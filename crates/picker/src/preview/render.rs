@@ -37,7 +37,6 @@ impl EditorPreview {
         if let Some(message) = &self.message {
             self.render_message(message, cx).into_any_element()
         } else {
-            debug_assert!(!self.preview_editor.read(cx).is_empty(cx));
             div()
                 .flex_1()
                 .overflow_hidden()

@@ -30,6 +30,7 @@ const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new(
 const API_KEY_ENV_VAR_NAME: &str = "OPENROUTER_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 pub(crate) const RESERVED_HEADER_NAMES: &[&str] = &["HTTP-Referer", "X-Title"];
+const MAX_OPEN_ROUTER_SESSION_ID_LENGTH: usize = 256;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct OpenRouterSettings {
@@ -449,23 +450,39 @@ pub fn into_open_router(
     // If we ever have a more formal distionction between the models in the future,
     // we should revise this to use that instead.
     let is_anthropic_model = model.id().starts_with("anthropic/");
+    let session_id = open_router_session_id(request.thread_id);
 
     let mut messages = Vec::new();
+    let mut any_message_wants_cache = false;
+    let mut last_cache_message_index: Option<usize> = None;
+
     for message in request.messages {
+        let mut message_added_content = false;
         let reasoning_details_for_message = if is_anthropic_model {
             None
         } else {
             message.reasoning_details.clone()
         };
 
+        let message_wants_cache = message.cache;
+        if message_wants_cache {
+            any_message_wants_cache = true;
+        }
+
         for content in message.content {
             match content {
-                MessageContent::Text(text) => add_message_content_part(
-                    open_router::MessagePart::Text { text },
-                    message.role,
-                    &mut messages,
-                    reasoning_details_for_message.clone(),
-                ),
+                MessageContent::Text(text) => {
+                    add_message_content_part(
+                        open_router::MessagePart::Text {
+                            text,
+                            cache_control: None,
+                        },
+                        message.role,
+                        &mut messages,
+                        reasoning_details_for_message.clone(),
+                    );
+                    message_added_content = true;
+                }
                 MessageContent::Thinking { .. } => {}
                 MessageContent::RedactedThinking(_) => {}
                 MessageContent::Compaction(_) => {}
@@ -478,6 +495,7 @@ pub fn into_open_router(
                         &mut messages,
                         reasoning_details_for_message.clone(),
                     );
+                    message_added_content = true;
                 }
                 MessageContent::ToolUse(tool_use) => {
                     let tool_call = open_router::ToolCall {
@@ -503,6 +521,7 @@ pub fn into_open_router(
                             reasoning_details: reasoning_details_for_message.clone(),
                         });
                     }
+                    message_added_content = true;
                 }
                 MessageContent::ToolResult(tool_result) => {
                     let content: Vec<open_router::MessagePart> = tool_result
@@ -512,6 +531,7 @@ pub fn into_open_router(
                             LanguageModelToolResultContent::Text(text) => {
                                 open_router::MessagePart::Text {
                                     text: text.to_string(),
+                                    cache_control: None,
                                 }
                             }
                             LanguageModelToolResultContent::Image(image) => {
@@ -526,8 +546,34 @@ pub fn into_open_router(
                         content: content.into(),
                         tool_call_id: tool_result.tool_use_id.to_string(),
                     });
+                    message_added_content = true;
                 }
             }
+        }
+
+        if message_wants_cache && message_added_content {
+            last_cache_message_index = messages.len().checked_sub(1);
+        }
+    }
+
+    if is_anthropic_model && any_message_wants_cache {
+        // OpenRouter's top-level automatic cache_control restricts routing to
+        // Anthropic direct; explicit block breakpoints also work on Bedrock and Vertex.
+        if let Some(content) = last_cache_message_index
+            .and_then(|index| messages.get_mut(index))
+            .and_then(request_message_content_mut)
+        {
+            set_last_text_cache_control(content, cache_control(None));
+        }
+
+        if let Some(content) = messages.iter_mut().find_map(|message| match message {
+            open_router::RequestMessage::System { content } => Some(content),
+            _ => None,
+        }) {
+            set_last_text_cache_control(
+                content,
+                cache_control(Some(open_router::CacheTtl::OneHour)),
+            );
         }
     }
 
@@ -535,6 +581,7 @@ pub fn into_open_router(
         model: model.id().into(),
         messages,
         stream: true,
+        session_id,
         stop: request.stop,
         temperature: request.temperature.unwrap_or(0.4),
         max_tokens: max_output_tokens,
@@ -573,6 +620,65 @@ pub fn into_open_router(
             LanguageModelToolChoice::None => open_router::ToolChoice::None,
         }),
         provider: model.provider.clone(),
+    }
+}
+
+fn open_router_session_id(thread_id: Option<String>) -> Option<String> {
+    thread_id.map(|thread_id| {
+        thread_id
+            .chars()
+            .take(MAX_OPEN_ROUTER_SESSION_ID_LENGTH)
+            .collect()
+    })
+}
+
+fn cache_control(ttl: Option<open_router::CacheTtl>) -> open_router::CacheControl {
+    open_router::CacheControl {
+        cache_type: open_router::CacheControlType::Ephemeral,
+        ttl,
+    }
+}
+
+fn request_message_content_mut(
+    message: &mut open_router::RequestMessage,
+) -> Option<&mut open_router::MessageContent> {
+    match message {
+        open_router::RequestMessage::User { content }
+        | open_router::RequestMessage::System { content }
+        | open_router::RequestMessage::Tool { content, .. } => Some(content),
+        open_router::RequestMessage::Assistant {
+            content: Some(content),
+            ..
+        } => Some(content),
+        open_router::RequestMessage::Assistant { content: None, .. } => None,
+    }
+}
+
+fn set_last_text_cache_control(
+    content: &mut open_router::MessageContent,
+    cache_control: open_router::CacheControl,
+) {
+    match content {
+        open_router::MessageContent::Plain(text) => {
+            let text = std::mem::take(text);
+            *content =
+                open_router::MessageContent::Multipart(vec![open_router::MessagePart::Text {
+                    text,
+                    cache_control: Some(cache_control),
+                }]);
+        }
+        open_router::MessageContent::Multipart(parts) => {
+            for part in parts.iter_mut().rev() {
+                if let open_router::MessagePart::Text {
+                    cache_control: target,
+                    ..
+                } = part
+                {
+                    *target = Some(cache_control);
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -651,11 +757,23 @@ impl OpenRouterEventMapper {
         let mut events = Vec::new();
 
         if let Some(usage) = event.usage {
+            let cache_creation_input_tokens = usage
+                .prompt_tokens_details
+                .as_ref()
+                .map_or(0, |details| details.cache_write_tokens);
+            let cache_read_input_tokens = usage
+                .prompt_tokens_details
+                .as_ref()
+                .map_or(0, |details| details.cached_tokens);
+            let input_tokens = usage.prompt_tokens.saturating_sub(
+                cache_creation_input_tokens.saturating_add(cache_read_input_tokens),
+            );
+
             events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: usage.prompt_tokens,
+                input_tokens,
                 output_tokens: usage.completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
+                cache_creation_input_tokens,
+                cache_read_input_tokens,
             })));
         }
 
@@ -1114,17 +1232,55 @@ mod tests {
                 prompt_tokens: 12,
                 completion_tokens: 7,
                 total_tokens: 19,
+                prompt_tokens_details: Some(open_router::PromptTokensDetails {
+                    cached_tokens: 5,
+                    cache_write_tokens: 3,
+                }),
             }),
         });
 
         assert_eq!(events.len(), 1);
-        match events.into_iter().next().unwrap() {
-            Ok(LanguageModelCompletionEvent::UsageUpdate(usage)) => {
-                assert_eq!(usage.input_tokens, 12);
+        match events.into_iter().next() {
+            Some(Ok(LanguageModelCompletionEvent::UsageUpdate(usage))) => {
+                assert_eq!(usage.input_tokens, 4);
                 assert_eq!(usage.output_tokens, 7);
+                assert_eq!(usage.cache_creation_input_tokens, 3);
+                assert_eq!(usage.cache_read_input_tokens, 5);
+                assert_eq!(usage.total_tokens(), 19);
             }
             other => panic!("Expected usage update event, got: {other:?}"),
         }
+    }
+
+    #[gpui::test]
+    async fn test_session_id_uses_thread_id() {
+        let model = open_router::Model::new(
+            "openai/gpt-4o",
+            Some("GPT-4o"),
+            Some(128000),
+            Some(true),
+            Some(false),
+            None,
+            None,
+        );
+        let expected_session_id = "a".repeat(MAX_OPEN_ROUTER_SESSION_ID_LENGTH);
+        let request = LanguageModelRequest {
+            thread_id: Some(format!("{expected_session_id}extra")),
+            messages: vec![language_model::LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".to_string())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let result = into_open_router(request, &model, None);
+
+        assert_eq!(
+            result.session_id.as_deref(),
+            Some(expected_session_id.as_str())
+        );
     }
 
     #[gpui::test]
@@ -1166,6 +1322,283 @@ mod tests {
             assert_eq!(arr[0]["data"], "real_data_here");
         } else {
             panic!("Expected array");
+        }
+    }
+
+    #[gpui::test]
+    async fn test_anthropic_model_caching_two_tier() {
+        let model = open_router::Model::new(
+            "anthropic/claude-sonnet-4-5",
+            Some("Claude Sonnet"),
+            Some(200000),
+            Some(true),
+            Some(false),
+            None,
+            None,
+        );
+
+        let request = LanguageModelRequest {
+            messages: vec![
+                language_model::LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("You are helpful.".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                language_model::LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hello".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                language_model::LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Text("Hi there!".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                language_model::LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("What is 2+2?".to_string())],
+                    cache: true,
+                    reasoning_details: None,
+                },
+            ],
+            stop: vec![],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            compact_at_tokens: None,
+        };
+
+        let result = into_open_router(request, &model, None);
+
+        let system_cache = result.messages.iter().find_map(|m| {
+            if let open_router::RequestMessage::System { content } = m {
+                if let open_router::MessageContent::Multipart(parts) = content {
+                    parts.iter().last().and_then(|p| {
+                        if let open_router::MessagePart::Text { cache_control, .. } = p {
+                            *cache_control
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        assert!(
+            matches!(
+                system_cache,
+                Some(open_router::CacheControl {
+                    cache_type: open_router::CacheControlType::Ephemeral,
+                    ttl: Some(open_router::CacheTtl::OneHour),
+                })
+            ),
+            "System message should have 1h cache_control, got: {system_cache:?}"
+        );
+
+        let tail_cache = result.messages.last().and_then(|last_message| {
+            if let open_router::RequestMessage::User { content } = last_message {
+                if let open_router::MessageContent::Multipart(parts) = content {
+                    parts.iter().last().and_then(|part| {
+                        if let open_router::MessagePart::Text { cache_control, .. } = part {
+                            *cache_control
+                        } else {
+                            None
+                        }
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+        assert!(
+            matches!(
+                tail_cache,
+                Some(open_router::CacheControl {
+                    cache_type: open_router::CacheControlType::Ephemeral,
+                    ttl: None,
+                })
+            ),
+            "Last cache:true message should have 5min cache_control, got: {tail_cache:?}"
+        );
+
+        for (i, message) in result.messages.iter().enumerate() {
+            let is_system = matches!(message, open_router::RequestMessage::System { .. });
+            let is_last = i == result.messages.len() - 1;
+            if is_system || is_last {
+                continue;
+            }
+            let parts: Option<&Vec<open_router::MessagePart>> = match message {
+                open_router::RequestMessage::User { content }
+                | open_router::RequestMessage::System { content }
+                | open_router::RequestMessage::Tool { content, .. } => {
+                    if let open_router::MessageContent::Multipart(parts) = content {
+                        Some(parts)
+                    } else {
+                        None
+                    }
+                }
+                open_router::RequestMessage::Assistant {
+                    content: Some(content),
+                    ..
+                } => {
+                    if let open_router::MessageContent::Multipart(parts) = content {
+                        Some(parts)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(parts) = parts {
+                for part in parts {
+                    if let open_router::MessagePart::Text { cache_control, .. } = part {
+                        assert!(
+                            cache_control.is_none(),
+                            "Message {i} should not have cache_control"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_anthropic_model_no_cache_when_no_cache_flag() {
+        let model = open_router::Model::new(
+            "anthropic/claude-sonnet-4-5",
+            Some("Claude Sonnet"),
+            Some(200000),
+            Some(true),
+            Some(false),
+            None,
+            None,
+        );
+
+        let request = LanguageModelRequest {
+            messages: vec![
+                language_model::LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("You are helpful.".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                language_model::LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hello".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+            ],
+            stop: vec![],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            compact_at_tokens: None,
+        };
+
+        let result = into_open_router(request, &model, None);
+
+        for message in &result.messages {
+            let content = match message {
+                open_router::RequestMessage::User { content }
+                | open_router::RequestMessage::System { content } => Some(content),
+                _ => None,
+            };
+            if let Some(content) = content {
+                if let open_router::MessageContent::Multipart(parts) = content {
+                    for part in parts {
+                        if let open_router::MessagePart::Text { cache_control, .. } = part {
+                            assert!(
+                                cache_control.is_none(),
+                                "No message should have cache_control when no cache:true flags"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_non_anthropic_model_no_cache_control() {
+        let model = open_router::Model::new(
+            "openai/gpt-4o",
+            Some("GPT-4o"),
+            Some(128000),
+            Some(true),
+            Some(false),
+            None,
+            None,
+        );
+
+        let request = LanguageModelRequest {
+            messages: vec![
+                language_model::LanguageModelRequestMessage {
+                    role: Role::System,
+                    content: vec![MessageContent::Text("You are helpful.".to_string())],
+                    cache: false,
+                    reasoning_details: None,
+                },
+                language_model::LanguageModelRequestMessage {
+                    role: Role::User,
+                    content: vec![MessageContent::Text("Hello".to_string())],
+                    cache: true,
+                    reasoning_details: None,
+                },
+            ],
+            stop: vec![],
+            temperature: None,
+            tools: vec![],
+            tool_choice: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            compact_at_tokens: None,
+        };
+
+        let result = into_open_router(request, &model, None);
+
+        for message in &result.messages {
+            let content = match message {
+                open_router::RequestMessage::User { content }
+                | open_router::RequestMessage::System { content } => Some(content),
+                _ => None,
+            };
+            if let Some(content) = content {
+                if let open_router::MessageContent::Multipart(parts) = content {
+                    for part in parts {
+                        if let open_router::MessagePart::Text { cache_control, .. } = part {
+                            assert!(
+                                cache_control.is_none(),
+                                "Non-Anthropic model should never have cache_control"
+                            );
+                        }
+                    }
+                }
+            }
         }
     }
 }

@@ -116,6 +116,16 @@ impl ActualCursor {
         editable_region_byte_offset: usize,
         editable_region_start_line: usize,
     ) -> Self {
+        // Defensive: a malformed/edge-case cursor offset must never panic and
+        // abort an (expensive) batch run. Clamp into range and snap down to a
+        // char boundary before slicing.
+        let mut editable_region_cursor_offset =
+            editable_region_cursor_offset.min(new_editable_region.len());
+        while editable_region_cursor_offset > 0
+            && !new_editable_region.is_char_boundary(editable_region_cursor_offset)
+        {
+            editable_region_cursor_offset -= 1;
+        }
         let global_offset = editable_region_byte_offset + editable_region_cursor_offset;
         let new_region_prefix = &new_editable_region[..editable_region_cursor_offset];
         let row = (editable_region_start_line + new_region_prefix.matches('\n').count()) as u32;
