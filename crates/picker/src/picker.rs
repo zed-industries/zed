@@ -1260,6 +1260,8 @@ impl<D: PickerDelegate> Picker<D> {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        persistence::store_last_layout(D::name(), self.preview.as_ref().map(|_| layout), cx);
+
         let Some(preview) = &mut self.preview else {
             return;
         };

@@ -385,6 +385,13 @@ mod resizable_drag {
         s.drag_to(0, px(-50.), px(REM));
         assert_eq!(widths_px(&s), vec![16., 100.]);
     }
+
+    #[test]
+    fn pinned_and_scrollable_width_split() {
+        let s = state(&[100., 100., 100.], vec![TableResizeBehavior::None; 3]);
+        assert_eq!(f32::from(s.pinned_width(2, px(REM))), 200.);
+        assert_eq!(f32::from(s.scrollable_width(2, px(REM))), 100.);
+    }
 }
 
 mod pin_layout {

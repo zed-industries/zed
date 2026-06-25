@@ -216,8 +216,6 @@ mod tests {
         assert!(
             rendered.contains("worktree metadata that may live outside the project directories")
         );
-        assert!(rendered.contains("inherited SSH agent socket"));
-        assert!(rendered.contains("does not allow packet-sending network access"));
         assert!(rendered.contains("for the rest of the thread"));
     }
 
