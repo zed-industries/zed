@@ -1181,8 +1181,8 @@ mod tests {
                      -old
                      +new"}
                 .into(),
-                old_range: 0..1,
-                new_range: 0..1,
+                old_range: 0..0,
+                new_range: 0..0,
                 predicted: false,
                 in_open_source_repo: true,
             }),
@@ -1194,8 +1194,8 @@ mod tests {
                      -a
                      +b"}
                 .into(),
-                old_range: 0..1,
-                new_range: 0..1,
+                old_range: 0..0,
+                new_range: 0..0,
                 predicted: false,
                 in_open_source_repo: true,
             }),
@@ -1207,8 +1207,8 @@ mod tests {
                      -x
                      +y"}
                 .into(),
-                old_range: 0..1,
-                new_range: 0..1,
+                old_range: 0..0,
+                new_range: 0..0,
                 predicted: false,
                 in_open_source_repo: true,
             }),
@@ -1937,8 +1937,8 @@ mod tests {
                       line2
                  "}
                 .into(),
-                old_range: 0..1,
-                new_range: 0..1,
+                old_range: 0..0,
+                new_range: 0..0,
                 predicted: false,
                 in_open_source_repo: false,
             })],
@@ -1977,8 +1977,8 @@ mod tests {
                       line11
                  "}
                 .into(),
-                old_range: 0..1,
-                new_range: 0..1,
+                old_range: 0..0,
+                new_range: 0..0,
                 predicted: false,
                 in_open_source_repo: false,
             })],
@@ -2039,8 +2039,8 @@ mod tests {
                       line2
                  "}
                 .into(),
-                old_range: 0..1,
-                new_range: 0..1,
+                old_range: 0..0,
+                new_range: 0..0,
                 predicted: false,
                 in_open_source_repo: false,
             })],
@@ -2078,8 +2078,8 @@ mod tests {
                       more_wrong
                  "}
                 .into(),
-                old_range: 0..1,
-                new_range: 0..1,
+                old_range: 0..0,
+                new_range: 0..0,
                 predicted: false,
                 in_open_source_repo: false,
             })],
@@ -2148,8 +2148,8 @@ mod tests {
                           line2
                      "}
                     .into(),
-                    old_range: 0..1,
-                    new_range: 0..1,
+                    old_range: 0..0,
+                    new_range: 0..0,
                     predicted: false,
                     in_open_source_repo: false,
                 }),
@@ -2163,8 +2163,8 @@ mod tests {
                           line2
                      "}
                     .into(),
-                    old_range: 0..1,
-                    new_range: 0..1,
+                    old_range: 0..0,
+                    new_range: 0..0,
                     predicted: false,
                     in_open_source_repo: false,
                 }),
