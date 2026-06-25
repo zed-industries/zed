@@ -14,11 +14,11 @@ use util::path_list::PathList;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct UserMessageId(SharedString);
+pub struct LocalUserMessageId(acp::MessageId);
 
-impl UserMessageId {
+impl LocalUserMessageId {
     pub fn new() -> Self {
-        Self(Uuid::new_v4().to_string().into())
+        Self(acp::MessageId::new(Uuid::new_v4().to_string()))
     }
 }
 
@@ -183,12 +183,21 @@ pub trait AgentConnection {
         Task::ready(Err(anyhow::Error::msg("Logout is not supported")))
     }
 
+    fn local_user_messages(
+        &self,
+        _session_id: &acp::SessionId,
+        _cx: &App,
+    ) -> Option<Rc<dyn AgentSessionLocalUserMessages>> {
+        None
+    }
+
     fn prompt(
         &self,
-        user_message_id: UserMessageId,
-        params: acp::PromptRequest,
-        cx: &mut App,
-    ) -> Task<Result<acp::PromptResponse>>;
+        _params: acp::PromptRequest,
+        _cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
+        Task::ready(Err(anyhow::Error::msg("Prompting is not supported")))
+    }
 
     fn retry(&self, _session_id: &acp::SessionId, _cx: &App) -> Option<Rc<dyn AgentSessionRetry>> {
         None
@@ -254,7 +263,18 @@ impl dyn AgentConnection {
 }
 
 pub trait AgentSessionTruncate {
-    fn run(&self, message_id: UserMessageId, cx: &mut App) -> Task<Result<()>>;
+    fn run(&self, local_user_message_id: LocalUserMessageId, cx: &mut App) -> Task<Result<()>>;
+}
+
+pub trait AgentSessionLocalUserMessages {
+    fn new_local_id(&self) -> LocalUserMessageId;
+
+    fn prompt(
+        &self,
+        local_id: LocalUserMessageId,
+        params: acp::PromptRequest,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>>;
 }
 
 pub trait AgentSessionRetry {
@@ -943,7 +963,6 @@ mod test_support {
 
         fn prompt(
             &self,
-            _id: UserMessageId,
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -1000,6 +1019,16 @@ mod test_support {
             }
         }
 
+        fn local_user_messages(
+            &self,
+            _session_id: &acp::SessionId,
+            _cx: &App,
+        ) -> Option<Rc<dyn AgentSessionLocalUserMessages>> {
+            Some(Rc::new(StubAgentSessionLocalUserMessages {
+                connection: self.clone(),
+            }))
+        }
+
         fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
             if let Some(end_turn_tx) = self
                 .sessions
@@ -1042,10 +1071,29 @@ mod test_support {
         }
     }
 
+    struct StubAgentSessionLocalUserMessages {
+        connection: StubAgentConnection,
+    }
+
+    impl AgentSessionLocalUserMessages for StubAgentSessionLocalUserMessages {
+        fn new_local_id(&self) -> LocalUserMessageId {
+            LocalUserMessageId::new()
+        }
+
+        fn prompt(
+            &self,
+            _local_id: LocalUserMessageId,
+            params: acp::PromptRequest,
+            cx: &mut App,
+        ) -> Task<Result<acp::PromptResponse>> {
+            self.connection.prompt(params, cx)
+        }
+    }
+
     struct StubAgentSessionEditor;
 
     impl AgentSessionTruncate for StubAgentSessionEditor {
-        fn run(&self, _: UserMessageId, _: &mut App) -> Task<Result<()>> {
+        fn run(&self, _: LocalUserMessageId, _: &mut App) -> Task<Result<()>> {
             Task::ready(Ok(()))
         }
     }

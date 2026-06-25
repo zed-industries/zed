@@ -1231,7 +1231,7 @@ impl ThreadView {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
                     && self.thread.read(cx).supports_truncate(cx)
-                    && user_message.id.is_some()
+                    && user_message.local_id.is_some()
                     && !self.is_subagent()
                 {
                     self.editing_message = Some(event.entry_index);
@@ -1242,7 +1242,7 @@ impl ThreadView {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
                     && self.thread.read(cx).supports_truncate(cx)
-                    && user_message.id.is_some()
+                    && user_message.local_id.is_some()
                     && !self.is_subagent()
                 {
                     if editor.read(cx).text(cx).as_str() == user_message.content.to_markdown(cx) {
@@ -1963,7 +1963,12 @@ impl ThreadView {
         let thread = self.thread.clone();
 
         let Some(user_message_id) = thread.update(cx, |thread, _| {
-            thread.entries().get(entry_ix)?.user_message()?.id.clone()
+            thread
+                .entries()
+                .get(entry_ix)?
+                .user_message()?
+                .local_id
+                .clone()
         }) else {
             return;
         };
@@ -2722,10 +2727,14 @@ impl ThreadView {
         .detach_and_log_err(cx);
     }
 
-    pub fn restore_checkpoint(&mut self, message_id: &UserMessageId, cx: &mut Context<Self>) {
+    pub fn restore_checkpoint(
+        &mut self,
+        local_user_message_id: &LocalUserMessageId,
+        cx: &mut Context<Self>,
+    ) {
         self.thread
             .update(cx, |thread, cx| {
-                thread.restore_checkpoint(message_id.clone(), cx)
+                thread.restore_checkpoint(local_user_message_id.clone(), cx)
             })
             .detach_and_log_err(cx);
     }
@@ -5944,7 +5953,7 @@ impl ThreadView {
 
                 let is_subagent = self.is_subagent();
                 let can_rewind = self.thread.read(cx).supports_truncate(cx);
-                let is_editable = can_rewind && message.id.is_some() && !is_subagent;
+                let is_editable = can_rewind && message.local_id.is_some() && !is_subagent;
                 let agent_name = if is_subagent {
                     "subagents".into()
                 } else {
@@ -5965,7 +5974,7 @@ impl ThreadView {
                     .gap_1p5()
                     .w_full()
                     .when(is_editable && has_checkpoint_button, |this| {
-                        this.children(message.id.clone().map(|message_id| {
+                        this.children(message.local_id.clone().map(|message_id| {
                             h_flex()
                                 .px_3()
                                 .gap_2()
