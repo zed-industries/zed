@@ -16,7 +16,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
 };
-use zeta_prompt::ZetaPromptInput;
+use zeta_prompt::Zeta2PromptInput;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Example {
@@ -26,7 +26,7 @@ pub struct Example {
     /// The full content of the file where an edit is being predicted, and the
     /// actual cursor offset.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_inputs: Option<ZetaPromptInput>,
+    pub prompt_inputs: Option<Zeta2PromptInput>,
 
     /// The input and expected output from the edit prediction model.
     #[serde(skip_serializing_if = "Option::is_none")]

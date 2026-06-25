@@ -1,5 +1,7 @@
 #[cfg(feature = "predict-edits")]
 pub mod predict_edits_v3;
+#[cfg(feature = "predict-edits")]
+pub mod predict_edits_v4;
 
 use std::str::FromStr;
 use std::sync::Arc;

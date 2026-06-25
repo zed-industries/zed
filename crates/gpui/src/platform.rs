@@ -1495,7 +1495,12 @@ pub struct WindowOptions {
     /// The kind of window to create
     pub kind: WindowKind,
 
-    /// Whether the window should be movable by the user
+    /// Whether the window should be movable by the user.
+    ///
+    /// On macOS 27, custom titlebar windows that implement their own drag behavior
+    /// with [`Window::start_window_move`] should set this to `false`; otherwise
+    /// AppKit can treat the titlebar region as system-owned and delay clicks
+    /// while disambiguating titlebar double-clicks.
     pub is_movable: bool,
 
     /// Whether the window should be resizable by the user

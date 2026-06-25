@@ -260,6 +260,7 @@ impl Model {
                 ReasoningEffort::Medium => &[ReasoningEffort::Medium],
                 ReasoningEffort::High => &[ReasoningEffort::High],
                 ReasoningEffort::XHigh => &[ReasoningEffort::XHigh],
+                ReasoningEffort::Max => &[ReasoningEffort::Max],
             },
             Self::O3 => &[
                 ReasoningEffort::Low,

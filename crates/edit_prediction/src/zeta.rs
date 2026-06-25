@@ -1,8 +1,8 @@
 use crate::{
     CloudRequestTimeoutError, CurrentEditPrediction, DebugEvent, EditPredictionFinishedDebugEvent,
-    EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
-    EditPredictionStore, PromptHistoryBoundary, ZedUpdateRequiredError,
-    buffer_path_with_id_fallback,
+    EditPredictionId, EditPredictionInputs, EditPredictionModelInput,
+    EditPredictionStartedDebugEvent, EditPredictionStore, PromptHistoryBoundary,
+    ZedUpdateRequiredError, buffer_path_with_id_fallback,
     cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
     data_collection::CapturedPredictionContext,
     prediction::EditPredictionResult,
@@ -24,7 +24,7 @@ use workspace::workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError};
 
 use std::{ops::Range, path::Path, sync::Arc};
 use zeta_prompt::{
-    ParsedOutput, ZetaFormat, ZetaPromptInput, excerpt_ranges_for_format, format_zeta_prompt,
+    ParsedOutput, Zeta2PromptInput, ZetaFormat, excerpt_ranges_for_format, format_zeta_prompt,
     get_prefill, parse_zeta2_model_output, stop_tokens_for_format,
     zeta1::{self, EDITABLE_REGION_END_MARKER},
 };
@@ -84,7 +84,7 @@ pub(crate) fn request_prediction_with_zeta(
     let app_version = AppVersion::global(cx);
 
     struct Prediction {
-        prompt_input: ZetaPromptInput,
+        prompt_input: Zeta2PromptInput,
         buffer: Entity<Buffer>,
         snapshot: BufferSnapshot,
         edits: Vec<(Range<Anchor>, Arc<str>)>,
@@ -396,7 +396,7 @@ pub(crate) fn request_prediction_with_zeta(
             edits.into(),
             cursor_position,
             Some(editable_anchor_range),
-            inputs,
+            EditPredictionInputs::V2(inputs),
             model_version,
             trigger,
             request_duration,
@@ -602,7 +602,7 @@ pub fn zeta2_prompt_input(
     is_open_source: bool,
     can_collect_data: bool,
     repo_url: Option<String>,
-) -> (Range<usize>, zeta_prompt::ZetaPromptInput) {
+) -> (Range<usize>, zeta_prompt::Zeta2PromptInput) {
     let (excerpt_point_range, excerpt_offset_range, cursor_offset_in_excerpt) =
         compute_cursor_excerpt(snapshot, cursor_offset);
 
@@ -624,7 +624,7 @@ pub fn zeta2_prompt_input(
         ACTIVE_BUFFER_DIAGNOSTIC_ADDITIONAL_CONTEXT_TOKEN_COUNT,
     );
 
-    let prompt_input = zeta_prompt::ZetaPromptInput {
+    let prompt_input = zeta_prompt::Zeta2PromptInput {
         cursor_path: excerpt_path,
         cursor_excerpt,
         cursor_offset_in_excerpt,
