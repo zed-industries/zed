@@ -4,7 +4,7 @@ use clock::ReplicaId;
 use cloud_api_types::{
     CreateLlmTokenResponse, LlmToken, Organization, OrganizationConfiguration,
     OrganizationEditPredictionConfiguration, OrganizationId, SettledEditPrediction,
-    SubmitEditPredictionSettledResponse,
+    SubmitEditPredictionSettledBatchBody, SubmitEditPredictionSettledResponse,
 };
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, PredictEditsRequestTrigger,
@@ -257,6 +257,68 @@ async fn test_simple_request(cx: &mut TestAppContext) {
         language::Point::new(1, 3)
     );
     assert_eq!(prediction.edits[0].1.as_ref(), " are you?");
+}
+
+#[gpui::test]
+async fn test_zeta_request_sends_settled_body_when_data_collection_is_disabled(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md":  "Hello!\nHow\nBye\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    let prediction_task = ep_store.update(cx, |ep_store, cx| {
+        ep_store.request_prediction(
+            &project,
+            &buffer,
+            position,
+            PredictEditsRequestTrigger::Other,
+            cx,
+        )
+    });
+
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    assert!(!request.input.can_collect_data);
+    respond_tx
+        .send(model_response(&request, SIMPLE_DIFF))
+        .unwrap();
+
+    prediction_task.await.unwrap().unwrap();
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
+    cx.run_until_parked();
+
+    let settled_request = requests
+        .settled
+        .next()
+        .now_or_never()
+        .flatten()
+        .expect("settled request should be sent");
+    assert!(!settled_request.can_collect_data);
+    assert_eq!(settled_request.settled_editable_region, None);
+    assert_eq!(settled_request.sample_data, None);
 }
 
 #[gpui::test]
@@ -1270,6 +1332,19 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
             e2e_latency_ms: Some(0),
         }]
     );
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
+    cx.run_until_parked();
+
+    let settled_request = requests
+        .settled
+        .next()
+        .now_or_never()
+        .flatten()
+        .expect("empty prediction should still send settled request");
+    assert_eq!(settled_request.request_id, id);
+    assert_eq!(settled_request.settled_editable_region, None);
+    assert_eq!(settled_request.sample_data, None);
 }
 
 #[gpui::test]
@@ -2533,8 +2608,11 @@ fn init_test_with_fake_client_and_legacy_data_collection(
                             } else {
                                 buf
                             };
-                            let req = serde_json::from_slice(&body).unwrap();
-                            settled_req_tx.unbounded_send(req).unwrap();
+                            let req: SubmitEditPredictionSettledBatchBody =
+                                serde_json::from_slice(&body).unwrap();
+                            for prediction in req.predictions {
+                                settled_req_tx.unbounded_send(prediction).unwrap();
+                            }
                             serde_json::to_string(&SubmitEditPredictionSettledResponse {}).unwrap()
                         }
                         _ => {
@@ -3514,6 +3592,17 @@ async fn test_edit_prediction_settled_sends_sample_data_after_quiescence(cx: &mu
                 snippet_buffer_row_range: 0..0,
                 diagnostic_range_in_snippet: 0..0,
             }],
+            editable_context: vec![zeta_prompt::RelatedFile {
+                path: Path::new("foo.md").into(),
+                max_row: 60,
+                excerpts: vec![zeta_prompt::RelatedExcerpt {
+                    row_range: 0..2,
+                    text: "line 0\nline 1\n".into(),
+                    order: 0,
+                    context_source: zeta_prompt::ContextSource::CurrentFile,
+                }],
+                in_open_source_repo: true,
+            }],
         },
         Some(boundary),
         VecDeque::from([RecentFile {
@@ -3553,6 +3642,7 @@ async fn test_edit_prediction_settled_sends_sample_data_after_quiescence(cx: &mu
             revision: None,
             uncommitted_diff: None,
             buffer_diagnostics: Vec::new(),
+            editable_context: Vec::new(),
         },
         Some(boundary),
         VecDeque::new(),
@@ -3617,6 +3707,14 @@ async fn test_edit_prediction_settled_sends_sample_data_after_quiescence(cx: &mu
     assert_eq!(sample_data.editable_path.as_ref(), Path::new("foo.md"));
     assert_eq!(sample_data.editable_offset_range, editable_offset_range);
     assert_eq!(sample_data.buffer_diagnostics.len(), 1);
+    assert_eq!(sample_data.editable_context.len(), 1);
+    let editable_context = &sample_data.editable_context[0];
+    assert_eq!(editable_context.path.as_ref(), Path::new("foo.md"));
+    assert_eq!(editable_context.excerpts.len(), 1);
+    assert_eq!(
+        editable_context.excerpts[0].context_source,
+        zeta_prompt::ContextSource::CurrentFile
+    );
     assert_eq!(sample_data.future_edit_history_events.len(), 4);
     assert_eq!(sample_data.navigation_history.len(), 1);
     assert_eq!(sample_data.edit_events_before_quiescence, 5);
@@ -3700,6 +3798,7 @@ async fn test_edit_prediction_settled_sample_data_requires_observing_all_events_
             revision: None,
             uncommitted_diff: None,
             buffer_diagnostics: Vec::new(),
+            editable_context: Vec::new(),
         },
         Some(boundary_observed),
         VecDeque::new(),
@@ -3731,6 +3830,7 @@ async fn test_edit_prediction_settled_sample_data_requires_observing_all_events_
             revision: None,
             uncommitted_diff: None,
             buffer_diagnostics: Vec::new(),
+            editable_context: Vec::new(),
         },
         Some(boundary_missed),
         VecDeque::new(),
@@ -3784,6 +3884,7 @@ async fn test_edit_prediction_settled_drops_future_events_when_their_oss_status_
             revision: None,
             uncommitted_diff: None,
             buffer_diagnostics: Vec::new(),
+            editable_context: Vec::new(),
         },
         None,
         VecDeque::new(),
