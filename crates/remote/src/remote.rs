@@ -15,6 +15,7 @@ pub use remote_client::{
 pub use remote_identity::{
     RemoteConnectionIdentity, remote_connection_identity, same_remote_connection_identity,
 };
+pub use transport::codespace::{CodespaceConnectionOptions, list_codespaces};
 pub use transport::docker::DockerConnectionOptions;
 pub use transport::ssh::{SshConnectionOptions, SshPortForwardOption};
 pub use transport::wsl::WslConnectionOptions;
