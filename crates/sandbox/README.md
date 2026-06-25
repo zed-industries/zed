@@ -6,6 +6,7 @@ Cross-platform sandboxing for shell commands.
 
 This crate allows creating a `Sandbox` according to some `SandboxPolicy`. A
 `SandboxPolicy` expresses:
+
 - what filesystem operations are allowed
 - which kinds of networking operations are allowed
 - whether git metadata is protected
@@ -15,13 +16,14 @@ by that policy.
 
 ## Security model
 
-All untrusted code is assumed to be maximally hostile. We do *not* assume that
+All untrusted code is assumed to be maximally hostile. We do _not_ assume that
 the untrusted code is written by a well-meaning-but-perhaps-marginally-unaligned
 AI agent.
 
 ## Implementation
 
 The implementations are highly platform-specific:
+
 - Mac support comes from Seatbelt
 - Linux support comes from [bubblewrap], implemented via Linux [namespaces].
 - Windows:
@@ -35,6 +37,7 @@ the files are stored in the Linux filesystem or not.
 
 Filesystem restrictions are different on all platforms. Network restrictions
 however largely follow a similar approach (details omitted):
+
 - Disable networking in the sandbox, except for one localhost port
 - Within the sandbox, set `HTTP_PROXY` and friends to tell programs to
   communicate with that socket
@@ -49,6 +52,7 @@ different `localhost`).
 ### Linux
 
 A naive implementation on Linux would work roughly like:
+
 - Figure out which paths are read-only and which are read/write
 - Run the sandboxed program through `bwrap` with `--ro-bind` for read-only and
   `--bind` for read/write
@@ -58,6 +62,7 @@ However, this fails because of a nasty TOCTOU.
 #### The nasty TOCTOU
 
 Consider the following case:
+
 - an attacker has convinced the user to open `project`, which contains an evil
   `AGENTS.md`
 - They have also convinced the user to allow git access
@@ -84,18 +89,18 @@ Consider the following case:
   to `/home/alice`, and so the second command to inject the malicious
   credential-stealing sudo succeeds.
 
-Note that this attack requires *two nested directories*, each with read/write
-grants. A single grant is insufficient, because you must mutate *a path which is
-used as a `--bind` argument*. If you cannot mutate a parent (because we are
+Note that this attack requires _two nested directories_, each with read/write
+grants. A single grant is insufficient, because you must mutate _a path which is
+used as a `--bind` argument_. If you cannot mutate a parent (because we are
 assuming no nested directories), then the only part you can mutate is the the
 read/write grant path itself (i.e. `/home/alice/project`). But, in bubblewrap's
-model, doing this requires write access to the *parent* (i.e. `/home/alice`),
+model, doing this requires write access to the _parent_ (i.e. `/home/alice`),
 which we have assumed is not present.
 
 #### The naive (and incorrect) fix
 
 It is tempting to read the previous paragraph and think "that's simple, just
-disallow nested directories". In theory, this would work. A read/write grant to `/foo` and `/foo/bar` is logically equivalent to a read/write grant to just `/foo`. And the following is *true*: 
+disallow nested directories". In theory, this would work. A read/write grant to `/foo` and `/foo/bar` is logically equivalent to a read/write grant to just `/foo`. And the following is _true_:
 
 > If there is no pair of read/write grants such that one is an ancestor of the
 > other, this TOCTOU attack is impossible.
@@ -103,15 +108,16 @@ disallow nested directories". In theory, this would work. A read/write grant to 
 However, this is not a viable countermeasure for two reasons:
 
 1. It requires that no two grants of this kind ever exist at the same time
-   *globally across the whole system*. For example, opening `/foo` in one zed
+   _globally across the whole system_. For example, opening `/foo` in one zed
    window and `/foo/bar` in another would re-open this exploit. Even if we did
    mitigate this by widening `/foo/bar` to have access to `/foo` (which in
    itself is an unacceptable privilege escalation), we still wouldn't be able to
    control non-Zed processes.
 2. It prevents the potentially useful pattern of:
-  - read/write access to `/foo`
-  - read-only access to `/foo/bar`
-  - read/write access to `/foo/bar/baz`
+
+- read/write access to `/foo`
+- read-only access to `/foo/bar`
+- read/write access to `/foo/bar/baz`
 
 Because of this, we need something more robust.
 
@@ -128,15 +134,17 @@ This leads to a different question: how do we tell `bwrap` to use FDs instead of
 FDs into the `bwrap` process?
 
 There are two options:
+
 1. open the FDs in zed, clear `CLOEXEC`, then fork/exec into bwrap with the FD arguments
 2. send them into a helper process inside the sandbox using an `SCM_RIGHTS`
-  socket, and validate from the inside of the sandbox.
+   socket, and validate from the inside of the sandbox.
 
 We chose option 2 because we already have a helper process inside the sandbox
 (to set up the HTTP proxy).
 
 The flow for this approach in detail is:
-- open each *writable* path we `--bind` and get an `O_PATH` FD (which pins the
+
+- open each _writable_ path we `--bind` and get an `O_PATH` FD (which pins the
   inode without granting read/write on its contents)
 - create an `SCM_RIGHTS` socket over which we can send the FDs
 - run `bwrap --bind /path1 /path1 ... -- zed --sandbox-bridge <untrusted program args>`
@@ -149,6 +157,7 @@ The flow for this approach in detail is:
   - check that they match
 
   Note that this is essentially the check that `bwrap --bind-fd` does internally.
+
 - if all binds match, run the untrusted command, otherwise refuse to execute
 
 If the attacker managed to change a path to point to a different inode to when
@@ -158,18 +167,29 @@ command.
 ### Windows
 
 > [!NOTE] The Windows implementation depends heavily on the details of the Linux
-  implementation. 
+> implementation.
 
 The Linux approach works perfectly on WSL in theory (WSL uses a "regular linux
 kernel"), but there is one practical thorn: the zed host code that creates the
 FD is now running on Windows, but we need Linux file descriptors.
 
+To do this, we run `zed --wsl-sandbox-helper` in WSL (this is distinct from the `zed
+--sandbox-bridge` program, which runs *inside* the sandbox). This helper's job
+is just to be a place where we can run the FD-capture-and-socket-creation code,
+from a Linux environment.
+
+There are a few practical snags here:
+- The user likely doesn't have **Linux Zed** installed in their WSL distro
+- However, the `zed` binary is likely *already* on their Linux `$PATH`, since
+  WSL can include the Windows path on the WSL path
+
+To mitigate this, we download Linux Zed to a not-on-`$PATH` dir, and 
 
 Restricting the filesystem means making specific host locations available inside
 the sandbox. On Linux/WSL that is a **bind mount**; on macOS it is a Seatbelt
 allow-rule. Both, naively, name the location by **path string**.
 
-A path is a *name that is re-resolved on every use*, so there is a gap between
+A path is a _name that is re-resolved on every use_, so there is a gap between
 when we validate a location and when the enforcement layer resolves it:
 
 ```mermaid
@@ -188,33 +208,33 @@ just `.git`. Read-only grants are not affected: the whole host is already bound
 read-only, so re-exposing a path read-only grants nothing new.
 
 The fix everywhere is the same idea: **bind the validated grant to a kernel
-*handle* (an inode), not to a re-resolvable name.** The platforms differ only in
-*how* that handle is obtained and checked.
+_handle_ (an inode), not to a re-resolvable name.** The platforms differ only in
+_how_ that handle is obtained and checked.
 
 ## Key types
 
 ### `HostFilesystemLocation`
 
-An **opaque** handle to a location on the *host* that the sandbox may grant
+An **opaque** handle to a location on the _host_ that the sandbox may grant
 access to. It captures the security-relevant identity of the location **once**,
 so the enforcement layer never has to re-resolve a path later. It is
 platform-specific inside:
 
-| Platform | Captured identity |
-| --- | --- |
-| macOS | the fully-canonicalized path (used verbatim as the Seatbelt rule literal) |
-| Linux | an `O_PATH` file descriptor pinned to the inode |
-| Windows | nothing (the WSL design captures inside WSL — see below) |
+| Platform | Captured identity                                                         |
+| -------- | ------------------------------------------------------------------------- |
+| macOS    | the fully-canonicalized path (used verbatim as the Seatbelt rule literal) |
+| Linux    | an `O_PATH` file descriptor pinned to the inode                           |
+| Windows  | nothing (the WSL design captures inside WSL — see below)                  |
 
 It does **not** `Deref` and never hands out its trusted value. The only readable
 thing is `untrusted_path_display()`, for showing the user which location is being
 granted — that string must **never** be fed back into a sandbox API as the
-location's identity. Equality compares the *actual filesystem object* (the inode
+location's identity. Equality compares the _actual filesystem object_ (the inode
 behind the fd on Linux; the canonical path on macOS), not the textual path.
 
 ### `SandboxFilesystemLocation`
 
-A thin wrapper over a `PathBuf` naming a location *inside* the sandbox (e.g. a
+A thin wrapper over a `PathBuf` naming a location _inside_ the sandbox (e.g. a
 bind-mount destination). It needs no hardening: the worst a tampered in-sandbox
 path can do is expose already-granted host files at a different in-sandbox path —
 it can never widen which host files are reachable.
@@ -239,7 +259,7 @@ cannot be recycled out from under a later check.
 
 Seatbelt matches the **resolved path of each access** against literal allow-rule
 subpaths, and **fails closed**: if a granted path is swapped for a symlink, the
-command's accesses resolve *out of* the allowed subpath and are denied — the
+command's accesses resolve _out of_ the allowed subpath and are denied — the
 grant is never redirected.
 
 So macOS is sealed simply by emitting the captured `canonical_path` as the rule
@@ -266,7 +286,7 @@ flowchart TD
 bwrap performs the mounts with ordinary `--bind <path> <path>`, and `bwrap`
 itself is launched by an external PTY (`portable_pty`) that we cannot make
 inherit extra file descriptors. So we cannot use bwrap's own `--bind-fd` (which
-requires the fd *inside* bwrap). Instead we **detect** a redirected bind and
+requires the fd _inside_ bwrap). Instead we **detect** a redirected bind and
 **fail closed**, replicating what `--bind-fd` does internally but in our own
 in-sandbox code:
 
@@ -281,8 +301,8 @@ in-sandbox code:
 4. Match → `exec` the command. Mismatch (the source was swapped, so bwrap bound
    the wrong inode) → abort; the command never runs.
 
-This is detection, not prevention — but it is sound: the validator runs *after*
-the mounts and *before* the command, and a bind mount is frozen once
+This is detection, not prevention — but it is sound: the validator runs _after_
+the mounts and _before_ the command, and a bind mount is frozen once
 established, so what the validator stats is exactly what the command would
 access.
 
@@ -328,7 +348,7 @@ the design:
   detection (not `--bind-fd`).
 
 The design runs the **same Linux host side** as native Linux, but inside WSL:
-`wsl.exe` execs a Linux `zed` in `--wsl-sandbox-helper` mode *instead of* bwrap,
+`wsl.exe` execs a Linux `zed` in `--wsl-sandbox-helper` mode _instead of_ bwrap,
 and that helper does exactly what `Sandbox::wrap` + the validation-fd sender do
 in-process on native Linux — capture the writable binds' `O_PATH` fds (WSL-side,
 since Windows holds none), stand up the `SCM_RIGHTS` validation socket, run
@@ -363,7 +383,7 @@ sequenceDiagram
 
 Distribution: Zed ships no Linux binary into the distro; the Windows side
 provisions one on demand. It deliberately **ignores** the WSL `PATH` — inside
-WSL `zed` usually resolves to the *Windows* `zed.exe` via interop, which is not a
+WSL `zed` usually resolves to the _Windows_ `zed.exe` via interop, which is not a
 Linux binary and can't be the helper — and it does **not** use the public
 install script (which puts `zed` on `PATH` and writes desktop entries). Instead
 it resolves the running channel + version (dev builds, which have no matching
@@ -377,13 +397,13 @@ same as native Linux.
 
 ## Implementation status
 
-| Area | Status |
-| --- | --- |
-| `HostFilesystemLocation` / `SandboxFilesystemLocation` types | implemented |
-| macOS canonical-path seal | implemented |
-| Linux SCM_RIGHTS in-sandbox validator | implemented |
+| Area                                                                                                    | Status                                                          |
+| ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `HostFilesystemLocation` / `SandboxFilesystemLocation` types                                            | implemented                                                     |
+| macOS canonical-path seal                                                                               | implemented                                                     |
+| Linux SCM_RIGHTS in-sandbox validator                                                                   | implemented                                                     |
 | WSL helper (`--wsl-sandbox-helper`: capture+validate in WSL, same SCM_RIGHTS detection as native Linux) | implemented (Windows-only; not exercised by the Linux/macOS CI) |
-| WSL helper provisioning (download a matching Linux `zed` release into an off-`PATH` location) | implemented (Windows-only) |
+| WSL helper provisioning (download a matching Linux `zed` release into an off-`PATH` location)           | implemented (Windows-only)                                      |
 
 Implementation notes for the Linux validator:
 
@@ -392,9 +412,9 @@ Implementation notes for the Linux validator:
   bind validation and, when needed, the restricted-network HTTP bridge — the two
   duties of one helper. The command runs directly under bwrap when neither is
   needed.
-- The writable bind-destination *paths* are passed to the launcher as trusted
+- The writable bind-destination _paths_ are passed to the launcher as trusted
   argv (the host sets them before any untrusted code runs); the captured
-  `O_PATH` *descriptors* are passed out-of-band over the validation socket via
+  `O_PATH` _descriptors_ are passed out-of-band over the validation socket via
   `SCM_RIGHTS`. The launcher compares `fstat(received fd)` against
   `lstat(mounted path)` for each, both inside the sandbox, and fails closed on
   any mismatch or missing descriptor.
@@ -409,10 +429,9 @@ WSL note: the WSL path only falls back to exec'ing bwrap directly when there is
 no release info to provision a helper from (`wsl_zed_release` is `None`, e.g. a
 caller that doesn't supply it). That legacy path binds writable locations by path
 string and carries the same bind-source TOCTOU as un-hardened Linux. When release
-info *is* present but provisioning fails (no `curl`/`wget`, a download error),
+info _is_ present but provisioning fails (no `curl`/`wget`, a download error),
 that is surfaced to the user as a sandbox-creation failure — like a missing
 `bwrap` — rather than silently downgraded.
-
 
 [bubblewrap]: https://github.com/containers/bubblewrap
 [namespaces]: https://en.wikipedia.org/wiki/Linux_namespaces
