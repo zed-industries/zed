@@ -1,3 +1,4 @@
+mod codespace_picker;
 mod dev_container_suggest;
 pub mod disconnected_overlay;
 mod remote_connections;

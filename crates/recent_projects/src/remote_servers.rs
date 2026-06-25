@@ -67,7 +67,6 @@ pub struct RemoteServerProjects {
     _subscriptions: Vec<Subscription>,
     allow_dismissal: bool,
 }
-
 struct CreateRemoteServer {
     address_editor: Entity<Editor>,
     address_error: Option<SharedString>,
@@ -89,7 +88,6 @@ impl CreateRemoteServer {
         }
     }
 }
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum DevContainerCreationProgress {
     SelectingConfig,
@@ -113,6 +111,41 @@ impl CreateRemoteDevContainer {
             back_entry,
             progress,
         }
+    }
+}
+
+struct AddCodespace {
+    picker: Entity<Picker<crate::codespace_picker::CodespacePickerDelegate>>,
+}
+
+impl AddCodespace {
+    fn new(window: &mut Window, cx: &mut Context<RemoteServerProjects>) -> Self {
+        use crate::codespace_picker::{
+            CodespacePickerDelegate, CodespacePickerDismissed, CodespaceSelected,
+        };
+
+        let delegate = CodespacePickerDelegate::new();
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded());
+
+        cx.subscribe_in(
+            &picker,
+            window,
+            |this, _, _: &CodespaceSelected, window, cx| {
+                this.confirm(&menu::Confirm, window, cx);
+            },
+        )
+        .detach();
+
+        cx.subscribe_in(
+            &picker,
+            window,
+            |this, _, _: &CodespacePickerDismissed, window, cx| {
+                this.cancel(&menu::Cancel, window, cx);
+            },
+        )
+        .detach();
+
+        Self { picker }
     }
 }
 
@@ -457,38 +490,39 @@ impl ProjectPicker {
                     let (paths, paths_with_positions) =
                         determine_paths_with_positions(&remote_connection, paths).await;
 
-                    cx.update(|_, cx| {
-                        let fs = app_state.fs.clone();
-                        update_settings_file(fs, cx, {
-                            let paths = paths
-                                .iter()
-                                .map(|path| path.to_string_lossy().into_owned())
-                                .collect();
-                            move |settings, _| match index {
-                                ServerIndex::Ssh(index) => {
-                                    if let Some(server) = settings
-                                        .remote
-                                        .ssh_connections
-                                        .as_mut()
-                                        .and_then(|connections| connections.get_mut(index.0))
-                                    {
-                                        server.projects.insert(RemoteProject { paths });
-                                    };
+                    if !matches!(index, ServerIndex::Transient) {
+                        cx.update(|_, cx| {
+                            let fs = app_state.fs.clone();
+                            update_settings_file(fs, cx, {
+                                let paths = paths
+                                    .iter()
+                                    .map(|path| path.to_string_lossy().into_owned())
+                                    .collect();
+                                move |settings, _| match index {
+                                    ServerIndex::Ssh(index) => {
+                                        if let Some(server) =
+                                            settings.remote.ssh_connections.as_mut().and_then(
+                                                |connections| connections.get_mut(index.0),
+                                            )
+                                        {
+                                            server.projects.insert(RemoteProject { paths });
+                                        };
+                                    }
+                                    ServerIndex::Wsl(index) => {
+                                        if let Some(server) =
+                                            settings.remote.wsl_connections.as_mut().and_then(
+                                                |connections| connections.get_mut(index.0),
+                                            )
+                                        {
+                                            server.projects.insert(RemoteProject { paths });
+                                        };
+                                    }
+                                    ServerIndex::Transient => {}
                                 }
-                                ServerIndex::Wsl(index) => {
-                                    if let Some(server) = settings
-                                        .remote
-                                        .wsl_connections
-                                        .as_mut()
-                                        .and_then(|connections| connections.get_mut(index.0))
-                                    {
-                                        server.projects.insert(RemoteProject { paths });
-                                    };
-                                }
-                            }
-                        });
-                    })
-                    .log_err();
+                            });
+                        })
+                        .log_err();
+                    }
 
                     let window = if create_new_window {
                         let options = cx
@@ -613,6 +647,7 @@ impl std::fmt::Display for WslServerIndex {
 enum ServerIndex {
     Ssh(SshServerIndex),
     Wsl(WslServerIndex),
+    Transient,
 }
 impl From<SshServerIndex> for ServerIndex {
     fn from(index: SshServerIndex) -> Self {
@@ -624,7 +659,6 @@ impl From<WslServerIndex> for ServerIndex {
         Self::Wsl(index)
     }
 }
-
 #[derive(Clone)]
 struct ProjectEntry {
     project: RemoteProject,
@@ -799,6 +833,7 @@ enum Mode {
     ProjectPicker(Entity<ProjectPicker>),
     CreateRemoteServer(CreateRemoteServer),
     CreateRemoteDevContainer(CreateRemoteDevContainer),
+    AddCodespace(AddCodespace),
     #[cfg(target_os = "windows")]
     AddWslDistro(AddWslDistro),
 }
@@ -815,6 +850,7 @@ impl Mode {
 enum RemoteMatch {
     AddServer,
     AddDevContainer,
+    AddCodespace,
     AddWsl,
     Separator,
     ServerHeader {
@@ -901,6 +937,7 @@ impl RemoteServerPickerDelegate {
         let mut matches = Vec::new();
         if self.query.trim().is_empty() {
             matches.push(RemoteMatch::AddServer);
+            matches.push(RemoteMatch::AddCodespace);
             if has_open_project && is_local {
                 matches.push(RemoteMatch::AddDevContainer);
             }
@@ -1162,6 +1199,14 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                     })
                     .ok();
             }
+            RemoteMatch::AddCodespace => {
+                remote_server_projects
+                    .update(cx, |this, cx| {
+                        this.mode = Mode::AddCodespace(AddCodespace::new(window, cx));
+                        cx.notify();
+                    })
+                    .ok();
+            }
             RemoteMatch::AddWsl => {
                 #[cfg(target_os = "windows")]
                 remote_server_projects
@@ -1270,6 +1315,12 @@ impl PickerDelegate for RemoteServerPickerDelegate {
             RemoteMatch::AddDevContainer => {
                 Some(self.render_action_item(ix, IconName::Plus, "Connect Dev Container", selected))
             }
+            RemoteMatch::AddCodespace => Some(self.render_action_item(
+                ix,
+                IconName::Plus,
+                "Connect GitHub Codespace",
+                selected,
+            )),
             RemoteMatch::AddWsl => {
                 Some(self.render_action_item(ix, IconName::Plus, "Add WSL Distro", selected))
             }
@@ -1913,6 +1964,13 @@ impl RemoteServerProjects {
                 let distro = delegate.selected_distro().unwrap();
                 self.connect_wsl_distro(state.picker.clone(), distro, window, cx);
             }
+            Mode::AddCodespace(state) => {
+                let delegate = &state.picker.read(cx).delegate;
+                let Some(codespace) = delegate.selected_codespace() else {
+                    return;
+                };
+                self.create_remote_project(ServerIndex::Transient, codespace.into(), window, cx);
+            }
         }
     }
 
@@ -2071,6 +2129,7 @@ impl RemoteServerProjects {
             ServerIndex::Wsl(server) => {
                 self.delete_wsl_project(server, project, cx);
             }
+            ServerIndex::Transient => {}
         }
     }
 
@@ -2576,6 +2635,24 @@ impl RemoteServerProjects {
             })
     }
 
+    fn render_add_codespace(
+        &self,
+        state: &AddCodespace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        state.picker.update(cx, |picker, cx| {
+            picker.focus_handle(cx).focus(window, cx);
+        });
+
+        v_flex()
+            .id("add-codespace")
+            .overflow_hidden()
+            .size_full()
+            .flex_1()
+            .child(state.picker.clone())
+    }
+
     fn render_view_options(
         &mut self,
         options: ViewServerOptionsState,
@@ -3070,6 +3147,7 @@ impl Focusable for RemoteServerProjects {
         match &self.mode {
             Mode::Default => self.default_picker.focus_handle(cx),
             Mode::ProjectPicker(picker) => picker.focus_handle(cx),
+            Mode::AddCodespace(state) => state.picker.focus_handle(cx),
             _ => self.focus_handle.clone(),
         }
     }
@@ -3107,6 +3185,9 @@ impl Render for RemoteServerProjects {
                     .into_any_element(),
                 Mode::EditNickname(state) => self
                     .render_edit_nickname(state, window, cx)
+                    .into_any_element(),
+                Mode::AddCodespace(state) => self
+                    .render_add_codespace(state, window, cx)
                     .into_any_element(),
                 #[cfg(target_os = "windows")]
                 Mode::AddWslDistro(state) => self
