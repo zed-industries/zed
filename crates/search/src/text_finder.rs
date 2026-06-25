@@ -1,6 +1,10 @@
 use std::{ops::Range, sync::atomic::Ordering};
 
-use db::kvp::KeyValueStore;
+use db::{
+    query,
+    sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
+    sqlez_macros::sql,
+};
 use editor::Editor;
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
@@ -14,7 +18,8 @@ use settings::SeedQuerySetting;
 use text::Anchor;
 use ui::Window;
 use workspace::{
-    DismissDecision, ModalView, Workspace, WorkspaceId, searchable::SearchableItemHandle,
+    DismissDecision, ModalView, Workspace, WorkspaceDb, WorkspaceId,
+    searchable::SearchableItemHandle,
 };
 
 mod delegate;
@@ -32,31 +37,59 @@ pub struct TextFinder {
     _subscription: Subscription,
 }
 
-const TEXT_FINDER_NAMESPACE: &str = "text_finder";
+/// Persists the query of the just-closed Text Finder in the per-project database, keyed by
+/// workspace so the query is restored only for the project it was run in (mirrors JetBrains'
+/// per-project find history). The row is removed automatically when its workspace is deleted,
+/// via the `ON DELETE CASCADE` foreign key. Workspaces without a database id (not yet persisted)
+/// don't participate.
+pub struct TextFinderDb(ThreadSafeConnection);
 
-/// Persist the query of the just-closed Text Finder, scoped to the workspace so the query is
-/// restored only for the project it was run in (mirrors JetBrains' per-project find history).
-/// Persists across restarts. Falls back to a shared key for workspaces without a database id.
-fn last_query_key(workspace_id: Option<WorkspaceId>) -> String {
-    match workspace_id {
-        Some(workspace_id) => format!("last_query/{workspace_id:?}"),
-        None => "last_query".to_string(),
+impl Domain for TextFinderDb {
+    const NAME: &str = stringify!(TextFinderDb);
+
+    const MIGRATIONS: &[&str] = &[sql!(
+        CREATE TABLE text_finder_queries (
+            workspace_id INTEGER PRIMARY KEY,
+            query TEXT NOT NULL,
+            FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
+            ON DELETE CASCADE
+        ) STRICT;
+    )];
+}
+
+db::static_connection!(TextFinderDb, [WorkspaceDb]);
+
+impl TextFinderDb {
+    query! {
+        pub async fn set_last_query(workspace_id: WorkspaceId, query: String) -> Result<()> {
+            INSERT INTO text_finder_queries (workspace_id, query)
+            VALUES (?1, ?2)
+            ON CONFLICT(workspace_id) DO UPDATE SET query = ?2
+        }
+    }
+
+    query! {
+        pub fn last_query(workspace_id: WorkspaceId) -> Result<Option<String>> {
+            SELECT query
+            FROM text_finder_queries
+            WHERE workspace_id = ?1
+        }
     }
 }
 
 fn store_last_query(workspace_id: Option<WorkspaceId>, query: String, cx: &App) {
-    let kvp = KeyValueStore::global(cx);
-    db::write_and_log(cx, async move || {
-        kvp.scoped(TEXT_FINDER_NAMESPACE)
-            .write(last_query_key(workspace_id), query)
-            .await
+    let Some(workspace_id) = workspace_id else {
+        return;
+    };
+    let db = TextFinderDb::global(cx);
+    db::write_and_log(cx, move || async move {
+        db.set_last_query(workspace_id, query).await
     });
 }
 
 fn load_last_query(workspace_id: Option<WorkspaceId>, cx: &App) -> Option<String> {
-    KeyValueStore::global(cx)
-        .scoped(TEXT_FINDER_NAMESPACE)
-        .read(&last_query_key(workspace_id))
+    TextFinderDb::global(cx)
+        .last_query(workspace_id?)
         .log_err()
         .flatten()
         .filter(|query| !query.is_empty())
