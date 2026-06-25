@@ -1215,34 +1215,9 @@ impl ProjectPanel {
                                     )
                             })
                             .when(is_dir && is_root, |menu| {
-                                let entity = entity.clone();
                                 menu.separator()
-                                    .item(
-                                        ContextMenuEntry::new("Expand All")
-                                            .action(Box::new(ExpandAllEntries))
-                                            .handler({
-                                                let entity = entity.clone();
-                                                move |window, cx| {
-                                                    entity.update(cx, |this, cx| {
-                                                        this.expand_all_for_entry_and_refresh(
-                                                            worktree_id,
-                                                            entry_id,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    });
-                                                }
-                                            }),
-                                    )
-                                    .item(
-                                        ContextMenuEntry::new("Collapse All")
-                                            .action(Box::new(CollapseAllEntries))
-                                            .handler(move |window, cx| {
-                                                entity.update(cx, |this, cx| {
-                                                    this.collapse_all_for_root(window, cx);
-                                                });
-                                            }),
-                                    )
+                                    .action("Expand All", Box::new(ExpandAllEntries))
+                                    .action("Collapse All", Box::new(CollapseAllEntries))
                             })
                     }
                 })
@@ -1425,38 +1400,59 @@ impl ProjectPanel {
         }
     }
 
-    /// Handles "Collapse All" from the context menu when a root directory is selected.
-    /// With a single visible worktree, keeps the root expanded (matching CollapseAllEntries behavior).
-    /// With multiple visible worktrees, collapses the root and all its children.
-    fn collapse_all_for_root(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((worktree, entry)) = self.selected_entry(cx) else {
-            return;
-        };
-
-        let is_root = worktree.root_entry().map(|e| e.id) == Some(entry.id);
-        if !is_root {
-            return;
-        }
-
-        self.collapse_all_for_worktree_root(worktree.id(), entry.id, window, cx);
-    }
-
-    fn collapse_all_for_worktree_root(
+    fn collapse_worktree_expanded_dirs(
         &mut self,
         worktree_id: WorktreeId,
         root_id: ProjectEntryId,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        cx: &App,
     ) {
+        let single_worktree = self.project.read(cx).visible_worktrees(cx).count() == 1;
         if let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id) {
-            if self.project.read(cx).visible_worktrees(cx).count() == 1 {
+            if single_worktree {
                 expanded_dir_ids.retain(|id| id == &root_id);
             } else {
                 expanded_dir_ids.clear();
             }
         }
+    }
 
-        self.update_visible_entries(Some((worktree_id, root_id)), false, false, window, cx);
+    fn all_worktree_roots(&self, cx: &App) -> Vec<(WorktreeId, ProjectEntryId)> {
+        self.project
+            .read(cx)
+            .visible_worktrees(cx)
+            .filter_map(|worktree| {
+                let worktree = worktree.read(cx);
+                Some((worktree.id(), worktree.root_entry()?.id))
+            })
+            .collect()
+    }
+
+    fn expand_worktree_roots(
+        &mut self,
+        roots: Vec<(WorktreeId, ProjectEntryId)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for (worktree_id, root_id) in roots {
+            self.expand_all_for_entry(worktree_id, root_id, cx);
+            self.synchronously_expand_all_directories_internal(worktree_id, root_id, cx);
+        }
+
+        self.update_visible_entries(None, false, false, window, cx);
+        cx.notify();
+    }
+
+    fn collapse_worktree_roots(
+        &mut self,
+        roots: Vec<(WorktreeId, ProjectEntryId)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for (worktree_id, root_id) in roots {
+            self.collapse_worktree_expanded_dirs(worktree_id, root_id, cx);
+        }
+
+        self.update_visible_entries(None, false, false, window, cx);
         cx.notify();
     }
 
@@ -1466,37 +1462,8 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
-        // (which is it's default behavior when there's no entry for a worktree in expanded_dir_ids).
-        let multiple_worktrees = self.project.read(cx).visible_worktrees(cx).count() > 1;
-        let project = self.project.read(cx);
-
-        self.state
-            .expanded_dir_ids
-            .iter_mut()
-            .for_each(|(worktree_id, expanded_entries)| {
-                if multiple_worktrees {
-                    *expanded_entries = Default::default();
-                    return;
-                }
-
-                let root_entry_id = project
-                    .worktree_for_id(*worktree_id, cx)
-                    .map(|worktree| worktree.read(cx).snapshot())
-                    .and_then(|worktree_snapshot| {
-                        worktree_snapshot.root_entry().map(|entry| entry.id)
-                    });
-
-                match root_entry_id {
-                    Some(id) => {
-                        expanded_entries.retain(|entry_id| entry_id == &id);
-                    }
-                    None => *expanded_entries = Default::default(),
-                };
-            });
-
-        self.update_visible_entries(None, false, false, window, cx);
-        cx.notify();
+        let roots = self.all_worktree_roots(cx);
+        self.collapse_worktree_roots(roots, window, cx);
     }
 
     fn expand_all_entries(
@@ -1505,23 +1472,8 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let worktree_roots = self
-            .project
-            .read(cx)
-            .visible_worktrees(cx)
-            .filter_map(|worktree| {
-                let worktree = worktree.read(cx);
-                Some((worktree.id(), worktree.root_entry()?.id))
-            })
-            .collect::<Vec<_>>();
-
-        for (worktree_id, root_id) in worktree_roots {
-            self.expand_all_for_entry(worktree_id, root_id, cx);
-            self.synchronously_expand_all_directories_internal(worktree_id, root_id, cx);
-        }
-
-        self.update_visible_entries(None, false, false, window, cx);
-        cx.notify();
+        let roots = self.all_worktree_roots(cx);
+        self.expand_worktree_roots(roots, window, cx);
     }
 
     fn expand_all_for_entry_and_refresh(
