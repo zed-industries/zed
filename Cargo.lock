@@ -14126,6 +14126,7 @@ dependencies = [
  "lsp",
  "ordered-float 2.10.1",
  "picker",
+ "picker_preview",
  "project",
  "release_channel",
  "semver",
