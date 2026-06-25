@@ -1063,9 +1063,11 @@ mod remote_button {
         })
         .when_some(left_icon, |this, left_icon| {
             this.child(
-                h_flex()
-                    .ml_neg_0p5()
-                    .child(Icon::new(left_icon).size(IconSize::XSmall)),
+                h_flex().ml_neg_0p5().child(
+                    Icon::new(left_icon)
+                        .size(IconSize::XSmall)
+                        .when(disabled, |this| this.color(Color::Disabled)),
+                ),
             )
         })
         .child(
