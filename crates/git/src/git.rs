@@ -59,6 +59,10 @@ actions!(
         Blame,
         /// Shows the git history for the selected file, folder, or project.
         FileHistory,
+        /// Compares the current file with a branch.
+        CompareWithBranch,
+        /// Compares the current file with a commit.
+        CompareWithCommit,
         /// Opens the selected file in the editor without a diff view.
         ViewFile,
         /// Stages the current file.
