@@ -2,7 +2,7 @@ use crate::{
     FormatPromptArgs, PredictArgs, PredictionProvider, TeacherBackend,
     anthropic_client::AnthropicClient,
     example::{Example, ExamplePrediction, ExamplePrompt},
-    format_prompt::{TeacherMultiRegionPrompt, TeacherPrompt, run_format_prompt},
+    format_prompt::{TeacherJumpsPrompt, TeacherPrompt, run_format_prompt},
     headless::EpAppState,
     load_project::run_load_project,
     openai_client::OpenAiClient,
@@ -57,16 +57,10 @@ pub async fn run_prediction(
         );
     };
 
-    if matches!(
-        provider,
-        PredictionProvider::TeacherMultiRegion(..)
-            | PredictionProvider::TeacherMultiRegionNonBatching(..)
-    ) {
-        anyhow::bail!("Teacher multi-region providers are not supported for prediction.");
-    }
-
     if let PredictionProvider::Teacher(backend, _)
-    | PredictionProvider::TeacherNonBatching(backend, _) = provider
+    | PredictionProvider::TeacherNonBatching(backend, _)
+    | PredictionProvider::TeacherJumps(backend)
+    | PredictionProvider::TeacherJumpsNonBatching(backend) = provider
     {
         run_context_retrieval(
             example,
@@ -79,7 +73,10 @@ pub async fn run_prediction(
         .await?;
         run_format_prompt(
             example,
-            &FormatPromptArgs { provider },
+            &FormatPromptArgs {
+                provider,
+                related_files_budget: TeacherJumpsPrompt::DEFAULT_RELATED_FILES_BUDGET,
+            },
             app_state.clone(),
             example_progress,
             cx,
@@ -89,7 +86,7 @@ pub async fn run_prediction(
         let step_progress = example_progress.start(Step::Predict);
         let batched = matches!(
             provider,
-            PredictionProvider::Teacher(..) | PredictionProvider::TeacherMultiRegion(..)
+            PredictionProvider::Teacher(..) | PredictionProvider::TeacherJumps(..)
         );
         return predict_teacher(
             example,
@@ -107,6 +104,7 @@ pub async fn run_prediction(
             example,
             &FormatPromptArgs {
                 provider: PredictionProvider::Zeta2(format),
+                related_files_budget: TeacherJumpsPrompt::DEFAULT_RELATED_FILES_BUDGET,
             },
             app_state.clone(),
             example_progress,
@@ -161,9 +159,9 @@ pub async fn run_prediction(
             PredictionProvider::Zeta2(_) => edit_prediction::EditPredictionModel::Zeta,
             PredictionProvider::Mercury => edit_prediction::EditPredictionModel::Mercury,
             PredictionProvider::Teacher(..)
-            | PredictionProvider::TeacherMultiRegion(..)
+            | PredictionProvider::TeacherJumps(..)
             | PredictionProvider::TeacherNonBatching(..)
-            | PredictionProvider::TeacherMultiRegionNonBatching(..)
+            | PredictionProvider::TeacherJumpsNonBatching(..)
             | PredictionProvider::Repair
             | PredictionProvider::Baseten(_) => {
                 unreachable!()
@@ -301,8 +299,8 @@ pub async fn run_prediction(
             })
             .await?;
 
-        let actual_patch = prediction.and_then(|prediction| {
-            let prediction = prediction.prediction;
+        let actual_patch = prediction.and_then(|result| {
+            let prediction = result.prediction;
             prediction
                 .edit_preview
                 .as_unified_diff(prediction.snapshot.file(), &prediction.edits)
@@ -360,7 +358,7 @@ async fn predict_teacher(
             )
             .await
         }
-        TeacherBackend::Gpt52 => {
+        TeacherBackend::Gpt52 | TeacherBackend::Gpt54 | TeacherBackend::Gpt55 => {
             predict_openai(
                 example,
                 backend,
@@ -441,39 +439,48 @@ async fn predict_anthropic(
                 .unwrap_or(PredictionProvider::Teacher(backend, ZetaFormat::default()))
         } else {
             match example.prompt.as_ref().map(|prompt| prompt.provider) {
-                Some(PredictionProvider::TeacherMultiRegion(_))
-                | Some(PredictionProvider::TeacherMultiRegionNonBatching(_)) => {
-                    PredictionProvider::TeacherMultiRegionNonBatching(backend)
+                Some(PredictionProvider::TeacherJumps(_))
+                | Some(PredictionProvider::TeacherJumpsNonBatching(_)) => {
+                    PredictionProvider::TeacherJumpsNonBatching(backend)
                 }
                 _ => PredictionProvider::TeacherNonBatching(backend, ZetaFormat::default()),
             }
         };
 
-        let (actual_patch, actual_cursor) = match parser_provider {
-            PredictionProvider::TeacherMultiRegion(_)
-            | PredictionProvider::TeacherMultiRegionNonBatching(_) => {
-                TeacherMultiRegionPrompt::parse(example, &actual_output)?
+        let parse_result = match parser_provider {
+            PredictionProvider::TeacherJumps(_)
+            | PredictionProvider::TeacherJumpsNonBatching(_) => {
+                TeacherJumpsPrompt::parse(example, &actual_output)
             }
-            _ => TeacherPrompt::parse(example, &actual_output)?,
+            _ => TeacherPrompt::parse(example, &actual_output),
+        };
+        // A teacher response can parse as text yet describe an invalid edit
+        // (e.g. an edit span crossing non-contiguous snippets, or a truncated
+        // span). Record the rejection on the prediction instead of propagating
+        // it: the raw output is preserved for `parse-output`/inspection, and a
+        // single bad example no longer aborts an entire (already paid for) batch.
+        let (actual_patch, actual_cursor, error) = match parse_result {
+            Ok((patch, cursor)) => (Some(patch), cursor, None),
+            Err(err) => (None, None, Some(format!("{err:#}"))),
         };
 
         let prediction = ExamplePrediction {
-            actual_patch: Some(actual_patch),
+            actual_patch,
             actual_output,
             actual_cursor,
-            error: None,
+            error,
             provider: if batched {
                 match example.prompt.as_ref().map(|prompt| prompt.provider) {
-                    Some(PredictionProvider::TeacherMultiRegion(_)) => {
-                        PredictionProvider::TeacherMultiRegion(backend)
+                    Some(PredictionProvider::TeacherJumps(_)) => {
+                        PredictionProvider::TeacherJumps(backend)
                     }
                     _ => PredictionProvider::Teacher(backend, ZetaFormat::default()),
                 }
             } else {
                 match example.prompt.as_ref().map(|prompt| prompt.provider) {
-                    Some(PredictionProvider::TeacherMultiRegion(_))
-                    | Some(PredictionProvider::TeacherMultiRegionNonBatching(_)) => {
-                        PredictionProvider::TeacherMultiRegionNonBatching(backend)
+                    Some(PredictionProvider::TeacherJumps(_))
+                    | Some(PredictionProvider::TeacherJumpsNonBatching(_)) => {
+                        PredictionProvider::TeacherJumpsNonBatching(backend)
                     }
                     _ => PredictionProvider::TeacherNonBatching(backend, ZetaFormat::default()),
                 }
@@ -560,39 +567,45 @@ async fn predict_openai(
                 .unwrap_or(PredictionProvider::Teacher(backend, ZetaFormat::default()))
         } else {
             match example.prompt.as_ref().map(|prompt| prompt.provider) {
-                Some(PredictionProvider::TeacherMultiRegion(_))
-                | Some(PredictionProvider::TeacherMultiRegionNonBatching(_)) => {
-                    PredictionProvider::TeacherMultiRegionNonBatching(backend)
+                Some(PredictionProvider::TeacherJumps(_))
+                | Some(PredictionProvider::TeacherJumpsNonBatching(_)) => {
+                    PredictionProvider::TeacherJumpsNonBatching(backend)
                 }
                 _ => PredictionProvider::TeacherNonBatching(backend, ZetaFormat::default()),
             }
         };
 
-        let (actual_patch, actual_cursor) = match parser_provider {
-            PredictionProvider::TeacherMultiRegion(_)
-            | PredictionProvider::TeacherMultiRegionNonBatching(_) => {
-                TeacherMultiRegionPrompt::parse(example, &actual_output)?
+        let parse_result = match parser_provider {
+            PredictionProvider::TeacherJumps(_)
+            | PredictionProvider::TeacherJumpsNonBatching(_) => {
+                TeacherJumpsPrompt::parse(example, &actual_output)
             }
-            _ => TeacherPrompt::parse(example, &actual_output)?,
+            _ => TeacherPrompt::parse(example, &actual_output),
+        };
+        // See `predict_anthropic`: an unparseable/invalid teacher edit is
+        // recorded as a per-prediction error rather than aborting the batch.
+        let (actual_patch, actual_cursor, error) = match parse_result {
+            Ok((patch, cursor)) => (Some(patch), cursor, None),
+            Err(err) => (None, None, Some(format!("{err:#}"))),
         };
 
         let prediction = ExamplePrediction {
-            actual_patch: Some(actual_patch),
+            actual_patch,
             actual_output,
             actual_cursor,
-            error: None,
+            error,
             provider: if batched {
                 match example.prompt.as_ref().map(|prompt| prompt.provider) {
-                    Some(PredictionProvider::TeacherMultiRegion(_)) => {
-                        PredictionProvider::TeacherMultiRegion(backend)
+                    Some(PredictionProvider::TeacherJumps(_)) => {
+                        PredictionProvider::TeacherJumps(backend)
                     }
                     _ => PredictionProvider::Teacher(backend, ZetaFormat::default()),
                 }
             } else {
                 match example.prompt.as_ref().map(|prompt| prompt.provider) {
-                    Some(PredictionProvider::TeacherMultiRegion(_))
-                    | Some(PredictionProvider::TeacherMultiRegionNonBatching(_)) => {
-                        PredictionProvider::TeacherMultiRegionNonBatching(backend)
+                    Some(PredictionProvider::TeacherJumps(_))
+                    | Some(PredictionProvider::TeacherJumpsNonBatching(_)) => {
+                        PredictionProvider::TeacherJumpsNonBatching(backend)
                     }
                     _ => PredictionProvider::TeacherNonBatching(backend, ZetaFormat::default()),
                 }
@@ -694,7 +707,7 @@ pub async fn predict_baseten(
 pub async fn sync_batches(provider: Option<&PredictionProvider>) -> anyhow::Result<()> {
     match provider {
         Some(PredictionProvider::Teacher(backend, _))
-        | Some(PredictionProvider::TeacherMultiRegion(backend)) => match backend {
+        | Some(PredictionProvider::TeacherJumps(backend)) => match backend {
             TeacherBackend::Sonnet45 | TeacherBackend::Sonnet46 => {
                 let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
                     AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
@@ -705,7 +718,7 @@ pub async fn sync_batches(provider: Option<&PredictionProvider>) -> anyhow::Resu
                     .await
                     .context("Failed to sync Anthropic batches")?;
             }
-            TeacherBackend::Gpt52 => {
+            TeacherBackend::Gpt52 | TeacherBackend::Gpt54 | TeacherBackend::Gpt55 => {
                 let llm_client = OPENAI_CLIENT.get_or_init(|| {
                     OpenAiClient::batch(&crate::paths::LLM_CACHE_DB)
                         .expect("Failed to create OpenAI client")
@@ -725,7 +738,9 @@ pub async fn reprocess_after_batch_wait(
     examples: &mut [Example],
     args: &PredictArgs,
 ) -> anyhow::Result<()> {
-    let Some(PredictionProvider::Teacher(backend, _)) = args.provider else {
+    let (Some(PredictionProvider::Teacher(backend, _))
+    | Some(PredictionProvider::TeacherJumps(backend))) = args.provider
+    else {
         return Ok(());
     };
 
@@ -784,7 +799,8 @@ pub async fn wait_for_batches(provider: Option<&PredictionProvider>) -> anyhow::
 
 fn pending_batch_count(provider: Option<&PredictionProvider>) -> anyhow::Result<usize> {
     match provider {
-        Some(PredictionProvider::Teacher(backend, _)) => match backend {
+        Some(PredictionProvider::Teacher(backend, _))
+        | Some(PredictionProvider::TeacherJumps(backend)) => match backend {
             TeacherBackend::Sonnet45 | TeacherBackend::Sonnet46 => {
                 let llm_client = ANTHROPIC_CLIENT.get_or_init(|| {
                     AnthropicClient::batch(&crate::paths::LLM_CACHE_DB)
@@ -792,7 +808,7 @@ fn pending_batch_count(provider: Option<&PredictionProvider>) -> anyhow::Result<
                 });
                 llm_client.pending_batch_count()
             }
-            TeacherBackend::Gpt52 => {
+            TeacherBackend::Gpt52 | TeacherBackend::Gpt54 | TeacherBackend::Gpt55 => {
                 let llm_client = OPENAI_CLIENT.get_or_init(|| {
                     OpenAiClient::batch(&crate::paths::LLM_CACHE_DB)
                         .expect("Failed to create OpenAI client")

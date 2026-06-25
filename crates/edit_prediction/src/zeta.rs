@@ -3,8 +3,8 @@ use crate::{
     EditPredictionId, EditPredictionModelInput, EditPredictionStartedDebugEvent,
     EditPredictionStore, PromptHistoryBoundary, ZedUpdateRequiredError,
     buffer_path_with_id_fallback,
-    capture_prediction_context::CapturedPredictionContext,
     cursor_excerpt::{self, compute_cursor_excerpt, compute_syntax_ranges},
+    data_collection::CapturedPredictionContext,
     prediction::EditPredictionResult,
 };
 use anyhow::Result;
@@ -404,36 +404,34 @@ pub(crate) fn request_prediction_with_zeta(
         )
         .await;
 
-        if can_collect_data {
-            let prediction = &result.prediction;
-            let weak_this = this.clone();
-            let request_id = prediction.id.clone();
-            let edited_buffer = edited_buffer.clone();
-            let edited_buffer_snapshot = edited_buffer_snapshot.clone();
-            let editable_range_in_buffer = editable_range_in_buffer.clone();
-            let edit_preview = prediction.edit_preview.clone();
-            let model_version = prediction.model_version.clone();
-            cx.spawn(async move |cx| {
-                weak_this
-                    .update(cx, |this, cx| {
-                        this.enqueue_settled_prediction(
-                            request_id.clone(),
-                            &project,
-                            &edited_buffer,
-                            &edited_buffer_snapshot,
-                            editable_range_in_buffer,
-                            &edit_preview,
-                            context_task,
-                            prompt_history_boundary,
-                            model_version,
-                            request_duration,
-                            cx,
-                        );
-                    })
-                    .ok();
-            })
-            .detach();
-        }
+        let prediction = &result.prediction;
+        let weak_this = this.clone();
+        let request_id = prediction.id.clone();
+        let edited_buffer = edited_buffer.clone();
+        let edited_buffer_snapshot = edited_buffer_snapshot.clone();
+        let editable_range_in_buffer = editable_range_in_buffer.clone();
+        let edit_preview = prediction.edit_preview.clone();
+        let model_version = prediction.model_version.clone();
+        cx.spawn(async move |cx| {
+            weak_this
+                .update(cx, |this, cx| {
+                    this.enqueue_settled_prediction(
+                        request_id.clone(),
+                        &project,
+                        &edited_buffer,
+                        &edited_buffer_snapshot,
+                        editable_range_in_buffer,
+                        &edit_preview,
+                        context_task,
+                        prompt_history_boundary,
+                        model_version,
+                        request_duration,
+                        cx,
+                    );
+                })
+                .ok();
+        })
+        .detach();
 
         Ok(Some(result))
     })

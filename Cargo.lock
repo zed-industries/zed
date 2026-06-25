@@ -116,6 +116,7 @@ dependencies = [
  "language_model",
  "log",
  "markdown",
+ "mime",
  "multi_buffer",
  "parking_lot",
  "portable-pty",
@@ -127,6 +128,7 @@ dependencies = [
  "settings",
  "task",
  "telemetry",
+ "tempfile",
  "terminal",
  "text",
  "ui",
@@ -523,6 +525,7 @@ dependencies = [
  "remote_server",
  "reqwest_client",
  "rope",
+ "sandbox",
  "schemars 1.0.4",
  "search",
  "semver",
@@ -15946,8 +15949,12 @@ name = "sandbox"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures 0.3.32",
+ "http_proxy",
  "libc",
  "log",
+ "serde",
+ "serde_json",
  "smol",
  "tempfile",
 ]
@@ -22934,7 +22941,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

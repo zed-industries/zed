@@ -920,8 +920,13 @@ fn collect_markdowns(
                             ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown }) => {
                                 Some(markdown.clone())
                             }
+                            ToolCallContent::ContentBlock(ContentBlock::EmbeddedResource {
+                                markdown: Some(markdown),
+                                ..
+                            }) => Some(markdown.clone()),
                             ToolCallContent::ContentBlock(
                                 ContentBlock::Empty
+                                | ContentBlock::EmbeddedResource { markdown: None, .. }
                                 | ContentBlock::ResourceLink { .. }
                                 | ContentBlock::Image { .. },
                             )
