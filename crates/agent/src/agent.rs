@@ -2711,10 +2711,6 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
 }
 
 impl acp_thread::AgentSessionLocalUserMessages for NativeAgentConnection {
-    fn new_local_id(&self) -> acp_thread::LocalUserMessageId {
-        acp_thread::LocalUserMessageId::new()
-    }
-
     fn prompt(
         &self,
         local_id: acp_thread::LocalUserMessageId,

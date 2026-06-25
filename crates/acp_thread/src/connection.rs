@@ -191,13 +191,8 @@ pub trait AgentConnection {
         None
     }
 
-    fn prompt(
-        &self,
-        _params: acp::PromptRequest,
-        _cx: &mut App,
-    ) -> Task<Result<acp::PromptResponse>> {
-        Task::ready(Err(anyhow::Error::msg("Prompting is not supported")))
-    }
+    fn prompt(&self, params: acp::PromptRequest, cx: &mut App)
+    -> Task<Result<acp::PromptResponse>>;
 
     fn retry(&self, _session_id: &acp::SessionId, _cx: &App) -> Option<Rc<dyn AgentSessionRetry>> {
         None
@@ -267,8 +262,6 @@ pub trait AgentSessionTruncate {
 }
 
 pub trait AgentSessionLocalUserMessages {
-    fn new_local_id(&self) -> LocalUserMessageId;
-
     fn prompt(
         &self,
         local_id: LocalUserMessageId,
@@ -1076,10 +1069,6 @@ mod test_support {
     }
 
     impl AgentSessionLocalUserMessages for StubAgentSessionLocalUserMessages {
-        fn new_local_id(&self) -> LocalUserMessageId {
-            LocalUserMessageId::new()
-        }
-
         fn prompt(
             &self,
             _local_id: LocalUserMessageId,

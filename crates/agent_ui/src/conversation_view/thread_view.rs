@@ -5970,7 +5970,7 @@ impl ThreadView {
                     .gap_1p5()
                     .w_full()
                     .when(is_editable && has_checkpoint_button, |this| {
-                        this.children(message.rewind_id.clone().map(|message_id| {
+                        this.children(message.rewind_id.clone().map(|rewind_id| {
                             h_flex()
                                 .px_3()
                                 .gap_2()
@@ -5982,7 +5982,7 @@ impl ThreadView {
                                         .color(Color::Muted)
                                         .tooltip(Tooltip::text("Restores all files in the project to the content they had at this point in the conversation."))
                                         .on_click(cx.listener(move |this, _, _window, cx| {
-                                            this.restore_checkpoint(&message_id, cx);
+                                            this.restore_checkpoint(&rewind_id, cx);
                                         }))
                                 )
                                 .child(Divider::horizontal())
