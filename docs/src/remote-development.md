@@ -117,6 +117,18 @@ To open a local folder inside a WSL container, use the `projects: open in wsl` a
 
 To open a folder that's already located inside of a WSL container, use the `projects: open wsl` action and select the WSL distribution. The distribution will be added to the `Remote Projects` window where you will be able to open the folder.
 
+## GitHub Codespaces Support
+
+Zed can connect to existing GitHub Codespaces from the Remote Projects dialog. Choose "Connect GitHub Codespace", select a Codespace from the list, and Zed will use the authenticated `gh` CLI to generate an SSH configuration for that Codespace.
+
+Prerequisites:
+
+- Install the [GitHub CLI](https://cli.github.com/) and sign in with `gh auth login`.
+- Create or start from an existing Codespace. Zed does not create, delete, rebuild, or stop Codespaces.
+- Ensure the Codespace dev container includes an SSH server, which is required by `gh codespace ssh`.
+
+When connecting, Zed runs `gh codespace list` to find Codespaces and `gh codespace ssh --config` to generate a temporary OpenSSH config. After that, Codespaces use the same SSH remote development path as other SSH servers, including terminals, tasks, proxying, port forwarding, and reconnect behavior. If the selected Codespace is stopped, `gh` may auto-start it during connection.
+
 ## Port forwarding
 
 If you'd like to be able to connect to ports on your remote server from your local machine, you can configure port forwarding in your settings file. This is particularly useful for developing websites so you can load the site in your browser while working.
