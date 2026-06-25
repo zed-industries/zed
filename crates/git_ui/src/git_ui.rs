@@ -1040,17 +1040,13 @@ mod remote_button {
 
         let should_render_counts = left_icon.is_none() && (ahead_count > 0 || behind_count > 0);
         let disabled = disabled_tooltip.is_some();
-        let label_color = if disabled {
-            Color::Disabled
-        } else {
-            Color::Default
-        };
 
         let left = ui::ButtonLike::new_rounded_left(ElementId::Name(
             format!("split-button-left-{}", id).into(),
         ))
         .layer(ui::ElevationIndex::ModalSurface)
         .size(ui::ButtonSize::Compact)
+        .disabled(disabled)
         .when(should_render_counts, |this| {
             this.child(
                 h_flex()
@@ -1073,16 +1069,12 @@ mod remote_button {
             )
         })
         .child(
-            div()
-                .child(
-                    Label::new(left_label)
-                        .size(LabelSize::Small)
-                        .color(label_color),
-                )
+            Label::new(left_label)
+                .size(LabelSize::Small)
+                .when(disabled, |this| this.color(Color::Disabled))
                 .mr_0p5(),
         )
         .on_click(left_on_click)
-        .disabled(disabled)
         .tooltip(move |window, cx| {
             if let Some(pending_tooltip) = disabled_tooltip {
                 Tooltip::simple(pending_tooltip, cx)
