@@ -1217,26 +1217,32 @@ impl ProjectPanel {
                             .when(is_dir && is_root, |menu| {
                                 let entity = entity.clone();
                                 menu.separator()
-                                    .item(ContextMenuEntry::new("Expand All").handler({
-                                        let entity = entity.clone();
-                                        move |window, cx| {
-                                            entity.update(cx, |this, cx| {
-                                                this.expand_all_for_entry_and_refresh(
-                                                    worktree_id,
-                                                    entry_id,
-                                                    window,
-                                                    cx,
-                                                );
-                                            });
-                                        }
-                                    }))
-                                    .item(ContextMenuEntry::new("Collapse All").handler(
-                                        move |window, cx| {
-                                            entity.update(cx, |this, cx| {
-                                                this.collapse_all_for_root(window, cx);
-                                            });
-                                        },
-                                    ))
+                                    .item(
+                                        ContextMenuEntry::new("Expand All")
+                                            .action(Box::new(ExpandAllEntries))
+                                            .handler({
+                                                let entity = entity.clone();
+                                                move |window, cx| {
+                                                    entity.update(cx, |this, cx| {
+                                                        this.expand_all_for_entry_and_refresh(
+                                                            worktree_id,
+                                                            entry_id,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                    .item(
+                                        ContextMenuEntry::new("Collapse All")
+                                            .action(Box::new(CollapseAllEntries))
+                                            .handler(move |window, cx| {
+                                                entity.update(cx, |this, cx| {
+                                                    this.collapse_all_for_root(window, cx);
+                                                });
+                                            }),
+                                    )
                             })
                     }
                 })
