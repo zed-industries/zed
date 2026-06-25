@@ -697,43 +697,40 @@ impl MentionSet {
     }
 }
 
-/// Computes disambiguated labels for a set of mentions. When multiple mentions
-/// share the same base name, their labels include extra context (additional
-/// parent path components for files/directories, source for skills) so the user
-/// can tell them apart. Driven by [`util::disambiguate::compute_disambiguation_details`],
-/// which is the same utility used for buffer tab titles and the sidebar.
-///
-/// Duplicate mentions (same URI added more than once) are deduplicated before
-/// disambiguation so they stay at the base name instead of being driven to the
-/// full absolute path by the collision-resolution loop.
+/// Computes disambiguated labels for a set of mentions, so that mentions sharing
+/// a base name get extra context (parent path components, skill source) to tell
+/// them apart. Same approach as buffer tab titles and the sidebar.
 fn compute_disambiguated_labels<'a>(
     mentions: impl Iterator<Item = (CreaseId, &'a MentionUri)>,
 ) -> HashMap<CreaseId, SharedString> {
-    let mentions: Vec<_> = mentions.collect();
+    let (ids, uris): (Vec<CreaseId>, Vec<&MentionUri>) = mentions.unzip();
+    ids.into_iter()
+        .zip(disambiguated_labels_for_uris(&uris))
+        .collect()
+}
 
-    // Deduplicate URIs before disambiguating. Without this, two mentions of the
-    // same file collide at every detail level and the algorithm escalates all
-    // the way to the full absolute path before reaching a fixed point.
+/// Labels for each URI, in input order. Duplicate URIs are collapsed first, so a
+/// mention added twice keeps its base name instead of being escalated to its
+/// full path by the collision-resolution loop.
+fn disambiguated_labels_for_uris(uris: &[&MentionUri]) -> Vec<SharedString> {
     let mut seen: HashSet<&MentionUri> = HashSet::default();
-    let unique_uris: Vec<&MentionUri> = mentions
+    let unique_uris: Vec<&MentionUri> = uris
         .iter()
-        .map(|(_, uri)| *uri)
+        .copied()
         .filter(|&uri| seen.insert(uri))
         .collect();
 
-    let details = util::disambiguate::compute_disambiguation_details(
-        &unique_uris,
-        |uri, detail| uri.disambiguated_name(detail),
-    );
+    let details =
+        util::disambiguate::compute_disambiguation_details(&unique_uris, |uri, detail| {
+            uri.disambiguated_name(detail)
+        });
 
-    let uri_to_detail: HashMap<&MentionUri, usize> =
-        unique_uris.into_iter().zip(details).collect();
+    let uri_to_detail: HashMap<&MentionUri, usize> = unique_uris.into_iter().zip(details).collect();
 
-    mentions
-        .into_iter()
-        .map(|(id, uri)| {
+    uris.iter()
+        .map(|uri| {
             let detail = uri_to_detail.get(uri).copied().unwrap_or(0);
-            (id, uri.disambiguated_name(detail).into())
+            uri.disambiguated_name(detail).into()
         })
         .collect()
 }
@@ -844,6 +841,27 @@ mod tests {
         // Non-image extensions and paths with no extension.
         assert!(!is_raster_image_path(Path::new("/tmp/notes.txt")));
         assert!(!is_raster_image_path(Path::new("/tmp/README")));
+    }
+
+    #[test]
+    fn test_disambiguated_labels_dedupe_identical_uris() {
+        // Mentioning the same file twice must not escalate the duplicates to
+        // their full path. Distinct files sharing a base name still disambiguate.
+        let foo_a = MentionUri::File {
+            abs_path: path!("/project/a/foo.rs").into(),
+        };
+
+        let foo_b = MentionUri::File {
+            abs_path: path!("/project/b/foo.rs").into(),
+        };
+
+        let uris = vec![&foo_a, &foo_a, &foo_b];
+        let labels = disambiguated_labels_for_uris(&uris);
+
+        assert_eq!(labels[0].as_ref(), "a/foo.rs");
+        assert_eq!(labels[2].as_ref(), "b/foo.rs");
+        // The duplicate keeps the same label rather than escalating to full path.
+        assert_eq!(labels[1].as_ref(), "a/foo.rs");
     }
 }
 
