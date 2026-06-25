@@ -283,8 +283,8 @@ pub fn subagent_session_info_from_meta(meta: &Option<acp::Meta>) -> Option<Subag
 
 #[derive(Debug)]
 pub struct UserMessage {
-    pub local_id: Option<LocalUserMessageId>,
-    pub is_local: bool,
+    pub rewind_id: Option<LocalUserMessageId>,
+    pub is_optimistic: bool,
     pub protocol_message_id: Option<acp::MessageId>,
     pub content: ContentBlock,
     pub chunks: Vec<acp::ContentBlock>,
@@ -2177,7 +2177,7 @@ impl AcpThread {
                         _ => None,
                     })
                     .is_some_and(|message| {
-                        let already_in_user_message = message.is_local
+                        let already_in_user_message = message.is_optimistic
                             && message.chunks.contains(&content)
                             && protocol_message_ids_compatible(
                                 message.protocol_message_id.as_ref(),
@@ -2265,23 +2265,23 @@ impl AcpThread {
 
     pub fn push_user_content_block(
         &mut self,
-        local_id: Option<LocalUserMessageId>,
+        rewind_id: Option<LocalUserMessageId>,
         chunk: acp::ContentBlock,
         cx: &mut Context<Self>,
     ) {
-        self.push_user_content_block_with_indent(local_id, chunk, false, cx)
+        self.push_user_content_block_with_indent(rewind_id, chunk, false, cx)
     }
 
     pub fn push_user_content_block_with_indent(
         &mut self,
-        local_id: Option<LocalUserMessageId>,
+        rewind_id: Option<LocalUserMessageId>,
         chunk: acp::ContentBlock,
         indented: bool,
         cx: &mut Context<Self>,
     ) {
         self.push_user_content_block_with_protocol_id(
-            local_id.clone(),
-            local_id.is_some(),
+            rewind_id.clone(),
+            rewind_id.is_some(),
             None,
             chunk,
             indented,
@@ -2307,8 +2307,8 @@ impl AcpThread {
 
     fn push_user_content_block_with_protocol_id(
         &mut self,
-        incoming_local_id: Option<LocalUserMessageId>,
-        is_local: bool,
+        incoming_rewind_id: Option<LocalUserMessageId>,
+        is_optimistic: bool,
         protocol_message_id: Option<acp::MessageId>,
         chunk: acp::ContentBlock,
         indented: bool,
@@ -2320,11 +2320,11 @@ impl AcpThread {
 
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntry::UserMessage(UserMessage {
-                local_id: existing_local_id,
+                rewind_id: existing_rewind_id,
                 protocol_message_id: existing_protocol_message_id,
                 content,
                 chunks,
-                is_local: existing_is_local,
+                is_optimistic: existing_is_optimistic,
                 indented: existing_indented,
                 ..
             }) = last_entry
@@ -2335,10 +2335,10 @@ impl AcpThread {
             )
         {
             Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
-            if let Some(incoming_local_id) = incoming_local_id {
-                *existing_local_id = Some(incoming_local_id);
+            if let Some(incoming_rewind_id) = incoming_rewind_id {
+                *existing_rewind_id = Some(incoming_rewind_id);
             }
-            *existing_is_local |= is_local;
+            *existing_is_optimistic |= is_optimistic;
             if existing_protocol_message_id.is_none() {
                 *existing_protocol_message_id = protocol_message_id;
             }
@@ -2350,8 +2350,8 @@ impl AcpThread {
             let content = ContentBlock::new(chunk.clone(), &language_registry, path_style, cx);
             self.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
-                    local_id: incoming_local_id,
-                    is_local,
+                    rewind_id: incoming_rewind_id,
+                    is_optimistic,
                     protocol_message_id,
                     content,
                     chunks: vec![chunk],
@@ -3178,7 +3178,7 @@ impl AcpThread {
         let git_store = self.project.read(cx).git_store().clone();
 
         let local_user_messages = self.connection.local_user_messages(&self.session_id, cx);
-        let local_user_message_id = local_user_messages
+        let rewind_id = local_user_messages
             .as_ref()
             .map(|local_user_messages| local_user_messages.new_local_id());
 
@@ -3187,8 +3187,8 @@ impl AcpThread {
                 this.update(cx, |this, cx| {
                     this.push_entry(
                         AgentThreadEntry::UserMessage(UserMessage {
-                            local_id: local_user_message_id.clone(),
-                            is_local: true,
+                            rewind_id: rewind_id.clone(),
+                            is_optimistic: true,
                             protocol_message_id: None,
                             content: block,
                             chunks: message,
@@ -3217,10 +3217,10 @@ impl AcpThread {
             }
 
             this.update(cx, |this, cx| {
-                if let (Some(local_user_messages), Some(local_user_message_id)) =
-                    (local_user_messages, local_user_message_id)
+                if let (Some(local_user_messages), Some(rewind_id)) =
+                    (local_user_messages, rewind_id)
                 {
-                    local_user_messages.prompt(local_user_message_id, request, cx)
+                    local_user_messages.prompt(rewind_id, request, cx)
                 } else {
                     this.connection.prompt(request, cx)
                 }
@@ -3444,10 +3444,10 @@ impl AcpThread {
     /// Restores the git working tree to the state at the given checkpoint (if one exists)
     pub fn restore_checkpoint(
         &mut self,
-        local_user_message_id: LocalUserMessageId,
+        rewind_id: LocalUserMessageId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let Some((_, message)) = self.user_message_mut(&local_user_message_id) else {
+        let Some((_, message)) = self.user_message_mut(&rewind_id) else {
             return Task::ready(Err(anyhow!("message not found")));
         };
 
@@ -3458,7 +3458,7 @@ impl AcpThread {
 
         // Cancel any in-progress generation before restoring
         let cancel_task = self.cancel(cx);
-        let rewind = self.rewind(local_user_message_id.clone(), cx);
+        let rewind = self.rewind(rewind_id.clone(), cx);
         let git_store = self.project.read(cx).git_store().clone();
 
         cx.spawn(async move |_, cx| {
@@ -3479,7 +3479,7 @@ impl AcpThread {
     /// Unlike `restore_checkpoint`, this method does not restore from git.
     pub fn rewind(
         &mut self,
-        local_user_message_id: LocalUserMessageId,
+        rewind_id: LocalUserMessageId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         let Some(truncate) = self.connection.truncate(&self.session_id, cx) else {
@@ -3489,10 +3489,9 @@ impl AcpThread {
         Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
         let telemetry = ActionLogTelemetry::from(&*self);
         cx.spawn(async move |this, cx| {
-            cx.update(|cx| truncate.run(local_user_message_id.clone(), cx))
-                .await?;
+            cx.update(|cx| truncate.run(rewind_id.clone(), cx)).await?;
             this.update(cx, |this, cx| {
-                if let Some((ix, _)) = this.user_message_mut(&local_user_message_id) {
+                if let Some((ix, _)) = this.user_message_mut(&rewind_id) {
                     // Collect all terminals from entries that will be removed
                     let terminals_to_remove: Vec<acp::TerminalId> = this.entries[ix..]
                         .iter()
@@ -3529,13 +3528,11 @@ impl AcpThread {
 
         let git_store = self.project.read(cx).git_store().clone();
 
-        let Some((user_message_id, checkpoint)) =
-            self.last_user_message().and_then(|(_, message)| {
-                let id = message.local_id.clone()?;
-                let checkpoint = message.checkpoint.as_ref()?;
-                Some((id, checkpoint))
-            })
-        else {
+        let Some((rewind_id, checkpoint)) = self.last_user_message().and_then(|(_, message)| {
+            let id = message.rewind_id.clone()?;
+            let checkpoint = message.checkpoint.as_ref()?;
+            Some((id, checkpoint))
+        }) else {
             return Task::ready(Ok(()));
         };
         if checkpoint.show {
@@ -3580,7 +3577,7 @@ impl AcpThread {
                 let Some((ix, message)) = this.last_user_message() else {
                     return;
                 };
-                if message.local_id.as_ref() != Some(&user_message_id) {
+                if message.rewind_id.as_ref() != Some(&rewind_id) {
                     return;
                 }
                 if let Some(checkpoint) = message.checkpoint.as_mut()
@@ -3601,7 +3598,7 @@ impl AcpThread {
         let Some((_, message)) = self.last_user_message() else {
             return Task::ready(Ok(()));
         };
-        let Some(user_message_id) = message.local_id.clone() else {
+        let Some(rewind_id) = message.rewind_id.clone() else {
             return Task::ready(Ok(()));
         };
         let Some(checkpoint) = message.checkpoint.as_ref() else {
@@ -3627,7 +3624,7 @@ impl AcpThread {
                 .unwrap_or(true);
 
             this.update(cx, |this, cx| {
-                if let Some((ix, message)) = this.user_message_mut(&user_message_id) {
+                if let Some((ix, message)) = this.user_message_mut(&rewind_id) {
                     if let Some(checkpoint) = message.checkpoint.as_mut() {
                         checkpoint.show = !equal;
                         cx.emit(AcpThreadEvent::EntryUpdated(ix));
@@ -3655,11 +3652,11 @@ impl AcpThread {
 
     fn user_message_mut(
         &mut self,
-        local_user_message_id: &LocalUserMessageId,
+        rewind_id: &LocalUserMessageId,
     ) -> Option<(usize, &mut UserMessage)> {
         self.entries.iter_mut().enumerate().find_map(|(ix, entry)| {
             if let AgentThreadEntry::UserMessage(message) = entry {
-                if message.local_id.as_ref() == Some(local_user_message_id) {
+                if message.rewind_id.as_ref() == Some(rewind_id) {
                     Some((ix, message))
                 } else {
                     None
@@ -4799,7 +4796,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 1);
             if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[0] {
-                assert_eq!(user_msg.local_id, None);
+                assert_eq!(user_msg.rewind_id, None);
                 assert_eq!(user_msg.content.to_markdown(cx), "Hello, ");
             } else {
                 panic!("Expected UserMessage");
@@ -4815,7 +4812,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 1);
             if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[0] {
-                assert_eq!(user_msg.local_id, Some(message_1_id));
+                assert_eq!(user_msg.rewind_id, Some(message_1_id));
                 assert_eq!(user_msg.content.to_markdown(cx), "Hello, world!");
             } else {
                 panic!("Expected UserMessage");
@@ -4839,7 +4836,7 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 3);
             if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[2] {
-                assert_eq!(user_msg.local_id, Some(message_2_id));
+                assert_eq!(user_msg.rewind_id, Some(message_2_id));
                 assert_eq!(user_msg.content.to_markdown(cx), "New user message");
             } else {
                 panic!("Expected UserMessage at index 2");
@@ -5250,8 +5247,8 @@ mod tests {
             let Some(AgentThreadEntry::UserMessage(message)) = thread.entries.first() else {
                 panic!("expected optimistic user message");
             };
-            assert_eq!(message.local_id, None);
-            assert!(message.is_local);
+            assert_eq!(message.rewind_id, None);
+            assert!(message.is_optimistic);
         });
     }
 
@@ -6299,7 +6296,7 @@ mod tests {
                 let AgentThreadEntry::UserMessage(message) = &thread.entries[2] else {
                     panic!("unexpected entries {:?}", thread.entries)
                 };
-                thread.restore_checkpoint(message.local_id.clone().unwrap(), cx)
+                thread.restore_checkpoint(message.rewind_id.clone().unwrap(), cx)
             })
             .await
             .unwrap();
@@ -7122,7 +7119,7 @@ mod tests {
             let AgentThreadEntry::UserMessage(message) = &thread.entries[1] else {
                 panic!("expected user message at index 1");
             };
-            message.local_id.clone().unwrap()
+            message.rewind_id.clone().unwrap()
         });
 
         // Create a terminal AFTER the checkpoint we'll restore to.
@@ -7328,8 +7325,8 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
-                    local_id: Some(LocalUserMessageId::new()),
-                    is_local: true,
+                    rewind_id: Some(LocalUserMessageId::new()),
+                    is_optimistic: true,
                     protocol_message_id: None,
                     content: ContentBlock::Empty,
                     chunks: vec!["Injected message (no checkpoint)".into()],
@@ -7555,8 +7552,8 @@ mod tests {
             let AgentThreadEntry::UserMessage(message) = &thread.entries[0] else {
                 panic!("expected first entry to be a user message")
             };
-            assert_eq!(message.local_id, None);
-            assert!(message.is_local);
+            assert_eq!(message.rewind_id, None);
+            assert!(message.is_optimistic);
         });
     }
 

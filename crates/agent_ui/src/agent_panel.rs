@@ -6897,7 +6897,7 @@ mod tests {
         active_session_id, active_thread_id, open_thread_with_connection,
         open_thread_with_custom_connection, register_test_sidebar, send_message,
     };
-    use acp_thread::{AgentConnection, LocalUserMessageId, StubAgentConnection, ThreadStatus};
+    use acp_thread::{AgentConnection, StubAgentConnection, ThreadStatus};
     use action_log::ActionLog;
     use anyhow::{Result, anyhow};
     use feature_flags::FeatureFlagAppExt;
