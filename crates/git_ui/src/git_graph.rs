@@ -1408,6 +1408,62 @@ struct GitGraphContextMenu {
     _subscription: Subscription,
 }
 
+#[derive(Clone)]
+struct RefMenuEntry {
+    ref_name: Option<SharedString>,
+    git_tasks: Vec<(TaskSourceKind, ResolvedTask)>,
+}
+
+impl RefMenuEntry {
+    fn add_entries(
+        self,
+        mut menu: ContextMenu,
+        git_graph: &Entity<GitGraph>,
+        window: &mut Window,
+    ) -> ContextMenu {
+        if let Some(ref_name) = self.ref_name {
+            menu = menu.entry("Copy Ref Name", None, move |_window, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(ref_name.to_string()));
+            });
+        }
+
+        menu = menu.separator().header("Custom Commands");
+
+        if self.git_tasks.is_empty() {
+            return menu.item(
+                ContextMenuEntry::new("Learn More")
+                    .icon(IconName::ArrowUpRight)
+                    .icon_color(Color::Muted)
+                    .icon_position(IconPosition::End)
+                    .handler(|_window, cx| {
+                        cx.open_url(&release_channel::docs_url(
+                            CUSTOM_GIT_COMMANDS_DOCS_SLUG,
+                            cx,
+                        ));
+                    }),
+            );
+        }
+
+        for (task_source_kind, resolved_task) in self.git_tasks {
+            let label = resolved_task.display_label().to_string();
+            menu = menu.entry(
+                label,
+                None,
+                window.handler_for(git_graph, move |this, window, cx| {
+                    this.schedule_git_task(
+                        task_source_kind.clone(),
+                        resolved_task.clone(),
+                        window,
+                        cx,
+                    );
+                }),
+            );
+        }
+
+        menu
+    }
+}
+
 pub struct GitGraph {
     focus_handle: FocusHandle,
     search_state: SearchState,
@@ -1862,9 +1918,10 @@ impl GitGraph {
 
     fn render_ref_count_chip(
         &self,
-        hidden_refs: &[SharedString],
+        hidden_refs: Vec<SharedString>,
         accent_color: gpui::Hsla,
         commit_idx: usize,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let hidden_refs_text = hidden_refs.join("\n");
         let chip_id = SharedString::from(format!("git-graph-ref-count-chip-{commit_idx}"));
@@ -1872,6 +1929,7 @@ impl GitGraph {
         div()
             .id(chip_id)
             .flex_none()
+            .cursor_pointer()
             .child(
                 Chip::new(format!("+{}", hidden_refs.len()))
                     .label_size(LabelSize::Small)
@@ -1879,6 +1937,20 @@ impl GitGraph {
                     .border_color(accent_color.opacity(0.25)),
             )
             .tooltip(move |_window, cx| Tooltip::simple(hidden_refs_text.clone(), cx))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+
+                    this.deploy_hidden_refs_context_menu(
+                        event.position,
+                        commit_idx,
+                        hidden_refs.clone(),
+                        window,
+                        cx,
+                    );
+                }),
+            )
             .into_any_element()
     }
 
@@ -2614,18 +2686,68 @@ impl GitGraph {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let context_menu = ContextMenu::build(window, cx, move |menu, _window, _| {
-            menu.when_some(
-                Self::ref_name_from_decoration(&name.clone()),
-                |menu, ref_name| {
-                    menu.entry("Copy Ref Name", None, move |_window, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(ref_name.to_string()));
-                    })
-                },
-            )
+        let Some(commit) = self.graph_data.commits.get(index) else {
+            return;
+        };
+
+        let ref_entry = self.ref_menu_entry(commit.data.sha, &name, cx);
+        let git_graph = cx.entity();
+        let context_menu = ContextMenu::build(window, cx, move |menu, window, _| {
+            menu.header(format!("Ref {name}"))
+                .map(|menu| ref_entry.add_entries(menu, &git_graph, window))
         });
 
         self.set_context_menu(context_menu, position, index, window, cx);
+    }
+
+    /// Builds a context menu listing the refs that aren't shown inline in the
+    /// gutter. Each ref is a submenu exposing that ref's actions, so users can
+    /// still act on refs hidden behind the "+N" badge.
+    fn deploy_hidden_refs_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        index: usize,
+        hidden_refs: Vec<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(commit) = self.graph_data.commits.get(index) else {
+            return;
+        };
+
+        let ref_entries = hidden_refs
+            .into_iter()
+            .map(|name| (self.ref_menu_entry(commit.data.sha, &name, cx), name))
+            .collect::<Vec<_>>();
+
+        let git_graph = cx.entity();
+        let context_menu = ContextMenu::build(window, cx, move |mut menu, _window, _| {
+            menu = menu.header("Refs");
+            for (ref_entry, name) in ref_entries {
+                let git_graph = git_graph.clone();
+                menu = menu.submenu(name, move |submenu, window, _cx| {
+                    ref_entry.clone().add_entries(submenu, &git_graph, window)
+                });
+            }
+            menu
+        });
+
+        self.set_context_menu(context_menu, position, index, window, cx);
+    }
+
+    /// Resolves the data needed to populate a single ref's context-menu entries
+    /// (its short name and any custom git command tasks). Kept separate so the
+    /// same entries can be rendered both as a standalone menu and as a submenu.
+    fn ref_menu_entry(&self, sha: Oid, name: &SharedString, cx: &App) -> RefMenuEntry {
+        let ref_name = Self::ref_name_from_decoration(name);
+        let git_tasks = self
+            .git_task_context(sha, ref_name.as_deref(), cx)
+            .map(|task_context| self.git_context_menu_tasks(&task_context, cx))
+            .unwrap_or_default();
+        RefMenuEntry {
+            ref_name,
+            git_tasks,
+        }
     }
 
     fn deploy_entry_context_menu(
@@ -2671,58 +2793,6 @@ impl GitGraph {
                         this.copy_commit_sha(index, cx);
                     }),
                 )
-                .when_some(ref_name.clone(), |menu, ref_name| {
-                    menu.entry("Copy Ref Name", None, move |_window, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(ref_name.to_string()));
-                    })
-                })
-                .when(ref_name.is_none(), |menu| {
-                    menu.map(|menu| {
-                        let tag_names = commit
-                            .data
-                            .tag_names()
-                            .into_iter()
-                            .map(|tag_name| SharedString::from(tag_name.to_string()))
-                            .collect::<Vec<_>>();
-                        let copy_tag_label = "Copy Tag";
-
-                        match tag_names.as_slice() {
-                            [] => menu.item(
-                                ContextMenuEntry::new(copy_tag_label)
-                                    .action(CopyCommitTag.boxed_clone())
-                                    .disabled(true),
-                            ),
-                            [tag_name] => {
-                                let tag_name = tag_name.clone();
-                                let label = format!("{copy_tag_label}: {tag_name}");
-                                menu.entry(
-                                    label,
-                                    Some(CopyCommitTag.boxed_clone()),
-                                    move |_window, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            tag_name.to_string(),
-                                        ));
-                                    },
-                                )
-                            }
-                            _ => menu.submenu(copy_tag_label, move |menu, _window, _cx| {
-                                let mut menu =
-                                    menu.fixed_width(COMMIT_TAG_LIST_WIDTH_IN_REMS.into());
-
-                                for tag_name in tag_names.clone() {
-                                    let tag_name_to_copy = tag_name.clone();
-
-                                    menu = menu.entry(tag_name, None, move |_window, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            tag_name_to_copy.to_string(),
-                                        ));
-                                    });
-                                }
-                                menu
-                            }),
-                        }
-                    })
-                })
                 .map(|mut menu| {
                     menu = menu.separator().header("Custom Commands");
 
@@ -3847,7 +3917,7 @@ impl GitGraph {
                 .cloned()
                 .collect::<Vec<_>>();
             let count_chip = (!hidden_refs.is_empty())
-                .then(|| self.render_ref_count_chip(&hidden_refs, accent_color, absolute_idx));
+                .then(|| self.render_ref_count_chip(hidden_refs, accent_color, absolute_idx, cx));
 
             elements.push(
                 div()
