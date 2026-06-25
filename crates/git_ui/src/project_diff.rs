@@ -1167,14 +1167,21 @@ fn project_diff_sort_prefixes<'a>(
 ) -> HashMap<RepoPath, u64> {
     let settings = GitPanelSettings::get_global(cx);
     let group_by_status = settings.group_by == GitPanelGroupBy::Status;
+    let group_by_staging = settings.group_by == GitPanelGroupBy::Staging;
 
     let mut conflict_entries = Vec::new();
     let mut tracked_entries = Vec::new();
     let mut new_entries = Vec::new();
+    let mut staged_entries = Vec::new();
+    let mut unstaged_entries = Vec::new();
 
     for (repo_path, status) in entries {
         let entry = (repo_path.clone(), status);
-        if group_by_status && repo.had_conflict_on_last_merge_head_change(repo_path) {
+        if group_by_staging && status.staging().has_staged() {
+            staged_entries.push(entry);
+        } else if group_by_staging {
+            unstaged_entries.push(entry);
+        } else if group_by_status && repo.had_conflict_on_last_merge_head_change(repo_path) {
             conflict_entries.push(entry);
         } else if group_by_status && status.is_created() {
             new_entries.push(entry);
@@ -1184,7 +1191,12 @@ fn project_diff_sort_prefixes<'a>(
     }
 
     let mut ordered_paths = Vec::new();
-    for mut section_entries in [conflict_entries, tracked_entries, new_entries] {
+    let section_entries = if group_by_staging {
+        vec![staged_entries, unstaged_entries]
+    } else {
+        vec![conflict_entries, tracked_entries, new_entries]
+    };
+    for mut section_entries in section_entries {
         if settings.tree_view {
             append_tree_order(&mut ordered_paths, section_entries);
         } else {
