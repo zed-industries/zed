@@ -231,6 +231,9 @@ fn git_panel_context_menu(
 const GIT_PANEL_KEY: &str = "GitPanel";
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
+const FETCH_IN_PROGRESS_TOOLTIP: &str = "Fetch in progress";
+const PULL_IN_PROGRESS_TOOLTIP: &str = "Pull in progress";
+const PUSH_IN_PROGRESS_TOOLTIP: &str = "Push in progress";
 // TODO: We should revise this part. It seems the indentation width is not aligned with the one in project panel
 const TREE_INDENT: f32 = 16.0;
 
@@ -657,6 +660,7 @@ pub struct GitPanel {
     diff_stat_total: DiffStat,
     new_staged_count: usize,
     pending_commit: Option<Task<()>>,
+    pending_remote_operation_tooltip: Option<&'static str>,
     amend_pending: bool,
     original_commit_message: Option<String>,
     signoff_enabled: bool,
@@ -854,6 +858,7 @@ impl GitPanel {
                 changes_count: 0,
                 diff_stat_total: DiffStat::default(),
                 pending_commit: None,
+                pending_remote_operation_tooltip: None,
                 amend_pending: false,
                 original_commit_message: None,
                 signoff_enabled: false,
@@ -2945,6 +2950,10 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
+        if !self.start_remote_operation(FETCH_IN_PROGRESS_TOOLTIP, cx) {
+            return;
+        }
+
         telemetry::event!("Git Fetched");
         let askpass = self.askpass_delegate("git fetch", window, cx);
         let this = cx.weak_entity();
@@ -2957,6 +2966,10 @@ impl GitPanel {
 
         window
             .spawn(cx, async move |cx| {
+                let _clear_pending_remote_operation = cx.on_drop(&this, |this, cx| {
+                    this.clear_remote_operation(cx);
+                });
+
                 let Some(fetch_options) = fetch_options.await else {
                     return Ok(());
                 };
@@ -3087,13 +3100,20 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        let Some(branch) = repo.read(cx).branch.as_ref() else {
+        let Some(branch) = repo.read(cx).branch.clone() else {
             return;
         };
+        if !self.start_remote_operation(PULL_IN_PROGRESS_TOOLTIP, cx) {
+            return;
+        }
+
         telemetry::event!("Git Pulled");
-        let branch = branch.clone();
         let remote = self.get_remote(false, false, window, cx);
         cx.spawn_in(window, async move |this, cx| {
+            let _clear_pending_remote_operation = cx.on_drop(&this, |this, cx| {
+                this.clear_remote_operation(cx);
+            });
+
             let remote = match remote.await {
                 Ok(Some(remote)) => remote,
                 Ok(None) => {
@@ -3150,11 +3170,14 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        let Some(branch) = repo.read(cx).branch.as_ref() else {
+        let Some(branch) = repo.read(cx).branch.clone() else {
             return;
         };
+        if !self.start_remote_operation(PUSH_IN_PROGRESS_TOOLTIP, cx) {
+            return;
+        }
+
         telemetry::event!("Git Pushed");
-        let branch = branch.clone();
 
         let options = if force_push {
             Some(PushOptions::Force)
@@ -3171,6 +3194,10 @@ impl GitPanel {
         let remote = self.get_remote(select_remote, true, window, cx);
 
         cx.spawn_in(window, async move |this, cx| {
+            let _clear_pending_remote_operation = cx.on_drop(&this, |this, cx| {
+                this.clear_remote_operation(cx);
+            });
+
             let remote = match remote.await {
                 Ok(Some(remote)) => remote,
                 Ok(None) => {
@@ -3345,6 +3372,21 @@ impl GitPanel {
 
     fn can_push_and_pull(&self, cx: &App) -> bool {
         !self.project.read(cx).is_via_collab()
+    }
+
+    fn start_remote_operation(&mut self, tooltip: &'static str, cx: &mut Context<Self>) -> bool {
+        if self.pending_remote_operation_tooltip.is_some() {
+            return false;
+        }
+
+        self.pending_remote_operation_tooltip = Some(tooltip);
+        cx.notify();
+        true
+    }
+
+    fn clear_remote_operation(&mut self, cx: &mut Context<Self>) {
+        self.pending_remote_operation_tooltip.take();
+        cx.notify();
     }
 
     fn get_remote(
@@ -4664,6 +4706,7 @@ impl GitPanel {
                         &branch,
                         focus_handle,
                         true,
+                        self.pending_remote_operation_tooltip,
                     ))
                 })
                 .into_any_element(),
