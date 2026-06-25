@@ -845,8 +845,8 @@ mod test {
             })
             .unwrap();
 
-        key_down(cx, (*window).into(), "enter", false);
-        key_up(cx, (*window).into(), "enter");
+        key_down(cx, *window, "enter", false);
+        key_up(cx, *window, "enter");
 
         window
             .update(cx, |view, _, _| {
@@ -867,7 +867,7 @@ mod test {
             })
             .unwrap();
 
-        key_up(cx, (*window).into(), "enter");
+        key_up(cx, *window, "enter");
 
         window
             .update(cx, |view, _, _| {
@@ -888,9 +888,9 @@ mod test {
             })
             .unwrap();
 
-        key_down(cx, (*window).into(), "enter", true);
-        key_down(cx, (*window).into(), "enter", true);
-        key_up(cx, (*window).into(), "enter");
+        key_down(cx, *window, "enter", true);
+        key_down(cx, *window, "enter", true);
+        key_up(cx, *window, "enter");
 
         window
             .update(cx, |view, _, _| {
@@ -943,12 +943,12 @@ mod test {
         window
             .update(cx, |view, window, cx| window.focus(&view.a, cx))
             .unwrap();
-        key_down(cx, (*window).into(), "enter", false);
+        key_down(cx, *window, "enter", false);
 
         window
             .update(cx, |view, window, cx| window.focus(&view.b, cx))
             .unwrap();
-        key_up(cx, (*window).into(), "enter");
+        key_up(cx, *window, "enter");
 
         window
             .update(cx, |view, _, _| {
@@ -994,8 +994,8 @@ mod test {
         window
             .update(cx, |view, window, cx| window.focus(&view.handle, cx))
             .unwrap();
-        key_down(cx, (*window).into(), "enter", false);
-        key_up(cx, (*window).into(), "enter");
+        key_down(cx, *window, "enter", false);
+        key_up(cx, *window, "enter");
         window
             .update(cx, |view, _, _| {
                 assert!(
