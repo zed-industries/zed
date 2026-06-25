@@ -797,10 +797,10 @@ mod tests {
     use super::*;
     use indoc::indoc;
     use zeta_prompt::udiff::{apply_diff_to_string, unified_diff_with_context};
-    use zeta_prompt::{ExcerptRanges, ZetaPromptInput};
+    use zeta_prompt::{ExcerptRanges, Zeta2PromptInput};
 
     fn compute_prediction_reversal_ratio(
-        prompt_inputs: &ZetaPromptInput,
+        prompt_inputs: &Zeta2PromptInput,
         predicted_content: &str,
         cursor_path: &Path,
     ) -> f32 {
@@ -817,8 +817,8 @@ mod tests {
         content: &str,
         events: Vec<Arc<zeta_prompt::Event>>,
         excerpt_start_row: Option<u32>,
-    ) -> ZetaPromptInput {
-        ZetaPromptInput {
+    ) -> Zeta2PromptInput {
+        Zeta2PromptInput {
             cursor_path: Arc::from(Path::new("src/test.rs")),
             cursor_excerpt: content.into(),
             cursor_offset_in_excerpt: 0,
@@ -1181,8 +1181,8 @@ mod tests {
                      -old
                      +new"}
                 .into(),
-                old_range: 0..1,
-                new_range: 0..1,
+                old_range: 0..0,
+                new_range: 0..0,
                 predicted: false,
                 in_open_source_repo: true,
             }),
@@ -1194,8 +1194,8 @@ mod tests {
                      -a
                      +b"}
                 .into(),
-                old_range: 0..1,
-                new_range: 0..1,
+                old_range: 0..0,
+                new_range: 0..0,
                 predicted: false,
                 in_open_source_repo: true,
             }),
@@ -1207,8 +1207,8 @@ mod tests {
                      -x
                      +y"}
                 .into(),
-                old_range: 0..1,
-                new_range: 0..1,
+                old_range: 0..0,
+                new_range: 0..0,
                 predicted: false,
                 in_open_source_repo: true,
             }),
@@ -1937,8 +1937,8 @@ mod tests {
                       line2
                  "}
                 .into(),
-                old_range: 0..1,
-                new_range: 0..1,
+                old_range: 0..0,
+                new_range: 0..0,
                 predicted: false,
                 in_open_source_repo: false,
             })],
@@ -1977,8 +1977,8 @@ mod tests {
                       line11
                  "}
                 .into(),
-                old_range: 0..1,
-                new_range: 0..1,
+                old_range: 0..0,
+                new_range: 0..0,
                 predicted: false,
                 in_open_source_repo: false,
             })],
@@ -2039,8 +2039,8 @@ mod tests {
                       line2
                  "}
                 .into(),
-                old_range: 0..1,
-                new_range: 0..1,
+                old_range: 0..0,
+                new_range: 0..0,
                 predicted: false,
                 in_open_source_repo: false,
             })],
@@ -2078,8 +2078,8 @@ mod tests {
                       more_wrong
                  "}
                 .into(),
-                old_range: 0..1,
-                new_range: 0..1,
+                old_range: 0..0,
+                new_range: 0..0,
                 predicted: false,
                 in_open_source_repo: false,
             })],
@@ -2148,8 +2148,8 @@ mod tests {
                           line2
                      "}
                     .into(),
-                    old_range: 0..1,
-                    new_range: 0..1,
+                    old_range: 0..0,
+                    new_range: 0..0,
                     predicted: false,
                     in_open_source_repo: false,
                 }),
@@ -2163,8 +2163,8 @@ mod tests {
                           line2
                      "}
                     .into(),
-                    old_range: 0..1,
-                    new_range: 0..1,
+                    old_range: 0..0,
+                    new_range: 0..0,
                     predicted: false,
                     in_open_source_repo: false,
                 }),
