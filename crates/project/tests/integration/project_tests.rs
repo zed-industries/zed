@@ -12416,7 +12416,10 @@ async fn test_bare_dot_git_changed_event_refreshes_git_state(cx: &mut gpui::Test
 
     repository.read_with(cx, |repository, _| {
         assert_eq!(
-            repository.head_commit.as_ref().map(|commit| commit.sha.as_ref()),
+            repository
+                .head_commit
+                .as_ref()
+                .map(|commit| commit.sha.as_ref()),
             Some("old-sha")
         );
         assert_eq!(
@@ -12447,7 +12450,10 @@ async fn test_bare_dot_git_changed_event_refreshes_git_state(cx: &mut gpui::Test
 
     repository.read_with(cx, |repository, _| {
         assert_eq!(
-            repository.head_commit.as_ref().map(|commit| commit.sha.as_ref()),
+            repository
+                .head_commit
+                .as_ref()
+                .map(|commit| commit.sha.as_ref()),
             Some("new-sha")
         );
         assert_eq!(repository.status_for_path(&repo_path("file.txt")), None);
