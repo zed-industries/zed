@@ -309,6 +309,13 @@ impl ModelEntry {
             .is_some_and(|status| status.value == "loaded")
     }
 
+    /// Whether the model is currently loading, so a progress label applies.
+    pub fn is_loading(&self) -> bool {
+        self.status
+            .as_ref()
+            .is_some_and(|status| status.value == "loading")
+    }
+
     pub fn supports_images_hint(&self) -> bool {
         self.architecture
             .as_ref()
@@ -414,6 +421,37 @@ pub struct ModelEventData {
     /// Present on an `unloaded` status; non-zero means the model failed to load.
     #[serde(default)]
     pub exit_code: Option<i32>,
+    /// Present on a `loading` status, reporting per-stage load progress.
+    #[serde(default)]
+    pub progress: Option<LoadProgress>,
+}
+
+/// Per-stage load progress carried by a `loading` event. A model loads its
+/// stages in order (the text model, plus an optional draft and/or multimodal
+/// projector), each reporting a `0.0..=1.0` fraction.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+pub struct LoadProgress {
+    #[serde(default)]
+    pub stages: Vec<String>,
+    #[serde(default)]
+    pub current: String,
+    #[serde(default)]
+    pub value: f32,
+}
+
+impl LoadProgress {
+    /// A human label for the stage currently loading, matching the llama.cpp
+    /// WebUI's labels. We report the current stage's own `value` rather than a
+    /// blended overall percentage (as the WebUI does), so each stage runs
+    /// `0→100%` and the label says which stage it is.
+    pub fn stage_label(&self) -> &'static str {
+        match self.current.as_str() {
+            "text_model" => "Loading weights",
+            "spec_model" => "Loading draft",
+            "mmproj_model" => "Loading projector",
+            _ => "Loading",
+        }
+    }
 }
 
 impl ModelEvent {
@@ -438,6 +476,23 @@ impl ModelEvent {
         } else {
             None
         }
+    }
+
+    /// This event's load progress if it is a loading event carrying usable stage
+    /// data, else `None`.
+    pub fn load_progress(&self) -> Option<&LoadProgress> {
+        let data = self.data.as_ref()?;
+        if data.status.as_deref() != Some("loading") {
+            return None;
+        }
+        let progress = data.progress.as_ref()?;
+        // The server also emits bare stage-transition markers (e.g.
+        // `{"stage": "mmproj_model"}`) with no `stages`/`current`/`value`. Skip
+        // them so the indicator holds its last value rather than dropping to 0%.
+        if progress.stages.is_empty() || progress.current.is_empty() {
+            return None;
+        }
+        Some(progress)
     }
 }
 
@@ -777,6 +832,44 @@ mod tests {
             "model": "m", "event": "status_change", "data": { "status": "loaded" }
         }));
         assert_eq!(loaded.load_failure(), None);
+    }
+
+    #[test]
+    fn model_event_load_progress() {
+        // We report the current stage's own value (0→1), not a blended overall.
+        let weights = model_event(serde_json::json!({
+            "model": "m", "event": "status_change",
+            "data": { "status": "loading",
+                      "progress": { "stages": ["text_model"], "current": "text_model", "value": 0.4 } }
+        }));
+        let progress = weights.load_progress().unwrap();
+        assert!((progress.value - 0.4).abs() < 1e-4);
+        assert_eq!(progress.stage_label(), "Loading weights");
+
+        // The projector stage runs 0→1 on its own (not 90→100%).
+        let projector = model_event(serde_json::json!({
+            "model": "m", "event": "status_change",
+            "data": { "status": "loading",
+                      "progress": { "stages": ["text_model", "mmproj_model"],
+                                    "current": "mmproj_model", "value": 0.5 } }
+        }));
+        let progress = projector.load_progress().unwrap();
+        assert!((progress.value - 0.5).abs() < 1e-4);
+        assert_eq!(progress.stage_label(), "Loading projector");
+
+        // Non-loading events carry no progress.
+        let loaded = model_event(serde_json::json!({
+            "model": "m", "event": "status_change", "data": { "status": "loaded" }
+        }));
+        assert!(loaded.load_progress().is_none());
+
+        // Bare stage-transition markers (no stages/current/value) are skipped so
+        // the indicator doesn't flicker to 0% between stages.
+        let transition = model_event(serde_json::json!({
+            "model": "m", "event": "status_change",
+            "data": { "status": "loading", "progress": { "stage": "mmproj_model" } }
+        }));
+        assert!(transition.load_progress().is_none());
     }
 
     #[test]

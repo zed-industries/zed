@@ -1,5 +1,5 @@
 use anyhow::Result;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::Stream;
@@ -67,6 +67,8 @@ pub struct LlamaCppLanguageModelProvider {
     /// Live capabilities shared with the models handed to the agent and refreshed
     /// by re-discovery on `/models/sse` events (see [`LiveCapabilities`]).
     capability_cells: CapabilityCells,
+    /// Live model-load progress shared with the models (see [`LoadingProgress`]).
+    loading_progress: LoadingProgress,
 }
 
 pub struct State {
@@ -80,6 +82,8 @@ pub struct State {
     model_event_task: Option<Task<()>>,
     /// Same `Arc` as the provider's; re-discovery keeps these cells in sync.
     capability_cells: CapabilityCells,
+    /// Same `Arc` as the provider's; the event stream updates it as a model loads.
+    loading_progress: LoadingProgress,
 }
 
 impl State {
@@ -102,6 +106,7 @@ impl State {
         // Drop the event stream so it reconnects with the new key (re-fetch
         // below restarts it).
         self.model_event_task = None;
+        write_recover(&self.loading_progress).clear();
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| this.restart_fetch_models_task(cx))
@@ -169,6 +174,16 @@ impl State {
 
             let is_router = entries.iter().any(ModelEntry::is_router_entry);
 
+            // Models the server currently reports as loading; used below to prune
+            // stale progress labels. A preempted/aborted load may never send a
+            // terminal event, and an SSE reconnect can miss one, so we reconcile
+            // against the live listing rather than trusting events alone.
+            let loading_ids: HashSet<String> = entries
+                .iter()
+                .filter(|entry| entry.is_loading())
+                .map(|entry| entry.id.clone())
+                .collect();
+
             let mut models: Vec<llama_cpp::Model> = if is_router {
                 // Router mode: per-model metadata comes from `/v1/models`. We
                 // only probe `/props` for already-loaded models, so listing
@@ -223,6 +238,10 @@ impl State {
                     LlamaCppLanguageModelProvider::settings(cx),
                 );
                 sync_capability_cells(&this.capability_cells, &effective);
+                // Drop progress labels for models the server no longer reports as
+                // loading, so a stale "Loading … 0%" can't stick in a name after a
+                // preempted load or a missed terminal event.
+                write_recover(&this.loading_progress).retain(|id, _| loading_ids.contains(id));
                 // In router mode, models load on demand; subscribe to the
                 // server's event stream so capabilities self-correct as models
                 // load and unload. Start it once — re-discovery is triggered by
@@ -275,15 +294,41 @@ impl State {
                                     event.model
                                 );
                             }
+                            // A loading-progress tick: record it for the model
+                            // selector's progress indicator, no re-discovery. The
+                            // `cx.notify()` drives `Event::ProviderStateChanged`,
+                            // which the selector observes to re-render.
+                            if let Some(progress) = event.load_progress() {
+                                let label = SharedString::from(format!(
+                                    "{} {}%",
+                                    progress.stage_label(),
+                                    (progress.value * 100.0).round() as u32
+                                ));
+                                if this
+                                    .update(cx, |this, cx| {
+                                        write_recover(&this.loading_progress)
+                                            .insert(event.model.clone(), label);
+                                        cx.notify();
+                                    })
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                                continue;
+                            }
                             if !event.changes_model_state() {
                                 continue;
                             }
-                            // Terminal load/unload (or list change): re-discover —
-                            // re-probing `/props` for whatever is now loaded,
-                            // reverting unloaded models to their defaults, and
-                            // refreshing the shared capability map.
+                            // Terminal load/unload (or list change): the model is
+                            // no longer loading, so drop its progress and
+                            // re-discover — re-probing `/props` for whatever is now
+                            // loaded, reverting unloaded models to their defaults,
+                            // and refreshing the shared capability map.
                             if this
-                                .update(cx, |this, cx| this.restart_fetch_models_task(cx))
+                                .update(cx, |this, cx| {
+                                    write_recover(&this.loading_progress).remove(&event.model);
+                                    this.restart_fetch_models_task(cx);
+                                })
                                 .is_err()
                             {
                                 return;
@@ -339,6 +384,11 @@ impl LiveCapabilities {
 /// Live capabilities keyed by model name, shared between the provider and the
 /// `LanguageModel` instances handed to the agent, and refreshed by re-discovery.
 type CapabilityCells = Arc<RwLock<HashMap<String, LiveCapabilities>>>;
+
+/// Model name → a short load-status label (e.g. `"Loading weights 42%"`) while a
+/// router model loads, shared between the provider, the event stream, and the
+/// models so the model selector can show progress live. Absent once loaded.
+type LoadingProgress = Arc<RwLock<HashMap<String, SharedString>>>;
 
 /// Locks for reading, recovering the guard if a previous holder panicked. The
 /// critical sections here are infallible map operations, so a poisoned lock is
@@ -430,9 +480,11 @@ impl LlamaCppLanguageModelProvider {
         cx: &mut App,
     ) -> Self {
         let capability_cells: CapabilityCells = Arc::new(RwLock::new(HashMap::default()));
+        let loading_progress: LoadingProgress = Arc::new(RwLock::new(HashMap::default()));
         let this = Self {
             http_client: http_client.clone(),
             capability_cells: capability_cells.clone(),
+            loading_progress: loading_progress.clone(),
             state: cx.new(|cx| {
                 cx.observe_global::<SettingsStore>({
                     let mut last_settings = LlamaCppLanguageModelProvider::settings(cx).clone();
@@ -455,6 +507,7 @@ impl LlamaCppLanguageModelProvider {
                                 // Drop the event stream so it reconnects against
                                 // the new URL (re-auth below restarts it).
                                 this.model_event_task = None;
+                                write_recover(&this.loading_progress).clear();
                                 this.authenticate(cx).detach();
                             }
                             cx.notify();
@@ -469,6 +522,7 @@ impl LlamaCppLanguageModelProvider {
                     fetch_model_task: None,
                     model_event_task: None,
                     capability_cells,
+                    loading_progress,
                     api_key_state: ApiKeyState::new(Self::api_url(cx), (*API_KEY_ENV_VAR).clone()),
                     credentials_provider,
                 }
@@ -550,6 +604,7 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
                     supports_images: model.supports_images,
                     supports_thinking: model.supports_thinking,
                     capability_cells: self.capability_cells.clone(),
+                    loading_progress: self.loading_progress.clone(),
                     http_client: self.http_client.clone(),
                     request_limiter: RateLimiter::new(4),
                     state: self.state.clone(),
@@ -601,6 +656,9 @@ pub struct LlamaCppLanguageModel {
     /// captured when the model is built rather than tracked live.
     supports_images: bool,
     supports_thinking: bool,
+    /// Shared with the provider; reports this model's load progress (read by
+    /// `name`) so the model selector can show a loading indicator.
+    loading_progress: LoadingProgress,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
     state: Entity<State>,
@@ -614,6 +672,14 @@ impl LlamaCppLanguageModel {
             .get(&self.name)
             .copied()
             .unwrap_or(self.fallback_capabilities)
+    }
+
+    /// This model's current load-status label (e.g. `"Loading weights 42%"`) if
+    /// it is loading, read live from the shared map the event stream updates.
+    fn loading_label(&self) -> Option<SharedString> {
+        read_recover(&self.loading_progress)
+            .get(&self.name)
+            .cloned()
     }
 
     fn to_llama_cpp_request(
@@ -795,7 +861,17 @@ impl LanguageModel for LlamaCppLanguageModel {
     }
 
     fn name(&self) -> LanguageModelName {
-        LanguageModelName::from(self.display_name.clone())
+        match self.loading_label() {
+            // Surface the loading stage + percent in the model's display name so
+            // it shows wherever the model is named (the selector button, the
+            // picker) while a router model loads — no provider-agnostic UI
+            // changes needed. The agent rebuilds the name on
+            // `ProviderStateChanged`, which our progress ticks emit.
+            Some(label) => {
+                LanguageModelName::from(format!("{} · {}", self.display_name, label))
+            }
+            None => LanguageModelName::from(self.display_name.clone()),
+        }
     }
 
     fn provider_id(&self) -> LanguageModelProviderId {
