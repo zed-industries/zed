@@ -4,7 +4,7 @@ use clock::ReplicaId;
 use cloud_api_types::{
     CreateLlmTokenResponse, LlmToken, Organization, OrganizationConfiguration,
     OrganizationEditPredictionConfiguration, OrganizationId, SettledEditPrediction,
-    SubmitEditPredictionSettledResponse,
+    SubmitEditPredictionSettledBatchBody, SubmitEditPredictionSettledResponse,
 };
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection, PredictEditsRequestTrigger,
@@ -257,6 +257,68 @@ async fn test_simple_request(cx: &mut TestAppContext) {
         language::Point::new(1, 3)
     );
     assert_eq!(prediction.edits[0].1.as_ref(), " are you?");
+}
+
+#[gpui::test]
+async fn test_zeta_request_sends_settled_body_when_data_collection_is_disabled(
+    cx: &mut TestAppContext,
+) {
+    let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "foo.md":  "Hello!\nHow\nBye\n"
+        }),
+    )
+    .await;
+    let project = Project::test(fs, vec![path!("/root").as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            let path = project.find_project_path(path!("root/foo.md"), cx).unwrap();
+            project.open_buffer(path, cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _cx| buffer.snapshot());
+    let position = snapshot.anchor_before(language::Point::new(1, 3));
+
+    ep_store.update(cx, |ep_store, cx| {
+        ep_store.register_buffer(&buffer, &project, cx);
+    });
+
+    let prediction_task = ep_store.update(cx, |ep_store, cx| {
+        ep_store.request_prediction(
+            &project,
+            &buffer,
+            position,
+            PredictEditsRequestTrigger::Other,
+            cx,
+        )
+    });
+
+    let (request, respond_tx) = requests.predict.next().await.unwrap();
+    assert!(!request.input.can_collect_data);
+    respond_tx
+        .send(model_response(&request, SIMPLE_DIFF))
+        .unwrap();
+
+    prediction_task.await.unwrap().unwrap();
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
+    cx.run_until_parked();
+
+    let settled_request = requests
+        .settled
+        .next()
+        .now_or_never()
+        .flatten()
+        .expect("settled request should be sent");
+    assert!(!settled_request.can_collect_data);
+    assert_eq!(settled_request.settled_editable_region, None);
+    assert_eq!(settled_request.sample_data, None);
 }
 
 #[gpui::test]
@@ -1270,6 +1332,19 @@ async fn test_empty_prediction(cx: &mut TestAppContext) {
             e2e_latency_ms: Some(0),
         }]
     );
+    cx.executor()
+        .advance_clock(EDIT_PREDICTION_SETTLED_QUIESCENCE);
+    cx.run_until_parked();
+
+    let settled_request = requests
+        .settled
+        .next()
+        .now_or_never()
+        .flatten()
+        .expect("empty prediction should still send settled request");
+    assert_eq!(settled_request.request_id, id);
+    assert_eq!(settled_request.settled_editable_region, None);
+    assert_eq!(settled_request.sample_data, None);
 }
 
 #[gpui::test]
@@ -2533,8 +2608,11 @@ fn init_test_with_fake_client_and_legacy_data_collection(
                             } else {
                                 buf
                             };
-                            let req = serde_json::from_slice(&body).unwrap();
-                            settled_req_tx.unbounded_send(req).unwrap();
+                            let req: SubmitEditPredictionSettledBatchBody =
+                                serde_json::from_slice(&body).unwrap();
+                            for prediction in req.predictions {
+                                settled_req_tx.unbounded_send(prediction).unwrap();
+                            }
                             serde_json::to_string(&SubmitEditPredictionSettledResponse {}).unwrap()
                         }
                         _ => {
