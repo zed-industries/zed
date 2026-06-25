@@ -2411,6 +2411,9 @@
     "ollama": {
       "api_url": "http://localhost:11434",
     },
+    "llama_cpp": {
+      "api_url": "http://localhost:8080",
+    },
     "openai": {
       "api_url": "https://api.openai.com/v1",
     },
