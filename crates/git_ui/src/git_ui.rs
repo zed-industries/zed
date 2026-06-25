@@ -811,12 +811,7 @@ fn render_remote_button(
 
 mod remote_button {
     use gpui::{Action, Anchor, AnyView, ClickEvent, FocusHandle};
-    use ui::{
-        App, ButtonCommon, Clickable, Color, ContextMenu, Disableable, ElementId, FluentBuilder,
-        Icon, IconName, IconSize, IntoElement, Label, LabelCommon, LabelSize, LineHeightStyle,
-        ParentElement, PopoverMenu, SharedString, SplitButton, Styled, Tooltip, Window, div,
-        h_flex, rems,
-    };
+    use ui::{ContextMenu, PopoverMenu, SplitButton, Tooltip, prelude::*};
 
     pub fn render_fetch_button(
         keybinding_target: Option<FocusHandle>,
