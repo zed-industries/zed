@@ -8375,7 +8375,7 @@ async fn test_expand_all_entries_via_window_dispatch(cx: &mut gpui::TestAppConte
 }
 
 #[gpui::test]
-async fn test_per_worktree_expand(cx: &mut gpui::TestAppContext) {
+async fn test_expand_all_for_entry_single_worktree(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 
     let fs = FakeFs::new(cx.executor());
