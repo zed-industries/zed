@@ -1807,76 +1807,56 @@ impl GitGraph {
         Some(SharedString::from(name.to_string()))
     }
 
-    fn render_chip(
-        &self,
-        name: &SharedString,
-        accent_color: gpui::Hsla,
-        is_head: bool,
-        background: gpui::Hsla,
-    ) -> impl IntoElement {
-        Chip::new(name.clone())
-            .label_size(LabelSize::Small)
-            .truncate()
-            .map(|chip| {
-                if is_head {
-                    chip.icon(IconName::Check)
-                        .bg_color(background.blend(accent_color.opacity(0.25)))
-                        .border_color(accent_color.opacity(0.5))
-                } else {
-                    chip.icon(IconName::GitBranch)
-                        .icon_color(Color::Custom(accent_color))
-                        .bg_color(background.blend(accent_color.opacity(0.08)))
-                        .border_color(accent_color.opacity(0.25))
-                }
-            })
-    }
-
-    /// Renders a ref chip for the commit at `commit_idx`. Chips that name a ref
-    /// (branch, remote ref, or tag) get a right-click handler that opens a
-    /// ref-specific context menu, so that custom commands can be resolved
-    /// against the clicked ref.
     fn render_ref_chip(
         &self,
-        name: &SharedString,
+        name: SharedString,
         accent_color: gpui::Hsla,
         is_head: bool,
         commit_idx: usize,
         background: gpui::Hsla,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let chip = self.render_chip(name, accent_color, is_head, background);
-
         let tooltip_text = name.clone();
         let chip_id = SharedString::from(format!("git-graph-ref-chip-{commit_idx}-{name}"));
-        let Some(ref_name) = Self::ref_name_from_decoration(name) else {
-            return div()
-                .id(chip_id)
-                .min_w_0()
-                .overflow_hidden()
-                .child(chip)
-                .tooltip(move |_window, cx| Tooltip::simple(tooltip_text.clone(), cx))
-                .into_any_element();
-        };
 
         div()
             .id(chip_id)
             .min_w_0()
             .overflow_hidden()
-            .child(chip)
-            .tooltip(move |_window, cx| Tooltip::simple(tooltip_text.clone(), cx))
+            .child(
+                Chip::new(name.clone())
+                    .label_size(LabelSize::Small)
+                    .truncate()
+                    .map(|chip| {
+                        if is_head {
+                            chip.icon(IconName::Check)
+                                .bg_color(background.blend(accent_color.opacity(0.25)))
+                                .border_color(accent_color.opacity(0.5))
+                        } else {
+                            chip.icon(IconName::GitBranch)
+                                .icon_color(Color::Custom(accent_color))
+                                .bg_color(background.blend(accent_color.opacity(0.08)))
+                                .border_color(accent_color.opacity(0.25))
+                        }
+                    }),
+            )
             .on_mouse_down(
                 MouseButton::Right,
-                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
-                    this.deploy_entry_context_menu(
-                        event.position,
-                        commit_idx,
-                        Some(ref_name.clone()),
-                        window,
-                        cx,
-                    );
-                    cx.stop_propagation();
+                cx.listener({
+                    move |this, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+
+                        this.deploy_ref_context_menu(
+                            event.position,
+                            commit_idx,
+                            name.clone(),
+                            window,
+                            cx,
+                        );
+                    }
                 }),
             )
+            .tooltip(move |_window, cx| Tooltip::simple(tooltip_text.clone(), cx))
             .into_any_element()
     }
 
@@ -1888,6 +1868,7 @@ impl GitGraph {
     ) -> AnyElement {
         let hidden_refs_text = hidden_refs.join("\n");
         let chip_id = SharedString::from(format!("git-graph-ref-count-chip-{commit_idx}"));
+
         div()
             .id(chip_id)
             .flex_none()
@@ -2625,6 +2606,28 @@ impl GitGraph {
             .ok();
     }
 
+    fn deploy_ref_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        index: usize,
+        name: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let context_menu = ContextMenu::build(window, cx, move |menu, _window, _| {
+            menu.when_some(
+                Self::ref_name_from_decoration(&name.clone()),
+                |menu, ref_name| {
+                    menu.entry("Copy Ref Name", None, move |_window, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(ref_name.to_string()));
+                    })
+                },
+            )
+        });
+
+        self.set_context_menu(context_menu, position, index, window, cx);
+    }
+
     fn deploy_entry_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -3110,7 +3113,7 @@ impl GitGraph {
                             ref_names.iter().map(|name| {
                                 let is_head = Self::is_head_ref(name.as_ref(), &head_branch_name);
                                 self.render_ref_chip(
-                                    name,
+                                    name.clone(),
                                     accent_color,
                                     is_head,
                                     selected_idx,
@@ -3830,7 +3833,7 @@ impl GitGraph {
 
             let is_head = Self::is_head_ref(primary_name.as_ref(), &head_branch_name);
             let primary_chip = self.render_ref_chip(
-                &primary_name,
+                primary_name.clone(),
                 accent_color,
                 is_head,
                 absolute_idx,
@@ -4340,10 +4343,9 @@ impl Render for GitGraph {
                                                             div()
                                                                 .relative()
                                                                 .h_full()
-                                                                .w(self
-                                                                    .ref_label_gutter_width(
-                                                                        window, cx,
-                                                                    ))
+                                                                .w(self.ref_label_gutter_width(
+                                                                    window, cx,
+                                                                ))
                                                                 .flex_shrink_0()
                                                                 .overflow_hidden()
                                                                 .child(
