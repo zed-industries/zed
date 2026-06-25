@@ -8449,10 +8449,22 @@ async fn test_expand_all_entries(cx: &mut gpui::TestAppContext) {
     assert!(entries[0].starts_with("v project_root"), "root expanded");
     assert!(entries[1].contains("v dir_1"), "dir_1 expanded");
     assert!(entries[2].contains("v nested_dir"), "nested_dir expanded");
-    assert!(entries.iter().any(|e| e.contains("file_a.py")), "file_a visible");
-    assert!(entries.iter().any(|e| e.contains("file_c.py")), "file_c visible");
-    assert!(entries.iter().any(|e| e.contains("v dir_2")), "dir_2 expanded");
-    assert!(!entries.iter().any(|e| e.contains("> ")), "no collapsed dirs");
+    assert!(
+        entries.iter().any(|e| e.contains("file_a.py")),
+        "file_a visible"
+    );
+    assert!(
+        entries.iter().any(|e| e.contains("file_c.py")),
+        "file_c visible"
+    );
+    assert!(
+        entries.iter().any(|e| e.contains("v dir_2")),
+        "dir_2 expanded"
+    );
+    assert!(
+        !entries.iter().any(|e| e.contains("> ")),
+        "no collapsed dirs"
+    );
 }
 
 #[gpui::test]
