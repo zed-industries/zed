@@ -100,9 +100,9 @@ If your LM Studio server requires a key, enter the key in the provider UI or set
 
 ## llama.cpp {#llama-cpp}
 
-Use [llama.cpp](https://github.com/ggml-org/llama.cpp) and its built-in server for local models with Zed Agent, Inline Assistant, and similar model-backed Zed AI features.
+Use [llama.cpp](https://llama.app) and its built-in server for local models with Zed Agent, Inline Assistant, and similar model-backed Zed AI features.
 
-1. Install llama.cpp from the [README](https://github.com/ggml-org/llama.cpp) or a [prebuilt release](https://github.com/ggml-org/llama.cpp/releases).
+1. Install llama.cpp from [llama.app](https://llama.app).
 2. Start the server in [router mode](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md):
 
    ```sh
