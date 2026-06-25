@@ -4,7 +4,7 @@ mod system_window_tabs;
 use gpui::{
     Action, AnyElement, App, Context, Decorations, Entity, Hsla, InteractiveElement, IntoElement,
     MouseButton, ParentElement, StatefulInteractiveElement, Styled, WeakEntity, Window,
-    WindowButtonLayout, WindowControlArea, div, px,
+    WindowButtonLayout, WindowControlArea, div, px, rgb,
 };
 use project::DisableAiSettings;
 use settings::Settings;
@@ -30,6 +30,7 @@ pub struct PlatformTitleBar {
     platform_style: PlatformStyle,
     children: SmallVec<[AnyElement; 2]>,
     should_move: bool,
+    fullscreen_macos_controls_reveal: f32,
     system_window_tabs: Entity<SystemWindowTabs>,
     button_layout: Option<WindowButtonLayout>,
     multi_workspace: Option<WeakEntity<MultiWorkspace>>,
@@ -45,6 +46,7 @@ impl PlatformTitleBar {
             platform_style,
             children: SmallVec::new(),
             should_move: false,
+            fullscreen_macos_controls_reveal: 0.0,
             system_window_tabs,
             button_layout: None,
             multi_workspace: None,
@@ -180,6 +182,117 @@ pub fn render_right_window_controls(
     }
 }
 
+#[derive(IntoElement)]
+struct MacFullscreenWindowControls {
+    opacity: f32,
+    close_action: Box<dyn Action>,
+}
+
+impl MacFullscreenWindowControls {
+    fn new(opacity: f32, close_action: Box<dyn Action>) -> Self {
+        Self {
+            opacity,
+            close_action,
+        }
+    }
+}
+
+impl RenderOnce for MacFullscreenWindowControls {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let supported_controls = window.window_controls();
+        h_flex()
+            .id("fullscreen-macos-window-controls")
+            .h_full()
+            .w(px(TRAFFIC_LIGHT_PADDING))
+            .flex_none()
+            .items_center()
+            .pl(px(9.0))
+            .gap(px(8.0))
+            .opacity(self.opacity)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(MacFullscreenWindowControl::new(
+                "fullscreen-macos-close",
+                MacFullscreenWindowControlKind::Close,
+                rgb(0xff5f57).into(),
+                Some(self.close_action),
+            ))
+            .children(supported_controls.minimize.then(|| {
+                MacFullscreenWindowControl::new(
+                    "fullscreen-macos-minimize",
+                    MacFullscreenWindowControlKind::Minimize,
+                    rgb(0xffbd2e).into(),
+                    None,
+                )
+            }))
+            .children(supported_controls.maximize.then(|| {
+                MacFullscreenWindowControl::new(
+                    "fullscreen-macos-zoom",
+                    MacFullscreenWindowControlKind::Zoom,
+                    rgb(0x28c840).into(),
+                    None,
+                )
+            }))
+    }
+}
+
+#[derive(IntoElement)]
+struct MacFullscreenWindowControl {
+    id: &'static str,
+    kind: MacFullscreenWindowControlKind,
+    color: Hsla,
+    close_action: Option<Box<dyn Action>>,
+}
+
+impl MacFullscreenWindowControl {
+    fn new(
+        id: &'static str,
+        kind: MacFullscreenWindowControlKind,
+        color: Hsla,
+        close_action: Option<Box<dyn Action>>,
+    ) -> Self {
+        Self {
+            id,
+            kind,
+            color,
+            close_action,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MacFullscreenWindowControlKind {
+    Close,
+    Minimize,
+    Zoom,
+}
+
+impl RenderOnce for MacFullscreenWindowControl {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        div()
+            .id(self.id)
+            .size(px(12.0))
+            .rounded_full()
+            .bg(self.color)
+            .border_1()
+            .border_color(gpui::black().opacity(0.12))
+            .hover(|this| this.opacity(0.85))
+            .active(|this| this.opacity(0.7))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(move |_, window, cx| {
+                cx.stop_propagation();
+                match self.kind {
+                    MacFullscreenWindowControlKind::Close => {
+                        if let Some(close_action) = self.close_action.as_ref() {
+                            window.dispatch_action(close_action.boxed_clone(), cx);
+                        }
+                    }
+                    MacFullscreenWindowControlKind::Minimize => window.minimize_window(),
+                    MacFullscreenWindowControlKind::Zoom => window.zoom_window(),
+                }
+            })
+    }
+}
+
 impl Render for PlatformTitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let supported_controls = window.window_controls();
@@ -191,6 +304,24 @@ impl Render for PlatformTitleBar {
 
         let button_layout = self.effective_button_layout(&decorations, cx);
         let sidebar = self.sidebar_render_state(cx);
+
+        if self.platform_style == PlatformStyle::Mac && window.is_fullscreen() {
+            let mouse_position = window.mouse_position();
+            let should_show_controls = mouse_position.x <= px(96.0) && mouse_position.y <= height;
+            let target = if should_show_controls { 1.0 } else { 0.0 };
+            let delta = target - self.fullscreen_macos_controls_reveal;
+            if delta.abs() <= 0.02 {
+                self.fullscreen_macos_controls_reveal = target;
+            } else {
+                self.fullscreen_macos_controls_reveal =
+                    (self.fullscreen_macos_controls_reveal + delta.signum() * 0.18).clamp(0.0, 1.0);
+                window.request_animation_frame();
+            }
+        } else {
+            self.fullscreen_macos_controls_reveal = 0.0;
+        }
+
+        let fullscreen_macos_controls_reveal = self.fullscreen_macos_controls_reveal;
 
         let title_bar = h_flex()
             .window_control_area(WindowControlArea::Drag)
@@ -212,10 +343,13 @@ impl Render for PlatformTitleBar {
                         this.should_move = true;
                     }),
                 )
-                .on_mouse_move(cx.listener(move |this, _ev, window, _| {
+                .on_mouse_move(cx.listener(move |this, _ev, window, cx| {
                     if this.should_move {
                         this.should_move = false;
                         window.start_window_move();
+                    }
+                    if this.platform_style == PlatformStyle::Mac && window.is_fullscreen() {
+                        cx.notify();
                     }
                 }))
             })
@@ -240,7 +374,12 @@ impl Render for PlatformTitleBar {
             .map(|this| {
                 let show_left_controls = !(sidebar.open && sidebar.side == SidebarSide::Left);
 
-                if window.is_fullscreen() {
+                if window.is_fullscreen() && self.platform_style == PlatformStyle::Mac {
+                    this.child(MacFullscreenWindowControls::new(
+                        fullscreen_macos_controls_reveal,
+                        close_action.as_ref().boxed_clone(),
+                    ))
+                } else if window.is_fullscreen() {
                     this.pl_2()
                 } else if self.platform_style == PlatformStyle::Mac && show_left_controls {
                     this.pl(px(TRAFFIC_LIGHT_PADDING))
