@@ -296,13 +296,7 @@ impl TextFinder {
             .update(cx, |p, _| p.delegate.in_progress_search.take_connected())
     }
 
-    /// The query is seeded from the active item if there is one (see [`Self::active_item_query`]),
-    /// otherwise from the last query searched in this workspace (so reopening resumes the previous
-    /// search, JetBrains-style).
-    ///
-    /// The filters (case sensitive, whole word, regex) are sticky independently of the query:
-    /// the last filters used in this workspace are restored regardless of where the query came
-    /// from, mirroring JetBrains' Find in Files where the filter toggles persist across searches.
+    /// Guess the query the user probably wants for pre-populating the search input.
     fn seed_query(
         workspace: &mut Workspace,
         window: &mut Window,
@@ -317,9 +311,7 @@ impl TextFinder {
         Some(SearchSeed { query, options })
     }
 
-    /// The query to seed from the active item, in priority order: an active project search's
-    /// query, then a focused buffer search bar's query, then an explicit selection in the active
-    /// editor.
+    /// The query to seed from the active item, if any.
     ///
     /// Only an explicit selection seeds from the editor; the bare word under the cursor is
     /// ignored. Confirming a match jumps to (and places the cursor on) it, so seeding from the
