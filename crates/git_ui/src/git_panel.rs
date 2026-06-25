@@ -4392,26 +4392,27 @@ impl GitPanel {
                         .size(IconSize::Small)
                         .color(Color::Muted),
                 );
-                match (style, is_push) {
-                    (Toast | ToastWithLog { .. }, true) => {
+                match style {
+                    PushPrLink { link } => this.action("Create Pull Request", move |_, cx| {
+                        cx.open_url(&link);
+                    }),
+                    Toast | ToastWithLog { .. } if is_push => {
                         this.action("Create Pull Request", move |window, cx| {
                             window
                                 .dispatch_action(Box::new(zed_actions::git::CreatePullRequest), cx);
                         })
                     }
-                    (Toast, false) => this,
-                    (ToastWithLog { output }, false) => {
-                        this.action("View Log", move |window, cx| {
-                            let output = output.clone();
-                            let output =
-                                format!("stdout:\n{}\nstderr:\n{}", output.stdout, output.stderr);
-                            workspace_weak
-                                .update(cx, move |workspace, cx| {
-                                    open_output(operation, workspace, &output, window, cx)
-                                })
-                                .ok();
-                        })
-                    }
+                    Toast => this,
+                    ToastWithLog { output } => this.action("View Log", move |window, cx| {
+                        let output = output.clone();
+                        let output =
+                            format!("stdout:\n{}\nstderr:\n{}", output.stdout, output.stderr);
+                        workspace_weak
+                            .update(cx, move |workspace, cx| {
+                                open_output(operation, workspace, &output, window, cx)
+                            })
+                            .ok();
+                    }),
                 }
                 .dismiss_button(true)
             });

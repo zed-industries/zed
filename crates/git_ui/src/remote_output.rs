@@ -1,6 +1,7 @@
 use anyhow::Context as _;
 
 use git::repository::{Remote, RemoteCommandOutput};
+use linkify::{LinkFinder, LinkKind};
 use ui::SharedString;
 use util::ResultExt as _;
 
@@ -21,9 +22,19 @@ impl RemoteAction {
     }
 }
 
+#[derive(Debug)]
 pub enum SuccessStyle {
     Toast,
-    ToastWithLog { output: RemoteCommandOutput },
+    ToastWithLog {
+        output: RemoteCommandOutput,
+    },
+    /// A push whose stderr contained a link to create or view a pull/merge
+    /// request. Opening this URL directly avoids relying on a hosting provider
+    /// being registered for the remote, which is not the case for every host
+    /// (e.g. self-hosted GitLab instances behind a private domain).
+    PushPrLink {
+        link: String,
+    },
 }
 
 pub struct SuccessMessage {
@@ -123,13 +134,44 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
                     style: SuccessStyle::Toast,
                 }
             } else {
-                SuccessMessage {
-                    message: format!("Pushed {} to {}", branch_name, remote_ref.name),
-                    style: SuccessStyle::ToastWithLog { output },
-                }
+                // Many hosting providers print a link to create or view a pull/merge
+                // request in the push output (prefixed with `remote:`). Prefer that
+                // link when present: it is produced by the server itself, so it works
+                // for any host regardless of whether Zed has a matching provider.
+                let link = extract_pull_request_link(&output.stderr);
+                let message = format!("Pushed {} to {}", branch_name, remote_ref.name);
+                let style = match link {
+                    Some(link) => SuccessStyle::PushPrLink { link },
+                    None => SuccessStyle::ToastWithLog { output },
+                };
+                SuccessMessage { message, style }
             }
         }
     }
+}
+
+/// Extracts a pull/merge request link from a push command's stderr, if any.
+///
+/// Hosting providers surface these links on lines prefixed with `remote:`
+/// (e.g. GitHub's "Create a pull request for ... on GitHub by visiting:"
+/// followed by the URL, or GitLab's "To create a merge request for ..., visit:").
+/// We only inspect `remote:` lines so that unrelated URLs printed earlier in
+/// the output (such as OpenSSH's post-quantum warning linking to openssh.com)
+/// are not picked up.
+fn extract_pull_request_link(stderr: &str) -> Option<String> {
+    let finder = LinkFinder::new();
+    stderr.lines().find_map(|line| {
+        let trimmed = line.trim_start();
+        trimmed
+            .strip_prefix("remote:")
+            .and_then(|rest| {
+                finder
+                    .links(rest)
+                    .find(|link| *link.kind() == LinkKind::Url)
+                    .map(|link| link.as_str().trim().to_string())
+            })
+            .filter(|link| !link.is_empty())
+    })
 }
 
 #[cfg(test)]
@@ -162,7 +204,10 @@ mod tests {
 
         let msg = format_output(&action, output);
 
-        assert!(matches!(msg.style, SuccessStyle::ToastWithLog { .. }));
+        let SuccessStyle::PushPrLink { link } = &msg.style else {
+            panic!("Expected PushPrLink variant, got {:?}", msg.style);
+        };
+        assert_eq!(link, "https://example.com/test/test/pull/new/test");
         assert_eq!(msg.message, "Pushed test_branch to test_remote");
     }
 
@@ -191,7 +236,13 @@ mod tests {
 
         let msg = format_output(&action, output);
 
-        assert!(matches!(msg.style, SuccessStyle::ToastWithLog { .. }));
+        let SuccessStyle::PushPrLink { link } = &msg.style else {
+            panic!("Expected PushPrLink variant, got {:?}", msg.style);
+        };
+        assert_eq!(
+            link,
+            "https://example.com/test/test/-/merge_requests/new?merge_request%5Bsource_branch%5D=test"
+        );
         assert_eq!(msg.message, "Pushed test_branch to test_remote");
     }
 
@@ -224,7 +275,11 @@ mod tests {
 
         let msg = format_output(&action, output);
 
-        assert!(matches!(msg.style, SuccessStyle::ToastWithLog { .. }));
+        let SuccessStyle::PushPrLink { link } = &msg.style else {
+            panic!("Expected PushPrLink variant, got {:?}", msg.style);
+        };
+        // The openssh.com URL on a non-`remote:` line must be ignored.
+        assert_eq!(link, "https://example.com/test/test/-/merge_requests/99999");
         assert_eq!(msg.message, "Pushed test_branch to test_remote");
     }
 
@@ -257,5 +312,43 @@ mod tests {
         } else {
             panic!("Expected ToastWithLog variant");
         }
+    }
+
+    /// Regression test for an internal GitLab host with no registered provider:
+    /// the create-merge-request URL printed by the server must still be picked
+    /// up from stderr so the toast can open it directly, instead of failing
+    /// with "Unsupported remote URL".
+    #[test]
+    fn test_push_internal_host_merge_request_link() {
+        let action = RemoteAction::Push(
+            SharedString::new_static("dtm-harness"),
+            Remote {
+                name: SharedString::new_static("origin"),
+            },
+        );
+
+        let output = RemoteCommandOutput {
+            stdout: String::new(),
+            stderr: indoc! {"
+                remote:
+                remote: To create a merge request for dtm-harness, visit:
+                remote:   https://git.woa.com/ybtm-client/dtm-harness/-/merge_requests/new?merge_request%5Bsource_branch%5D=dtm-harness
+                remote:
+                To git.woa.com:ybtm-client/dtm-harness.git
+                 * [new branch]      dtm-harness -> dtm-harness
+                "}
+            .to_string(),
+        };
+
+        let msg = format_output(&action, output);
+
+        let SuccessStyle::PushPrLink { link } = &msg.style else {
+            panic!("Expected PushPrLink variant, got {:?}", msg.style);
+        };
+        assert_eq!(
+            link,
+            "https://git.woa.com/ybtm-client/dtm-harness/-/merge_requests/new?merge_request%5Bsource_branch%5D=dtm-harness"
+        );
+        assert_eq!(msg.message, "Pushed dtm-harness to origin");
     }
 }
