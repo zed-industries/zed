@@ -22,9 +22,9 @@ use util::markdown::MarkdownInlineCode;
 /// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ListDirectoryToolInput {
-    /// The fully-qualified path of the directory to list in the project.
+    /// The path of the directory to list in the project.
     ///
-    /// This path should never be absolute, and the first component of the path should always be a root directory in a project, unless it's a global agent skill directory under `~/.agents/skills`.
+    /// In a single-root project, give the path relative to the root. In a multi-root project, prefix it with the root directory's name (an unprefixed path falls back to the first root). Absolute paths within a project root also work. For a global agent skill directory, give a path under `~/.agents/skills`.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -122,6 +122,10 @@ impl ListDirectoryTool {
         let worktree_settings = WorktreeSettings::get(Some(project_path.into()), cx);
         let worktree_snapshot = worktree.read(cx).snapshot();
         let worktree_root_name = worktree.read(cx).root_name();
+        // Drop the root-name prefix when there's a single visible worktree, so the
+        // model isn't fed (and confused by) a redundant prefix (#35893). Mirrors
+        // `Project::short_full_path_for_project_path`.
+        let prefix_root_name = project.read(cx).visible_worktrees(cx).take(2).count() >= 2;
 
         let Some(entry) = worktree_snapshot.entry_for_path(&project_path.path) else {
             return Err(anyhow!("Path not found: {}", input_path));
@@ -149,10 +153,17 @@ impl ListDirectoryTool {
                 continue;
             }
 
-            let full_path = worktree_root_name
-                .join(&entry.path)
-                .display(worktree_snapshot.path_style())
-                .into_owned();
+            let full_path = if prefix_root_name {
+                worktree_root_name
+                    .join(&entry.path)
+                    .display(worktree_snapshot.path_style())
+                    .into_owned()
+            } else {
+                entry
+                    .path
+                    .display(worktree_snapshot.path_style())
+                    .into_owned()
+            };
             if entry.is_dir() {
                 folders.push(full_path);
             } else {
@@ -410,12 +421,12 @@ mod tests {
             output,
             platform_paths(indoc! {"
                 # Folders:
-                project/src
-                project/tests
+                src
+                tests
 
                 # Files:
-                project/Cargo.toml
-                project/README.md
+                Cargo.toml
+                README.md
             "})
         );
 
@@ -437,12 +448,12 @@ mod tests {
             output,
             platform_paths(indoc! {"
                 # Folders:
-                project/src/models
-                project/src/utils
+                src/models
+                src/utils
 
                 # Files:
-                project/src/lib.rs
-                project/src/main.rs
+                src/lib.rs
+                src/main.rs
             "})
         );
 
@@ -462,7 +473,7 @@ mod tests {
             .unwrap();
         assert!(!output.contains("# Folders:"));
         assert!(output.contains("# Files:"));
-        assert!(output.contains(&platform_paths("project/tests/integration_test.rs")));
+        assert!(output.contains(&platform_paths("tests/integration_test.rs")));
     }
 
     #[gpui::test]

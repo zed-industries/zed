@@ -28,7 +28,7 @@ const DEFAULT_UI_TEXT: &str = "Writing file";
 pub struct WriteFileToolInput {
     /// The full path of the file to create or overwrite in the project.
     ///
-    /// WARNING: When specifying which file path need changing, you MUST start each path with one of the project's root directories, unless it's a global agent skill under `~/.agents/skills`.
+    /// In a single-root project, give the path relative to the root. In a multi-root project, prefix it with the root directory's name — an unprefixed path falls back to the first root, which may not be the file you mean. Absolute paths within a project root also work. For a global agent skill, give a path under `~/.agents/skills`.
     ///
     /// The following examples assume we have two root directories in the project:
     /// - /a/b/backend
@@ -37,7 +37,7 @@ pub struct WriteFileToolInput {
     /// <example>
     /// `backend/src/main.rs`
     ///
-    /// Notice how the file path starts with `backend`. Without that, the path would be ambiguous and the call would fail!
+    /// Notice how the file path starts with `backend`. Without it, an unprefixed path resolves against the first root directory, which may not be the one you intend.
     /// </example>
     ///
     /// <example>

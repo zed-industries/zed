@@ -159,9 +159,9 @@ use crate::{AgentTool, ToolCallEventStream, ToolInput, outline};
 /// The only supported path outside the project is `~/.agents/skills` or a descendant, for global agent skills.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileToolInput {
-    /// The relative path of the file to read.
+    /// The path of the file to read.
     ///
-    /// This path should never be absolute, and the first component of the path should always be a root directory in a project, unless it's a global agent skill under `~/.agents/skills`.
+    /// In a single-root project, give the path relative to the root. In a multi-root project, prefix it with the root directory's name (an unprefixed path falls back to the first root). Absolute paths within a project root also work. For a global agent skill, give a path under `~/.agents/skills`.
     ///
     /// <example>
     /// If the project has the following root directories:
@@ -870,8 +870,8 @@ mod test {
         let action_log = cx.new(|_| ActionLog::new(project.clone()));
         let tool = Arc::new(ReadFileTool::new(project, action_log, true));
 
-        // The tool schema says the first component must be the worktree root name,
-        // so "foo/test.txt" means test.txt at the root of the "foo" worktree.
+        // A path beginning with a worktree root name binds to that worktree, so
+        // "foo/test.txt" means test.txt at the root of the "foo" worktree.
         let result = cx
             .update(|cx| {
                 let input = ReadFileToolInput {

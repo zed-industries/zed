@@ -205,17 +205,12 @@ impl AgentTool for GrepTool {
                     continue;
                 }
 
-                let (Some((path, project_path)), mut parse_status) =
+                let (Some(project_path), mut parse_status) =
                     buffer.read_with(cx, |buffer, cx| {
                         (
-                            buffer.file().map(|file| {
-                                (
-                                    file.full_path(cx),
-                                    ProjectPath {
-                                        worktree_id: file.worktree_id(cx),
-                                        path: file.path().clone(),
-                                    },
-                                )
+                            buffer.file().map(|file| ProjectPath {
+                                worktree_id: file.worktree_id(cx),
+                                path: file.path().clone(),
                             }),
                             buffer.parse_status(),
                         )
@@ -233,10 +228,17 @@ impl AgentTool for GrepTool {
                     continue;
                 }
 
-                let abs_path = project
-                    .read_with(cx, |project, cx| project.absolute_path(&project_path, cx))
-                    .ok()
-                    .flatten();
+                // Drop the root-name prefix when there's a single visible
+                // worktree, so the model isn't fed a redundant prefix (#35893).
+                let Ok((path, abs_path)) = project.read_with(cx, |project, cx| {
+                    let path_style = project.path_style(cx);
+                    let path = project
+                        .short_full_path_for_project_path(&project_path, cx)
+                        .unwrap_or_else(|| project_path.path.display(path_style).to_string());
+                    (path, project.absolute_path(&project_path, cx))
+                }) else {
+                    continue;
+                };
 
                 while *parse_status.borrow() != ParseStatus::Idle {
                     parse_status.changed().await.map_err(|e| e.to_string())?;
@@ -301,8 +303,7 @@ impl AgentTool for GrepTool {
                     }
 
                     if !file_header_written {
-                        writeln!(output, "\n## Matches in {}", path.display())
-                            .ok();
+                        writeln!(output, "\n## Matches in {path}").ok();
                         file_header_written = true;
                     }
 
@@ -329,7 +330,7 @@ impl AgentTool for GrepTool {
                     if let Some(abs_path) = &abs_path {
                         content.push(acp::ToolCallContent::Content(acp::Content::new(
                             acp::ContentBlock::ResourceLink(acp::ResourceLink::new(
-                                format!("{}#{}", path.display(), line_label),
+                                format!("{path}#{line_label}"),
                                 format!("file://{}#{}", abs_path.display(), line_label),
                             )),
                         )));
@@ -614,7 +615,7 @@ mod tests {
         let alpha_uri = format!("file://{}#L1", path!("/root/src/alpha.txt"));
         assert!(
             links.iter().any(|link| {
-                link.name.replace('\\', "/") == "root/src/alpha.txt#L1"
+                link.name.replace('\\', "/") == "src/alpha.txt#L1"
                     && link.uri.replace('\\', "/") == alpha_uri.replace('\\', "/")
             }),
             "missing clickable link for alpha.txt, got: {links:?}"
@@ -623,7 +624,7 @@ mod tests {
         let beta_uri = format!("file://{}#L1", path!("/root/beta.txt"));
         assert!(
             links.iter().any(|link| {
-                link.name.replace('\\', "/") == "root/beta.txt#L1"
+                link.name.replace('\\', "/") == "beta.txt#L1"
                     && link.uri.replace('\\', "/") == beta_uri.replace('\\', "/")
             }),
             "missing clickable link for beta.txt, got: {links:?}"
@@ -805,7 +806,7 @@ mod tests {
         let expected = r#"
             Found 1 matches:
 
-            ## Matches in root/test_syntax.rs
+            ## Matches in test_syntax.rs
 
             ### fn top_level_function › L1-3
             ```
@@ -834,7 +835,7 @@ mod tests {
         let expected = r#"
             Found 1 matches:
 
-            ## Matches in root/test_syntax.rs
+            ## Matches in test_syntax.rs
 
             ### mod feature_module › pub mod nested_module › pub fn nested_function › L10-14
             ```
@@ -865,7 +866,7 @@ mod tests {
         let expected = r#"
             Found 1 matches:
 
-            ## Matches in root/test_syntax.rs
+            ## Matches in test_syntax.rs
 
             ### mod feature_module › pub mod nested_module › pub fn nested_function › L7-14
             ```
@@ -900,7 +901,7 @@ mod tests {
         let expected = r#"
             Found 1 matches:
 
-            ## Matches in root/test_syntax.rs
+            ## Matches in test_syntax.rs
 
             ### impl MyStruct › fn method_with_block › L26-28
             ```
@@ -930,7 +931,7 @@ mod tests {
         let expected = r#"
             Found 1 matches:
 
-            ## Matches in root/test_syntax.rs
+            ## Matches in test_syntax.rs
 
             ### impl MyStruct › fn long_function › L31-41
             ```
@@ -970,7 +971,7 @@ mod tests {
         let expected = r#"
             Found 1 matches:
 
-            ## Matches in root/test_syntax.rs
+            ## Matches in test_syntax.rs
 
             ### impl MyStruct › fn long_function › L41-45
             ```

@@ -5058,15 +5058,21 @@ impl Project {
             // resolution stays stable as files are created and deleted. When
             // visible worktrees share a root name, the first wins; the others are
             // reachable by absolute path.
+            let mut had_root_name_prefix = false;
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree = worktree.read(cx);
-                if let Ok(relative_path) = path.strip_prefix(worktree.root_name().as_std_path())
-                    && let Ok(rel_path) = RelPath::new(relative_path, path_style)
-                {
-                    return Some(ProjectPath {
-                        worktree_id: worktree.id(),
-                        path: rel_path.into_arc(),
-                    });
+                if let Ok(relative_path) = path.strip_prefix(worktree.root_name().as_std_path()) {
+                    // The path is owned by this worktree's namespace even if it
+                    // then escapes via `..`; in that case we must not fall through
+                    // to the relative fallback below and silently re-anchor it
+                    // inside the worktree.
+                    had_root_name_prefix = true;
+                    if let Ok(rel_path) = RelPath::new(relative_path, path_style) {
+                        return Some(ProjectPath {
+                            worktree_id: worktree.id(),
+                            path: rel_path.into_arc(),
+                        });
+                    }
                 }
             }
 
@@ -5083,6 +5089,24 @@ impl Project {
                         path: entry.path.clone(),
                     });
                 }
+            }
+
+            // Third pass: the path has no root-name prefix and matched no existing
+            // entry, so bind it as a worktree-relative path against the first
+            // visible worktree. This lets a model resolve a not-yet-created file
+            // when it omits the root-name prefix (#35893), matching the first-wins
+            // resolution used elsewhere. Paths that began with a root name are
+            // excluded so a root-prefixed `..` escape stays unresolved rather than
+            // being re-anchored inside the worktree. `RelPath::new` still rejects
+            // unprefixed paths that escape past the root.
+            if !had_root_name_prefix
+                && let Some(worktree) = worktree_store.visible_worktrees(cx).next()
+                && let Ok(rel_path) = RelPath::new(path, path_style)
+            {
+                return Some(ProjectPath {
+                    worktree_id: worktree.read(cx).id(),
+                    path: rel_path.into_arc(),
+                });
             }
         }
 
@@ -6827,6 +6851,50 @@ mod find_project_path_tests {
             assert_ne!(
                 absolute.worktree_id, first_id,
                 "absolute path should reach the second worktree"
+            );
+        });
+    }
+
+    /// A path that omits the worktree root name and matches no existing entry
+    /// still resolves against the first visible worktree, so a model can write a
+    /// not-yet-created file without prefixing the root name (#35893).
+    #[gpui::test]
+    async fn test_find_project_path_resolves_unprefixed_new_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(Path::new("/zero"), json!({ "src": { "main.rs": "" } }))
+            .await;
+
+        let project = Project::test(fs.clone(), [Path::new("/zero")], cx).await;
+
+        project.read_with(cx, |project, cx| {
+            let worktree_id = project
+                .visible_worktrees(cx)
+                .next()
+                .expect("one worktree")
+                .read(cx)
+                .id();
+
+            // Unprefixed, not-yet-created file resolves to the worktree.
+            let new_file = project
+                .find_project_path("src/new_file.rs", cx)
+                .expect("unprefixed new file resolves");
+            assert_eq!(new_file.worktree_id, worktree_id);
+            assert_eq!(new_file.path.as_unix_str(), "src/new_file.rs");
+
+            // The root-name-prefixed form resolves to the same place.
+            let prefixed = project
+                .find_project_path("zero/src/new_file.rs", cx)
+                .expect("prefixed new file resolves");
+            assert_eq!(prefixed, new_file);
+
+            // A root-name-prefixed path that escapes the worktree via `..` must
+            // not be silently re-anchored inside the worktree by the fallback.
+            assert_eq!(
+                project.find_project_path("zero/../other", cx),
+                None,
+                "escaping path should stay unresolved"
             );
         });
     }

@@ -43,8 +43,7 @@ type Result<T, E = String> = core::result::Result<T, E>;
 pub struct DiagnosticsToolInput {
     /// The path to get diagnostics for. If not provided, returns a project-wide summary.
     ///
-    /// This path should never be absolute, and the first component
-    /// of the path should always be a root directory in a project.
+    /// In a single-root project, give the path relative to the root. In a multi-root project, prefix it with the root directory's name (an unprefixed path falls back to the first root). Absolute paths within a project root also work.
     ///
     /// <example>
     /// If the project has the following root directories:
