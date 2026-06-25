@@ -382,3 +382,34 @@ async fn trash_undo_redo(cx: &mut gpui::TestAppContext) {
     cx.redo().await;
     cx.assert_fs_state_is(&[]);
 }
+
+#[gpui::test]
+async fn trash_directory_undo_redo(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new_with_tree(
+        cx,
+        json!({
+            "a.txt": "",
+            "dir": {
+                "b.txt": "File B's Content",
+            },
+        }),
+    )
+    .await;
+    cx.assert_fs_state_is(&["a.txt", "dir/", "dir/b.txt"]);
+
+    cx.trash(&["dir"]).await;
+    cx.assert_fs_state_is(&["a.txt"]);
+
+    cx.undo().await;
+    cx.assert_fs_state_is(&["a.txt", "dir/", "dir/b.txt"]);
+    assert_eq!(
+        cx.fs
+            .load(Path::new(&path("/workspace/dir/b.txt")))
+            .await
+            .unwrap(),
+        "File B's Content",
+    );
+
+    cx.redo().await;
+    cx.assert_fs_state_is(&["a.txt"]);
+}

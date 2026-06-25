@@ -2630,6 +2630,20 @@ impl FakeFs {
         state.emit_event([(path, Some(PathEventKind::Removed))]);
         Ok(removed)
     }
+
+    pub fn trashed_paths(&self) -> Vec<PathBuf> {
+        self.state
+            .lock()
+            .trash
+            .lock()
+            .values()
+            .map(|(trashed_entry, _fake_entry)| {
+                PathBuf::new()
+                    .join(trashed_entry.original_parent.clone())
+                    .join(trashed_entry.name.clone())
+            })
+            .collect::<Vec<PathBuf>>()
+    }
 }
 
 #[cfg(feature = "test-support")]
