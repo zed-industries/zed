@@ -7,9 +7,9 @@ pub use google_ai::completion::{GoogleEventMapper, into_google};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    AuthenticateError, ConfigurationViewTargetAgent, EnvVar, InlineDescription,
+    ApiKeyConfiguration, AuthenticateError, ConfigurationViewTargetAgent, EnvVar,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, ProviderConfigurationView,
+    LanguageModelToolSchemaFormat,
 };
 use language_model::{
     GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, IconOrSvg, LanguageModel, LanguageModelEffortLevel,
@@ -237,36 +237,19 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
             .update(cx, |state, cx| state.set_api_key(None, cx))
     }
 
-    fn configuration_view_v2(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> ProviderConfigurationView {
-        let state = self.state.clone();
-        ProviderConfigurationView::Inline {
-            view: cx
-                .new(|cx| {
-                    crate::ApiKeyEditor::new(
-                        state,
-                        "AIza…",
-                        |state, _cx| crate::api_key_status(&state.api_key_state),
-                        |state, key, cx| {
-                            state.update(cx, |state, cx| state.set_api_key(Some(key), cx))
-                        },
-                        |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
-                        window,
-                        cx,
-                    )
-                })
-                .into(),
-        }
+    fn api_key_configuration(&self, cx: &App) -> Option<ApiKeyConfiguration> {
+        let state = self.state.read(cx);
+        Some(ApiKeyConfiguration {
+            has_key: state.api_key_state.has_key(),
+            is_from_env_var: state.api_key_state.is_from_env_var(),
+            env_var_name: state.api_key_state.env_var_name().clone(),
+            api_key_url: "https://aistudio.google.com/app/apikey".into(),
+        })
     }
 
-    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
-        Some(InlineDescription::ApiKeyUrl(
-            "https://aistudio.google.com/app/apikey".into(),
-        ))
+    fn set_api_key(&self, key: String, cx: &mut App) -> Task<Result<()>> {
+        self.state
+            .update(cx, |state, cx| state.set_api_key(Some(key), cx))
     }
 }
 

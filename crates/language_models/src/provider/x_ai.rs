@@ -5,12 +5,11 @@ use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt, Window};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
+    ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, LanguageModelToolSchemaFormat, ProviderConfigurationView, RateLimiter,
-    env_var,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, RateLimiter, env_var,
 };
 use open_ai::ResponseStreamEvent;
 pub use settings::XaiAvailableModel as AvailableModel;
@@ -209,36 +208,19 @@ impl LanguageModelProvider for XAiLanguageModelProvider {
             .update(cx, |state, cx| state.set_api_key(None, cx))
     }
 
-    fn configuration_view_v2(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> ProviderConfigurationView {
-        let state = self.state.clone();
-        ProviderConfigurationView::Inline {
-            view: cx
-                .new(|cx| {
-                    crate::ApiKeyEditor::new(
-                        state,
-                        "xai-…",
-                        |state, _cx| crate::api_key_status(&state.api_key_state),
-                        |state, key, cx| {
-                            state.update(cx, |state, cx| state.set_api_key(Some(key), cx))
-                        },
-                        |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
-                        window,
-                        cx,
-                    )
-                })
-                .into(),
-        }
+    fn api_key_configuration(&self, cx: &App) -> Option<ApiKeyConfiguration> {
+        let state = self.state.read(cx);
+        Some(ApiKeyConfiguration {
+            has_key: state.api_key_state.has_key(),
+            is_from_env_var: state.api_key_state.is_from_env_var(),
+            env_var_name: state.api_key_state.env_var_name().clone(),
+            api_key_url: "https://console.x.ai/team/default/api-keys".into(),
+        })
     }
 
-    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
-        Some(InlineDescription::ApiKeyUrl(
-            "https://console.x.ai/team/default/api-keys".into(),
-        ))
+    fn set_api_key(&self, key: String, cx: &mut App) -> Task<Result<()>> {
+        self.state
+            .update(cx, |state, cx| state.set_api_key(Some(key), cx))
     }
 }
 

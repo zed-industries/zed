@@ -1,9 +1,10 @@
 use crate::{Tooltip, prelude::*};
-use gpui::{ClickEvent, IntoElement, ParentElement, SharedString};
+use gpui::{ClickEvent, ElementId, IntoElement, ParentElement, SharedString};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct ConfiguredApiCard {
     label: SharedString,
+    button_id: Option<ElementId>,
     button_label: Option<SharedString>,
     button_tab_index: Option<isize>,
     tooltip_label: Option<SharedString>,
@@ -15,6 +16,7 @@ impl ConfiguredApiCard {
     pub fn new(label: impl Into<SharedString>) -> Self {
         Self {
             label: label.into(),
+            button_id: None,
             button_label: None,
             button_tab_index: None,
             tooltip_label: None,
@@ -33,6 +35,14 @@ impl ConfiguredApiCard {
 
     pub fn button_label(mut self, button_label: impl Into<SharedString>) -> Self {
         self.button_label = Some(button_label.into());
+        self
+    }
+
+    /// Sets a unique id for the action button. Required when several cards are
+    /// rendered together (e.g. one per provider), since the default id is
+    /// derived from the button label and would otherwise collide.
+    pub fn button_id(mut self, id: impl Into<ElementId>) -> Self {
+        self.button_id = Some(id.into());
         self
     }
 
@@ -113,7 +123,9 @@ impl Component for ConfiguredApiCard {
 impl RenderOnce for ConfiguredApiCard {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let button_label = self.button_label.unwrap_or("Reset Key".into());
-        let button_id = SharedString::new(format!("id-{}", button_label));
+        let button_id = self
+            .button_id
+            .unwrap_or_else(|| ElementId::from(SharedString::new(format!("id-{}", button_label))));
 
         h_flex()
             .min_w_0()

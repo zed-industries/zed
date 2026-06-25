@@ -12,7 +12,7 @@ use project::agent_server_store::{AgentId, AgentServerStore, ExternalAgentSource
 use settings::{CustomAgentServerSettings, SettingsStore, update_settings_file};
 use ui::{
     AiSettingItem, AiSettingItemSource, AiSettingItemStatus, ContextMenu, ContextMenuEntry,
-    Divider, DividerColor, PopoverMenu, Tooltip, prelude::*,
+    Divider, PopoverMenu, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{MultiWorkspace, Workspace, create_and_open_local_file};
@@ -49,23 +49,7 @@ pub(crate) fn render_external_agents_page(
         .pb_16()
         .track_scroll(scroll_handle)
         .overflow_y_scroll()
-        .child(
-            h_flex()
-                .w_full()
-                .justify_between()
-                .items_center()
-                .mb_4()
-                .child(
-                    v_flex()
-                        .child(Label::new("External Agents").size(LabelSize::Large))
-                        .child(
-                            Label::new("All agents connected through the Agent Client Protocol.")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                )
-                .child(add_agent_popover),
-        )
+        .child(add_agent_popover)
         .child(agent_list)
         .into_any_element()
 }
@@ -163,11 +147,7 @@ fn render_agent_list(agents: Vec<AgentRow>, cx: &mut Context<SettingsWindow>) ->
             agents.into_iter().map(|(id, icon, display_name, source)| {
                 render_agent(id, icon, display_name, source, cx).into_any_element()
             }),
-            || {
-                Divider::horizontal()
-                    .color(DividerColor::BorderFaded)
-                    .into_any_element()
-            },
+            || Divider::horizontal().into_any_element(),
         ))
         .into_any_element()
 }
@@ -196,22 +176,20 @@ fn render_agent(
     // Only custom agents are editable here; registry agents are managed via the
     // ACP registry and only support removal.
     let configure_button = (source == ExternalAgentSource::Custom).then(|| {
-        IconButton::new(
-            SharedString::from(format!("configure-{}", id_string)),
-            IconName::Settings,
-        )
-        .icon_color(Color::Muted)
-        .icon_size(IconSize::Small)
-        .tab_index(0isize)
-        .tooltip(Tooltip::text("Configure Agent"))
-        .on_click(cx.listener({
-            let id = id.clone();
-            move |this, _event, window, cx| {
-                let existing =
-                    custom_agent_settings(&id, cx).map(|settings| (id.clone(), settings));
-                open_custom_agent_form(this, existing, window, cx);
-            }
-        }))
+        IconButton::new(format!("configure-{}", id_string), IconName::Settings)
+            .icon_color(Color::Muted)
+            .icon_size(IconSize::Small)
+            .size(ButtonSize::Medium)
+            .tab_index(0isize)
+            .tooltip(Tooltip::text("Configure Agent"))
+            .on_click(cx.listener({
+                let id = id.clone();
+                move |this, _event, window, cx| {
+                    let existing =
+                        custom_agent_settings(&id, cx).map(|settings| (id.clone(), settings));
+                    open_custom_agent_form(this, existing, window, cx);
+                }
+            }))
     });
 
     let remove_tooltip = match source {
@@ -219,17 +197,15 @@ fn render_agent(
         ExternalAgentSource::Custom => "Remove Custom Agent",
     };
 
-    let remove_button = IconButton::new(
-        SharedString::from(format!("uninstall-{}", id_string)),
-        IconName::Trash,
-    )
-    .icon_color(Color::Muted)
-    .icon_size(IconSize::Small)
-    .tab_index(0isize)
-    .tooltip(Tooltip::text(remove_tooltip))
-    .on_click(move |_event, _window, cx| {
-        remove_agent(&id, source, cx);
-    });
+    let remove_button = IconButton::new(format!("uninstall-{}", id_string), IconName::Trash)
+        .icon_color(Color::Muted)
+        .icon_size(IconSize::Small)
+        .size(ButtonSize::Medium)
+        .tab_index(0isize)
+        .tooltip(Tooltip::text(remove_tooltip))
+        .on_click(move |_event, _window, cx| {
+            remove_agent(&id, source, cx);
+        });
 
     // The connection status of an external agent is tracked per agent-panel
     // session (via the agent panel's `AgentConnectionStore`), which isn't

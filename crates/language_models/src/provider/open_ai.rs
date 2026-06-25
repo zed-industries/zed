@@ -5,12 +5,12 @@ use futures::{FutureExt, StreamExt, future::BoxFuture};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, FastModeConfirmation, IconOrSvg, InlineDescription,
+    ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, FastModeConfirmation, IconOrSvg,
     LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
     LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
     LanguageModelRequest, LanguageModelToolChoice, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME,
-    ProviderConfigurationView, RateLimiter, env_var,
+    RateLimiter, env_var,
 };
 use menu;
 use open_ai::{
@@ -219,36 +219,19 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
             .update(cx, |state, cx| state.set_api_key(None, cx))
     }
 
-    fn configuration_view_v2(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> ProviderConfigurationView {
-        let state = self.state.clone();
-        ProviderConfigurationView::Inline {
-            view: cx
-                .new(|cx| {
-                    crate::ApiKeyEditor::new(
-                        state,
-                        "sk-…",
-                        |state, _cx| crate::api_key_status(&state.api_key_state),
-                        |state, key, cx| {
-                            state.update(cx, |state, cx| state.set_api_key(Some(key), cx))
-                        },
-                        |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
-                        window,
-                        cx,
-                    )
-                })
-                .into(),
-        }
+    fn api_key_configuration(&self, cx: &App) -> Option<ApiKeyConfiguration> {
+        let state = self.state.read(cx);
+        Some(ApiKeyConfiguration {
+            has_key: state.api_key_state.has_key(),
+            is_from_env_var: state.api_key_state.is_from_env_var(),
+            env_var_name: state.api_key_state.env_var_name().clone(),
+            api_key_url: "https://platform.openai.com/api-keys".into(),
+        })
     }
 
-    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
-        Some(InlineDescription::ApiKeyUrl(
-            "https://platform.openai.com/api-keys".into(),
-        ))
+    fn set_api_key(&self, key: String, cx: &mut App) -> Task<Result<()>> {
+        self.state
+            .update(cx, |state, cx| state.set_api_key(Some(key), cx))
     }
 
     fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {

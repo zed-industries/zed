@@ -11,8 +11,9 @@ use language_model::{
     LanguageModelToolUse, MessageContent, StopReason, TokenUsage, env_var,
 };
 use language_model::{
-    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
+    InlineDescription, LanguageModelId, LanguageModelName, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
+    LanguageModelRequest, RateLimiter, Role,
 };
 use lmstudio::{LMSTUDIO_API_URL, ModelType, get_models};
 
@@ -251,6 +252,12 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
 
     fn icon(&self) -> IconOrSvg {
         IconOrSvg::Icon(IconName::AiLmStudio)
+    }
+
+    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
+        Some(InlineDescription::Text(
+            "Run local LLMs like Llama, Phi, and Qwen with LM Studio.".into(),
+        ))
     }
 
     fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {

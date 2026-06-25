@@ -371,12 +371,34 @@ pub trait LanguageModelProvider: 'static {
         ProviderConfigurationView::SubPage(self.configuration_view(target_agent, window, cx))
     }
 
+    /// Optional title rendered above [`Self::inline_description`] in an inline
+    /// configuration row (the equivalent of the "API Key" label on API-key
+    /// providers). Computed live, so it may depend on mutable state.
+    fn inline_title(&self, _cx: &App) -> Option<SharedString> {
+        None
+    }
+
     /// Optional descriptive line rendered beneath the provider name on the left
     /// of an inline configuration row. Computed live on each render, so it may
     /// depend on mutable provider state (e.g. the current plan). Only meaningful
     /// for providers presented via [`ProviderConfigurationView::Inline`].
     fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
         None
+    }
+
+    /// For single-API-key providers, returns a live snapshot of the current key
+    /// state. Returning `Some` opts the provider into the settings UI's uniform
+    /// "API Key" section (rendered directly by the settings UI), instead of
+    /// [`Self::configuration_view_v2`].
+    fn api_key_configuration(&self, _cx: &App) -> Option<ApiKeyConfiguration> {
+        None
+    }
+
+    /// Stores a new API key for a single-API-key provider (see
+    /// [`Self::api_key_configuration`]). Clearing the key is done via
+    /// [`Self::reset_credentials`].
+    fn set_api_key(&self, _key: String, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Ok(()))
     }
 
     /// Copy shown the first time a user enables fast mode for a model from
@@ -395,6 +417,21 @@ pub enum ProviderConfigurationView {
     Inline { view: AnyView },
     /// A richer view that should be shown on its own dedicated sub-page.
     SubPage(AnyView),
+}
+
+/// A live snapshot of a single-API-key provider's credential state, used by the
+/// settings UI to render the provider's "API Key" section.
+#[derive(Clone)]
+pub struct ApiKeyConfiguration {
+    /// Whether a key is currently configured (via the UI or an env var).
+    pub has_key: bool,
+    /// Whether the configured key comes from an environment variable (and so
+    /// can't be edited or reset from the UI).
+    pub is_from_env_var: bool,
+    /// Name of the environment variable that can supply this key.
+    pub env_var_name: SharedString,
+    /// URL of the provider's dashboard where a user can create an API key.
+    pub api_key_url: SharedString,
 }
 
 /// The subtitle rendered beneath a provider's name when its configuration is

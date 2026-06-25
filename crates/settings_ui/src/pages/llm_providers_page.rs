@@ -1,13 +1,15 @@
 use std::sync::Arc;
 
-use gpui::{ScrollHandle, prelude::*};
+use gpui::{AnyView, ScrollHandle, prelude::*};
 use language_model::{
-    ConfigurationViewTargetAgent, IconOrSvg, InlineDescription, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelRegistry, ProviderConfigurationView,
+    ApiKeyConfiguration, ConfigurationViewTargetAgent, IconOrSvg, InlineDescription,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
+    ProviderConfigurationView,
 };
-use ui::{ButtonLink, Divider, prelude::*};
+use ui::{ButtonLink, ConfiguredApiCard, Divider, DividerColor, prelude::*};
 
 use crate::SettingsWindow;
+use crate::components::SettingsInputField;
 
 pub(crate) fn render_llm_providers_page(
     settings_window: &SettingsWindow,
@@ -20,7 +22,6 @@ pub(crate) fn render_llm_providers_page(
     v_flex()
         .id("llm-providers-page")
         .size_full()
-        .pt_2p5()
         .px_8()
         .pb_16()
         .track_scroll(scroll_handle)
@@ -28,18 +29,20 @@ pub(crate) fn render_llm_providers_page(
         .children(
             providers
                 .iter()
-                .enumerate()
-                .map(|(index, provider)| {
-                    v_flex()
-                        .when(index > 0, |this| this.child(Divider::horizontal()))
-                        .child(render_provider_row(settings_window, provider, window, cx))
-                })
+                .map(|provider| render_provider_section(settings_window, provider, window, cx))
                 .collect::<Vec<_>>(),
         )
         .into_any_element()
 }
 
-fn render_provider_row(
+/// Renders a single provider as a section: an icon + name header, then a body
+/// whose shape depends on the provider:
+/// - single-API-key providers get the uniform "API Key" item (input or a
+///   configured card),
+/// - other inline providers (sign-in based) render their own control,
+/// - providers that need a richer surface render a "Configure" button that opens
+///   a dedicated sub-page.
+fn render_provider_section(
     settings_window: &SettingsWindow,
     provider: &Arc<dyn LanguageModelProvider>,
     window: &mut Window,
@@ -48,59 +51,226 @@ fn render_provider_row(
     let provider_id = provider.id();
     let provider_name = provider.name().0;
 
-    let icon = match provider.icon() {
+    let body = if let Some(config) = provider.api_key_configuration(cx) {
+        render_api_key_body(provider, provider_name.clone(), config)
+    } else {
+        match get_or_create_configuration_view(settings_window, &provider_id, provider, window, cx)
+        {
+            ProviderConfigurationView::Inline { view } => render_inline_body(provider, view, cx),
+            ProviderConfigurationView::SubPage(_) => render_subpage_body(provider, cx),
+        }
+    };
+
+    v_flex()
+        .min_w_0()
+        .pt_8()
+        .gap_1p5()
+        .child(render_provider_header(provider_name, provider.icon(), cx))
+        .child(body)
+        .into_any_element()
+}
+
+/// An icon + name header with a faded divider, mirroring `SettingsSectionHeader`
+/// but able to render providers' external SVG icons.
+fn render_provider_header(
+    provider_name: SharedString,
+    icon: IconOrSvg,
+    cx: &mut Context<SettingsWindow>,
+) -> impl IntoElement {
+    let icon = match icon {
         IconOrSvg::Svg(path) => Icon::from_external_svg(path),
         IconOrSvg::Icon(name) => Icon::new(name),
     }
-    .size(IconSize::Small)
     .color(Color::Muted);
 
-    let description = provider.inline_description(cx);
-
-    let control =
-        match get_or_create_configuration_view(settings_window, &provider_id, provider, window, cx)
-        {
-            ProviderConfigurationView::Inline { view } => view.into_any_element(),
-            ProviderConfigurationView::SubPage(_) => {
-                let provider_id = provider_id.clone();
-                Button::new(format!("configure-{}", provider_id.0), "Configure")
-                    .style(ButtonStyle::OutlinedGhost)
-                    .size(ButtonSize::Medium)
-                    .end_icon(
-                        Icon::new(IconName::ChevronRight)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .tab_index(0isize)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        open_provider_configuration(this, provider_id.clone(), window, cx);
-                    }))
-                    .into_any_element()
-            }
-        };
-
-    let left = v_flex()
-        .flex_1()
-        .min_w_0()
-        .gap_0p5()
+    v_flex()
+        .w_full()
+        .gap_1p5()
         .child(
-            h_flex()
-                .gap_1p5()
-                .child(icon)
-                .child(Label::new(&provider_name)),
+            h_flex().gap_1p5().child(icon).child(
+                Label::new(provider_name)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .buffer_font(cx),
+            ),
         )
-        .when_some(description, |this, description| {
-            this.max_w_1_2()
-                .child(render_inline_description(provider_name, description))
-        });
+        .child(Divider::horizontal().color(DividerColor::BorderFaded))
+}
+
+/// The "API Key" item for single-API-key providers: a configured card when a key
+/// is set, otherwise an "API Key" label + dashboard link + input field.
+fn render_api_key_body(
+    provider: &Arc<dyn LanguageModelProvider>,
+    provider_name: SharedString,
+    config: ApiKeyConfiguration,
+) -> AnyElement {
+    let ApiKeyConfiguration {
+        has_key,
+        is_from_env_var,
+        env_var_name,
+        api_key_url,
+    } = config;
+
+    if has_key {
+        let configured_label = if is_from_env_var {
+            "API Key Set in Environment Variable"
+        } else {
+            "API Key Configured"
+        };
+        let button_id = format!("reset-api-key-{}", provider.id().0);
+        let provider = provider.clone();
+        let env_var_name_for_tooltip = env_var_name.clone();
+
+        return ConfiguredApiCard::new(configured_label)
+            .button_id(button_id)
+            .button_label("Reset Key")
+            .button_tab_index(0)
+            .disabled(is_from_env_var)
+            .when(is_from_env_var, |this| {
+                this.tooltip_label(format!(
+                    "To reset your API key, unset the {env_var_name_for_tooltip} environment variable."
+                ))
+            })
+            .on_click(move |_, _, cx| {
+                provider.reset_credentials(cx).detach_and_log_err(cx);
+            })
+            .into_any_element();
+    }
+
+    let input_id = format!("{}-api-key-input", provider.id().0);
+    let aria_label = format!("{provider_name} API Key");
+    let provider = provider.clone();
 
     h_flex()
+        .pt_2p5()
         .w_full()
-        .py_4()
+        .min_w_0()
         .gap_4()
         .justify_between()
-        .child(left)
-        .child(h_flex().flex_none().child(control))
+        .child(
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .max_w_1_2()
+                .child(Label::new("API Key"))
+                .child(
+                    h_flex()
+                        .w_full()
+                        .min_w_0()
+                        .flex_wrap()
+                        .gap_0p5()
+                        .child(
+                            Label::new("Visit the")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            ButtonLink::new(format!("{provider_name} dashboard"), api_key_url)
+                                .no_icon(true)
+                                .label_size(LabelSize::Small)
+                                .label_color(Color::Muted),
+                        )
+                        .child(
+                            Label::new("to generate an API key.")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+                .child(
+                    Label::new(format!(
+                        "Or set the {env_var_name} env var and restart Zed."
+                    ))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+                ),
+        )
+        .child(
+            SettingsInputField::new(input_id)
+                .tab_index(0)
+                .with_placeholder("xxxxxxxxxxxxxxxxxxxx")
+                .aria_label(aria_label)
+                .on_confirm(move |api_key, _window, cx| {
+                    if let Some(key) = api_key.filter(|key| !key.is_empty()) {
+                        provider.set_api_key(key, cx).detach_and_log_err(cx);
+                    }
+                }),
+        )
+        .into_any_element()
+}
+
+/// Body for non-API-key inline providers (sign-in based): an optional
+/// description on the left and the provider's own control on the right.
+fn render_inline_body(
+    provider: &Arc<dyn LanguageModelProvider>,
+    view: AnyView,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let provider_name = provider.name().0;
+    let title = provider.inline_title(cx);
+    let description = provider.inline_description(cx);
+
+    h_flex()
+        .pt_2p5()
+        .w_full()
+        .min_w_0()
+        .gap_4()
+        .items_center()
+        .justify_between()
+        .child(
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .max_w_1_2()
+                .when_some(title, |this, title| this.child(Label::new(title)))
+                .when_some(description, |this, description| {
+                    this.child(render_inline_description(provider_name, description))
+                }),
+        )
+        .child(h_flex().flex_none().child(view))
+        .into_any_element()
+}
+
+/// Body for providers that configure on a dedicated sub-page: a "Configure"
+/// button that pushes that sub-page.
+fn render_subpage_body(
+    provider: &Arc<dyn LanguageModelProvider>,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let provider_id = provider.id();
+    let provider_name = provider.name().0;
+    let description = provider.inline_description(cx);
+
+    h_flex()
+        .pt_2p5()
+        .w_full()
+        .min_w_0()
+        .gap_4()
+        .items_center()
+        .justify_between()
+        .child(
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .max_w_1_2()
+                .child(Label::new("Configure Provider"))
+                .when_some(description, |this, description| {
+                    this.child(render_inline_description(provider_name, description))
+                }),
+        )
+        .child(
+            Button::new(format!("configure-{}", provider_id.0), "Configure")
+                .style(ButtonStyle::OutlinedGhost)
+                .size(ButtonSize::Medium)
+                .end_icon(
+                    Icon::new(IconName::ChevronRight)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .tab_index(0isize)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    open_provider_configuration(this, provider_id.clone(), window, cx);
+                })),
+        )
         .into_any_element()
 }
 

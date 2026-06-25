@@ -32,11 +32,12 @@ use gpui::{
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
 use language_model::{
-    AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, TokenUsage, env_var,
+    AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
+    TokenUsage, env_var,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -458,6 +459,12 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
 
     fn icon(&self) -> IconOrSvg {
         IconOrSvg::Icon(IconName::AiBedrock)
+    }
+
+    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
+        Some(InlineDescription::Text(
+            "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials.".into(),
+        ))
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {

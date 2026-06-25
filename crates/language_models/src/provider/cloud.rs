@@ -401,6 +401,22 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         ))
     }
 
+    fn inline_title(&self, cx: &App) -> Option<SharedString> {
+        let state = self.state.read(cx);
+        if state.is_signed_out(cx) {
+            return None;
+        }
+        let plan_name = match state.user_store.read(cx).plan()? {
+            Plan::ZedPro => "Pro",
+            Plan::ZedProTrial => "Pro Trial",
+            Plan::ZedStudent => "Student",
+            Plan::ZedBusiness => "Business",
+            Plan::ZedVip => "VIP",
+            Plan::ZedFree => return None,
+        };
+        Some(format!("Subscribed to {plan_name}").into())
+    }
+
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }

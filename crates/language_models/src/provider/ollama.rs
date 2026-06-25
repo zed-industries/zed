@@ -7,9 +7,9 @@ use futures::{Stream, TryFutureExt, stream};
 use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ApiKeyState, AuthenticateError, DisabledReason, EnvVar, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    ApiKeyState, AuthenticateError, DisabledReason, EnvVar, IconOrSvg, InlineDescription,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestTool,
     LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
     RateLimiter, Role, StopReason, TokenUsage, env_var,
@@ -275,6 +275,12 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
 
     fn icon(&self) -> IconOrSvg {
         IconOrSvg::Icon(IconName::AiOllama)
+    }
+
+    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
+        Some(InlineDescription::Text(
+            "Run local models on your machine with Ollama.".into(),
+        ))
     }
 
     fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
