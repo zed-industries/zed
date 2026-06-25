@@ -78,21 +78,13 @@ impl TextFinderDb {
     }
 }
 
-/// A query to pre-populate the Text Finder with, optionally with the search filters to restore
-/// alongside it. Filters are restored only when resuming a persisted search; when seeding from
-/// the active item the filters are left at their setting-derived defaults.
+/// A query to pre-populate the Text Finder with, plus the search filters to restore alongside
+/// it. `options` carries the workspace's last-used filters when there are any persisted; it is
+/// `None` only the first time the finder is used in a workspace, leaving the filters at their
+/// setting-derived defaults.
 pub(crate) struct SearchSeed {
     query: String,
     options: Option<SearchOptions>,
-}
-
-impl SearchSeed {
-    fn from_query(query: String) -> Self {
-        Self {
-            query,
-            options: None,
-        }
-    }
 }
 
 fn store_last_search(
@@ -304,44 +296,66 @@ impl TextFinder {
             .update(cx, |p, _| p.delegate.in_progress_search.take_connected())
     }
 
-    /// The query to pre-populate the text finder with, sourced in priority order:
-    /// an active project search's query, then a focused buffer search bar's query,
-    /// then an explicit selection in the active editor, then the last query searched
-    /// in this workspace (so reopening resumes the previous search, JetBrains-style).
+    /// What to pre-populate the text finder with on open.
     ///
-    /// Only an explicit selection seeds from the editor; the bare word under the
-    /// cursor is ignored. Confirming a match jumps to (and places the cursor on) it,
-    /// so seeding from the cursor on reopen would clobber the search you were in the
-    /// middle of, whereas a deliberate selection (e.g. a double-click) is a clear
-    /// signal to search for that text.
+    /// The query is sourced in priority order: an active project search's query, then a
+    /// focused buffer search bar's query, then an explicit selection in the active editor,
+    /// then the last query searched in this workspace (so reopening resumes the previous
+    /// search, JetBrains-style).
+    ///
+    /// The filters (case sensitive, whole word, regex) are sticky independently of the query:
+    /// the last filters used in this workspace are restored regardless of where the query came
+    /// from, mirroring JetBrains' Find in Files where the filter toggles persist across searches.
     fn seed_query(
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Option<SearchSeed> {
-        if let Some(item) = workspace.active_item(cx) {
-            if let Some(project_search) = item.downcast::<ProjectSearchView>() {
-                let query = project_search.read(cx).search_query_text(cx);
-                if !query.is_empty() {
-                    return Some(SearchSeed::from_query(query));
-                }
-            }
+        let last_search = load_last_search(workspace.database_id(), cx);
+        let options = last_search.as_ref().and_then(|seed| seed.options);
 
-            if let Some(query) =
-                crate::project_search::buffer_search_query(workspace, item.as_ref(), cx)
-            {
-                return Some(SearchSeed::from_query(query));
-            }
+        let query = Self::active_item_query(workspace, window, cx)
+            .or_else(|| last_search.map(|seed| seed.query))?;
 
-            if let Some(editor) = item.act_as::<Editor>(cx) {
-                let query = editor.query_suggestion(Some(SeedQuerySetting::Selection), window, cx);
-                if !query.is_empty() {
-                    return Some(SearchSeed::from_query(query));
-                }
+        Some(SearchSeed { query, options })
+    }
+
+    /// The query to seed from the active item, in priority order: an active project search's
+    /// query, then a focused buffer search bar's query, then an explicit selection in the active
+    /// editor.
+    ///
+    /// Only an explicit selection seeds from the editor; the bare word under the cursor is
+    /// ignored. Confirming a match jumps to (and places the cursor on) it, so seeding from the
+    /// cursor on reopen would clobber the search you were in the middle of, whereas a deliberate
+    /// selection (e.g. a double-click) is a clear signal to search for that text.
+    fn active_item_query(
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Option<String> {
+        let item = workspace.active_item(cx)?;
+
+        if let Some(project_search) = item.downcast::<ProjectSearchView>() {
+            let query = project_search.read(cx).search_query_text(cx);
+            if !query.is_empty() {
+                return Some(query);
             }
         }
 
-        load_last_search(workspace.database_id(), cx)
+        if let Some(query) =
+            crate::project_search::buffer_search_query(workspace, item.as_ref(), cx)
+        {
+            return Some(query);
+        }
+
+        if let Some(editor) = item.act_as::<Editor>(cx) {
+            let query = editor.query_suggestion(Some(SeedQuerySetting::Selection), window, cx);
+            if !query.is_empty() {
+                return Some(query);
+            }
+        }
+
+        None
     }
 
     pub(crate) fn open(
