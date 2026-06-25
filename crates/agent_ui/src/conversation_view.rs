@@ -6550,7 +6550,9 @@ pub(crate) mod tests {
                 .find_map(|entry| match entry {
                     AgentThreadEntry::AssistantMessage(message) => {
                         message.chunks.iter().find_map(|chunk| match chunk {
-                            AssistantMessageChunk::Message { block } => block.markdown().cloned(),
+                            AssistantMessageChunk::Message { block, .. } => {
+                                block.markdown().cloned()
+                            }
                             AssistantMessageChunk::Thought { .. } => None,
                         })
                     }

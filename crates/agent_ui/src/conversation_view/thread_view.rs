@@ -6115,7 +6115,7 @@ impl ThreadView {
                     .gap_3()
                     .children(chunks.iter().enumerate().filter_map(
                         |(chunk_ix, chunk)| match chunk {
-                            AssistantMessageChunk::Message { block } => {
+                            AssistantMessageChunk::Message { block, .. } => {
                                 block.markdown().and_then(|md| {
                                     let this_is_blank = md.read(cx).source().trim().is_empty();
                                     is_blank = is_blank && this_is_blank;
@@ -6129,7 +6129,7 @@ impl ThreadView {
                                     )
                                 })
                             }
-                            AssistantMessageChunk::Thought { block } => {
+                            AssistantMessageChunk::Thought { block, .. } => {
                                 block.markdown().and_then(|md| {
                                     let this_is_blank = md.read(cx).source().trim().is_empty();
                                     is_blank = is_blank && this_is_blank;
@@ -7129,8 +7129,12 @@ impl ThreadView {
                         .map(|chunks| {
                             chunks.iter().any(|chunk| {
                                 let md = match chunk {
-                                    AssistantMessageChunk::Message { block } => block.markdown(),
-                                    AssistantMessageChunk::Thought { block } => block.markdown(),
+                                    AssistantMessageChunk::Message { block, .. } => {
+                                        block.markdown()
+                                    }
+                                    AssistantMessageChunk::Thought { block, .. } => {
+                                        block.markdown()
+                                    }
                                 };
                                 md.map_or(false, |m| m.read(cx).selected_text().is_some())
                             })
@@ -7140,8 +7144,8 @@ impl ThreadView {
                     let context_menu_link = chunks.and_then(|chunks| {
                         chunks.iter().find_map(|chunk| {
                             let md = match chunk {
-                                AssistantMessageChunk::Message { block } => block.markdown(),
-                                AssistantMessageChunk::Thought { block } => block.markdown(),
+                                AssistantMessageChunk::Message { block, .. } => block.markdown(),
+                                AssistantMessageChunk::Thought { block, .. } => block.markdown(),
                             };
                             md.and_then(|m| m.read(cx).context_menu_link().cloned())
                         })
@@ -7247,7 +7251,7 @@ impl ThreadView {
                         .chunks
                         .iter()
                         .filter_map(|chunk| match chunk {
-                            AssistantMessageChunk::Message { block } => {
+                            AssistantMessageChunk::Message { block, .. } => {
                                 let markdown = block.to_markdown(cx);
                                 if markdown.trim().is_empty() {
                                     None
