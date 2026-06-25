@@ -342,6 +342,7 @@ fn supported_thinking_effort_levels(model: &x_ai::Model) -> Vec<LanguageModelEff
                 open_ai::ReasoningEffort::Medium => ("Medium", "medium"),
                 open_ai::ReasoningEffort::High => ("High", "high"),
                 open_ai::ReasoningEffort::XHigh => ("Extra High", "xhigh"),
+                open_ai::ReasoningEffort::Max => return None, // Not supported by any xAI models
             };
 
             Some(LanguageModelEffortLevel {

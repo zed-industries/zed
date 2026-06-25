@@ -516,7 +516,7 @@ mod tests {
             .map(|level| level.value.as_ref())
             .collect::<Vec<_>>();
 
-        assert_eq!(values, ["minimal", "low", "medium", "high", "xhigh"]);
+        assert_eq!(values, ["minimal", "low", "medium", "high", "xhigh", "max"]);
         assert_eq!(
             effort_levels
                 .iter()

@@ -41,7 +41,7 @@ use util::{
 };
 use uuid::Uuid;
 use workspace::{AppState, CollaboratorId, MultiWorkspace};
-use zeta_prompt::ZetaPromptInput;
+use zeta_prompt::Zeta2PromptInput;
 
 use crate::udiff::apply_diff_to_string;
 use crate::{
@@ -2699,7 +2699,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
         buffer: buffer.clone(),
         snapshot: cx.read(|cx| buffer.read(cx).snapshot()),
         id: EditPredictionId("the-id".into()),
-        inputs: ZetaPromptInput {
+        inputs: EditPredictionInputs::V2(Zeta2PromptInput {
             events: Default::default(),
             related_files: Default::default(),
             active_buffer_diagnostics: vec![],
@@ -2712,7 +2712,7 @@ async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
             in_open_source_repo: false,
             can_collect_data: false,
             repo_url: None,
-        },
+        }),
         model_version: None,
         trigger: PredictEditsRequestTrigger::Other,
     };
