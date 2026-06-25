@@ -1,10 +1,11 @@
 #[cfg(any(test, feature = "test-support"))]
 use crate::transport::mock::ConnectGuard;
 use crate::{
-    SshConnectionOptions,
+    CodespaceConnectionOptions, SshConnectionOptions,
     protocol::MessageId,
     proxy::ProxyLaunchError,
     transport::{
+        codespace::codespace_ssh_connection,
         docker::{DockerConnectionOptions, DockerExecConnection},
         ssh::SshRemoteConnection,
         wsl::{WslConnectionOptions, WslRemoteConnection},
@@ -1271,6 +1272,20 @@ impl ConnectionPool {
                                 .await
                                 .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
                         }
+                        RemoteConnectionOptions::Codespace(opts) => {
+                            delegate
+                                .set_status(Some("Generating Codespaces SSH configuration"), cx);
+                            let ssh_connection = codespace_ssh_connection(&opts).await?;
+                            SshRemoteConnection::new_with_reported_connection_options(
+                                ssh_connection.ssh_options,
+                                RemoteConnectionOptions::Codespace(opts),
+                                ssh_connection.ssh_config_dir,
+                                delegate,
+                                cx,
+                            )
+                            .await
+                            .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>)
+                        }
                         RemoteConnectionOptions::Docker(opts) => {
                             DockerExecConnection::new(opts, delegate, cx)
                                 .await
@@ -1322,6 +1337,7 @@ impl ConnectionPool {
 pub enum RemoteConnectionOptions {
     Ssh(SshConnectionOptions),
     Wsl(WslConnectionOptions),
+    Codespace(CodespaceConnectionOptions),
     Docker(DockerConnectionOptions),
     #[cfg(any(test, feature = "test-support"))]
     Mock(crate::transport::mock::MockConnectionOptions),
@@ -1335,6 +1351,7 @@ impl RemoteConnectionOptions {
                 .clone()
                 .unwrap_or_else(|| opts.host.to_string()),
             RemoteConnectionOptions::Wsl(opts) => opts.distro_name.clone(),
+            RemoteConnectionOptions::Codespace(opts) => opts.name.clone(),
             RemoteConnectionOptions::Docker(opts) => {
                 if opts.use_podman {
                     format!("[podman] {}", opts.name)
@@ -1353,6 +1370,7 @@ impl RemoteConnectionOptions {
         match self {
             RemoteConnectionOptions::Ssh(_) => "ssh",
             RemoteConnectionOptions::Wsl(_) => "wsl",
+            RemoteConnectionOptions::Codespace(_) => "codespace",
             RemoteConnectionOptions::Docker(opts) => {
                 if opts.use_podman {
                     "podman"
@@ -1408,6 +1426,13 @@ mod tests {
             "wsl"
         );
         assert_eq!(
+            RemoteConnectionOptions::Codespace(CodespaceConnectionOptions {
+                name: "octocat-hello-123".to_string(),
+            })
+            .connection_type(),
+            "codespace"
+        );
+        assert_eq!(
             RemoteConnectionOptions::Docker(DockerConnectionOptions {
                 use_podman: false,
                 ..Default::default()
@@ -1423,6 +1448,15 @@ mod tests {
             .connection_type(),
             "podman"
         );
+    }
+
+    #[test]
+    fn test_codespace_display_name_uses_name() {
+        let options = RemoteConnectionOptions::Codespace(CodespaceConnectionOptions {
+            name: "octocat-hello-123".to_string(),
+        });
+
+        assert_eq!(options.display_name(), "octocat-hello-123");
     }
 
     #[gpui::test]
@@ -1566,6 +1600,12 @@ impl From<SshConnectionOptions> for RemoteConnectionOptions {
 impl From<WslConnectionOptions> for RemoteConnectionOptions {
     fn from(opts: WslConnectionOptions) -> Self {
         RemoteConnectionOptions::Wsl(opts)
+    }
+}
+
+impl From<CodespaceConnectionOptions> for RemoteConnectionOptions {
+    fn from(opts: CodespaceConnectionOptions) -> Self {
+        RemoteConnectionOptions::Codespace(opts)
     }
 }
 

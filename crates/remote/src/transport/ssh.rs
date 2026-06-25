@@ -50,6 +50,8 @@ pub(crate) struct SshRemoteConnection {
     ssh_shell_kind: ShellKind,
     ssh_default_system_shell: String,
     _temp_dir: TempDir,
+    _extra_temp_dir: Option<TempDir>,
+    reported_connection_options: Option<RemoteConnectionOptions>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -292,7 +294,9 @@ impl RemoteConnection for SshRemoteConnection {
     }
 
     fn connection_options(&self) -> RemoteConnectionOptions {
-        RemoteConnectionOptions::Ssh(self.socket.connection_options.clone())
+        self.reported_connection_options
+            .clone()
+            .unwrap_or_else(|| RemoteConnectionOptions::Ssh(self.socket.connection_options.clone()))
     }
 
     fn shell(&self) -> String {
@@ -779,6 +783,8 @@ impl SshRemoteConnection {
             master_process: Mutex::new(master_process_option),
             killed: AtomicBool::new(false),
             _temp_dir: temp_dir,
+            _extra_temp_dir: None,
+            reported_connection_options: None,
             remote_binary_path: None,
             ssh_path_style,
             ssh_platform,
@@ -795,6 +801,19 @@ impl SshRemoteConnection {
                 .await?,
         );
 
+        Ok(this)
+    }
+
+    pub(crate) async fn new_with_reported_connection_options(
+        connection_options: SshConnectionOptions,
+        reported_connection_options: RemoteConnectionOptions,
+        extra_temp_dir: TempDir,
+        delegate: Arc<dyn RemoteClientDelegate>,
+        cx: &mut AsyncApp,
+    ) -> Result<Self> {
+        let mut this = Self::new(connection_options, delegate, cx).await?;
+        this.reported_connection_options = Some(reported_connection_options);
+        this._extra_temp_dir = Some(extra_temp_dir);
         Ok(this)
     }
 

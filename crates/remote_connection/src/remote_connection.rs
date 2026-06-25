@@ -240,6 +240,9 @@ impl RemoteConnectionModal {
             RemoteConnectionOptions::Wsl(options) => {
                 (options.distro_name.clone(), None, true, false)
             }
+            RemoteConnectionOptions::Codespace(options) => {
+                (options.name.clone(), None, false, false)
+            }
             RemoteConnectionOptions::Docker(options) => (options.name.clone(), None, false, true),
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionOptions::Mock(options) => {

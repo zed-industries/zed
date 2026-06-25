@@ -17,13 +17,18 @@ pub enum RemoteConnectionIdentity {
         distro_name: String,
         user: Option<String>,
     },
+    Codespace {
+        name: String,
+    },
     Docker {
         container_id: String,
         name: String,
         remote_user: String,
     },
     #[cfg(any(test, feature = "test-support"))]
-    Mock { id: u64 },
+    Mock {
+        id: u64,
+    },
 }
 
 impl RemoteConnectionIdentity {
@@ -46,6 +51,7 @@ impl RemoteConnectionIdentity {
                 user.as_deref().unwrap_or_default(),
                 distro_name
             ),
+            Self::Codespace { name } => format!("codespace:{name}"),
             Self::Docker {
                 container_id,
                 name,
@@ -68,6 +74,9 @@ impl From<&RemoteConnectionOptions> for RemoteConnectionIdentity {
             RemoteConnectionOptions::Wsl(options) => Self::Wsl {
                 distro_name: options.distro_name.clone(),
                 user: options.user.clone(),
+            },
+            RemoteConnectionOptions::Codespace(options) => Self::Codespace {
+                name: options.name.clone(),
             },
             RemoteConnectionOptions::Docker(options) => Self::Docker {
                 container_id: options.container_id.clone(),
@@ -162,6 +171,18 @@ mod tests {
         });
 
         assert!(!same_remote_connection_identity(Some(&left), Some(&right),));
+    }
+
+    #[test]
+    fn codespace_identity_uses_name() {
+        let left = RemoteConnectionOptions::Codespace(crate::CodespaceConnectionOptions {
+            name: "octocat-hello-123".to_string(),
+        });
+        let right = RemoteConnectionOptions::Codespace(crate::CodespaceConnectionOptions {
+            name: "octocat-hello-123".to_string(),
+        });
+
+        assert!(same_remote_connection_identity(Some(&left), Some(&right),));
     }
 
     #[test]

@@ -408,6 +408,10 @@ impl ProjectPicker {
             RemoteConnectionOptions::Wsl(connection) => ProjectPickerData::Wsl {
                 distro_name: connection.distro_name.clone().into(),
             },
+            RemoteConnectionOptions::Codespace(connection) => ProjectPickerData::Ssh {
+                connection_string: connection.name.clone().into(),
+                nickname: None,
+            },
             RemoteConnectionOptions::Docker(_) => ProjectPickerData::Ssh {
                 // Not implemented as a project picker at this time
                 connection_string: "".into(),

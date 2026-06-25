@@ -9722,6 +9722,9 @@ pub fn workspace_windows_for_location(
                     // The WSL username is not consistently populated in the workspace location, so ignore it for now.
                     a.distro_name == b.distro_name
                 }
+                (RemoteConnectionOptions::Codespace(a), RemoteConnectionOptions::Codespace(b)) => {
+                    a.name == b.name
+                }
                 (RemoteConnectionOptions::Docker(a), RemoteConnectionOptions::Docker(b)) => {
                     a.container_id == b.container_id
                 }

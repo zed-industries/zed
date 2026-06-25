@@ -29,8 +29,9 @@ use project::{
 
 use language::{LanguageName, Toolchain, ToolchainScope};
 use remote::{
-    DockerConnectionOptions, RemoteConnectionIdentity, RemoteConnectionOptions,
-    SshConnectionOptions, WslConnectionOptions, remote_connection_identity,
+    CodespaceConnectionOptions, DockerConnectionOptions, RemoteConnectionIdentity,
+    RemoteConnectionOptions, SshConnectionOptions, WslConnectionOptions,
+    remote_connection_identity,
 };
 use serde::{Deserialize, Serialize};
 use sqlez::{
@@ -1697,6 +1698,13 @@ impl WorkspaceDb {
                 name = Some(identity_name);
                 user = Some(remote_user);
             }
+            RemoteConnectionIdentity::Codespace {
+                name: identity_name,
+            } => {
+                kind = RemoteConnectionKind::Codespace;
+                name = Some(identity_name);
+                user = None;
+            }
             #[cfg(any(test, feature = "test-support"))]
             RemoteConnectionIdentity::Mock { id } => {
                 kind = RemoteConnectionKind::Ssh;
@@ -1988,6 +1996,9 @@ impl WorkspaceDb {
                     remote_env,
                 }))
             }
+            RemoteConnectionKind::Codespace => Some(RemoteConnectionOptions::Codespace(
+                CodespaceConnectionOptions { name: name? },
+            )),
         }
     }
 
@@ -4204,6 +4215,37 @@ mod tests {
             .unwrap();
 
         assert_eq!(connection_id, same_connection_id);
+    }
+
+    #[gpui::test]
+    async fn test_get_or_create_codespace_project_round_trip() {
+        let db = WorkspaceDb::open_test_db("test_get_or_create_codespace_project_round_trip").await;
+
+        let options = RemoteConnectionOptions::Codespace(CodespaceConnectionOptions {
+            name: "octocat-hello-123".to_string(),
+        });
+
+        let connection_id = db
+            .get_or_create_remote_connection(options.clone())
+            .await
+            .unwrap();
+
+        let same_connection_id = db
+            .get_or_create_remote_connection(RemoteConnectionOptions::Codespace(
+                CodespaceConnectionOptions {
+                    name: "octocat-hello-123".to_string(),
+                },
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(connection_id, same_connection_id);
+        assert_eq!(
+            db.remote_connection(connection_id).unwrap(),
+            RemoteConnectionOptions::Codespace(CodespaceConnectionOptions {
+                name: "octocat-hello-123".to_string(),
+            })
+        );
     }
 
     #[gpui::test]

@@ -317,6 +317,9 @@ pub async fn open_remote_project(
                             match connection_options {
                                 RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
                                 RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
+                                RemoteConnectionOptions::Codespace(_) => {
+                                    "Failed to connect to GitHub Codespace"
+                                }
                                 RemoteConnectionOptions::Docker(_) => {
                                     "Failed to connect to Dev Container"
                                 }
@@ -378,6 +381,9 @@ pub async fn open_remote_project(
                             match connection_options {
                                 RemoteConnectionOptions::Ssh(_) => "Failed to connect over SSH",
                                 RemoteConnectionOptions::Wsl(_) => "Failed to connect to WSL",
+                                RemoteConnectionOptions::Codespace(_) => {
+                                    "Failed to connect to GitHub Codespace"
+                                }
                                 RemoteConnectionOptions::Docker(_) => {
                                     "Failed to connect to Dev Container"
                                 }
