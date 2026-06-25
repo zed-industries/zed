@@ -4291,6 +4291,208 @@ async fn test_diagnostic_summaries_cleared_on_buffer_reload(cx: &mut gpui::TestA
 }
 
 #[gpui::test]
+async fn test_diagnostic_summaries_cleared_on_buffer_close_based_on_workspace_diagnostics(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/dir"), json!({ "a.rs": "one two three" }))
+        .await;
+
+    // 1. Scenario A: Server has workspace_diagnostics: false. Diagnostics should be cleared on close.
+    let project_no_ws = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry_no_ws = project_no_ws.read_with(cx, |project, _| project.languages().clone());
+    language_registry_no_ws.add(rust_lang());
+
+    let mut fake_servers_no_ws = language_registry_no_ws.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                    lsp::DiagnosticOptions {
+                        identifier: Some("test-close-no-ws".to_string()),
+                        inter_file_dependencies: true,
+                        workspace_diagnostics: false,
+                        work_done_progress_options: Default::default(),
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new(move |fake_server| {
+                fake_server.set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(
+                    move |_, _| async move {
+                        Ok(lsp::DocumentDiagnosticReportResult::Report(
+                            lsp::DocumentDiagnosticReport::Full(
+                                lsp::RelatedFullDocumentDiagnosticReport {
+                                    related_documents: None,
+                                    full_document_diagnostic_report:
+                                        lsp::FullDocumentDiagnosticReport {
+                                            result_id: None,
+                                            items: vec![lsp::Diagnostic {
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(0, 0),
+                                                    lsp::Position::new(0, 3),
+                                                ),
+                                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                                message: "pulled error no-ws".to_string(),
+                                                ..Default::default()
+                                            }],
+                                        },
+                                },
+                            ),
+                        ))
+                    },
+                );
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (buffer_no_ws, handle_no_ws) = project_no_ws
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _fake_server_no_ws = fake_servers_no_ws.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    // Manually trigger diagnostics pull so they are populated
+    let lsp_store_no_ws = project_no_ws.read_with(cx, |project, _| project.lsp_store());
+    lsp_store_no_ws.update(cx, |lsp_store, cx| {
+        lsp_store.pull_diagnostics_for_buffer(buffer_no_ws.clone(), cx).detach();
+    });
+    cx.executor().run_until_parked();
+
+    project_no_ws.update(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(false, cx),
+            DiagnosticSummary {
+                error_count: 1,
+                warning_count: 0,
+            }
+        );
+    });
+
+    cx.update(|_| {
+        drop(buffer_no_ws);
+        drop(handle_no_ws);
+    });
+    cx.executor().run_until_parked();
+
+    project_no_ws.update(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(false, cx),
+            DiagnosticSummary {
+                error_count: 0,
+                warning_count: 0,
+            }
+        );
+    });
+
+    // 2. Scenario B: Server has workspace_diagnostics: true. Diagnostics should be retained on close.
+    let project_ws = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry_ws = project_ws.read_with(cx, |project, _| project.languages().clone());
+    language_registry_ws.add(rust_lang());
+
+    let mut fake_servers_ws = language_registry_ws.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                diagnostic_provider: Some(lsp::DiagnosticServerCapabilities::Options(
+                    lsp::DiagnosticOptions {
+                        identifier: Some("test-close-ws".to_string()),
+                        inter_file_dependencies: true,
+                        workspace_diagnostics: true,
+                        work_done_progress_options: Default::default(),
+                    },
+                )),
+                ..lsp::ServerCapabilities::default()
+            },
+            initializer: Some(Box::new(move |fake_server| {
+                fake_server.set_request_handler::<lsp::request::DocumentDiagnosticRequest, _, _>(
+                    move |_, _| async move {
+                        Ok(lsp::DocumentDiagnosticReportResult::Report(
+                            lsp::DocumentDiagnosticReport::Full(
+                                lsp::RelatedFullDocumentDiagnosticReport {
+                                    related_documents: None,
+                                    full_document_diagnostic_report:
+                                        lsp::FullDocumentDiagnosticReport {
+                                            result_id: None,
+                                            items: vec![lsp::Diagnostic {
+                                                range: lsp::Range::new(
+                                                    lsp::Position::new(0, 0),
+                                                    lsp::Position::new(0, 3),
+                                                ),
+                                                severity: Some(lsp::DiagnosticSeverity::ERROR),
+                                                message: "pulled error ws".to_string(),
+                                                ..Default::default()
+                                            }],
+                                        },
+                                },
+                            ),
+                        ))
+                    },
+                );
+                fake_server.set_request_handler::<lsp::request::WorkspaceDiagnosticRequest, _, _>(
+                    move |_, _| async move {
+                        Ok(lsp::WorkspaceDiagnosticReportResult::Report(
+                            lsp::WorkspaceDiagnosticReport { items: Vec::new() },
+                        ))
+                    },
+                );
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (buffer_ws, handle_ws) = project_ws
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let _fake_server_ws = fake_servers_ws.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    // Manually trigger diagnostics pull so they are populated
+    let lsp_store_ws = project_ws.read_with(cx, |project, _| project.lsp_store());
+    lsp_store_ws.update(cx, |lsp_store, cx| {
+        lsp_store.pull_diagnostics_for_buffer(buffer_ws.clone(), cx).detach();
+    });
+    cx.executor().run_until_parked();
+
+    project_ws.update(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(false, cx),
+            DiagnosticSummary {
+                error_count: 1,
+                warning_count: 0,
+            }
+        );
+    });
+
+    cx.update(|_| {
+        drop(buffer_ws);
+        drop(handle_ws);
+    });
+    cx.executor().run_until_parked();
+
+    project_ws.update(cx, |project, cx| {
+        assert_eq!(
+            project.diagnostic_summary(false, cx),
+            DiagnosticSummary {
+                error_count: 1,
+                warning_count: 0,
+            }
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
