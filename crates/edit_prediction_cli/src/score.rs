@@ -66,18 +66,6 @@ pub async fn run_scoring(
                 None
             };
 
-            let prepared_expected_patches = edit_prediction_metrics::prepare_expected_patches(
-                &expected_patches_with_cursors,
-                original_text,
-                old_editable_region.as_deref(),
-            )
-            .with_context(|| {
-                format!(
-                    "Expected patch did not apply for {}",
-                    example_for_scoring.spec.name
-                )
-            })?;
-
             let cursor_path = example_for_scoring.spec.cursor_path.as_ref();
             let context = context_excerpts(
                 &example_for_scoring,
@@ -85,6 +73,30 @@ pub async fn run_scoring(
                 retrieved_context_byte_limit,
                 context_source_filter.as_deref(),
             );
+
+            let prepared_expected_patches = match edit_prediction_metrics::prepare_expected_patches(
+                &expected_patches_with_cursors,
+                original_text,
+                old_editable_region.as_deref(),
+            ) {
+                Ok(prepared_expected_patches) => prepared_expected_patches,
+                Err(_) if !context.is_empty() => expected_patches_with_cursors
+                    .iter()
+                    .map(|(patch, cursor_offset)| edit_prediction_metrics::PreparedExpectedPatch {
+                        patch: patch.clone(),
+                        text: original_text.to_string(),
+                        cursor_editable_region_offset: *cursor_offset,
+                    })
+                    .collect(),
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "Expected patch did not apply for {}",
+                            example_for_scoring.spec.name
+                        )
+                    });
+                }
+            };
 
             let mut scores = vec![];
             if allow_missing_predictions && example_for_scoring.predictions.is_empty() {
@@ -295,8 +307,6 @@ pub fn print_report(
     context_source_filter: Option<&[ContextSource]>,
 ) {
     const MAX_EXAMPLES_DEFAULT: usize = 20;
-    use crate::metrics::ClassificationMetrics;
-
     const LINE_WIDTH: usize = 101;
 
     if context_only {
@@ -318,59 +328,14 @@ pub fn print_report(
     );
     println!("{}", separator);
 
-    let mut all_delta_chr_f_scores = Vec::new();
-    let mut all_reversal_ratios = Vec::new();
-    let mut braces_disbalance_sum: usize = 0;
-    let mut total_delta_chr_f = ClassificationMetrics::default();
-    let mut total_delta_chr_f_precision = 0.0;
-    let mut total_delta_chr_f_recall = 0.0;
-    let mut delta_chr_f_beta = 0.0;
-    let mut total_exact_lines = ClassificationMetrics::default();
-    let mut total_scores: usize = 0;
-    let mut qa_reverts_count: usize = 0;
-    let mut qa_reverts_total: usize = 0;
-    let mut qa_confidence_sum: u64 = 0;
-    let mut qa_confidence_count: usize = 0;
-    let mut cursor_exact_matches: usize = 0;
-    let mut cursor_total: usize = 0;
-    let mut cursor_distance_sum: usize = 0;
-    let mut cursor_distance_count: usize = 0;
-    let mut wrong_editable_region_count: usize = 0;
-    let mut wrong_editable_region_total: usize = 0;
-    let mut isolated_whitespace_count: usize = 0;
-    let mut kept_rate_sum: f64 = 0.0;
-    let mut kept_rate_count: usize = 0;
-    let mut kept_chars_total: usize = 0;
-    let mut correctly_deleted_chars_total: usize = 0;
-    let mut discarded_chars_total: usize = 0;
-    let mut recall_rate_sum: f64 = 0.0;
-    let mut recall_rate_count: usize = 0;
-    let mut editable_context_coverage_count: usize = 0;
-    let mut editable_context_lines_precision_sum = 0.0;
-    let mut editable_context_lines_recall_sum = 0.0;
-    let mut editable_context_lines_f1_sum = 0.0;
-    let mut editable_context_files_precision_sum = 0.0;
-    let mut editable_context_files_recall_sum = 0.0;
-    let mut editable_context_files_f1_sum = 0.0;
-    let mut total_editable_context_lines = ClassificationMetrics::default();
-    let mut total_editable_context_files = ClassificationMetrics::default();
     let mut patch_inserted_tokens: Vec<usize> = Vec::new();
     let mut patch_deleted_tokens: Vec<usize> = Vec::new();
     let mut predictions_with_patch: usize = 0;
-    let mut retrieved_context_bytes_sum = 0.0;
-    let mut retrieved_context_bytes_count = 0;
 
     let mut printed_lines: usize = 0;
     let mut skipped_lines: usize = 0;
 
     for example in examples {
-        if let Some(bytes) =
-            retrieved_context_bytes(example, retrieved_context_byte_limit, context_source_filter)
-        {
-            retrieved_context_bytes_sum += bytes as f64;
-            retrieved_context_bytes_count += 1;
-        }
-
         for (score_idx, score) in example.score.iter().enumerate() {
             let exact_lines = score.exact_lines_counts();
 
@@ -418,82 +383,8 @@ pub fn print_report(
                 skipped_lines += 1;
             }
 
-            all_delta_chr_f_scores.push(score.delta_chr_f);
-            all_reversal_ratios.push(score.reversal_ratio);
-            total_scores += 1;
-            braces_disbalance_sum += score.braces_disbalance;
-            total_delta_chr_f.accumulate(&score.delta_chr_f_counts());
-            total_delta_chr_f_precision += score.delta_chr_f_precision;
-            total_delta_chr_f_recall += score.delta_chr_f_recall;
-            delta_chr_f_beta = score.delta_chr_f_beta;
-            total_exact_lines.accumulate(&score.exact_lines_counts());
-
-            // Accumulate QA metrics
-            if let Some(qa) = qa_result {
-                if let Some(reverts) = qa.reverts_edits {
-                    qa_reverts_total += 1;
-                    if reverts {
-                        qa_reverts_count += 1;
-                    }
-                }
-                if let Some(conf) = qa.confidence {
-                    qa_confidence_sum += conf as u64;
-                    qa_confidence_count += 1;
-                }
-            }
-
-            // Accumulate wrong editable region metrics
-            if let Some(wrong) = score.wrong_editable_region {
-                wrong_editable_region_total += 1;
-                if wrong {
-                    wrong_editable_region_count += 1;
-                }
-            }
-
-            // Accumulate isolated whitespace metrics
-            if score.has_isolated_whitespace_changes {
-                isolated_whitespace_count += 1;
-            }
-
-            // Accumulate kept and recall rate metrics
-            if let Some(kr) = score.kept_rate {
-                kept_rate_sum += kr;
-                kept_rate_count += 1;
-            }
-            if let Some(kept_chars) = score.kept_chars {
-                kept_chars_total += kept_chars;
-            }
-            if let Some(correctly_deleted_chars) = score.correctly_deleted_chars {
-                correctly_deleted_chars_total += correctly_deleted_chars;
-            }
-            if let Some(discarded_chars) = score.discarded_chars {
-                discarded_chars_total += discarded_chars;
-            }
-            if let Some(rr) = score.recall_rate {
-                recall_rate_sum += rr;
-                recall_rate_count += 1;
-            }
-            if let Some(coverage) = &score.editable_context_coverage {
-                editable_context_coverage_count += 1;
-                editable_context_lines_precision_sum += coverage.lines_precision;
-                editable_context_lines_recall_sum += coverage.lines_recall;
-                editable_context_lines_f1_sum += coverage.lines_f1;
-                editable_context_files_precision_sum += coverage.files_precision;
-                editable_context_files_recall_sum += coverage.files_recall;
-                editable_context_files_f1_sum += coverage.files_f1;
-                total_editable_context_lines.accumulate(&ClassificationMetrics {
-                    true_positives: coverage.lines_tp,
-                    false_positives: coverage.lines_fp,
-                    false_negatives: coverage.lines_fn,
-                });
-                total_editable_context_files.accumulate(&ClassificationMetrics {
-                    true_positives: coverage.files_tp,
-                    false_positives: coverage.files_fp,
-                    false_negatives: coverage.files_fn,
-                });
-            }
-
-            // Accumulate token change metrics (only for predictions that produced a patch)
+            // Token change percentiles need the raw per-prediction values, so
+            // they are collected here rather than in `compute_summary`.
             let has_patch = example
                 .predictions
                 .get(score_idx)
@@ -503,18 +394,6 @@ pub fn print_report(
                 predictions_with_patch += 1;
                 patch_inserted_tokens.push(score.inserted_tokens);
                 patch_deleted_tokens.push(score.deleted_tokens);
-            }
-
-            // Accumulate cursor metrics
-            if let Some(exact_match) = score.cursor_exact_match {
-                cursor_total += 1;
-                if exact_match {
-                    cursor_exact_matches += 1;
-                }
-            }
-            if let Some(dist) = score.cursor_distance {
-                cursor_distance_sum += dist;
-                cursor_distance_count += 1;
             }
         }
     }
@@ -528,68 +407,33 @@ pub fn print_report(
     }
     println!("{}", separator);
 
-    if !all_delta_chr_f_scores.is_empty() {
-        let avg_delta_chr_f: f32 =
-            all_delta_chr_f_scores.iter().sum::<f32>() / all_delta_chr_f_scores.len() as f32;
-        let avg_reversal_ratio: f32 =
-            all_reversal_ratios.iter().sum::<f32>() / all_reversal_ratios.len() as f32;
-        let braces_disbalance_avg: f32 = braces_disbalance_sum as f32 / total_scores as f32;
+    let summary = compute_summary(
+        examples,
+        retrieved_context_byte_limit,
+        context_source_filter,
+    );
 
-        let qa_reverts_str = if qa_reverts_total > 0 {
-            format!(
-                "{:.1}%",
-                qa_reverts_count as f32 / qa_reverts_total as f32 * 100.0
-            )
-        } else {
-            "-".to_string()
+    if summary.total_examples > 0 {
+        let total_scores = summary.total_examples;
+        let format_rate = |rate: Option<f32>, precision: usize| {
+            rate.map(|rate| format!("{:.*}%", precision, rate * 100.0))
+                .unwrap_or_else(|| "-".to_string())
         };
-        let qa_conf_str = if qa_confidence_count > 0 {
-            format!(
-                "{:.1}",
-                qa_confidence_sum as f32 / qa_confidence_count as f32
-            )
-        } else {
-            "-".to_string()
-        };
-        let cursor_str = if cursor_total > 0 {
-            format!(
-                "{:.0}%",
-                cursor_exact_matches as f32 / cursor_total as f32 * 100.0
-            )
-        } else {
-            "-".to_string()
-        };
-        let wrong_er_str = if wrong_editable_region_total > 0 {
-            format!(
-                "{:.2}%",
-                wrong_editable_region_count as f32 / wrong_editable_region_total as f32 * 100.0
-            )
-        } else {
-            "-".to_string()
-        };
-        let isolated_ws_str = if total_scores > 0 {
-            format!(
-                "{}/{} ({:.1}%)",
-                isolated_whitespace_count,
-                total_scores,
-                isolated_whitespace_count as f32 / total_scores as f32 * 100.0
-            )
-        } else {
-            "-".to_string()
-        };
-        let avg_cursor_distance = if cursor_distance_count > 0 {
-            Some(cursor_distance_sum as f32 / cursor_distance_count as f32)
-        } else {
-            None
-        };
+        let qa_reverts_str = format_rate(summary.qa_avg_reverts_edits, 1);
+        let qa_conf_str = summary
+            .qa_avg_confidence
+            .map(|confidence| format!("{:.1}", confidence))
+            .unwrap_or_else(|| "-".to_string());
+        let cursor_str = format_rate(summary.cursor_exact_match_rate, 0);
+        let wrong_er_str = format_rate(summary.wrong_editable_region_rate, 2);
 
         println!(
             "{:<40} {:>8.2} {:>5.1} {:>6.1}% {:>6.1}% {:>7} {:>7} {:>6} {:>5}",
             "TOTAL / AVERAGE",
-            avg_delta_chr_f,
-            braces_disbalance_avg,
-            total_exact_lines.f1() * 100.0,
-            avg_reversal_ratio * 100.0,
+            summary.avg_delta_chr_f,
+            summary.avg_braces_disbalance,
+            summary.exact_lines_f1 * 100.0,
+            summary.avg_reversal_ratio * 100.0,
             qa_reverts_str,
             qa_conf_str,
             cursor_str,
@@ -598,80 +442,107 @@ pub fn print_report(
         println!("{}", separator);
         println!(
             "Delta chrF (β={:.1}): TP={}, FP={}, FN={}, P={:.1}%, R={:.1}%",
-            delta_chr_f_beta,
-            total_delta_chr_f.true_positives,
-            total_delta_chr_f.false_positives,
-            total_delta_chr_f.false_negatives,
-            total_delta_chr_f_precision / total_scores as f64 * 100.0,
-            total_delta_chr_f_recall / total_scores as f64 * 100.0
+            summary.delta_chr_f_beta,
+            summary.delta_chr_f_true_positives,
+            summary.delta_chr_f_false_positives,
+            summary.delta_chr_f_false_negatives,
+            summary.delta_chr_f_precision * 100.0,
+            summary.delta_chr_f_recall * 100.0
         );
 
-        // Print additional cursor metrics if available
-        if let Some(avg_dist) = avg_cursor_distance {
+        if let Some(avg_distance) = summary.cursor_avg_distance {
             println!(
                 "Cursor: {}/{} exact matches ({:.0}%), avg distance: {:.1} bytes",
-                cursor_exact_matches,
-                cursor_total,
-                cursor_exact_matches as f32 / cursor_total as f32 * 100.0,
-                avg_dist
+                summary.cursor_exact_matches.unwrap_or(0),
+                summary.cursor_total_evaluated.unwrap_or(0),
+                summary.cursor_exact_match_rate.unwrap_or(0.0) * 100.0,
+                avg_distance
             );
         }
 
-        // Print isolated whitespace metrics
-        if total_scores > 0 {
-            println!("Isolated whitespace changes: {}", isolated_ws_str);
+        if let (Some(count), Some(rate)) = (
+            summary.isolated_whitespace_count,
+            summary.isolated_whitespace_rate,
+        ) {
+            println!(
+                "Isolated whitespace changes: {}/{} ({:.1}%)",
+                count,
+                total_scores,
+                rate * 100.0
+            );
         }
 
-        // Print kept and recall rate metrics
-        if kept_rate_count > 0 {
-            let avg_kept_rate = kept_rate_sum / kept_rate_count as f64;
+        if let (Some(avg_kept_rate), Some(evaluated)) =
+            (summary.avg_kept_rate, summary.kept_rate_examples)
+        {
             println!(
                 "Kept rate: {:.1}% avg ({} evaluated, kept chars: {}, correctly deleted chars: {}, discarded chars: {})",
                 avg_kept_rate * 100.0,
-                kept_rate_count,
-                kept_chars_total,
-                correctly_deleted_chars_total,
-                discarded_chars_total
+                evaluated,
+                summary.total_kept_chars.unwrap_or(0),
+                summary.total_correctly_deleted_chars.unwrap_or(0),
+                summary.total_discarded_chars.unwrap_or(0)
             );
         }
-        if recall_rate_count > 0 {
-            let avg_recall_rate = recall_rate_sum / recall_rate_count as f64;
+        if let (Some(avg_recall_rate), Some(evaluated)) =
+            (summary.avg_recall_rate, summary.recall_rate_examples)
+        {
             println!(
                 "Recall rate: {:.1}% avg ({} evaluated)",
                 avg_recall_rate * 100.0,
-                recall_rate_count
+                evaluated
             );
         }
-        if retrieved_context_bytes_count > 0 {
+        if let (Some(avg_bytes), Some(example_count)) = (
+            summary.avg_retrieved_context_bytes,
+            summary.retrieved_context_examples,
+        ) {
             println!(
                 "Retrieved context size: {:.0} bytes avg ({} examples)",
-                retrieved_context_bytes_sum / retrieved_context_bytes_count as f64,
-                retrieved_context_bytes_count
+                avg_bytes, example_count
             );
         }
-        if editable_context_coverage_count > 0 {
-            let count = editable_context_coverage_count as f64;
-            println!(
-                "Editable context lines: P={:.1}%, R={:.1}%, F1={:.1}% avg ({} evaluated, TP={}, FP={}, FN={})",
-                editable_context_lines_precision_sum / count * 100.0,
-                editable_context_lines_recall_sum / count * 100.0,
-                editable_context_lines_f1_sum / count * 100.0,
-                editable_context_coverage_count,
-                total_editable_context_lines.true_positives,
-                total_editable_context_lines.false_positives,
-                total_editable_context_lines.false_negatives
-            );
-            println!(
-                "Editable context files: P={:.1}%, R={:.1}%, F1={:.1}% avg ({} evaluated, TP={}, FP={}, FN={})",
-                editable_context_files_precision_sum / count * 100.0,
-                editable_context_files_recall_sum / count * 100.0,
-                editable_context_files_f1_sum / count * 100.0,
-                editable_context_coverage_count,
-                total_editable_context_files.true_positives,
-                total_editable_context_files.false_positives,
-                total_editable_context_files.false_negatives
-            );
-        }
+
+        print_prf_line(
+            "Editable context lines",
+            summary.editable_context_examples,
+            summary.avg_editable_context_lines_precision,
+            summary.avg_editable_context_lines_recall,
+            summary.avg_editable_context_lines_f1,
+            summary.editable_context_lines_tp,
+            summary.editable_context_lines_fp,
+            summary.editable_context_lines_fn,
+        );
+        print_prf_line(
+            "Editable context files",
+            summary.editable_context_examples,
+            summary.avg_editable_context_files_precision,
+            summary.avg_editable_context_files_recall,
+            summary.avg_editable_context_files_f1,
+            summary.editable_context_files_tp,
+            summary.editable_context_files_fp,
+            summary.editable_context_files_fn,
+        );
+        print_prf_line(
+            "Jump location lines",
+            summary.jump_location_examples,
+            summary.avg_jump_location_lines_precision,
+            summary.avg_jump_location_lines_recall,
+            summary.avg_jump_location_lines_f1,
+            summary.jump_location_lines_tp,
+            summary.jump_location_lines_fp,
+            summary.jump_location_lines_fn,
+        );
+        print_prf_line(
+            "Jump location files",
+            summary.jump_location_examples,
+            summary.avg_jump_location_files_precision,
+            summary.avg_jump_location_files_recall,
+            summary.avg_jump_location_files_f1,
+            summary.jump_location_files_tp,
+            summary.jump_location_files_fp,
+            summary.jump_location_files_fn,
+        );
 
         // Print token change percentile summary (only for predictions with a patch)
         if !patch_inserted_tokens.is_empty() {
@@ -737,8 +608,6 @@ fn print_context_coverage_report(
     const MAX_EXAMPLES_DEFAULT: usize = 20;
     const LINE_WIDTH: usize = 120;
 
-    use crate::metrics::ClassificationMetrics;
-
     let separator = "─".repeat(LINE_WIDTH);
     println!("{}", separator);
     println!(
@@ -759,28 +628,10 @@ fn print_context_coverage_report(
     );
     println!("{}", separator);
 
-    let mut total_lines = ClassificationMetrics::default();
-    let mut total_files = ClassificationMetrics::default();
-    let mut line_precision_sum = 0.0;
-    let mut line_recall_sum = 0.0;
-    let mut line_f1_sum = 0.0;
-    let mut file_precision_sum = 0.0;
-    let mut file_recall_sum = 0.0;
-    let mut file_f1_sum = 0.0;
-    let mut total_scores = 0;
-    let mut retrieved_context_bytes_sum = 0.0;
-    let mut retrieved_context_bytes_count = 0;
     let mut printed_lines = 0;
     let mut skipped_lines = 0;
 
     for example in examples {
-        if let Some(bytes) =
-            retrieved_context_bytes(example, retrieved_context_byte_limit, context_source_filter)
-        {
-            retrieved_context_bytes_sum += bytes as f64;
-            retrieved_context_bytes_count += 1;
-        }
-
         for score in &example.score {
             let Some(coverage) = &score.editable_context_coverage else {
                 continue;
@@ -807,24 +658,6 @@ fn print_context_coverage_report(
             } else {
                 skipped_lines += 1;
             }
-
-            total_scores += 1;
-            line_precision_sum += coverage.lines_precision;
-            line_recall_sum += coverage.lines_recall;
-            line_f1_sum += coverage.lines_f1;
-            file_precision_sum += coverage.files_precision;
-            file_recall_sum += coverage.files_recall;
-            file_f1_sum += coverage.files_f1;
-            total_lines.accumulate(&ClassificationMetrics {
-                true_positives: coverage.lines_tp,
-                false_positives: coverage.lines_fp,
-                false_negatives: coverage.lines_fn,
-            });
-            total_files.accumulate(&ClassificationMetrics {
-                true_positives: coverage.files_tp,
-                false_positives: coverage.files_fp,
-                false_negatives: coverage.files_fn,
-            });
         }
     }
 
@@ -838,39 +671,91 @@ fn print_context_coverage_report(
 
     println!("{}", separator);
 
-    if total_scores > 0 {
-        let count = total_scores as f64;
+    let summary = compute_summary(
+        examples,
+        retrieved_context_byte_limit,
+        context_source_filter,
+    );
+
+    if let Some(total_scores) = summary.editable_context_examples {
         println!(
             "{:<40} {:>5.1}% {:>5.1}% {:>5.1}% {:>5} {:>5} {:>5} {:>5.1}% {:>5.1}% {:>5.1}% {:>5} {:>5} {:>5}",
             "TOTAL / AVERAGE",
-            line_precision_sum / count * 100.0,
-            line_recall_sum / count * 100.0,
-            line_f1_sum / count * 100.0,
-            total_lines.true_positives,
-            total_lines.false_positives,
-            total_lines.false_negatives,
-            file_precision_sum / count * 100.0,
-            file_recall_sum / count * 100.0,
-            file_f1_sum / count * 100.0,
-            total_files.true_positives,
-            total_files.false_positives,
-            total_files.false_negatives
+            summary.avg_editable_context_lines_precision.unwrap_or(0.0) * 100.0,
+            summary.avg_editable_context_lines_recall.unwrap_or(0.0) * 100.0,
+            summary.avg_editable_context_lines_f1.unwrap_or(0.0) * 100.0,
+            summary.editable_context_lines_tp.unwrap_or(0),
+            summary.editable_context_lines_fp.unwrap_or(0),
+            summary.editable_context_lines_fn.unwrap_or(0),
+            summary.avg_editable_context_files_precision.unwrap_or(0.0) * 100.0,
+            summary.avg_editable_context_files_recall.unwrap_or(0.0) * 100.0,
+            summary.avg_editable_context_files_f1.unwrap_or(0.0) * 100.0,
+            summary.editable_context_files_tp.unwrap_or(0),
+            summary.editable_context_files_fp.unwrap_or(0),
+            summary.editable_context_files_fn.unwrap_or(0)
         );
         println!("{}", separator);
         println!(
             "Evaluated editable context coverage for {} examples",
             total_scores
         );
-        if retrieved_context_bytes_count > 0 {
+        if let (Some(avg_bytes), Some(example_count)) = (
+            summary.avg_retrieved_context_bytes,
+            summary.retrieved_context_examples,
+        ) {
             println!(
                 "Retrieved context size: {:.0} bytes avg ({} examples)",
-                retrieved_context_bytes_sum / retrieved_context_bytes_count as f64,
-                retrieved_context_bytes_count
+                avg_bytes, example_count
             );
         }
     }
 
     println!("\n");
+}
+
+/// Print one "P/R/F1 avg + pooled TP/FP/FN" summary line, or nothing when
+/// the metric was never evaluated.
+fn print_prf_line(
+    label: &str,
+    examples: Option<usize>,
+    precision: Option<f64>,
+    recall: Option<f64>,
+    f1: Option<f64>,
+    true_positives: Option<usize>,
+    false_positives: Option<usize>,
+    false_negatives: Option<usize>,
+) {
+    let (
+        Some(examples),
+        Some(precision),
+        Some(recall),
+        Some(f1),
+        Some(true_positives),
+        Some(false_positives),
+        Some(false_negatives),
+    ) = (
+        examples,
+        precision,
+        recall,
+        f1,
+        true_positives,
+        false_positives,
+        false_negatives,
+    )
+    else {
+        return;
+    };
+    println!(
+        "{}: P={:.1}%, R={:.1}%, F1={:.1}% avg ({} evaluated, TP={}, FP={}, FN={})",
+        label,
+        precision * 100.0,
+        recall * 100.0,
+        f1 * 100.0,
+        examples,
+        true_positives,
+        false_positives,
+        false_negatives
+    );
 }
 
 fn percentile(sorted_values: &[usize], p: usize) -> usize {
