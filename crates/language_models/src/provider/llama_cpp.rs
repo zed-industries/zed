@@ -184,7 +184,7 @@ impl State {
                 .map(|entry| entry.id.clone())
                 .collect();
 
-            let mut models: Vec<llama_cpp::Model> = if is_router {
+            let models: Vec<llama_cpp::Model> = if is_router {
                 // Router mode: per-model metadata comes from `/v1/models`. We
                 // only probe `/props` for already-loaded models, so listing
                 // never triggers a model load; unloaded models fall back to the
@@ -228,8 +228,6 @@ impl State {
                     .map(|entry| model_from_entry(entry, props.as_ref()))
                     .collect()
             };
-
-            models.sort_by(|a, b| a.name.cmp(&b.name));
 
             this.update(cx, |this, cx| {
                 this.fetched_models = models;
@@ -299,11 +297,7 @@ impl State {
                             // `cx.notify()` drives `Event::ProviderStateChanged`,
                             // which the selector observes to re-render.
                             if let Some(progress) = event.load_progress() {
-                                let label = SharedString::from(format!(
-                                    "{} {}%",
-                                    progress.stage_label(),
-                                    (progress.value * 100.0).round() as u32
-                                ));
+                                let label = SharedString::from(progress.progress_label());
                                 if this
                                     .update(cx, |this, cx| {
                                         write_recover(&this.loading_progress)
@@ -392,7 +386,7 @@ type LoadingProgress = Arc<RwLock<HashMap<String, SharedString>>>;
 
 /// Locks for reading, recovering the guard if a previous holder panicked. The
 /// critical sections here are infallible map operations, so a poisoned lock is
-/// effectively unreachable; this just avoids `unwrap()` per the repo guidelines.
+/// effectively unreachable; recovering just avoids a panicking `unwrap()`.
 fn read_recover<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
     lock.read().unwrap_or_else(|poisoned| poisoned.into_inner())
 }

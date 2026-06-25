@@ -62,16 +62,8 @@ impl Model {
         }
     }
 
-    pub fn id(&self) -> &str {
-        &self.name
-    }
-
     pub fn display_name(&self) -> &str {
         self.display_name.as_deref().unwrap_or(&self.name)
-    }
-
-    pub fn max_token_count(&self) -> u64 {
-        self.max_tokens
     }
 }
 
@@ -452,6 +444,17 @@ impl LoadProgress {
             _ => "Loading",
         }
     }
+
+    /// The full load-status label shown in the model selector, e.g.
+    /// `"Loading weights 42%"`: the current stage plus its own progress rounded
+    /// to a percentage.
+    pub fn progress_label(&self) -> String {
+        format!(
+            "{} {}%",
+            self.stage_label(),
+            (self.value * 100.0).round() as u32
+        )
+    }
 }
 
 impl ModelEvent {
@@ -529,7 +532,7 @@ pub async fn stream_chat_completion(
                         } else {
                             match serde_json::from_str(line) {
                                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                                Ok(ResponseStreamResult::Err { error }) => {
+                                Ok(ResponseStreamResult::Err { error, .. }) => {
                                     Some(Err(anyhow!(error.message)))
                                 }
                                 Err(error) => Some(Err(anyhow!(error))),
@@ -834,6 +837,7 @@ mod tests {
         let progress = weights.load_progress().unwrap();
         assert!((progress.value - 0.4).abs() < 1e-4);
         assert_eq!(progress.stage_label(), "Loading weights");
+        assert_eq!(progress.progress_label(), "Loading weights 40%");
 
         // The projector stage runs 0→1 on its own (not 90→100%).
         let projector = model_event(serde_json::json!({
