@@ -27,7 +27,7 @@ mod render;
 use delegate::{Delegate, matches_to_multibuffer};
 use util::ResultExt as _;
 
-use crate::{ProjectSearchView, text_finder::delegate::PopulateProjectSearch};
+use crate::{ProjectSearchView, SearchOptions, text_finder::delegate::PopulateProjectSearch};
 
 actions!(text_finder, [ToProjectSearch,]);
 
@@ -37,11 +37,11 @@ pub struct TextFinder {
     _subscription: Subscription,
 }
 
-/// Persists the query of the just-closed Text Finder in the per-project database, keyed by
-/// workspace so the query is restored only for the project it was run in (mirrors JetBrains'
-/// per-project find history). The row is removed automatically when its workspace is deleted,
-/// via the `ON DELETE CASCADE` foreign key. Workspaces without a database id (not yet persisted)
-/// don't participate.
+/// Persists the query and active filters of the just-closed Text Finder in the per-project
+/// database, keyed by workspace so the search is restored only for the project it was run in
+/// (mirrors JetBrains' per-project find history). The row is removed automatically when its
+/// workspace is deleted, via the `ON DELETE CASCADE` foreign key. Workspaces without a database
+/// id (not yet persisted) don't participate.
 pub struct TextFinderDb(ThreadSafeConnection);
 
 impl Domain for TextFinderDb {
@@ -51,6 +51,7 @@ impl Domain for TextFinderDb {
         CREATE TABLE text_finder_queries (
             workspace_id INTEGER PRIMARY KEY,
             query TEXT NOT NULL,
+            search_options INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
             ON DELETE CASCADE
         ) STRICT;
@@ -61,38 +62,68 @@ db::static_connection!(TextFinderDb, [WorkspaceDb]);
 
 impl TextFinderDb {
     query! {
-        pub async fn set_last_query(workspace_id: WorkspaceId, query: String) -> Result<()> {
-            INSERT INTO text_finder_queries (workspace_id, query)
-            VALUES (?1, ?2)
-            ON CONFLICT(workspace_id) DO UPDATE SET query = ?2
+        pub async fn set_last_search(workspace_id: WorkspaceId, query: String, search_options: i64) -> Result<()> {
+            INSERT INTO text_finder_queries (workspace_id, query, search_options)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(workspace_id) DO UPDATE SET query = ?2, search_options = ?3
         }
     }
 
     query! {
-        pub fn last_query(workspace_id: WorkspaceId) -> Result<Option<String>> {
-            SELECT query
+        pub fn last_search(workspace_id: WorkspaceId) -> Result<Option<(String, i64)>> {
+            SELECT query, search_options
             FROM text_finder_queries
             WHERE workspace_id = ?1
         }
     }
 }
 
-fn store_last_query(workspace_id: Option<WorkspaceId>, query: String, cx: &App) {
+/// A query to pre-populate the Text Finder with, optionally with the search filters to restore
+/// alongside it. Filters are restored only when resuming a persisted search; when seeding from
+/// the active item the filters are left at their setting-derived defaults.
+pub(crate) struct SearchSeed {
+    query: String,
+    options: Option<SearchOptions>,
+}
+
+impl SearchSeed {
+    fn from_query(query: String) -> Self {
+        Self {
+            query,
+            options: None,
+        }
+    }
+}
+
+fn store_last_search(
+    workspace_id: Option<WorkspaceId>,
+    query: String,
+    options: SearchOptions,
+    cx: &App,
+) {
     let Some(workspace_id) = workspace_id else {
         return;
     };
     let db = TextFinderDb::global(cx);
+    let search_options = options.bits() as i64;
     db::write_and_log(cx, move || async move {
-        db.set_last_query(workspace_id, query).await
+        db.set_last_search(workspace_id, query, search_options)
+            .await
     });
 }
 
-fn load_last_query(workspace_id: Option<WorkspaceId>, cx: &App) -> Option<String> {
-    TextFinderDb::global(cx)
-        .last_query(workspace_id?)
+fn load_last_search(workspace_id: Option<WorkspaceId>, cx: &App) -> Option<SearchSeed> {
+    let (query, search_options) = TextFinderDb::global(cx)
+        .last_search(workspace_id?)
         .log_err()
-        .flatten()
-        .filter(|query| !query.is_empty())
+        .flatten()?;
+    if query.is_empty() {
+        return None;
+    }
+    Some(SearchSeed {
+        query,
+        options: Some(SearchOptions::from_bits_truncate(search_options as u8)),
+    })
 }
 
 pub fn init(cx: &mut App) {
@@ -287,34 +318,34 @@ impl TextFinder {
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
-    ) -> Option<String> {
+    ) -> Option<SearchSeed> {
         if let Some(item) = workspace.active_item(cx) {
             if let Some(project_search) = item.downcast::<ProjectSearchView>() {
                 let query = project_search.read(cx).search_query_text(cx);
                 if !query.is_empty() {
-                    return Some(query);
+                    return Some(SearchSeed::from_query(query));
                 }
             }
 
             if let Some(query) =
                 crate::project_search::buffer_search_query(workspace, item.as_ref(), cx)
             {
-                return Some(query);
+                return Some(SearchSeed::from_query(query));
             }
 
             if let Some(editor) = item.act_as::<Editor>(cx) {
                 let query = editor.query_suggestion(Some(SeedQuerySetting::Selection), window, cx);
                 if !query.is_empty() {
-                    return Some(query);
+                    return Some(SearchSeed::from_query(query));
                 }
             }
         }
 
-        load_last_query(workspace.database_id(), cx)
+        load_last_search(workspace.database_id(), cx)
     }
 
-    pub fn open(
-        seed_query: Option<String>,
+    pub(crate) fn open(
+        seed_query: Option<SearchSeed>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
@@ -338,7 +369,7 @@ impl TextFinder {
 
     fn new(
         delegate: Delegate,
-        seed_query: Option<String>,
+        seed_query: Option<SearchSeed>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -349,8 +380,12 @@ impl TextFinder {
         picker.update(cx, |picker, cx| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
             picker.delegate.hook_up_any_ongoing_search(picker_weak, cx);
-            if let Some(seed_query) = seed_query.as_deref() {
-                picker.set_query(seed_query, window, cx);
+            if let Some(seed_query) = seed_query {
+                // Restore filters before seeding the query so the initial search runs with them.
+                if let Some(options) = seed_query.options {
+                    picker.delegate.search_options = options;
+                }
+                picker.set_query(&seed_query.query, window, cx);
                 picker.select_query(window, cx);
             }
         });
@@ -389,13 +424,15 @@ impl ModalView for TextFinder {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DismissDecision {
-        let query = self.picker.read(cx).query(cx);
+        let picker = self.picker.read(cx);
+        let query = picker.query(cx);
         if !query.is_empty() {
+            let options = picker.delegate.search_options;
             let workspace_id = self
                 .weak_workspace(cx)
                 .upgrade()
                 .and_then(|workspace| workspace.read(cx).database_id());
-            store_last_query(workspace_id, query, cx);
+            store_last_search(workspace_id, query, options, cx);
         }
         DismissDecision::Dismiss(true)
     }
