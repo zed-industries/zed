@@ -3961,8 +3961,8 @@ impl Editor {
             .size(ui::ButtonSize::None)
             .icon_color(Color::Info)
             .style(ButtonStyle::Transparent)
-            .on_click(cx.listener(move |editor, _, window, cx| {
-                editor.toggle_bookmark_at_row(row, window, cx);
+            .on_click(cx.listener(move |editor, _, _window, cx| {
+                editor.toggle_bookmark_at_row(row, cx);
             }))
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
                 editor.set_gutter_context_menu(row, None, event.position(), window, cx);
@@ -4253,10 +4253,10 @@ impl Editor {
                 .separator()
                 .entry(set_bookmark_msg, Some(ToggleBookmark.boxed_clone()), {
                     let weak_editor = weak_editor.clone();
-                    move |window, cx| {
+                    move |_window, cx| {
                         weak_editor
                             .update(cx, |this, cx| {
-                                this.toggle_bookmark_at_anchor(anchor, window, cx);
+                                this.toggle_bookmark_at_anchor(anchor, cx);
                             })
                             .log_err();
                     }
@@ -4452,7 +4452,7 @@ impl Editor {
                     };
 
                     match intent {
-                        Intent::SetBookmark => editor.toggle_bookmark_at_row(row, window, cx),
+                        Intent::SetBookmark => editor.toggle_bookmark_at_row(row, cx),
                         Intent::SetBreakpoint => editor.edit_breakpoint_at_anchor(
                             position,
                             Breakpoint::new_standard(),
