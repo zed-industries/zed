@@ -6,6 +6,7 @@ use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
+use language_model::util::parse_tool_arguments;
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
@@ -13,7 +14,6 @@ use language_model::{
     LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
     LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
-use language_model::util::parse_tool_arguments;
 use llama_cpp::{
     LLAMA_CPP_API_URL, ModelEntry, Props, get_models, get_props, stream_chat_completion,
     stream_model_events,
@@ -34,7 +34,7 @@ use util::ResultExt;
 use crate::AllLanguageModelSettings;
 
 const LLAMA_CPP_REPO_URL: &str = "https://github.com/ggml-org/llama.cpp";
-const LLAMA_CPP_DOWNLOAD_URL: &str = "https://github.com/ggml-org/llama.cpp/releases";
+const LLAMA_CPP_DOWNLOAD_URL: &str = "https://llama.app";
 const LLAMA_CPP_MODELS_URL: &str = "https://huggingface.co/models?library=gguf&sort=trending";
 
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("llama_cpp");
@@ -47,9 +47,9 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 const MODEL_EVENT_RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Context length assumed for an unloaded router model, which can't be probed
-/// without loading it. A generous default lets the first message succeed instead
-/// of tripping a 4K limit; re-discovery refines it once the model loads, and
-/// `context_window` / `available_models` override it.
+/// without loading it. A generous default keeps the first message working
+/// instead of tripping a small limit; re-discovery refines it once the model
+/// loads, and `context_window` / `available_models` override it.
 const ASSUMED_UNLOADED_CONTEXT: u64 = 131_072;
 
 #[derive(Default, Debug, Clone, PartialEq)]
@@ -211,7 +211,10 @@ impl State {
                         model_from_entry(&entry, props.as_ref())
                     }
                 });
-                futures::stream::iter(tasks).buffer_unordered(5).collect().await
+                futures::stream::iter(tasks)
+                    .buffer_unordered(5)
+                    .collect()
+                    .await
             } else {
                 // Single-model mode: one `/props` call describes the loaded model.
                 let props = get_props(
@@ -393,7 +396,8 @@ fn read_recover<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
 
 /// Locks for writing; see [`read_recover`].
 fn write_recover<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
-    lock.write().unwrap_or_else(|poisoned| poisoned.into_inner())
+    lock.write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Merges discovered models with user `available_models` overrides and the
@@ -861,9 +865,7 @@ impl LanguageModel for LlamaCppLanguageModel {
             // picker) while a router model loads — no provider-agnostic UI
             // changes needed. The agent rebuilds the name on
             // `ProviderStateChanged`, which our progress ticks emit.
-            Some(label) => {
-                LanguageModelName::from(format!("{} · {}", self.display_name, label))
-            }
+            Some(label) => LanguageModelName::from(format!("{} · {}", self.display_name, label)),
             None => LanguageModelName::from(self.display_name.clone()),
         }
     }
@@ -1259,8 +1261,7 @@ impl ConfigurationView {
             .text(cx)
             .trim()
             .to_string();
-        let current_context_window =
-            LlamaCppLanguageModelProvider::settings(cx).context_window;
+        let current_context_window = LlamaCppLanguageModelProvider::settings(cx).context_window;
 
         if let Ok(context_window) = context_window_str.parse::<u64>() {
             if Some(context_window) != current_context_window {
@@ -1316,7 +1317,10 @@ impl ConfigurationView {
                     .child(
                         ListBulletItem::new("")
                             .child(Label::new("Install llama.cpp from"))
-                            .child(ButtonLink::new("github.com/ggml-org/llama.cpp", LLAMA_CPP_REPO_URL)),
+                            .child(ButtonLink::new(
+                                "github.com/ggml-org/llama.cpp",
+                                LLAMA_CPP_REPO_URL,
+                            )),
                     )
                     .child(
                         ListBulletItem::new("")
@@ -1394,14 +1398,18 @@ impl ConfigurationView {
                         .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
                         .layer(ElevationIndex::ModalSurface)
                         .on_click(
-                            cx.listener(|this, _, window, cx| this.reset_context_window(window, cx)),
+                            cx.listener(|this, _, window, cx| {
+                                this.reset_context_window(window, cx)
+                            }),
                         ),
                 )
         } else {
             v_flex()
-                .on_action(cx.listener(|this, _: &menu::Confirm, _window, cx| {
-                    this.save_context_window(cx)
-                }))
+                .on_action(
+                    cx.listener(|this, _: &menu::Confirm, _window, cx| {
+                        this.save_context_window(cx)
+                    }),
+                )
                 .child(self.context_window_editor.clone())
                 .child(
                     Label::new("Default: discovered from the server")
@@ -1434,7 +1442,9 @@ impl ConfigurationView {
                         .label_size(LabelSize::Small)
                         .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
                         .layer(ElevationIndex::ModalSurface)
-                        .on_click(cx.listener(|this, _, window, cx| this.reset_api_url(window, cx))),
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.reset_api_url(window, cx)),
+                        ),
                 )
         } else {
             v_flex()
@@ -1477,7 +1487,9 @@ impl Render for ConfigurationView {
                                                     .size(IconSize::XSmall)
                                                     .color(Color::Muted),
                                             )
-                                            .on_click(move |_, _, cx| cx.open_url(LLAMA_CPP_REPO_URL))
+                                            .on_click(move |_, _, cx| {
+                                                cx.open_url(LLAMA_CPP_REPO_URL)
+                                            })
                                             .into_any_element(),
                                     )
                                 } else {

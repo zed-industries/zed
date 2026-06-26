@@ -4,19 +4,9 @@ use http_client::{
     AsyncBody, CustomHeaders, HttpClient, HttpRequestExt, Method, Request as HttpRequest,
     RequestBuilderExt, http,
 };
-use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-/// Percent-encoding set for a query-string value: encode everything except the
-/// RFC 3986 unreserved characters (`A-Za-z0-9` and `-._~`). Router model ids
-/// look like `unsloth/Qwen3.5-2B-GGUF:Q4_1`, so the `/` and `:` must be encoded
-/// when used in the `?model=` query parameter.
-const MODEL_QUERY: &AsciiSet = &NON_ALPHANUMERIC
-    .remove(b'-')
-    .remove(b'.')
-    .remove(b'_')
-    .remove(b'~');
+use url::Url;
 
 /// Default base URL of a local `llama-server`.
 ///
@@ -532,7 +522,7 @@ pub async fn stream_chat_completion(
                         } else {
                             match serde_json::from_str(line) {
                                 Ok(ResponseStreamResult::Ok(response)) => Some(Ok(response)),
-                                Ok(ResponseStreamResult::Err { error, .. }) => {
+                                Ok(ResponseStreamResult::Err { error }) => {
                                     Some(Err(anyhow!(error.message)))
                                 }
                                 Err(error) => Some(Err(anyhow!(error))),
@@ -601,12 +591,11 @@ pub async fn get_props(
 ) -> Result<Props> {
     // Router-mode `/props` takes a `model` query parameter selecting which
     // instance to describe. Model ids contain `/` and `:` (e.g.
-    // `unsloth/Qwen3.5-2B-GGUF:Q4_1`), so the value must be percent-encoded.
+    // `unsloth/Qwen3.5-2B-GGUF:Q4_1`), so the value is URL-encoded.
     let uri = match model {
-        Some(model) => format!(
-            "{api_url}/props?model={}",
-            utf8_percent_encode(model, MODEL_QUERY)
-        ),
+        Some(model) => Url::parse_with_params(&format!("{api_url}/props"), [("model", model)])
+            .context("invalid llama.cpp API URL")?
+            .to_string(),
         None => format!("{api_url}/props"),
     };
     let request = HttpRequest::builder()
@@ -791,8 +780,14 @@ mod tests {
             }))
             .changes_model_state()
         );
-        assert!(model_event(serde_json::json!({ "model": "*", "event": "models_reload" })).changes_model_state());
-        assert!(model_event(serde_json::json!({ "model": "m", "event": "model_remove" })).changes_model_state());
+        assert!(
+            model_event(serde_json::json!({ "model": "*", "event": "models_reload" }))
+                .changes_model_state()
+        );
+        assert!(
+            model_event(serde_json::json!({ "model": "m", "event": "model_remove" }))
+                .changes_model_state()
+        );
 
         // Intermediate loading-progress ticks do not.
         assert!(
@@ -897,9 +892,16 @@ mod tests {
 
     #[test]
     fn encodes_router_model_id_for_props_query() {
-        // Router ids contain `/` and `:`, which must be percent-encoded, while
-        // unreserved characters (`.`, `-`) stay literal.
-        let encoded = utf8_percent_encode("unsloth/Qwen3.5-2B-GGUF:Q4_1", MODEL_QUERY).to_string();
-        assert_eq!(encoded, "unsloth%2FQwen3.5-2B-GGUF%3AQ4_1");
+        // Router ids contain `/` and `:`, which must be URL-encoded in the
+        // `?model=` query, while unreserved characters (`.`, `-`) stay literal.
+        let url = Url::parse_with_params(
+            "http://localhost:8080/props",
+            [("model", "unsloth/Qwen3.5-2B-GGUF:Q4_1")],
+        )
+        .unwrap();
+        assert_eq!(
+            url.as_str(),
+            "http://localhost:8080/props?model=unsloth%2FQwen3.5-2B-GGUF%3AQ4_1"
+        );
     }
 }
