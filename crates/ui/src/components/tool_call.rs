@@ -617,13 +617,14 @@ impl Component for ToolCall {
             |icon: IconName| Icon::new(icon).size(IconSize::Small).color(Color::Muted);
         let sample_output = || {
             v_flex().p_2().gap_1().children(
-                [
-                    "fn main() {",
-                    "    println!(\"hello\");",
-                    "}",
-                ]
-                .into_iter()
-                .map(|line| Label::new(line).size(LabelSize::Small).color(Color::Muted).buffer_font(cx)),
+                ["fn main() {", "    println!(\"hello\");", "}"]
+                    .into_iter()
+                    .map(|line| {
+                        Label::new(line)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .buffer_font(cx)
+                    }),
             )
         };
 
@@ -670,19 +671,21 @@ impl Component for ToolCall {
             .width(px(560.)),
         ];
 
-        let thinking_examples = vec![single_example(
-            "Expanded With Guideline Output",
-            ToolCall::new("thinking-expanded")
-                .icon(sample_icon(IconName::ToolThink))
-                .label(sample_label("Thinking"))
-                .status(ToolCallStatusKind::Completed)
-                .style(ToolCallStyle::Thinking)
-                .collapsible(true)
-                .open(true)
-                .content(sample_output())
-                .into_any_element(),
-        )
-        .width(px(560.))];
+        let thinking_examples = vec![
+            single_example(
+                "Expanded With Guideline Output",
+                ToolCall::new("thinking-expanded")
+                    .icon(sample_icon(IconName::ToolThink))
+                    .label(sample_label("Thinking"))
+                    .status(ToolCallStatusKind::Completed)
+                    .style(ToolCallStyle::Thinking)
+                    .collapsible(true)
+                    .open(true)
+                    .content(sample_output())
+                    .into_any_element(),
+            )
+            .width(px(560.)),
+        ];
 
         let card_examples = vec![
             single_example(

@@ -7172,30 +7172,32 @@ impl ThreadView {
 
         let view = cx.weak_entity();
 
-        ToolCallCard::new(SharedString::from(format!("thinking-block-{entry_ix}-{chunk_ix}")))
-            .style(ToolCallStyle::Thinking)
-            .icon(
-                Icon::new(IconName::ToolThink)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-            )
-            .label(
-                div()
-                    .text_size(self.tool_name_font_size())
-                    .text_color(cx.theme().colors().text_muted)
-                    .child("Thinking"),
-            )
-            .fade_label(false)
-            .collapsible(true)
-            .open(is_open)
-            .on_toggle(move |_, window, cx| {
-                view.update(cx, |this, cx| {
-                    this.toggle_thinking_block_expansion(key, window, cx);
-                })
-                .ok();
+        ToolCallCard::new(SharedString::from(format!(
+            "thinking-block-{entry_ix}-{chunk_ix}"
+        )))
+        .style(ToolCallStyle::Thinking)
+        .icon(
+            Icon::new(IconName::ToolThink)
+                .size(IconSize::Small)
+                .color(Color::Muted),
+        )
+        .label(
+            div()
+                .text_size(self.tool_name_font_size())
+                .text_color(cx.theme().colors().text_muted)
+                .child("Thinking"),
+        )
+        .fade_label(false)
+        .collapsible(true)
+        .open(is_open)
+        .on_toggle(move |_, window, cx| {
+            view.update(cx, |this, cx| {
+                this.toggle_thinking_block_expansion(key, window, cx);
             })
-            .when_some_content(content)
-            .into_any_element()
+            .ok();
+        })
+        .when_some_content(content)
+        .into_any_element()
     }
 
     fn render_message_context_menu(
