@@ -18,6 +18,7 @@ call = ["dep:call"]
 
 [dependencies]
 agent_settings.workspace = true
+agent_skills.workspace = true
 anyhow.workspace = true
 askpass.workspace = true
 async-channel.workspace = true

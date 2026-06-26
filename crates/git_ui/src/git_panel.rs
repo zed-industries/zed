@@ -11,6 +11,7 @@ use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
 use agent_settings::{AgentSettings, UserAgentsMd};
+use agent_skills;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -62,7 +63,7 @@ use project::{
 use prompt_store::RULES_FILE_NAMES;
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsStore, StatusStyle, update_settings_file};
+use settings::{Settings, SettingsFile, SettingsStore, StatusStyle, update_settings_file};
 use smallvec::SmallVec;
 use std::future::Future;
 use std::ops::Range;
@@ -2666,6 +2667,73 @@ impl GitPanel {
         }
     }
 
+    fn commit_message_skill_name(
+        project: &Entity<Project>,
+        repo_work_dir: &Path,
+        cx: &App,
+    ) -> Option<(bool, String)> {
+        if let Some(project_settings_file) = project
+            .read(cx)
+            .find_project_path(repo_work_dir, cx)
+            .map(|project_path| {
+                SettingsFile::Project((project_path.worktree_id, project_path.path.clone()))
+            })
+        {
+            let (_, skill_name) = cx
+                .global::<SettingsStore>()
+                .get_value_from_file(project_settings_file, |settings| {
+                    settings.project.git_commit_message_skill_name.clone()
+                });
+
+            if let Some(skill_name) = skill_name {
+                return Some((true, skill_name));
+            }
+        }
+
+        let (_, skill_name) = cx
+            .global::<SettingsStore>()
+            .get_value_from_file(SettingsFile::User(), |settings| {
+                settings.project.git_commit_message_skill_name.clone()
+            });
+
+        if let Some(skill_name) = skill_name {
+            return Some((false, skill_name));
+        }
+
+        None
+    }
+
+    async fn load_commit_message_skill_content(
+        project: &Entity<Project>,
+        fs: Arc<dyn Fs>,
+        skill_name: Option<(bool, String)>,
+    ) -> Option<String> {
+        if let Some((local_setting, skill_name)) = skill_name {
+            if local_setting {
+                let skill_file_path = repo_work_dir
+                    .join(agent_skills::project_skills_relative_path())
+                    .join(skill_name)
+                    .join(agent_skills::SKILL_FILE_NAME);
+
+                return match agent_skills::read_skill_body(fs, skill_file_path) {
+                    Ok(content) => Some(content),
+                    Err(_) => None,
+                };
+            } else {
+                let user_skill_file_path = agent_skills::global_skills_dir()
+                    .join(skill_name)
+                    .join(agent_skills::SKILL_FILE_NAME);
+
+                return match agent_skills::read_skill_body(&fs, user_skill_file_path) {
+                    Ok(content) => Some(content),
+                    Err(_) => None,
+                };
+            }
+        }
+
+        None
+    }
+
     fn build_commit_message_prompt(
         prompt: &str,
         user_agents_md: Option<&str>,
@@ -2749,7 +2817,9 @@ impl GitPanel {
             .commit_message_instructions
             .clone();
         let project = self.project.clone();
+        let fs = self.fs.clone();
         let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
+        let skill_name = Self::commit_message_skill_name(&project, &repo_work_dir, &cx);
 
         self.generate_commit_message_task = Some(cx.spawn(async move |this, mut cx| {
             async move {
@@ -2786,6 +2856,8 @@ impl GitPanel {
 
                 let rules_content =
                     Self::load_project_rules(&project, &repo_work_dir, &mut cx).await;
+                let skill_content =
+                    Self::load_commit_message_skill_content(&project, &fs, skill_name).await;
                 let user_agents_md = cx.update(|cx| {
                     UserAgentsMd::global(cx)
                         .and_then(|user_agents_md| user_agents_md.content().cloned())
@@ -2810,6 +2882,7 @@ impl GitPanel {
                     user_agents_md.as_deref(),
                     rules_content.as_deref(),
                     instructions.as_deref(),
+                    skill_content.as_deref(),
                     &subject,
                     &diff_text,
                 );
