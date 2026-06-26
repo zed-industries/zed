@@ -1,7 +1,8 @@
 use db::kvp::KeyValueStore;
 use dev_container::find_configs_in_snapshot;
-use gpui::{SharedString, Window};
+use gpui::{App, SharedString, Window};
 use project::{Project, WorktreeId};
+use std::path::Path;
 use std::sync::LazyLock;
 use ui::Tooltip;
 use ui::prelude::*;
@@ -28,6 +29,44 @@ fn devcontainer_json_path() -> &'static RelPath {
 
 fn project_devcontainer_key(project_path: &str) -> String {
     format!("{}_{}", DEV_CONTAINER_SUGGEST_KEY, project_path)
+}
+
+/// Returns the path used to remember the user's "Don't Show Again" choice for a
+/// worktree's dev container suggestion. This is keyed on the repository's common
+/// Git directory rather than the worktree's own path, so that dismissing the
+/// suggestion in one git worktree also suppresses it in sibling worktrees of the
+/// same repository. Falls back to the worktree path when it isn't part of a Git
+/// repository.
+fn dismiss_path_for_worktree(
+    project: &gpui::Entity<Project>,
+    worktree_abs_path: &Path,
+    cx: &App,
+) -> String {
+    let common_dir = project
+        .read(cx)
+        .repositories(cx)
+        .values()
+        .filter_map(|repo| {
+            let repo = repo.read(cx);
+            let work_dir = repo.work_directory_abs_path.clone();
+            // The folder opened in Zed isn't necessarily the repo root; it may be
+            // a subdirectory of it, e.g. opening `~/code/myrepo/backend` when the
+            // repo lives at `~/code/myrepo`. So match any repo whose work directory
+            // contains the folder. Nested repos can produce multiple matches, e.g.
+            // opening `~/code/myrepo/vendor/lib` where `vendor/lib` is a submodule
+            // matches both `myrepo` and the submodule; `max_by_key` then picks the
+            // innermost match (the submodule), which the folder actually belongs to.
+            worktree_abs_path
+                .starts_with(work_dir.as_ref())
+                .then(|| (work_dir.as_os_str().len(), repo.common_dir_abs_path.clone()))
+        })
+        .max_by_key(|(work_dir_len, _)| *work_dir_len)
+        .map(|(_, common_dir)| common_dir);
+
+    match common_dir {
+        Some(common_dir) => common_dir.to_string_lossy().to_string(),
+        None => worktree_abs_path.to_string_lossy().to_string(),
+    }
 }
 
 pub fn suggest_on_worktree_updated(
@@ -93,7 +132,8 @@ pub fn suggest_on_worktree_updated(
     let abs_path = worktree.abs_path();
     let project_path = abs_path.to_string_lossy().to_string();
     let worktree_name = worktree.root_name_str().to_string();
-    let key_for_dismiss = project_devcontainer_key(&project_path);
+    let dismiss_path = dismiss_path_for_worktree(project, abs_path.as_ref(), cx);
+    let key_for_dismiss = project_devcontainer_key(&dismiss_path);
 
     let already_dismissed = KeyValueStore::global(cx)
         .read_kvp(&key_for_dismiss)

@@ -350,6 +350,56 @@ fn test_dynamic_language_injection(cx: &mut App) {
 }
 
 #[gpui::test]
+fn test_rust_json_macro_empty_string_highlighting(cx: &mut App) {
+    let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+    let language = rust_lang();
+    registry.add(language.clone());
+
+    let buffer = Buffer::new(
+        ReplicaId::LOCAL,
+        BufferId::new(1).unwrap(),
+        r#"
+            serde_json::json!({
+                "email": "",
+                "password": "password123",
+                "requires2FA": false
+            })
+        "#
+        .unindent(),
+    );
+
+    let mut syntax_map = SyntaxMap::new(&buffer);
+    syntax_map.set_language_registry(registry);
+    syntax_map.reparse(language, &buffer);
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["string"],
+        r#"
+            serde_json::json!({
+                «"email"»: «""»,
+                «"password"»: «"password123"»,
+                «"requires2FA"»: false
+            })
+        "#,
+    );
+
+    assert_capture_ranges(
+        &syntax_map,
+        &buffer,
+        &["boolean"],
+        r#"
+            serde_json::json!({
+                "email": "",
+                "password": "password123",
+                "requires2FA": «false»
+            })
+        "#,
+    );
+}
+
+#[gpui::test]
 fn test_typing_multiple_new_injections(cx: &mut App) {
     let (buffer, syntax_map) = test_edit_sequence(
         "Rust",
