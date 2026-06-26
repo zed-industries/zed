@@ -7487,9 +7487,9 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::ToolUse));
 
-    // Signal that a message is queued before ending the stream
+    // Request that the turn end at the next boundary (a "steering" queued message)
     thread.update(cx, |thread, _cx| {
-        thread.set_has_queued_message(true);
+        thread.set_end_turn_at_next_boundary(true);
     });
 
     // Now end the stream - tool will run, and the boundary check should see the queue
@@ -7520,11 +7520,11 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
         "Turn should have ended after tool completion due to queued message"
     );
 
-    // Verify the queued message flag is still set
+    // Verify the boundary flag is still set
     thread.update(cx, |thread, _cx| {
         assert!(
-            thread.has_queued_message(),
-            "Should still have queued message flag set"
+            thread.end_turn_at_next_boundary(),
+            "Should still have the end-turn-at-boundary flag set"
         );
     });
 
@@ -7535,6 +7535,68 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
             "Thread should not be running after turn ends"
         );
     });
+}
+
+#[gpui::test]
+async fn test_queued_message_does_not_end_turn_without_boundary_flag(cx: &mut TestAppContext) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+    });
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Use the echo tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "echo".into(),
+            raw_input: r#"{"text": "hello"}"#.into(),
+            input: json!({"text": "hello"}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::ToolUse));
+
+    // Default behavior: even though a message is conceptually queued, we do NOT
+    // set the boundary flag, so the agent must keep going past the tool boundary
+    // (running to completion) rather than ending the turn early.
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The agent should have issued a fresh completion request with the tool
+    // results instead of stopping — proof it continued past the boundary.
+    let continuation = fake_model.pending_completions();
+    assert_eq!(
+        continuation.len(),
+        1,
+        "Without the boundary flag, the turn should continue with another completion request"
+    );
+
+    // Let the continuation finish the turn naturally.
+    fake_model.send_last_completion_stream_text_chunk("All done");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+
+    let all_events = collect_events_until_stop(&mut events, cx).await;
+    let stop_reasons = stop_events(all_events);
+    assert_eq!(
+        stop_reasons,
+        vec![acp::StopReason::EndTurn],
+        "Turn should end only after the agent finishes, not at the tool boundary"
+    );
 }
 
 #[gpui::test]
