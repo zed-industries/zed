@@ -4,8 +4,8 @@
 //! Where the Linux helper is the sandboxed process itself (it re-execs under
 //! the launcher), here the sandboxed process is a *Linux* program inside WSL
 //! while this helper runs on Windows. So instead of a status channel and a
-//! launcher, the helper drives the real [`sandbox::windows_wsl::wrap_invocation`],
-//! spawns the `wsl.exe` command line it produces, and inspects exit codes and
+//! launcher, the helper drives the real [`sandbox::Sandbox`] (`new` + `wrap`),
+//! spawns the command line it produces, and inspects exit codes and
 //! host-side filesystem effects to confirm every grant the sandbox makes and
 //! every restriction it imposes actually holds — including the Windows-specific
 //! one: that a sandboxed process cannot escape via WSL interop by exec'ing a
@@ -47,8 +47,28 @@ mod imp {
     use std::process::{Command, Output};
 
     use anyhow::{Context as _, Result, bail, ensure};
-    use sandbox::SandboxPermissions;
-    use sandbox::windows_wsl;
+    use sandbox::{
+        CommandAndArgs, GitSandboxPolicy, Sandbox, SandboxError, SandboxFsPolicy, SandboxNetPolicy,
+        SandboxPolicy,
+    };
+
+    /// Network access for a helper run, translated into a `SandboxNetPolicy` in
+    /// `drive_sandbox`. Only the all-or-nothing cases the helper exercises are
+    /// represented.
+    #[derive(Clone, Copy, Default)]
+    enum NetworkAccess {
+        #[default]
+        None,
+        All,
+    }
+
+    /// The per-run permission knobs the helper varies, translated into a
+    /// `SandboxPolicy` in `drive_sandbox`.
+    #[derive(Clone, Copy, Default)]
+    struct SandboxPermissions {
+        network: NetworkAccess,
+        allow_fs_write: bool,
+    }
 
     /// Tag prefixed to every result line, matching `bwrap_test_helper` so both
     /// helpers' output reads the same.
@@ -144,11 +164,11 @@ mod imp {
 
         let default = SandboxPermissions::default();
         let fs_write_all = SandboxPermissions {
-            allow_network: false,
+            network: NetworkAccess::None,
             allow_fs_write: true,
         };
         let network_allowed = SandboxPermissions {
-            allow_network: true,
+            network: NetworkAccess::All,
             allow_fs_write: false,
         };
 
@@ -488,31 +508,42 @@ mod imp {
         permissions: SandboxPermissions,
         env: &HashMap<String, String>,
     ) -> Result<Outcome> {
-        let wrapped = smol::block_on(windows_wsl::wrap_invocation(
-            program.to_string(),
-            args.iter().map(|arg| arg.to_string()).collect(),
-            writable_paths.to_vec(),
-            permissions,
-            None,
-            env.clone(),
-        ));
+        let policy = SandboxPolicy {
+            fs: if permissions.allow_fs_write {
+                SandboxFsPolicy::Unrestricted
+            } else {
+                SandboxFsPolicy::Restricted {
+                    writable_paths: writable_paths.to_vec(),
+                }
+            },
+            network: match permissions.network {
+                NetworkAccess::None => SandboxNetPolicy::Blocked,
+                NetworkAccess::All => SandboxNetPolicy::Unrestricted,
+            },
+            git: GitSandboxPolicy::default(),
+        };
+        let command = CommandAndArgs {
+            program: program.to_string(),
+            args: args.iter().map(|arg| arg.to_string()).collect(),
+            env: env.clone(),
+            cwd: None,
+        };
+        let prepared =
+            Sandbox::new(policy).and_then(|mut sandbox| smol::block_on(sandbox.wrap(&command)));
 
-        let (wsl_exe, wsl_args) = match wrapped {
-            Ok(wrapped) => wrapped,
+        let prepared = match prepared {
+            Ok(prepared) => prepared,
             Err(error) => {
-                let message = format!("{error:#}");
-                return Ok(
-                    if message.contains(sandbox::WSL_SANDBOX_UNAVAILABLE_PREFIX) {
-                        Outcome::Unavailable(message)
-                    } else {
-                        Outcome::BadRequest(message)
-                    },
-                );
+                let message = error.to_string();
+                return Ok(match error {
+                    SandboxError::WslUnavailable(_) => Outcome::Unavailable(message),
+                    _ => Outcome::BadRequest(message),
+                });
             }
         };
 
-        let output = Command::new(&wsl_exe)
-            .args(&wsl_args)
+        let output = Command::new(&prepared.program)
+            .args(&prepared.args)
             .creation_flags(CREATE_NO_WINDOW)
             .output()
             .context("failed to spawn the wrapped wsl.exe sandbox command")?;

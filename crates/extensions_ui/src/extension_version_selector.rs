@@ -30,7 +30,7 @@ impl Focusable for ExtensionVersionSelector {
 
 impl Render for ExtensionVersionSelector {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex().w(rems(34.)).child(self.picker.clone())
+        v_flex().child(self.picker.clone())
     }
 }
 

@@ -23,7 +23,7 @@ impl HeadlessClient {
     pub(crate) fn new() -> Self {
         let event_loop = EventLoop::try_new().unwrap();
 
-        let (common, main_receiver) = LinuxCommon::new(event_loop.get_signal());
+        let (common, main_receiver, wake_receiver) = LinuxCommon::new(event_loop.get_signal());
 
         let handle = event_loop.handle();
 
@@ -31,6 +31,14 @@ impl HeadlessClient {
             .insert_source(main_receiver, |event, _, _: &mut HeadlessClient| {
                 if let calloop::channel::Event::Msg(runnable) = event {
                     runnable.run();
+                }
+            })
+            .ok();
+
+        handle
+            .insert_source(wake_receiver, |event, _, client: &mut HeadlessClient| {
+                if let calloop::channel::Event::Msg(()) = event {
+                    client.with_common(|common| common.handle_system_wake());
                 }
             })
             .ok();
