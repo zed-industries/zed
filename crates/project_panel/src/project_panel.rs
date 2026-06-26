@@ -60,10 +60,9 @@ use std::{
 };
 use theme_settings::ThemeSettings;
 use ui::{
-    ContextMenu, DecoratedIcon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, Indicator, KeyBinding, ListItem, ListItemSpacing,
-    ProjectEmptyState, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip,
-    WithScrollbar, prelude::*,
+    ContextMenu, DecoratedIcon, IconDecoration, IconDecorationKind, IndentGuideColors,
+    IndentGuideLayout, Indicator, KeyBinding, ListItem, ListItemSpacing, ProjectEmptyState,
+    ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt, TakeUntilExt, TryFutureExt,
@@ -1197,10 +1196,7 @@ impl ProjectPanel {
                             })
                             .when(is_dir && !is_root, |menu| {
                                 menu.separator()
-                                    .action(
-                                        "Expand All",
-                                        Box::new(ExpandSelectedEntryAndChildren),
-                                    )
+                                    .action("Expand All", Box::new(ExpandSelectedEntryAndChildren))
                                     .action(
                                         "Collapse All",
                                         Box::new(CollapseSelectedEntryAndChildren),
