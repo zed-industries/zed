@@ -14,13 +14,14 @@ use cloud_llm_client::{
 };
 use db::AppDatabase;
 use edit_prediction_types::EditPredictionRequestTrigger;
+use feature_flags::{FeatureFlag as _, FeatureFlagAppExt as _, FeatureFlagsSettings};
 use futures::{
     AsyncReadExt, FutureExt, StreamExt,
     channel::{mpsc, oneshot},
 };
 use gpui::App;
 use gpui::{
-    Entity, TestAppContext,
+    Entity, TestAppContext, UpdateGlobal,
     http_client::{FakeHttpClient, Response},
 };
 use indoc::indoc;
@@ -56,6 +57,7 @@ use super::*;
 #[gpui::test]
 async fn test_current_state(cx: &mut TestAppContext) {
     let (ep_store, mut requests) = init_test_with_fake_client(cx);
+    cx.update(|cx| set_jumps_feature_flag_override(cx, "on"));
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         "/root",
@@ -2540,6 +2542,7 @@ fn init_test_with_fake_client_and_legacy_data_collection(
         cx.set_global(AppDatabase::test_new());
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        disable_jumps_feature_flag(cx);
         zlog::init_test();
 
         if let Some(legacy_data_collection_choice) = legacy_data_collection_choice {
@@ -3099,6 +3102,26 @@ fn init_test(cx: &mut TestAppContext) {
         cx.set_global(AppDatabase::test_new());
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);
+        disable_jumps_feature_flag(cx);
+    });
+}
+
+fn disable_jumps_feature_flag(cx: &mut App) {
+    SettingsStore::update_global(cx, |store, _| {
+        store.register_setting::<FeatureFlagsSettings>();
+    });
+    set_jumps_feature_flag_override(cx, "off");
+    cx.update_flags(false, vec![]);
+}
+
+fn set_jumps_feature_flag_override(cx: &mut App, value: &str) {
+    SettingsStore::update_global(cx, |store, cx| {
+        store.update_user_settings(cx, |content| {
+            content.feature_flags.get_or_insert_default().insert(
+                EditPredictionJumpsFeatureFlag::NAME.to_string(),
+                value.to_string(),
+            );
+        });
     });
 }
 
