@@ -62,6 +62,8 @@ pub enum MarkdownPreviewMode {
     Default,
     /// The preview will "follow" the currently active editor.
     Follow,
+    /// A single reusable auto-preview; re-pointed in place when another Markdown file opens.
+    Auto,
 }
 
 impl MarkdownPreviewMode {
@@ -95,44 +97,13 @@ impl MarkdownPreviewView {
     pub fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>) {
         workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
             if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
-                let view = Self::create_markdown_view(workspace, editor.clone(), window, cx);
-                workspace.active_pane().update(cx, |pane, cx| {
-                    if let Some(existing_view_idx) =
-                        Self::find_existing_independent_preview_item_idx(pane, &editor, cx)
-                    {
-                        pane.activate_item(existing_view_idx, true, true, window, cx);
-                    } else {
-                        pane.add_item(Box::new(view.clone()), true, true, None, window, cx)
-                    }
-                });
-                cx.notify();
+                Self::open_preview(workspace, editor, false, true, window, cx);
             }
         });
 
         workspace.register_action(move |workspace, _: &OpenPreviewToTheSide, window, cx| {
             if let Some(editor) = Self::resolve_active_item_as_markdown_editor(workspace, cx) {
-                let view = Self::create_markdown_view(workspace, editor.clone(), window, cx);
-                let pane = workspace
-                    .find_pane_in_direction(workspace::SplitDirection::Right, cx)
-                    .unwrap_or_else(|| {
-                        workspace.split_pane(
-                            workspace.active_pane().clone(),
-                            workspace::SplitDirection::Right,
-                            window,
-                            cx,
-                        )
-                    });
-                pane.update(cx, |pane, cx| {
-                    if let Some(existing_view_idx) =
-                        Self::find_existing_independent_preview_item_idx(pane, &editor, cx)
-                    {
-                        pane.activate_item(existing_view_idx, true, true, window, cx);
-                    } else {
-                        pane.add_item(Box::new(view.clone()), false, false, None, window, cx)
-                    }
-                });
-                editor.focus_handle(cx).focus(window, cx);
-                cx.notify();
+                Self::open_preview(workspace, editor, true, false, window, cx);
             }
         });
 
@@ -160,6 +131,51 @@ impl MarkdownPreviewView {
                 cx.notify();
             }
         });
+    }
+
+    pub fn open_preview(
+        workspace: &mut Workspace,
+        editor: Entity<Editor>,
+        to_side: bool,
+        focus_preview: bool,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let view = Self::create_markdown_view(workspace, editor.clone(), window, cx);
+        let pane = if to_side {
+            workspace
+                .find_pane_in_direction(workspace::SplitDirection::Right, cx)
+                .unwrap_or_else(|| {
+                    workspace.split_pane(
+                        workspace.active_pane().clone(),
+                        workspace::SplitDirection::Right,
+                        window,
+                        cx,
+                    )
+                })
+        } else {
+            workspace.active_pane().clone()
+        };
+        pane.update(cx, |pane, cx| {
+            if let Some(existing_view_idx) =
+                Self::find_existing_independent_preview_item_idx(pane, &editor, cx)
+            {
+                pane.activate_item(existing_view_idx, true, true, window, cx);
+            } else {
+                pane.add_item(
+                    Box::new(view.clone()),
+                    focus_preview,
+                    focus_preview,
+                    None,
+                    window,
+                    cx,
+                );
+            }
+        });
+        if !focus_preview {
+            editor.focus_handle(cx).focus(window, cx);
+        }
+        cx.notify();
     }
 
     fn find_existing_independent_preview_item_idx(
@@ -337,7 +353,7 @@ impl MarkdownPreviewView {
         }
     }
 
-    pub fn is_markdown_file<V>(editor: &Entity<Editor>, cx: &mut Context<V>) -> bool {
+    pub fn is_markdown_file(editor: &Entity<Editor>, cx: &App) -> bool {
         let buffer = editor.read(cx).buffer().read(cx);
         if let Some(buffer) = buffer.as_singleton()
             && let Some(language) = buffer.read(cx).language()
@@ -347,7 +363,12 @@ impl MarkdownPreviewView {
         false
     }
 
-    fn set_editor(&mut self, editor: Entity<Editor>, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn set_editor(
+        &mut self,
+        editor: Entity<Editor>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(active) = &self.active_editor
             && active.editor == editor
         {

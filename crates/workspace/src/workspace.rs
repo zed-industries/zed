@@ -111,7 +111,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
 use settings::{
-    CenteredPaddingSettings, DefaultOpenBehavior, Settings, SettingsLocation, SettingsStore,
+    AutoPreviewMode, CenteredPaddingSettings, DefaultOpenBehavior, Settings, SettingsLocation,
+    SettingsStore,
     update_settings_file,
 };
 
@@ -950,6 +951,57 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut App) {
     cx.default_global::<ProjectItemRegistry>().register::<I>();
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoPreviewMatch {
+    Yes,
+    Pending,
+    No,
+}
+
+/// Lets preview crates (markdown, svg, csv) opt into auto-preview. The workspace
+/// owns pane/focus/slot orchestration; providers only match and build/swap views.
+pub trait AutoPreviewProvider: 'static {
+    fn id(&self) -> &'static str;
+
+    fn match_item(&self, item: &dyn ItemHandle, cx: &App) -> AutoPreviewMatch;
+
+    fn create(
+        &self,
+        item: &dyn ItemHandle,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> Option<Box<dyn ItemHandle>>;
+
+    fn swap(
+        &self,
+        preview: &dyn ItemHandle,
+        item: &dyn ItemHandle,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> bool;
+}
+
+#[derive(Default)]
+pub struct AutoPreviewRegistry {
+    providers: Vec<Box<dyn AutoPreviewProvider>>,
+}
+
+impl Global for AutoPreviewRegistry {}
+
+/// Providers are consulted in reverse registration order (last wins), matching
+/// [ProjectItemRegistry::open_path].
+pub fn register_auto_preview_provider(provider: impl AutoPreviewProvider, cx: &mut App) {
+    cx.default_global::<AutoPreviewRegistry>()
+        .providers
+        .push(Box::new(provider));
+}
+
+fn item_focus_back(item: &dyn ItemHandle, window: &mut Window, cx: &mut App) {
+    let focus_handle = item.item_focus_handle(cx);
+    focus_handle.focus(window, cx);
+}
+
 #[derive(Default)]
 pub struct FollowableViewRegistry(TypeIdHashMap<FollowableViewDescriptor>);
 
@@ -1421,6 +1473,13 @@ pub struct Workspace {
     active_workspace_id: Option<Rc<Cell<EntityId>>>,
     active_worktree_creation: ActiveWorktreeCreation,
     deferred_save_items: Vec<Box<dyn WeakItemHandle>>,
+    auto_preview: Option<AutoPreviewSlot>,
+}
+
+struct AutoPreviewSlot {
+    provider_id: &'static str,
+    pane: WeakEntity<Pane>,
+    preview: Box<dyn WeakItemHandle>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1614,6 +1673,12 @@ impl Workspace {
                     this.handle_agent_location_changed(window, cx)
                 }
 
+                project::Event::LanguageDetected(_) => {
+                    if let Some(item) = this.active_item(cx) {
+                        this.update_auto_preview(item, window, cx);
+                    }
+                }
+
                 _ => {}
             }
             cx.notify()
@@ -1796,6 +1861,24 @@ impl Workspace {
             }),
         ];
 
+        let mut last_auto_preview_mode =
+            crate::item::PreviewTabsSettings::get_global(cx).auto_preview;
+        cx.observe_global_in::<SettingsStore>(window, move |workspace, window, cx| {
+            let mode = crate::item::PreviewTabsSettings::get_global(cx).auto_preview;
+            if mode == last_auto_preview_mode {
+                return;
+            }
+            last_auto_preview_mode = mode;
+            workspace.refresh_auto_preview(window, cx);
+        })
+        .detach();
+
+        cx.defer_in(window, |workspace, window, cx| {
+            if let Some(item) = workspace.active_item(cx) {
+                workspace.update_auto_preview(item, window, cx);
+            }
+        });
+
         cx.defer_in(window, move |this, window, cx| {
             this.update_window_title(window, cx);
             this.show_initial_notifications(cx);
@@ -1868,6 +1951,7 @@ impl Workspace {
             open_in_dev_container: false,
             _dev_container_task: None,
             deferred_save_items: Vec::new(),
+            auto_preview: None,
         }
     }
 
@@ -5437,6 +5521,201 @@ impl Workspace {
             .cloned()
     }
 
+    fn auto_preview_to_side(cx: &App) -> Option<bool> {
+        match crate::item::PreviewTabsSettings::get_global(cx).auto_preview {
+            AutoPreviewMode::Off => None,
+            AutoPreviewMode::SamePane => Some(false),
+            AutoPreviewMode::ToSide => Some(true),
+        }
+    }
+
+    fn refresh_auto_preview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_auto_preview_slot(window, cx);
+        if Self::auto_preview_to_side(cx).is_none() {
+            return;
+        }
+        let source = self
+            .active_item(cx)
+            .filter(|item| self.item_matches_any_provider(item.as_ref(), cx))
+            .or_else(|| {
+                self.active_pane()
+                    .read(cx)
+                    .items()
+                    .find(|item| self.item_matches_any_provider(item.as_ref(), cx))
+                    .map(|item| item.boxed_clone())
+            });
+        if let Some(item) = source {
+            self.update_auto_preview(item, window, cx);
+        }
+    }
+
+    fn item_matches_any_provider(&self, item: &dyn ItemHandle, cx: &App) -> bool {
+        let Some(registry) = cx.try_global::<AutoPreviewRegistry>() else {
+            return false;
+        };
+        registry
+            .providers
+            .iter()
+            .any(|provider| matches!(provider.match_item(item, cx), AutoPreviewMatch::Yes))
+    }
+
+    fn update_auto_preview(
+        &mut self,
+        item: Box<dyn ItemHandle>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(to_side) = Self::auto_preview_to_side(cx) else {
+            return;
+        };
+
+        let providers = std::mem::take(&mut cx.default_global::<AutoPreviewRegistry>().providers);
+        let matched =
+            providers
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(
+                    |(index, provider)| match provider.match_item(item.as_ref(), cx) {
+                        AutoPreviewMatch::Yes => Some((index, provider.id())),
+                        _ => None,
+                    },
+                );
+        cx.default_global::<AutoPreviewRegistry>().providers = providers;
+        let Some((provider_index, provider_id)) = matched else {
+            return;
+        };
+
+        let live_slot = self.auto_preview.as_ref().and_then(|slot| {
+            let pane = slot.pane.upgrade()?;
+            let preview = slot.preview.upgrade()?;
+            Some((slot.provider_id, pane, preview))
+        });
+
+        let previous = match live_slot {
+            Some((slot_id, pane, preview)) if slot_id == provider_id => {
+                let swapped = cx.update_global::<AutoPreviewRegistry, _>(|registry, cx| {
+                    registry
+                        .providers
+                        .get(provider_index)
+                        .map(|provider| provider.swap(preview.as_ref(), item.as_ref(), window, cx))
+                        .unwrap_or(false)
+                });
+                if swapped {
+                    pane.update(cx, |pane, cx| {
+                        if let Some(index) = pane.index_for_item(preview.as_ref()) {
+                            pane.activate_item(index, false, false, window, cx);
+                        }
+                    });
+                    cx.notify();
+                    return;
+                }
+                Some((pane, preview))
+            }
+            Some((_, pane, preview)) => Some((pane, preview)),
+            None => None,
+        };
+
+        self.auto_preview = None;
+        self.create_auto_preview(
+            provider_index,
+            provider_id,
+            item,
+            to_side,
+            previous,
+            window,
+            cx,
+        );
+    }
+
+    fn create_auto_preview(
+        &mut self,
+        provider_index: usize,
+        provider_id: &'static str,
+        item: Box<dyn ItemHandle>,
+        to_side: bool,
+        previous: Option<(Entity<Pane>, Box<dyn ItemHandle>)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let preview = self.create_with_provider(provider_index, item.as_ref(), window, cx);
+
+        if let Some(preview) = &preview {
+            let reuse_pane = previous
+                .as_ref()
+                .map(|(pane, _)| pane.clone())
+                .filter(|pane| !to_side || pane.entity_id() != self.active_pane().entity_id());
+
+            let pane = if to_side {
+                reuse_pane
+                    .or_else(|| self.find_pane_in_direction(SplitDirection::Right, cx))
+                    .unwrap_or_else(|| {
+                        self.split_pane(
+                            self.active_pane().clone(),
+                            SplitDirection::Right,
+                            window,
+                            cx,
+                        )
+                    })
+            } else {
+                reuse_pane.unwrap_or_else(|| self.active_pane().clone())
+            };
+
+            let focus = !to_side;
+            pane.update(cx, |pane, cx| {
+                pane.add_item(preview.boxed_clone(), focus, focus, None, window, cx);
+            });
+            if to_side {
+                item_focus_back(item.as_ref(), window, cx);
+            }
+
+            self.auto_preview = Some(AutoPreviewSlot {
+                provider_id,
+                pane: pane.downgrade(),
+                preview: preview.downgrade_item(),
+            });
+        }
+
+        if let Some((old_pane, old_preview)) = previous
+            && preview
+                .as_ref()
+                .is_none_or(|preview| preview.item_id() != old_preview.item_id())
+        {
+            old_pane.update(cx, |pane, cx| {
+                pane.remove_item(old_preview.item_id(), false, true, window, cx);
+            });
+        }
+
+        cx.notify();
+    }
+
+    fn close_auto_preview_slot(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(slot) = self.auto_preview.take()
+            && let Some(pane) = slot.pane.upgrade()
+            && let Some(preview) = slot.preview.upgrade()
+        {
+            pane.update(cx, |pane, cx| {
+                pane.remove_item(preview.item_id(), false, true, window, cx);
+            });
+        }
+    }
+
+    fn create_with_provider(
+        &mut self,
+        provider_index: usize,
+        item: &dyn ItemHandle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Box<dyn ItemHandle>> {
+        let registry = cx.default_global::<AutoPreviewRegistry>();
+        let providers = std::mem::take(&mut registry.providers);
+        let result = providers
+            .get(provider_index)
+            .and_then(|provider| provider.create(item, self, window, cx));
+        cx.default_global::<AutoPreviewRegistry>().providers = providers;
+        result
+    }
+
     pub fn swap_pane_in_direction(&mut self, direction: SplitDirection, cx: &mut Context<Self>) {
         if let Some(to) = self.find_pane_in_direction(direction, cx) {
             self.center.swap(&self.active_pane, &to, cx);
@@ -5587,6 +5866,9 @@ impl Workspace {
                 cx.emit(Event::ItemAdded {
                     item: item.boxed_clone(),
                 });
+            }
+            pane::Event::OpenItem { item } => {
+                self.update_auto_preview(item.boxed_clone(), window, cx);
             }
             pane::Event::Split { direction, mode } => {
                 match mode {
@@ -16321,5 +16603,471 @@ mod tests {
             workspace.open_url_or_file("nonexistent.txt", None, window, cx);
         });
         assert_eq!(cx.opened_url(), Some("nonexistent.txt".to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_auto_preview_registry_reverse_order(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        struct FakeProvider(&'static str);
+        impl AutoPreviewProvider for FakeProvider {
+            fn id(&self) -> &'static str {
+                self.0
+            }
+            fn match_item(&self, _item: &dyn ItemHandle, _cx: &App) -> AutoPreviewMatch {
+                AutoPreviewMatch::Yes
+            }
+            fn create(
+                &self,
+                _item: &dyn ItemHandle,
+                _workspace: &mut Workspace,
+                _window: &mut Window,
+                _cx: &mut Context<Workspace>,
+            ) -> Option<Box<dyn ItemHandle>> {
+                None
+            }
+            fn swap(
+                &self,
+                _preview: &dyn ItemHandle,
+                _item: &dyn ItemHandle,
+                _window: &mut Window,
+                _cx: &mut App,
+            ) -> bool {
+                false
+            }
+        }
+
+        cx.update(|cx| {
+            register_auto_preview_provider(FakeProvider("first"), cx);
+            register_auto_preview_provider(FakeProvider("second"), cx);
+            let registry = cx.global::<AutoPreviewRegistry>();
+            assert_eq!(registry.providers.last().unwrap().id(), "second");
+            assert_eq!(registry.providers.first().unwrap().id(), "first");
+        });
+    }
+
+    struct LabelProvider {
+        id: &'static str,
+        matches_label: &'static str,
+    }
+
+    impl AutoPreviewProvider for LabelProvider {
+        fn id(&self) -> &'static str {
+            self.id
+        }
+        fn match_item(&self, item: &dyn ItemHandle, cx: &App) -> AutoPreviewMatch {
+            let Some(test_item) = item.downcast::<TestItem>() else {
+                return AutoPreviewMatch::No;
+            };
+            if test_item.read(cx).label == self.matches_label {
+                AutoPreviewMatch::Yes
+            } else {
+                AutoPreviewMatch::No
+            }
+        }
+        fn create(
+            &self,
+            _item: &dyn ItemHandle,
+            _workspace: &mut Workspace,
+            _window: &mut Window,
+            cx: &mut Context<Workspace>,
+        ) -> Option<Box<dyn ItemHandle>> {
+            let id = self.id;
+            Some(Box::new(cx.new(|cx| {
+                let mut preview = TestItem::new(cx);
+                preview.label = format!("preview:{id}");
+                preview
+            })))
+        }
+        fn swap(
+            &self,
+            preview: &dyn ItemHandle,
+            _item: &dyn ItemHandle,
+            _window: &mut Window,
+            cx: &mut App,
+        ) -> bool {
+            let Some(preview) = preview.downcast::<TestItem>() else {
+                return false;
+            };
+            preview.update(cx, |preview, _| preview.reload_count += 1);
+            true
+        }
+    }
+
+    fn preview_tab_count(workspace: &Workspace, cx: &App) -> usize {
+        workspace
+            .panes()
+            .iter()
+            .flat_map(|pane| pane.read(cx).items_of_type::<TestItem>())
+            .filter(|item| item.read(cx).label.starts_with("preview:"))
+            .count()
+    }
+
+    fn set_auto_preview_mode(mode: AutoPreviewMode, cx: &mut App) {
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.preview_tabs.get_or_insert_default().auto_preview = Some(mode);
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_auto_preview_open_swap_replace(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.update(|_, cx| {
+            register_auto_preview_provider(
+                LabelProvider {
+                    id: "md",
+                    matches_label: "doc.md",
+                },
+                cx,
+            );
+            register_auto_preview_provider(
+                LabelProvider {
+                    id: "svg",
+                    matches_label: "logo.svg",
+                },
+                cx,
+            );
+            set_auto_preview_mode(AutoPreviewMode::SamePane, cx);
+        });
+
+        let md = cx.new(|cx| {
+            let mut item = TestItem::new(cx);
+            item.label = "doc.md".into();
+            item
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.update_auto_preview(Box::new(md.clone()), window, cx);
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(preview_tab_count(workspace, cx), 1);
+        });
+
+        let md2 = cx.new(|cx| {
+            let mut item = TestItem::new(cx);
+            item.label = "doc.md".into();
+            item
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.update_auto_preview(Box::new(md2.clone()), window, cx);
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(preview_tab_count(workspace, cx), 1);
+            let slot = workspace.auto_preview.as_ref().unwrap();
+            assert_eq!(slot.provider_id, "md");
+            // `swap` bumps `reload_count`; a close+recreate would leave it 0.
+            let preview = slot
+                .preview
+                .upgrade()
+                .unwrap()
+                .downcast::<TestItem>()
+                .unwrap();
+            assert_eq!(preview.read(cx).reload_count, 1);
+        });
+
+        let svg = cx.new(|cx| {
+            let mut item = TestItem::new(cx);
+            item.label = "logo.svg".into();
+            item
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.update_auto_preview(Box::new(svg.clone()), window, cx);
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(preview_tab_count(workspace, cx), 1);
+            assert_eq!(workspace.auto_preview.as_ref().unwrap().provider_id, "svg");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_auto_preview_off_opens_nothing(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.update(|_, cx| {
+            register_auto_preview_provider(
+                LabelProvider {
+                    id: "md",
+                    matches_label: "doc.md",
+                },
+                cx,
+            );
+            set_auto_preview_mode(AutoPreviewMode::Off, cx);
+        });
+
+        let md = cx.new(|cx| {
+            let mut item = TestItem::new(cx);
+            item.label = "doc.md".into();
+            item
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.update_auto_preview(Box::new(md), window, cx);
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(preview_tab_count(workspace, cx), 0);
+        });
+    }
+
+    fn open_item_through_pane(
+        workspace: &Entity<Workspace>,
+        item: Entity<TestItem>,
+        path: &str,
+        allow_preview: bool,
+        cx: &mut VisualTestContext,
+    ) {
+        workspace.update_in(cx, |workspace, window, cx| {
+            let pane = workspace.active_pane().clone();
+            let project_path = ProjectPath {
+                worktree_id: WorktreeId::from_usize(0),
+                path: util::rel_path::rel_path(path).into(),
+            };
+            pane.update(cx, |pane, cx| {
+                let build_item: WorkspaceItemBuilder =
+                    Box::new(move |_, _, _| Box::new(item) as Box<dyn ItemHandle>);
+                pane.open_item(
+                    None,
+                    project_path,
+                    true,
+                    allow_preview,
+                    true,
+                    None,
+                    window,
+                    cx,
+                    build_item,
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_auto_preview_setting_off_closes_then_reopens(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.update(|_, cx| {
+            register_auto_preview_provider(
+                LabelProvider {
+                    id: "md",
+                    matches_label: "doc.md",
+                },
+                cx,
+            );
+            set_auto_preview_mode(AutoPreviewMode::SamePane, cx);
+        });
+
+        let md = cx.new(|cx| {
+            let mut item = TestItem::new(cx);
+            item.label = "doc.md".into();
+            item
+        });
+        open_item_through_pane(&workspace, md, "doc.md", false, cx);
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(preview_tab_count(workspace, cx), 1);
+        });
+
+        cx.update(|_, cx| set_auto_preview_mode(AutoPreviewMode::Off, cx));
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(preview_tab_count(workspace, cx), 0);
+            assert!(workspace.auto_preview.is_none());
+        });
+
+        cx.update(|_, cx| set_auto_preview_mode(AutoPreviewMode::SamePane, cx));
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(preview_tab_count(workspace, cx), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_auto_preview_pending_then_detected(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        struct PendingProvider {
+            ready: std::rc::Rc<std::cell::Cell<bool>>,
+        }
+        impl AutoPreviewProvider for PendingProvider {
+            fn id(&self) -> &'static str {
+                "pending"
+            }
+            fn match_item(&self, item: &dyn ItemHandle, _cx: &App) -> AutoPreviewMatch {
+                if item.downcast::<TestItem>().is_none() {
+                    return AutoPreviewMatch::No;
+                }
+                if self.ready.get() {
+                    AutoPreviewMatch::Yes
+                } else {
+                    AutoPreviewMatch::Pending
+                }
+            }
+            fn create(
+                &self,
+                _item: &dyn ItemHandle,
+                _workspace: &mut Workspace,
+                _window: &mut Window,
+                cx: &mut Context<Workspace>,
+            ) -> Option<Box<dyn ItemHandle>> {
+                Some(Box::new(cx.new(|cx| {
+                    let mut p = TestItem::new(cx);
+                    p.label = "preview:pending".into();
+                    p
+                })))
+            }
+            fn swap(
+                &self,
+                _: &dyn ItemHandle,
+                _: &dyn ItemHandle,
+                _: &mut Window,
+                _: &mut App,
+            ) -> bool {
+                true
+            }
+        }
+
+        let ready = std::rc::Rc::new(std::cell::Cell::new(false));
+        cx.update(|_, cx| {
+            register_auto_preview_provider(
+                PendingProvider {
+                    ready: ready.clone(),
+                },
+                cx,
+            );
+            set_auto_preview_mode(AutoPreviewMode::SamePane, cx);
+        });
+
+        let item = cx.new(|cx| {
+            let mut i = TestItem::new(cx);
+            i.label = "doc".into();
+            i
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.update_auto_preview(Box::new(item.clone()), window, cx);
+        });
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(preview_tab_count(workspace, cx), 0);
+        });
+
+        ready.set(true);
+        let buffer = project.update(cx, |project, cx| {
+            project.create_local_buffer("", None, false, cx)
+        });
+        project.update(cx, |_, cx| {
+            cx.emit(project::Event::LanguageDetected(buffer));
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(preview_tab_count(workspace, cx), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_auto_preview_to_side_through_pane(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.update(|_, cx| {
+            register_auto_preview_provider(
+                LabelProvider {
+                    id: "md",
+                    matches_label: "doc.md",
+                },
+                cx,
+            );
+            set_auto_preview_mode(AutoPreviewMode::ToSide, cx);
+        });
+
+        let md = cx.new(|cx| {
+            let mut item = TestItem::new(cx);
+            item.label = "doc.md".into();
+            item
+        });
+        open_item_through_pane(&workspace, md, "doc.md", true, cx);
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            assert_eq!(preview_tab_count(workspace, cx), 1);
+            assert_eq!(workspace.panes().len(), 2);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_auto_preview_to_side_provider_switch(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        cx.update(|_, cx| {
+            register_auto_preview_provider(
+                LabelProvider {
+                    id: "md",
+                    matches_label: "doc.md",
+                },
+                cx,
+            );
+            register_auto_preview_provider(
+                LabelProvider {
+                    id: "csv",
+                    matches_label: "data.csv",
+                },
+                cx,
+            );
+            set_auto_preview_mode(AutoPreviewMode::ToSide, cx);
+        });
+
+        let open =
+            |workspace: &Entity<Workspace>, label: &'static str, cx: &mut VisualTestContext| {
+                let item = cx.new(|cx| {
+                    let mut item = TestItem::new(cx);
+                    item.label = label.into();
+                    item
+                });
+                open_item_through_pane(workspace, item, label, true, cx);
+                cx.run_until_parked();
+            };
+
+        for (step, label) in [
+            "doc.md", "doc.md", "data.csv", "doc.md", "doc.md", "data.csv", "data.csv",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            open(&workspace, label, cx);
+            workspace.read_with(cx, |workspace, cx| {
+                assert_eq!(
+                    preview_tab_count(workspace, cx),
+                    1,
+                    "step {step} ({label}): expected exactly one visible side preview"
+                );
+                assert_eq!(
+                    workspace.panes().len(),
+                    2,
+                    "step {step} ({label}): side pane should survive"
+                );
+            });
+        }
     }
 }

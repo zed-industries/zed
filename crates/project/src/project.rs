@@ -359,6 +359,7 @@ pub enum Event {
     },
     LanguageServerPrompt(LanguageServerPromptRequest),
     LanguageNotFound(Entity<Buffer>),
+    LanguageDetected(Entity<Buffer>),
     ActiveEntryChanged(Option<ProjectEntryId>),
     ActivateProjectPanel,
     WorktreeAdded(WorktreeId),
@@ -3563,6 +3564,7 @@ impl Project {
                     cx.emit(Event::LanguageNotFound(buffer.clone()));
                     return;
                 };
+                cx.emit(Event::LanguageDetected(buffer.clone()));
             }
             LspStoreEvent::RefreshInlayHints {
                 server_id,

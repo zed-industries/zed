@@ -1,7 +1,9 @@
 use gpui::{App, actions};
-use workspace::Workspace;
+use workspace::{Workspace, register_auto_preview_provider};
 
 pub mod svg_preview_view;
+
+use crate::svg_preview_view::SvgAutoPreviewProvider;
 
 pub use zed_actions::preview::svg::{OpenPreview, OpenPreviewToTheSide};
 
@@ -21,4 +23,6 @@ pub fn init(cx: &mut App) {
         crate::svg_preview_view::SvgPreviewView::register(workspace, window, cx);
     })
     .detach();
+
+    register_auto_preview_provider(SvgAutoPreviewProvider, cx);
 }
