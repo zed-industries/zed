@@ -4739,12 +4739,6 @@ impl ThreadView {
         }
     }
 
-    /// A small lock icon summarizing the sandbox state. Hovering shows the
-    /// write-access paths and network-access domains from the user's settings
-    /// and the per-thread overrides. The lock is struck through when sandboxing
-    /// is turned off (in settings, or for this thread). Shown whenever
-    /// sandboxing is *applicable* to the project, even when disabled, so the
-    /// user can always see and change the state. Clicking opens the settings.
     pub fn render_sandbox_status(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let status = self.refresh_sandbox_status(cx)?;
         let settings_sandbox = status.settings_sandbox.clone();
@@ -4754,14 +4748,14 @@ impl ThreadView {
         // The lock is struck only when the *merged* result is unsandboxed (the
         // agent runs with ambient permissions). A layer that is merely wide open
         // but still sandboxed keeps the closed lock.
-        let icon = if settings_sandbox
+        let (icon, icon_color) = if settings_sandbox
             .clone()
             .merge(thread_sandbox.clone())
             .is_unsandboxed()
         {
-            IconName::LockOutlinedOff
+            (IconName::LockOff, Color::Disabled)
         } else {
-            IconName::LockOutlined
+            (IconName::Lock, Color::Default)
         };
 
         let state = match (settings_sandbox, thread_sandbox) {
@@ -4785,21 +4779,26 @@ impl ThreadView {
         };
 
         Some(
-            IconButton::new("sandbox-status", icon)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .tooltip(Tooltip::element(move |_window, cx| {
-                    render_sandbox_status_tooltip(&state, cx)
-                }))
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(
-                        Box::new(zed_actions::OpenSettingsAt {
-                            path: zed_actions::AGENT_SANDBOX_SETTINGS_PATH.to_string(),
-                            target: None,
+            h_flex()
+                .gap_1()
+                .child(
+                    IconButton::new("sandbox-status", icon)
+                        .icon_size(IconSize::Small)
+                        .icon_color(icon_color)
+                        .tooltip(Tooltip::element(move |_window, cx| {
+                            render_sandbox_status_tooltip(&state, cx)
+                        }))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(zed_actions::OpenSettingsAt {
+                                    path: zed_actions::AGENT_SANDBOX_SETTINGS_PATH.to_string(),
+                                    target: None,
+                                }),
+                                cx,
+                            );
                         }),
-                        cx,
-                    );
-                })
+                )
+                .child(Divider::vertical().h_4())
                 .into_any_element(),
         )
     }
