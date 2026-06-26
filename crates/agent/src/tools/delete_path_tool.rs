@@ -247,9 +247,7 @@ impl AgentTool for DeletePathTool {
             }
 
             let deletion_task = project
-                .update(cx, |project, cx| {
-                    project.delete_file(project_path, false, cx)
-                })
+                .update(cx, |project, cx| project.delete_file(project_path, cx))
                 .ok_or_else(|| {
                     format!("Couldn't delete {path} because that path isn't in this project.")
                 })?;

@@ -469,15 +469,18 @@ impl Peer {
                 .lock()
                 .as_mut()
                 .context("connection was closed")?
+                // requesting to forward the response on the oneshot tx
+                // when it's envelope.id matches the one for the request we are about to send
                 .insert(envelope.id, tx);
             connection
                 .outgoing_tx
+                // request that the message is send at some point in the future
                 .unbounded_send(Message::Envelope(envelope))
                 .context("connection was closed")?;
             Ok(())
         });
         async move {
-            send?;
+            send?; // wait for reception
             let (response, received_at, _barrier) = rx.await.context("connection was closed")?;
             if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
                 return Err(RpcError::from_proto(error, type_name));

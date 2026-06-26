@@ -3478,7 +3478,7 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project.delete_entry(dir_entry.id, false, cx).unwrap()
+            project.delete_entry(dir_entry.id, cx).unwrap()
         })
         .await
         .unwrap();
@@ -3506,7 +3506,7 @@ async fn test_fs_operations(
 
     project_b
         .update(cx_b, |project, cx| {
-            project.delete_entry(entry.id, false, cx).unwrap()
+            project.delete_entry(entry.id, cx).unwrap()
         })
         .await
         .unwrap();

@@ -5,7 +5,6 @@ mod utils;
 use anyhow::{Context as _, Result};
 use client::{ErrorCode, ErrorExt};
 use collections::{BTreeSet, HashMap, hash_map};
-use command_palette_hooks::CommandPaletteFilter;
 use editor::{
     Editor, EditorEvent, MultiBufferOffset,
     items::{
@@ -757,18 +756,6 @@ impl ProjectPanel {
             )
             .detach();
 
-            let trash_action = [TypeId::of::<Trash>()];
-            let is_remote = project.read(cx).is_remote();
-
-            // Make sure the trash option is never displayed anywhere on remote
-            // hosts since they may not support trashing. May want to dynamically
-            // detect this in the future.
-            if is_remote {
-                CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                    filter.hide_action_types(&trash_action);
-                });
-            }
-
             let filename_editor = cx.new(|cx| Editor::single_line(window, cx));
 
             cx.subscribe_in(
@@ -1198,7 +1185,7 @@ impl ProjectPanel {
                             .when(!should_hide_rename, |menu| {
                                 menu.separator().action("Rename", Box::new(Rename))
                             })
-                            .when(!is_root && !is_remote, |menu| {
+                            .when(!is_root, |menu| {
                                 menu.action("Trash", Box::new(Trash { skip_prompt: false }))
                             })
                             .when(!is_root, |menu| {
@@ -2411,6 +2398,11 @@ impl ProjectPanel {
         });
     }
 
+    // TODO(yara|dino): trashing and deleting are conceptually distinct, even
+    // more so with the fact that trashing can now be undone, whereas deleting
+    // cannot.
+    // Worth splitting them, and exploring dropping the trash confirmation now
+    // that trash is undoable.
     fn remove(
         &mut self,
         trash: bool,
@@ -2524,20 +2516,29 @@ impl ProjectPanel {
                 let mut changes = Vec::new();
 
                 for (entry_id, worktree_id, _) in file_paths {
-                    let trashed_entry = panel
-                        .update(cx, |panel, cx| {
-                            panel
-                                .project
-                                .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
-                                .context("no such entry")
-                        })??
-                        .await?;
+                    if trash {
+                        let trash_id = panel
+                            .update(cx, |panel, cx| {
+                                panel
+                                    .project
+                                    .update(cx, |project, cx| project.trash_entry(entry_id, cx))
+                                    .context("no such entry")
+                            })??
+                            .await?;
 
-                    // Keep track of trashed change so that we can then record
-                    // all of the changes at once, such that undoing and redoing
-                    // restores or trashes all files in batch.
-                    if trash && let Some(trashed_entry) = trashed_entry {
-                        changes.push(Change::Trashed(worktree_id, trashed_entry));
+                        // Keep track of trashed change so that we can then record
+                        // all of the changes at once, such that undoing and redoing
+                        // restores or trashes all files in batch.
+                        changes.push(Change::Trashed(worktree_id, trash_id))
+                    } else {
+                        panel
+                            .update(cx, |panel, cx| {
+                                panel
+                                    .project
+                                    .update(cx, |project, cx| project.delete_entry(entry_id, cx))
+                                    .context("no such entry")
+                            })??
+                            .await?;
                     }
                 }
                 panel.update_in(cx, |panel, window, cx| {
@@ -6792,11 +6793,9 @@ impl Render for ProjectPanel {
                         .on_action(cx.listener(Self::paste))
                         .on_action(cx.listener(Self::duplicate))
                         .on_action(cx.listener(Self::restore_file))
+                        .on_action(cx.listener(Self::trash))
                         .on_action(cx.listener(Self::add_to_gitignore))
                         .on_action(cx.listener(Self::add_to_git_info_exclude))
-                        .when(!project.is_remote(), |el| {
-                            el.on_action(cx.listener(Self::trash))
-                        })
                 })
                 .when(
                     project.is_local() || project.is_via_wsl_with_host_interop(cx),

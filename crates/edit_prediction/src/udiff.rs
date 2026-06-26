@@ -65,7 +65,7 @@ pub async fn apply_diff(
                 if status == FileStatus::Deleted {
                     let delete_task = project.update(cx, |project, cx| {
                         if let Some(path) = project.find_project_path(path.as_ref(), cx) {
-                            project.delete_file(path, false, cx)
+                            project.delete_file(path, cx)
                         } else {
                             None
                         }
