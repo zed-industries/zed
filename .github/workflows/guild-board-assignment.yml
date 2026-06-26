@@ -1,0 +1,45 @@
+# Zed Guild Board (#74): mark Guild-assigned issues as in progress.
+
+name: Guild Board Assignment
+
+on:
+  issues:
+    types: [assigned]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: guild-board-assignment-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  run:
+    if: github.repository == 'zed-industries/zed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
+        id: app-token
+        with:
+          app-id: ${{ secrets.ZED_COMMUNITY_BOT_APP_ID }}
+          private-key: ${{ secrets.ZED_COMMUNITY_BOT_PRIVATE_KEY }}
+          owner: zed-industries
+
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          sparse-checkout: script/guild-board-assignment.py
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - run: python script/guild-board-assignment.py
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          PROJECT_NUMBER: "74"
+          GUILD_TEAM_SLUG: "zed-guild"
