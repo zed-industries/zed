@@ -190,6 +190,81 @@ impl PromptContextAction {
     }
 }
 
+/// A slash command that runs a local UI action against the conversation
+/// (scrolling, exporting, sending feedback) instead of being sent to the
+/// agent as part of a prompt. Each variant maps to a method on `ThreadView`;
+/// the completion provider only surfaces them and emits an event, while
+/// `ThreadView` performs the actual work (see `handle_message_editor_event`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptLocalCommand {
+    OpenAsMarkdown,
+    ScrollToTop,
+    ScrollToRecentUserPrompt,
+    ThumbsUp,
+    ThumbsDown,
+    ShareThread,
+    SyncThread,
+}
+
+impl PromptLocalCommand {
+    /// The `/keyword` typed to invoke this command.
+    pub fn keyword(&self) -> &'static str {
+        match self {
+            Self::OpenAsMarkdown => "markdown",
+            Self::ScrollToTop => "scroll-to-top",
+            Self::ScrollToRecentUserPrompt => "scroll-to-prompt",
+            Self::ThumbsUp => "helpful",
+            Self::ThumbsDown => "not-helpful",
+            Self::ShareThread => "share",
+            Self::SyncThread => "sync",
+        }
+    }
+
+    /// Human-readable label shown in the completion popup.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::OpenAsMarkdown => "Open Thread as Markdown",
+            Self::ScrollToTop => "Scroll to Top",
+            Self::ScrollToRecentUserPrompt => "Scroll to Most Recent User Prompt",
+            Self::ThumbsUp => "Helpful Response",
+            Self::ThumbsDown => "Not Helpful Response",
+            Self::ShareThread => "Share Thread",
+            Self::SyncThread => "Sync with Source Thread",
+        }
+    }
+
+    /// Longer description shown as documentation in the completion popup.
+    pub fn description(&self) -> &'static str {
+        match self {
+            Self::OpenAsMarkdown => "Open this thread as a Markdown document.",
+            Self::ScrollToTop => "Scroll to the top of the conversation.",
+            Self::ScrollToRecentUserPrompt => {
+                "Scroll to the most recent user prompt in the conversation."
+            }
+            Self::ThumbsUp => {
+                "Rate this response as helpful. Sends the current conversation to the Zed team."
+            }
+            Self::ThumbsDown => {
+                "Rate this response as not helpful. Sends the current conversation to the Zed team."
+            }
+            Self::ShareThread => "Share this thread.",
+            Self::SyncThread => "Sync this thread with its source thread.",
+        }
+    }
+
+    pub fn icon(&self) -> IconName {
+        match self {
+            Self::OpenAsMarkdown => IconName::FileMarkdown,
+            Self::ScrollToTop => IconName::ArrowUp,
+            Self::ScrollToRecentUserPrompt => IconName::ForwardArrow,
+            Self::ThumbsUp => IconName::ThumbsUp,
+            Self::ThumbsDown => IconName::ThumbsDown,
+            Self::ShareThread => IconName::ArrowUpRight,
+            Self::SyncThread => IconName::ArrowCircle,
+        }
+    }
+}
+
 impl TryFrom<&str> for PromptContextType {
     type Error = String;
 
@@ -366,13 +441,15 @@ impl AvailableCommand {
 enum SlashCompletionCandidate {
     Skill(AvailableSkill),
     Command(AvailableCommand),
+    LocalCommand(PromptLocalCommand),
 }
 
 impl SlashCompletionCandidate {
-    fn name(&self) -> &Arc<str> {
+    fn name(&self) -> Arc<str> {
         match self {
-            Self::Skill(skill) => &skill.name,
-            Self::Command(command) => &command.name,
+            Self::Skill(skill) => skill.name.clone(),
+            Self::Command(command) => command.name.clone(),
+            Self::LocalCommand(command) => command.keyword().into(),
         }
     }
 }
@@ -385,6 +462,8 @@ fn slash_completion_group_key(candidate: &SlashCompletionCandidate) -> u32 {
     match candidate {
         SlashCompletionCandidate::Skill(_) => 0,
         SlashCompletionCandidate::Command(command) => 1 + command.category_order() as u32,
+        // `category_order()` tops out at 2, so command keys occupy 1..=3.
+        SlashCompletionCandidate::LocalCommand(_) => 4,
     }
 }
 
@@ -411,6 +490,20 @@ pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
     fn available_skills(&self, _cx: &App) -> Vec<AvailableSkill> {
         Vec::new()
     }
+
+    /// Local UI commands this editor exposes as slash commands (scrolling,
+    /// exporting, feedback). Unlike `available_commands`, confirming one of
+    /// these runs a local action via `run_local_command` instead of sending
+    /// a prompt to the agent. The default is none.
+    fn available_local_commands(&self, _cx: &App) -> Vec<PromptLocalCommand> {
+        Vec::new()
+    }
+
+    /// Runs a local command that was confirmed in the completion popup. The
+    /// `/keyword` text has already been removed from the editor by the time
+    /// this is called.
+    fn run_local_command(&self, _command: PromptLocalCommand, _cx: &mut App) {}
+
     fn confirm_command(&self, cx: &mut App);
 
     /// Called once each time the user opens slash-command autocomplete
@@ -969,6 +1062,12 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                 .into_iter()
                 .map(SlashCompletionCandidate::Command),
         );
+        candidates.extend(
+            self.source
+                .available_local_commands(cx)
+                .into_iter()
+                .map(SlashCompletionCandidate::LocalCommand),
+        );
         if candidates.is_empty() {
             return Task::ready(Vec::new());
         }
@@ -977,7 +1076,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             let string_match_candidates = candidates
                 .iter()
                 .enumerate()
-                .map(|(id, candidate)| StringMatchCandidate::new(id, candidate.name()))
+                .map(|(id, candidate)| StringMatchCandidate::new(id, &candidate.name()))
                 .collect::<Vec<_>>();
 
             let matches = fuzzy::match_strings(
@@ -1429,7 +1528,10 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                             Some((new_text, icon_path, icon_color, confirm)),
                                         )
                                     }
-                                    SlashCompletionCandidate::Command(_) => (candidate, None),
+                                    SlashCompletionCandidate::Command(_)
+                                    | SlashCompletionCandidate::LocalCommand(_) => {
+                                        (candidate, None)
+                                    }
                                 })
                                 .collect::<Vec<(SlashCompletionCandidate, Option<SkillInfo>)>>()
                         })
@@ -1536,6 +1638,50 @@ impl<T: PromptCompletionProviderDelegate> CompletionProvider for PromptCompletio
                                                     }
                                                 });
                                             }
+                                            false
+                                        }
+                                    })),
+                                    group,
+                                }
+                            }
+                            SlashCompletionCandidate::LocalCommand(command) => {
+                                let group = show_section_headers.then(|| CompletionGroup {
+                                    key: "local-commands".into(),
+                                    label: Some("Actions".into()),
+                                });
+
+                                Completion {
+                                    replace_range: source_range.clone(),
+                                    // Local commands aren't part of the prompt;
+                                    // confirming one clears the typed text
+                                    // rather than leaving `/keyword` behind.
+                                    new_text: String::new(),
+                                    label: CodeLabel::plain(command.label().to_string(), None),
+                                    documentation: Some(
+                                        CompletionDocumentation::MultiLinePlainText(
+                                            command.description().into(),
+                                        ),
+                                    ),
+                                    source: project::CompletionSource::Custom,
+                                    icon_path: Some(command.icon().path().into()),
+                                    icon_color: None,
+                                    match_start: None,
+                                    snippet_deduplication_key: None,
+                                    insert_text_mode: None,
+                                    confirm: Some(Arc::new({
+                                        let source = source.clone();
+                                        move |intent, _window, cx| {
+                                            cx.defer({
+                                                let source = source.clone();
+                                                move |cx| match intent {
+                                                    CompletionIntent::Complete
+                                                    | CompletionIntent::CompleteWithInsert
+                                                    | CompletionIntent::CompleteWithReplace => {
+                                                        source.run_local_command(command, cx);
+                                                    }
+                                                    CompletionIntent::Compose => {}
+                                                }
+                                            });
                                             false
                                         }
                                     })),
