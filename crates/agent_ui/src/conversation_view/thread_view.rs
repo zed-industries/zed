@@ -1,21 +1,26 @@
 use crate::{
     DEFAULT_THREAD_TITLE, SelectPermissionGranularity,
     agent_configuration::configure_context_server_modal::default_markdown_style,
+    conversation_view::thread_search_bar::{ThreadSearchBar, ThreadSearchBarEvent},
     open_abs_path_at_point,
     thread_metadata_store::{ThreadId, ThreadMetadataStore},
 };
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use std::cell::RefCell;
 
 use acp_thread::{
-    ContentBlock, PlanEntry, SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails,
+    PlanEntry, SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails,
     SandboxNotAppliedReason,
 };
-use agent::{SkillLoadingIssue, SkillLoadingIssueKind, SkillLoadingIssuesUpdated};
+use agent::{
+    SandboxStatusKey, SandboxStatusRefresh, SkillLoadingIssue, SkillLoadingIssueKind,
+    SkillLoadingIssuesUpdated, ThreadSandbox, VerifiedSandboxStatus,
+};
 use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
+use sandbox::{GitSandboxPolicy, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
 use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
@@ -576,18 +581,9 @@ pub struct ThreadView {
     thread_feedback: ThreadFeedbackState,
     pub list_state: ListState,
     pub session_capabilities: SharedSessionCapabilities,
-    /// Tracks which tool calls have their content/output expanded.
-    /// Used for showing/hiding tool call results, terminal output, etc.
-    pub expanded_tool_calls: HashSet<acp::ToolCallId>,
     pub expanded_tool_call_raw_inputs: HashSet<acp::ToolCallId>,
     collapsed_sandbox_authorization_details: HashSet<acp::ToolCallId>,
     collapsed_sandbox_network_details: HashSet<acp::ToolCallId>,
-    pub expanded_thinking_blocks: HashSet<(usize, usize)>,
-    auto_expanded_thinking_block: Option<(usize, usize)>,
-    user_toggled_thinking_blocks: HashSet<(usize, usize)>,
-    /// Tracks which context compaction entries (by entry index) have their
-    /// summary expanded.
-    expanded_compactions: HashSet<usize>,
     pub subagent_scroll_handles: RefCell<HashMap<acp::SessionId, ScrollHandle>>,
     pub edits_expanded: bool,
     pub plan_expanded: bool,
@@ -595,10 +591,7 @@ pub struct ThreadView {
     pub editor_expanded: bool,
     pub should_be_following: bool,
     pub editing_message: Option<usize>,
-    pub local_queued_messages: Vec<QueuedMessage>,
-    pub queued_message_editors: Vec<Entity<MessageEditor>>,
-    pub queued_message_editor_subscriptions: Vec<Subscription>,
-    pub last_synced_queue_length: usize,
+    pub message_queue: MessageQueue,
     pub turn_fields: TurnFields,
     pub discarded_partial_edits: HashSet<acp::ToolCallId>,
     pub is_loading_contents: bool,
@@ -608,9 +601,7 @@ pub struct ThreadView {
     pub _cancel_task: Option<Task<()>>,
     _save_task: Option<Task<()>>,
     _draft_resolve_task: Option<Task<()>>,
-    pub skip_queue_processing_count: usize,
-    pub user_interrupted_generation: bool,
-    pub can_fast_track_queue: bool,
+    _sandbox_status_refresh_task: Option<Task<()>>,
     pub hovered_edited_file_buttons: Option<usize>,
     pub in_flight_prompt: Option<Vec<acp::ContentBlock>>,
     pub _subscriptions: Vec<Subscription>,
@@ -625,6 +616,9 @@ pub struct ThreadView {
     pub(crate) code_span_resolver: AgentCodeSpanResolver,
     pub show_external_source_prompt_warning: bool,
     pub show_codex_windows_warning: bool,
+    sandbox_status: Option<VerifiedSandboxStatus>,
+    sandbox_status_key: Option<SandboxStatusKey>,
+    pending_sandbox_status_key: Option<SandboxStatusKey>,
     pub multi_root_callout_dismissed: bool,
     pub generating_indicator_in_list: bool,
     pub skill_loading_issues: Vec<SkillLoadingIssue>,
@@ -634,6 +628,8 @@ pub struct ThreadView {
     /// dropped from this set so a future regression of the same kind would
     /// re-show.
     dismissed_skill_loading_issues: HashSet<SkillLoadingIssue>,
+    pub(crate) thread_search_bar: Option<Entity<super::thread_search_bar::ThreadSearchBar>>,
+    pub(crate) thread_search_visible: bool,
 }
 impl Focusable for ThreadView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
@@ -668,6 +664,19 @@ enum ToolCallLayout {
     Standalone,
     Embedded,
     Floating,
+}
+
+impl ToolCallLayout {
+    /// Stable discriminant used to disambiguate element ids when the same tool
+    /// call is rendered in more than one layout at once (e.g. inline in the
+    /// list *and* in the floating awaiting-permission row).
+    fn id_str(self) -> &'static str {
+        match self {
+            ToolCallLayout::Standalone => "standalone",
+            ToolCallLayout::Embedded => "embedded",
+            ToolCallLayout::Floating => "floating",
+        }
+    }
 }
 
 fn full_path_for_empty_project_path(file: &dyn language::File, cx: &App) -> Option<String> {
@@ -964,14 +973,9 @@ impl ThreadView {
             token_limit_callout_dismissed: false,
             last_token_limit_telemetry: None,
             thread_feedback: Default::default(),
-            expanded_tool_calls: HashSet::default(),
             expanded_tool_call_raw_inputs: HashSet::default(),
             collapsed_sandbox_authorization_details: HashSet::default(),
             collapsed_sandbox_network_details: HashSet::default(),
-            expanded_thinking_blocks: HashSet::default(),
-            auto_expanded_thinking_block: None,
-            user_toggled_thinking_blocks: HashSet::default(),
-            expanded_compactions: HashSet::default(),
             subagent_scroll_handles: RefCell::new(HashMap::default()),
             edits_expanded: false,
             plan_expanded: false,
@@ -979,10 +983,7 @@ impl ThreadView {
             editor_expanded: false,
             should_be_following: false,
             editing_message: None,
-            local_queued_messages: Vec::new(),
-            queued_message_editors: Vec::new(),
-            queued_message_editor_subscriptions: Vec::new(),
-            last_synced_queue_length: 0,
+            message_queue: MessageQueue::default(),
             turn_fields: TurnFields::default(),
             discarded_partial_edits: HashSet::default(),
             is_loading_contents: false,
@@ -991,9 +992,7 @@ impl ThreadView {
             _cancel_task: None,
             _save_task: None,
             _draft_resolve_task: None,
-            skip_queue_processing_count: 0,
-            user_interrupted_generation: false,
-            can_fast_track_queue: false,
+            _sandbox_status_refresh_task: None,
             hovered_edited_file_buttons: None,
             in_flight_prompt: None,
             message_editor,
@@ -1004,10 +1003,15 @@ impl ThreadView {
             code_span_resolver,
             show_external_source_prompt_warning,
             show_codex_windows_warning,
+            sandbox_status: None,
+            sandbox_status_key: None,
+            pending_sandbox_status_key: None,
             multi_root_callout_dismissed: false,
             generating_indicator_in_list: false,
             skill_loading_issues: Vec::new(),
             dismissed_skill_loading_issues: HashSet::default(),
+            thread_search_bar: None,
+            thread_search_visible: false,
         };
 
         this.sync_generating_indicator(cx);
@@ -1088,7 +1092,11 @@ impl ThreadView {
         match event {
             MessageEditorEvent::Send => self.send(window, cx),
             MessageEditorEvent::SendImmediately => self.interrupt_and_send(window, cx),
-            MessageEditorEvent::Cancel => self.cancel_generation(cx),
+            MessageEditorEvent::Cancel => {
+                if !self.close_thread_search(window, cx) {
+                    self.cancel_generation(cx);
+                }
+            }
             MessageEditorEvent::Focus => {
                 self.cancel_editing(&Default::default(), window, cx);
             }
@@ -1168,7 +1176,7 @@ impl ThreadView {
     }
 
     pub fn has_queued_messages(&self) -> bool {
-        !self.local_queued_messages.is_empty()
+        !self.message_queue.is_empty()
     }
 
     pub fn is_imported_thread(&self, cx: &App) -> bool {
@@ -1190,16 +1198,22 @@ impl ThreadView {
         match &event.view_event {
             ViewEvent::NewDiff(tool_call_id) => {
                 if AgentSettings::get_global(cx).expand_edit_card {
-                    self.expanded_tool_calls.insert(tool_call_id.clone());
+                    self.entry_view_state.update(cx, |state, _cx| {
+                        state.expand_tool_call(tool_call_id.clone());
+                    });
                 }
             }
             ViewEvent::NewTerminal(tool_call_id) => {
                 if AgentSettings::get_global(cx).expand_terminal_card {
-                    self.expanded_tool_calls.insert(tool_call_id.clone());
+                    self.entry_view_state.update(cx, |state, _cx| {
+                        state.expand_tool_call(tool_call_id.clone());
+                    });
                 }
             }
             ViewEvent::TerminalMovedToBackground(tool_call_id) => {
-                self.expanded_tool_calls.remove(tool_call_id);
+                self.entry_view_state.update(cx, |state, _cx| {
+                    state.collapse_tool_call(tool_call_id);
+                });
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Focus) => {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
@@ -1405,14 +1419,10 @@ impl ThreadView {
         let is_editor_empty = message_editor.read(cx).is_empty(cx);
         let is_generating = thread.read(cx).status() != ThreadStatus::Idle;
 
-        let has_queued = self.has_queued_messages();
-        if is_editor_empty && self.can_fast_track_queue && has_queued {
-            self.can_fast_track_queue = false;
-            self.send_queued_message_at_index(0, true, window, cx);
-            return;
-        }
-
         if is_editor_empty {
+            if let Some(entry) = self.message_queue.try_fast_track(is_generating) {
+                self.dispatch_queued_entry(entry, window, cx);
+            }
             return;
         }
 
@@ -1521,7 +1531,7 @@ impl ThreadView {
                 // Queue the remainder first, then start the command turn; the
                 // queue auto-processes when the command turn stops.
                 if !content.is_empty() {
-                    this.add_to_queue(content, tracked_buffers, cx);
+                    this.add_to_queue(content, tracked_buffers, window, cx);
                 }
                 this.send_content(
                     Task::ready(Ok(Some((vec![command_block], Vec::new())))),
@@ -1546,6 +1556,9 @@ impl ThreadView {
         self.thread_error.take();
         self.thread_feedback.clear();
         self.editing_message.take();
+        // Sending a message is active engagement: un-freeze the queue if it
+        // was paused by a manual stop.
+        self.message_queue.resume();
 
         if self.should_be_following {
             self.workspace
@@ -1754,8 +1767,7 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) {
         let thread = self.thread.clone();
-        self.skip_queue_processing_count = 0;
-        self.user_interrupted_generation = true;
+        self.message_queue.pause();
 
         let cancelled = thread.update(cx, |thread, cx| thread.cancel(cx));
 
@@ -1894,7 +1906,7 @@ impl ThreadView {
     pub fn cancel_generation(&mut self, cx: &mut Context<Self>) {
         self.thread_retry_status.take();
         self.thread_error.take();
-        self.user_interrupted_generation = true;
+        self.message_queue.pause();
         self._cancel_task = Some(self.thread.update(cx, |thread, cx| thread.cancel(cx)));
         self.sync_generating_indicator(cx);
         cx.notify();
@@ -2010,8 +2022,7 @@ impl ThreadView {
             }
 
             this.update_in(cx, |this, window, cx| {
-                this.add_to_queue(content, tracked_buffers, cx);
-                this.can_fast_track_queue = true;
+                this.add_to_queue(content, tracked_buffers, window, cx);
                 message_editor.update(cx, |message_editor, cx| {
                     message_editor.clear(window, cx);
                 });
@@ -2026,55 +2037,165 @@ impl ThreadView {
         &mut self,
         content: Vec<acp::ContentBlock>,
         tracked_buffers: Vec<Entity<Buffer>>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.local_queued_messages.push(QueuedMessage {
+        // The ID must be allocated up front so the editor event subscription
+        // can capture it before the entry (which owns the subscription) exists.
+        let id = self.message_queue.next_id();
+
+        let editor = cx.new(|cx| {
+            let mut editor = MessageEditor::new(
+                self.workspace.clone(),
+                self.project.clone(),
+                None,
+                self.session_capabilities.clone(),
+                self.agent_id.clone(),
+                "",
+                EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: Some(10),
+                },
+                window,
+                cx,
+            );
+            editor.set_read_only(true, cx);
+            editor.set_message(content.clone(), window, cx);
+            editor
+        });
+
+        let subscription =
+            cx.subscribe_in(&editor, window, move |this, _editor, event, window, cx| {
+                this.handle_queue_editor_event(id, event, window, cx);
+            });
+
+        self.message_queue.enqueue(QueueEntry {
+            id,
             content,
             tracked_buffers,
+            steer: false,
+            editor,
+            _subscription: subscription,
         });
         self.sync_queue_flag_to_native_thread(cx);
+        cx.notify();
+    }
+
+    fn handle_queue_editor_event(
+        &mut self,
+        id: QueueEntryId,
+        event: &MessageEditorEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            MessageEditorEvent::InputAttempted {
+                attempt,
+                cursor_offset,
+            } => {
+                self.move_queued_message_to_main_editor(
+                    id,
+                    Some(attempt.clone()),
+                    Some(*cursor_offset),
+                    window,
+                    cx,
+                );
+            }
+            MessageEditorEvent::LostFocus => {
+                self.save_queued_message(id, cx);
+            }
+            MessageEditorEvent::Cancel | MessageEditorEvent::Send => {
+                window.focus(&self.message_editor.focus_handle(cx), cx);
+            }
+            MessageEditorEvent::SendImmediately => {
+                self.send_queued_message_now(id, window, cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn save_queued_message(&mut self, id: QueueEntryId, cx: &mut Context<Self>) {
+        let Some(entry) = self.message_queue.entry_by_id(id) else {
+            return;
+        };
+        let contents_task = entry
+            .editor
+            .update(cx, |editor, cx| editor.contents(false, cx));
+
+        cx.spawn(async move |this, cx| {
+            let (content, tracked_buffers) = contents_task.await?;
+
+            this.update(cx, |this, cx| {
+                if let Some(entry) = this.message_queue.entry_by_id_mut(id) {
+                    entry.content = content;
+                    entry.tracked_buffers = tracked_buffers;
+                }
+                cx.notify();
+            })?;
+
+            Ok::<(), anyhow::Error>(())
+        })
+        .detach_and_log_err(cx);
     }
 
     pub fn remove_from_queue(
         &mut self,
-        index: usize,
+        id: QueueEntryId,
         cx: &mut Context<Self>,
-    ) -> Option<QueuedMessage> {
-        if index < self.local_queued_messages.len() {
-            let removed = self.local_queued_messages.remove(index);
+    ) -> Option<QueueEntry> {
+        let removed = self.message_queue.remove(id);
+        if removed.is_some() {
             self.sync_queue_flag_to_native_thread(cx);
-            Some(removed)
-        } else {
-            None
         }
+        removed
+    }
+
+    fn toggle_queue_entry_steer(&mut self, id: QueueEntryId, cx: &mut Context<Self>) {
+        self.message_queue.toggle_steer(id);
+        self.sync_queue_flag_to_native_thread(cx);
+        cx.notify();
     }
 
     pub fn sync_queue_flag_to_native_thread(&self, cx: &mut Context<Self>) {
         if let Some(native_thread) = self.as_native_thread(cx) {
-            let has_queued = self.has_queued_messages();
+            // By default queued messages wait for the turn to fully complete.
+            // Only a "steering" front message ends the turn at the next boundary.
+            let end_at_boundary = self.message_queue.front_wants_steer();
             native_thread.update(cx, |thread, _| {
-                thread.set_has_queued_message(has_queued);
+                thread.set_end_turn_at_next_boundary(end_at_boundary);
             });
         }
     }
 
-    pub fn send_queued_message_at_index(
+    pub fn send_queued_message_now(
         &mut self,
-        index: usize,
-        is_send_now: bool,
+        id: QueueEntryId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(queued) = self.remove_from_queue(index, cx) else {
-            return;
-        };
+        let is_generating = self.thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
+        if let Some(entry) = self.message_queue.send_now(id, is_generating) {
+            self.dispatch_queued_entry(entry, window, cx);
+        }
+    }
+
+    /// The shared "actually send this entry" path, used by fast-track,
+    /// auto-processing on Stopped, and "Send Now". The entry must already have
+    /// been removed from the queue.
+    pub fn dispatch_queued_entry(
+        &mut self,
+        entry: QueueEntry,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.sync_queue_flag_to_native_thread(cx);
 
         cx.emit(AcpThreadViewEvent::Interacted);
 
         self.message_editor.focus_handle(cx).focus(window, cx);
 
-        let content = queued.content;
-        let tracked_buffers = queued.tracked_buffers;
+        let content = entry.content;
+        let tracked_buffers = entry.tracked_buffers;
 
         // A queued message can itself be a built-in command (e.g. the user typed
         // `/compact` while a turn was generating). Detect that so we run it as a
@@ -2090,16 +2211,6 @@ impl ThreadView {
                 leading_native_command(text, self.session_capabilities.read().available_commands())
             })
             .is_some();
-
-        // Only increment skip count for "Send Now" operations (out-of-order sends)
-        // Normal auto-processing from the Stopped handler doesn't need to skip.
-        // We only skip the Stopped event from the cancelled generation, NOT the
-        // Stopped event from the newly sent message (which should trigger queue processing).
-        if is_send_now {
-            let is_generating =
-                self.thread.read(cx).status() == acp_thread::ThreadStatus::Generating;
-            self.skip_queue_processing_count += if is_generating { 1 } else { 0 };
-        }
 
         let cancelled = self.thread.update(cx, |thread, cx| thread.cancel(cx));
 
@@ -2124,13 +2235,13 @@ impl ThreadView {
 
     pub fn move_queued_message_to_main_editor(
         &mut self,
-        index: usize,
+        id: QueueEntryId,
         attempt: Option<InputAttempt>,
         cursor_offset: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(queued_message) = self.remove_from_queue(index, cx) else {
+        let Some(queued_message) = self.remove_from_queue(id, cx) else {
             return false;
         };
         let queued_content = queued_message.content;
@@ -2177,12 +2288,15 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.message_editor.read(cx).is_empty(cx) || self.local_queued_messages.is_empty() {
+        if !self.message_editor.read(cx).is_empty(cx) {
             cx.propagate();
             return;
         }
-        let last_index = self.local_queued_messages.len() - 1;
-        self.move_queued_message_to_main_editor(last_index, None, None, window, cx);
+        let Some(last_id) = self.message_queue.last_id() else {
+            cx.propagate();
+            return;
+        };
+        self.move_queued_message_to_main_editor(last_id, None, None, window, cx);
     }
 
     // editor methods
@@ -3372,7 +3486,7 @@ impl ThreadView {
         _window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let queue_count = self.local_queued_messages.len();
+        let queue_count = self.message_queue.len();
         let title: SharedString = if queue_count == 1 {
             "1 Queued Message".into()
         } else {
@@ -3407,16 +3521,15 @@ impl ThreadView {
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.clear_queue(cx);
-                        this.can_fast_track_queue = false;
-                        cx.notify();
                     })),
             )
             .into_any_element()
     }
 
     fn clear_queue(&mut self, cx: &mut Context<Self>) {
-        self.local_queued_messages.clear();
+        self.message_queue.clear();
         self.sync_queue_flag_to_native_thread(cx);
+        cx.notify();
     }
 
     fn render_plan_summary(
@@ -3681,7 +3794,10 @@ impl ThreadView {
     ) -> AnyElement {
         let is_compacting = compaction.is_in_progress();
         let summary = compaction.summary.clone();
-        let is_expanded = self.expanded_compactions.contains(&entry_ix);
+        let is_expanded = self
+            .entry_view_state
+            .read(cx)
+            .is_compaction_expanded(entry_ix);
 
         let id = format!("context-compaction-{entry_ix}");
         let header_label = match compaction.status {
@@ -3715,8 +3831,8 @@ impl ThreadView {
                                 .color(Color::Muted),
                         )
                         .on_click(cx.listener(
-                            move |this, _event: &ClickEvent, _window, cx| {
-                                this.toggle_compaction_expansion(entry_ix, cx);
+                            move |this, _event: &ClickEvent, window, cx| {
+                                this.toggle_compaction_expansion(entry_ix, window, cx);
                             },
                         ))
                     }),
@@ -3761,8 +3877,14 @@ impl ThreadView {
                                         .full_width()
                                         .on_click(
                                             cx.listener(
-                                                move |this, _event: &ClickEvent, _window, cx| {
-                                                    this.expanded_compactions.remove(&entry_ix);
+                                                move |this, _event: &ClickEvent, window, cx| {
+                                                    this.entry_view_state.update(
+                                                        cx,
+                                                        |state, _cx| {
+                                                            state.collapse_compaction(entry_ix);
+                                                        },
+                                                    );
+                                                    this.refresh_thread_search(window, cx);
                                                     cx.notify();
                                                 },
                                             ),
@@ -3774,10 +3896,16 @@ impl ThreadView {
             .into_any()
     }
 
-    fn toggle_compaction_expansion(&mut self, entry_ix: usize, cx: &mut Context<Self>) {
-        if !self.expanded_compactions.remove(&entry_ix) {
-            self.expanded_compactions.insert(entry_ix);
-        }
+    fn toggle_compaction_expansion(
+        &mut self,
+        entry_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.entry_view_state.update(cx, |state, _cx| {
+            state.toggle_compaction_expansion(entry_ix);
+        });
+        self.refresh_thread_search(window, cx);
         cx.notify();
     }
 
@@ -4057,7 +4185,7 @@ impl ThreadView {
         let fills_container = !has_messages || editor_expanded;
 
         h_flex()
-            .p_2()
+            .py_2()
             .bg(editor_bg_color)
             .justify_center()
             .on_action(cx.listener(Self::handle_message_editor_move_up))
@@ -4076,6 +4204,7 @@ impl ThreadView {
                     .when_some(max_content_width, |this, max_w| this.flex_basis(max_w))
                     .when(max_content_width.is_none(), |this| this.w_full())
                     .when(fills_container, |this| this.h_full())
+                    .px_2()
                     .flex_shrink_1()
                     .flex_grow_0()
                     .justify_between()
@@ -4133,6 +4262,7 @@ impl ThreadView {
                                     .gap_0p5()
                                     .child(self.render_add_context_button(cx))
                                     .child(self.render_follow_toggle(cx))
+                                    .children(self.render_sandbox_status(cx))
                                     .children(self.render_fast_mode_control(cx))
                                     .children(self.render_thinking_control(cx)),
                             )
@@ -4155,6 +4285,40 @@ impl ThreadView {
             .into_any()
     }
 
+    fn render_queue_steer_button(
+        &self,
+        entry_id: QueueEntryId,
+        index: usize,
+        is_next: bool,
+        steer_on: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let focus_handle = self.message_editor.focus_handle(cx);
+
+        Button::new(("steer", index), "Steer")
+            .label_size(LabelSize::Small)
+            .toggle_state(steer_on)
+            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            .when(is_next, |this| {
+                this.key_binding(
+                    KeyBinding::for_action_in(&ToggleSteerFirstQueuedMessage, &focus_handle, cx)
+                        .map(|kb| kb.size(rems_from_px(12.))),
+                )
+            })
+            .tooltip(move |_window, cx| {
+                Tooltip::with_meta(
+                    "Steer",
+                    None,
+                    "Interrupt the agent at its next step to send this message. \
+                     When off, queued messages wait for the agent to finish.",
+                    cx,
+                )
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.toggle_queue_entry_steer(entry_id, cx);
+            }))
+    }
+
     fn render_message_queue_entries(
         &self,
         _window: &mut Window,
@@ -4163,176 +4327,178 @@ impl ThreadView {
         let message_editor = self.message_editor.read(cx);
         let focus_handle = message_editor.focus_handle(cx);
 
-        let queued_message_editors = &self.queued_message_editors;
-        let queue_len = queued_message_editors.len();
-        let can_fast_track = self.can_fast_track_queue && queue_len > 0;
+        let queue_len = self.message_queue.len();
+        let can_fast_track = self.message_queue.can_fast_track();
+        let is_native = self.as_native_thread(cx).is_some();
 
         v_flex()
             .id("message_queue_list")
             .max_h_40()
             .overflow_y_scroll()
-            .children(
-                queued_message_editors
-                    .iter()
-                    .enumerate()
-                    .map(|(index, editor)| {
-                        let is_next = index == 0;
-                        let (icon_color, tooltip_text) = if is_next {
-                            (Color::Accent, "Next in Queue")
-                        } else {
-                            (Color::Muted, "In Queue")
-                        };
+            .children(self.message_queue.iter().enumerate().map(|(index, entry)| {
+                let entry_id = entry.id;
+                let editor = &entry.editor;
+                let is_next = index == 0;
+                let (icon_color, tooltip_text) = if is_next {
+                    (Color::Accent, "Next in Queue")
+                } else {
+                    (Color::Muted, "In Queue")
+                };
 
-                        let editor_focused = editor.focus_handle(cx).is_focused(_window);
-                        let keybinding_size = rems_from_px(12.);
+                let editor_focused = editor.focus_handle(cx).is_focused(_window);
+                let keybinding_size = rems_from_px(12.);
+                let steer_on = entry.steer;
 
+                let min_width = rems_from_px(160.);
+
+                h_flex()
+                    .group("queue_entry")
+                    .w_full()
+                    .p_1p5()
+                    .gap_1()
+                    .bg(cx.theme().colors().editor_background)
+                    .when(index < queue_len - 1, |this| {
+                        this.border_b_1()
+                            .border_color(cx.theme().colors().border_variant)
+                    })
+                    .child(
+                        div()
+                            .id("next_in_queue")
+                            .child(
+                                Icon::new(IconName::Circle)
+                                    .size(IconSize::Small)
+                                    .color(icon_color),
+                            )
+                            .tooltip(Tooltip::text(tooltip_text)),
+                    )
+                    .child(editor.clone())
+                    .child(if editor_focused {
                         h_flex()
-                            .group("queue_entry")
-                            .w_full()
-                            .p_1p5()
                             .gap_1()
-                            .bg(cx.theme().colors().editor_background)
-                            .when(index < queue_len - 1, |this| {
-                                this.border_b_1()
-                                    .border_color(cx.theme().colors().border_variant)
+                            .min_w(min_width)
+                            .justify_end()
+                            .child(
+                                IconButton::new(("edit", index), IconName::Pencil)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|_window, cx| {
+                                        Tooltip::with_meta(
+                                            "Edit Queued Message",
+                                            None,
+                                            "Type anything to edit",
+                                            cx,
+                                        )
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.move_queued_message_to_main_editor(
+                                            entry_id, None, None, window, cx,
+                                        );
+                                    })),
+                            )
+                            .when(is_native, |row| {
+                                row.child(self.render_queue_steer_button(
+                                    entry_id, index, is_next, steer_on, cx,
+                                ))
                             })
                             .child(
-                                div()
-                                    .id("next_in_queue")
-                                    .child(
-                                        Icon::new(IconName::Circle)
-                                            .size(IconSize::Small)
-                                            .color(icon_color),
+                                Button::new(("send_now_focused", index), "Send Now")
+                                    .label_size(LabelSize::Small)
+                                    .style(ButtonStyle::Outlined)
+                                    .key_binding(
+                                        KeyBinding::for_action_in(
+                                            &SendImmediately,
+                                            &editor.focus_handle(cx),
+                                            cx,
+                                        )
+                                        .map(|kb| kb.size(keybinding_size)),
                                     )
-                                    .tooltip(Tooltip::text(tooltip_text)),
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.send_queued_message_now(entry_id, window, cx);
+                                    })),
                             )
-                            .child(editor.clone())
-                            .child(if editor_focused {
-                                h_flex()
-                                    .gap_1()
-                                    .min_w(rems_from_px(150.))
-                                    .justify_end()
-                                    .child(
-                                        IconButton::new(("edit", index), IconName::Pencil)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip(|_window, cx| {
-                                                Tooltip::with_meta(
-                                                    "Edit Queued Message",
-                                                    None,
-                                                    "Type anything to edit",
+                    } else {
+                        h_flex()
+                            .when(!is_next, |this| this.visible_on_hover("queue_entry"))
+                            .gap_1()
+                            .min_w(min_width)
+                            .justify_end()
+                            .child(
+                                IconButton::new(("delete", index), IconName::Trash)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip({
+                                        let focus_handle = focus_handle.clone();
+                                        move |_window, cx| {
+                                            if is_next {
+                                                Tooltip::for_action_in(
+                                                    "Remove Message from Queue",
+                                                    &RemoveFirstQueuedMessage,
+                                                    &focus_handle,
                                                     cx,
                                                 )
-                                            })
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.move_queued_message_to_main_editor(
-                                                    index, None, None, window, cx,
-                                                );
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new(("send_now_focused", index), "Send Now")
-                                            .label_size(LabelSize::Small)
-                                            .style(ButtonStyle::Outlined)
-                                            .key_binding(
-                                                KeyBinding::for_action_in(
-                                                    &SendImmediately,
-                                                    &editor.focus_handle(cx),
+                                            } else {
+                                                Tooltip::simple("Remove Message from Queue", cx)
+                                            }
+                                        }
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.remove_from_queue(entry_id, cx);
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                IconButton::new(("edit", index), IconName::Pencil)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip({
+                                        let focus_handle = focus_handle.clone();
+                                        move |_window, cx| {
+                                            if is_next {
+                                                Tooltip::for_action_in(
+                                                    "Edit",
+                                                    &EditFirstQueuedMessage,
+                                                    &focus_handle,
                                                     cx,
                                                 )
-                                                .map(|kb| kb.size(keybinding_size)),
-                                            )
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.send_queued_message_at_index(
-                                                    index, true, window, cx,
-                                                );
-                                            })),
-                                    )
-                            } else {
-                                h_flex()
-                                    .when(!is_next, |this| this.visible_on_hover("queue_entry"))
-                                    .gap_1()
-                                    .min_w(rems_from_px(150.))
-                                    .justify_end()
-                                    .child(
-                                        IconButton::new(("delete", index), IconName::Trash)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip({
-                                                let focus_handle = focus_handle.clone();
-                                                move |_window, cx| {
-                                                    if is_next {
-                                                        Tooltip::for_action_in(
-                                                            "Remove Message from Queue",
-                                                            &RemoveFirstQueuedMessage,
-                                                            &focus_handle,
-                                                            cx,
-                                                        )
-                                                    } else {
-                                                        Tooltip::simple(
-                                                            "Remove Message from Queue",
-                                                            cx,
-                                                        )
-                                                    }
-                                                }
-                                            })
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.remove_from_queue(index, cx);
-                                                cx.notify();
-                                            })),
-                                    )
-                                    .child(
-                                        IconButton::new(("edit", index), IconName::Pencil)
-                                            .icon_size(IconSize::Small)
-                                            .tooltip({
-                                                let focus_handle = focus_handle.clone();
-                                                move |_window, cx| {
-                                                    if is_next {
-                                                        Tooltip::for_action_in(
-                                                            "Edit",
-                                                            &EditFirstQueuedMessage,
-                                                            &focus_handle,
-                                                            cx,
-                                                        )
-                                                    } else {
-                                                        Tooltip::simple("Edit", cx)
-                                                    }
-                                                }
-                                            })
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.move_queued_message_to_main_editor(
-                                                    index, None, None, window, cx,
-                                                );
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new(("send_now", index), "Send Now")
-                                            .label_size(LabelSize::Small)
-                                            .when(is_next, |this| this.style(ButtonStyle::Outlined))
-                                            .when(is_next && message_editor.is_empty(cx), |this| {
-                                                let action: Box<dyn gpui::Action> =
-                                                    if can_fast_track {
-                                                        Box::new(Chat)
-                                                    } else {
-                                                        Box::new(SendNextQueuedMessage)
-                                                    };
-
-                                                this.key_binding(
-                                                    KeyBinding::for_action_in(
-                                                        action.as_ref(),
-                                                        &focus_handle.clone(),
-                                                        cx,
-                                                    )
-                                                    .map(|kb| kb.size(keybinding_size)),
-                                                )
-                                            })
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                this.send_queued_message_at_index(
-                                                    index, true, window, cx,
-                                                );
-                                            })),
-                                    )
+                                            } else {
+                                                Tooltip::simple("Edit", cx)
+                                            }
+                                        }
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.move_queued_message_to_main_editor(
+                                            entry_id, None, None, window, cx,
+                                        );
+                                    })),
+                            )
+                            .when(is_native, |row| {
+                                row.child(self.render_queue_steer_button(
+                                    entry_id, index, is_next, steer_on, cx,
+                                ))
                             })
-                    }),
-            )
+                            .child(
+                                Button::new(("send_now", index), "Send Now")
+                                    .label_size(LabelSize::Small)
+                                    .when(is_next, |this| this.style(ButtonStyle::Outlined))
+                                    .when(is_next && message_editor.is_empty(cx), |this| {
+                                        let action: Box<dyn gpui::Action> = if can_fast_track {
+                                            Box::new(Chat)
+                                        } else {
+                                            Box::new(SendNextQueuedMessage)
+                                        };
+
+                                        this.key_binding(
+                                            KeyBinding::for_action_in(
+                                                action.as_ref(),
+                                                &focus_handle.clone(),
+                                                cx,
+                                            )
+                                            .map(|kb| kb.size(keybinding_size)),
+                                        )
+                                    })
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.send_queued_message_now(entry_id, window, cx);
+                                    })),
+                            )
+                    })
+            }))
             .into_any_element()
     }
 
@@ -4533,6 +4699,110 @@ impl ThreadView {
             .and_then(|thread| thread.read(cx).model())
             .map(|model| model.supports_fast_mode())
             .unwrap_or(false)
+    }
+
+    fn refresh_sandbox_status(&mut self, cx: &mut Context<Self>) -> Option<VerifiedSandboxStatus> {
+        let thread = self.as_native_thread(cx)?;
+        let (key, refresh) =
+            thread.update(cx, |thread, cx| thread.refresh_verified_sandbox_status(cx))?;
+
+        if self.sandbox_status_key.as_ref() == Some(&key) {
+            return self.sandbox_status.clone();
+        }
+
+        match refresh {
+            SandboxStatusRefresh::Ready(status) => {
+                self.sandbox_status = Some(status.clone());
+                self.sandbox_status_key = Some(key);
+                self.pending_sandbox_status_key = None;
+                Some(status)
+            }
+            SandboxStatusRefresh::Pending(task) => {
+                if self.pending_sandbox_status_key.as_ref() != Some(&key) {
+                    self.sandbox_status = None;
+                    self.sandbox_status_key = None;
+                    self.pending_sandbox_status_key = Some(key.clone());
+                    self._sandbox_status_refresh_task = Some(cx.spawn(async move |this, cx| {
+                        let status = task.await;
+                        this.update(cx, |this, cx| {
+                            if this.pending_sandbox_status_key.as_ref() == Some(&key) {
+                                this.sandbox_status = Some(status);
+                                this.sandbox_status_key = Some(key);
+                                this.pending_sandbox_status_key = None;
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    }));
+                }
+                None
+            }
+        }
+    }
+
+    /// A small lock icon summarizing the sandbox state. Hovering shows the
+    /// write-access paths and network-access domains from the user's settings
+    /// and the per-thread overrides. The lock is struck through when sandboxing
+    /// is turned off (in settings, or for this thread). Shown whenever
+    /// sandboxing is *applicable* to the project, even when disabled, so the
+    /// user can always see and change the state. Clicking opens the settings.
+    fn render_sandbox_status(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let status = self.refresh_sandbox_status(cx)?;
+        let settings_sandbox = status.settings_sandbox.clone();
+        let thread_sandbox = status.thread_sandbox.clone();
+        let baseline = status.baseline_writable_paths;
+
+        // The lock is struck only when the *merged* result is unsandboxed (the
+        // agent runs with ambient permissions). A layer that is merely wide open
+        // but still sandboxed keeps the closed lock.
+        let icon = if settings_sandbox
+            .clone()
+            .merge(thread_sandbox.clone())
+            .is_unsandboxed()
+        {
+            IconName::LockOutlinedOff
+        } else {
+            IconName::LockOutlined
+        };
+
+        let state = match (settings_sandbox, thread_sandbox) {
+            // No sandbox at all because the user turned it off in settings: the
+            // per-thread layer is moot, so don't show it.
+            (ThreadSandbox::Unsandboxed, _) => SandboxTooltipState::DisabledInSettings,
+            // Sandboxed by settings, but disabled for this thread: show the
+            // settings scope (greyed) for context above the disabled status.
+            (ThreadSandbox::Sandboxed(settings_policy), ThreadSandbox::Unsandboxed) => {
+                SandboxTooltipState::DisabledForThread {
+                    settings: augment_settings_sandbox_policy(settings_policy, baseline),
+                }
+            }
+            (
+                ThreadSandbox::Sandboxed(settings_policy),
+                ThreadSandbox::Sandboxed(thread_policy),
+            ) => SandboxTooltipState::Enabled {
+                settings: augment_settings_sandbox_policy(settings_policy, baseline),
+                thread: thread_policy,
+            },
+        };
+
+        Some(
+            IconButton::new("sandbox-status", icon)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::element(move |_window, cx| {
+                    render_sandbox_status_tooltip(&state, cx)
+                }))
+                .on_click(|_, window, cx| {
+                    window.dispatch_action(
+                        Box::new(zed_actions::OpenSettingsAt {
+                            path: zed_actions::AGENT_SANDBOX_SETTINGS_PATH.to_string(),
+                            target: None,
+                        }),
+                        cx,
+                    );
+                })
+                .into_any_element(),
+        )
     }
 
     fn render_fast_mode_control(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -5447,6 +5717,279 @@ impl Render for TokenUsageTooltip {
     }
 }
 
+/// Which sandbox state the status tooltip describes.
+#[derive(Clone)]
+enum SandboxTooltipState {
+    /// Sandboxing is on: show the settings policy and the per-thread overrides.
+    Enabled {
+        settings: SandboxPolicy,
+        thread: SandboxPolicy,
+    },
+    /// Turned off via the persistent `allow_unsandboxed` setting.
+    DisabledInSettings,
+    /// Turned off for this thread (the "run without sandbox for this thread"
+    /// fallback). The settings policy is still shown, greyed out, for context.
+    DisabledForThread { settings: SandboxPolicy },
+}
+
+/// Build the hover tooltip for the sandbox status icon. Always opens with a
+/// "Sandboxing settings" title, then describes the active state.
+///
+/// Returns the raw content only: `Tooltip::element` wraps it in the tooltip
+/// container, so wrapping it again here would double the background.
+fn render_sandbox_status_tooltip(state: &SandboxTooltipState, cx: &App) -> AnyElement {
+    let mut body = v_flex()
+        .min_w(rems(15.))
+        .gap_2()
+        .child(Label::new("Sandboxing settings"))
+        .child(Divider::horizontal());
+
+    match state {
+        SandboxTooltipState::DisabledInSettings => {
+            body = body.child(
+                Label::new("Sandboxing is disabled in settings")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            );
+        }
+        SandboxTooltipState::DisabledForThread { settings } => {
+            // The settings policy is moot while disabled, so show it greyed out
+            // for context above the active "disabled for this thread" status.
+            let settings_section =
+                render_sandbox_policy_section("From your settings", settings, true, cx);
+            body = body
+                .children(
+                    settings_section
+                        .map(|section| div().opacity(0.5).child(section).into_any_element()),
+                )
+                .child(Divider::horizontal())
+                .child(Label::new("Sandboxing is disabled for this thread").size(LabelSize::Small));
+        }
+        SandboxTooltipState::Enabled { settings, thread } => {
+            let settings_section =
+                render_sandbox_policy_section("From your settings", settings, true, cx);
+            let thread_section =
+                render_sandbox_policy_section("Allowed in this thread", thread, false, cx);
+            body = body.children(settings_section);
+            if let Some(section) = thread_section {
+                body = body.child(Divider::horizontal()).child(section);
+            }
+        }
+    }
+
+    body.into_any_element()
+}
+
+/// Render one section of the sandbox status tooltip.
+///
+/// When `show_empty` is true the section is always rendered, and groups that
+/// grant nothing show "None". When false, empty groups are omitted and the
+/// whole section is dropped (`None`) if it grants nothing at all.
+/// Fold the always-granted baseline writable paths (the project's worktree
+/// roots, derived from the same source the terminal tool uses) and, on Linux,
+/// the host-isolated `/tmp` overlay into a settings policy for display. These
+/// are part of what the sandbox grants whenever it's active but aren't
+/// persistent-settings entries, so they're shown in the "from your settings"
+/// section rather than stored. A no-op when the fs is unrestricted (rendered as
+/// "All paths"), since there's nothing to scope.
+fn augment_settings_sandbox_policy(
+    mut policy: SandboxPolicy,
+    baseline: Vec<PathBuf>,
+) -> SandboxPolicy {
+    if let SandboxFsPolicy::Restricted { writable_paths } = &mut policy.fs {
+        let mut merged = baseline;
+        for path in writable_paths.drain(..) {
+            if !merged.contains(&path) {
+                merged.push(path);
+            }
+        }
+        // The ephemeral, host-isolated tmpfs at /tmp is Linux-specific (the
+        // bwrap `--tmpfs /tmp` overlay). It's a display-only label, not a real
+        // host path, so it can't come from the path source above.
+        #[cfg(target_os = "linux")]
+        merged.push(PathBuf::from("/tmp (isolated)"));
+        *writable_paths = merged;
+    }
+    policy
+}
+
+fn render_sandbox_policy_section(
+    title: &str,
+    policy: &SandboxPolicy,
+    show_empty: bool,
+    cx: &App,
+) -> Option<AnyElement> {
+    let write_rows = sandbox_fs_rows(&policy.fs, cx);
+    let network_rows = sandbox_network_rows(&policy.network, cx);
+    let write_empty = fs_grants_nothing(&policy.fs);
+    let network_empty = network_grants_nothing(&policy.network);
+    // Git access is only ever surfaced when *granted* (the `.git` dirs become
+    // writable), so it never shows a "None" row — unlike write/network, it's
+    // omitted entirely when denied, regardless of `show_empty`.
+    let git_empty = git_grants_nothing(&policy.git);
+
+    if !show_empty && write_empty && network_empty && git_empty {
+        return None;
+    }
+
+    let write_group =
+        (show_empty || !write_empty).then(|| sandbox_status_group("Write access", write_rows));
+    let network_group = (show_empty || !network_empty)
+        .then(|| sandbox_status_group("Network access", network_rows));
+    let git_group = (!git_empty)
+        .then(|| sandbox_status_group("Git metadata access", sandbox_git_rows(&policy.git, cx)));
+
+    Some(
+        v_flex()
+            .gap_1()
+            .child(Label::new(title.to_string()))
+            .children(write_group)
+            .children(network_group)
+            .children(git_group)
+            .into_any_element(),
+    )
+}
+
+/// Git access grants nothing to surface unless `.git` writes are allowed *and*
+/// at least one `.git` directory is known.
+fn git_grants_nothing(git: &GitSandboxPolicy) -> bool {
+    !git.allows_writes() || git.git_dirs().is_empty()
+}
+
+/// Rows for the Git-access group: one row per writable `.git` directory (these
+/// may live outside the project for a linked worktree).
+fn sandbox_git_rows(git: &GitSandboxPolicy, cx: &App) -> Vec<AnyElement> {
+    match git {
+        GitSandboxPolicy::Allowed { git_dirs } if !git_dirs.is_empty() => git_dirs
+            .iter()
+            .map(|path| sandbox_git_path_row(path, cx))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// A `.git` directory row, tagged with a Git icon to distinguish it from plain
+/// writable paths.
+fn sandbox_git_path_row(path: &Path, cx: &App) -> AnyElement {
+    h_flex()
+        .min_w_0()
+        .gap_1()
+        .child(
+            Icon::new(IconName::GitBranch)
+                .color(Color::Muted)
+                .size(IconSize::Small),
+        )
+        .child(
+            Label::new(path.display().to_string())
+                .size(LabelSize::XSmall)
+                .buffer_font(cx),
+        )
+        .into_any_element()
+}
+
+fn fs_grants_nothing(fs: &SandboxFsPolicy) -> bool {
+    matches!(fs, SandboxFsPolicy::Restricted { writable_paths } if writable_paths.is_empty())
+}
+
+fn network_grants_nothing(network: &SandboxNetPolicy) -> bool {
+    match network {
+        SandboxNetPolicy::Blocked => true,
+        SandboxNetPolicy::Restricted { allowed_domains } => allowed_domains.is_empty(),
+        SandboxNetPolicy::Unrestricted => false,
+    }
+}
+
+/// Rows for the write-access group: a message for the "all"/"none" cases, or one
+/// row per granted path.
+fn sandbox_fs_rows(fs: &SandboxFsPolicy, cx: &App) -> Vec<AnyElement> {
+    match fs {
+        SandboxFsPolicy::Unrestricted => vec![sandbox_message_row("All paths (unrestricted)")],
+        SandboxFsPolicy::Restricted { writable_paths } if writable_paths.is_empty() => {
+            vec![sandbox_message_row("None")]
+        }
+        SandboxFsPolicy::Restricted { writable_paths } => writable_paths
+            .iter()
+            .map(|path| sandbox_path_row(path, cx))
+            .collect(),
+    }
+}
+
+/// Rows for the network-access group: a message for the "all"/"none" cases, or
+/// one row per allowed domain.
+fn sandbox_network_rows(network: &SandboxNetPolicy, cx: &App) -> Vec<AnyElement> {
+    match network {
+        SandboxNetPolicy::Unrestricted => vec![sandbox_message_row("All domains (unrestricted)")],
+        SandboxNetPolicy::Blocked => vec![sandbox_message_row("None")],
+        SandboxNetPolicy::Restricted { allowed_domains } if allowed_domains.is_empty() => {
+            vec![sandbox_message_row("None")]
+        }
+        SandboxNetPolicy::Restricted { allowed_domains } => allowed_domains
+            .iter()
+            .map(|domain| sandbox_domain_row(domain, cx))
+            .collect(),
+    }
+}
+
+/// A "Write access" / "Network access" group: a muted header, then the indented
+/// rows.
+fn sandbox_status_group(heading: &str, rows: Vec<AnyElement>) -> impl IntoElement {
+    v_flex()
+        .gap_0p5()
+        .child(
+            Label::new(heading.to_string())
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
+        .child(v_flex().pl_3().gap_0p5().children(rows))
+}
+
+/// A non-path row (e.g. "All paths (unrestricted)", "None") in a status group.
+fn sandbox_message_row(message: &str) -> AnyElement {
+    Label::new(message.to_string())
+        .size(LabelSize::XSmall)
+        .color(Color::Muted)
+        .into_any_element()
+}
+
+fn sandbox_path_row(path: &Path, cx: &App) -> AnyElement {
+    let display_path = path.display().to_string();
+    let icon = FileIcons::get_icon(path, cx)
+        .map(Icon::from_path)
+        .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
+        .unwrap_or_else(|| {
+            Icon::new(IconName::Folder)
+                .color(Color::Muted)
+                .size(IconSize::Small)
+        });
+    h_flex()
+        .min_w_0()
+        .gap_1()
+        .child(icon)
+        .child(
+            Label::new(display_path)
+                .size(LabelSize::XSmall)
+                .buffer_font(cx),
+        )
+        .into_any_element()
+}
+
+fn sandbox_domain_row(domain: &str, cx: &App) -> AnyElement {
+    h_flex()
+        .min_w_0()
+        .gap_1()
+        .child(
+            Icon::new(IconName::Public)
+                .color(Color::Muted)
+                .size(IconSize::Small),
+        )
+        .child(
+            Label::new(domain.to_string())
+                .size(LabelSize::XSmall)
+                .buffer_font(cx),
+        )
+        .into_any_element()
+}
+
 impl ThreadView {
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
@@ -5759,15 +6302,7 @@ impl ThreadView {
                 if matches!(tool_call.status, ToolCallStatus::Canceled) {
                     let has_visible_content =
                         tool_call.content.iter().any(|content| match content {
-                            ToolCallContent::ContentBlock(block) => match block {
-                                ContentBlock::Empty => false,
-                                ContentBlock::Markdown { markdown } => {
-                                    !markdown.read(cx).source().trim().is_empty()
-                                }
-                                ContentBlock::ResourceLink { .. } | ContentBlock::Image { .. } => {
-                                    true
-                                }
-                            },
+                            ToolCallContent::ContentBlock(block) => block.visible_content(cx),
                             ToolCallContent::Diff(_) | ToolCallContent::Terminal(_) => true,
                         });
                     if !has_visible_content {
@@ -6300,6 +6835,106 @@ impl ThreadView {
         }
     }
 
+    fn refresh_thread_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.thread_search_visible {
+            return;
+        }
+        if let Some(bar) = self.thread_search_bar.clone() {
+            bar.update(cx, |bar, cx| bar.update_matches(window, cx));
+        }
+    }
+
+    /// Hides the thread search bar, clears its highlights, and returns focus to
+    /// the message editor. Returns `true` if the search bar was visible.
+    pub(crate) fn close_thread_search(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.thread_search_visible {
+            return false;
+        }
+
+        if let Some(bar) = self.thread_search_bar.clone() {
+            bar.update(cx, |bar, cx| bar.clear_highlights(cx));
+        }
+
+        self.thread_search_visible = false;
+        self.message_editor.focus_handle(cx).focus(window, cx);
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn toggle_search(
+        &mut self,
+        _: &crate::ToggleSearch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.thread_search_bar.is_none() {
+            let thread = self.thread.clone();
+            let view = cx.entity().downgrade();
+            let on_activate =
+                Arc::new(move |entry_ix: usize, _window: &mut Window, cx: &mut App| {
+                    // Avoid re-entering `ThreadView` when search navigation is forwarded
+                    // from a `ThreadView` action handler.
+                    let view = view.clone();
+                    cx.defer(move |cx| {
+                        view.update(cx, |this, cx| {
+                            this.list_state.scroll_to(gpui::ListOffset {
+                                item_ix: entry_ix,
+                                offset_in_item: gpui::px(0.),
+                            });
+                            cx.notify();
+                        })
+                        .ok();
+                    });
+                });
+            let search_bar = cx.new(|cx| {
+                ThreadSearchBar::new(
+                    thread,
+                    self.entry_view_state.clone(),
+                    on_activate,
+                    window,
+                    cx,
+                )
+            });
+            self._subscriptions.push(cx.subscribe_in(
+                &search_bar,
+                window,
+                |this, _bar, event, window, cx| {
+                    if matches!(event, ThreadSearchBarEvent::Dismissed) {
+                        this.thread_search_visible = false;
+                        this.message_editor.focus_handle(cx).focus(window, cx);
+                        cx.notify();
+                    }
+                },
+            ));
+            self.thread_search_bar = Some(search_bar);
+        }
+
+        // Re-focus an open bar unless it already owns focus.
+        let search_bar_focused = self
+            .thread_search_bar
+            .as_ref()
+            .is_some_and(|bar| bar.focus_handle(cx).contains_focused(window, cx));
+
+        if self.thread_search_visible && search_bar_focused {
+            if let Some(bar) = &self.thread_search_bar {
+                bar.update(cx, |bar, cx| bar.clear_highlights(cx));
+            }
+            self.thread_search_visible = false;
+            self.message_editor.focus_handle(cx).focus(window, cx);
+            cx.notify();
+        } else {
+            self.thread_search_visible = true;
+            if let Some(bar) = self.thread_search_bar.clone() {
+                bar.update(cx, |bar, cx| bar.focus_and_refresh(window, cx));
+            }
+            cx.notify();
+        }
+    }
+
     pub fn open_thread_as_markdown(
         &self,
         workspace: Entity<Workspace>,
@@ -6444,104 +7079,35 @@ impl ThreadView {
     }
 
     pub(crate) fn auto_expand_streaming_thought(&mut self, cx: &mut Context<Self>) {
-        let thinking_display = AgentSettings::get_global(cx).thinking_display;
-
-        if !matches!(
-            thinking_display,
-            ThinkingBlockDisplay::Auto | ThinkingBlockDisplay::Preview
-        ) {
-            return;
-        }
-
-        let key = {
-            let thread = self.thread.read(cx);
+        let thread = self.thread.clone();
+        let changed = self.entry_view_state.update(cx, |state, cx| {
+            let thread = thread.read(cx);
             if thread.status() != ThreadStatus::Generating {
-                return;
+                return false;
             }
-            let entries = thread.entries();
-            let last_ix = entries.len().saturating_sub(1);
-            match entries.get(last_ix) {
-                Some(AgentThreadEntry::AssistantMessage(msg)) => match msg.chunks.last() {
-                    Some(AssistantMessageChunk::Thought { .. }) => {
-                        Some((last_ix, msg.chunks.len() - 1))
-                    }
-                    _ => None,
-                },
-                _ => None,
-            }
-        };
-
-        if let Some(key) = key {
-            if self.auto_expanded_thinking_block != Some(key) {
-                self.auto_expanded_thinking_block = Some(key);
-                self.expanded_thinking_blocks.insert(key);
-                cx.notify();
-            }
-        } else if self.auto_expanded_thinking_block.is_some() {
-            if thinking_display == ThinkingBlockDisplay::Auto {
-                if let Some(key) = self.auto_expanded_thinking_block {
-                    if !self.user_toggled_thinking_blocks.contains(&key) {
-                        self.expanded_thinking_blocks.remove(&key);
-                    }
-                }
-            }
-            self.auto_expanded_thinking_block = None;
+            state.auto_expand_streaming_thought(thread, cx)
+        });
+        if changed {
             cx.notify();
         }
     }
 
-    pub(crate) fn clear_auto_expand_tracking(&mut self) {
-        self.auto_expanded_thinking_block = None;
+    pub(crate) fn clear_auto_expand_tracking(&mut self, cx: &mut Context<Self>) {
+        self.entry_view_state.update(cx, |state, _cx| {
+            state.clear_auto_expand_tracking();
+        });
     }
 
-    fn toggle_thinking_block_expansion(&mut self, key: (usize, usize), cx: &mut Context<Self>) {
-        let thinking_display = AgentSettings::get_global(cx).thinking_display;
-
-        match thinking_display {
-            ThinkingBlockDisplay::Auto => {
-                let is_open = self.expanded_thinking_blocks.contains(&key)
-                    || self.user_toggled_thinking_blocks.contains(&key);
-
-                if is_open {
-                    self.expanded_thinking_blocks.remove(&key);
-                    self.user_toggled_thinking_blocks.remove(&key);
-                } else {
-                    self.expanded_thinking_blocks.insert(key);
-                    self.user_toggled_thinking_blocks.insert(key);
-                }
-            }
-            ThinkingBlockDisplay::Preview => {
-                let is_user_expanded = self.user_toggled_thinking_blocks.contains(&key);
-                let is_in_expanded_set = self.expanded_thinking_blocks.contains(&key);
-
-                if is_user_expanded {
-                    self.user_toggled_thinking_blocks.remove(&key);
-                    self.expanded_thinking_blocks.remove(&key);
-                } else if is_in_expanded_set {
-                    self.user_toggled_thinking_blocks.insert(key);
-                } else {
-                    self.expanded_thinking_blocks.insert(key);
-                    self.user_toggled_thinking_blocks.insert(key);
-                }
-            }
-            ThinkingBlockDisplay::AlwaysExpanded => {
-                if self.user_toggled_thinking_blocks.contains(&key) {
-                    self.user_toggled_thinking_blocks.remove(&key);
-                } else {
-                    self.user_toggled_thinking_blocks.insert(key);
-                }
-            }
-            ThinkingBlockDisplay::AlwaysCollapsed => {
-                if self.user_toggled_thinking_blocks.contains(&key) {
-                    self.user_toggled_thinking_blocks.remove(&key);
-                    self.expanded_thinking_blocks.remove(&key);
-                } else {
-                    self.expanded_thinking_blocks.insert(key);
-                    self.user_toggled_thinking_blocks.insert(key);
-                }
-            }
-        }
-
+    fn toggle_thinking_block_expansion(
+        &mut self,
+        key: (usize, usize),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.entry_view_state.update(cx, |state, cx| {
+            state.toggle_thinking_block_expansion(key, cx);
+        });
+        self.refresh_thread_search(window, cx);
         cx.notify();
     }
 
@@ -6558,29 +7124,10 @@ impl ThreadView {
 
         let key = (entry_ix, chunk_ix);
 
-        let thinking_display = AgentSettings::get_global(cx).thinking_display;
-        let is_user_toggled = self.user_toggled_thinking_blocks.contains(&key);
-        let is_in_expanded_set = self.expanded_thinking_blocks.contains(&key);
-
-        let (is_open, is_constrained) = match thinking_display {
-            ThinkingBlockDisplay::Auto => {
-                let is_open = is_user_toggled || is_in_expanded_set;
-                (is_open, false)
-            }
-            ThinkingBlockDisplay::Preview => {
-                let is_open = is_user_toggled || is_in_expanded_set;
-                let is_constrained = is_in_expanded_set && !is_user_toggled;
-                (is_open, is_constrained)
-            }
-            ThinkingBlockDisplay::AlwaysExpanded => (!is_user_toggled, false),
-            ThinkingBlockDisplay::AlwaysCollapsed => (is_user_toggled, false),
-        };
-
-        let should_auto_scroll = self.auto_expanded_thinking_block == Some(key);
-
-        let scroll_handle = self
-            .entry_view_state
-            .read(cx)
+        let entry_view_state = self.entry_view_state.read(cx);
+        let (is_open, is_constrained) = entry_view_state.thinking_block_state(key, cx);
+        let should_auto_scroll = entry_view_state.is_auto_expanded_thinking_block(key);
+        let scroll_handle = entry_view_state
             .entry(entry_ix)
             .and_then(|entry| entry.scroll_handle_for_assistant_message_chunk(chunk_ix));
 
@@ -6624,14 +7171,12 @@ impl ThreadView {
                             .opened_icon(IconName::ChevronUp)
                             .closed_icon(IconName::ChevronDown)
                             .visible_on_hover(&card_header_id)
-                            .on_click(cx.listener(
-                                move |this, _event: &ClickEvent, _window, cx| {
-                                    this.toggle_thinking_block_expansion(key, cx);
-                                },
-                            )),
+                            .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
+                                this.toggle_thinking_block_expansion(key, window, cx);
+                            })),
                     )
-                    .on_click(cx.listener(move |this, _event: &ClickEvent, _window, cx| {
-                        this.toggle_thinking_block_expansion(key, cx);
+                    .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
+                        this.toggle_thinking_block_expansion(key, window, cx);
                     })),
             )
             .when(is_open, |this| {
@@ -6903,6 +7448,12 @@ impl ThreadView {
         style.container_style.text.font_size = Some(rems_from_px(12.).into());
         style.container_style.text.line_height = Some(rems_from_px(17.).into());
         style.height_is_multiple_of_line_height = true;
+        // Soft-wrap the command instead of horizontally scrolling it: the card is
+        // narrow, and in scroll mode a long command wraps anyway but its wrapped
+        // lines don't pick up the code block's left padding. Wrap mode lays the
+        // text out as a normal block inside the padded content box, so every
+        // line (wrapped or not) is padded consistently.
+        style.code_block_overflow_x_scroll = false;
 
         let header_bg = self.tool_card_header_bg(cx);
         let run_command_label = if is_preview {
@@ -6927,7 +7478,8 @@ impl ThreadView {
                 wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                 border: false,
             });
-        let copy_button = CopyButton::new("copy-command", command_text)
+        let copy_button_id = SharedString::from(format!("{group}-copy-command"));
+        let copy_button = CopyButton::new(copy_button_id, command_text)
             .tooltip_label("Copy Command")
             .visible_on_hover(group.clone());
 
@@ -7012,7 +7564,10 @@ impl ThreadView {
             cx,
         );
 
-        let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
+        let is_expanded = self
+            .entry_view_state
+            .read(cx)
+            .is_tool_call_expanded(&tool_call.id);
 
         let header = h_flex()
             .id(header_id)
@@ -7049,12 +7604,11 @@ impl ThreadView {
                 .visible_on_hover(&header_group)
                 .on_click(cx.listener({
                     let id = tool_call.id.clone();
-                    move |this, _event, _window, cx| {
-                        if is_expanded {
-                            this.expanded_tool_calls.remove(&id);
-                        } else {
-                            this.expanded_tool_calls.insert(id.clone());
-                        }
+                    move |this, _event, window, cx| {
+                        this.entry_view_state.update(cx, |state, _cx| {
+                            state.toggle_tool_call_expansion(&id);
+                        });
+                        this.refresh_thread_search(window, cx);
                         cx.notify();
                     }
                 })),
@@ -7183,7 +7737,7 @@ impl ThreadView {
                     .child(command_element),
             )
             .when_some(tool_call.sandbox_not_applied.as_ref(), |this, reason| {
-                this.child(self.render_sandbox_not_applied_warning(reason, terminal, cx))
+                this.child(self.render_sandbox_not_applied_warning(reason, cx))
             })
             .when(is_expanded && terminal_view.is_some(), |this| {
                 this.child(
@@ -7237,45 +7791,36 @@ impl ThreadView {
     fn render_sandbox_not_applied_warning(
         &self,
         reason: &SandboxNotAppliedReason,
-        terminal: &Entity<acp_thread::Terminal>,
         cx: &Context<Self>,
     ) -> AnyElement {
-        // (title, optional detail line, whether to offer the settings shortcut)
-        let (title, detail, show_settings_button): (SharedString, Option<SharedString>, bool) =
-            match reason {
-                SandboxNotAppliedReason::DisabledForever => (
-                    "Ran without sandbox".into(),
-                    Some("Unsandboxed execution is enabled in settings.".into()),
-                    true,
-                ),
-                SandboxNotAppliedReason::ErrorLinuxWsl(error) => (
-                    "Couldn't create a sandbox".into(),
-                    Some(error.user_facing_message().into()),
-                    false,
-                ),
-                SandboxNotAppliedReason::DisabledForThisThread => {
-                    // The grant only exists because an earlier command failed to
-                    // create a sandbox; surface that same explanation here.
-                    let detail = self
-                        .find_thread_sandbox_error(cx)
-                        .map(|error| {
-                            SharedString::from(format!(
-                                "Allowed for this thread after the sandbox failed: {}",
-                                error.user_facing_message()
-                            ))
-                        })
-                        .unwrap_or_else(|| {
-                            "Unsandboxed execution is allowed for the rest of this thread.".into()
-                        });
-                    ("Ran without sandbox".into(), Some(detail), false)
-                }
-            };
+        // (title, optional detail line)
+        let (title, detail): (SharedString, Option<SharedString>) = match reason {
+            SandboxNotAppliedReason::ErrorLinuxWsl(error) => (
+                "Couldn't create a sandbox".into(),
+                Some(error.user_facing_message().into()),
+            ),
+            SandboxNotAppliedReason::DisabledForThisThread => {
+                // The grant only exists because an earlier command failed to
+                // create a sandbox; surface that same explanation here.
+                let detail = self
+                    .find_thread_sandbox_error(cx)
+                    .map(|error| {
+                        SharedString::from(format!(
+                            "Allowed for this thread after the sandbox failed: {}",
+                            error.user_facing_message()
+                        ))
+                    })
+                    .unwrap_or_else(|| {
+                        "Unsandboxed execution is allowed for the rest of this thread.".into()
+                    });
+                ("Ran without sandbox".into(), Some(detail))
+            }
+        };
 
         h_flex()
             .px_2()
             .py_1()
             .gap_1()
-            .justify_between()
             .border_t_1()
             .border_color(cx.theme().status().warning_border)
             .bg(cx.theme().status().warning_background.opacity(0.5))
@@ -7304,29 +7849,6 @@ impl ThreadView {
                             }),
                     ),
             )
-            .when(show_settings_button, |this| {
-                this.child(
-                    IconButton::new(
-                        SharedString::from(format!(
-                            "open-sandbox-setting-{}",
-                            terminal.entity_id()
-                        )),
-                        IconName::Settings,
-                    )
-                    .icon_size(IconSize::XSmall)
-                    .icon_color(Color::Muted)
-                    .tooltip(Tooltip::text("Open the sandbox permission settings"))
-                    .on_click(|_event, window, cx| {
-                        window.dispatch_action(
-                            Box::new(zed_actions::OpenSettingsAt {
-                                path: zed_actions::AGENT_SANDBOX_SETTINGS_PATH.to_string(),
-                                target: None,
-                            }),
-                            cx,
-                        );
-                    }),
-                )
-            })
             .into_any_element()
     }
 
@@ -7369,10 +7891,22 @@ impl ThreadView {
         layout: ToolCallLayout,
         window: &Window,
         cx: &Context<Self>,
-    ) -> Div {
+    ) -> Stateful<Div> {
         let has_terminals = tool_call.terminals().next().is_some();
 
-        div().w_full().map(|this| {
+        // Give every tool-call subtree a unique element-id prefix derived from
+        // the globally-unique tool call id and the layout. This single wrapper
+        // is what keeps all the `entry_ix`-keyed element ids inside the card
+        // collision-free, even when the same tool call is rendered in multiple
+        // places at once (inline list + floating awaiting-permission row) or
+        // when subagent entries are inlined into the parent view's element tree.
+        let container_id = ElementId::Name(SharedString::from(format!(
+            "tool-call-{}-{}",
+            tool_call.id.0,
+            layout.id_str()
+        )));
+
+        div().w_full().id(container_id).map(|this| {
             if tool_call.is_subagent() {
                 this.child(
                     self.render_subagent_tool_call(
@@ -7426,7 +7960,7 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> Div {
         let has_location = tool_call.locations.len() == 1;
-        let card_header_id = SharedString::from("inner-tool-call-header");
+        let card_header_id = SharedString::from(format!("inner-tool-call-header-{entry_ix}"));
 
         let failed_or_canceled = match &tool_call.status {
             ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed => true,
@@ -7463,7 +7997,10 @@ impl ThreadView {
 
         let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
-        let mut is_open = self.expanded_tool_calls.contains(&tool_call.id);
+        let mut is_open = self
+            .entry_view_state
+            .read(cx)
+            .is_tool_call_expanded(&tool_call.id);
 
         is_open |= needs_confirmation;
 
@@ -7692,8 +8229,14 @@ impl ThreadView {
                                         .style(ButtonStyle::Outlined)
                                         .icon_color(Color::Muted)
                                         .on_click(cx.listener({
-                                            move |this: &mut Self, _, _, cx: &mut Context<Self>| {
-                                                this.expanded_tool_calls.remove(&tool_call_id);
+                                            move |this: &mut Self,
+                                                  _,
+                                                  window,
+                                                  cx: &mut Context<Self>| {
+                                                this.entry_view_state.update(cx, |state, _cx| {
+                                                    state.collapse_tool_call(&tool_call_id);
+                                                });
+                                                this.refresh_thread_search(window, cx);
                                                 cx.notify();
                                             }
                                         })),
@@ -7796,15 +8339,18 @@ impl ThreadView {
                                                             let id = tool_call.id.clone();
                                                             move |this: &mut Self,
                                                                   _,
-                                                                  _,
+                                                                  window,
                                                                   cx: &mut Context<Self>| {
-                                                                if is_open {
-                                                                    this.expanded_tool_calls
-                                                                        .remove(&id);
-                                                                } else {
-                                                                    this.expanded_tool_calls
-                                                                        .insert(id.clone());
-                                                                }
+                                                                this.entry_view_state.update(
+                                                                    cx,
+                                                                    |state, _cx| {
+                                                                        state
+                                                                            .toggle_tool_call_expansion(
+                                                                                &id,
+                                                                            );
+                                                                    },
+                                                                );
+                                                                this.refresh_thread_search(window, cx);
                                                                 cx.notify();
                                                             }
                                                         })),
@@ -7919,13 +8465,11 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let has_network = details.network_all_hosts || !details.network_hosts.is_empty();
-        let command = details
-            .command
-            .as_deref()
-            .filter(|command| !command.is_empty());
-        if details.write_paths.is_empty()
-            && !has_network
-            && command.is_none()
+        let has_write = details.allow_fs_write_all || !details.write_paths.is_empty();
+        if !has_network
+            && !has_write
+            && !details.allow_git_access
+            && !details.unsandboxed
             && details.reason.is_empty()
         {
             return Empty.into_any_element();
@@ -7956,7 +8500,10 @@ impl ThreadView {
                 .child(
                     h_flex()
                         .id(("sandbox-network-details-header", entry_ix))
-                        .p_1()
+                        // Align text with the allow/deny button icons below,
+                        // which sit at p_1 (container) + Base04 (button) ≈ px_2.
+                        .px_2()
+                        .py_1()
                         .justify_between()
                         .when(has_host_list, |this| {
                             this.cursor_pointer()
@@ -8014,17 +8561,12 @@ impl ThreadView {
                             .children(hosts.iter().enumerate().map(|(host_ix, host)| {
                                 h_flex()
                                     .min_w_0()
-                                    .p_1p5()
-                                    .gap_2()
+                                    .px_2()
+                                    .py_1p5()
                                     .bg(cx.theme().colors().editor_background)
                                     .when(host_ix < hosts.len() - 1, |this| {
                                         this.border_b_1().border_color(cx.theme().colors().border)
                                     })
-                                    .child(
-                                        Icon::new(IconName::Public)
-                                            .color(Color::Muted)
-                                            .size(IconSize::Small),
-                                    )
                                     .child(
                                         Label::new(host.clone())
                                             .size(LabelSize::XSmall)
@@ -8035,91 +8577,54 @@ impl ThreadView {
                 })
         });
 
-        if details.write_paths.is_empty() {
-            return v_flex()
-                .border_t_1()
-                .border_color(self.tool_card_border_color(cx))
-                .when_some(command, |this, command| {
-                    this.child(Self::render_sandbox_authorization_command(
-                        entry_ix, command, cx,
-                    ))
-                })
-                .children(network_section)
-                .into_any_element();
-        }
-
-        let is_open = !self
-            .collapsed_sandbox_authorization_details
-            .contains(tool_call_id);
-        let mut paths = details.write_paths.clone();
-        paths.sort();
-
-        v_flex()
-            .border_t_1()
-            .border_color(self.tool_card_border_color(cx))
-            .when_some(command, |this, command| {
-                this.child(Self::render_sandbox_authorization_command(
-                    entry_ix, command, cx,
-                ))
-            })
-            .children(network_section)
-            .child(
-                h_flex()
-                    .id(("sandbox-authorization-details-header", entry_ix))
-                    .p_1()
-                    .justify_between()
-                    .cursor_pointer()
-                    .hover(|style| style.bg(cx.theme().colors().element_hover))
-                    .child(
-                        h_flex().gap_1().child(
-                            Label::new("Write access")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                    )
-                    .child(
-                        Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
-                            .opened_icon(IconName::ChevronUp)
-                            .closed_icon(IconName::ChevronDown),
-                    )
-                    .on_click(cx.listener({
-                        let tool_call_id = tool_call_id.clone();
-                        move |this, _event, _window, cx| {
-                            if this
-                                .collapsed_sandbox_authorization_details
-                                .remove(&tool_call_id)
-                            {
-                                cx.notify();
-                                return;
-                            }
-
-                            this.collapsed_sandbox_authorization_details
-                                .insert(tool_call_id.clone());
-                            cx.notify();
-                        }
-                    })),
-            )
-            .when(is_open && !paths.is_empty(), |this| {
-                this.child(
-                    v_flex()
-                        .gap_0p5()
-                        .child(
-                            Label::new("Reason from agent")
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted)
-                                .buffer_font(cx),
-                        )
-                        .child(Label::new(details.reason.clone()).size(LabelSize::Small)),
+        let write_section = has_write.then(|| {
+            let summary = if details.allow_fs_write_all {
+                "unrestricted".to_string()
+            } else {
+                format!(
+                    "{} {}",
+                    details.write_paths.len(),
+                    if details.write_paths.len() == 1 {
+                        "path"
+                    } else {
+                        "paths"
+                    }
                 )
-            })
-            .when(!paths.is_empty(), |this| {
-                this.child(
+            };
+            let has_path_list = !details.allow_fs_write_all && !details.write_paths.is_empty();
+            let is_open = !self
+                .collapsed_sandbox_authorization_details
+                .contains(tool_call_id);
+            let mut paths = details.write_paths.clone();
+            paths.sort();
+
+            v_flex()
+                .child(
                     h_flex()
                         .id(("sandbox-authorization-details-header", entry_ix))
-                        .p_1()
+                        .px_2()
+                        .py_1()
                         .justify_between()
-                        .cursor_pointer()
-                        .hover(|style| style.bg(cx.theme().colors().element_hover))
+                        .when(has_path_list, |this| {
+                            this.cursor_pointer()
+                                .hover(|style| style.bg(cx.theme().colors().element_hover))
+                                .on_click(cx.listener({
+                                    let tool_call_id = tool_call_id.clone();
+                                    move |this, _event, _window, cx| {
+                                        if this
+                                            .collapsed_sandbox_authorization_details
+                                            .remove(&tool_call_id)
+                                        {
+                                            cx.notify();
+                                            return;
+                                        }
+
+                                        this.collapsed_sandbox_authorization_details
+                                            .insert(tool_call_id.clone());
+                                        cx.notify();
+                                    }
+                                }))
+                        })
                         .child(
                             h_flex()
                                 .gap_1()
@@ -8134,38 +8639,23 @@ impl ThreadView {
                                         .color(Color::Disabled),
                                 )
                                 .child(
-                                    Label::new(format!(
-                                        "{} {}",
-                                        paths.len(),
-                                        if paths.len() == 1 { "path" } else { "paths" }
-                                    ))
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
+                                    Label::new(summary)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
                                 ),
                         )
-                        .child(
-                            Disclosure::new(("sandbox-authorization-details", entry_ix), is_open)
+                        .when(has_path_list, |this| {
+                            this.child(
+                                Disclosure::new(
+                                    ("sandbox-authorization-details", entry_ix),
+                                    is_open,
+                                )
                                 .opened_icon(IconName::ChevronUp)
                                 .closed_icon(IconName::ChevronDown),
-                        )
-                        .on_click(cx.listener({
-                            let tool_call_id = tool_call_id.clone();
-                            move |this, _event, _window, cx| {
-                                if this
-                                    .collapsed_sandbox_authorization_details
-                                    .remove(&tool_call_id)
-                                {
-                                    cx.notify();
-                                    return;
-                                }
-
-                                this.collapsed_sandbox_authorization_details
-                                    .insert(tool_call_id.clone());
-                                cx.notify();
-                            }
-                        })),
+                            )
+                        }),
                 )
-                .when(is_open, |this| {
+                .when(has_path_list && is_open, |this| {
                     this.child(
                         v_flex()
                             .id(("sandbox-authorization-paths-list", entry_ix))
@@ -8182,7 +8672,66 @@ impl ThreadView {
                             })),
                     )
                 })
-            })
+        });
+
+        let unsandboxed_section = details.unsandboxed.then(|| {
+            h_flex()
+                .px_2()
+                .py_1()
+                .gap_1p5()
+                .child(
+                    Icon::new(IconName::Warning)
+                        .color(Color::Warning)
+                        .size(IconSize::Small),
+                )
+                .child(
+                    Label::new("Runs without the OS sandbox")
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+        });
+
+        let git_access_section = details.allow_git_access.then(|| {
+            v_flex().px_2().py_1().gap_0p5().child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::GitBranch)
+                            .color(Color::Muted)
+                            .size(IconSize::Small),
+                    )
+                    .child(
+                        Label::new("Git metadata access")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
+                    ),
+            )
+        });
+
+        let reason_section = (!details.reason.is_empty()).then(|| {
+            v_flex()
+                .px_2()
+                .py_1()
+                .gap_0p5()
+                .child(
+                    Label::new("Reason from agent")
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted)
+                        .buffer_font(cx),
+                )
+                .child(Label::new(details.reason.clone()).size(LabelSize::Small))
+        });
+
+        // The command stays in the tool-call title above; here we show what the
+        // command is asking for (paths / domains) and the agent's reason.
+        v_flex()
+            .border_t_1()
+            .border_color(self.tool_card_border_color(cx))
+            .children(network_section)
+            .children(write_section)
+            .children(git_access_section)
+            .children(unsandboxed_section)
+            .children(reason_section)
             .into_any_element()
     }
 
@@ -8223,49 +8772,6 @@ impl ThreadView {
             .into_any_element()
     }
 
-    fn render_sandbox_authorization_command(entry_ix: usize, command: &str, cx: &App) -> Div {
-        let group = SharedString::from(format!("sandbox-authorization-command-{entry_ix}"));
-        let command = SharedString::from(command.to_string());
-
-        v_flex()
-            .group(group.clone())
-            .relative()
-            .p_1p5()
-            .gap_1()
-            .bg(cx.theme().colors().editor_background)
-            .child(
-                Label::new("Command")
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted),
-            )
-            .child(
-                div()
-                    .id(("sandbox-authorization-command-scroll", entry_ix))
-                    .flex()
-                    .flex_1()
-                    .w_full()
-                    .min_w_0()
-                    .overflow_x_scroll()
-                    .whitespace_nowrap()
-                    .rounded_sm()
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .p_1()
-                    .child(
-                        Label::new(command.clone())
-                            .buffer_font(cx)
-                            .size(LabelSize::XSmall),
-                    ),
-            )
-            .child(
-                div().absolute().top_1().right_1().child(
-                    CopyButton::new("copy-sandbox-authorization-command", command)
-                        .tooltip_label("Copy Command")
-                        .visible_on_hover(group),
-                ),
-            )
-    }
-
     fn render_sandbox_authorization_path_row(
         &self,
         entry_ix: usize,
@@ -8283,22 +8789,14 @@ impl ThreadView {
             let parent = parent.display().to_string();
             (!parent.is_empty()).then_some(parent)
         });
-        let path_icon = FileIcons::get_icon(path, cx)
-            .map(Icon::from_path)
-            .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
-            .unwrap_or_else(|| {
-                Icon::new(IconName::Folder)
-                    .color(Color::Muted)
-                    .size(IconSize::Small)
-            });
 
         h_flex()
             .id(SharedString::from(format!(
                 "sandbox-authorization-path-{entry_ix}-{path_ix}"
             )))
             .min_w_0()
-            .p_1p5()
-            .gap_2()
+            .px_2()
+            .py_1p5()
             .bg(cx.theme().colors().editor_background)
             .when(show_border, |this| {
                 this.border_b_1().border_color(cx.theme().colors().border)
@@ -8310,7 +8808,6 @@ impl ThreadView {
                     )))
                     .min_w_0()
                     .gap_0p5()
-                    .child(path_icon)
                     .child(
                         Label::new(file_name)
                             .size(LabelSize::XSmall)
@@ -9145,7 +9642,18 @@ impl ThreadView {
     ) -> AnyElement {
         match content {
             ToolCallContent::ContentBlock(content) => {
-                if let Some(resource_link) = content.resource_link() {
+                if let Some((resource, markdown)) = content.embedded_resource() {
+                    self.render_embedded_resource_output(
+                        resource,
+                        markdown.cloned(),
+                        entry_ix,
+                        context_ix,
+                        tool_call,
+                        card_layout,
+                        window,
+                        cx,
+                    )
+                } else if let Some(resource_link) = content.resource_link() {
                     self.render_resource_link(resource_link, cx)
                 } else if let Some(markdown) = content.markdown() {
                     self.render_markdown_output(
@@ -9157,16 +9665,9 @@ impl ThreadView {
                         window,
                         cx,
                     )
-                } else if let Some((image, dimensions)) = content.image() {
+                } else if let Some((image, _)) = content.image() {
                     let location = tool_call.locations.first().cloned();
-                    self.render_image_output(
-                        entry_ix,
-                        image.clone(),
-                        dimensions,
-                        location,
-                        card_layout,
-                        cx,
-                    )
+                    self.render_image_output(entry_ix, image.clone(), location, card_layout, cx)
                 } else {
                     Empty.into_any_element()
                 }
@@ -9187,6 +9688,60 @@ impl ThreadView {
         }
     }
 
+    fn render_embedded_resource_output(
+        &self,
+        resource: &acp::EmbeddedResource,
+        markdown: Option<Entity<Markdown>>,
+        entry_ix: usize,
+        context_ix: usize,
+        tool_call: &ToolCall,
+        card_layout: bool,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        if let Some(markdown) = markdown {
+            return self.render_markdown_output(
+                markdown,
+                entry_ix,
+                context_ix,
+                tool_call,
+                card_layout,
+                window,
+                cx,
+            );
+        }
+
+        let uri = match &resource.resource {
+            acp::EmbeddedResourceResource::BlobResourceContents(blob) => blob.uri.as_str(),
+            acp::EmbeddedResourceResource::TextResourceContents(text) => text.uri.as_str(),
+            _ => "",
+        };
+
+        v_flex()
+            .gap_1()
+            .map(|this| {
+                if card_layout {
+                    this.p_2().when(context_ix > 0, |this| {
+                        this.border_t_1()
+                            .border_color(self.tool_card_border_color(cx))
+                    })
+                } else {
+                    this.ml(rems(0.4))
+                        .px_3p5()
+                        .border_l_1()
+                        .border_color(self.tool_card_border_color(cx))
+                }
+            })
+            .when(!uri.is_empty(), |this| {
+                this.child(
+                    Label::new(uri.to_string())
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
+                )
+            })
+            .into_any_element()
+    }
+
     fn render_resource_link(
         &self,
         resource_link: &acp::ResourceLink,
@@ -9200,7 +9755,12 @@ impl ThreadView {
         };
 
         let label: SharedString = if let Some(abs_path) = is_file {
-            if let Some(project_path) = project
+            // Split off an optional `#L<line>` fragment so the path still resolves.
+            let (abs_path, fragment) = abs_path
+                .split_once('#')
+                .map_or((abs_path, None), |(path, fragment)| (path, Some(fragment)));
+
+            let path_label = if let Some(project_path) = project
                 .read(cx)
                 .project_path_for_absolute_path(&Path::new(abs_path), cx)
                 && let Some(worktree) = project
@@ -9212,9 +9772,13 @@ impl ThreadView {
                     .full_path(&project_path.path)
                     .to_string_lossy()
                     .to_string()
-                    .into()
             } else {
-                abs_path.to_string().into()
+                abs_path.to_string()
+            };
+
+            match fragment {
+                Some(fragment) => format!("{path_label}#{fragment}").into(),
+                None => path_label.into(),
             }
         } else {
             uri.clone()
@@ -9371,28 +9935,10 @@ impl ThreadView {
         &self,
         entry_ix: usize,
         image: Arc<gpui::Image>,
-        dimensions: Option<gpui::Size<u32>>,
         location: Option<acp::ToolCallLocation>,
         card_layout: bool,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let format_name = match image.format() {
-            gpui::ImageFormat::Png => "PNG",
-            gpui::ImageFormat::Jpeg => "JPEG",
-            gpui::ImageFormat::Webp => "WebP",
-            gpui::ImageFormat::Gif => "GIF",
-            gpui::ImageFormat::Svg => "SVG",
-            gpui::ImageFormat::Bmp => "BMP",
-            gpui::ImageFormat::Tiff => "TIFF",
-            gpui::ImageFormat::Ico => "ICO",
-            gpui::ImageFormat::Pnm => "PNM",
-        };
-        let dimensions_label = if let Some(size) = dimensions {
-            format!("{}×{} {}", size.width, size.height, format_name)
-        } else {
-            format_name.into()
-        };
-
         v_flex()
             .gap_2()
             .map(|this| {
@@ -9405,27 +9951,17 @@ impl ThreadView {
                         .border_color(self.tool_card_border_color(cx))
                 }
             })
-            .child(
-                h_flex()
-                    .w_full()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        Label::new(dimensions_label)
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted)
-                            .buffer_font(cx),
-                    )
-                    .when_some(location, |this, _loc| {
-                        this.child(
-                            Button::new(("go-to-file", entry_ix), "Go to File")
-                                .label_size(LabelSize::Small)
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.open_tool_call_location(entry_ix, 0, window, cx);
-                                })),
-                        )
-                    }),
-            )
+            .when_some(location, |this, _loc| {
+                this.child(
+                    h_flex().w_full().justify_end().child(
+                        Button::new(("go-to-file", entry_ix), "Go to File")
+                            .label_size(LabelSize::Small)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_tool_call_location(entry_ix, 0, window, cx);
+                            })),
+                    ),
+                )
+            })
             .child(
                 img(image)
                     .max_w_96()
@@ -9494,7 +10030,10 @@ impl ThreadView {
             })
             .is_some();
 
-        let is_expanded = self.expanded_tool_calls.contains(&tool_call.id);
+        let is_expanded = self
+            .entry_view_state
+            .read(cx)
+            .is_tool_call_expanded(&tool_call.id);
         let files_changed = changed_buffers.len();
         let diff_stats = DiffStats::all_files(changed_buffers, cx);
 
@@ -9512,8 +10051,8 @@ impl ThreadView {
 
         let is_cancelled = matches!(tool_call.status, ToolCallStatus::Canceled)
             || tool_call.content.iter().any(|c| match c {
-                ToolCallContent::ContentBlock(ContentBlock::Markdown { markdown }) => {
-                    markdown.read(cx).source() == "User canceled"
+                ToolCallContent::ContentBlock(block) => {
+                    block.text_content(cx) == Some("User canceled")
                 }
                 _ => false,
             });
@@ -9675,15 +10214,13 @@ impl ThreadView {
                                     )
                                     .on_click(cx.listener({
                                         let tool_call_id = tool_call.id.clone();
-                                        move |this, _, _, cx| {
-                                            if this.expanded_tool_calls.contains(&tool_call_id) {
-                                                this.expanded_tool_calls.remove(&tool_call_id);
-                                            } else {
-                                                this.expanded_tool_calls
-                                                    .insert(tool_call_id.clone());
-                                            }
+                                        move |this, _, window, cx| {
                                             let expanded =
-                                                this.expanded_tool_calls.contains(&tool_call_id);
+                                                this.entry_view_state.update(cx, |state, _cx| {
+                                                    state.toggle_tool_call_expansion(&tool_call_id);
+                                                    state.is_tool_call_expanded(&tool_call_id)
+                                                });
+                                            this.refresh_thread_search(window, cx);
                                             telemetry::event!("Subagent Toggled", expanded);
                                             cx.notify();
                                         }
@@ -9868,7 +10405,13 @@ impl ThreadView {
                 div()
                     .pb_1()
                     .min_h_0()
-                    .id(format!("subagent-entries-{}", session_id))
+                    // Include the tool call id so the same subagent session
+                    // rendered in multiple parent cards gets distinct element
+                    // ids for its inlined entries (avoids duplicate a11y ids).
+                    .id(format!(
+                        "subagent-entries-{}-{}",
+                        session_id, tool_call.id.0
+                    ))
                     .track_scroll(&scroll_handle)
                     .children(rendered_entries),
             )
@@ -9886,14 +10429,12 @@ impl ThreadView {
         if matches!(status, ToolCallStatus::Failed) {
             tool_call.content.iter().find_map(|content| {
                 if let ToolCallContent::ContentBlock(block) = content {
-                    if let acp_thread::ContentBlock::Markdown { markdown } = block {
-                        let source = markdown.read(cx).source().to_string();
-                        if !source.is_empty() {
-                            if source == "User canceled" {
-                                return None;
-                            } else {
-                                return Some(SharedString::from(source));
-                            }
+                    if let Some(source) = block.text_content(cx).filter(|source| !source.is_empty())
+                    {
+                        if source == "User canceled" {
+                            return None;
+                        } else {
+                            return Some(SharedString::from(source));
                         }
                     }
                 }
@@ -10966,6 +11507,89 @@ impl Render for ThreadView {
                     this.cancel_generation(cx);
                 }
             }))
+            .on_action(cx.listener(
+                |this, _: &super::thread_search_bar::DismissThreadSearch, window, cx| {
+                    this.close_thread_search(window, cx);
+                },
+            ))
+            // Esc can arrive as `editor::Cancel` from the query editor.
+            .on_action(
+                cx.listener(|this, _: &editor::actions::Cancel, window, cx| {
+                    if !this.close_thread_search(window, cx) {
+                        cx.propagate();
+                    }
+                }),
+            )
+            .on_action(cx.listener(
+                |this, action: &super::thread_search_bar::SelectNextThreadMatch, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.select_next_match(action, window, cx));
+                    }
+                },
+            ))
+            .on_action(cx.listener(
+                |this, action: &super::thread_search_bar::SelectPreviousThreadMatch, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.select_prev_match(action, window, cx));
+                    }
+                },
+            ))
+            .on_action(
+                cx.listener(|this, _: &search::ToggleCaseSensitive, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| {
+                            bar.toggle_case_sensitive(&search::ToggleCaseSensitive, window, cx)
+                        });
+                    }
+                }),
+            )
+            .on_action(
+                cx.listener(|this, _: &search::ToggleWholeWord, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| {
+                            bar.toggle_whole_word(&search::ToggleWholeWord, window, cx)
+                        });
+                    }
+                }),
+            )
+            .on_action(cx.listener(|this, _: &search::ToggleRegex, window, cx| {
+                if !this.thread_search_visible {
+                    cx.propagate();
+                    return;
+                }
+                if let Some(bar) = this.thread_search_bar.clone() {
+                    bar.update(cx, |bar, cx| {
+                        bar.toggle_regex(&search::ToggleRegex, window, cx)
+                    });
+                }
+            }))
+            .on_action(
+                cx.listener(|this, action: &search::FocusSearch, window, cx| {
+                    if !this.thread_search_visible {
+                        cx.propagate();
+                        return;
+                    }
+                    if let Some(bar) = this.thread_search_bar.clone() {
+                        bar.update(cx, |bar, cx| bar.focus_search(action, window, cx));
+                    }
+                }),
+            )
             .on_action(cx.listener(|this, _: &workspace::GoBack, window, cx| {
                 if let Some(parent_session_id) = this.thread.read(cx).parent_session_id().cloned() {
                     this.server_view
@@ -10994,6 +11618,7 @@ impl Render for ThreadView {
             .on_action(cx.listener(Self::scroll_output_to_bottom))
             .on_action(cx.listener(Self::scroll_output_to_previous_message))
             .on_action(cx.listener(Self::scroll_output_to_next_message))
+            .on_action(cx.listener(Self::toggle_search))
             .on_action(cx.listener(|this, _: &ToggleFastMode, window, cx| {
                 this.toggle_fast_mode(window, cx);
             }))
@@ -11054,20 +11679,33 @@ impl Render for ThreadView {
                 }),
             )
             .on_action(cx.listener(|this, _: &SendNextQueuedMessage, window, cx| {
-                this.send_queued_message_at_index(0, true, window, cx);
+                if let Some(id) = this.message_queue.first_id() {
+                    this.send_queued_message_now(id, window, cx);
+                }
             }))
             .on_action(cx.listener(|this, _: &RemoveFirstQueuedMessage, _, cx| {
-                this.remove_from_queue(0, cx);
-                cx.notify();
+                if let Some(id) = this.message_queue.first_id() {
+                    this.remove_from_queue(id, cx);
+                    cx.notify();
+                }
             }))
             .on_action(cx.listener(|this, _: &EditFirstQueuedMessage, window, cx| {
-                this.move_queued_message_to_main_editor(0, None, None, window, cx);
+                if let Some(id) = this.message_queue.first_id() {
+                    this.move_queued_message_to_main_editor(id, None, None, window, cx);
+                }
             }))
+            .on_action(
+                cx.listener(|this, _: &ToggleSteerFirstQueuedMessage, _, cx| {
+                    if this.as_native_thread(cx).is_none() {
+                        return;
+                    }
+                    if let Some(id) = this.message_queue.first_id() {
+                        this.toggle_queue_entry_steer(id, cx);
+                    }
+                }),
+            )
             .on_action(cx.listener(|this, _: &ClearMessageQueue, _, cx| {
-                this.local_queued_messages.clear();
-                this.sync_queue_flag_to_native_thread(cx);
-                this.can_fast_track_queue = false;
-                cx.notify();
+                this.clear_queue(cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleProfileSelector, window, cx| {
                 if let Some(config_options_view) = this.config_options_view.clone() {
@@ -11163,6 +11801,12 @@ impl Render for ThreadView {
             }))
             .size_full()
             .children(self.render_subagent_titlebar(cx))
+            .when_some(
+                self.thread_search_visible
+                    .then(|| self.thread_search_bar.clone())
+                    .flatten(),
+                |this, bar| this.child(bar),
+            )
             .child(conversation)
             .children(self.render_multi_root_callout(cx))
             .children(self.render_activity_bar(window, cx))

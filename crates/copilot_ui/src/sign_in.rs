@@ -63,7 +63,7 @@ fn open_copilot_code_verification_window(copilot: &Entity<Copilot>, window: &Win
     ));
     cx.open_window(
         WindowOptions {
-            kind: gpui::WindowKind::PopUp,
+            kind: gpui::WindowKind::Floating,
             window_bounds: Some(window_bounds),
             is_resizable: false,
             is_movable: true,
