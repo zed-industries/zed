@@ -3006,7 +3006,7 @@ async fn test_remote_delete_project_entry_with_trash(
     let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
     let (worktree, _path) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/root/zed", true, cx)
+            project.find_or_create_worktree(path!("/root/zed"), true, cx)
         })
         .await
         .unwrap();
@@ -3058,7 +3058,7 @@ async fn test_remote_trash_restore(cx: &mut TestAppContext, server_cx: &mut Test
     let (project, _headless_project) = init_test(&fs, cx, server_cx).await;
     let (worktree, _path) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/root/zed", true, cx)
+            project.find_or_create_worktree(path!("/root/zed"), true, cx)
         })
         .await
         .unwrap();
