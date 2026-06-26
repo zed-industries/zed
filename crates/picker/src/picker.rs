@@ -240,6 +240,10 @@ pub trait PickerDelegate: Sized + 'static {
     fn supports_multi_select(&self) -> bool {
         false
     }
+    fn save_selected_matches(&mut self, _indices: &[usize]) {}
+    fn pinned_match_count(&self) -> usize {
+        0
+    }
     fn confirm_multi(
         &mut self,
         secondary: bool,
@@ -1054,6 +1058,11 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.delegate.supports_multi_select() && !self.selected_indices.is_empty() {
+            let mut indices: Vec<usize> = self.selected_indices.iter().copied().collect();
+            indices.sort();
+            self.delegate.save_selected_matches(&indices);
+        }
         self.selected_indices.clear();
         self.update_matches_with_options(query, ScrollBehavior::RevealSelected, window, cx);
     }
@@ -1128,6 +1137,10 @@ impl<D: PickerDelegate> Picker<D> {
             },
         }
         self.pending_update_matches = None;
+        let pinned = self.delegate.pinned_match_count();
+        if pinned > 0 {
+            self.selected_indices = (0..pinned).collect();
+        }
         if let Some(update) = self.delegate.try_get_preview_data_for_match(cx)
             && let Some(preview) = &mut self.preview
         {

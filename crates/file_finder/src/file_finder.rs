@@ -360,6 +360,7 @@ pub struct FileFinderDelegate {
     latest_search_query: Option<FileSearchQuery>,
     currently_opened_path: Option<FoundPath>,
     matches: Matches,
+    pinned_matches: Vec<Match>,
     selected_index: usize,
     has_changed_selected_index: bool,
     cancel_flag: Arc<AtomicBool>,
@@ -926,6 +927,7 @@ impl FileFinderDelegate {
             latest_search_query: None,
             currently_opened_path,
             matches: Matches::default(),
+            pinned_matches: Vec::new(),
             has_changed_selected_index: false,
             selected_index: 0,
             cancel_flag: Arc::new(AtomicBool::new(false)),
@@ -955,6 +957,23 @@ impl FileFinderDelegate {
             };
         })
         .detach();
+    }
+
+    fn prepend_pinned_matches(&mut self) {
+        if self.pinned_matches.is_empty() {
+            return;
+        }
+        let pinned_paths: std::collections::HashSet<Arc<RelPath>> = self
+            .pinned_matches
+            .iter()
+            .filter_map(|m| m.relative_path().cloned())
+            .collect();
+        self.matches
+            .matches
+            .retain(|m| m.relative_path().map_or(true, |p| !pinned_paths.contains(p)));
+        let mut new = self.pinned_matches.clone();
+        new.extend(self.matches.matches.drain(..));
+        self.matches.matches = new;
     }
 
     fn spawn_search(
@@ -1159,14 +1178,20 @@ impl FileFinderDelegate {
                 }
             }
 
-            self.selected_index = selected_match.map_or_else(
-                || self.calculate_selected_index(cx),
-                |m| {
-                    self.matches
-                        .position(&m, self.currently_opened_path.as_ref())
-                        .unwrap_or(0)
-                },
-            );
+            self.prepend_pinned_matches();
+
+            self.selected_index = if !self.pinned_matches.is_empty() {
+                0
+            } else {
+                selected_match.map_or_else(
+                    || self.calculate_selected_index(cx),
+                    |m| {
+                        self.matches
+                            .position(&m, self.currently_opened_path.as_ref())
+                            .unwrap_or(0)
+                    },
+                )
+            };
 
             self.latest_search_query = Some(query);
             self.latest_search_did_cancel = did_cancel;
@@ -1755,6 +1780,7 @@ impl PickerDelegate for FileFinderDelegate {
                 self.first_update = false;
                 self.selected_index = 0;
             }
+            self.prepend_pinned_matches();
             cx.notify();
             self.search_in_flight
                 .store(false, atomic::Ordering::Release);
@@ -1807,6 +1833,17 @@ impl PickerDelegate for FileFinderDelegate {
 
     fn supports_multi_select(&self) -> bool {
         true
+    }
+
+    fn save_selected_matches(&mut self, indices: &[usize]) {
+        self.pinned_matches = indices
+            .iter()
+            .filter_map(|&ix| self.matches.get(ix).cloned())
+            .collect();
+    }
+
+    fn pinned_match_count(&self) -> usize {
+        self.pinned_matches.len()
     }
 
     fn confirm_multi(
@@ -1936,6 +1973,10 @@ impl PickerDelegate for FileFinderDelegate {
             picker::PickerAction::button("Up", pane::SplitUp::default().boxed_clone()),
             picker::PickerAction::button("Down", pane::SplitDown::default().boxed_clone()),
             picker::PickerAction::separator(),
+            picker::PickerAction::button(
+                "Multi Select",
+                picker::ToggleMultiSelectItem.boxed_clone(),
+            ),
             picker::PickerAction::button(open_label, menu::Confirm.boxed_clone()),
         ]
     }
