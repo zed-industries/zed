@@ -103,6 +103,40 @@ struct LineHighlightSpec {
     _active_stack_frame: bool,
 }
 
+enum LineNumberStyle {
+    Breakpoint,
+    DiffAdded,
+    DiffDeleted,
+    Active,
+    Inactive,
+}
+
+impl LineNumberStyle {
+    fn new(is_active: bool, is_breakpoint: bool, diff_status: Option<DiffHunkStatus>) -> Self {
+        match (
+            is_active,
+            is_breakpoint,
+            diff_status.map(|status| status.kind),
+        ) {
+            (_, true, _) => Self::Breakpoint,
+            (true, _, _) => Self::Active,
+            (_, _, Some(DiffHunkStatusKind::Added)) => Self::DiffAdded,
+            (_, _, Some(DiffHunkStatusKind::Deleted)) => Self::DiffDeleted,
+            (_, _, _) => Self::Inactive,
+        }
+    }
+
+    fn color(self, colors: &theme::ThemeColors) -> Hsla {
+        match self {
+            Self::Breakpoint => colors.debugger_accent,
+            Self::DiffAdded => colors.version_control_added,
+            Self::DiffDeleted => colors.version_control_deleted,
+            Self::Active => colors.editor_active_line_number,
+            Self::Inactive => colors.editor_line_number,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct SelectionLayout {
     head: DisplayPoint,
@@ -2725,32 +2759,13 @@ impl EditorElement {
                 let number = relative_number.unwrap_or(&non_relative_number);
                 write!(&mut line_number, "{number}").unwrap();
 
-                let colors = cx.theme().colors();
                 let spec = active_rows.get(&display_row);
-                let color = match (spec, row_info.diff_status) {
-                    (
-                        Some(LineHighlightSpec {
-                            breakpoint: true, ..
-                        }),
-                        _,
-                    ) => colors.debugger_accent,
-                    (
-                        _,
-                        Some(DiffHunkStatus {
-                            kind: DiffHunkStatusKind::Added,
-                            ..
-                        }),
-                    ) => colors.version_control_added,
-                    (
-                        _,
-                        Some(DiffHunkStatus {
-                            kind: DiffHunkStatusKind::Deleted,
-                            ..
-                        }),
-                    ) => colors.version_control_deleted,
-                    (Some(_), _) => colors.editor_active_line_number,
-                    (_, _) => colors.editor_line_number,
-                };
+                let color = LineNumberStyle::new(
+                    spec.is_some(),
+                    spec.is_some_and(|spec| spec.breakpoint),
+                    row_info.diff_status,
+                )
+                .color(cx.theme().colors());
 
                 let shaped_line =
                     self.shape_line_number(SharedString::from(&line_number), color, window);
