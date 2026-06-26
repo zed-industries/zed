@@ -8,16 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
-/// Default base URL of a local `llama-server`.
-///
-/// `llama-server` listens on `127.0.0.1:8080` by default and serves both the
-/// OpenAI-compatible API under `/v1` and native endpoints such as `/props` and
-/// `/health` at the root, so the configured URL is the server root rather than
-/// the `/v1` prefix.
 pub const LLAMA_CPP_API_URL: &str = "http://localhost:8080";
 
-/// When the server doesn't report a context size we fall back to a
-/// conservative default that virtually any model can handle.
 const DEFAULT_CONTEXT_LENGTH: u64 = 4096;
 
 /// A model exposed to the rest of Zed, after merging API discovery with
