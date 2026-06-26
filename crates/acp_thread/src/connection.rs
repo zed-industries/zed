@@ -263,6 +263,10 @@ pub trait AgentSessionTruncate {
 }
 
 pub trait AgentSessionClientUserMessageIds {
+    fn new_id(&self) -> ClientUserMessageId {
+        ClientUserMessageId::new()
+    }
+
     fn prompt(
         &self,
         client_user_message_id: ClientUserMessageId,

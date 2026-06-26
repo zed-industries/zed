@@ -2634,7 +2634,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     ) -> Task<Result<acp::PromptResponse>> {
         acp_thread::AgentSessionClientUserMessageIds::prompt(
             self,
-            acp_thread::ClientUserMessageId::new(),
+            acp_thread::AgentSessionClientUserMessageIds::new_id(self),
             params,
             cx,
         )

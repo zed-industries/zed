@@ -3182,7 +3182,7 @@ impl AcpThread {
         let client_user_message_ids = self.connection.client_user_message_ids(cx);
         let client_id = client_user_message_ids
             .as_ref()
-            .map(|_| ClientUserMessageId::new());
+            .map(|client_user_message_ids| client_user_message_ids.new_id());
 
         self.run_turn(cx, async move |this, cx| {
             if push_user_message {
