@@ -4262,7 +4262,6 @@ impl ThreadView {
                                     .gap_0p5()
                                     .child(self.render_add_context_button(cx))
                                     .child(self.render_follow_toggle(cx))
-                                    .children(self.render_sandbox_status(cx))
                                     .children(self.render_fast_mode_control(cx))
                                     .children(self.render_thinking_control(cx)),
                             )
@@ -4746,7 +4745,7 @@ impl ThreadView {
     /// is turned off (in settings, or for this thread). Shown whenever
     /// sandboxing is *applicable* to the project, even when disabled, so the
     /// user can always see and change the state. Clicking opens the settings.
-    fn render_sandbox_status(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub fn render_sandbox_status(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let status = self.refresh_sandbox_status(cx)?;
         let settings_sandbox = status.settings_sandbox.clone();
         let thread_sandbox = status.thread_sandbox.clone();

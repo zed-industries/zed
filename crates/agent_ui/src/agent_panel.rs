@@ -6208,6 +6208,13 @@ impl AgentPanel {
                 .with_handle(self.new_thread_menu_handle.clone())
                 .menu(move |window, cx| new_thread_menu_builder(window, cx));
 
+            let sandbox_status = self
+                .active_conversation_view()
+                .and_then(|conversation_view| conversation_view.read(cx).root_thread_view())
+                .and_then(|thread_view| {
+                    thread_view.update(cx, |thread_view, cx| thread_view.render_sandbox_status(cx))
+                });
+
             base_container
                 .child(
                     h_flex()
@@ -6235,6 +6242,7 @@ impl AgentPanel {
                         .gap_1()
                         .pl_1()
                         .pr_1()
+                        .children(sandbox_status)
                         .when(can_create_entries, |this| this.child(new_thread_menu))
                         .child(full_screen_button)
                         .child(self.render_panel_options_menu(window, cx)),
