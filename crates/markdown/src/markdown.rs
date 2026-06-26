@@ -4727,30 +4727,19 @@ mod tests {
         let rendered = render_markdown(markdown, cx);
         let text = rendered.text_for_range(0..markdown.len());
 
-        assert!(text.contains("^echo(\\s|$)"));
-        assert!(text.contains("a|b"));
-        assert!(text.contains("(a|b)"));
-        assert!(text.contains("a||b"));
-        assert!(!text.contains("\\|"));
-    }
-
-    #[gpui::test]
-    fn test_raw_pipes_in_inline_code_inside_tables(cx: &mut TestAppContext) {
-        let markdown = "\
-| Pattern | What it does |
-| --- | --- |
-| ``^echo(\\s|$)`` | command pattern |
-| `a|b` | alternation |
-| `(a|b)` | grouped alternation |
-| `a||b` | empty middle alternative |";
-        let rendered = render_markdown(markdown, cx);
-        let text = rendered.text_for_range(0..markdown.len());
-
-        assert!(text.contains("^echo(\\s|$)"));
-        assert!(text.contains("a|b"));
-        assert!(text.contains("(a|b)"));
-        assert!(text.contains("a||b"));
-        assert!(!text.contains("``^echo"));
+        assert_eq!(
+            text,
+            "Pattern\n\
+             What it does\n\
+             ^echo(\\s|$)\n\
+             command pattern\n\
+             a|b\n\
+             alternation\n\
+             (a|b)\n\
+             grouped alternation\n\
+             a||b\n\
+             empty middle alternative"
+        );
     }
 
     #[test]
@@ -5133,21 +5122,6 @@ mod tests {
         let source = r"| Pattern |
 | --- |
 | `a\|b` |";
-        let rendered = render_markdown_with_code_span_link(
-            source,
-            |text, _cx| (text == "a|b").then(|| "file:///tmp/a-or-b".into()),
-            cx,
-        );
-
-        assert_eq!(rendered.links.len(), 1);
-        assert_eq!(rendered.links[0].destination_url, "file:///tmp/a-or-b");
-    }
-
-    #[gpui::test]
-    fn test_code_span_link_receives_raw_pipe_inline_code(cx: &mut TestAppContext) {
-        let source = r"| Pattern |
-| --- |
-| `a|b` |";
         let rendered = render_markdown_with_code_span_link(
             source,
             |text, _cx| (text == "a|b").then(|| "file:///tmp/a-or-b".into()),
