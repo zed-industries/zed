@@ -33,7 +33,6 @@ use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
 
-const LLAMA_CPP_REPO_URL: &str = "https://github.com/ggml-org/llama.cpp";
 const LLAMA_CPP_DOWNLOAD_URL: &str = "https://llama.app";
 const LLAMA_CPP_MODELS_URL: &str = "https://huggingface.co/models?library=gguf&sort=trending";
 
@@ -1436,6 +1435,21 @@ impl Render for ConfigurationView {
                             .map(|this| {
                                 if is_authenticated {
                                     this.child(
+                                        Button::new("llama-cpp-webui", "Open WebUI")
+                                            .style(ButtonStyle::Subtle)
+                                            .end_icon(
+                                                Icon::new(IconName::ArrowUpRight)
+                                                    .size(IconSize::XSmall)
+                                                    .color(Color::Muted),
+                                            )
+                                            .on_click(move |_, _, cx| {
+                                                let url =
+                                                    LlamaCppLanguageModelProvider::api_url(cx);
+                                                cx.open_url(&url);
+                                            })
+                                            .into_any_element(),
+                                    )
+                                    .child(
                                         Button::new("llama-cpp-site", "llama.cpp")
                                             .style(ButtonStyle::Subtle)
                                             .end_icon(
@@ -1444,7 +1458,7 @@ impl Render for ConfigurationView {
                                                     .color(Color::Muted),
                                             )
                                             .on_click(move |_, _, cx| {
-                                                cx.open_url(LLAMA_CPP_REPO_URL)
+                                                cx.open_url(LLAMA_CPP_DOWNLOAD_URL)
                                             })
                                             .into_any_element(),
                                     )
