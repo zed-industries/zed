@@ -2707,7 +2707,7 @@ impl GitPanel {
         fs: Arc<dyn Fs>,
         repo_work_dir: &Arc<Path>,
         skill_name: Option<(bool, String)>,
-    ) -> Option<String> {
+    ) -> anyhow::Result<Option<String>> {
         if let Some((local_setting, skill_name)) = skill_name {
             if local_setting {
                 let skill_file_path = repo_work_dir
@@ -2716,8 +2716,8 @@ impl GitPanel {
                     .join(agent_skills::SKILL_FILE_NAME);
 
                 return match agent_skills::read_skill_body(&*fs, &skill_file_path).await {
-                    Ok(content) => Some(content),
-                    Err(_) => None,
+                    Ok(content) => Ok(Some(content)),
+                    Err(err) => Err(err.into()),
                 };
             } else {
                 let user_skill_file_path = agent_skills::global_skills_dir()
@@ -2725,13 +2725,13 @@ impl GitPanel {
                     .join(agent_skills::SKILL_FILE_NAME);
 
                 return match agent_skills::read_skill_body(&*fs, &user_skill_file_path).await {
-                    Ok(content) => Some(content),
-                    Err(_) => None,
+                    Ok(content) => Ok(Some(content)),
+                    Err(err) => Err(err.into()),
                 };
             }
         }
 
-        None
+        Ok(None)
     }
 
     fn build_commit_message_prompt(
@@ -2882,7 +2882,7 @@ impl GitPanel {
                     user_agents_md.as_deref(),
                     rules_content.as_deref(),
                     instructions.as_deref(),
-                    skill_content.as_deref(),
+                    skill_content?.as_deref(),
                     &subject,
                     &diff_text,
                 );
