@@ -75,7 +75,6 @@ actions!(
         ToggleActionsMenu,
         /// Take the picker's content and open it in a multibuffer
         ToMultiBuffer,
-        /// Toggles the current item in or out of the multi-selection without closing the picker.
         ToggleMultiSelectItem,
     ]
 );
@@ -125,8 +124,6 @@ pub struct Picker<D: PickerDelegate> {
     preview: Option<Preview>,
     pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
-    /// Indices currently toggled into the multi-selection. When non-empty,
-    /// pressing Enter opens all of them instead of the cursor item.
     pub selected_indices: HashSet<usize>,
     shape: shape::Shape,
     /// The size the picker opens at (and resets to). Defaults depend on whether
@@ -240,10 +237,6 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>);
-    /// Called when the user confirms a multi-selection (multiple items toggled via
-    /// Cmd/Ctrl+Click or Tab). The default implementation confirms only the first
-    /// item; delegates that support multi-select (e.g. the file finder) should
-    /// override this to open all items at once.
     fn confirm_multi(
         &mut self,
         secondary: bool,
