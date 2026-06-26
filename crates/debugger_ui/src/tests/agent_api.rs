@@ -1,17 +1,21 @@
 #![expect(clippy::result_large_err)]
 use crate::tests::{init_test, init_test_workspace, start_debug_session};
 use dap::{
-    Scope, StackFrame, Variable,
-    requests::{Scopes, StackTrace, Threads, Variables},
+    ErrorResponse, Message, Scope, StackFrame, Variable,
+    requests::{Continue, Scopes, SetBreakpoints, StackTrace, Threads, Variables},
 };
 use gpui::{BackgroundExecutor, TestAppContext};
 use project::debugger::agent_api::{
     AgentDebuggerApi, AgentDebuggerSessionStatus, AgentDebuggerSnapshotLimits,
     AgentDebuggerThreadStatus, AgentSourceBreakpointInput,
 };
-use project::{FakeFs, Project};
+use project::{FakeFs, Project, WorktreeId};
 use serde_json::json;
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use task::SharedTaskContext;
 use unindent::Unindent as _;
 use util::path;
@@ -20,6 +24,20 @@ fn agent_api(project: &gpui::Entity<Project>, cx: &mut TestAppContext) -> AgentD
     project.read_with(cx, |project, _| {
         AgentDebuggerApi::new(project.dap_store(), project.breakpoint_store())
     })
+}
+
+fn error_response(message: &str) -> ErrorResponse {
+    ErrorResponse {
+        error: Some(Message {
+            id: 1,
+            format: message.into(),
+            variables: None,
+            send_telemetry: None,
+            show_user: None,
+            url: None,
+            url_label: None,
+        }),
+    }
 }
 
 #[gpui::test]
@@ -304,6 +322,367 @@ async fn test_agent_api_snapshot_is_bounded(executor: BackgroundExecutor, cx: &m
     assert_eq!(long_variable.value, "this val");
     assert!(long_variable.value_truncated);
     assert!(!scope.variables[1].value_truncated);
+}
+
+#[gpui::test]
+async fn test_agent_api_snapshot_skips_dap_requests_for_terminated_session(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(path!("/project"), json!({ "main.js": "" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let session_id = session.read_with(cx, |session, _| session.session_id());
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+    let thread_requests = Arc::new(Mutex::new(0));
+
+    client.on_request::<Threads, _>({
+        let thread_requests = thread_requests.clone();
+        move |_, _| {
+            *thread_requests.lock().unwrap() += 1;
+            Err(error_response(
+                "threads should not be requested for terminated sessions",
+            ))
+        }
+    });
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "session finished\n".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+            location_reference: None,
+        }))
+        .await;
+    client
+        .fake_event(dap::messages::Events::Terminated(Some(
+            dap::TerminatedEvent { restart: None },
+        )))
+        .await;
+
+    for _ in 0..100 {
+        if session.read_with(cx, |session, _| session.is_terminated()) {
+            break;
+        }
+        assert!(cx.dispatcher.tick(false));
+    }
+    assert!(session.read_with(cx, |session, _| session.is_terminated()));
+
+    let api = agent_api(&project, cx);
+    let snapshot = cx
+        .update(|cx| {
+            api.snapshot_session_for_test(
+                session.clone(),
+                AgentDebuggerSnapshotLimits::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(snapshot.session.session_id, session_id);
+    assert_eq!(
+        snapshot.session.status,
+        AgentDebuggerSessionStatus::Terminated
+    );
+    assert!(snapshot.threads.is_empty());
+    assert_eq!(snapshot.output.len(), 1);
+    assert!(
+        snapshot
+            .notes
+            .iter()
+            .any(|note| note == "Session has ended; threads were not requested")
+    );
+    assert_eq!(*thread_requests.lock().unwrap(), 0);
+}
+
+#[gpui::test]
+async fn test_agent_api_snapshot_returns_partial_data_when_nested_requests_fail(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(path!("/project"), json!({ "main.js": "debugger;\n" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+
+    client.on_request::<Threads, _>(move |_, _| {
+        Ok(dap::ThreadsResponse {
+            threads: vec![
+                dap::Thread {
+                    id: 1,
+                    name: "Thread with stack error".into(),
+                },
+                dap::Thread {
+                    id: 2,
+                    name: "Thread with partial frames".into(),
+                },
+            ],
+        })
+    });
+
+    client.on_request::<StackTrace, _>(move |_, args| match args.thread_id {
+        1 => Err(error_response("stack trace failed")),
+        2 => Ok(dap::StackTraceResponse {
+            stack_frames: vec![
+                StackFrame {
+                    id: 20,
+                    name: "Frame with scopes error".into(),
+                    source: None,
+                    line: 1,
+                    column: 1,
+                    end_line: None,
+                    end_column: None,
+                    can_restart: None,
+                    instruction_pointer_reference: None,
+                    module_id: None,
+                    presentation_hint: None,
+                },
+                StackFrame {
+                    id: 21,
+                    name: "Frame with variables error".into(),
+                    source: None,
+                    line: 1,
+                    column: 1,
+                    end_line: None,
+                    end_column: None,
+                    can_restart: None,
+                    instruction_pointer_reference: None,
+                    module_id: None,
+                    presentation_hint: None,
+                },
+            ],
+            total_frames: None,
+        }),
+        thread_id => panic!("unexpected thread id {thread_id}"),
+    });
+
+    client.on_request::<Scopes, _>(move |_, args| match args.frame_id {
+        20 => Err(error_response("scopes failed")),
+        21 => Ok(dap::ScopesResponse {
+            scopes: vec![Scope {
+                name: "Locals".into(),
+                presentation_hint: None,
+                variables_reference: 200,
+                named_variables: Some(1),
+                indexed_variables: None,
+                expensive: false,
+                source: None,
+                line: None,
+                column: None,
+                end_line: None,
+                end_column: None,
+            }],
+        }),
+        frame_id => panic!("unexpected frame id {frame_id}"),
+    });
+
+    client.on_request::<Variables, _>(move |_, args| match args.variables_reference {
+        200 => Err(error_response("variables failed")),
+        variables_reference => panic!("unexpected variables reference {variables_reference}"),
+    });
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: Some(true),
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+    cx.run_until_parked();
+
+    let api = agent_api(&project, cx);
+    let session_id = session.read_with(cx, |session, _| session.session_id());
+    let snapshot = cx
+        .update(|cx| {
+            api.snapshot(
+                session_id,
+                AgentDebuggerSnapshotLimits {
+                    max_frames: 10,
+                    max_variables_per_scope: 10,
+                    max_variable_value_length: 1024,
+                    max_output_events: 10,
+                    max_output_bytes: 1024,
+                    max_source_context_lines: 0,
+                },
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(snapshot.threads.len(), 2);
+    assert_eq!(snapshot.threads[0].thread_id.0, 1);
+    assert!(snapshot.threads[0].frames.is_empty());
+    assert_eq!(snapshot.threads[1].thread_id.0, 2);
+    assert_eq!(snapshot.threads[1].frames.len(), 2);
+    assert!(snapshot.threads[1].frames[0].scopes.is_empty());
+    let scope = &snapshot.threads[1].frames[1].scopes[0];
+    assert_eq!(scope.name, "Locals");
+    assert!(scope.variables.is_empty());
+    assert!(scope.variables_truncated);
+
+    assert!(
+        snapshot
+            .notes
+            .iter()
+            .any(|note| note.contains("Stack frames for thread")),
+        "expected a stack frame failure note, got {:?}",
+        snapshot.notes
+    );
+    assert!(
+        snapshot
+            .notes
+            .iter()
+            .any(|note| note.contains("Scopes for frame")),
+        "expected a scopes failure note, got {:?}",
+        snapshot.notes
+    );
+    assert!(
+        snapshot
+            .notes
+            .iter()
+            .any(|note| note.contains("Variables for scope")),
+        "expected a variables failure note, got {:?}",
+        snapshot.notes
+    );
+}
+
+#[gpui::test]
+async fn test_agent_run_to_line_removes_temporary_breakpoint_when_continue_fails(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(
+        path!("/project"),
+        json!({ "src": { "main.js": "let a = 1;\nlet b = 2;\n" } }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
+    let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+    let breakpoint_requests = Arc::new(Mutex::new(Vec::<Vec<u64>>::new()));
+
+    client.on_request::<SetBreakpoints, _>({
+        let breakpoint_requests = breakpoint_requests.clone();
+        move |_, args| {
+            let lines = args
+                .breakpoints
+                .unwrap_or_default()
+                .into_iter()
+                .map(|breakpoint| breakpoint.line)
+                .collect::<Vec<_>>();
+            breakpoint_requests.lock().unwrap().push(lines);
+            Ok(dap::SetBreakpointsResponse {
+                breakpoints: Vec::default(),
+            })
+        }
+    });
+
+    client.on_request::<Continue, _>(move |_, _| Err(error_response("continue failed")));
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+    cx.run_until_parked();
+
+    let api = agent_api(&project, cx);
+    let session_id = session.read_with(cx, |session, _| session.session_id());
+    let result = cx
+        .update(|cx| {
+            api.run_to_line(
+                session_id,
+                project::debugger::session::ThreadId(1),
+                PathBuf::from(path!("/project/src/main.js")),
+                2,
+                Duration::from_millis(100),
+                cx,
+            )
+        })
+        .await;
+
+    assert!(result.is_err());
+    let breakpoint_requests = breakpoint_requests.lock().unwrap();
+    assert_eq!(&*breakpoint_requests, &[vec![2], Vec::<u64>::new()]);
+}
+
+#[gpui::test]
+async fn test_start_debug_session_rejects_invalid_explicit_worktree_id(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+    fs.insert_tree(path!("/project"), json!({ "main.js": "" }))
+        .await;
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let invalid_worktree_id = WorktreeId::from_usize(usize::MAX);
+
+    let error = workspace
+        .update(cx, |multi, window, cx| {
+            multi.workspace().update(cx, |workspace, cx| {
+                workspace.start_debug_session(
+                    task::DebugScenario {
+                        adapter: "fake-adapter".into(),
+                        label: "agent session".into(),
+                        build: None,
+                        config: json!({ "request": "launch" }),
+                        tcp_connection: None,
+                    },
+                    SharedTaskContext::default(),
+                    None,
+                    Some(invalid_worktree_id),
+                    window,
+                    cx,
+                )
+            })
+        })
+        .unwrap()
+        .unwrap_err();
+
+    assert!(
+        error
+            .to_string()
+            .contains(&format!("Could not find worktree {invalid_worktree_id}")),
+        "unexpected error: {error:#}"
+    );
 }
 
 #[gpui::test]

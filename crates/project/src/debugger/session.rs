@@ -2398,7 +2398,7 @@ impl Session {
                 let path = breakpoint.path.clone();
                 local_mode.tmp_breakpoint = Some(breakpoint);
                 let task = local_mode.send_breakpoints_from_path_result(
-                    path,
+                    path.clone(),
                     BreakpointUpdatedReason::Toggled,
                     &breakpoint_store,
                     cx,
@@ -2414,10 +2414,37 @@ impl Session {
                         return Err(error);
                     }
 
-                    this.update(cx, |this, cx| {
-                        this.agent_continue_thread(active_thread_id, cx)
-                    })?
-                    .await
+                    let continue_result = this
+                        .update(cx, |this, cx| {
+                            this.agent_continue_thread(active_thread_id, cx)
+                        })?
+                        .await;
+
+                    if let Err(error) = continue_result {
+                        let cleanup = this.update(cx, |this, cx| {
+                            this.as_running_mut().map(|local_mode| {
+                                local_mode.tmp_breakpoint.take();
+                                local_mode.send_breakpoints_from_path_result(
+                                    path,
+                                    BreakpointUpdatedReason::Toggled,
+                                    &breakpoint_store,
+                                    cx,
+                                )
+                            })
+                        })?;
+
+                        if let Some(cleanup) = cleanup
+                            && let Err(cleanup_error) = cleanup.await
+                        {
+                            log::warn!(
+                                "failed to remove temporary run-to-line breakpoint after continue failed: {cleanup_error}"
+                            );
+                        }
+
+                        return Err(error);
+                    }
+
+                    Ok(())
                 })
             }
             SessionState::Booting(_) => Task::ready(Err(anyhow!(

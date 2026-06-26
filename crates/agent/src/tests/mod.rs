@@ -1015,6 +1015,7 @@ async fn test_debugger_tool_ask_mode_gating(cx: &mut TestAppContext) {
         model, thread, fs, ..
     } = setup(cx, TestModel::Fake).await;
     let fake_model = model.as_fake();
+    cx.update(|cx| cx.update_flags(false, vec!["debugger-tool".to_string()]));
 
     // Enable the debugger tool in an "ask" profile and a write-capable profile.
     fs.insert_file(
@@ -1154,6 +1155,461 @@ async fn test_debugger_tool_ask_mode_gating(cx: &mut TestAppContext) {
         text.contains("\"changed\": true"),
         "expected the breakpoint to be added, got: {text}"
     );
+}
+
+#[gpui::test]
+async fn test_debugger_tool_permission_rules_match_start_session_details(cx: &mut TestAppContext) {
+    let ThreadTest { thread, .. } = setup(cx, TestModel::Fake).await;
+    let tool = debugger_tool_for_thread(&thread, cx);
+
+    set_debugger_permission_rules(
+        cx,
+        settings::ToolPermissionMode::Allow,
+        &[r#""secret_token":"nested-match""#],
+        &[],
+    );
+    let (event_stream, _receiver) = ToolCallEventStream::test();
+    let result = cx
+        .update(|cx| {
+            tool.clone().run(
+                ToolInput::resolved(debugger_start_session_input()),
+                event_stream,
+                cx,
+            )
+        })
+        .await;
+    assert!(
+        result.is_err(),
+        "expected start_session to be denied by a config path rule"
+    );
+
+    set_debugger_permission_rules(
+        cx,
+        settings::ToolPermissionMode::Allow,
+        &[],
+        &[r#"build_task:"build-secret".*tcp_connection:.*9229"#],
+    );
+    let (event_stream, mut receiver) = ToolCallEventStream::test();
+    let task = cx.update(|cx| {
+        tool.run(
+            ToolInput::resolved(debugger_start_session_input()),
+            event_stream,
+            cx,
+        )
+    });
+    let authorization = receiver.expect_authorization().await;
+    let title = authorization
+        .tool_call
+        .fields
+        .title
+        .as_deref()
+        .unwrap_or("");
+    assert!(
+        title.contains("Debug secret"),
+        "expected start_session authorization, got title: {title}"
+    );
+    drop(task);
+}
+
+#[gpui::test]
+async fn test_debugger_tool_permission_rules_match_breakpoint_expressions(cx: &mut TestAppContext) {
+    let ThreadTest { thread, .. } = setup(cx, TestModel::Fake).await;
+    let tool = debugger_tool_for_thread(&thread, cx);
+
+    set_debugger_permission_rules(
+        cx,
+        settings::ToolPermissionMode::Allow,
+        &[r#"condition:"secret == true".*hit_condition:">= 10""#],
+        &[],
+    );
+    let (event_stream, _receiver) = ToolCallEventStream::test();
+    let result = cx
+        .update(|cx| {
+            tool.clone().run(
+                ToolInput::resolved(DebuggerToolInput::SetBreakpoints {
+                    breakpoints: vec![BreakpointInput {
+                        path: path!("/test/main.js").into(),
+                        line: 3,
+                        enabled: true,
+                        condition: Some("secret == true".into()),
+                        hit_condition: Some(">= 10".into()),
+                        log_message: Some("secret {value}".into()),
+                    }],
+                }),
+                event_stream,
+                cx,
+            )
+        })
+        .await;
+    assert_debugger_error_contains(result, "Command blocked by security rule for debugger tool");
+
+    set_debugger_permission_rules(
+        cx,
+        settings::ToolPermissionMode::Allow,
+        &[],
+        &[r#"log_message:"secret \{value\}""#],
+    );
+    let (event_stream, mut receiver) = ToolCallEventStream::test();
+    let task = cx.update(|cx| {
+        tool.run(
+            ToolInput::resolved(DebuggerToolInput::SetBreakpoints {
+                breakpoints: vec![BreakpointInput {
+                    path: path!("/test/main.js").into(),
+                    line: 3,
+                    enabled: true,
+                    condition: Some("secret == true".into()),
+                    hit_condition: Some(">= 10".into()),
+                    log_message: Some("secret {value}".into()),
+                }],
+            }),
+            event_stream,
+            cx,
+        )
+    });
+    let authorization = receiver.expect_authorization().await;
+    let title = authorization
+        .tool_call
+        .fields
+        .title
+        .as_deref()
+        .unwrap_or("");
+    assert!(
+        title.contains("breakpoint"),
+        "expected breakpoint authorization, got title: {title}"
+    );
+    drop(task);
+}
+
+#[gpui::test]
+async fn test_debugger_tool_rejects_excessive_snapshot_and_control_limits(cx: &mut TestAppContext) {
+    let ThreadTest { thread, .. } = setup(cx, TestModel::Fake).await;
+    let tool = debugger_tool_for_thread(&thread, cx);
+
+    let (event_stream, _receiver) = ToolCallEventStream::test();
+    let result = cx
+        .update(|cx| {
+            tool.clone().run(
+                ToolInput::resolved(DebuggerToolInput::Snapshot(SnapshotInput {
+                    session_id: Some(1),
+                    limits: Some(snapshot_limits_with_max_frames(201)),
+                })),
+                event_stream,
+                cx,
+            )
+        })
+        .await;
+    assert_debugger_error_contains(result, "max_frames");
+
+    let (event_stream, _receiver) = ToolCallEventStream::test();
+    let result = cx
+        .update(|cx| {
+            tool.clone().run(
+                ToolInput::resolved(DebuggerToolInput::Control(ControlInput {
+                    session_id: Some(1),
+                    thread_id: Some(2),
+                    action: ControlAction::Continue,
+                    path: None,
+                    line: None,
+                    timeout_ms: Some(300_001),
+                    snapshot_limits: None,
+                })),
+                event_stream,
+                cx,
+            )
+        })
+        .await;
+    assert_debugger_error_contains(result, "timeout_ms");
+
+    let (event_stream, _receiver) = ToolCallEventStream::test();
+    let result = cx
+        .update(|cx| {
+            tool.run(
+                ToolInput::resolved(DebuggerToolInput::Control(ControlInput {
+                    session_id: Some(1),
+                    thread_id: Some(2),
+                    action: ControlAction::Continue,
+                    path: None,
+                    line: None,
+                    timeout_ms: Some(30_000),
+                    snapshot_limits: Some(snapshot_limits_with_max_output_bytes(1_048_577)),
+                })),
+                event_stream,
+                cx,
+            )
+        })
+        .await;
+    assert_debugger_error_contains(result, "max_output_bytes");
+}
+
+#[test]
+fn test_debugger_tool_permission_rules_match_resolved_control_ids() {
+    let inputs = control_permission_inputs_for_test(
+        "control",
+        ControlInput {
+            session_id: None,
+            thread_id: None,
+            action: ControlAction::Continue,
+            path: None,
+            line: None,
+            timeout_ms: None,
+            snapshot_limits: None,
+        },
+        12,
+        34,
+    );
+    assert_eq!(
+        inputs,
+        vec!["control action:continue session_id:12 thread_id:34"]
+    );
+    assert!(
+        !inputs[0].contains("auto"),
+        "resolved control permission input must not contain auto: {}",
+        inputs[0]
+    );
+
+    let mut permissions = agent_settings::ToolPermissions::default();
+    permissions.default = settings::ToolPermissionMode::Allow;
+    permissions.tools.insert(
+        DebuggerTool::NAME.into(),
+        agent_settings::ToolRules {
+            default: Some(settings::ToolPermissionMode::Allow),
+            always_allow: vec![],
+            always_deny: vec![
+                agent_settings::CompiledRegex::new(
+                    r"action:continue session_id:12 thread_id:34",
+                    false,
+                )
+                .expect("debugger deny regex should compile"),
+            ],
+            always_confirm: vec![],
+            invalid_patterns: vec![],
+        },
+    );
+
+    assert!(matches!(
+        ToolPermissionDecision::from_input(
+            DebuggerTool::NAME,
+            &inputs,
+            &permissions,
+            util::shell::ShellKind::system(),
+        ),
+        ToolPermissionDecision::Deny(_)
+    ));
+}
+
+#[gpui::test]
+async fn test_debugger_tool_permission_rules_match_resolved_paths(cx: &mut TestAppContext) {
+    let ThreadTest { thread, fs, .. } = setup(cx, TestModel::Fake).await;
+    fs.insert_tree(
+        path!("/test"),
+        json!({ "src": { "main.js": "let a = 1;\nlet b = 2;\n" } }),
+    )
+    .await;
+    cx.run_until_parked();
+
+    let tool = debugger_tool_for_thread(&thread, cx);
+
+    set_debugger_permission_rules(
+        cx,
+        settings::ToolPermissionMode::Allow,
+        &[],
+        &[r"path:/test/src/main\.js line:3"],
+    );
+    let (event_stream, mut receiver) = ToolCallEventStream::test();
+    let task = cx.update(|cx| {
+        tool.clone().run(
+            ToolInput::resolved(DebuggerToolInput::SetBreakpoints {
+                breakpoints: vec![BreakpointInput {
+                    path: "src/main.js".into(),
+                    line: 3,
+                    enabled: true,
+                    condition: None,
+                    hit_condition: None,
+                    log_message: None,
+                }],
+            }),
+            event_stream,
+            cx,
+        )
+    });
+    let authorization = receiver.expect_authorization().await;
+    let title = authorization
+        .tool_call
+        .fields
+        .title
+        .as_deref()
+        .unwrap_or("");
+    assert!(
+        title.contains("breakpoint"),
+        "expected breakpoint authorization, got title: {title}"
+    );
+    drop(task);
+
+    set_debugger_permission_rules(
+        cx,
+        settings::ToolPermissionMode::Allow,
+        &[r"path:/test/src/main\.js line:1"],
+        &[],
+    );
+    let (event_stream, _receiver) = ToolCallEventStream::test();
+    let result = cx
+        .update(|cx| {
+            tool.clone().run(
+                ToolInput::resolved(DebuggerToolInput::SetBreakpoints {
+                    breakpoints: vec![BreakpointInput {
+                        path: path!("/test/src/./main.js").into(),
+                        line: 1,
+                        enabled: true,
+                        condition: None,
+                        hit_condition: None,
+                        log_message: None,
+                    }],
+                }),
+                event_stream,
+                cx,
+            )
+        })
+        .await;
+    assert_debugger_error_contains(result, "Command blocked by security rule for debugger tool");
+
+    set_debugger_permission_rules(
+        cx,
+        settings::ToolPermissionMode::Allow,
+        &[r"action:run_to_line session_id:12 thread_id:34 path:/test/src/main\.js line:5"],
+        &[],
+    );
+    let (event_stream, _receiver) = ToolCallEventStream::test();
+    let result = cx
+        .update(|cx| {
+            tool.run(
+                ToolInput::resolved(DebuggerToolInput::Control(ControlInput {
+                    session_id: Some(12),
+                    thread_id: Some(34),
+                    action: ControlAction::RunToLine,
+                    path: Some(path!("/test/src/./main.js").into()),
+                    line: Some(5),
+                    timeout_ms: None,
+                    snapshot_limits: None,
+                })),
+                event_stream,
+                cx,
+            )
+        })
+        .await;
+    assert_debugger_error_contains(result, "Command blocked by security rule for debugger tool");
+}
+
+#[allow(clippy::arc_with_non_send_sync)]
+fn debugger_tool_for_thread(thread: &Entity<Thread>, cx: &mut TestAppContext) -> Arc<DebuggerTool> {
+    thread.update(cx, |thread, cx| {
+        Arc::new(DebuggerTool::new(
+            thread.project().clone(),
+            Rc::new(FakeThreadEnvironment::default()),
+            cx.weak_entity(),
+        ))
+    })
+}
+
+fn snapshot_limits_with_max_frames(max_frames: usize) -> SnapshotLimitsInput {
+    SnapshotLimitsInput {
+        max_frames: Some(max_frames),
+        max_variables_per_scope: None,
+        max_variable_value_length: None,
+        max_output_events: None,
+        max_output_bytes: None,
+        max_source_context_lines: None,
+    }
+}
+
+fn snapshot_limits_with_max_output_bytes(max_output_bytes: usize) -> SnapshotLimitsInput {
+    SnapshotLimitsInput {
+        max_frames: None,
+        max_variables_per_scope: None,
+        max_variable_value_length: None,
+        max_output_events: None,
+        max_output_bytes: Some(max_output_bytes),
+        max_source_context_lines: None,
+    }
+}
+
+fn assert_debugger_error_contains(
+    result: std::result::Result<DebuggerToolOutput, DebuggerToolOutput>,
+    expected: &str,
+) {
+    let error = match result {
+        Err(DebuggerToolOutput::Error { error, .. }) => error,
+        Ok(DebuggerToolOutput::Error { error, .. }) => error,
+        other => panic!("expected debugger error containing `{expected}`, got {other:?}"),
+    };
+    assert!(
+        error.contains(expected),
+        "expected debugger error to contain `{expected}`, got: {error}"
+    );
+}
+
+fn debugger_start_session_input() -> DebuggerToolInput {
+    DebuggerToolInput::StartSession(StartSessionInput {
+        scenario: task::DebugScenario {
+            adapter: "node".into(),
+            label: "Debug secret".into(),
+            build: Some(task::BuildTaskDefinition::ByName("build-secret".into())),
+            config: json!({
+                "request": "launch",
+                "program": "src/secret.js",
+                "cwd": "/test",
+                "args": ["--smoke"],
+                "nested": {
+                    "level1": {
+                        "level2": {
+                            "level3": {
+                                "secret_token": "nested-match"
+                            }
+                        }
+                    }
+                },
+            }),
+            tcp_connection: Some(task::TcpArgumentsTemplate {
+                port: Some(9229),
+                host: Some("127.0.0.1".parse().expect("test host should parse")),
+                timeout: Some(1000),
+            }),
+        },
+        worktree_id: Some(7),
+    })
+}
+
+fn set_debugger_permission_rules(
+    cx: &mut TestAppContext,
+    default: settings::ToolPermissionMode,
+    always_deny: &[&str],
+    always_confirm: &[&str],
+) {
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            DebuggerTool::NAME.into(),
+            agent_settings::ToolRules {
+                default: Some(default),
+                always_allow: vec![],
+                always_deny: always_deny
+                    .iter()
+                    .map(|pattern| {
+                        agent_settings::CompiledRegex::new(pattern, false)
+                            .expect("debugger deny regex should compile")
+                    })
+                    .collect(),
+                always_confirm: always_confirm
+                    .iter()
+                    .map(|pattern| {
+                        agent_settings::CompiledRegex::new(pattern, false)
+                            .expect("debugger confirm regex should compile")
+                    })
+                    .collect(),
+                invalid_patterns: vec![],
+            },
+        );
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
 }
 
 fn debugger_tool_result<'a>(
@@ -5999,6 +6455,95 @@ async fn test_max_subagent_depth_prevents_tool_registration(cx: &mut TestAppCont
             "subagent tool should not be present at max depth"
         );
     });
+}
+
+#[gpui::test]
+async fn test_debugger_tool_gated_by_feature_flag(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        cx.update_flags(false, vec![]);
+        assert!(
+            !tool_feature_flag_enabled(DebuggerTool::NAME, cx),
+            "expected debugger tool feature flag to be off"
+        );
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let model = Arc::new(FakeLanguageModel::default());
+    let environment = Rc::new(cx.update(|cx| {
+        FakeThreadEnvironment::default().with_terminal(FakeTerminalHandle::new_never_exits(cx))
+    }));
+
+    let thread = cx.new(|cx| {
+        let mut thread = Thread::new(
+            project,
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(model.clone() as Arc<dyn LanguageModel>),
+            cx,
+        );
+        thread.add_default_tools(environment, cx);
+        thread
+    });
+
+    thread.read_with(cx, |thread, _| {
+        assert!(
+            thread.has_registered_tool(DebuggerTool::NAME),
+            "expected debugger tool to be registered regardless of feature flag"
+        );
+    });
+
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["hello"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let completion = model.pending_completions().pop().unwrap();
+    let tool_names = tool_names_for_completion(&completion);
+    assert!(
+        !tool_names
+            .iter()
+            .any(|tool_name| tool_name == DebuggerTool::NAME),
+        "expected debugger tool to be hidden without debugger-tool flag, \
+         but completion tools were: {tool_names:?}"
+    );
+    model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        cx.update_flags(false, vec!["debugger-tool".to_string()]);
+        assert!(
+            tool_feature_flag_enabled(DebuggerTool::NAME, cx),
+            "expected debugger tool feature flag to be on"
+        );
+    });
+
+    thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["hello again"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    let completion = model.pending_completions().pop().unwrap();
+    let tool_names = tool_names_for_completion(&completion);
+    assert!(
+        tool_names
+            .iter()
+            .any(|tool_name| tool_name == DebuggerTool::NAME),
+        "expected debugger tool to be exposed when debugger-tool flag is on, \
+         but completion tools were: {tool_names:?}"
+    );
 }
 
 #[gpui::test]

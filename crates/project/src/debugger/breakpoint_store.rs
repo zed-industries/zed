@@ -876,29 +876,35 @@ impl BreakpointStore {
             return;
         };
 
-        for breakpoint in breakpoints {
-            let Some(breakpoint) =
-                breakpoint
-                    .bp
-                    .to_proto(abs_path, &breakpoint.position, &HashMap::default())
-            else {
-                continue;
-            };
-            let upstream_client = remote.upstream_client.clone();
-            let upstream_project_id = remote.upstream_project_id;
-            let path = abs_path.to_string_lossy().into_owned();
-            cx.background_spawn(async move {
-                upstream_client
-                    .request(proto::ToggleBreakpoint {
-                        project_id: upstream_project_id,
-                        path,
-                        breakpoint: Some(breakpoint),
-                    })
-                    .await?;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+        if breakpoints.is_empty() {
+            return;
         }
+
+        let abs_path = abs_path.clone();
+        let upstream_client = remote.upstream_client.clone();
+        let upstream_project_id = remote.upstream_project_id;
+        cx.background_spawn(async move {
+            let path = abs_path.to_string_lossy().into_owned();
+            let breakpoint_toggles = breakpoints
+                .into_iter()
+                .filter_map(|breakpoint| {
+                    breakpoint
+                        .bp
+                        .to_proto(&abs_path, &breakpoint.position, &HashMap::default())
+                        .map(|breakpoint| proto::ToggleBreakpoint {
+                            project_id: upstream_project_id,
+                            path: path.clone(),
+                            breakpoint: Some(breakpoint),
+                        })
+                })
+                .collect::<Vec<_>>();
+
+            for breakpoint_toggle in breakpoint_toggles {
+                upstream_client.request(breakpoint_toggle).await?;
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn broadcast_breakpoints_for_path(&self, abs_path: &Arc<Path>) {

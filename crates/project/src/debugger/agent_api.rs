@@ -287,98 +287,20 @@ impl AgentDebuggerApi {
         let breakpoint_store = self.breakpoint_store.clone();
         cx.spawn(async move |cx| {
             let session = session_by_id(&dap_store, session_id, cx)?;
-            let mut notes = Vec::new();
-            let session_summary = session.read_with(cx, |session, cx| {
-                AgentDebuggerApi::session_summary_for_session(session, cx)
-            });
-            let output = session.read_with(cx, |session, _| {
-                bounded_output(session, &limits, &mut notes)
-            });
-            let dap_threads = session
-                .update(cx, |session, _| session.agent_fetch_threads())
-                .await?;
-            let mut remaining_frames = limits.max_frames;
-            let mut frames_truncated = false;
-            let mut threads = Vec::new();
-
-            if limits.max_frames == 0 {
-                notes.push("Stack frames omitted because max_frames is 0".to_string());
-            }
-
-            for dap_thread in dap_threads {
-                let thread_id = ThreadId(dap_thread.id);
-                let status = session.read_with(cx, |session, _| session.thread_status(thread_id));
-                let mut frames = Vec::new();
-
-                if status == ThreadStatus::Stopped && remaining_frames > 0 {
-                    let requested_frames = remaining_frames.saturating_add(1);
-                    let mut fetched_frames = session
-                        .update(cx, |session, _| {
-                            session.agent_fetch_stack_frames(thread_id, requested_frames)
-                        })
-                        .await?
-                        .into_iter()
-                        .filter(|frame| {
-                            !(frame.id == 0
-                                && frame.line == 0
-                                && frame.column == 0
-                                && frame.presentation_hint
-                                    == Some(StackFramePresentationHint::Label))
-                        })
-                        .collect::<Vec<_>>();
-
-                    if fetched_frames.len() > remaining_frames {
-                        frames_truncated = true;
-                        fetched_frames.truncate(remaining_frames);
-                    }
-
-                    remaining_frames = remaining_frames.saturating_sub(fetched_frames.len());
-
-                    for frame in fetched_frames {
-                        frames.push(
-                            stack_frame_snapshot(
-                                &session,
-                                &breakpoint_store,
-                                frame,
-                                &limits,
-                                &mut notes,
-                                cx,
-                            )
-                            .await?,
-                        );
-                    }
-                }
-
-                threads.push(AgentDebuggerThread {
-                    thread_id,
-                    name: dap_thread.name,
-                    status: AgentDebuggerThreadStatus::from_thread_status(status),
-                    frames,
-                });
-            }
-
-            if remaining_frames == limits.max_frames
-                && !threads
-                    .iter()
-                    .any(|thread| thread.status == AgentDebuggerThreadStatus::Stopped)
-            {
-                notes.push(
-                    "No stopped threads; stack frames and variables were not requested".to_string(),
-                );
-            } else if frames_truncated {
-                notes.push(format!(
-                    "Stack frames truncated to {} frame(s)",
-                    limits.max_frames
-                ));
-            }
-
-            Ok(AgentDebuggerSnapshot {
-                session: session_summary,
-                threads,
-                output,
-                notes,
-            })
+            snapshot_session(session, breakpoint_store, limits, cx).await
         })
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    #[doc(hidden)]
+    pub fn snapshot_session_for_test(
+        &self,
+        session: Entity<Session>,
+        limits: AgentDebuggerSnapshotLimits,
+        cx: &mut App,
+    ) -> Task<Result<AgentDebuggerSnapshot>> {
+        let breakpoint_store = self.breakpoint_store.clone();
+        cx.spawn(async move |cx| snapshot_session(session, breakpoint_store, limits, cx).await)
     }
 
     pub fn continue_thread(
@@ -587,6 +509,122 @@ fn session_by_id(
         .with_context(|| format!("Could not find debugger session {:?}", session_id))
 }
 
+async fn snapshot_session(
+    session: Entity<Session>,
+    breakpoint_store: Entity<BreakpointStore>,
+    limits: AgentDebuggerSnapshotLimits,
+    cx: &mut AsyncApp,
+) -> Result<AgentDebuggerSnapshot> {
+    let mut notes = Vec::new();
+    let session_summary = session.read_with(cx, |session, cx| {
+        AgentDebuggerApi::session_summary_for_session(session, cx)
+    });
+    let output = session.read_with(cx, |session, _| {
+        bounded_output(session, &limits, &mut notes)
+    });
+    if session_summary.status == AgentDebuggerSessionStatus::Terminated {
+        notes.push("Session has ended; threads were not requested".to_string());
+        return Ok(AgentDebuggerSnapshot {
+            session: session_summary,
+            threads: Vec::new(),
+            output,
+            notes,
+        });
+    }
+
+    let dap_threads = session
+        .update(cx, |session, _| session.agent_fetch_threads())
+        .await?;
+    let mut remaining_frames = limits.max_frames;
+    let mut frames_truncated = false;
+    let mut threads = Vec::new();
+
+    if limits.max_frames == 0 {
+        notes.push("Stack frames omitted because max_frames is 0".to_string());
+    }
+
+    for dap_thread in dap_threads {
+        let thread_id = ThreadId(dap_thread.id);
+        let status = session.read_with(cx, |session, _| session.thread_status(thread_id));
+        let mut frames = Vec::new();
+
+        if status == ThreadStatus::Stopped && remaining_frames > 0 {
+            let requested_frames = remaining_frames.saturating_add(1);
+            let fetched_frames = session
+                .update(cx, |session, _| {
+                    session.agent_fetch_stack_frames(thread_id, requested_frames)
+                })
+                .await;
+            let mut fetched_frames = match fetched_frames {
+                Ok(fetched_frames) => fetched_frames
+                    .into_iter()
+                    .filter(|frame| {
+                        !(frame.id == 0
+                            && frame.line == 0
+                            && frame.column == 0
+                            && frame.presentation_hint == Some(StackFramePresentationHint::Label))
+                    })
+                    .collect::<Vec<_>>(),
+                Err(error) => {
+                    notes.push(format!(
+                        "Stack frames for thread `{}` ({:?}) omitted: {error}",
+                        dap_thread.name, thread_id
+                    ));
+                    Vec::new()
+                }
+            };
+
+            if fetched_frames.len() > remaining_frames {
+                frames_truncated = true;
+                fetched_frames.truncate(remaining_frames);
+            }
+
+            remaining_frames = remaining_frames.saturating_sub(fetched_frames.len());
+
+            for frame in fetched_frames {
+                frames.push(
+                    stack_frame_snapshot(
+                        &session,
+                        &breakpoint_store,
+                        frame,
+                        &limits,
+                        &mut notes,
+                        cx,
+                    )
+                    .await,
+                );
+            }
+        }
+
+        threads.push(AgentDebuggerThread {
+            thread_id,
+            name: dap_thread.name,
+            status: AgentDebuggerThreadStatus::from_thread_status(status),
+            frames,
+        });
+    }
+
+    if remaining_frames == limits.max_frames
+        && !threads
+            .iter()
+            .any(|thread| thread.status == AgentDebuggerThreadStatus::Stopped)
+    {
+        notes.push("No stopped threads; stack frames and variables were not requested".to_string());
+    } else if frames_truncated {
+        notes.push(format!(
+            "Stack frames truncated to {} frame(s)",
+            limits.max_frames
+        ));
+    }
+
+    Ok(AgentDebuggerSnapshot {
+        session: session_summary,
+        threads,
+        output,
+        notes,
+    })
+}
+
 fn subscribe_to_stop(session: Entity<Session>, cx: &mut AsyncApp) -> Result<AgentDebuggerStopWait> {
     let (sender, receiver) = futures::channel::oneshot::channel();
     let sender = Arc::new(Mutex::new(Some(sender)));
@@ -659,13 +697,24 @@ async fn stack_frame_snapshot(
     limits: &AgentDebuggerSnapshotLimits,
     notes: &mut Vec<String>,
     cx: &mut AsyncApp,
-) -> Result<AgentDebuggerStackFrame> {
+) -> AgentDebuggerStackFrame {
     let mut scopes = Vec::new();
-    let dap_scopes = session
+    let dap_scopes = match session
         .update(cx, |session, _| session.agent_fetch_scopes(frame.id))
-        .await?;
+        .await
+    {
+        Ok(scopes) => scopes,
+        Err(error) => {
+            notes.push(format!(
+                "Scopes for frame `{}` ({}) omitted: {error}",
+                frame.name, frame.id
+            ));
+            Vec::new()
+        }
+    };
 
     for scope in dap_scopes {
+        let mut variables_unavailable = false;
         let variables = if scope.variables_reference == 0 || limits.max_variables_per_scope == 0 {
             if scope.variables_reference != 0 && limits.max_variables_per_scope == 0 {
                 notes.push(format!(
@@ -675,7 +724,7 @@ async fn stack_frame_snapshot(
             }
             Vec::new()
         } else {
-            session
+            match session
                 .update(cx, |session, cx| {
                     session.agent_fetch_variables(
                         scope.variables_reference,
@@ -683,20 +732,33 @@ async fn stack_frame_snapshot(
                         cx,
                     )
                 })
-                .await?
+                .await
+            {
+                Ok(variables) => variables,
+                Err(error) => {
+                    notes.push(format!(
+                        "Variables for scope `{}` omitted: {error}",
+                        scope.name
+                    ));
+                    variables_unavailable = true;
+                    Vec::new()
+                }
+            }
         };
 
         let known_variable_count = scope
             .named_variables
             .unwrap_or(0)
             .saturating_add(scope.indexed_variables.unwrap_or(0));
-        let variables_truncated = if limits.max_variables_per_scope == 0 {
+        let variables_truncated = if variables_unavailable {
+            true
+        } else if limits.max_variables_per_scope == 0 {
             scope.variables_reference != 0
         } else {
             known_variable_count > variables.len() as u64
                 || variables.len() >= limits.max_variables_per_scope
         };
-        if variables_truncated && limits.max_variables_per_scope > 0 {
+        if variables_truncated && !variables_unavailable && limits.max_variables_per_scope > 0 {
             notes.push(format!(
                 "Variables for scope `{}` truncated to {} variable(s)",
                 scope.name,
@@ -729,7 +791,7 @@ async fn stack_frame_snapshot(
         .as_ref()
         .and_then(|source| source.path.as_ref())
         .map(PathBuf::from);
-    let source_context = source_context_for_frame(
+    let source_context = match source_context_for_frame(
         breakpoint_store,
         frame.source.as_ref(),
         frame.line,
@@ -737,9 +799,19 @@ async fn stack_frame_snapshot(
         notes,
         cx,
     )
-    .await?;
+    .await
+    {
+        Ok(context) => context,
+        Err(error) => {
+            notes.push(format!(
+                "Source context for frame `{}` ({}) omitted: {error}",
+                frame.name, frame.id
+            ));
+            None
+        }
+    };
 
-    Ok(AgentDebuggerStackFrame {
+    AgentDebuggerStackFrame {
         frame_id: frame.id,
         name: frame.name,
         source_path,
@@ -747,7 +819,7 @@ async fn stack_frame_snapshot(
         column: frame.column,
         scopes,
         source_context,
-    })
+    }
 }
 
 async fn source_context_for_frame(

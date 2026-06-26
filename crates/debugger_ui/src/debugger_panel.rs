@@ -213,17 +213,22 @@ impl DebugPanel {
             compact: adapter.compact_child_session(),
             prefer_thread_name: adapter.prefer_thread_name(),
         };
-        let worktree = worktree_id.or_else(|| {
-            active_buffer
+        let project = self.project.read(cx);
+        let worktree = if let Some(worktree_id) = worktree_id {
+            project.worktree_for_id(worktree_id, cx).ok_or_else(|| {
+                anyhow!("Could not find worktree {worktree_id} to spawn the debug session in")
+            })?
+        } else {
+            let worktree_id = active_buffer
                 .as_ref()
                 .and_then(|buffer| buffer.read(cx).file())
-                .map(|file| file.worktree_id(cx))
-        });
+                .map(|file| file.worktree_id(cx));
 
-        let worktree = worktree
-            .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
-            .or_else(|| self.project.read(cx).visible_worktrees(cx).next())
-            .ok_or_else(|| anyhow!("Could not find a worktree to spawn the debug session in"))?;
+            worktree_id
+                .and_then(|id| project.worktree_for_id(id, cx))
+                .or_else(|| project.visible_worktrees(cx).next())
+                .ok_or_else(|| anyhow!("Could not find a worktree to spawn the debug session in"))?
+        };
 
         let session = dap_store.update(cx, |dap_store, cx| {
             dap_store.new_session(

@@ -1,4 +1,4 @@
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Context as _, Result, anyhow};
 use dap::{DapRegistry, client::SessionId};
 use gpui::{App, Entity, SharedString, Task, WeakEntity};
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{path::PathBuf, rc::Rc, sync::Arc, time::Duration};
 use task::{DebugScenario, SharedTaskContext};
-use util::markdown::MarkdownInlineCode;
+use util::{markdown::MarkdownInlineCode, paths::normalize_lexically};
 
 use crate::{
     AgentTool, DebugSessionRequest, Thread, ThreadEnvironment, ToolCallEventStream, ToolInput,
@@ -18,6 +18,13 @@ use crate::{
 };
 
 const DEFAULT_CONTROL_TIMEOUT_MS: u64 = 30_000;
+const MAX_CONTROL_TIMEOUT_MS: u64 = 300_000;
+const MAX_SNAPSHOT_FRAMES: usize = 200;
+const MAX_SNAPSHOT_VARIABLES_PER_SCOPE: usize = 500;
+const MAX_SNAPSHOT_VARIABLE_VALUE_LENGTH: usize = 16 * 1024;
+const MAX_SNAPSHOT_OUTPUT_EVENTS: usize = 1_000;
+const MAX_SNAPSHOT_OUTPUT_BYTES: usize = 1024 * 1024;
+const MAX_SNAPSHOT_SOURCE_CONTEXT_LINES: usize = 200;
 
 /// Interact with Zed's debugger. Read-only operations such as `snapshot`,
 /// `list_sessions`, `list_breakpoints`, and `list_adapters` are available in
@@ -79,22 +86,22 @@ pub struct SnapshotInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct SnapshotLimitsInput {
-    /// Maximum total stack frames across all stopped threads. Defaults to 20.
+    /// Maximum total stack frames across all stopped threads. Defaults to 20; maximum 200.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_frames: Option<usize>,
-    /// Maximum variables per scope. Defaults to 50.
+    /// Maximum variables per scope. Defaults to 50; maximum 500.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_variables_per_scope: Option<usize>,
-    /// Maximum bytes per variable value. Defaults to 1024.
+    /// Maximum bytes per variable value. Defaults to 1024; maximum 16384.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_variable_value_length: Option<usize>,
-    /// Maximum recent output events. Defaults to 100.
+    /// Maximum recent output events. Defaults to 100; maximum 1000.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_events: Option<usize>,
-    /// Maximum recent output bytes. Defaults to 16384.
+    /// Maximum recent output bytes. Defaults to 16384; maximum 1048576.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_output_bytes: Option<usize>,
-    /// Maximum source context lines around each frame. Defaults to 5.
+    /// Maximum source context lines around each frame. Defaults to 5; maximum 200.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_source_context_lines: Option<usize>,
 }
@@ -146,7 +153,7 @@ pub struct ControlInput {
     /// 1-based line for `run_to_line`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
-    /// Maximum time to wait for the debugger to stop. Defaults to 30000ms.
+    /// Maximum time to wait for the debugger to stop. Defaults to 30000ms; maximum 300000ms.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
     /// Optional bounds for the snapshot returned after control completes.
@@ -311,10 +318,11 @@ impl DebuggerTool {
                 Ok(success(operation, "listed debug sessions", data))
             }
             DebuggerToolInput::Snapshot(input) => {
-                let (api, session_id, limits) = cx.update(|cx| {
+                let limits = limits_from_input(input.limits)?;
+                let (api, session_id) = cx.update(|cx| {
                     let api = self.api(cx);
                     let session_id = resolve_session_id(&self.project, &api, input.session_id, cx)?;
-                    anyhow::Ok((api, session_id, limits_from_input(input.limits)))
+                    anyhow::Ok((api, session_id))
                 })?;
                 let snapshot_task = cx.update(|cx| api.snapshot(session_id, limits, cx));
                 let snapshot = snapshot_task.await?;
@@ -335,15 +343,14 @@ impl DebuggerTool {
             }
             DebuggerToolInput::SetBreakpoints { breakpoints } => {
                 self.ensure_write_mode(&operation, cx)?;
+                let breakpoints = breakpoints
+                    .into_iter()
+                    .map(|breakpoint| resolve_breakpoint_input(&self.project, breakpoint, cx))
+                    .collect::<Result<Vec<_>>>()?;
                 authorize_debugger_operation(
                     &event_stream,
                     "Set debugger breakpoint(s)",
-                    permission_inputs(
-                        &operation,
-                        breakpoints.iter().map(|breakpoint| {
-                            format!("{}:{}", breakpoint.path.display(), breakpoint.line)
-                        }),
-                    ),
+                    breakpoint_permission_inputs(&operation, breakpoints.iter())?,
                     cx,
                 )
                 .await?;
@@ -351,7 +358,6 @@ impl DebuggerTool {
                 let api = cx.update(|cx| self.api(cx));
                 let mut results = Vec::new();
                 for breakpoint in breakpoints {
-                    let breakpoint = resolve_breakpoint_input(&self.project, breakpoint, cx)?;
                     let task = cx
                         .update(|cx| api.set_source_breakpoint(breakpoint.into_agent_input(), cx));
                     let result = task.await?;
@@ -365,15 +371,14 @@ impl DebuggerTool {
             }
             DebuggerToolInput::RemoveBreakpoints { breakpoints } => {
                 self.ensure_write_mode(&operation, cx)?;
+                let breakpoints = breakpoints
+                    .into_iter()
+                    .map(|breakpoint| resolve_breakpoint_location(&self.project, breakpoint, cx))
+                    .collect::<Result<Vec<_>>>()?;
                 authorize_debugger_operation(
                     &event_stream,
                     "Remove debugger breakpoint(s)",
-                    permission_inputs(
-                        &operation,
-                        breakpoints.iter().map(|breakpoint| {
-                            format!("{}:{}", breakpoint.path.display(), breakpoint.line)
-                        }),
-                    ),
+                    breakpoint_location_permission_inputs(&operation, breakpoints.iter()),
                     cx,
                 )
                 .await?;
@@ -381,7 +386,6 @@ impl DebuggerTool {
                 let api = cx.update(|cx| self.api(cx));
                 let mut results = Vec::new();
                 for breakpoint in breakpoints {
-                    let breakpoint = resolve_breakpoint_location(&self.project, breakpoint, cx)?;
                     let task = cx.update(|cx| {
                         api.remove_source_breakpoint(breakpoint.path, breakpoint.line, cx)
                     });
@@ -396,28 +400,21 @@ impl DebuggerTool {
             }
             DebuggerToolInput::Control(input) => {
                 self.ensure_write_mode(&operation, cx)?;
-                let action = input.action;
+                validate_control_timeout(input.timeout_ms)?;
+                let snapshot_limits = limits_from_input(input.snapshot_limits.clone())?;
+                let resolved_input = self.resolve_control_input(input, cx).await?;
+                let action = resolved_input.action;
                 authorize_debugger_operation(
                     &event_stream,
                     format!("Debugger {}", action.label()),
-                    permission_inputs(
-                        &operation,
-                        [format!(
-                            "{} session:{:?} thread:{:?}",
-                            action.permission_name(),
-                            input.session_id,
-                            input.thread_id
-                        )],
-                    ),
+                    permission_inputs(&operation, [control_permission_input(&resolved_input)]),
                     cx,
                 )
                 .await?;
 
-                let snapshot_limits = input.snapshot_limits.clone();
-                let (session_id, control_result) = self.run_control(input, cx).await?;
+                let (session_id, control_result) = self.run_control(resolved_input, cx).await?;
                 let api = cx.update(|cx| self.api(cx));
-                let limits = limits_from_input(snapshot_limits);
-                let snapshot_task = cx.update(|cx| api.snapshot(session_id, limits, cx));
+                let snapshot_task = cx.update(|cx| api.snapshot(session_id, snapshot_limits, cx));
                 let snapshot = snapshot_task.await?;
                 Ok(success(
                     operation,
@@ -436,13 +433,7 @@ impl DebuggerTool {
                         "Start debug session {}",
                         MarkdownInlineCode(&input.scenario.label)
                     ),
-                    permission_inputs(
-                        &operation,
-                        [format!(
-                            "start_session adapter:{} label:{}",
-                            input.scenario.adapter, input.scenario.label
-                        )],
-                    ),
+                    start_session_permission_inputs(&operation, &input)?,
                     cx,
                 )
                 .await?;
@@ -454,8 +445,8 @@ impl DebuggerTool {
                     };
                     let approve = cx.update(|cx| {
                         event_stream.authorize_sandbox(
-                            "Start debug session outside the agent terminal sandbox",
                             request,
+                            "Start debug session outside the agent terminal sandbox".to_string(),
                             cx,
                         )
                     });
@@ -484,7 +475,10 @@ impl DebuggerTool {
                 authorize_debugger_operation(
                     &event_stream,
                     format!("Stop debug session {session_id}"),
-                    permission_inputs(&operation, [format!("stop_session session:{session_id}")]),
+                    permission_inputs(
+                        &operation,
+                        [format!("stop_session session_id:{session_id}")],
+                    ),
                     cx,
                 )
                 .await?;
@@ -514,12 +508,22 @@ impl DebuggerTool {
         Ok(())
     }
 
-    async fn run_control(
+    async fn resolve_control_input(
         &self,
-        input: ControlInput,
+        mut input: ControlInput,
         cx: &mut gpui::AsyncApp,
-    ) -> Result<(SessionId, AgentDebuggerControlResult)> {
-        let timeout = Duration::from_millis(input.timeout_ms.unwrap_or(DEFAULT_CONTROL_TIMEOUT_MS));
+    ) -> Result<ResolvedControlInput> {
+        if input.action == ControlAction::RunToLine {
+            let path = input
+                .path
+                .take()
+                .context("path is required for debugger control run_to_line")?;
+            input.path = Some(resolve_debugger_path(&self.project, path, cx)?);
+            input
+                .line
+                .context("line is required for debugger control run_to_line")?;
+        }
+
         let (api, session_id, thread_id) = cx.update(|cx| {
             let api = self.api(cx);
             let session_id = resolve_session_id(&self.project, &api, input.session_id, cx)?;
@@ -530,6 +534,26 @@ impl DebuggerTool {
             Some(thread_id) => thread_id,
             None => choose_thread_for_action(&api, session_id, input.action, cx).await?,
         };
+
+        Ok(ResolvedControlInput {
+            session_id,
+            thread_id,
+            action: input.action,
+            path: input.path,
+            line: input.line,
+            timeout_ms: input.timeout_ms,
+        })
+    }
+
+    async fn run_control(
+        &self,
+        input: ResolvedControlInput,
+        cx: &mut gpui::AsyncApp,
+    ) -> Result<(SessionId, AgentDebuggerControlResult)> {
+        let timeout = Duration::from_millis(control_timeout_ms(input.timeout_ms)?);
+        let session_id = input.session_id;
+        let thread_id = input.thread_id;
+        let api = cx.update(|cx| self.api(cx));
 
         match input.action {
             ControlAction::Continue => {
@@ -580,7 +604,6 @@ impl DebuggerTool {
                 let path = input
                     .path
                     .context("path is required for debugger control run_to_line")?;
-                let path = resolve_debugger_path(&self.project, path, cx)?;
                 let line = input
                     .line
                     .context("line is required for debugger control run_to_line")?;
@@ -604,6 +627,15 @@ impl BreakpointInput {
             log_message: self.log_message,
         }
     }
+}
+
+struct ResolvedControlInput {
+    session_id: SessionId,
+    thread_id: project::debugger::session::ThreadId,
+    action: ControlAction,
+    path: Option<PathBuf>,
+    line: Option<u32>,
+    timeout_ms: Option<u64>,
 }
 
 impl ControlAction {
@@ -669,6 +701,153 @@ fn permission_inputs(operation: &str, values: impl IntoIterator<Item = String>) 
         }
     }
     inputs
+}
+
+fn breakpoint_permission_inputs<'a>(
+    operation: &str,
+    breakpoints: impl IntoIterator<Item = &'a BreakpointInput>,
+) -> Result<Vec<String>> {
+    let inputs = breakpoints
+        .into_iter()
+        .map(|breakpoint| {
+            let condition =
+                permission_value_to_string(&breakpoint.condition, "breakpoint condition")?;
+            let hit_condition =
+                permission_value_to_string(&breakpoint.hit_condition, "breakpoint hit condition")?;
+            let log_message =
+                permission_value_to_string(&breakpoint.log_message, "breakpoint log message")?;
+            anyhow::Ok(format!(
+                "path:{} line:{} enabled:{} condition:{} hit_condition:{} log_message:{}",
+                breakpoint.path.display(),
+                breakpoint.line,
+                breakpoint.enabled,
+                condition,
+                hit_condition,
+                log_message
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(permission_inputs(operation, inputs))
+}
+
+fn breakpoint_location_permission_inputs<'a>(
+    operation: &str,
+    breakpoints: impl IntoIterator<Item = &'a BreakpointLocationInput>,
+) -> Vec<String> {
+    permission_inputs(
+        operation,
+        breakpoints.into_iter().map(|breakpoint| {
+            format!(
+                "path:{} line:{}",
+                breakpoint.path.display(),
+                breakpoint.line
+            )
+        }),
+    )
+}
+
+fn control_permission_input(input: &ResolvedControlInput) -> String {
+    let mut value = format!(
+        "action:{} session_id:{} thread_id:{}",
+        input.action.permission_name(),
+        input.session_id.0,
+        input.thread_id.0
+    );
+
+    if input.action == ControlAction::RunToLine {
+        let path = input
+            .path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| "missing".to_string());
+        let line = input
+            .line
+            .map(|line| line.to_string())
+            .unwrap_or_else(|| "missing".to_string());
+        value.push_str(&format!(" path:{path} line:{line}"));
+    }
+
+    value
+}
+
+#[cfg(test)]
+pub fn control_permission_inputs_for_test(
+    operation: &str,
+    input: ControlInput,
+    resolved_session_id: u64,
+    resolved_thread_id: i64,
+) -> Vec<String> {
+    permission_inputs(
+        operation,
+        [control_permission_input(&ResolvedControlInput {
+            session_id: SessionId::from_proto(resolved_session_id),
+            thread_id: project::debugger::session::ThreadId(resolved_thread_id),
+            action: input.action,
+            path: input.path,
+            line: input.line,
+            timeout_ms: input.timeout_ms,
+        })],
+    )
+}
+
+fn start_session_permission_inputs(
+    operation: &str,
+    input: &StartSessionInput,
+) -> Result<Vec<String>> {
+    let scenario = &input.scenario;
+    let worktree_id = input
+        .worktree_id
+        .map(|worktree_id| worktree_id.to_string())
+        .unwrap_or_else(|| "none".to_string());
+    let build_task = scenario
+        .build
+        .as_ref()
+        .map(|build| permission_value_to_string(build, "start_session build"))
+        .transpose()?
+        .unwrap_or_else(|| "null".to_string());
+    let tcp_connection = scenario
+        .tcp_connection
+        .as_ref()
+        .map(|tcp_connection| {
+            permission_value_to_string(tcp_connection, "start_session tcp_connection")
+        })
+        .transpose()?
+        .unwrap_or_else(|| "null".to_string());
+    let config = permission_value_to_string(&scenario.config, "start_session config")?;
+
+    Ok(permission_inputs(
+        operation,
+        [format!(
+            "adapter:{} label:{} worktree_id:{} build_task:{} tcp_connection:{} config:{}",
+            scenario.adapter, scenario.label, worktree_id, build_task, tcp_connection, config
+        )],
+    ))
+}
+
+fn permission_value_to_string(value: &impl Serialize, value_name: &str) -> Result<String> {
+    let value = serde_json::to_value(value).with_context(|| {
+        format!("Failed to serialize debugger {value_name} for permission matching")
+    })?;
+    serde_json::to_string(&sort_json_value(value)).with_context(|| {
+        format!("Failed to serialize debugger {value_name} JSON for permission matching")
+    })
+}
+
+fn sort_json_value(value: Value) -> Value {
+    match value {
+        Value::Array(values) => Value::Array(values.into_iter().map(sort_json_value).collect()),
+        Value::Object(object) => {
+            let mut entries = object.into_iter().collect::<Vec<_>>();
+            entries.sort_by(|(left_key, _), (right_key, _)| left_key.cmp(right_key));
+
+            let mut sorted = serde_json::Map::new();
+            for (key, value) in entries {
+                sorted.insert(key, sort_json_value(value));
+            }
+            Value::Object(sorted)
+        }
+        value => value,
+    }
 }
 
 fn operation_name(input: &DebuggerToolInput) -> &'static str {
@@ -747,29 +926,66 @@ fn initial_title_for_input(input: &DebuggerToolInput) -> SharedString {
     }
 }
 
-fn limits_from_input(input: Option<SnapshotLimitsInput>) -> AgentDebuggerSnapshotLimits {
+fn limits_from_input(input: Option<SnapshotLimitsInput>) -> Result<AgentDebuggerSnapshotLimits> {
     let mut limits = AgentDebuggerSnapshotLimits::default();
     if let Some(input) = input {
         if let Some(value) = input.max_frames {
-            limits.max_frames = value;
+            limits.max_frames = validate_snapshot_limit("max_frames", value, MAX_SNAPSHOT_FRAMES)?;
         }
         if let Some(value) = input.max_variables_per_scope {
-            limits.max_variables_per_scope = value;
+            limits.max_variables_per_scope = validate_snapshot_limit(
+                "max_variables_per_scope",
+                value,
+                MAX_SNAPSHOT_VARIABLES_PER_SCOPE,
+            )?;
         }
         if let Some(value) = input.max_variable_value_length {
-            limits.max_variable_value_length = value;
+            limits.max_variable_value_length = validate_snapshot_limit(
+                "max_variable_value_length",
+                value,
+                MAX_SNAPSHOT_VARIABLE_VALUE_LENGTH,
+            )?;
         }
         if let Some(value) = input.max_output_events {
-            limits.max_output_events = value;
+            limits.max_output_events =
+                validate_snapshot_limit("max_output_events", value, MAX_SNAPSHOT_OUTPUT_EVENTS)?;
         }
         if let Some(value) = input.max_output_bytes {
-            limits.max_output_bytes = value;
+            limits.max_output_bytes =
+                validate_snapshot_limit("max_output_bytes", value, MAX_SNAPSHOT_OUTPUT_BYTES)?;
         }
         if let Some(value) = input.max_source_context_lines {
-            limits.max_source_context_lines = value;
+            limits.max_source_context_lines = validate_snapshot_limit(
+                "max_source_context_lines",
+                value,
+                MAX_SNAPSHOT_SOURCE_CONTEXT_LINES,
+            )?;
         }
     }
-    limits
+    Ok(limits)
+}
+
+fn validate_snapshot_limit(field_name: &str, value: usize, maximum: usize) -> Result<usize> {
+    if value > maximum {
+        anyhow::bail!(
+            "debugger snapshot limit `{field_name}` must be at most {maximum}, got {value}"
+        );
+    }
+    Ok(value)
+}
+
+fn validate_control_timeout(timeout_ms: Option<u64>) -> Result<()> {
+    control_timeout_ms(timeout_ms).map(|_| ())
+}
+
+fn control_timeout_ms(timeout_ms: Option<u64>) -> Result<u64> {
+    let timeout_ms = timeout_ms.unwrap_or(DEFAULT_CONTROL_TIMEOUT_MS);
+    if timeout_ms > MAX_CONTROL_TIMEOUT_MS {
+        anyhow::bail!(
+            "debugger control `timeout_ms` must be at most {MAX_CONTROL_TIMEOUT_MS}, got {timeout_ms}"
+        );
+    }
+    Ok(timeout_ms)
 }
 
 fn thread_picker_limits() -> AgentDebuggerSnapshotLimits {
@@ -807,7 +1023,7 @@ fn resolve_debugger_path(
     cx: &gpui::AsyncApp,
 ) -> Result<PathBuf> {
     if path.is_absolute() {
-        return Ok(path);
+        return normalize_debugger_path(path);
     }
 
     project.read_with(cx, |project, cx| {
@@ -820,7 +1036,16 @@ fn resolve_debugger_path(
         let worktree = project
             .worktree_for_id(project_path.worktree_id, cx)
             .with_context(|| format!("Could not find worktree for `{}`", path.display()))?;
-        Ok(worktree.read(cx).absolutize(&project_path.path))
+        normalize_debugger_path(worktree.read(cx).absolutize(&project_path.path))
+    })
+}
+
+fn normalize_debugger_path(path: PathBuf) -> Result<PathBuf> {
+    normalize_lexically(&path).with_context(|| {
+        format!(
+            "Could not normalize debugger source path `{}`",
+            path.display()
+        )
     })
 }
 
