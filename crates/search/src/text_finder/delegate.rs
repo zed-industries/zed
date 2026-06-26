@@ -598,6 +598,7 @@ impl PickerDelegate for Delegate {
         &self,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
+        _selected_count: usize,
     ) -> Vec<picker::PickerAction> {
         use gpui::Action as _;
         vec![

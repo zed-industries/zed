@@ -360,6 +360,7 @@ pub trait PickerDelegate: Sized + 'static {
         &self,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
+        _selected_count: usize,
     ) -> Vec<footer::PickerAction> {
         Vec::new()
     }
@@ -1180,29 +1181,13 @@ impl<D: PickerDelegate> Picker<D> {
             ix < self.delegate.match_count() && self.delegate.can_select(ix, window, cx);
 
         let is_multi_selected = self.selected_indices.contains(&ix);
-        let is_cursor = ix == self.delegate.selected_index();
+        let multi_select_active = !self.selected_indices.is_empty();
 
         div()
             .id(("item", ix))
             .when(selectable, |this| this.cursor_pointer())
-            .when(is_multi_selected && !is_cursor, |this| {
+            .when(is_multi_selected, |this| {
                 this.bg(cx.theme().colors().ghost_element_selected.opacity(0.5))
-            })
-            .when(is_multi_selected && is_cursor, |this| {
-                this.border_l_2()
-                    .border_color(cx.theme().colors().border_focused)
-            })
-            .when(selectable, |this| {
-                this.hover(|s| {
-                    let s = s
-                        .border_l_2()
-                        .border_color(cx.theme().colors().border_focused);
-                    if is_multi_selected {
-                        s.bg(cx.theme().colors().ghost_element_hover)
-                    } else {
-                        s
-                    }
-                })
             })
             .child(
                 canvas(
@@ -1244,12 +1229,30 @@ impl<D: PickerDelegate> Picker<D> {
                     }
                 }))
             })
-            .children(self.delegate.render_match(
-                ix,
-                ix == self.delegate.selected_index(),
-                window,
-                cx,
-            ))
+            .child(
+                h_flex()
+                    .when(multi_select_active, |this| {
+                        this.child(
+                            h_flex()
+                                .w_4()
+                                .flex_none()
+                                .justify_center()
+                                .when(is_multi_selected, |this| {
+                                    this.child(
+                                        Icon::new(IconName::Check)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Accent),
+                                    )
+                                }),
+                        )
+                    })
+                    .children(self.delegate.render_match(
+                        ix,
+                        ix == self.delegate.selected_index(),
+                        window,
+                        cx,
+                    )),
+            )
             .when(
                 self.delegate.separators_after_indices().contains(&ix),
                 |picker| {

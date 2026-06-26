@@ -1918,7 +1918,13 @@ impl PickerDelegate for FileFinderDelegate {
         &self,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
+        selected_count: usize,
     ) -> Vec<picker::PickerAction> {
+        let open_label: SharedString = if selected_count > 1 {
+            "Open multiple".into()
+        } else {
+            "Open File".into()
+        };
         vec![
             picker::PickerAction::header("Split…"),
             picker::PickerAction::button("Left", pane::SplitLeft::default().boxed_clone()),
@@ -1926,7 +1932,7 @@ impl PickerDelegate for FileFinderDelegate {
             picker::PickerAction::button("Up", pane::SplitUp::default().boxed_clone()),
             picker::PickerAction::button("Down", pane::SplitDown::default().boxed_clone()),
             picker::PickerAction::separator(),
-            picker::PickerAction::button("Open File", menu::Confirm.boxed_clone()),
+            picker::PickerAction::button(open_label, menu::Confirm.boxed_clone()),
         ]
     }
 }
