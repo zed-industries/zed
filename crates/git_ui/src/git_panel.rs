@@ -3,7 +3,7 @@ use crate::commit_modal::CommitModal;
 use crate::commit_tooltip::{CommitAvatar, CommitTooltip};
 use crate::commit_view::CommitView;
 use crate::git_panel_settings::GitPanelScrollbarAccessor;
-use crate::project_diff::{self, BranchDiff, Diff, ProjectDiff};
+use crate::project_diff::{BranchDiff, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
 use crate::solo_diff_view::SoloDiffView;
 use crate::staged_diff::StagedDiff;
@@ -46,8 +46,8 @@ use gpui::{
 use itertools::Itertools;
 use language::{Buffer, File};
 use language_model::{
-    CompletionIntent, ConfiguredModel, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
+    CompletionIntent, ConfiguredModel, Event as LanguageModelEvent, LanguageModelRegistry,
+    LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use menu;
 use multi_buffer::ExcerptBoundaryInfo;
@@ -65,12 +65,15 @@ use prompt_store::RULES_FILE_NAMES;
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitPanelGroupBy, GitPanelSortBy, Settings, SettingsStore, StatusStyle, update_settings_file,
+    GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, Settings, SettingsStore, StatusStyle,
+    update_settings_file,
 };
 use smallvec::SmallVec;
+use std::cell::Cell;
 use std::future::Future;
 use std::ops::Range;
 use std::path::Path;
+use std::rc::Rc;
 use std::{sync::Arc, time::Duration, usize};
 use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
@@ -89,6 +92,11 @@ use workspace::{
     notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt},
 };
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
+
+const GIT_PANEL_KEY: &str = "GitPanel";
+const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
+// TODO: We should revise this part. It seems the indentation width is not aligned with the one in project panel
+const TREE_INDENT: f32 = 16.0;
 
 actions!(
     git_panel,
@@ -168,54 +176,44 @@ enum TrashCancel {
     Cancel,
 }
 
-struct GitMenuState {
-    has_tracked_changes: bool,
-    has_staged_changes: bool,
-    has_unstaged_changes: bool,
-    has_new_changes: bool,
+#[derive(Clone, Copy)]
+struct GitPanelViewOptionsMenuState {
     sort_by: GitPanelSortBy,
     group_by: GitPanelGroupBy,
-    has_stash_items: bool,
     tree_view: bool,
 }
 
 fn git_panel_context_menu(
+    has_tracked_changes: bool,
+    has_staged_changes: bool,
+    has_unstaged_changes: bool,
+    has_new_changes: bool,
+    has_stash_items: bool,
     focus_handle: FocusHandle,
-    state: GitMenuState,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ContextMenu> {
-    ContextMenu::build(window, cx, move |context_menu, _, _| {
+    ContextMenu::build(window, cx, |context_menu, _, _| {
         context_menu
-            .context(focus_handle)
-            .action_disabled_when(
-                !state.has_unstaged_changes,
-                "Stage All",
-                StageAll.boxed_clone(),
-            )
-            .action_disabled_when(
-                !state.has_staged_changes,
-                "Unstage All",
-                UnstageAll.boxed_clone(),
-            )
+            .context(focus_handle.clone())
+            .action_disabled_when(!has_unstaged_changes, "Stage All", StageAll.boxed_clone())
+            .action_disabled_when(!has_staged_changes, "Unstage All", UnstageAll.boxed_clone())
             .separator()
             .action_disabled_when(
-                !(state.has_new_changes || state.has_tracked_changes),
+                !(has_new_changes || has_tracked_changes),
                 "Stash All",
                 StashAll.boxed_clone(),
             )
-            .action_disabled_when(!state.has_stash_items, "Stash Pop", StashPop.boxed_clone())
+            .action_disabled_when(!has_stash_items, "Stash Pop", StashPop.boxed_clone())
             .action("View Stash", zed_actions::git::ViewStash.boxed_clone())
             .separator()
-            .action("Open Diff", project_diff::Diff.boxed_clone())
-            .separator()
             .action_disabled_when(
-                !state.has_tracked_changes,
+                !has_tracked_changes,
                 "Discard Tracked Changes",
                 RestoreTrackedFiles.boxed_clone(),
             )
             .action_disabled_when(
-                !state.has_new_changes,
+                !has_new_changes,
                 "Trash Untracked Files",
                 TrashUntrackedFiles.boxed_clone(),
             )
@@ -224,82 +222,122 @@ fn git_panel_context_menu(
 
 fn git_panel_view_options_menu(
     focus_handle: FocusHandle,
-    state: GitMenuState,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<ContextMenu> {
-    ContextMenu::build(window, cx, move |context_menu, _, _| {
+    let view_options_menu_state = Rc::new(Cell::new(GitPanelViewOptionsMenuState {
+        sort_by: GitPanelSettings::get_global(cx).sort_by,
+        group_by: GitPanelSettings::get_global(cx).group_by,
+        tree_view: GitPanelSettings::get_global(cx).tree_view,
+    }));
+
+    ContextMenu::build_persistent(window, cx, move |context_menu, _, _| {
+        let state = view_options_menu_state.get();
+
         context_menu
-            .context(focus_handle)
+            .context(focus_handle.clone())
             .header("View")
-            .item(
+            .item({
+                let view_options_menu_state = view_options_menu_state.clone();
                 ContextMenuEntry::new("List")
                     .toggle(IconPosition::End, !state.tree_view)
                     .handler(move |window, cx| {
                         if state.tree_view {
+                            view_options_menu_state.set(GitPanelViewOptionsMenuState {
+                                tree_view: false,
+                                ..state
+                            });
                             window.dispatch_action(Box::new(ToggleTreeView), cx);
                         }
-                    }),
-            )
-            .item(
+                    })
+            })
+            .item({
+                let view_options_menu_state = view_options_menu_state.clone();
                 ContextMenuEntry::new("Tree")
                     .toggle(IconPosition::End, state.tree_view)
                     .handler(move |window, cx| {
                         if !state.tree_view {
+                            view_options_menu_state.set(GitPanelViewOptionsMenuState {
+                                tree_view: true,
+                                ..state
+                            });
                             window.dispatch_action(Box::new(ToggleTreeView), cx);
                         }
-                    }),
-            )
-            .separator()
-            .header("Sort By")
-            .item(
-                ContextMenuEntry::new("Path")
-                    .toggle(IconPosition::End, state.sort_by == GitPanelSortBy::Path)
-                    .disabled(state.tree_view)
-                    .handler(move |window, cx| {
-                        if !state.tree_view {
-                            window.dispatch_action(Box::new(SetSortByPath), cx);
-                        }
-                    }),
-            )
-            .item(
-                ContextMenuEntry::new("Name")
-                    .toggle(IconPosition::End, state.sort_by == GitPanelSortBy::Name)
-                    .disabled(state.tree_view)
-                    .handler(move |window, cx| {
-                        if !state.tree_view {
-                            window.dispatch_action(Box::new(SetSortByName), cx);
-                        }
-                    }),
-            )
+                    })
+            })
+            .when(!state.tree_view, |this| {
+                this.separator()
+                    .header("Sort By")
+                    .item({
+                        let view_options_menu_state = view_options_menu_state.clone();
+                        ContextMenuEntry::new("Path")
+                            .toggle(IconPosition::End, state.sort_by == GitPanelSortBy::Path)
+                            .handler(move |window, cx| {
+                                if !state.tree_view {
+                                    view_options_menu_state.set(GitPanelViewOptionsMenuState {
+                                        sort_by: GitPanelSortBy::Path,
+                                        ..state
+                                    });
+                                    window.dispatch_action(Box::new(SetSortByPath), cx);
+                                }
+                            })
+                    })
+                    .item({
+                        let view_options_menu_state = view_options_menu_state.clone();
+                        ContextMenuEntry::new("Name")
+                            .toggle(IconPosition::End, state.sort_by == GitPanelSortBy::Name)
+                            .handler(move |window, cx| {
+                                if !state.tree_view {
+                                    view_options_menu_state.set(GitPanelViewOptionsMenuState {
+                                        sort_by: GitPanelSortBy::Name,
+                                        ..state
+                                    });
+                                    window.dispatch_action(Box::new(SetSortByName), cx);
+                                }
+                            })
+                    })
+            })
             .separator()
             .header("Group By")
-            .item(
+            .item({
+                let view_options_menu_state = view_options_menu_state.clone();
                 ContextMenuEntry::new("None")
                     .toggle(IconPosition::End, state.group_by == GitPanelGroupBy::None)
                     .handler(move |window, cx| {
                         if state.group_by != GitPanelGroupBy::None {
+                            view_options_menu_state.set(GitPanelViewOptionsMenuState {
+                                group_by: GitPanelGroupBy::None,
+                                ..state
+                            });
                             window.dispatch_action(Box::new(SetGroupByNone), cx);
                         }
-                    }),
-            )
-            .item(
+                    })
+            })
+            .item({
+                let view_options_menu_state = view_options_menu_state.clone();
                 ContextMenuEntry::new("Status")
                     .toggle(IconPosition::End, state.group_by == GitPanelGroupBy::Status)
                     .handler(move |window, cx| {
                         if state.group_by != GitPanelGroupBy::Status {
+                            view_options_menu_state.set(GitPanelViewOptionsMenuState {
+                                group_by: GitPanelGroupBy::Status,
+                                ..state
+                            });
                             window.dispatch_action(Box::new(SetGroupByStatus), cx);
                         }
-                    }),
-            )
+                    })
+            })
     })
 }
 
-const GIT_PANEL_KEY: &str = "GitPanel";
-
-const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
-// TODO: We should revise this part. It seems the indentation width is not aligned with the one in project panel
-const TREE_INDENT: f32 = 16.0;
+// We only allow a single remote operation at a time to avoid concurrent
+// credential prompts and competing ref/working-tree updates.
+#[derive(Clone, Copy)]
+pub(crate) enum RemoteOperationKind {
+    Fetch,
+    Pull,
+    Push,
+}
 
 pub fn register(workspace: &mut Workspace) {
     workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
@@ -725,6 +763,7 @@ pub struct GitPanel {
     diff_stat_total: DiffStat,
     new_staged_count: usize,
     pending_commit: Option<Task<()>>,
+    pending_remote_operation: Option<RemoteOperationKind>,
     amend_pending: bool,
     original_commit_message: Option<String>,
     signoff_enabled: bool,
@@ -892,6 +931,20 @@ impl GitPanel {
                 }
             });
 
+            let registry = LanguageModelRegistry::global(cx);
+            cx.subscribe(&registry, |_, _, event, cx| match event {
+                LanguageModelEvent::CommitMessageModelChanged
+                | LanguageModelEvent::DefaultModelChanged
+                | LanguageModelEvent::ProviderStateChanged(_)
+                | LanguageModelEvent::AddedProvider(_)
+                | LanguageModelEvent::RemovedProvider(_)
+                | LanguageModelEvent::ProvidersChanged => {
+                    cx.notify();
+                }
+                _ => {}
+            })
+            .detach();
+
             cx.subscribe_in(
                 &git_store,
                 window,
@@ -939,6 +992,7 @@ impl GitPanel {
                 changes_count: 0,
                 diff_stat_total: DiffStat::default(),
                 pending_commit: None,
+                pending_remote_operation: None,
                 amend_pending: false,
                 original_commit_message: None,
                 signoff_enabled: false,
@@ -1400,6 +1454,14 @@ impl GitPanel {
         }
     }
 
+    fn select_last_entry_if_out_of_bounds(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(idx) = self.selected_entry
+            && idx >= self.entries.len()
+        {
+            self.select_last(&menu::SelectLast, window, cx);
+        }
+    }
+
     fn focus_changes_list(
         &mut self,
         _: &FocusChanges,
@@ -1496,6 +1558,36 @@ impl GitPanel {
 
             Some(())
         });
+    }
+
+    fn open_selected_entry_on_click(
+        &mut self,
+        secondary: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entry_primary_click_action =
+            GitPanelSettings::get_global(cx).entry_primary_click_action;
+        let action = match (entry_primary_click_action, secondary) {
+            (GitPanelClickBehavior::ProjectDiff, false) => GitPanelClickBehavior::ProjectDiff,
+            (GitPanelClickBehavior::ProjectDiff, true) => GitPanelClickBehavior::FileDiff,
+            (GitPanelClickBehavior::FileDiff, false) => GitPanelClickBehavior::FileDiff,
+            (GitPanelClickBehavior::FileDiff, true) => GitPanelClickBehavior::ProjectDiff,
+            (GitPanelClickBehavior::ViewFile, false) => GitPanelClickBehavior::ViewFile,
+            (GitPanelClickBehavior::ViewFile, true) => GitPanelClickBehavior::ProjectDiff,
+        };
+        match action {
+            GitPanelClickBehavior::ProjectDiff => {
+                self.open_diff(&Default::default(), window, cx);
+                self.focus_handle.focus(window, cx);
+            }
+            GitPanelClickBehavior::FileDiff => {
+                self.open_solo_diff(&Default::default(), window, cx);
+            }
+            GitPanelClickBehavior::ViewFile => {
+                self.view_file(&Default::default(), window, cx);
+            }
+        }
     }
 
     fn revert_selected(
@@ -3030,6 +3122,10 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
+        if !self.start_remote_operation(RemoteOperationKind::Fetch, cx) {
+            return;
+        }
+
         telemetry::event!("Git Fetched");
         let askpass = self.askpass_delegate("git fetch", window, cx);
         let this = cx.weak_entity();
@@ -3042,6 +3138,10 @@ impl GitPanel {
 
         window
             .spawn(cx, async move |cx| {
+                let _clear_pending_remote_operation = cx.on_drop(&this, |this, cx| {
+                    this.clear_remote_operation(cx);
+                });
+
                 let Some(fetch_options) = fetch_options.await else {
                     return Ok(());
                 };
@@ -3172,13 +3272,20 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        let Some(branch) = repo.read(cx).branch.as_ref() else {
+        let Some(branch) = repo.read(cx).branch.clone() else {
             return;
         };
+        if !self.start_remote_operation(RemoteOperationKind::Pull, cx) {
+            return;
+        }
+
         telemetry::event!("Git Pulled");
-        let branch = branch.clone();
         let remote = self.get_remote(false, false, window, cx);
         cx.spawn_in(window, async move |this, cx| {
+            let _clear_pending_remote_operation = cx.on_drop(&this, |this, cx| {
+                this.clear_remote_operation(cx);
+            });
+
             let remote = match remote.await {
                 Ok(Some(remote)) => remote,
                 Ok(None) => {
@@ -3235,11 +3342,14 @@ impl GitPanel {
         let Some(repo) = self.active_repository.clone() else {
             return;
         };
-        let Some(branch) = repo.read(cx).branch.as_ref() else {
+        let Some(branch) = repo.read(cx).branch.clone() else {
             return;
         };
+        if !self.start_remote_operation(RemoteOperationKind::Push, cx) {
+            return;
+        }
+
         telemetry::event!("Git Pushed");
-        let branch = branch.clone();
 
         let options = if force_push {
             Some(PushOptions::Force)
@@ -3256,6 +3366,10 @@ impl GitPanel {
         let remote = self.get_remote(select_remote, true, window, cx);
 
         cx.spawn_in(window, async move |this, cx| {
+            let _clear_pending_remote_operation = cx.on_drop(&this, |this, cx| {
+                this.clear_remote_operation(cx);
+            });
+
             let remote = match remote.await {
                 Ok(Some(remote)) => remote,
                 Ok(None) => {
@@ -3430,6 +3544,25 @@ impl GitPanel {
 
     fn can_push_and_pull(&self, cx: &App) -> bool {
         !self.project.read(cx).is_via_collab()
+    }
+
+    fn start_remote_operation(
+        &mut self,
+        kind: RemoteOperationKind,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.pending_remote_operation.is_some() {
+            return false;
+        }
+
+        self.pending_remote_operation = Some(kind);
+        cx.notify();
+        true
+    }
+
+    fn clear_remote_operation(&mut self, cx: &mut Context<Self>) {
+        self.pending_remote_operation.take();
+        cx.notify();
     }
 
     fn get_remote(
@@ -4127,6 +4260,7 @@ impl GitPanel {
         }
 
         self.select_first_entry_if_none(window, cx);
+        self.select_last_entry_if_out_of_bounds(window, cx);
 
         let suggested_commit_message = self.suggest_commit_message(cx);
         let placeholder_text = suggested_commit_message.unwrap_or("Enter commit message".into());
@@ -4450,66 +4584,18 @@ impl GitPanel {
         path + file_name + depth * 2
     }
 
-    fn render_ellipsis_menu(&self, id: impl Into<ElementId>) -> impl IntoElement {
-        let focus_handle = self.focus_handle.clone();
-        let has_tracked_changes = self.has_tracked_changes();
-        let has_staged_changes = self.has_staged_changes();
-        let has_unstaged_changes = self.has_unstaged_changes();
-        let has_new_changes = self.new_count > 0;
-        let has_stash_items = self.stash_entries.entries.len() > 0;
-
-        PopoverMenu::new(id.into())
-            .trigger(
-                IconButton::new("overflow-menu-trigger", IconName::Ellipsis)
-                    .icon_size(IconSize::Small),
-            )
-            .menu(move |window, cx| {
-                Some(git_panel_context_menu(
-                    focus_handle.clone(),
-                    GitMenuState {
-                        has_tracked_changes,
-                        has_staged_changes,
-                        has_unstaged_changes,
-                        has_new_changes,
-                        sort_by: GitPanelSettings::get_global(cx).sort_by,
-                        group_by: GitPanelSettings::get_global(cx).group_by,
-                        has_stash_items,
-                        tree_view: GitPanelSettings::get_global(cx).tree_view,
-                    },
-                    window,
-                    cx,
-                ))
-            })
-            .anchor(Anchor::TopRight)
-    }
-
     fn render_view_options_menu(&self, id: impl Into<ElementId>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
-        let has_tracked_changes = self.has_tracked_changes();
-        let has_staged_changes = self.has_staged_changes();
-        let has_unstaged_changes = self.has_unstaged_changes();
-        let has_new_changes = self.new_count > 0;
-        let has_stash_items = self.stash_entries.entries.len() > 0;
 
         PopoverMenu::new(id.into())
-            .trigger(
+            .trigger_with_tooltip(
                 IconButton::new("view-options-menu-trigger", IconName::Sliders)
-                    .icon_size(IconSize::Small)
-                    .tooltip(Tooltip::text("View Options")),
+                    .icon_size(IconSize::Small),
+                Tooltip::text("View Options"),
             )
             .menu(move |window, cx| {
                 Some(git_panel_view_options_menu(
                     focus_handle.clone(),
-                    GitMenuState {
-                        has_tracked_changes,
-                        has_staged_changes,
-                        has_unstaged_changes,
-                        has_new_changes,
-                        sort_by: GitPanelSettings::get_global(cx).sort_by,
-                        group_by: GitPanelSettings::get_global(cx).group_by,
-                        has_stash_items,
-                        tree_view: GitPanelSettings::get_global(cx).tree_view,
-                    },
                     window,
                     cx,
                 ))
@@ -4767,6 +4853,78 @@ impl GitPanel {
         })
     }
 
+    fn render_git_changes_actions_menu(
+        &self,
+        id: impl Into<ElementId>,
+        _cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let has_tracked_changes = self.has_tracked_changes();
+        let has_staged_changes = self.has_staged_changes();
+        let has_unstaged_changes = self.has_unstaged_changes();
+        let has_new_changes = self.new_count > 0;
+        let has_stash_items = self.stash_entries.entries.len() > 0;
+        let focus_handle = self.focus_handle.clone();
+
+        PopoverMenu::new(id.into())
+            .trigger(
+                ui::ButtonLike::new_rounded_right("git-changes-actions-split-button-right")
+                    .layer(ui::ElevationIndex::ModalSurface)
+                    .size(ButtonSize::None)
+                    .child(
+                        div()
+                            .px_1()
+                            .child(Icon::new(IconName::ChevronDown).size(IconSize::XSmall)),
+                    ),
+            )
+            .menu(move |window, cx| {
+                Some(git_panel_context_menu(
+                    has_tracked_changes,
+                    has_staged_changes,
+                    has_unstaged_changes,
+                    has_new_changes,
+                    has_stash_items,
+                    focus_handle.clone(),
+                    window,
+                    cx,
+                ))
+            })
+            .anchor(Anchor::TopRight)
+    }
+
+    fn render_git_changes_actions_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let (text, action, stage, tooltip) =
+            if self.total_staged_count() == self.entry_count && self.entry_count > 0 {
+                ("Unstage All", UnstageAll.boxed_clone(), false, "git reset")
+            } else {
+                ("Stage All", StageAll.boxed_clone(), true, "git add --all")
+            };
+
+        SplitButton::new(
+            ButtonLike::new_rounded_left("git-changes-actions-split-button-left")
+                .layer(ElevationIndex::ModalSurface)
+                .size(ButtonSize::Compact)
+                .child(Label::new(text).size(LabelSize::Small).mr_0p5())
+                .tooltip(Tooltip::for_action_title_in(
+                    tooltip,
+                    action.as_ref(),
+                    &self.focus_handle,
+                ))
+                .disabled(self.entry_count == 0)
+                .on_click({
+                    let git_panel = cx.weak_entity();
+                    move |_, _, cx| {
+                        git_panel
+                            .update(cx, |git_panel, cx| {
+                                git_panel.change_all_files_stage(stage, cx);
+                            })
+                            .ok();
+                    }
+                }),
+            self.render_git_changes_actions_menu("git-changes-actions-split-button-menu", cx)
+                .into_any_element(),
+        )
+    }
+
     fn render_changes_header(
         &self,
         _window: &mut Window,
@@ -4778,87 +4936,61 @@ impl GitPanel {
 
         self.active_repository.as_ref()?;
 
-        let (text, action, stage, tooltip) =
-            if self.total_staged_count() == self.entry_count && self.entry_count > 0 {
-                ("Unstage All", UnstageAll.boxed_clone(), false, "git reset")
-            } else {
-                ("Stage All", StageAll.boxed_clone(), true, "git add --all")
-            };
-
         let diff_stat_total = self.diff_stat_total;
 
         Some(
             h_flex()
-                .h(Tab::container_height(cx))
+                .min_h(Tab::container_height(cx))
                 .w_full()
-                .px_1()
+                .pl_1()
+                .pr_2()
                 .flex_none()
+                .flex_wrap()
+                .gap_1()
                 .justify_between()
                 .child(
-                    h_flex()
-                        .gap_1p5()
+                    ButtonLike::new("diff-button")
                         .child(
-                            Button::new("changes", "View Diff")
-                                .label_size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .start_icon(
+                            h_flex()
+                                .gap_1()
+                                .child(
                                     Icon::new(IconName::Diff)
                                         .size(IconSize::Small)
                                         .color(Color::Muted),
                                 )
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "View Diff",
-                                    &Diff,
-                                    &self.focus_handle,
-                                ))
-                                .on_click(|_, _, cx| {
-                                    cx.defer(|cx| {
-                                        cx.dispatch_action(&Diff);
-                                    })
-                                }),
-                        )
-                        .when(
-                            GitPanelSettings::get_global(cx).diff_stats
-                                && diff_stat_total != DiffStat::default(),
-                            |this| {
-                                this.child(
-                                    ui::DiffStat::new(
-                                        "changes-diff-stat-total",
-                                        diff_stat_total.added as usize,
-                                        diff_stat_total.deleted as usize,
-                                    )
-                                    .tooltip("Total tracked changes"),
+                                .child(
+                                    Label::new("View Diff")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
                                 )
-                            },
-                        ),
+                                .when(
+                                    GitPanelSettings::get_global(cx).diff_stats
+                                        && diff_stat_total != DiffStat::default(),
+                                    |this| {
+                                        this.child(ui::DiffStat::new(
+                                            "changes-diff-stat-total",
+                                            diff_stat_total.added as usize,
+                                            diff_stat_total.deleted as usize,
+                                        ))
+                                    },
+                                ),
+                        )
+                        .tooltip(Tooltip::for_action_title_in(
+                            "View Diff",
+                            &Diff,
+                            &self.focus_handle,
+                        ))
+                        .on_click(|_, _, cx| {
+                            cx.defer(|cx| {
+                                cx.dispatch_action(&Diff);
+                            })
+                        }),
                 )
                 .child(
                     h_flex()
                         .gap_1()
                         .child(self.render_view_options_menu("view_options_menu"))
-                        .child(self.render_ellipsis_menu("overflow_menu"))
-                        .child(
-                            Button::new("stage_unstage_all", text)
-                                .label_size(LabelSize::Small)
-                                .layer(ElevationIndex::ModalSurface)
-                                .style(ButtonStyle::Filled)
-                                .tooltip(Tooltip::for_action_title_in(
-                                    tooltip,
-                                    action.as_ref(),
-                                    &self.focus_handle,
-                                ))
-                                .disabled(self.entry_count == 0)
-                                .on_click({
-                                    let git_panel = cx.weak_entity();
-                                    move |_, _, cx| {
-                                        git_panel
-                                            .update(cx, |git_panel, cx| {
-                                                git_panel.change_all_files_stage(stage, cx);
-                                            })
-                                            .ok();
-                                    }
-                                }),
-                        ),
+                        .child(self.render_git_changes_actions_button(cx)),
                 ),
         )
     }
@@ -4880,6 +5012,7 @@ impl GitPanel {
                         &branch,
                         focus_handle,
                         true,
+                        self.pending_remote_operation,
                     ))
                 })
                 .into_any_element(),
@@ -6275,18 +6408,19 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let has_tracked_changes = self.has_tracked_changes();
+        let has_staged_changes = self.has_staged_changes();
+        let has_unstaged_changes = self.has_unstaged_changes();
+        let has_new_changes = self.new_count > 0;
+        let has_stash_items = self.stash_entries.entries.len() > 0;
+
         let context_menu = git_panel_context_menu(
+            has_tracked_changes,
+            has_staged_changes,
+            has_unstaged_changes,
+            has_new_changes,
+            has_stash_items,
             self.focus_handle.clone(),
-            GitMenuState {
-                has_tracked_changes: self.has_tracked_changes(),
-                has_staged_changes: self.has_staged_changes(),
-                has_unstaged_changes: self.has_unstaged_changes(),
-                has_new_changes: self.new_count > 0,
-                sort_by: GitPanelSettings::get_global(cx).sort_by,
-                group_by: GitPanelSettings::get_global(cx).group_by,
-                has_stash_items: self.stash_entries.entries.len() > 0,
-                tree_view: GitPanelSettings::get_global(cx).tree_view,
-            },
             window,
             cx,
         );
@@ -6553,12 +6687,7 @@ impl GitPanel {
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
                     cx.notify();
-                    if event.modifiers().secondary() {
-                        this.open_solo_diff(&Default::default(), window, cx)
-                    } else {
-                        this.open_diff(&Default::default(), window, cx);
-                        this.focus_handle.focus(window, cx);
-                    }
+                    this.open_selected_entry_on_click(event.modifiers().secondary(), window, cx);
                 })
             })
             .on_mouse_down(
@@ -7083,7 +7212,7 @@ impl Render for GitPanel {
 
 impl Focusable for GitPanel {
     fn focus_handle(&self, cx: &App) -> gpui::FocusHandle {
-        if self.entries.is_empty() {
+        if self.entries.is_empty() || self.commit_editor_expanded {
             self.commit_editor.focus_handle(cx)
         } else {
             self.focus_handle.clone()
@@ -7811,6 +7940,7 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme_settings::init(LoadThemes::JustBase, cx);
+            language_model::init(cx);
             editor::init(cx);
             crate::init(cx);
         });
@@ -8968,6 +9098,48 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_remote_operation_serialization(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+        let panel = workspace.update_in(cx, GitPanel::new);
+
+        panel.update(cx, |panel, cx| {
+            // The first remote operation starts and records its kind, which the
+            // button uses to render an "in progress" tooltip.
+            assert!(panel.start_remote_operation(RemoteOperationKind::Fetch, cx));
+            assert!(matches!(
+                panel.pending_remote_operation,
+                Some(RemoteOperationKind::Fetch)
+            ));
+
+            // A second remote operation is refused while one is pending, even a
+            // different kind: we serialize all remote ops.
+            assert!(!panel.start_remote_operation(RemoteOperationKind::Push, cx));
+
+            // Clearing the pending operation re-opens the gate.
+            panel.clear_remote_operation(cx);
+            assert!(panel.pending_remote_operation.is_none());
+            assert!(panel.start_remote_operation(RemoteOperationKind::Pull, cx));
+        });
+    }
+
+    #[gpui::test]
     async fn test_tree_view_without_status_grouping_combines_statuses(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -9871,6 +10043,47 @@ mod tests {
                 panel.commit_editor.read(cx).mode().clone(),
                 EditorMode::AutoHeight { .. }
             ));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_focus_handle(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (_project, workspace, panel, mut cx) = setup_git_panel_with_changes(
+            cx,
+            json!({
+                ".git": {},
+                "tracked": "tracked\n",
+            }),
+            &[("tracked", StatusCode::Modified)],
+        )
+        .await;
+
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.add_panel(panel.clone(), window, cx);
+        });
+
+        // With changes present and the editor not expanded, the panel's own
+        // focus handle should be returned, in order for
+        // `git_panel::ToggleFocus` to focus on the panel itself.
+        panel.update_in(&mut cx, |panel, _window, cx| {
+            assert!(!panel.entries.is_empty());
+            assert!(!panel.commit_editor_expanded);
+            assert_eq!(panel.focus_handle(cx), panel.focus_handle.clone());
+        });
+
+        // Expand the editor so we can later confirm that toggling focus
+        // actually focuses on the commit editor, seeing as it has been
+        // expanded.
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.toggle_fill_commit_editor(&ToggleFillCommitEditor, window, cx);
+            assert!(panel.commit_editor_expanded);
+        });
+
+        cx.dispatch_action(super::ToggleFocus);
+        panel.update_in(&mut cx, |panel, window, cx| {
+            assert!(panel.commit_editor.focus_handle(cx).is_focused(window));
         });
     }
 }

@@ -342,6 +342,7 @@ fn supported_thinking_effort_levels(model: &x_ai::Model) -> Vec<LanguageModelEff
                 open_ai::ReasoningEffort::Medium => ("Medium", "medium"),
                 open_ai::ReasoningEffort::High => ("High", "high"),
                 open_ai::ReasoningEffort::XHigh => ("Extra High", "xhigh"),
+                open_ai::ReasoningEffort::Max => return None, // Not supported by any xAI models
             };
 
             Some(LanguageModelEffortLevel {
@@ -443,6 +444,7 @@ impl LanguageModel for XAiLanguageModel {
             self.model.supports_parallel_tool_calls(),
             self.model.supports_prompt_cache_key(),
             self.max_output_tokens(),
+            crate::provider::open_ai::ChatCompletionMaxTokensParameter::MaxCompletionTokens,
             reasoning_effort,
             false,
         );

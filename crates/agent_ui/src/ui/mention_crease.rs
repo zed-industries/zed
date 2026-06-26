@@ -1,7 +1,7 @@
 use std::{path::PathBuf, time::Duration};
 
 use acp_thread::MentionUri;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use editor::Editor;
 use gpui::{
     Animation, AnimationExt, AnyView, Context, IntoElement, TaskExt, WeakEntity, Window,
