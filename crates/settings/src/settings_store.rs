@@ -1796,6 +1796,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_default_semantic_token_rules_cover_roslyn_token_types() {
+        let rules: SemanticTokenRules =
+            crate::parse_json_with_comments(&crate::default_semantic_token_rules())
+                .expect("default_semantic_token_rules.json must parse");
+
+        // C# (Roslyn) reports its own extended token-type legend instead of the
+        // standard LSP types. Each of these needs a rule with a non-empty style,
+        // otherwise the tokens are dropped and C# falls back to tree-sitter-only
+        // highlighting.
+        for token_type in [
+            "field",
+            "constant",
+            "controlKeyword",
+            "delegate",
+            "extensionMethod",
+            "operatorOverloaded",
+            "recordClass",
+            "recordStruct",
+            "module",
+        ] {
+            assert!(
+                rules.rules.iter().any(|rule| {
+                    rule.token_type.as_deref() == Some(token_type) && !rule.style.is_empty()
+                }),
+                "default semantic token rules must map the C# (Roslyn) token type {token_type:?}"
+            );
+        }
+    }
+
     #[gpui::test]
     fn test_default_settings_release_channel_overrides(cx: &mut App) {
         // The test deals with overrides and should ignore the other set-ups (Preview and Stable runs)

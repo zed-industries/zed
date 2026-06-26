@@ -253,4 +253,75 @@
     "token_modifiers": [],
     "style": ["type.event", "type"],
   },
+  // C# (Roslyn) extended classification types
+  {
+    "token_type": "field",
+    "token_modifiers": [],
+    "style": ["property", "variable.member", "variable"],
+  },
+  {
+    "token_type": "constant",
+    "token_modifiers": [],
+    "style": ["constant"],
+  },
+  {
+    "token_type": "controlKeyword",
+    "token_modifiers": [],
+    "style": ["keyword.control", "keyword"],
+  },
+  {
+    "token_type": "delegate",
+    "token_modifiers": [],
+    "style": ["type.delegate", "type"],
+  },
+  {
+    "token_type": "extensionMethod",
+    "token_modifiers": [],
+    "style": ["function.method", "function"],
+  },
+  {
+    "token_type": "operatorOverloaded",
+    "token_modifiers": [],
+    "style": ["operator"],
+  },
+  {
+    "token_type": "recordClass",
+    "token_modifiers": [],
+    "style": ["type.class", "class", "type"],
+  },
+  {
+    "token_type": "recordStruct",
+    "token_modifiers": [],
+    "style": ["type.struct", "struct", "type"],
+  },
+  {
+    "token_type": "module",
+    "token_modifiers": [],
+    "style": ["namespace", "module"],
+  },
+  {
+    "token_type": "functionPointer",
+    "token_modifiers": [],
+    "style": ["function", "type"],
+  },
+  {
+    "token_type": "pointer",
+    "token_modifiers": [],
+    "style": ["type"],
+  },
+  {
+    "token_type": "excludedCode",
+    "token_modifiers": [],
+    "style": ["comment"],
+  },
+  {
+    "token_type": "stringVerbatim",
+    "token_modifiers": [],
+    "style": ["string"],
+  },
+  {
+    "token_type": "stringEscapeCharacter",
+    "token_modifiers": [],
+    "style": ["string.escape", "string.special", "string"],
+  },
 ]
