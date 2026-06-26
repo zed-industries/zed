@@ -5,6 +5,10 @@ on:
     - cron: "0 */12 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   update_top_ranking_issues:
     runs-on: namespace-profile-2x4-ubuntu-2404

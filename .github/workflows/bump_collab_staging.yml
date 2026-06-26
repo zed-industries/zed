@@ -5,6 +5,9 @@ on:
     # Fire every day at 16:00 UTC (At the start of the US workday)
     - cron: "0 16 * * *"
 
+permissions:
+  contents: write
+
 jobs:
   update-collab-staging-tag:
     if: github.repository_owner == 'zed-industries'

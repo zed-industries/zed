@@ -13,6 +13,9 @@ on:
         type: number
         default: 1000
 
+permissions:
+  issues: write
+
 jobs:
   stale:
     if: github.repository_owner == 'zed-industries'

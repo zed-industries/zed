@@ -14,6 +14,9 @@ on:
       - "PR Issue Labeler"
     types: [completed]
 
+permissions:
+  contents: read
+
 jobs:
   notify-slack:
     if: >-

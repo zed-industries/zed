@@ -8,6 +8,8 @@ on:
   push:
     tags:
     - v*
+permissions:
+  contents: write
 jobs:
   run_tests_mac:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

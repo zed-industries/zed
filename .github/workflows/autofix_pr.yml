@@ -13,6 +13,9 @@ on:
         description: run_clippy
         type: boolean
         default: 'true'
+permissions:
+  contents: read
+  pull-requests: read
 jobs:
   run_autofix:
     runs-on: namespace-profile-16x32-ubuntu-2204

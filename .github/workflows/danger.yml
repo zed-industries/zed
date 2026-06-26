@@ -11,6 +11,8 @@ on:
     - edited
     branches:
     - main
+permissions:
+  contents: read
 jobs:
   danger:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

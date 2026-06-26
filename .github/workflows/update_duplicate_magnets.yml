@@ -5,6 +5,10 @@ on:
     - cron: "0 6 * * 1,4" # Mondays and Thursdays at 6 AM UTC
   workflow_dispatch:
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   update-duplicate-magnets:
     runs-on: ubuntu-latest

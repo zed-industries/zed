@@ -1,4 +1,6 @@
-use gh_workflow::{Event, Expression, Level, Push, Run, Step, Use, Workflow, ctx::Context};
+use gh_workflow::{
+    Event, Expression, Level, Permissions, Push, Run, Step, Use, Workflow, ctx::Context,
+};
 use indoc::formatdoc;
 
 use crate::tasks::workflows::{
@@ -101,6 +103,10 @@ pub(crate) fn release() -> Workflow {
     named::workflow()
         .on(Event::default().push(Push::default().tags(vec!["v*".to_string()])))
         .concurrency(vars::one_workflow_per_non_main_branch())
+        // `upload_release_assets` uploads GitHub release assets using the workflow
+        // `GITHUB_TOKEN`, which requires `contents: write`. All other jobs either only
+        // read the repo or authenticate with a separate GitHub App token.
+        .permissions(Permissions::default().contents(Level::Write))
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", "1"))
         .add_job(macos_tests.name, macos_tests.job)
