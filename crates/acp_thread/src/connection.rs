@@ -185,7 +185,10 @@ pub trait AgentConnection {
     }
 
     /// Returns a capability for agents that accept client-generated user message IDs.
-    fn prompt_with_rewind(&self, _cx: &App) -> Option<Rc<dyn AgentSessionPromptWithRewind>> {
+    fn client_user_message_ids(
+        &self,
+        _cx: &App,
+    ) -> Option<Rc<dyn AgentSessionClientUserMessageIds>> {
         None
     }
 
@@ -259,7 +262,7 @@ pub trait AgentSessionTruncate {
     fn run(&self, client_user_message_id: ClientUserMessageId, cx: &mut App) -> Task<Result<()>>;
 }
 
-pub trait AgentSessionPromptWithRewind {
+pub trait AgentSessionClientUserMessageIds {
     fn prompt(
         &self,
         client_user_message_id: ClientUserMessageId,
@@ -1010,8 +1013,11 @@ mod test_support {
             }
         }
 
-        fn prompt_with_rewind(&self, _cx: &App) -> Option<Rc<dyn AgentSessionPromptWithRewind>> {
-            Some(Rc::new(StubAgentSessionPromptWithRewind {
+        fn client_user_message_ids(
+            &self,
+            _cx: &App,
+        ) -> Option<Rc<dyn AgentSessionClientUserMessageIds>> {
+            Some(Rc::new(StubAgentSessionClientUserMessageIds {
                 connection: self.clone(),
             }))
         }
@@ -1058,11 +1064,11 @@ mod test_support {
         }
     }
 
-    struct StubAgentSessionPromptWithRewind {
+    struct StubAgentSessionClientUserMessageIds {
         connection: StubAgentConnection,
     }
 
-    impl AgentSessionPromptWithRewind for StubAgentSessionPromptWithRewind {
+    impl AgentSessionClientUserMessageIds for StubAgentSessionClientUserMessageIds {
         fn prompt(
             &self,
             _client_user_message_id: ClientUserMessageId,

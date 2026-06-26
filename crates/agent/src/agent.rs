@@ -2619,11 +2619,11 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         }) as Rc<dyn AgentModelSelector>)
     }
 
-    fn prompt_with_rewind(
+    fn client_user_message_ids(
         &self,
         _cx: &App,
-    ) -> Option<Rc<dyn acp_thread::AgentSessionPromptWithRewind>> {
-        let prompt: Rc<dyn acp_thread::AgentSessionPromptWithRewind> = Rc::new(self.clone());
+    ) -> Option<Rc<dyn acp_thread::AgentSessionClientUserMessageIds>> {
+        let prompt: Rc<dyn acp_thread::AgentSessionClientUserMessageIds> = Rc::new(self.clone());
         Some(prompt)
     }
 
@@ -2632,7 +2632,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
-        acp_thread::AgentSessionPromptWithRewind::prompt(
+        acp_thread::AgentSessionClientUserMessageIds::prompt(
             self,
             acp_thread::ClientUserMessageId::new(),
             params,
@@ -2710,7 +2710,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     }
 }
 
-impl acp_thread::AgentSessionPromptWithRewind for NativeAgentConnection {
+impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
     fn prompt(
         &self,
         client_user_message_id: acp_thread::ClientUserMessageId,
@@ -3834,7 +3834,7 @@ mod internal_tests {
 
         let compact_message_id = ClientUserMessageId::new();
         let prompt_task = cx.update(|cx| {
-            acp_thread::AgentSessionPromptWithRewind::prompt(
+            acp_thread::AgentSessionClientUserMessageIds::prompt(
                 connection.as_ref(),
                 compact_message_id,
                 acp::PromptRequest::new(session_id.clone(), vec!["/compact".into()]),

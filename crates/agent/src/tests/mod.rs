@@ -3865,7 +3865,7 @@ async fn test_agent_connection(cx: &mut TestAppContext) {
     drop(acp_thread);
     let result = cx
         .update(|cx| {
-            acp_thread::AgentSessionPromptWithRewind::prompt(
+            acp_thread::AgentSessionClientUserMessageIds::prompt(
                 &connection,
                 acp_thread::ClientUserMessageId::new(),
                 acp::PromptRequest::new(session_id.clone(), vec!["ghi".into()]),

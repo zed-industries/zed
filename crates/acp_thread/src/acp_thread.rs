@@ -3173,8 +3173,8 @@ impl AcpThread {
         let request = acp::PromptRequest::new(self.session_id.clone(), message.clone());
         let git_store = self.project.read(cx).git_store().clone();
 
-        let prompt_with_rewind = self.connection.prompt_with_rewind(cx);
-        let rewind_id = prompt_with_rewind
+        let client_user_message_ids = self.connection.client_user_message_ids(cx);
+        let rewind_id = client_user_message_ids
             .as_ref()
             .map(|_| ClientUserMessageId::new());
 
@@ -3213,7 +3213,7 @@ impl AcpThread {
             }
 
             this.update(cx, |this, cx| {
-                if let (Some(prompt), Some(rewind_id)) = (prompt_with_rewind, rewind_id) {
+                if let (Some(prompt), Some(rewind_id)) = (client_user_message_ids, rewind_id) {
                     prompt.prompt(rewind_id, request, cx)
                 } else {
                     this.connection.prompt(request, cx)
@@ -6890,11 +6890,14 @@ mod tests {
             }
         }
 
-        fn prompt_with_rewind(&self, _cx: &App) -> Option<Rc<dyn AgentSessionPromptWithRewind>> {
+        fn client_user_message_ids(
+            &self,
+            _cx: &App,
+        ) -> Option<Rc<dyn AgentSessionClientUserMessageIds>> {
             self.supports_truncate.then(|| {
-                Rc::new(FakeAgentSessionPromptWithRewind {
+                Rc::new(FakeAgentSessionClientUserMessageIds {
                     connection: self.clone(),
-                }) as Rc<dyn AgentSessionPromptWithRewind>
+                }) as Rc<dyn AgentSessionClientUserMessageIds>
             })
         }
 
@@ -6952,11 +6955,11 @@ mod tests {
         }
     }
 
-    struct FakeAgentSessionPromptWithRewind {
+    struct FakeAgentSessionClientUserMessageIds {
         connection: FakeAgentConnection,
     }
 
-    impl AgentSessionPromptWithRewind for FakeAgentSessionPromptWithRewind {
+    impl AgentSessionClientUserMessageIds for FakeAgentSessionClientUserMessageIds {
         fn prompt(
             &self,
             _client_user_message_id: ClientUserMessageId,
