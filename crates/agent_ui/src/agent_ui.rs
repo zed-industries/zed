@@ -196,8 +196,6 @@ actions!(
         CycleFavoriteModels,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
-        /// Adds a context server to the configuration.
-        AddContextServer,
         /// Archives the currently selected thread.
         ArchiveSelectedThread,
         /// Removes the currently selected thread.
@@ -262,6 +260,9 @@ actions!(
         RemoveFirstQueuedMessage,
         /// Edits the first message in the queue (the next one to be sent).
         EditFirstQueuedMessage,
+        /// Toggles steering for the first queued message: when on, it interrupts
+        /// the agent at its next step instead of waiting for it to finish.
+        ToggleSteerFirstQueuedMessage,
         /// Clears all messages from the queue.
         ClearMessageQueue,
         /// Opens the permission granularity dropdown for the current tool call.
@@ -351,6 +352,49 @@ pub struct ToggleCommandPattern {
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
 pub struct NewThread;
+
+/// The kind of context server to configure when adding a new one.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextServerType {
+    /// A context server that runs locally via stdin/stdout.
+    #[default]
+    Local,
+    /// A context server that is connected to over HTTP.
+    Remote,
+}
+
+/// Adds a context server to the configuration.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct AddContextServer {
+    /// The kind of context server to add.
+    #[serde(default)]
+    pub context_server_type: ContextServerType,
+}
+
+impl Default for AddContextServer {
+    fn default() -> Self {
+        Self::local()
+    }
+}
+
+impl AddContextServer {
+    /// Returns an action that adds a local (stdin/stdout) context server.
+    pub fn local() -> Self {
+        Self {
+            context_server_type: ContextServerType::Local,
+        }
+    }
+
+    /// Returns an action that adds a remote (HTTP) context server.
+    pub fn remote() -> Self {
+        Self {
+            context_server_type: ContextServerType::Remote,
+        }
+    }
+}
 
 /// Creates a new external agent conversation thread.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]

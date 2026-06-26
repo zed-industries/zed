@@ -67,11 +67,13 @@ use std::{
 };
 use theme::{ActiveTheme, GlobalTheme, ThemeRegistry};
 use theme_settings::load_user_theme;
-use util::{ResultExt, TryFutureExt, maybe};
+use util::{ResultExt, maybe};
 use uuid::Uuid;
 use workspace::{
     AppState, MultiWorkspace, SerializedWorkspaceLocation, SessionWorkspace, Toast,
-    WorkspaceSettings, WorkspaceStore, notifications::NotificationId, restore_multiworkspace,
+    WorkspaceSettings, WorkspaceStore,
+    notifications::{NotificationId, NotifyResultExt},
+    restore_multiworkspace,
 };
 use zed::{
     OpenListener, OpenRequest, RawOpenRequest, app_menus, build_window_options,
@@ -202,11 +204,10 @@ static STARTUP_TIME: OnceLock<Instant> = OnceLock::new();
 fn main() {
     STARTUP_TIME.get_or_init(|| Instant::now());
 
-    // If this process was re-executed as a sandbox launcher (Linux
-    // bwrap/seccomp), install the seccomp policy and exec the wrapped command
-    // without returning. Must run before argument parsing: the wrapped
-    // command's args are appended verbatim and would otherwise be
-    // misinterpreted as Zed's own arguments.
+    // If this process was re-executed as a Linux sandbox helper, run that mode
+    // without returning. Must run before argument parsing: the wrapped command's
+    // args are appended verbatim and would otherwise be misinterpreted as Zed's
+    // own arguments.
     sandbox::run_sandbox_launcher_if_invoked();
 
     #[cfg(unix)]
@@ -1392,9 +1393,9 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     task.await?;
                 }
                 let client = app_state.client.clone();
-                // we continue even if authentication fails as join_channel/ open channel notes will
+                // we continue even if connection fails as join_channel/ open channel notes will
                 // show a visible error message.
-                authenticate(client, cx).await.log_err();
+                client.connect(true, cx).await.into_response().log_err();
 
                 if let Some(channel_id) = request.join_channel {
                     cx.update(|cx| {
@@ -1413,6 +1414,7 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                     workspace::get_any_active_multi_workspace(app_state, cx.clone()).await?;
 
                 let workspace = workspace_window.read_with(cx, |mw, _| mw.workspace().clone())?;
+                let weak_workspace = workspace.downgrade();
 
                 let mut promises = Vec::new();
                 for (channel_id, heading) in request.open_channel_notes {
@@ -1424,10 +1426,11 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
                             window,
                             cx,
                         )
-                        .log_err()
                     })?)
                 }
-                future::join_all(promises).await;
+                for result in future::join_all(promises).await {
+                    result.notify_workspace_async_err(weak_workspace.clone(), cx);
+                }
                 anyhow::Ok(())
             })
             .await;

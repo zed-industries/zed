@@ -1916,7 +1916,7 @@ impl ProjectSearchView {
     }
 }
 
-fn buffer_search_query(
+pub(crate) fn buffer_search_query(
     workspace: &mut Workspace,
     item: &dyn ItemHandle,
     cx: &mut Context<Workspace>,

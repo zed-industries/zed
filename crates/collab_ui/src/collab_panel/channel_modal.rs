@@ -65,11 +65,7 @@ impl ChannelModal {
                 window,
                 cx,
             )
-            .modal(false)
-            .initial_width(rems(34.))
-            .minimum_results_width(rems(34.))
-            .height(rems(24.))
-            .no_vertical_padding()
+            .embedded()
         });
 
         Self {

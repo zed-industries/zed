@@ -73,6 +73,12 @@
   "agent_buffer_font_size": 12,
   // The default font size for the commit editor in the git panel and commit modal.
   "git_commit_buffer_font_size": 12,
+  // The default font size for the markdown preview. Falls back to the editor font size if unset.
+  "markdown_preview_font_size": null,
+  // The font family for the markdown preview. Falls back to the UI font family if unset.
+  "markdown_preview_font_family": null,
+  // The font family for code blocks in the markdown preview. Falls back to the editor font family if unset.
+  "markdown_preview_code_font_family": null,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.

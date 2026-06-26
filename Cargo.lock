@@ -116,6 +116,7 @@ dependencies = [
  "language_model",
  "log",
  "markdown",
+ "mime",
  "multi_buffer",
  "parking_lot",
  "portable-pty",
@@ -127,6 +128,7 @@ dependencies = [
  "settings",
  "task",
  "telemetry",
+ "tempfile",
  "terminal",
  "text",
  "ui",
@@ -319,9 +321,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.15.0"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "794aea8f191be00ab10233745d49b49f53be6a3f4d7fe540f681aebc535c5415"
+checksum = "e981a7d0207a0e9eb67d0faafc04e8c6601dea572d67a3163798897c0024521d"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
@@ -336,13 +338,14 @@ dependencies = [
  "shell-words",
  "tracing",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "0.15.0"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83ffd930c0d668152ce6d591189f324835d46031eabecb51ada3619ad7e2a278"
+checksum = "0d589c28cbe2978c76f8714cc304bc08355ee2f05d120806717725d9ffa12143"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -350,9 +353,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "0.14.0"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4e7eb6f1e554741f621ae4abb046d4fbb3cb88541bc599693ae7f9aa30b72eb"
+checksum = "ac542aba230234b1591ace7286a47c0514fe3efc3037d43296bde31ba7ee5728"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -523,6 +526,7 @@ dependencies = [
  "remote_server",
  "reqwest_client",
  "rope",
+ "sandbox",
  "schemars 1.0.4",
  "search",
  "semver",
@@ -543,6 +547,7 @@ dependencies = [
  "tree-sitter-md",
  "ui",
  "ui_input",
+ "unicode-segmentation",
  "unindent",
  "url",
  "util",
@@ -10121,7 +10126,7 @@ dependencies = [
 [[package]]
 name = "libwebrtc"
 version = "0.3.26"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c3a55bbc207008f1ca3474b6037fdd3c443cad0f#c3a55bbc207008f1ca3474b6037fdd3c443cad0f"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d0e27be0cdad89eadab3e36207cda0a2b6e359ee#d0e27be0cdad89eadab3e36207cda0a2b6e359ee"
 dependencies = [
  "cxx",
  "glib",
@@ -10219,7 +10224,7 @@ checksum = "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092"
 [[package]]
 name = "livekit"
 version = "0.7.32"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c3a55bbc207008f1ca3474b6037fdd3c443cad0f#c3a55bbc207008f1ca3474b6037fdd3c443cad0f"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d0e27be0cdad89eadab3e36207cda0a2b6e359ee#d0e27be0cdad89eadab3e36207cda0a2b6e359ee"
 dependencies = [
  "base64 0.22.1",
  "bmrng",
@@ -10245,7 +10250,7 @@ dependencies = [
 [[package]]
 name = "livekit-api"
 version = "0.4.14"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c3a55bbc207008f1ca3474b6037fdd3c443cad0f#c3a55bbc207008f1ca3474b6037fdd3c443cad0f"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d0e27be0cdad89eadab3e36207cda0a2b6e359ee#d0e27be0cdad89eadab3e36207cda0a2b6e359ee"
 dependencies = [
  "base64 0.21.7",
  "futures-util",
@@ -10272,7 +10277,7 @@ dependencies = [
 [[package]]
 name = "livekit-protocol"
 version = "0.7.1"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c3a55bbc207008f1ca3474b6037fdd3c443cad0f#c3a55bbc207008f1ca3474b6037fdd3c443cad0f"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d0e27be0cdad89eadab3e36207cda0a2b6e359ee#d0e27be0cdad89eadab3e36207cda0a2b6e359ee"
 dependencies = [
  "futures-util",
  "livekit-runtime",
@@ -10288,7 +10293,7 @@ dependencies = [
 [[package]]
 name = "livekit-runtime"
 version = "0.4.0"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c3a55bbc207008f1ca3474b6037fdd3c443cad0f#c3a55bbc207008f1ca3474b6037fdd3c443cad0f"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d0e27be0cdad89eadab3e36207cda0a2b6e359ee#d0e27be0cdad89eadab3e36207cda0a2b6e359ee"
 dependencies = [
  "tokio",
  "tokio-stream",
@@ -15062,6 +15067,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smol",
+ "telemetry",
  "tempfile",
  "thiserror 2.0.17",
  "urlencoding",
@@ -15154,6 +15160,7 @@ dependencies = [
  "smol",
  "sysinfo 0.37.2",
  "task",
+ "telemetry",
  "tempfile",
  "theme",
  "theme_settings",
@@ -15930,8 +15937,12 @@ name = "sandbox"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures 0.3.32",
+ "http_proxy",
  "libc",
  "log",
+ "serde",
+ "serde_json",
  "smol",
  "tempfile",
 ]
@@ -20954,7 +20965,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys"
 version = "0.3.23"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c3a55bbc207008f1ca3474b6037fdd3c443cad0f#c3a55bbc207008f1ca3474b6037fdd3c443cad0f"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d0e27be0cdad89eadab3e36207cda0a2b6e359ee#d0e27be0cdad89eadab3e36207cda0a2b6e359ee"
 dependencies = [
  "cc",
  "cxx",
@@ -20968,7 +20979,7 @@ dependencies = [
 [[package]]
 name = "webrtc-sys-build"
 version = "0.3.13"
-source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=c3a55bbc207008f1ca3474b6037fdd3c443cad0f#c3a55bbc207008f1ca3474b6037fdd3c443cad0f"
+source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=d0e27be0cdad89eadab3e36207cda0a2b6e359ee#d0e27be0cdad89eadab3e36207cda0a2b6e359ee"
 dependencies = [
  "anyhow",
  "fs2",
@@ -22918,7 +22929,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.9.0"
+version = "1.10.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

@@ -21,7 +21,7 @@ use windows::{
         Foundation::*,
         Graphics::{Direct3D11::ID3D11Device, Gdi::*},
         Security::Credentials::*,
-        System::{Com::*, LibraryLoader::*, Ole::*, SystemInformation::*},
+        System::{Com::*, LibraryLoader::*, Ole::*, Power::*, SystemInformation::*},
         UI::{Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
     core::*,
@@ -45,6 +45,7 @@ pub struct WindowsPlatform {
     /// as resizing them has failed, causing us to have lost at least the render target.
     invalidate_devices: Arc<AtomicBool>,
     handle: HWND,
+    suspend_resume_notification: RefCell<Option<HPOWERNOTIFY>>,
     disable_direct_composition: bool,
 }
 
@@ -77,6 +78,7 @@ struct PlatformCallbacks {
     will_open_app_menu: Cell<Option<Box<dyn FnMut()>>>,
     validate_app_menu_command: Cell<Option<Box<dyn FnMut(&dyn Action) -> bool>>>,
     keyboard_layout_change: Cell<Option<Box<dyn FnMut()>>>,
+    system_wake: Cell<Option<Box<dyn FnMut()>>>,
 }
 
 impl WindowsPlatformState {
@@ -193,6 +195,7 @@ impl WindowsPlatform {
             foreground_executor,
             text_system,
             direct_write_text_system,
+            suspend_resume_notification: RefCell::new(None),
             disable_direct_composition,
             drop_target_helper,
             invalidate_devices: Arc::new(AtomicBool::new(false)),
@@ -628,6 +631,21 @@ impl Platform for WindowsPlatform {
         self.inner.state.callbacks.reopen.set(Some(callback));
     }
 
+    fn on_system_wake(&self, callback: Box<dyn FnMut()>) {
+        self.inner.state.callbacks.system_wake.set(Some(callback));
+        let mut notification = self.suspend_resume_notification.borrow_mut();
+        if notification.is_none() {
+            *notification = unsafe {
+                // SAFETY: self.handle is the platform window receiving WM_POWERBROADCAST.
+                RegisterSuspendResumeNotification(
+                    HANDLE(self.handle.0),
+                    DEVICE_NOTIFY_WINDOW_HANDLE,
+                )
+                .log_err()
+            };
+        }
+    }
+
     fn set_menus(&self, menus: Vec<Menu>, _keymap: &Keymap) {
         *self.inner.state.menus.borrow_mut() = menus.into_iter().map(|menu| menu.owned()).collect();
     }
@@ -882,6 +900,7 @@ impl WindowsPlatformInner {
             | WM_GPUI_DOCK_MENU_ACTION
             | WM_GPUI_KEYBOARD_LAYOUT_CHANGED
             | WM_GPUI_GPU_DEVICE_LOST => self.handle_gpui_events(msg, wparam, lparam),
+            WM_POWERBROADCAST => self.handle_power_broadcast(wparam),
             _ => None,
         };
         if let Some(result) = handled {
@@ -1018,6 +1037,13 @@ impl WindowsPlatformInner {
         Some(0)
     }
 
+    fn handle_power_broadcast(&self, wparam: WPARAM) -> Option<isize> {
+        if wparam.0 as u32 == PBT_APMRESUMEAUTOMATIC {
+            self.with_callback(|callbacks| &callbacks.system_wake, |callback| callback());
+        }
+        Some(1)
+    }
+
     fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
         let directx_devices = lparam.0 as *const DirectXDevices;
         let directx_devices = unsafe { &*directx_devices };
@@ -1031,6 +1057,10 @@ impl WindowsPlatformInner {
 impl Drop for WindowsPlatform {
     fn drop(&mut self) {
         unsafe {
+            if let Some(notification) = self.suspend_resume_notification.borrow_mut().take() {
+                // SAFETY: notification was returned by RegisterSuspendResumeNotification.
+                UnregisterSuspendResumeNotification(notification).log_err();
+            }
             DestroyWindow(self.handle)
                 .context("Destroying platform window")
                 .log_err();
