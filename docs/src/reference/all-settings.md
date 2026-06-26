@@ -1754,6 +1754,7 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
   "status_bar": {
     "active_language_button": true,
     "cursor_position_button": true,
+    "edit_prediction_button": true,
     "line_endings_button": false
   }
 }

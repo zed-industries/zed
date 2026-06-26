@@ -79,6 +79,10 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
         }
     }
 
+    pub fn clear(&self) {
+        self.0.borrow_mut().take();
+    }
+
     pub fn toggle(&self, window: &mut Window, cx: &mut App) {
         if let Some(state) = self.0.borrow().as_ref() {
             if state.menu.borrow().is_some() {

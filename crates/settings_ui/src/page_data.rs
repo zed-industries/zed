@@ -3757,7 +3757,7 @@ fn search_and_files_page() -> SettingsPage {
 }
 
 fn window_and_layout_page() -> SettingsPage {
-    fn status_bar_section() -> [SettingsPageItem; 11] {
+    fn status_bar_section() -> [SettingsPageItem; 12] {
         [
             SettingsPageItem::SectionHeader("Status Bar"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3866,6 +3866,29 @@ fn window_and_layout_page() -> SettingsPage {
                             .status_bar
                             .get_or_insert_default()
                             .line_endings_button = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Edit Predictions Button",
+                description: "Show the edit predictions button in the status bar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("status_bar.edit_prediction_button"),
+                    pick: |settings_content| {
+                        settings_content
+                            .status_bar
+                            .as_ref()?
+                            .edit_prediction_button
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .status_bar
+                            .get_or_insert_default()
+                            .edit_prediction_button = value;
                     },
                 }),
                 metadata: None,

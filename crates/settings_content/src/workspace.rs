@@ -513,6 +513,10 @@ pub struct StatusBarSettingsContent {
     ///
     /// Default: false
     pub line_endings_button: Option<bool>,
+    /// Whether to show the edit prediction button in the status bar.
+    ///
+    /// Default: true
+    pub edit_prediction_button: Option<bool>,
     /// Whether to show the active encoding button in the status bar.
     ///
     /// Default: non_utf8

@@ -15708,6 +15708,26 @@ mod tests {
         workspace.read_with(cx, |workspace, cx| {
             let visible = workspace.status_bar_visible(cx);
             assert!(visible, "Status bar should be visible by default");
+            assert!(
+                StatusBarSettings::get_global(cx).edit_prediction_button,
+                "Edit prediction status button should be visible by default"
+            );
+        });
+
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .status_bar
+                    .get_or_insert_default()
+                    .edit_prediction_button = Some(false);
+            });
+        });
+
+        workspace.read_with(cx, |_, cx| {
+            assert!(
+                !StatusBarSettings::get_global(cx).edit_prediction_button,
+                "Edit prediction status button should be hidden when disabled"
+            );
         });
 
         // Test with status bar hidden
