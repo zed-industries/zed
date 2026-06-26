@@ -2692,7 +2692,7 @@ impl GitPanel {
 
         let (_, skill_name) = cx
             .global::<SettingsStore>()
-            .get_value_from_file(SettingsFile::User(), |settings| {
+            .get_value_from_file(SettingsFile::User, |settings| {
                 settings.project.git_commit_message_skill_name.clone()
             });
 
@@ -2704,8 +2704,8 @@ impl GitPanel {
     }
 
     async fn load_commit_message_skill_content(
-        project: &Entity<Project>,
         fs: Arc<dyn Fs>,
+        repo_work_dir: &Arc<Path>,
         skill_name: Option<(bool, String)>,
     ) -> Option<String> {
         if let Some((local_setting, skill_name)) = skill_name {
@@ -2715,7 +2715,7 @@ impl GitPanel {
                     .join(skill_name)
                     .join(agent_skills::SKILL_FILE_NAME);
 
-                return match agent_skills::read_skill_body(fs, skill_file_path) {
+                return match agent_skills::read_skill_body(&*fs, &skill_file_path).await {
                     Ok(content) => Some(content),
                     Err(_) => None,
                 };
@@ -2724,7 +2724,7 @@ impl GitPanel {
                     .join(skill_name)
                     .join(agent_skills::SKILL_FILE_NAME);
 
-                return match agent_skills::read_skill_body(&fs, user_skill_file_path) {
+                return match agent_skills::read_skill_body(&*fs, &user_skill_file_path).await {
                     Ok(content) => Some(content),
                     Err(_) => None,
                 };
@@ -2857,7 +2857,7 @@ impl GitPanel {
                 let rules_content =
                     Self::load_project_rules(&project, &repo_work_dir, &mut cx).await;
                 let skill_content =
-                    Self::load_commit_message_skill_content(&project, &fs, skill_name).await;
+                    Self::load_commit_message_skill_content(fs, &repo_work_dir, skill_name).await;
                 let user_agents_md = cx.update(|cx| {
                     UserAgentsMd::global(cx)
                         .and_then(|user_agents_md| user_agents_md.content().cloned())
