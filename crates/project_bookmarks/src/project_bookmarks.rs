@@ -92,13 +92,11 @@ impl ProjectBookmarksDelegate {
             .collect();
 
         let bookmarks = cx
-            .spawn({
-                async move |cx| {
-                    let bookmarks = BookmarkStore::all_bookmarks(&bookmark_store, cx).await;
-                    bookmarks
-                        .map(|bookmarks| Arc::new(bookmarks))
-                        .unwrap_or_default()
-                }
+            .spawn(async move |cx| {
+                let bookmarks = BookmarkStore::all_bookmarks(&bookmark_store, cx).await;
+                bookmarks
+                    .map(|bookmarks| Arc::new(bookmarks))
+                    .unwrap_or_default()
             })
             .shared();
 
@@ -194,7 +192,7 @@ impl ProjectBookmarksDelegate {
         }
     }
 
-    fn render_header(&self, project_path: &ProjectPath, cx: &mut App) -> Option<AnyElement> {
+    fn render_header(&self, project_path: &ProjectPath, cx: &mut App) -> AnyElement {
         let path_style = self.project.read(cx).path_style(cx);
         let file_name = project_path
             .path
@@ -219,29 +217,27 @@ impl ProjectBookmarksDelegate {
                     .size(IconSize::Small)
             });
 
-        Some(
-            h_flex()
-                .w_full()
-                .min_w_0()
-                .px(DynamicSpacing::Base06.rems(cx))
-                .py_1()
-                .gap_1p5()
-                .children(file_icon)
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(Label::new(file_name).size(LabelSize::Small))
-                        .when(!directory.is_empty(), |this| {
-                            this.child(
-                                Label::new(directory)
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted)
-                                    .truncate_start(),
-                            )
-                        }),
-                )
-                .into_any_element(),
-        )
+        h_flex()
+            .w_full()
+            .min_w_0()
+            .px(DynamicSpacing::Base06.rems(cx))
+            .py_1()
+            .gap_1p5()
+            .children(file_icon)
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(Label::new(file_name).size(LabelSize::Small))
+                    .when(!directory.is_empty(), |this| {
+                        this.child(
+                            Label::new(directory)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                                .truncate_start(),
+                        )
+                    }),
+            )
+            .into_any_element()
     }
 }
 
@@ -399,13 +395,9 @@ impl PickerDelegate for ProjectBookmarksDelegate {
             .color(Color::Info);
 
         match entry {
-            Entry::Header(project_path) => {
-                if self.group_result_by_path {
-                    self.render_header(project_path, cx)
-                } else {
-                    None
-                }
-            }
+            Entry::Header(project_path) => self
+                .group_result_by_path
+                .then(|| self.render_header(project_path, cx)),
             &Entry::Match(ix) => self.matches.get(ix).map(|mat| {
                 let item_base = ListItem::new(ix)
                     .spacing(ListItemSpacing::Sparse)
@@ -427,54 +419,14 @@ impl PickerDelegate for ProjectBookmarksDelegate {
                             .into_any_element(),
                     )
                 }
-                // .when_else(
-                //     self.group_result_by_path,
-                //     |this| {
-                //         let (bookmark_label, full_path_label) =
-                //             self.labels_for_match(mat, window, cx);
-                //         this.child(bookmark_label.truncate().into_any_element())
-                //     },
-                //     |this| {
-                //         let (bookmark_label, full_path_label) =
-                //             self.labels_for_match(mat, window, cx);
-                //         this.start_slot::<Icon>(Some(icon)).child(
-                //             h_flex()
-                //                 .w_full()
-                //                 .min_w_0()
-                //                 .gap_1p5()
-                //                 .child(bookmark_label.truncate())
-                //                 .child(full_path_label)
-                //                 .into_any_element(),
-                //         )
-                //     },
-                // )
-                // .child({
-                //     if self.group_result_by_path {
-                //         bookmark_label.truncate().into_any_element()
-                //     } else {
-                //         h_flex()
-                //             .w_full()
-                //             .min_w_0()
-                //             .gap_1p5()
-                //             .child(bookmark_label.truncate())
-                //             .child(full_path_label)
-                //             .into_any_element()
-                //     }
-                // })
                 .into_any_element()
             }),
-            Entry::Separator => {
-                if self.group_result_by_path {
-                    Some(
-                        div()
-                            .py(DynamicSpacing::Base04.rems(cx))
-                            .child(Divider::horizontal())
-                            .into_any_element(),
-                    )
-                } else {
-                    None
-                }
-            }
+            Entry::Separator => self.group_result_by_path.then(|| {
+                div()
+                    .py(DynamicSpacing::Base04.rems(cx))
+                    .child(Divider::horizontal())
+                    .into_any_element()
+            }),
         }
     }
 
