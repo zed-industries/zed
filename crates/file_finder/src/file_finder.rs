@@ -1805,6 +1805,20 @@ impl PickerDelegate for FileFinderDelegate {
         self.open_selected_file(secondary, true, window, cx);
     }
 
+    fn confirm_multi(
+        &mut self,
+        secondary: bool,
+        indices: Vec<usize>,
+        window: &mut Window,
+        cx: &mut Context<Picker<FileFinderDelegate>>,
+    ) {
+        for (i, &ix) in indices.iter().enumerate() {
+            self.selected_index = ix;
+            let is_last = i == indices.len() - 1;
+            self.open_selected_file(secondary, is_last, window, cx);
+        }
+    }
+
     fn dismissed(&mut self, _: &mut Window, cx: &mut Context<Picker<FileFinderDelegate>>) {
         self.file_finder
             .update(cx, |_, cx| cx.emit(DismissEvent))

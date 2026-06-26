@@ -10,7 +10,8 @@ use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
-    cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
+    cell::Cell, cell::RefCell, collections::HashMap, collections::HashSet, ops::Range, rc::Rc,
+    sync::Arc, time::Duration,
 };
 use ui::{ContextMenu, Divider, DocumentationAside, PopoverMenuHandle, prelude::*, v_flex};
 use ui_input::ErasedEditorEvent;
@@ -74,6 +75,8 @@ actions!(
         ToggleActionsMenu,
         /// Take the picker's content and open it in a multibuffer
         ToMultiBuffer,
+        /// Toggles the current item in or out of the multi-selection without closing the picker.
+        ToggleMultiSelectItem,
     ]
 );
 
@@ -122,6 +125,9 @@ pub struct Picker<D: PickerDelegate> {
     preview: Option<Preview>,
     pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
+    /// Indices currently toggled into the multi-selection. When non-empty,
+    /// pressing Enter opens all of them instead of the cursor item.
+    pub selected_indices: HashSet<usize>,
     shape: shape::Shape,
     /// The size the picker opens at (and resets to). Defaults depend on whether
     /// the picker has a preview; see [`Picker::initial_width`] / [`Picker::max_height`].
@@ -234,6 +240,22 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>);
+    /// Called when the user confirms a multi-selection (multiple items toggled via
+    /// Cmd/Ctrl+Click or Tab). The default implementation confirms only the first
+    /// item; delegates that support multi-select (e.g. the file finder) should
+    /// override this to open all items at once.
+    fn confirm_multi(
+        &mut self,
+        secondary: bool,
+        indices: Vec<usize>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        if let Some(&first) = indices.first() {
+            self.set_selected_index(first, window, cx);
+            self.confirm(secondary, window, cx);
+        }
+    }
     /// Instead of interacting with currently selected entry, treats editor input literally,
     /// performing some kind of action on it.
     fn confirm_input(
@@ -526,6 +548,7 @@ impl<D: PickerDelegate> Picker<D> {
             element_container,
             pending_update_matches: None,
             confirm_on_update: None,
+            selected_indices: HashSet::default(),
             preview,
             shape_loaded_from_persistence: persisted_shape.is_some(),
             shape: persisted_shape.unwrap_or_else(|| {
@@ -825,9 +848,26 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.delegate.should_dismiss() {
+            self.selected_indices.clear();
             self.delegate.dismissed(window, cx);
             cx.emit(DismissEvent);
         }
+    }
+
+    fn toggle_multi_select_item(
+        &mut self,
+        _: &ToggleMultiSelectItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ix = self.delegate.selected_index();
+        if self.selected_indices.contains(&ix) {
+            self.selected_indices.remove(&ix);
+        } else {
+            self.selected_indices.insert(ix);
+        }
+        self.select_next(&menu::SelectNext, window, cx);
+        cx.notify();
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -932,11 +972,26 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         }
         self.set_selected_index(ix, None, false, window, cx);
-        self.do_confirm(secondary, window, cx)
+        if secondary {
+            if self.selected_indices.contains(&ix) {
+                self.selected_indices.remove(&ix);
+            } else {
+                self.selected_indices.insert(ix);
+            }
+            cx.notify();
+        } else {
+            self.selected_indices.clear();
+            self.do_confirm(false, window, cx);
+        }
     }
 
     fn do_confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(update_query) = self.delegate.confirm_update_query(window, cx) {
+        if !self.selected_indices.is_empty() {
+            let mut indices: Vec<usize> = self.selected_indices.iter().copied().collect();
+            indices.sort();
+            self.selected_indices.clear();
+            self.delegate.confirm_multi(secondary, indices, window, cx);
+        } else if let Some(update_query) = self.delegate.confirm_update_query(window, cx) {
             self.set_query(&update_query, window, cx);
             self.set_selected_index(0, Some(Direction::Down), false, window, cx);
         } else {
@@ -998,6 +1053,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.selected_indices.clear();
         self.update_matches_with_options(query, ScrollBehavior::RevealSelected, window, cx);
     }
 
@@ -1130,9 +1186,31 @@ impl<D: PickerDelegate> Picker<D> {
         let selectable =
             ix < self.delegate.match_count() && self.delegate.can_select(ix, window, cx);
 
+        let is_multi_selected = self.selected_indices.contains(&ix);
+        let is_cursor = ix == self.delegate.selected_index();
+
         div()
             .id(("item", ix))
             .when(selectable, |this| this.cursor_pointer())
+            .when(is_multi_selected && !is_cursor, |this| {
+                this.bg(cx.theme().colors().ghost_element_selected.opacity(0.5))
+            })
+            .when(is_multi_selected && is_cursor, |this| {
+                this.border_l_2()
+                    .border_color(cx.theme().colors().border_focused)
+            })
+            .when(selectable, |this| {
+                this.hover(|s| {
+                    let s = s
+                        .border_l_2()
+                        .border_color(cx.theme().colors().border_focused);
+                    if is_multi_selected {
+                        s.bg(cx.theme().colors().ghost_element_hover)
+                    } else {
+                        s
+                    }
+                })
+            })
             .child(
                 canvas(
                     move |bounds, _window, _cx| {
