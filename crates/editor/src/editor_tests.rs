@@ -31028,7 +31028,7 @@ impl BookmarkTestContext {
     fn toggle_bookmarks_at_rows(&mut self, rows: &[u32]) {
         for &row in rows {
             self.move_to_row(row);
-            self.add_bookmark_with_label("");
+            self.toggle_bookmark();
         }
     }
 
@@ -31048,16 +31048,16 @@ impl BookmarkTestContext {
 }
 
 #[gpui::test]
-async fn test_bookmark_toggling(cx: &mut TestAppContext) {
+async fn test_bookmark_toggling_unlabeled(cx: &mut TestAppContext) {
     let mut ctx =
         BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
 
-    ctx.add_bookmark_with_label("");
+    ctx.toggle_bookmark();
     ctx.editor
         .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
             editor.move_to_end(&MoveToEnd, window, cx);
         });
-    ctx.add_bookmark_with_label("");
+    ctx.toggle_bookmark();
 
     ctx.assert_bookmarked_file_count(1);
     ctx.assert_bookmark_rows(vec![0, 3]);
@@ -31076,7 +31076,43 @@ async fn test_bookmark_toggling(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_bookmark_toggling_unnamed_with_multiple_selections(cx: &mut TestAppContext) {
+async fn test_bookmark_toggling_with_label(cx: &mut TestAppContext) {
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
+
+    ctx.add_bookmark_with_label("first label");
+    ctx.assert_bookmark_labels(vec![(0, "first label")]);
+
+    ctx.toggle_bookmark_with_label();
+
+    ctx.assert_prompt_block_count(0);
+    ctx.assert_bookmarked_file_count(0);
+    ctx.assert_bookmark_rows(vec![]);
+}
+
+#[gpui::test]
+async fn test_bookmark_toggles_can_remove_each_others_bookmarks(cx: &mut TestAppContext) {
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
+
+    ctx.toggle_bookmark();
+    ctx.assert_bookmark_labels(vec![(0, "")]);
+
+    ctx.toggle_bookmark_with_label();
+    ctx.assert_prompt_block_count(0);
+    ctx.assert_bookmarked_file_count(0);
+    ctx.assert_bookmark_rows(vec![]);
+
+    ctx.add_bookmark_with_label("labeled bookmark");
+    ctx.assert_bookmark_labels(vec![(0, "labeled bookmark")]);
+
+    ctx.toggle_bookmark();
+    ctx.assert_bookmarked_file_count(0);
+    ctx.assert_bookmark_rows(vec![]);
+}
+
+#[gpui::test]
+async fn test_bookmark_toggling_unlabeled_with_multiple_selections(cx: &mut TestAppContext) {
     let mut ctx =
         BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
 
@@ -31163,7 +31199,7 @@ async fn test_bookmark_toggle_deduplicates_by_row(cx: &mut TestAppContext) {
         .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
             editor.move_to_beginning(&MoveToBeginning, window, cx);
         });
-    ctx.add_bookmark_with_label("");
+    ctx.toggle_bookmark();
 
     ctx.assert_bookmark_rows(vec![0]);
 
@@ -31188,7 +31224,7 @@ async fn test_bookmark_survives_edits(cx: &mut TestAppContext) {
         BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
 
     ctx.move_to_row(2);
-    ctx.add_bookmark_with_label("");
+    ctx.toggle_bookmark();
     ctx.assert_bookmark_rows(vec![2]);
 
     ctx.editor
@@ -31315,7 +31351,7 @@ async fn test_bookmark_navigation_lands_at_column_zero(cx: &mut TestAppContext) 
         "Cursor should be at the 11th column before toggling bookmark, got column {column_before_toggle}"
     );
 
-    ctx.add_bookmark_with_label("");
+    ctx.toggle_bookmark();
 
     ctx.editor
         .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
@@ -31351,7 +31387,7 @@ async fn test_bookmark_set_from_nonzero_column_toggles_off_from_column_zero(
                 cx,
             );
         });
-    ctx.add_bookmark_with_label("");
+    ctx.toggle_bookmark();
 
     ctx.assert_bookmark_rows(vec![1]);
 
