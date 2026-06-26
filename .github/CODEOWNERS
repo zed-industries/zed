@@ -1,0 +1,3 @@
+/.github/workflows/ @zed-industries/security-team
+/.github/CODEOWNERS @zed-industries/security-team
+/script/danger/dangerfile.ts @zed-industries/security-team
