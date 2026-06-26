@@ -3906,6 +3906,7 @@ dependencies = [
  "lsp",
  "menu",
  "project",
+ "release_channel",
  "serde_json",
  "settings",
  "ui",
