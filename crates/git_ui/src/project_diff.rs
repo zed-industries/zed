@@ -638,8 +638,7 @@ impl ProjectDiff {
             return;
         };
         let repo = git_repo.read(cx);
-        let sort_prefix = project_diff_sort_prefix(repo, &entry.repo_path, entry.status, cx);
-        let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
+        let path_key = project_diff_path_key(repo, &entry.repo_path, entry.status, cx);
 
         self.move_to_path(path_key, window, cx)
     }
@@ -664,8 +663,7 @@ impl ProjectDiff {
             .status_for_path(&repo_path)
             .map(|entry| entry.status)
             .unwrap_or(FileStatus::Untracked);
-        let sort_prefix = project_diff_sort_prefix(&git_repo.read(cx), &repo_path, status, cx);
-        let path_key = PathKey::with_sort_prefix(sort_prefix, repo_path.as_ref().clone());
+        let path_key = project_diff_path_key(&git_repo.read(cx), &repo_path, status, cx);
         self.move_to_path(path_key, window, cx)
     }
 
@@ -821,7 +819,7 @@ impl ProjectDiff {
         conflict_set: Entity<ConflictSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> (BufferId, bool) {
+    ) -> Option<BufferId> {
         let diff_subscription = cx.subscribe_in(&diff, window, {
             let path_key = path_key.clone();
             let buffer = buffer.clone();
@@ -954,7 +952,7 @@ impl ProjectDiff {
             self.move_to_path(path_key, window, cx);
         }
 
-        (buffer_id, needs_fold)
+        needs_fold.then_some(buffer_id)
     }
 
     fn buffer_ranges_changed(
@@ -995,41 +993,16 @@ impl ProjectDiff {
                 .buffers_with_paths()
                 .map(|(buffer_snapshot, path_key)| (path_key.clone(), buffer_snapshot.remote_id()))
                 .collect::<HashMap<_, _>>();
-            let previous_folded_paths = {
-                let snapshot = this.multibuffer.read(cx).snapshot(cx);
-                let rhs_editor = this.editor.read(cx).rhs_editor().clone();
-                snapshot
-                    .buffers_with_paths()
-                    .map(|(buffer_snapshot, path_key)| {
-                        (
-                            path_key.path.clone(),
-                            rhs_editor
-                                .read(cx)
-                                .is_buffer_folded(buffer_snapshot.remote_id(), cx),
-                        )
-                    })
-                    .collect::<HashMap<_, _>>()
-            };
 
             let mut entries = BTreeMap::new();
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
-                let sort_prefixes = project_diff_sort_prefixes(
-                    &repo,
-                    buffers_to_load
-                        .iter()
-                        .map(|diff_buffer| (&diff_buffer.repo_path, diff_buffer.file_status)),
-                    cx,
-                );
-
                 for diff_buffer in buffers_to_load {
-                    let sort_prefix = sort_prefixes
-                        .get(&diff_buffer.repo_path)
-                        .copied()
-                        .unwrap_or(u64::MAX);
-                    let path_key = PathKey::with_sort_prefix(
-                        sort_prefix,
-                        diff_buffer.repo_path.as_ref().clone(),
+                    let path_key = project_diff_path_key(
+                        &repo,
+                        &diff_buffer.repo_path,
+                        diff_buffer.file_status,
+                        cx,
                     );
                     previous_paths.remove(&path_key);
                     entries.insert(path_key, diff_buffer);
@@ -1048,12 +1021,10 @@ impl ProjectDiff {
                 }
             });
 
-            (entries, previous_folded_paths)
+            entries
         })?;
 
-        let (entries, previous_folded_paths) = entries;
         let mut buffers_to_fold = Vec::new();
-        let mut buffers_to_unfold = Vec::new();
 
         for (path_key, entry) in entries {
             if let Some((buffer, diff, conflict_set)) = entry.load.await.log_err() {
@@ -1062,8 +1033,7 @@ impl ProjectDiff {
                 yield_now().await;
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
-                        let path = path_key.path.clone();
-                        let (buffer_id, needs_fold) = this.register_buffer(
+                        if let Some(buffer_id) = this.register_buffer(
                             path_key,
                             entry.file_status,
                             buffer,
@@ -1071,14 +1041,7 @@ impl ProjectDiff {
                             conflict_set,
                             window,
                             cx,
-                        );
-                        if let Some(was_folded) = previous_folded_paths.get(&path) {
-                            if *was_folded {
-                                buffers_to_fold.push(buffer_id);
-                            } else {
-                                buffers_to_unfold.push(buffer_id);
-                            }
-                        } else if needs_fold {
+                        ) {
                             buffers_to_fold.push(buffer_id);
                         }
                     })
@@ -1092,15 +1055,6 @@ impl ProjectDiff {
                     editor
                         .rhs_editor()
                         .update(cx, |editor, cx| editor.fold_buffers(buffers_to_fold, cx));
-                });
-            }
-            if !buffers_to_unfold.is_empty() {
-                this.editor.update(cx, |editor, cx| {
-                    editor.rhs_editor().update(cx, |editor, cx| {
-                        for buffer_id in buffers_to_unfold {
-                            editor.unfold_buffer(buffer_id, cx);
-                        }
-                    });
                 });
             }
             this.pending_scroll.take();
@@ -1133,126 +1087,93 @@ impl ProjectDiff {
     }
 }
 
-fn project_diff_sort_prefix(
+const CONFLICT_SORT_PREFIX: u64 = 1;
+const TRACKED_SORT_PREFIX: u64 = 2;
+const NEW_SORT_PREFIX: u64 = 3;
+
+/// Computes a stable [`PathKey`] for a buffer in the project diff.
+///
+/// The key is an intrinsic function of the file's own repo path and status; it
+/// never depends on which other buffers happen to be present in the
+/// multibuffer. This is required because the multibuffer uses the path key both
+/// to order excerpts and to identify which excerpts belong to a given buffer, so
+/// a key that shifted as files were added or removed would break that identity.
+///
+/// Status grouping is encoded in the `sort_prefix`, and the within-group order
+/// is encoded in the (possibly synthetic) path so that `PathKey`'s natural
+/// ordering reproduces the git panel's order. The path here is only ever used
+/// for sorting and multibuffer identity; the path shown in the UI comes from the
+/// buffer's own `File`.
+fn project_diff_path_key(
     repo: &Repository,
     repo_path: &RepoPath,
     status: FileStatus,
     cx: &App,
-) -> u64 {
-    let mut entries = repo
-        .cached_status()
-        .map(|entry| (entry.repo_path.clone(), entry.status))
-        .collect::<Vec<_>>();
-    if !entries
-        .iter()
-        .any(|(entry_path, _status)| entry_path == repo_path)
-    {
-        entries.push((repo_path.clone(), status));
-    }
-
-    project_diff_sort_prefixes(
-        repo,
-        entries.iter().map(|(path, status)| (path, *status)),
-        cx,
-    )
-    .get(repo_path)
-    .copied()
-    .unwrap_or(u64::MAX)
-}
-
-fn project_diff_sort_prefixes<'a>(
-    repo: &Repository,
-    entries: impl IntoIterator<Item = (&'a RepoPath, FileStatus)>,
-    cx: &App,
-) -> HashMap<RepoPath, u64> {
+) -> PathKey {
     let settings = GitPanelSettings::get_global(cx);
-    let group_by_status = settings.group_by == GitPanelGroupBy::Status;
-
-    let mut conflict_entries = Vec::new();
-    let mut tracked_entries = Vec::new();
-    let mut new_entries = Vec::new();
-
-    for (repo_path, status) in entries {
-        let entry = (repo_path.clone(), status);
-        if group_by_status && repo.had_conflict_on_last_merge_head_change(repo_path) {
-            conflict_entries.push(entry);
-        } else if group_by_status && status.is_created() {
-            new_entries.push(entry);
-        } else {
-            tracked_entries.push(entry);
-        }
-    }
-
-    let mut ordered_paths = Vec::new();
-    for mut section_entries in [conflict_entries, tracked_entries, new_entries] {
-        if settings.tree_view {
-            append_tree_order(&mut ordered_paths, section_entries);
-        } else {
-            sort_flat_entries(&mut section_entries, settings.sort_by);
-            ordered_paths.extend(
-                section_entries
-                    .into_iter()
-                    .map(|(repo_path, _status)| repo_path),
-            );
-        }
-    }
-
-    ordered_paths
-        .into_iter()
-        .enumerate()
-        .map(|(index, repo_path)| (repo_path, index as u64 + 1))
-        .collect()
+    let sort_prefix = if settings.group_by != GitPanelGroupBy::Status {
+        TRACKED_SORT_PREFIX
+    } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
+        CONFLICT_SORT_PREFIX
+    } else if status.is_created() {
+        NEW_SORT_PREFIX
+    } else {
+        TRACKED_SORT_PREFIX
+    };
+    let path = project_diff_sort_path(repo_path, settings.tree_view, settings.sort_by);
+    PathKey::with_sort_prefix(sort_prefix, path)
 }
 
-fn sort_flat_entries(entries: &mut [(RepoPath, FileStatus)], sort_by: GitPanelSortBy) {
-    match sort_by {
-        GitPanelSortBy::Path => entries.sort_by(|(a_path, _), (b_path, _)| a_path.cmp(b_path)),
-        GitPanelSortBy::Name => entries.sort_by(|(a_path, _), (b_path, _)| {
-            a_path
-                .file_name()
-                .cmp(&b_path.file_name())
-                .then_with(|| a_path.cmp(b_path))
-        }),
+fn project_diff_sort_path(
+    repo_path: &RelPath,
+    tree_view: bool,
+    sort_by: GitPanelSortBy,
+) -> Arc<RelPath> {
+    if tree_view {
+        tree_sort_path(repo_path)
+    } else {
+        match sort_by {
+            GitPanelSortBy::Path => repo_path.into_arc(),
+            GitPanelSortBy::Name => name_sort_path(repo_path),
+        }
     }
 }
 
-fn append_tree_order(ordered_paths: &mut Vec<RepoPath>, mut entries: Vec<(RepoPath, FileStatus)>) {
-    entries.sort_by(|(a_path, _), (b_path, _)| a_path.cmp(b_path));
-
-    let mut root = ProjectDiffTreeNode::default();
-    for (repo_path, _status) in entries {
-        let components: Vec<&str> = repo_path.components().collect();
-        if components.is_empty() {
-            root.files.push(repo_path);
-            continue;
-        }
-
-        let mut current = &mut root;
-        for (index, component) in components.iter().enumerate() {
-            if index == components.len() - 1 {
-                current.files.push(repo_path.clone());
-            } else {
-                current = current.children.entry((*component).into()).or_default();
-            }
-        }
-    }
-
-    root.append_ordered_paths(ordered_paths);
+/// Builds a synthetic path that sorts by file name first, falling back to the
+/// full path to keep the key unique per file.
+fn name_sort_path(repo_path: &RelPath) -> Arc<RelPath> {
+    let Some(file_name) = repo_path.file_name() else {
+        return repo_path.into_arc();
+    };
+    let synthetic = format!("{}/{}", file_name, repo_path.as_unix_str());
+    RelPath::unix(&synthetic)
+        .map(|path| path.into_arc())
+        .unwrap_or_else(|_| repo_path.into_arc())
 }
 
-#[derive(Default)]
-struct ProjectDiffTreeNode {
-    children: BTreeMap<String, ProjectDiffTreeNode>,
-    files: Vec<RepoPath>,
-}
-
-impl ProjectDiffTreeNode {
-    fn append_ordered_paths(self, ordered_paths: &mut Vec<RepoPath>) {
-        for child in self.children.into_values() {
-            child.append_ordered_paths(ordered_paths);
-        }
-        ordered_paths.extend(self.files);
+/// Builds a synthetic path whose natural component-wise ordering reproduces a
+/// folder-first tree order. Each directory component is prefixed with a NUL
+/// byte, which can never appear in a real path component and sorts before every
+/// printable character, so at each level directories sort before files.
+fn tree_sort_path(repo_path: &RelPath) -> Arc<RelPath> {
+    let components: Vec<&str> = repo_path.components().collect();
+    if components.len() <= 1 {
+        return repo_path.into_arc();
     }
+    let last = components.len() - 1;
+    let mut synthetic = String::new();
+    for (index, component) in components.into_iter().enumerate() {
+        if index > 0 {
+            synthetic.push('/');
+        }
+        if index < last {
+            synthetic.push('\0');
+        }
+        synthetic.push_str(component);
+    }
+    RelPath::unix(&synthetic)
+        .map(|path| path.into_arc())
+        .unwrap_or_else(|_| repo_path.into_arc())
 }
 
 impl EventEmitter<EditorEvent> for ProjectDiff {}
@@ -2296,7 +2217,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::with_sort_prefix(1, rel_path("bar").into_arc()),
+                PathKey::with_sort_prefix(2, rel_path("bar").into_arc()),
                 window,
                 cx,
             );
@@ -2823,15 +2744,7 @@ mod tests {
             &editor,
             cx,
             &"
-                  ˇone
-                  two
-                  three
-                  four
-                  five
-                  six
-                  seven
-                  eight
-                  nine
+                  ˇnine
                   ten
                 - eleven
                 + ELEVEN
@@ -2878,16 +2791,13 @@ mod tests {
             &editor,
             cx,
             &"
-                  ˇone
+                  one
                 - two
                 + TWO
                   three
                   four
                   five
-                  six
-                  seven
-                  eight
-                  nine
+                  ˇnine
                   ten
                 - eleven
                 + ELEVEN
