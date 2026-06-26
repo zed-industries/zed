@@ -35,6 +35,15 @@ use worktree::{
 
 use crate::{ProjectPath, trusted_worktrees::TrustedWorktrees};
 
+/// Controls which path identity is used for project group keys.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjectGrouping {
+    /// Group projects by the main Git repository they belong to.
+    Repository,
+    /// Group projects by the actual opened worktree root folder.
+    Worktree,
+}
+
 /// The current paths for a project's worktrees. Each folder path has a corresponding
 /// main worktree path at the same position. The two lists are always the
 /// same length and are modified together via `add_path` / `remove_main_path`.
@@ -96,6 +105,15 @@ impl WorktreePaths {
     /// The main worktree paths (for group key / `threads_by_main_paths` index).
     pub fn main_worktree_path_list(&self) -> &PathList {
         &self.main_paths
+    }
+
+    /// Returns the path list to use for project group keys based on the
+    /// active grouping policy.
+    pub fn path_list_for_grouping(&self, grouping: ProjectGrouping) -> &PathList {
+        match grouping {
+            ProjectGrouping::Repository => self.main_worktree_path_list(),
+            ProjectGrouping::Worktree => self.folder_path_list(),
+        }
     }
 
     /// Iterate the (main_worktree_path, folder_path) pairs in insertion order.

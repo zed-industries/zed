@@ -2,13 +2,14 @@ use std::{path::PathBuf, sync::Arc};
 
 use fs::Fs;
 use gpui::{AppContext, Entity, Global, MenuItem};
+use settings::Settings;
 use smallvec::SmallVec;
 use ui::{App, Context};
 use util::{ResultExt, paths::PathExt};
 
 use crate::{
     NewWindow, SerializedWorkspaceLocation, WorkspaceId, path_list::PathList,
-    persistence::WorkspaceDb,
+    persistence::WorkspaceDb, project_grouping_from_settings, workspace_settings,
 };
 
 pub fn init(fs: Arc<dyn Fs>, cx: &mut App) {
@@ -42,9 +43,11 @@ impl HistoryManager {
 
     fn init(this: Entity<HistoryManager>, fs: Arc<dyn Fs>, cx: &App) {
         let db = WorkspaceDb::global(cx);
+        let grouping = workspace_settings::WorkspaceSettings::get_global(cx).project_grouping;
+        let grouping = project_grouping_from_settings(grouping);
         cx.spawn(async move |cx| {
             let recent_folders = db
-                .recent_project_workspaces(fs.as_ref())
+                .recent_project_workspaces_with_grouping(fs.as_ref(), grouping)
                 .await
                 .unwrap_or_default()
                 .into_iter()

@@ -1013,6 +1013,7 @@ impl VsCodeSettings {
             centered_layout: None,
             cli_default_open_behavior: None,
             default_open_behavior: None,
+            project_grouping: None,
             close_on_file_delete: None,
             close_panel_on_toggle: None,
             command_aliases: Default::default(),

@@ -41,7 +41,7 @@ use util::ResultExt;
 use util::paths::PathExt;
 use workspace::{
     CloseWindow, ModalView, PathList, RecentWorkspace, SerializedWorkspaceLocation, Workspace,
-    WorkspaceDb, WorkspaceId,
+    WorkspaceDb, WorkspaceId, WorkspaceSettings, project_grouping_from_settings,
 };
 
 use zed_actions::agents_sidebar::FocusSidebarFilter;
@@ -1148,9 +1148,11 @@ impl ProjectPickerModal {
             });
 
         let db = WorkspaceDb::global(cx);
+        let grouping = WorkspaceSettings::get_global(cx).project_grouping;
+        let grouping = project_grouping_from_settings(grouping);
         cx.spawn_in(window, async move |this, cx| {
             let workspaces = db
-                .recent_project_workspaces(fs.as_ref())
+                .recent_project_workspaces_with_grouping(fs.as_ref(), grouping)
                 .await
                 .log_err()
                 .unwrap_or_default();

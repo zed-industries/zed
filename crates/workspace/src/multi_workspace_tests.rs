@@ -10,6 +10,7 @@ use project::DisableAiSettings;
 use serde_json::json;
 use settings::{Settings, SettingsStore};
 use util::path;
+use workspace_settings::{ProjectGrouping, WorkspaceSettings};
 
 fn init_test(cx: &mut TestAppContext) {
     cx.update(|cx| {
@@ -17,6 +18,14 @@ fn init_test(cx: &mut TestAppContext) {
         cx.set_global(settings_store);
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         DisableAiSettings::register(cx);
+    });
+}
+
+fn set_project_grouping(grouping: ProjectGrouping, cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let mut settings = WorkspaceSettings::get_global(cx).clone();
+        settings.project_grouping = grouping;
+        WorkspaceSettings::override_global(settings, cx);
     });
 }
 
@@ -493,6 +502,275 @@ async fn test_find_or_create_workspace_uses_project_group_key_when_paths_are_mis
             main_workspace_id,
             "the active workspace should remain the main worktree workspace"
         );
+        assert_eq!(
+            PathList::new(&mw.workspace().read(cx).root_paths(cx)),
+            project_group_key.path_list().clone(),
+            "the activated workspace should use the project group key path list rather than the missing linked-worktree path"
+        );
+        assert_eq!(
+            mw.workspaces().count(),
+            1,
+            "falling back to the project group key should not create a second workspace"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_repository_mode_groups_linked_worktrees_together(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/repo",
+        json!({
+            ".git": {
+                "worktrees": {
+                    "feature": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature"
+                    }
+                }
+            },
+            "src": { "main.rs": "" }
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/worktree-feature",
+        json!({
+            ".git": "gitdir: /repo/.git/worktrees/feature",
+            "src": { "main.rs": "" }
+        }),
+    )
+    .await;
+
+    let main_project = Project::test(fs.clone(), ["/repo".as_ref()], cx).await;
+    let linked_project = Project::test(fs.clone(), ["/worktree-feature".as_ref()], cx).await;
+
+    let main_key = main_project.read_with(cx, |p, cx| p.project_group_key(cx));
+    let linked_key = linked_project.read_with(cx, |p, cx| p.project_group_key(cx));
+    assert_eq!(
+        main_key, linked_key,
+        "repository mode should group linked worktree with main repo"
+    );
+    assert_eq!(
+        main_key.path_list().paths(),
+        &[PathBuf::from("/repo")],
+        "repository mode key should use main repo path"
+    );
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project, window, cx));
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(linked_project, window, cx);
+    });
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |mw, _cx| {
+        let keys = mw.project_group_keys();
+        assert_eq!(
+            keys.len(),
+            1,
+            "repository mode should produce one project group for linked worktrees"
+        );
+        assert_eq!(keys[0], main_key);
+    });
+}
+
+#[gpui::test]
+async fn test_worktree_mode_separates_linked_worktrees(cx: &mut TestAppContext) {
+    init_test(cx);
+    set_project_grouping(ProjectGrouping::Worktree, cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/repo",
+        json!({
+            ".git": {
+                "worktrees": {
+                    "feature": {
+                        "commondir": "../../",
+                        "HEAD": "ref: refs/heads/feature"
+                    }
+                }
+            },
+            "src": { "main.rs": "" }
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        "/worktree-feature",
+        json!({
+            ".git": "gitdir: /repo/.git/worktrees/feature",
+            "src": { "main.rs": "" }
+        }),
+    )
+    .await;
+
+    let main_project = Project::test(fs.clone(), ["/repo".as_ref()], cx).await;
+    let linked_project = Project::test(fs.clone(), ["/worktree-feature".as_ref()], cx).await;
+
+    let main_key = main_project.read_with(cx, |p, cx| {
+        p.project_group_key_with_grouping(project::ProjectGrouping::Worktree, cx)
+    });
+    let linked_key = linked_project.read_with(cx, |p, cx| {
+        p.project_group_key_with_grouping(project::ProjectGrouping::Worktree, cx)
+    });
+    assert_ne!(
+        main_key, linked_key,
+        "worktree mode should separate linked worktree from main repo"
+    );
+    assert_eq!(
+        main_key.path_list().paths(),
+        &[PathBuf::from("/repo")],
+        "main repo key should use main repo path"
+    );
+    assert_eq!(
+        linked_key.path_list().paths(),
+        &[PathBuf::from("/worktree-feature")],
+        "linked worktree key should use worktree folder path"
+    );
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(main_project, window, cx));
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
+    cx.run_until_parked();
+    let main_workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        let linked_workspace = mw.test_add_workspace(linked_project, window, cx);
+        mw.activate(linked_workspace, None, window, cx);
+    });
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |mw, cx| {
+        let keys = mw.project_group_keys();
+        assert_eq!(
+            keys.len(),
+            2,
+            "worktree mode should produce two project groups for linked worktrees"
+        );
+        let main_workspace_key = main_workspace.read(cx).project_group_key(cx);
+        assert!(
+            keys.contains(&main_workspace_key),
+            "keys should contain the main workspace key; got {keys:?}"
+        );
+        assert!(
+            keys.contains(&linked_key),
+            "keys should contain the linked worktree key; got {keys:?}"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_adding_worktree_updates_key_in_worktree_mode(cx: &mut TestAppContext) {
+    init_test(cx);
+    set_project_grouping(ProjectGrouping::Worktree, cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    fs.insert_tree("/root_b", json!({ "file.txt": "" })).await;
+    let project = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+
+    let initial_key = project.read_with(cx, |p, cx| {
+        p.project_group_key_with_grouping(project::ProjectGrouping::Worktree, cx)
+    });
+    assert_eq!(
+        initial_key.path_list().paths(),
+        &[PathBuf::from("/root_a")]
+    );
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
+    cx.run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/root_b", true, cx)
+        })
+        .await
+        .expect("adding worktree should succeed");
+    cx.run_until_parked();
+
+    let updated_key = project.read_with(cx, |p, cx| {
+        p.project_group_key_with_grouping(project::ProjectGrouping::Worktree, cx)
+    });
+    assert_eq!(
+        updated_key.path_list().paths(),
+        &[PathBuf::from("/root_a"), PathBuf::from("/root_b")],
+        "worktree mode key should use actual folder paths after adding worktree"
+    );
+
+    multi_workspace.read_with(cx, |mw, cx| {
+        let keys = mw.project_group_keys();
+        let workspace_key = mw.workspace().read(cx).project_group_key(cx);
+        assert_eq!(
+            workspace_key, updated_key,
+            "workspace key should match the updated worktree-mode key"
+        );
+        assert!(keys.contains(&workspace_key));
+    });
+}
+
+#[gpui::test]
+async fn test_find_or_create_workspace_worktree_mode_does_not_collapse_missing_worktree(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    set_project_grouping(ProjectGrouping::Worktree, cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/repo",
+        json!({
+            ".git": {},
+            "src": {}
+        }),
+    )
+    .await;
+    cx.update(|cx| <dyn Fs>::set_global(fs.clone(), cx));
+    let project = Project::test(fs.clone(), ["/repo".as_ref()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+
+    let project_group_key = project.read_with(cx, |project, cx| project.project_group_key(cx));
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+
+    let main_workspace = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+    let main_workspace_id = main_workspace.entity_id();
+
+    let workspace = multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            mw.find_or_create_workspace(
+                PathList::new(&[PathBuf::from("/wt-feature-a")]),
+                None,
+                Some(project_group_key.clone()),
+                |_options, _window, _cx| Task::ready(Ok(None)),
+                &[],
+                None,
+                OpenMode::Activate,
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("opening a missing linked-worktree path should fall back to the project group key workspace");
+
+    assert_eq!(
+        workspace.entity_id(),
+        main_workspace_id,
+        "missing linked-worktree path should reuse the main worktree workspace from the project group key"
+    );
+
+    multi_workspace.read_with(cx, |mw, cx| {
         assert_eq!(
             PathList::new(&mw.workspace().read(cx).root_paths(cx)),
             project_group_key.path_list().clone(),

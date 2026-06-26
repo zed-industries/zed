@@ -359,9 +359,7 @@ fn main() {
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
-    let failed_single_instance_check = if *zed_env_vars::ZED_STATELESS
-        || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev
-    {
+    let failed_single_instance_check = if *zed_env_vars::ZED_STATELESS {
         false
     } else {
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -1696,7 +1694,7 @@ pub(crate) async fn restorable_workspace_locations(
 
     match restore_behavior {
         workspace::RestoreOnStartupBehavior::LastWorkspace => {
-            workspace::last_opened_workspace_location(&db, app_state.fs.as_ref())
+            workspace::last_opened_workspace_location(&db, app_state.fs.as_ref(), cx)
                 .await
                 .map(|(workspace_id, location, paths)| {
                     vec![SessionWorkspace {

@@ -168,6 +168,17 @@
   //  2. Open projects in a new window
   //         "default_open_behavior": "new_window"
   "default_open_behavior": "existing_window",
+  // Controls how projects are grouped in the workspace sidebar.
+  //
+  // May take 2 values:
+  //  1. Group linked Git worktrees by their shared repository:
+  //         "project_grouping": "repository"
+  //  2. Group each opened worktree root separately:
+  //         "project_grouping": "worktree"
+  //
+  // Changing this setting may require reopening workspaces or restarting Zed
+  // before all existing project groups and recent project entries reflect it.
+  "project_grouping": "repository",
   // Whether to attempt to restore previous file's state when opening it again.
   // The state is stored per pane.
   // When disabled, defaults are applied instead of the state restoration.

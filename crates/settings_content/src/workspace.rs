@@ -58,6 +58,11 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: existing_window
     pub default_open_behavior: Option<DefaultOpenBehavior>,
+    /// Controls how projects are grouped in the workspace sidebar.
+    ///
+    /// Values: repository, worktree
+    /// Default: repository
+    pub project_grouping: Option<ProjectGrouping>,
     /// Whether to attempt to restore previous file's state when opening it again.
     /// The state is stored per pane.
     /// When disabled, defaults are applied instead of the state restoration.
@@ -283,6 +288,27 @@ pub enum ActivateOnClose {
     History,
     Neighbour,
     LeftNeighbour,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectGrouping {
+    #[default]
+    Repository,
+    Worktree,
 }
 
 #[with_fallible_options]

@@ -6,11 +6,11 @@ use serde::Deserialize;
 use settings::CommandAliasTarget;
 pub use settings::{
     AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
-    PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
+    PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, ProjectGrouping, RegisterSetting,
     RestoreOnStartupBehavior, Settings,
 };
 
-#[derive(RegisterSetting)]
+#[derive(Clone, RegisterSetting)]
 pub struct WorkspaceSettings {
     pub active_pane_modifiers: ActivePanelModifiers,
     pub bottom_dock_layout: settings::BottomDockLayout,
@@ -23,6 +23,7 @@ pub struct WorkspaceSettings {
     pub restore_on_startup: settings::RestoreOnStartupBehavior,
     pub cli_default_open_behavior: settings::CliDefaultOpenBehavior,
     pub default_open_behavior: settings::DefaultOpenBehavior,
+    pub project_grouping: settings::ProjectGrouping,
     pub restore_on_file_reopen: bool,
     pub drop_target_size: f32,
     pub use_system_path_prompts: bool,
@@ -104,6 +105,7 @@ impl Settings for WorkspaceSettings {
             restore_on_startup: workspace.restore_on_startup.unwrap(),
             cli_default_open_behavior: workspace.cli_default_open_behavior.unwrap(),
             default_open_behavior: workspace.default_open_behavior.unwrap(),
+            project_grouping: workspace.project_grouping.unwrap(),
             restore_on_file_reopen: workspace.restore_on_file_reopen.unwrap(),
             drop_target_size: workspace.drop_target_size.unwrap(),
             use_system_path_prompts: workspace.use_system_path_prompts.unwrap(),

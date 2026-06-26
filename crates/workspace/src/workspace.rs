@@ -96,8 +96,8 @@ pub use persistence::{
 use persistence::{SerializedWindowBounds, model::SerializedWorkspace};
 use postage::stream::Stream;
 use project::{
-    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
-    WorktreeSettings,
+    DirectoryLister, Project, ProjectEntryId, ProjectGrouping as ProjectGroupingPolicy, ProjectPath,
+    ResolvedPath, Worktree, WorktreeId, WorktreeSettings,
     debugger::{breakpoint_store::BreakpointStoreEvent, session::ThreadStatus},
     project_settings::ProjectSettings,
     toolchain_store::ToolchainStoreEvent,
@@ -155,7 +155,7 @@ use util::{
 };
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, FocusFollowsMouse,
+    AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, FocusFollowsMouse, ProjectGrouping,
     RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings, WorkspaceSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
@@ -1467,6 +1467,13 @@ pub enum OpenMode {
     Activate,
 }
 
+pub fn project_grouping_from_settings(value: ProjectGrouping) -> ProjectGroupingPolicy {
+    match value {
+        ProjectGrouping::Repository => ProjectGroupingPolicy::Repository,
+        ProjectGrouping::Worktree => ProjectGroupingPolicy::Worktree,
+    }
+}
+
 impl Workspace {
     pub fn new(
         workspace_id: Option<WorkspaceId>,
@@ -2153,7 +2160,11 @@ impl Workspace {
     }
 
     pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {
-        self.project.read(cx).project_group_key(cx)
+        let grouping = WorkspaceSettings::get_global(cx).project_grouping;
+        let grouping = project_grouping_from_settings(grouping);
+        self.project
+            .read(cx)
+            .project_group_key_with_grouping(grouping, cx)
     }
 
     pub fn weak_handle(&self) -> WeakEntity<Self> {
@@ -9203,8 +9214,13 @@ impl WorkspaceHandle for Entity<Workspace> {
 pub async fn last_opened_workspace_location(
     db: &WorkspaceDb,
     fs: &dyn fs::Fs,
+    cx: &mut AsyncApp,
 ) -> Option<(WorkspaceId, SerializedWorkspaceLocation, PathList)> {
-    db.last_workspace(fs)
+    let grouping = cx.update(|cx| {
+        let grouping = WorkspaceSettings::get_global(cx).project_grouping;
+        project_grouping_from_settings(grouping)
+    });
+    db.last_workspace_with_grouping(fs, grouping)
         .await
         .log_err()
         .flatten()
@@ -9314,28 +9330,39 @@ pub async fn apply_restored_multiworkspace_state(
         ..
     } = state;
 
+    let grouping = cx.update(|cx| {
+        let grouping = WorkspaceSettings::get_global(cx).project_grouping;
+        project_grouping_from_settings(grouping)
+    });
+
     if !project_groups.is_empty() {
-        // Resolve linked worktree paths to their main repo paths so
-        // stale keys from previous sessions get normalized and deduped.
+        // In repository mode, resolve linked worktree paths to their main repo
+        // paths so stale keys from previous sessions get normalized and deduped.
+        // In worktree mode, preserve the serialized project group paths as-is.
         let mut resolved_groups: Vec<SerializedProjectGroupState> = Vec::new();
         for serialized in project_groups.iter().cloned() {
             let SerializedProjectGroupState { key, expanded } = serialized.into_restored_state();
             if key.path_list().paths().is_empty() {
                 continue;
             }
-            let mut resolved_paths = Vec::new();
-            for path in key.path_list().paths() {
-                if key.host().is_none()
-                    && let Some(common_dir) =
-                        project::discover_root_repo_common_dir(path, fs.as_ref()).await
-                {
-                    let main_path = project::repo_identity_path(&common_dir);
-                    resolved_paths.push(main_path.to_path_buf());
-                } else {
-                    resolved_paths.push(path.to_path_buf());
+            let resolved = match grouping {
+                ProjectGroupingPolicy::Repository => {
+                    let mut resolved_paths = Vec::new();
+                    for path in key.path_list().paths() {
+                        if key.host().is_none()
+                            && let Some(common_dir) =
+                                project::discover_root_repo_common_dir(path, fs.as_ref()).await
+                        {
+                            let main_path = project::repo_identity_path(&common_dir);
+                            resolved_paths.push(main_path.to_path_buf());
+                        } else {
+                            resolved_paths.push(path.to_path_buf());
+                        }
+                    }
+                    ProjectGroupKey::new(key.host(), PathList::new(&resolved_paths))
                 }
-            }
-            let resolved = ProjectGroupKey::new(key.host(), PathList::new(&resolved_paths));
+                ProjectGroupingPolicy::Worktree => key,
+            };
             if !resolved_groups.iter().any(|g| g.key == resolved) {
                 resolved_groups.push(SerializedProjectGroupState {
                     key: resolved,

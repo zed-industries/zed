@@ -2005,9 +2005,10 @@ impl WorkspaceDb {
 
     // Returns the raw recent workspace history. Scratch workspaces (no paths) are filtered
     // out because they are restored separately by `last_session_workspace_locations`.
-    pub async fn recent_project_workspaces_ungrouped(
+    pub async fn recent_project_workspaces_ungrouped_with_grouping(
         &self,
         fs: &dyn Fs,
+        grouping: project::ProjectGrouping,
     ) -> Result<Vec<RecentWorkspace>> {
         let remote_connections = self.remote_connections()?;
         let mut result = Vec::new();
@@ -2032,7 +2033,7 @@ impl WorkspaceDb {
             }
 
             if Self::all_paths_exist_with_a_directory(paths.paths(), fs).await {
-                let identity_paths = resolve_local_workspace_identity(fs, &paths)
+                let identity_paths = resolve_local_workspace_identity(fs, &paths, grouping)
                     .await
                     .or(identity_paths_hint)
                     .unwrap_or_else(|| paths.clone());
@@ -2047,6 +2048,27 @@ impl WorkspaceDb {
         }
 
         Ok(result)
+    }
+
+    pub async fn recent_project_workspaces_ungrouped(
+        &self,
+        fs: &dyn Fs,
+    ) -> Result<Vec<RecentWorkspace>> {
+        self.recent_project_workspaces_ungrouped_with_grouping(
+            fs,
+            project::ProjectGrouping::Repository,
+        )
+        .await
+    }
+
+    pub async fn recent_project_workspaces_with_grouping(
+        &self,
+        fs: &dyn Fs,
+        grouping: project::ProjectGrouping,
+    ) -> Result<Vec<RecentWorkspace>> {
+        Ok(dedupe_recent_workspaces(
+            self.recent_project_workspaces_ungrouped_with_grouping(fs, grouping).await?,
+        ))
     }
 
     // Returns the recent project workspaces suitable for recent-project UIs.
@@ -2156,6 +2178,18 @@ impl WorkspaceDb {
         )
         .await;
         Ok(())
+    }
+
+    pub async fn last_workspace_with_grouping(
+        &self,
+        fs: &dyn Fs,
+        grouping: project::ProjectGrouping,
+    ) -> Result<Option<RecentWorkspace>> {
+        Ok(self
+            .recent_project_workspaces_with_grouping(fs, grouping)
+            .await?
+            .into_iter()
+            .next())
     }
 
     pub async fn last_workspace(&self, fs: &dyn Fs) -> Result<Option<RecentWorkspace>> {
@@ -2665,31 +2699,41 @@ impl RecentWorkspace {
     }
 }
 
-async fn resolve_local_workspace_identity(fs: &dyn Fs, paths: &PathList) -> Option<PathList> {
-    let raw_paths = paths.paths();
-    let resolved_paths = futures::future::join_all(
-        raw_paths
-            .iter()
-            .map(|path| project::git_store::resolve_git_worktree_to_main_repo(fs, path)),
-    )
-    .await;
+async fn resolve_local_workspace_identity(
+    fs: &dyn Fs,
+    paths: &PathList,
+    grouping: project::ProjectGrouping,
+) -> Option<PathList> {
+    match grouping {
+        project::ProjectGrouping::Worktree => Some(paths.clone()),
+        project::ProjectGrouping::Repository => {
+            let raw_paths = paths.paths();
+            let resolved_paths = futures::future::join_all(
+                raw_paths
+                    .iter()
+                    .map(|path| project::git_store::resolve_git_worktree_to_main_repo(fs, path)),
+            )
+            .await;
 
-    if resolved_paths.iter().all(|resolved| resolved.is_none()) {
-        return None;
+            if resolved_paths.iter().all(|resolved| resolved.is_none()) {
+                return None;
+            }
+
+            let resolved_paths: Vec<PathBuf> = raw_paths
+                .iter()
+                .zip(resolved_paths.iter())
+                .map(|(original, resolved)| {
+                    resolved
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_else(|| original.clone())
+                })
+                .collect();
+            let resolved_path_refs: Vec<&Path> =
+                resolved_paths.iter().map(PathBuf::as_path).collect();
+            Some(PathList::new(&resolved_path_refs))
+        }
     }
-
-    let resolved_paths: Vec<PathBuf> = raw_paths
-        .iter()
-        .zip(resolved_paths.iter())
-        .map(|(original, resolved)| {
-            resolved
-                .as_ref()
-                .cloned()
-                .unwrap_or_else(|| original.clone())
-        })
-        .collect();
-    let resolved_path_refs: Vec<&Path> = resolved_paths.iter().map(PathBuf::as_path).collect();
-    Some(PathList::new(&resolved_path_refs))
 }
 
 fn dedupe_recent_workspaces(
@@ -2756,6 +2800,7 @@ mod tests {
     use crate::OpenMode;
     use crate::PathList;
     use crate::ProjectGroupKey;
+    use crate::{ProjectGrouping, WorkspaceSettings};
     use crate::{
         multi_workspace::MultiWorkspace,
         persistence::{
@@ -2773,6 +2818,7 @@ mod tests {
     use project::Project;
     use remote::SshConnectionOptions;
     use serde_json::json;
+    use settings::Settings;
     use std::{thread, time::Duration};
 
     /// Creates a unique directory in a FakeFs, returning the path.
@@ -3812,9 +3858,13 @@ mod tests {
         timestamp: DateTime<Utc>,
         fs: &dyn Fs,
     ) -> RecentWorkspace {
-        let identity_paths = resolve_local_workspace_identity(fs, &paths)
-            .await
-            .unwrap_or_else(|| paths.clone());
+        let identity_paths = resolve_local_workspace_identity(
+            fs,
+            &paths,
+            project::ProjectGrouping::Repository,
+        )
+        .await
+        .unwrap_or_else(|| paths.clone());
         RecentWorkspace {
             workspace_id,
             location: SerializedWorkspaceLocation::Local,
@@ -5342,6 +5392,77 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_recent_project_workspaces_worktree_mode_separates_linked_worktrees(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let db = WorkspaceDb::open_test_db(
+            "test_recent_project_workspaces_worktree_mode_separates_linked_worktrees",
+        )
+        .await;
+
+        fs.insert_tree(
+            "/repo",
+            json!({
+                ".git": {
+                    "worktrees": {
+                        "feature": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature"
+                        }
+                    }
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            "/worktree",
+            json!({
+                ".git": "gitdir: /repo/.git/worktrees/feature",
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        db.save_workspace(workspace_with(
+            1,
+            &[Path::new("/repo")],
+            empty_pane_group(),
+            None,
+        ))
+        .await;
+        db.save_workspace(workspace_with(
+            2,
+            &[Path::new("/worktree")],
+            empty_pane_group(),
+            None,
+        ))
+        .await;
+        db.set_timestamp_for_tests(WorkspaceId(1), "2024-01-01 00:00:00".to_owned())
+            .await
+            .unwrap();
+        db.set_timestamp_for_tests(WorkspaceId(2), "2024-01-01 00:00:01".to_owned())
+            .await
+            .unwrap();
+
+        let recents = db
+            .recent_project_workspaces_with_grouping(fs.as_ref(), project::ProjectGrouping::Worktree)
+            .await
+            .unwrap();
+
+        assert_eq!(recents.len(), 2, "worktree mode should keep separate entries");
+        assert_eq!(
+            recents[0].identity_paths.paths(),
+            &[PathBuf::from("/worktree")]
+        );
+        assert_eq!(recents[1].identity_paths.paths(), &[PathBuf::from("/repo")]);
+        assert_eq!(recents[0].workspace_id, WorkspaceId(2));
+        assert_eq!(recents[1].workspace_id, WorkspaceId(1));
+    }
+
+    #[gpui::test]
     async fn test_recent_project_workspaces_preserve_reopen_paths(cx: &mut gpui::TestAppContext) {
         let fs = fs::FakeFs::new(cx.executor());
         let db =
@@ -5756,6 +5877,132 @@ mod tests {
             active_paths,
             vec![PathBuf::from("/worktree-feature")],
             "The restored active workspace should be the linked worktree project"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_restore_window_with_linked_worktree_in_worktree_mode(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        crate::tests::init_test(cx);
+
+        cx.update(|cx| {
+            let mut settings = WorkspaceSettings::get_global(cx).clone();
+            settings.project_grouping = ProjectGrouping::Worktree;
+            WorkspaceSettings::override_global(settings, cx);
+        });
+
+        let fs = fs::FakeFs::new(cx.executor());
+
+        fs.insert_tree(
+            "/repo",
+            json!({
+                ".git": {
+                    "HEAD": "ref: refs/heads/main",
+                    "worktrees": {
+                        "feature": {
+                            "commondir": "../../",
+                            "HEAD": "ref: refs/heads/feature"
+                        }
+                    }
+                },
+                "src": { "main.rs": "" }
+            }),
+        )
+        .await;
+
+        fs.insert_tree(
+            "/worktree-feature",
+            json!({
+                ".git": "gitdir: /repo/.git/worktrees/feature",
+                "src": { "lib.rs": "" }
+            }),
+        )
+        .await;
+
+        let project_main = Project::test(fs.clone(), ["/repo".as_ref()], cx).await;
+        let project_linked = Project::test(fs.clone(), ["/worktree-feature".as_ref()], cx).await;
+        cx.run_until_parked();
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_main.clone(), window, cx));
+
+        multi_workspace.update(cx, |mw, cx| {
+            mw.open_sidebar(cx);
+        });
+
+        let workspace_linked = multi_workspace.update_in(cx, |mw, window, cx| {
+            mw.test_add_workspace(project_linked.clone(), window, cx)
+        });
+
+        let tasks =
+            multi_workspace.update_in(cx, |mw, window, cx| mw.flush_all_serialization(window, cx));
+        cx.run_until_parked();
+        for task in tasks {
+            task.await;
+        }
+        cx.run_until_parked();
+
+        let active_db_id = workspace_linked.read_with(cx, |ws, _| ws.database_id());
+        assert!(active_db_id.is_some());
+
+        let session_id = multi_workspace
+            .read_with(cx, |mw, cx| mw.workspace().read(cx).session_id())
+            .unwrap();
+        let db = cx.update(|_, cx| WorkspaceDb::global(cx));
+        let session_workspaces = db
+            .last_session_workspace_locations(&session_id, None, fs.as_ref())
+            .await
+            .expect("should load session workspaces");
+
+        let multi_workspaces =
+            cx.update(|_, cx| read_serialized_multi_workspaces(session_workspaces, cx));
+        assert_eq!(multi_workspaces.len(), 1);
+
+        let serialized = &multi_workspaces[0];
+        assert_eq!(
+            serialized.active_workspace.workspace_id,
+            active_db_id.unwrap(),
+        );
+        assert_eq!(serialized.state.project_groups.len(), 2);
+
+        let restored_keys: Vec<ProjectGroupKey> = serialized
+            .state
+            .project_groups
+            .iter()
+            .cloned()
+            .map(Into::into)
+            .collect();
+        let expected_keys = vec![
+            ProjectGroupKey::new(None, PathList::new(&["/worktree-feature"])),
+            ProjectGroupKey::new(None, PathList::new(&["/repo"])),
+        ];
+        assert_eq!(
+            restored_keys, expected_keys,
+            "Serialized project group keys in worktree mode should use actual folder paths"
+        );
+
+        let app_state =
+            multi_workspace.read_with(cx, |mw, cx| mw.workspace().read(cx).app_state().clone());
+
+        let serialized_mw = multi_workspaces.into_iter().next().unwrap();
+        let restored_handle: gpui::WindowHandle<MultiWorkspace> = cx
+            .update(|_, cx| {
+                cx.spawn(async move |mut cx| {
+                    crate::restore_multiworkspace(serialized_mw, app_state, &mut cx).await
+                })
+            })
+            .await
+            .expect("restore_multiworkspace should succeed");
+
+        cx.run_until_parked();
+
+        let restored_keys: Vec<ProjectGroupKey> = restored_handle
+            .read_with(cx, |mw: &MultiWorkspace, _cx| mw.project_group_keys())
+            .unwrap();
+        assert_eq!(
+            restored_keys, expected_keys,
+            "Restored window in worktree mode should preserve separate worktree project groups"
         );
     }
 

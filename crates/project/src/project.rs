@@ -53,7 +53,7 @@ pub use git_store::{
 };
 pub use manifest_tree::ManifestTree;
 pub use project_search::{Search, SearchResults};
-pub use worktree_store::WorktreePaths;
+pub use worktree_store::{ProjectGrouping, WorktreePaths};
 
 use anyhow::{Context as _, Result, anyhow};
 use buffer_store::{BufferStore, BufferStoreEvent};
@@ -6235,6 +6235,14 @@ impl Project {
     pub fn project_group_key(&self, cx: &App) -> ProjectGroupKey {
         ProjectGroupKey::from_project(self, cx)
     }
+
+    pub fn project_group_key_with_grouping(
+        &self,
+        grouping: ProjectGrouping,
+        cx: &App,
+    ) -> ProjectGroupKey {
+        ProjectGroupKey::from_project_with_grouping(self, grouping, cx)
+    }
 }
 
 /// Identifies a project group by a set of paths the workspaces in this group
@@ -6258,10 +6266,18 @@ impl ProjectGroupKey {
     }
 
     pub fn from_project(project: &Project, cx: &App) -> Self {
+        Self::from_project_with_grouping(project, ProjectGrouping::Repository, cx)
+    }
+
+    pub fn from_project_with_grouping(
+        project: &Project,
+        grouping: ProjectGrouping,
+        cx: &App,
+    ) -> Self {
         let paths = project.worktree_paths(cx);
         let host = project.remote_connection_options(cx);
         Self {
-            paths: paths.main_worktree_path_list().clone(),
+            paths: paths.path_list_for_grouping(grouping).clone(),
             host,
         }
     }
@@ -6270,8 +6286,16 @@ impl ProjectGroupKey {
         paths: &WorktreePaths,
         host: Option<RemoteConnectionOptions>,
     ) -> Self {
+        Self::from_worktree_paths_with_grouping(paths, host, ProjectGrouping::Repository)
+    }
+
+    pub fn from_worktree_paths_with_grouping(
+        paths: &WorktreePaths,
+        host: Option<RemoteConnectionOptions>,
+        grouping: ProjectGrouping,
+    ) -> Self {
         Self {
-            paths: paths.main_worktree_path_list().clone(),
+            paths: paths.path_list_for_grouping(grouping).clone(),
             host,
         }
     }

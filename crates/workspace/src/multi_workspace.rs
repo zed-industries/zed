@@ -10,6 +10,7 @@ pub use project::ProjectGroupKey;
 use project::{DisableAiSettings, Project};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
+use crate::workspace_settings::WorkspaceSettings;
 pub use settings::SidebarSide;
 use std::cell::Cell;
 use std::future::Future;
@@ -29,7 +30,7 @@ const SIDEBAR_RESIZE_HANDLE_SIZE: Pixels = px(6.0);
 use crate::open_remote_project_with_existing_connection;
 use crate::{
     CloseIntent, CloseWindow, DockPosition, Event as WorkspaceEvent, Item, ModalView, OpenMode,
-    Panel, Workspace, WorkspaceId, client_side_decorations,
+    Panel, Workspace, WorkspaceId, client_side_decorations, project_grouping_from_settings,
     persistence::model::MultiWorkspaceState,
 };
 
@@ -579,8 +580,13 @@ impl MultiWorkspace {
                             .project()
                             .read(cx)
                             .remote_connection_options(cx);
-                        let old_key =
-                            ProjectGroupKey::from_worktree_paths(old_worktree_paths, host);
+                        let grouping = WorkspaceSettings::get_global(cx).project_grouping;
+                        let grouping = project_grouping_from_settings(grouping);
+                        let old_key = ProjectGroupKey::from_worktree_paths_with_grouping(
+                            old_worktree_paths,
+                            host,
+                            grouping,
+                        );
                         this.handle_project_group_key_change(&workspace, &old_key, cx);
                     }
                 }

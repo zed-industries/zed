@@ -24,9 +24,13 @@ use gpui::{AppContext as _, Entity, Global, Subscription, Task, TaskExt};
 pub use project::WorktreePaths;
 use project::{AgentId, linked_worktree_short_name};
 use remote::{RemoteConnectionOptions, same_remote_connection_identity};
+use settings::Settings;
 use ui::{App, Context, SharedString, ThreadItemWorktreeInfo, WorktreeKind};
 use util::ResultExt as _;
-use workspace::{PathList, SerializedWorkspaceLocation, WorkspaceDb};
+use workspace::{
+    PathList, SerializedWorkspaceLocation, WorkspaceDb, WorkspaceSettings,
+    project_grouping_from_settings,
+};
 
 use crate::DEFAULT_THREAD_TITLE;
 
@@ -196,6 +200,9 @@ fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::
     let workspace_db = WorkspaceDb::global(cx);
     let fs = <dyn Fs>::global(cx);
 
+    let grouping = WorkspaceSettings::get_global(cx).project_grouping;
+    let grouping = project_grouping_from_settings(grouping);
+
     cx.spawn(async move |cx| -> anyhow::Result<()> {
         migration_task.await?;
 
@@ -207,7 +214,7 @@ fn migrate_thread_remote_connections(cx: &mut App, migration_task: Task<anyhow::
         }
 
         let recent_workspaces = workspace_db
-            .recent_project_workspaces_ungrouped(fs.as_ref())
+            .recent_project_workspaces_ungrouped_with_grouping(fs.as_ref(), grouping)
             .await?;
 
         let mut local_path_lists = HashSet::<PathList>::default();
