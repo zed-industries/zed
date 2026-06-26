@@ -26,3 +26,5 @@ serde.workspace = true
 serde_json.workspace = true
 strum.workspace = true
 thiserror.workspace = true
+open_ai.workspace = true
+language_model_core.workspace = true
