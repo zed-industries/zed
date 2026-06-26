@@ -295,7 +295,6 @@ impl RenderOnce for ToolCall {
                     this.child(
                         v_flex()
                             .w_full()
-                            .p_1()
                             .rounded_md()
                             .border_1()
                             .border_color(border_color)
@@ -617,15 +616,14 @@ impl Component for ToolCall {
         let sample_icon =
             |icon: IconName| Icon::new(icon).size(IconSize::Small).color(Color::Muted);
         let sample_output = || {
-            v_flex().py_1().gap_1().children(
-                ["fn main() {", "    println!(\"hello\");", "}"]
-                    .into_iter()
-                    .map(|line| {
-                        Label::new(line)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                            .buffer_font(cx)
-                    }),
+            v_flex().p_2().gap_1().children(
+                [
+                    "fn main() {",
+                    "    println!(\"hello\");",
+                    "}",
+                ]
+                .into_iter()
+                .map(|line| Label::new(line).size(LabelSize::Small).color(Color::Muted).buffer_font(cx)),
             )
         };
 

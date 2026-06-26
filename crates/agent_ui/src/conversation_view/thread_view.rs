@@ -7119,9 +7119,6 @@ impl ThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let header_id = SharedString::from(format!("thinking-block-header-{}", entry_ix));
-        let card_header_id = SharedString::from("inner-card-header");
-
         let key = (entry_ix, chunk_ix);
 
         let entry_view_state = self.entry_view_state.read(cx);
@@ -7139,84 +7136,65 @@ impl ThreadView {
 
         let panel_bg = cx.theme().colors().panel_background;
 
-        v_flex()
-            .gap_1()
-            .child(
-                h_flex()
-                    .id(header_id)
-                    .group(&card_header_id)
-                    .relative()
-                    .w_full()
-                    .pr_1()
-                    .justify_between()
-                    .child(
-                        h_flex()
-                            .h(window.line_height() - px(2.))
-                            .gap_1p5()
-                            .overflow_hidden()
-                            .child(
-                                Icon::new(IconName::ToolThink)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                div()
-                                    .text_size(self.tool_name_font_size())
-                                    .text_color(cx.theme().colors().text_muted)
-                                    .child("Thinking"),
-                            ),
-                    )
-                    .child(
-                        Disclosure::new(("expand", entry_ix), is_open)
-                            .opened_icon(IconName::ChevronUp)
-                            .closed_icon(IconName::ChevronDown)
-                            .visible_on_hover(&card_header_id)
-                            .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
-                                this.toggle_thinking_block_expansion(key, window, cx);
-                            })),
-                    )
-                    .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
-                        this.toggle_thinking_block_expansion(key, window, cx);
-                    })),
-            )
-            .when(is_open, |this| {
-                this.child(
+        let content = is_open.then(|| {
+            div()
+                .when(is_constrained, |this| this.relative())
+                .child(
                     div()
-                        .when(is_constrained, |this| this.relative())
-                        .child(
-                            div()
-                                .id(("thinking-content", chunk_ix))
-                                .ml_1p5()
-                                .pl_3p5()
-                                .border_l_1()
-                                .border_color(self.tool_card_border_color(cx))
-                                .when(is_constrained, |this| this.max_h_64())
-                                .when_some(scroll_handle, |this, scroll_handle| {
-                                    this.track_scroll(&scroll_handle)
-                                })
-                                .overflow_hidden()
-                                .child(self.render_markdown(
-                                    chunk,
-                                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
-                                    cx,
-                                )),
-                        )
-                        .when(is_constrained, |this| {
-                            this.child(
-                                div()
-                                    .absolute()
-                                    .inset_0()
-                                    .size_full()
-                                    .bg(linear_gradient(
-                                        180.,
-                                        linear_color_stop(panel_bg.opacity(0.8), 0.),
-                                        linear_color_stop(panel_bg.opacity(0.), 0.1),
-                                    ))
-                                    .block_mouse_except_scroll(),
-                            )
-                        }),
+                        .id(("thinking-content", chunk_ix))
+                        .when(is_constrained, |this| this.max_h_64())
+                        .when_some(scroll_handle, |this, scroll_handle| {
+                            this.track_scroll(&scroll_handle)
+                        })
+                        .overflow_hidden()
+                        .child(self.render_markdown(
+                            chunk,
+                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                            cx,
+                        )),
                 )
+                .when(is_constrained, |this| {
+                    this.child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .size_full()
+                            .bg(linear_gradient(
+                                180.,
+                                linear_color_stop(panel_bg.opacity(0.8), 0.),
+                                linear_color_stop(panel_bg.opacity(0.), 0.1),
+                            ))
+                            .block_mouse_except_scroll(),
+                    )
+                })
+                .into_any_element()
+        });
+
+        let view = cx.weak_entity();
+
+        ToolCallCard::new(SharedString::from(format!("thinking-block-{entry_ix}-{chunk_ix}")))
+            .style(ToolCallStyle::Thinking)
+            .icon(
+                Icon::new(IconName::ToolThink)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
+            .label(
+                div()
+                    .text_size(self.tool_name_font_size())
+                    .text_color(cx.theme().colors().text_muted)
+                    .child("Thinking"),
+            )
+            .fade_label(false)
+            .collapsible(true)
+            .open(is_open)
+            .on_toggle(move |_, window, cx| {
+                view.update(cx, |this, cx| {
+                    this.toggle_thinking_block_expansion(key, window, cx);
+                })
+                .ok();
             })
+            .when_some_content(content)
             .into_any_element()
     }
 
@@ -7920,6 +7898,12 @@ impl ThreadView {
             .unwrap_or_else(|| (false, false, focus_handle.clone()));
 
         let use_card_layout = needs_confirmation || is_edit || is_terminal_tool;
+        // Read-only tools (read, list, search, etc.) keep a flush header, but
+        // their output is contained in its own bordered card. Their content is
+        // therefore rendered with the same "carded" padding as edit/terminal
+        // output rather than the old left-guideline treatment.
+        let is_read_only = !use_card_layout && !is_terminal_tool;
+        let content_card_layout = use_card_layout || is_read_only;
 
         let has_image_content = tool_call.content.iter().any(|c| c.image().is_some());
         let is_collapsible = !tool_call.content.is_empty() && !needs_confirmation;
@@ -8094,13 +8078,11 @@ impl ThreadView {
                 | ToolCallStatus::Failed
                 | ToolCallStatus::Canceled => v_flex()
                     .when(should_show_raw_input, |this| {
-                        this.mt_1p5().w_full().child(
+                        this.w_full().child(
                             v_flex()
-                                .ml(rems(0.4))
-                                .px_3p5()
-                                .pb_1()
+                                .p_2()
                                 .gap_1()
-                                .border_l_1()
+                                .border_t_1()
                                 .border_color(self.tool_card_border_color(cx))
                                 .child(input_output_header("Raw Input:".into()))
                                 .children(tool_call.raw_input_markdown.clone().map(|input| {
@@ -8128,7 +8110,7 @@ impl ThreadView {
                                         content,
                                         content_ix,
                                         tool_call,
-                                        use_card_layout,
+                                        content_card_layout,
                                         failed_or_canceled,
                                         focus_handle,
                                         window,
@@ -8137,38 +8119,6 @@ impl ThreadView {
                                 )
                             }),
                     )
-                    .when(!use_card_layout, |this| {
-                        let button_id =
-                            SharedString::from(format!("tool_output-collapse-{:?}", tool_call.id));
-                        let tool_call_id = tool_call.id.clone();
-
-                        this.child(
-                            div()
-                                .ml(rems(0.4))
-                                .px_3p5()
-                                .pt_2()
-                                .border_l_1()
-                                .border_color(self.tool_card_border_color(cx))
-                                .child(
-                                    IconButton::new(button_id, IconName::ChevronUp)
-                                        .full_width()
-                                        .style(ButtonStyle::Outlined)
-                                        .icon_color(Color::Muted)
-                                        .on_click(cx.listener({
-                                            move |this: &mut Self,
-                                                  _,
-                                                  window,
-                                                  cx: &mut Context<Self>| {
-                                                this.entry_view_state.update(cx, |state, _cx| {
-                                                    state.collapse_tool_call(&tool_call_id);
-                                                });
-                                                this.refresh_thread_search(window, cx);
-                                                cx.notify();
-                                            }
-                                        })),
-                                ),
-                        )
-                    })
                     .into_any(),
                 ToolCallStatus::Rejected => Empty.into_any(),
             }
@@ -8192,6 +8142,14 @@ impl ThreadView {
             }
         } else {
             ToolCallStatusKind::Completed
+        };
+
+        // Read-only output is carded inside the component itself; edit/terminal
+        // output stays a sibling within the outer card frame.
+        let (read_only_content, sibling_content) = if is_read_only {
+            (tool_output_display, None)
+        } else {
+            (None, tool_output_display)
         };
 
         v_flex()
@@ -8223,7 +8181,7 @@ impl ThreadView {
                 })
                 .mr_5()
             })
-            .map(|this| {
+            .map(move |this| {
                 if is_terminal_tool {
                     this.child(self.render_collapsible_command(
                         card_header_id.clone(),
@@ -8388,12 +8346,13 @@ impl ThreadView {
                                                 }),
                                         )
                                     }),
-                                ),
+                                )
+                                .when_some_content(read_only_content),
                         ),
                     )
                 }
             })
-            .children(tool_output_display)
+            .children(sibling_content)
     }
 
     fn render_sandbox_authorization_details(
