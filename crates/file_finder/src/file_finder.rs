@@ -1805,6 +1805,10 @@ impl PickerDelegate for FileFinderDelegate {
         self.open_selected_file(secondary, true, window, cx);
     }
 
+    fn supports_multi_select(&self) -> bool {
+        true
+    }
+
     fn confirm_multi(
         &mut self,
         secondary: bool,

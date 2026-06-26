@@ -124,7 +124,7 @@ pub struct Picker<D: PickerDelegate> {
     preview: Option<Preview>,
     pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
-    pub selected_indices: HashSet<usize>,
+    selected_indices: HashSet<usize>,
     shape: shape::Shape,
     /// The size the picker opens at (and resets to). Defaults depend on whether
     /// the picker has a preview; see [`Picker::initial_width`] / [`Picker::max_height`].
@@ -237,6 +237,9 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>);
+    fn supports_multi_select(&self) -> bool {
+        false
+    }
     fn confirm_multi(
         &mut self,
         secondary: bool,
@@ -854,6 +857,9 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.delegate.supports_multi_select() {
+            return;
+        }
         let ix = self.delegate.selected_index();
         if self.selected_indices.contains(&ix) {
             self.selected_indices.remove(&ix);
@@ -966,7 +972,9 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         }
         self.set_selected_index(ix, None, false, window, cx);
-        if secondary {
+        if self.delegate.supports_multi_select()
+            && (secondary || !self.selected_indices.is_empty())
+        {
             if self.selected_indices.contains(&ix) {
                 self.selected_indices.remove(&ix);
             } else {
@@ -974,7 +982,6 @@ impl<D: PickerDelegate> Picker<D> {
             }
             cx.notify();
         } else {
-            self.selected_indices.clear();
             self.do_confirm(false, window, cx);
         }
     }
@@ -1180,14 +1187,15 @@ impl<D: PickerDelegate> Picker<D> {
         let selectable =
             ix < self.delegate.match_count() && self.delegate.can_select(ix, window, cx);
 
-        let is_multi_selected = self.selected_indices.contains(&ix);
-        let multi_select_active = !self.selected_indices.is_empty();
+        let supports_multi_select = self.delegate.supports_multi_select();
+        let is_multi_selected = supports_multi_select && self.selected_indices.contains(&ix);
+        let multi_select_active = supports_multi_select && !self.selected_indices.is_empty();
 
         div()
             .id(("item", ix))
             .when(selectable, |this| this.cursor_pointer())
-            .when(is_multi_selected, |this| {
-                this.bg(cx.theme().colors().ghost_element_selected.opacity(0.5))
+            .when(selectable && multi_select_active, |this| {
+                this.hover(|s| s.bg(cx.theme().colors().ghost_element_hover))
             })
             .child(
                 canvas(
@@ -1232,19 +1240,7 @@ impl<D: PickerDelegate> Picker<D> {
             .child(
                 h_flex()
                     .when(multi_select_active, |this| {
-                        this.child(
-                            h_flex()
-                                .w_4()
-                                .flex_none()
-                                .justify_center()
-                                .when(is_multi_selected, |this| {
-                                    this.child(
-                                        Icon::new(IconName::Check)
-                                            .size(IconSize::XSmall)
-                                            .color(Color::Accent),
-                                    )
-                                }),
-                        )
+                        this.child(self.render_multi_select_indicator(is_multi_selected, cx))
                     })
                     .children(self.delegate.render_match(
                         ix,
@@ -1261,6 +1257,40 @@ impl<D: PickerDelegate> Picker<D> {
                         .border_b_1()
                         .py(px(-1.0))
                 },
+            )
+    }
+
+    fn render_multi_select_indicator(
+        &self,
+        is_selected: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        h_flex()
+            .w_6()
+            .flex_none()
+            .justify_center()
+            .items_center()
+            .child(
+                div()
+                    .size_4()
+                    .flex_none()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(if is_selected {
+                        cx.theme().colors().border_focused
+                    } else {
+                        cx.theme().colors().border
+                    })
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(is_selected, |this| {
+                        this.bg(cx.theme().colors().element_selected).child(
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Small)
+                                .color(Color::Accent),
+                        )
+                    }),
             )
     }
 
