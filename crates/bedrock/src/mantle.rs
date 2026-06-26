@@ -1,9 +1,10 @@
 use anyhow::{Context as _, Result, anyhow};
+use aws_http_client::sign_request_sigv4;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
     StatusCode,
-    http::{HeaderMap, HeaderValue},
+    http::{HeaderMap, HeaderValue, header::AUTHORIZATION},
 };
 pub use language_model_core::ReasoningEffort;
 use open_ai::responses as MantleResponses;
@@ -12,6 +13,68 @@ use serde_json::Value;
 use std::{convert::TryFrom, future::Future};
 use strum::EnumIter;
 use thiserror::Error;
+
+const PROVIDER_NAME: &str = "bedrock-mantle";
+
+/// SigV4 signing name for the Bedrock Mantle service.
+const MANTLE_SIGNING_SERVICE: &str = "bedrock-mantle";
+
+/// Authentication for Bedrock Mantle requests.
+///
+/// Unlike the regular Bedrock path (which goes through the AWS SDK client and
+/// lets the SDK handle signing), Mantle requests are issued directly through an
+/// [`HttpClient`], so we have to apply auth to each request ourselves. The
+/// provider resolves its higher-level auth configuration down to one of these
+/// two concrete schemes before calling into this module.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MantleAuth {
+    /// Bearer token (Bedrock API key) auth.
+    ApiKey { api_key: String },
+    /// AWS SigV4 request signing with concrete IAM credentials. The provider is
+    /// responsible for resolving profile/SSO/automatic credential chains into
+    /// these concrete values before reaching this module.
+    SigV4 {
+        access_key_id: String,
+        secret_access_key: String,
+        session_token: Option<String>,
+    },
+}
+
+impl MantleAuth {
+    /// Applies this auth scheme to an already-built request, mutating it in place.
+    /// For SigV4 the full request body bytes are required to compute the payload hash.
+    fn apply(
+        &self,
+        request: &mut HttpRequest<AsyncBody>,
+        body: &[u8],
+        region: &str,
+    ) -> Result<(), RequestError> {
+        match self {
+            MantleAuth::ApiKey { api_key } => {
+                let value = HeaderValue::from_str(&format!("Bearer {}", api_key.trim()))
+                    .map_err(|error| RequestError::Other(error.into()))?;
+                request.headers_mut().insert(AUTHORIZATION, value);
+            }
+            MantleAuth::SigV4 {
+                access_key_id,
+                secret_access_key,
+                session_token,
+            } => {
+                sign_request_sigv4(
+                    request,
+                    body,
+                    access_key_id,
+                    secret_access_key,
+                    session_token.as_deref(),
+                    region,
+                    MANTLE_SIGNING_SERVICE,
+                )
+                .map_err(RequestError::Other)?;
+            }
+        }
+        Ok(())
+    }
+}
 
 fn is_none_or_empty<T: AsRef<[U]>, U>(opt: &Option<T>) -> bool {
     opt.as_ref().is_none_or(|v| v.as_ref().is_empty())
@@ -53,12 +116,20 @@ impl From<Role> for String {
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
-pub enum Model {
+pub enum MantleModel {
     #[serde(rename = "gpt-5.4")]
-    FivePointFour,
+    Gpt5_4,
     #[serde(rename = "gpt-5.5")]
     #[default]
-    FivePointFive,
+    Gpt5_5,
+    #[serde(rename = "gemma-4-31b")]
+    Gemma4_31B,
+    #[serde(rename = "gemma-4-26b")]
+    Gemma4_26B,
+    #[serde(rename = "gemma-4-e2b")]
+    Gemma4E2b,
+    #[serde(rename = "grok-4-3")]
+    Grok4_3,
     #[serde(rename = "custom")]
     Custom {
         name: String,
@@ -83,39 +154,58 @@ const fn default_supports_images() -> bool {
     true
 }
 
-impl Model {
+impl MantleModel {
     pub fn default_fast() -> Self {
-        Self::FivePointFour
+        Self::Gemma4E2b
     }
 
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
-            "gpt-5.4" => Ok(Self::FivePointFour),
-            "gpt-5.5" => Ok(Self::FivePointFive),
+            "gpt-5.4" => Ok(Self::Gpt5_4),
+            "gpt-5.5" => Ok(Self::Gpt5_5),
+            "google.gemma-4-31b" => Ok(Self::Gemma4_31B),
+            "google.gemma-4-26b-a4b" => Ok(Self::Gemma4_26B),
+            "google.gemma-4-e2b" => Ok(Self::Gemma4E2b),
+            "xai.grok-4.3" => Ok(Self::Grok4_3),
             invalid_id => anyhow::bail!("invalid model id '{invalid_id}'"),
         }
     }
 
     pub fn id(&self) -> &str {
         match self {
-            Self::FivePointFour => "gpt-5.4",
-            Self::FivePointFive => "gpt-5.5",
+            Self::Gpt5_4 => "gpt-5.4",
+            Self::Gpt5_5 => "gpt-5.5",
+            // Gemma and Grok are served on the `bedrock-mantle` endpoint and
+            // expect their fully-qualified Bedrock model IDs as `request.model`.
+            Self::Gemma4_31B => "google.gemma-4-31b",
+            Self::Gemma4_26B => "google.gemma-4-26b-a4b",
+            Self::Gemma4E2b => "google.gemma-4-e2b",
+            Self::Grok4_3 => "xai.grok-4.3",
             Self::Custom { name, .. } => name,
         }
     }
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::FivePointFour => "gpt-5.4",
-            Self::FivePointFive => "gpt-5.5",
-            Self::Custom { display_name, .. } => display_name.as_deref().unwrap_or(&self.id()),
+            Self::Gpt5_4 => "gpt-5.4",
+            Self::Gpt5_5 => "gpt-5.5",
+            Self::Gemma4_31B => "Gemma 4 31B",
+            Self::Gemma4_26B => "Gemma 4 26B-A4B",
+            Self::Gemma4E2b => "Gemma 4 E2B",
+            Self::Grok4_3 => "Grok 4.3",
+            Self::Custom { display_name, .. } => display_name.as_deref().unwrap_or(self.id()),
         }
     }
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::FivePointFour => 1_050_000,
-            Self::FivePointFive => 1_050_000,
+            Self::Gpt5_4 => 1_050_000,
+            Self::Gpt5_5 => 1_050_000,
+            // Context windows verified against the `bedrock-mantle` endpoint:
+            // it caps `max_completion_tokens` at exactly the context window.
+            Self::Grok4_3 => 1_048_576,
+            Self::Gemma4_31B | Self::Gemma4_26B => 262_144,
+            Self::Gemma4E2b => 131_072,
             Self::Custom { max_tokens, .. } => *max_tokens,
         }
     }
@@ -125,8 +215,15 @@ impl Model {
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
-            Self::FivePointFour => Some(128_000),
-            Self::FivePointFive => Some(128_000),
+            Self::Gpt5_4 => Some(128_000),
+            Self::Gpt5_5 => Some(128_000),
+            // Empirically probed against `bedrock-mantle`: the endpoint accepts
+            // `max_completion_tokens` up to the full context window and rejects
+            // anything larger ("exceeds model maximum (N)"). Grok's documented
+            // 131072 is only the *default*, not the ceiling.
+            Self::Grok4_3 => Some(1_048_576),
+            Self::Gemma4_31B | Self::Gemma4_26B => Some(262_144),
+            Self::Gemma4E2b => Some(131_072),
         }
     }
 
@@ -135,9 +232,14 @@ impl Model {
             Self::Custom {
                 reasoning_effort, ..
             } => reasoning_effort.to_owned(),
-            Self::FivePointFour => Some(ReasoningEffort::None),
-            Self::FivePointFive => Some(ReasoningEffort::Medium),
-            _ => None,
+            Self::Gpt5_4 => Some(ReasoningEffort::None),
+            Self::Gpt5_5 => Some(ReasoningEffort::Medium),
+            // Grok 4.3 reasoning is always on and defaults to low effort.
+            Self::Grok4_3 => Some(ReasoningEffort::Low),
+            Self::Gemma4_31B | Self::Gemma4_26B => Some(ReasoningEffort::Medium),
+            // Gemma 4 E2B is recommended to run with high reasoning effort so
+            // that its extensive reasoning stays in the dedicated channel.
+            Self::Gemma4E2b => Some(ReasoningEffort::High),
         }
     }
 
@@ -155,14 +257,31 @@ impl Model {
                 ReasoningEffort::XHigh => &[ReasoningEffort::XHigh],
                 ReasoningEffort::Max => &[ReasoningEffort::Max],
             },
-            Self::FivePointFour | Self::FivePointFive => &[
+            Self::Custom {
+                reasoning_effort: None,
+                ..
+            } => &[],
+            Self::Gpt5_4 | Self::Gpt5_5 => &[
                 ReasoningEffort::None,
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
                 ReasoningEffort::XHigh,
             ],
-            _ => &[],
+            // Grok 4.3 supports disabling reasoning ("none") plus low/medium/high.
+            Self::Grok4_3 => &[
+                ReasoningEffort::None,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ],
+            // Gemma 4 models honor reasoning effort but do not document a
+            // "none" option, so we only expose low/medium/high.
+            Self::Gemma4_31B | Self::Gemma4_26B | Self::Gemma4E2b => &[
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ],
         }
     }
 
@@ -181,8 +300,12 @@ impl Model {
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
     pub fn supports_parallel_tool_calls(&self) -> bool {
         match self {
-            Self::FivePointFour | Self::FivePointFive => true,
-            Model::Custom { .. } => false,
+            Self::Gpt5_4 | Self::Gpt5_5 => true,
+            // Grok 4.3 does not document a parallel tool call restriction.
+            Self::Grok4_3 => true,
+            // Gemma 4 models explicitly only support one tool call per turn.
+            Self::Gemma4_31B | Self::Gemma4_26B | Self::Gemma4E2b => false,
+            Self::Custom { .. } => false,
         }
     }
 
@@ -202,7 +325,8 @@ impl Model {
     /// <https://developers.openai.com/api/docs/guides/compaction>
     pub fn supports_compaction(&self) -> bool {
         match self {
-            Self::FivePointFour | Self::FivePointFive => true,
+            Self::Gpt5_4 | Self::Gpt5_5 => true,
+            Self::Gemma4_31B | Self::Gemma4_26B | Self::Gemma4E2b | Self::Grok4_3 => false,
             Self::Custom { .. } => false,
         }
     }
@@ -212,7 +336,9 @@ impl Model {
     /// `*-nano`, and legacy `gpt-4` variants are not eligible.
     pub fn supports_priority(&self) -> bool {
         match self {
-            Self::FivePointFour | Self::FivePointFive => true,
+            Self::Gpt5_4 | Self::Gpt5_5 => true,
+            // Gemma 4 and Grok 4.3 are all available on the Priority tier.
+            Self::Gemma4_31B | Self::Gemma4_26B | Self::Gemma4E2b | Self::Grok4_3 => true,
             Self::Custom { .. } => false,
         }
     }
@@ -220,7 +346,7 @@ impl Model {
 
 #[cfg(test)]
 mod tests {
-    use super::{Model, ReasoningEffort};
+    use super::{MantleModel, ReasoningEffort};
 
     #[test]
     fn newer_frontier_models_support_none_reasoning() {
@@ -233,19 +359,19 @@ mod tests {
         ];
 
         assert_eq!(
-            Model::FivePointFour.reasoning_effort(),
+            MantleModel::Gpt5_4.reasoning_effort(),
             Some(ReasoningEffort::None)
         );
         assert_eq!(
-            Model::FivePointFour.supported_reasoning_efforts(),
+            MantleModel::Gpt5_4.supported_reasoning_efforts(),
             expected_efforts.as_slice()
         );
         assert_eq!(
-            Model::FivePointFive.reasoning_effort(),
+            MantleModel::Gpt5_5.reasoning_effort(),
             Some(ReasoningEffort::Medium)
         );
         assert_eq!(
-            Model::FivePointFive.supported_reasoning_efforts(),
+            MantleModel::Gpt5_5.supported_reasoning_efforts(),
             expected_efforts.as_slice()
         );
     }
@@ -517,26 +643,40 @@ pub struct ResponseStreamEvent {
     pub usage: Option<Usage>,
 }
 
+/// Builds the chat-completions URL for a Mantle model.
+///
+/// Bedrock-hosted third-party models (Gemma, Grok — whose IDs are namespaced
+/// like `google.gemma-4-31b` or `xai.grok-4.3`) are served on the OpenAI-shaped
+/// `/openai/v1` path, whereas the first-party GPT ids use the bare `/v1` path.
+/// See the per-model "Programmatic Access" sections of the Bedrock model cards.
+fn chat_completions_uri(region: &str, model: &str) -> String {
+    let region_url = format!("https://bedrock-mantle.{region}.api.aws");
+    if model.contains('.') {
+        format!("{region_url}/openai/v1/chat/completions")
+    } else {
+        format!("{region_url}/v1/chat/completions")
+    }
+}
+
 pub async fn non_streaming_completion(
     client: &dyn HttpClient,
-    api_url: &str,
-    api_key: &str,
+    region: &str,
+    auth: &MantleAuth,
     request: Request,
 ) -> Result<Response, RequestError> {
-    let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
+    let uri = chat_completions_uri(region, &request.model);
+    let body = serde_json::to_vec(&request).map_err(|e| RequestError::Other(e.into()))?;
+
+    let mut http_request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()));
-
-    let request = request_builder
-        .body(AsyncBody::from(
-            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
-        ))
+        .body(AsyncBody::from(body.clone()))
         .map_err(|e| RequestError::Other(e.into()))?;
 
-    let mut response = client.send(request).await?;
+    auth.apply(&mut http_request, &body, region)?;
+
+    let mut response = client.send(http_request).await?;
     if response.status().is_success() {
         let mut body = String::new();
         response
@@ -555,7 +695,7 @@ pub async fn non_streaming_completion(
             .map_err(|e| RequestError::Other(e.into()))?;
 
         Err(RequestError::HttpResponseError {
-            provider: "openai".to_owned(),
+            provider: PROVIDER_NAME.to_owned(),
             status_code: response.status(),
             body,
             headers: response.headers().clone(),
@@ -565,25 +705,25 @@ pub async fn non_streaming_completion(
 
 pub async fn stream_completion(
     client: &dyn HttpClient,
-    provider_name: &str,
-    api_url: &str,
-    api_key: &str,
+    region: &str,
+    auth: &MantleAuth,
     request: Request,
     extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
-    let uri = format!("{api_url}/chat/completions");
-    let request = HttpRequest::builder()
+    let uri = chat_completions_uri(region, &request.model);
+    let body = serde_json::to_vec(&request).map_err(|e| RequestError::Other(e.into()))?;
+
+    let mut http_request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()))
         .extra_headers(extra_headers)
-        .body(AsyncBody::from(
-            serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
-        ))
+        .body(AsyncBody::from(body.clone()))
         .map_err(|e| RequestError::Other(e.into()))?;
 
-    let mut response = client.send(request).await?;
+    auth.apply(&mut http_request, &body, region)?;
+
+    let mut response = client.send(http_request).await?;
     if response.status().is_success() {
         let reader = BufReader::new(response.into_body());
         Ok(reader
@@ -625,7 +765,7 @@ pub async fn stream_completion(
             .map_err(|e| RequestError::Other(e.into()))?;
 
         Err(RequestError::HttpResponseError {
-            provider: provider_name.to_owned(),
+            provider: PROVIDER_NAME.to_owned(),
             status_code: response.status(),
             body,
             headers: response.headers().clone(),
