@@ -37,7 +37,7 @@ use language_model::{
 use settings::{update_settings_file, update_settings_file_with_completion};
 use ui::{
     ButtonLike, CalloutBorderPosition, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle,
-    Tab, ToolCallStatusKind, ToolCallTerminal,
+    Tab, ToolCall as ToolCallCard, ToolCallStatusKind, ToolCallStyle, ToolCallTerminal,
 };
 use workspace::notifications::NotificationId;
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
@@ -8172,6 +8172,23 @@ impl ThreadView {
             None
         };
 
+        let header_style = if use_card_layout {
+            ToolCallStyle::Card
+        } else {
+            ToolCallStyle::Inline
+        };
+        let status_kind = if needs_confirmation {
+            ToolCallStatusKind::AwaitingConfirmation
+        } else if failed_or_canceled {
+            match tool_call.status {
+                ToolCallStatus::Rejected => ToolCallStatusKind::Rejected,
+                ToolCallStatus::Canceled => ToolCallStatusKind::Canceled,
+                _ => ToolCallStatusKind::Failed,
+            }
+        } else {
+            ToolCallStatusKind::Completed
+        };
+
         v_flex()
             .map(|this| {
                 if matches!(
@@ -8212,27 +8229,23 @@ impl ThreadView {
                     ))
                 } else {
                     this.child(
-                        h_flex()
-                            .group(&card_header_id)
-                            .relative()
-                            .w_full()
-                            .justify_between()
-                            .when(use_card_layout, |this| {
-                                this.p_0p5()
-                                    .rounded_t(rems_from_px(5.))
-                                    .bg(self.tool_card_header_bg(cx))
-                            })
-                            .child(self.render_tool_call_label(
-                                entry_ix,
-                                tool_call,
-                                is_edit,
-                                is_cancelled_edit,
-                                has_revealed_diff,
-                                use_card_layout,
-                                window,
-                                cx,
-                            ))
-                            .child(
+                        div().w_full().group(card_header_id.clone()).child(
+                            ToolCallCard::new(card_header_id.clone())
+                                .style(header_style)
+                                .framed(false)
+                                .fade_label(false)
+                                .status(status_kind)
+                                .label(self.render_tool_call_label(
+                                    entry_ix,
+                                    tool_call,
+                                    is_edit,
+                                    is_cancelled_edit,
+                                    has_revealed_diff,
+                                    use_card_layout,
+                                    window,
+                                    cx,
+                                ))
+                                .header_action(
                                 h_flex()
                                     .when(is_collapsible || failed_or_canceled, |this| {
                                         let diff_for_discard = if has_revealed_diff
@@ -8370,8 +8383,8 @@ impl ThreadView {
                                                 }),
                                         )
                                     }),
-                            )
-
+                                ),
+                        ),
                     )
                 }
             })

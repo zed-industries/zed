@@ -86,6 +86,8 @@ pub struct ToolCall {
     is_open: bool,
     is_collapsible: bool,
     fade_label: bool,
+    wrap_content: bool,
+    framed: Option<bool>,
     on_toggle: Option<ClickHandler>,
     header_actions: Vec<AnyElement>,
     content: Option<AnyElement>,
@@ -102,6 +104,8 @@ impl ToolCall {
             is_open: false,
             is_collapsible: false,
             fade_label: true,
+            wrap_content: true,
+            framed: None,
             on_toggle: None,
             header_actions: Vec::new(),
             content: None,
@@ -146,6 +150,23 @@ impl ToolCall {
         self
     }
 
+    /// Whether the component should frame the content slot itself (card top
+    /// border / inline left guideline). Set to `false` when the caller's
+    /// content already carries that styling. Defaults to `true`.
+    pub fn wrap_content(mut self, wrap_content: bool) -> Self {
+        self.wrap_content = wrap_content;
+        self
+    }
+
+    /// Whether to draw the outer card frame (border, background, clipped
+    /// corners). Defaults to following the style (`Card` is framed, `Inline`
+    /// is not). Override for a card-styled header mounted inside another
+    /// container that shouldn't draw its own box.
+    pub fn framed(mut self, framed: bool) -> Self {
+        self.framed = Some(framed);
+        self
+    }
+
     pub fn on_toggle(
         mut self,
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
@@ -180,6 +201,7 @@ impl ToolCall {
 impl RenderOnce for ToolCall {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let is_card = self.style == ToolCallStyle::Card;
+        let is_framed = self.framed.unwrap_or(is_card);
         let is_unsuccessful = self.status.is_unsuccessful();
         let header_bg = tool_call_card_header_bg(cx);
         let border_color = tool_call_card_border_color(cx);
@@ -243,7 +265,7 @@ impl RenderOnce for ToolCall {
 
         v_flex()
             .w_full()
-            .when(is_card, |this| {
+            .when(is_framed, |this| {
                 this.rounded_md()
                     .border_1()
                     .when(is_unsuccessful, |this| this.border_dashed())
@@ -253,7 +275,9 @@ impl RenderOnce for ToolCall {
             })
             .child(header)
             .when_some(self.content, |this, content| {
-                if is_card {
+                if !self.wrap_content {
+                    this.child(content)
+                } else if is_card {
                     this.child(
                         v_flex()
                             .w_full()
