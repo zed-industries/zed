@@ -3,7 +3,7 @@ use std::{
     ffi::c_void,
     ptr::NonNull,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, Once},
 };
 
 use collections::{FxHashSet, HashMap};
@@ -14,7 +14,7 @@ use wayland_backend::client::ObjectId;
 use wayland_client::WEnum;
 use wayland_client::{
     Proxy,
-    protocol::{wl_output, wl_surface},
+    protocol::{wl_output, wl_region, wl_surface},
 };
 use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1;
 use wayland_protocols::wp::viewporter::client::wp_viewport;
@@ -710,11 +710,11 @@ impl WaylandWindowStatePtr {
             let request_frame_callback = !state.acknowledged_first_configure;
             if request_frame_callback {
                 state.acknowledged_first_configure = true;
-                drop(state);
+            }
+            // Keep the opaque and blur regions in sync with the new size.
+            update_window(state);
+            if request_frame_callback {
                 self.frame();
-            } else {
-                drop(state);
-                update_window(self.state.borrow_mut());
             }
         }
     }
@@ -1621,22 +1621,163 @@ impl accesskit::DeactivationHandler for TrivialDeactivationHandler {
     }
 }
 
+static BLUR_UNAVAILABLE_ONCE: Once = Once::new();
+static KDE_BLUR_FALLBACK_ONCE: Once = Once::new();
+
+/// Applies the background blur for the window via the cross-compositor
+/// `ext-background-effect` protocol, if the compositor supports it.
+fn update_blur(state: &mut RefMut<WaylandWindowState>, content_area: Bounds<i32>) {
+    let Some(manager) = state.globals.ext_background_effect_manager.clone() else {
+        return;
+    };
+
+    if state.background_appearance == WindowBackgroundAppearance::Blurred {
+        let effect = match state.blur.as_ref() {
+            Some(BlurSurface::ExtBackgroundEffect(effect)) => effect.clone(),
+            _ => {
+                let effect = manager.get_background_effect(&state.surface, &state.globals.qh, ());
+                state.blur = Some(BlurSurface::ExtBackgroundEffect(effect.clone()));
+                effect
+            }
+        };
+        let region = state
+            .globals
+            .compositor
+            .create_region(&state.globals.qh, ());
+        let rounding = if state.decorations == WindowDecorations::Client {
+            f32::from(theme::CLIENT_SIDE_DECORATION_ROUNDING) as i32
+        } else {
+            0
+        };
+        add_rounded_region(&region, content_area, rounding, state.tiling);
+        effect.set_blur_region(Some(&region));
+        region.destroy();
+    } else if let Some(BlurSurface::ExtBackgroundEffect(effect)) = state.blur.take() {
+        // Destroying the effect removes the blur region on the next commit.
+        effect.destroy();
+    }
+}
+
+/// Adds `bounds` to `region` as a rounded rectangle. Each corner is only rounded
+/// when both of its adjacent edges are untiled, mirroring
+/// `theme::ClientDecorationsExt::rounded_client_corners`. The rounded corners are
+/// approximated by subtracting the area outside each corner's quarter circle one
+/// scanline at a time, since `wl_region` only supports rectangles.
+fn add_rounded_region(
+    region: &wl_region::WlRegion,
+    bounds: Bounds<i32>,
+    rounding: i32,
+    tiling: Tiling,
+) {
+    region.add(
+        bounds.origin.x,
+        bounds.origin.y,
+        bounds.size.width,
+        bounds.size.height,
+    );
+
+    let radius = rounding
+        .min(bounds.size.width / 2)
+        .min(bounds.size.height / 2);
+    if radius <= 0 {
+        return;
+    }
+
+    let left = bounds.origin.x;
+    let top = bounds.origin.y;
+    let right = bounds.origin.x + bounds.size.width;
+    let bottom = bounds.origin.y + bounds.size.height;
+
+    if !tiling.top && !tiling.left {
+        subtract_corner(region, left, top, left + radius, top + radius, radius);
+    }
+    if !tiling.top && !tiling.right {
+        subtract_corner(
+            region,
+            right - radius,
+            top,
+            right - radius,
+            top + radius,
+            radius,
+        );
+    }
+    if !tiling.bottom && !tiling.left {
+        subtract_corner(
+            region,
+            left,
+            bottom - radius,
+            left + radius,
+            bottom - radius,
+            radius,
+        );
+    }
+    if !tiling.bottom && !tiling.right {
+        subtract_corner(
+            region,
+            right - radius,
+            bottom - radius,
+            right - radius,
+            bottom - radius,
+            radius,
+        );
+    }
+}
+
+/// Subtracts the part of a `radius`×`radius` corner square that lies outside the
+/// corner's quarter circle. The square's top-left is (`square_x`, `square_y`) and
+/// `center` is the arc center (the square corner adjacent to the window body).
+fn subtract_corner(
+    region: &wl_region::WlRegion,
+    square_x: i32,
+    square_y: i32,
+    center_x: i32,
+    center_y: i32,
+    radius: i32,
+) {
+    let radius_squared = (radius * radius) as f32;
+    for row in 0..radius {
+        let y = square_y + row;
+        let dy = (y - center_y) as f32;
+        let half_chord = (radius_squared - dy * dy).max(0.0).sqrt().round() as i32;
+        let gap = radius - half_chord;
+        if gap <= 0 {
+            continue;
+        }
+        // When the arc opens to the right the gap hugs the left edge of the
+        // square; otherwise it hugs the right edge.
+        let x = if center_x == square_x {
+            square_x + half_chord
+        } else {
+            square_x
+        };
+        region.subtract(x, y, gap, 1);
+    }
+}
+
 fn update_window(mut state: RefMut<WaylandWindowState>) {
     let opaque = !state.is_transparent();
 
     state.renderer.update_transparency(!opaque);
-    let opaque_area = state.window_bounds.map(|v| f32::from(v) as i32);
-    opaque_area.inset(f32::from(state.inset()) as i32);
+
+    // The window content occupies the surface minus the client-side decoration
+    // shadow, which is only inset on untiled edges.
+    let content_area = inset_by_tiling(
+        state.bounds.map_origin(|_| px(0.0)),
+        state.inset(),
+        state.tiling,
+    )
+    .map(|v| f32::from(v) as i32)
+    .map_size(|v| v.max(0));
 
     let region = state
         .globals
         .compositor
         .create_region(&state.globals.qh, ());
     region.add(
-        opaque_area.origin.x,
-        opaque_area.origin.y,
-        opaque_area.size.width,
-        opaque_area.size.height,
+        content_area.origin.x,
+        content_area.origin.y,
+        content_area.size.width,
+        content_area.size.height,
     );
 
     // Note that rounded corners make this rectangle API hard to work with.
@@ -1651,38 +1792,18 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
     } else {
         state.surface.set_opaque_region(None);
     }
+    region.destroy();
 
-    if let Some(ref blur_manager) = state.globals.ext_background_effect_manager {
-        if state.background_appearance == WindowBackgroundAppearance::Blurred {
-            if state.blur.is_none() {
-                let surface_effect =
-                    blur_manager.get_background_effect(&state.surface, &state.globals.qh, ());
-                state.blur = Some(BlurSurface::ExtBackgroundEffect(surface_effect));
-            }
-            // Set the blur region to cover the entire surface.
-            // The compositor clips this to the surface size.
-            let blur_region = state
-                .globals
-                .compositor
-                .create_region(&state.globals.qh, ());
-            let surface_width = f32::from(state.bounds.size.width) as i32;
-            let surface_height = f32::from(state.bounds.size.height) as i32;
-            blur_region.add(0, 0, surface_width, surface_height);
-            if let BlurSurface::ExtBackgroundEffect(surface) = state.blur.as_ref().unwrap() {
-                surface.set_blur_region(Some(&blur_region));
-            }
-            blur_region.destroy();
-        } else {
-            // Remove the blur effect by destroying the background effect surface.
-            if let Some(mut blur) = state.blur.take() {
-                blur.destroy();
-            }
-        }
-    } else if let Some(ref blur_manager) = state.globals.blur_manager {
+    update_blur(&mut state, content_area);
+
+    if let Some(ref blur_manager) = state.globals.blur_manager {
         // Fallback to the deprecated KDE blur protocol for older compositors
-        // (e.g. X11, pre-6.7 Plasma) where ext-background-effect is not available.
+        // (e.g. pre-6.7 Plasma) where ext-background-effect is not available.
         if state.background_appearance == WindowBackgroundAppearance::Blurred {
             if state.blur.is_none() {
+                KDE_BLUR_FALLBACK_ONCE.call_once(|| {
+                    log::debug!("Using KDE blur protocol (ext-background-effect unavailable)")
+                });
                 let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
                 state.blur = Some(BlurSurface::KdeBlur(blur));
             }
@@ -1699,11 +1820,11 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
 
     if state.background_appearance == WindowBackgroundAppearance::Blurred {
         if state.blur.is_none() {
-            log::warn!("Background blur requested but no blur protocol is available");
+            BLUR_UNAVAILABLE_ONCE.call_once(|| {
+                log::warn!("Background blur requested but no blur protocol is available")
+            });
         }
     }
-
-    region.destroy();
 }
 
 pub(crate) trait WindowDecorationsExt {
