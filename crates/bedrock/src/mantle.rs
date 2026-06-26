@@ -778,6 +778,83 @@ pub async fn stream_completion(
     }
 }
 
+/// Streams a completion from the Mantle Responses API.
+///
+/// GPT-5.x are Responses-only on Mantle, and Gemma/Grok only return reasoning
+/// content on this path, so it is the preferred transport for all first-party
+/// Mantle models. Reuses the OpenAI Responses request/event types (these models
+/// live on the `openai/v1/responses` path, distinct from the bare `v1/responses`
+/// path other Bedrock responses models use).
+pub async fn stream_responses(
+    client: &dyn HttpClient,
+    region: &str,
+    auth: &MantleAuth,
+    request: MantleResponses::Request,
+    extra_headers: &CustomHeaders,
+) -> Result<BoxStream<'static, Result<MantleResponses::StreamEvent>>, RequestError> {
+    let region_url = format!("https://bedrock-mantle.{region}.api.aws");
+    let uri = format!("{region_url}/openai/v1/responses");
+    let body = serde_json::to_vec(&request).map_err(|e| RequestError::Other(e.into()))?;
+
+    let mut http_request = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(uri)
+        .header("Content-Type", "application/json")
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(body.clone()))
+        .map_err(|e| RequestError::Other(e.into()))?;
+
+    auth.apply(&mut http_request, &body, region)?;
+
+    let mut response = client.send(http_request).await?;
+    if response.status().is_success() {
+        let reader = BufReader::new(response.into_body());
+        Ok(reader
+            .lines()
+            .filter_map(|line| async move {
+                match line {
+                    Ok(line) => {
+                        let line = line
+                            .strip_prefix("data: ")
+                            .or_else(|| line.strip_prefix("data:"))?;
+                        if line == "[DONE]" || line.is_empty() {
+                            None
+                        } else {
+                            match serde_json::from_str::<MantleResponses::StreamEvent>(line) {
+                                Ok(event) => Some(Ok(event)),
+                                Err(error) => {
+                                    log::error!(
+                                        "Failed to parse Mantle responses stream event: `{}`\n\
+                                        Response: `{}`",
+                                        error,
+                                        line,
+                                    );
+                                    Some(Err(anyhow!(error)))
+                                }
+                            }
+                        }
+                    }
+                    Err(error) => Some(Err(anyhow!(error))),
+                }
+            })
+            .boxed())
+    } else {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|e| RequestError::Other(e.into()))?;
+
+        Err(RequestError::HttpResponseError {
+            provider: PROVIDER_NAME.to_owned(),
+            status_code: response.status(),
+            body,
+            headers: response.headers().clone(),
+        })
+    }
+}
+
 // -- Conversions to `language_model_core` types --
 
 impl From<RequestError> for language_model_core::LanguageModelCompletionError {

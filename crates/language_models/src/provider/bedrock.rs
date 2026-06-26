@@ -1026,7 +1026,7 @@ impl LanguageModel for BedrockMantleModel {
 
     fn stream_completion(
         &self,
-        request: LanguageModelRequest,
+        mut request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -1049,7 +1049,48 @@ impl LanguageModel for BedrockMantleModel {
         });
 
         let http_client = self.aws_http_client.client();
-        let mantle_request = into_mantle(request, &self.model);
+        let model = self.model.clone();
+
+        // The Responses API is the preferred (and for GPT-5.x, only) Mantle
+        // transport; the Chat Completions path is kept for custom models that
+        // opt into it. `service_tier` only applies when Priority is available.
+        if !model.supports_priority() {
+            request.speed = None;
+        }
+
+        if model.uses_responses_api() {
+            let responses_request = open_ai::completion::into_open_ai_response(
+                request,
+                model.id(),
+                model.supports_parallel_tool_calls(),
+                model.supports_prompt_cache_key(),
+                model.max_output_tokens(),
+                model.reasoning_effort(),
+                model
+                    .supported_reasoning_efforts()
+                    .contains(&bedrock::mantle::ReasoningEffort::None),
+            );
+
+            let future = self.request_limiter.stream(async move {
+                let stream = bedrock::mantle::stream_responses(
+                    http_client.as_ref(),
+                    &region,
+                    &auth,
+                    responses_request,
+                    &extra_headers,
+                )
+                .await
+                .map_err(LanguageModelCompletionError::from)?;
+
+                Ok(open_ai::completion::OpenAiResponseEventMapper::new()
+                    .map_stream(stream)
+                    .boxed())
+            });
+
+            return async move { Ok(future.await?.boxed()) }.boxed();
+        }
+
+        let mantle_request = into_mantle(request, &model);
 
         let future = self.request_limiter.stream(async move {
             let stream = bedrock::mantle::stream_completion(
