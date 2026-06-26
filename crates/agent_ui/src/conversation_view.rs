@@ -5769,7 +5769,7 @@ pub(crate) mod tests {
             let AgentThreadEntry::UserMessage(user_message) = &thread.entries()[2] else {
                 panic!();
             };
-            user_message.rewind_id.clone().unwrap()
+            user_message.client_id.clone().unwrap()
         });
 
         conversation_view.read_with(cx, |view, cx| {

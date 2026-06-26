@@ -1231,7 +1231,7 @@ impl ThreadView {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
                     && self.thread.read(cx).supports_truncate(cx)
-                    && user_message.rewind_id.is_some()
+                    && user_message.client_id.is_some()
                     && !self.is_subagent()
                 {
                     self.editing_message = Some(event.entry_index);
@@ -1242,7 +1242,7 @@ impl ThreadView {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
                     && self.thread.read(cx).supports_truncate(cx)
-                    && user_message.rewind_id.is_some()
+                    && user_message.client_id.is_some()
                     && !self.is_subagent()
                 {
                     if editor.read(cx).text(cx).as_str() == user_message.content.to_markdown(cx) {
@@ -1962,12 +1962,12 @@ impl ThreadView {
         }
         let thread = self.thread.clone();
 
-        let Some(rewind_id) = thread.update(cx, |thread, _| {
+        let Some(client_id) = thread.update(cx, |thread, _| {
             thread
                 .entries()
                 .get(entry_ix)?
                 .user_message()?
-                .rewind_id
+                .client_id
                 .clone()
         }) else {
             return;
@@ -2004,7 +2004,7 @@ impl ThreadView {
             }
 
             thread
-                .update(cx, |thread, cx| thread.rewind(rewind_id, cx))
+                .update(cx, |thread, cx| thread.rewind(client_id, cx))
                 .await?;
             this.update_in(cx, |thread, window, cx| {
                 cx.emit(AcpThreadViewEvent::Interacted);
@@ -2727,10 +2727,10 @@ impl ThreadView {
         .detach_and_log_err(cx);
     }
 
-    pub fn restore_checkpoint(&mut self, rewind_id: &ClientUserMessageId, cx: &mut Context<Self>) {
+    pub fn restore_checkpoint(&mut self, client_id: &ClientUserMessageId, cx: &mut Context<Self>) {
         self.thread
             .update(cx, |thread, cx| {
-                thread.restore_checkpoint(rewind_id.clone(), cx)
+                thread.restore_checkpoint(client_id.clone(), cx)
             })
             .detach_and_log_err(cx);
     }
@@ -5949,7 +5949,7 @@ impl ThreadView {
 
                 let is_subagent = self.is_subagent();
                 let can_rewind = self.thread.read(cx).supports_truncate(cx);
-                let is_editable = can_rewind && message.rewind_id.is_some() && !is_subagent;
+                let is_editable = can_rewind && message.client_id.is_some() && !is_subagent;
                 let agent_name = if is_subagent {
                     "subagents".into()
                 } else {
@@ -5970,7 +5970,7 @@ impl ThreadView {
                     .gap_1p5()
                     .w_full()
                     .when(is_editable && has_checkpoint_button, |this| {
-                        this.children(message.rewind_id.clone().map(|rewind_id| {
+                        this.children(message.client_id.clone().map(|client_id| {
                             h_flex()
                                 .px_3()
                                 .gap_2()
@@ -5982,7 +5982,7 @@ impl ThreadView {
                                         .color(Color::Muted)
                                         .tooltip(Tooltip::text("Restores all files in the project to the content they had at this point in the conversation."))
                                         .on_click(cx.listener(move |this, _, _window, cx| {
-                                            this.restore_checkpoint(&rewind_id, cx);
+                                            this.restore_checkpoint(&client_id, cx);
                                         }))
                                 )
                                 .child(Divider::horizontal())
