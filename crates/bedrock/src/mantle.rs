@@ -161,8 +161,8 @@ impl MantleModel {
 
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
-            "gpt-5.4" => Ok(Self::Gpt5_4),
-            "gpt-5.5" => Ok(Self::Gpt5_5),
+            "openai.gpt-5.4" => Ok(Self::Gpt5_4),
+            "openai.gpt-5.5" => Ok(Self::Gpt5_5),
             "google.gemma-4-31b" => Ok(Self::Gemma4_31B),
             "google.gemma-4-26b-a4b" => Ok(Self::Gemma4_26B),
             "google.gemma-4-e2b" => Ok(Self::Gemma4E2b),
@@ -173,10 +173,10 @@ impl MantleModel {
 
     pub fn id(&self) -> &str {
         match self {
-            Self::Gpt5_4 => "gpt-5.4",
-            Self::Gpt5_5 => "gpt-5.5",
-            // Gemma and Grok are served on the `bedrock-mantle` endpoint and
-            // expect their fully-qualified Bedrock model IDs as `request.model`.
+            // Mantle models expect their fully-qualified Bedrock model IDs as
+            // `request.model`.
+            Self::Gpt5_4 => "openai.gpt-5.4",
+            Self::Gpt5_5 => "openai.gpt-5.5",
             Self::Gemma4_31B => "google.gemma-4-31b",
             Self::Gemma4_26B => "google.gemma-4-26b-a4b",
             Self::Gemma4E2b => "google.gemma-4-e2b",
@@ -187,8 +187,8 @@ impl MantleModel {
 
     pub fn display_name(&self) -> &str {
         match self {
-            Self::Gpt5_4 => "gpt-5.4",
-            Self::Gpt5_5 => "gpt-5.5",
+            Self::Gpt5_4 => "GPT-5.4",
+            Self::Gpt5_5 => "GPT-5.5",
             Self::Gemma4_31B => "Gemma 4 31B",
             Self::Gemma4_26B => "Gemma 4 26B-A4B",
             Self::Gemma4E2b => "Gemma 4 E2B",
@@ -199,8 +199,9 @@ impl MantleModel {
 
     pub fn max_token_count(&self) -> u64 {
         match self {
-            Self::Gpt5_4 => 1_050_000,
-            Self::Gpt5_5 => 1_050_000,
+            // GPT-5.4 / GPT-5.5 expose a 272K-token context window.
+            Self::Gpt5_4 => 272_000,
+            Self::Gpt5_5 => 272_000,
             // Context windows verified against the `bedrock-mantle` endpoint:
             // it caps `max_completion_tokens` at exactly the context window.
             Self::Grok4_3 => 1_048_576,
@@ -215,6 +216,9 @@ impl MantleModel {
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
+            // GPT-5.4 / GPT-5.5 don't document a max output token count, and the
+            // responses endpoint silently clamps oversized values rather than
+            // rejecting them, so we use OpenAI's documented 128K output cap.
             Self::Gpt5_4 => Some(128_000),
             Self::Gpt5_5 => Some(128_000),
             // Empirically probed against `bedrock-mantle`: the endpoint accepts
@@ -336,7 +340,8 @@ impl MantleModel {
     /// `*-nano`, and legacy `gpt-4` variants are not eligible.
     pub fn supports_priority(&self) -> bool {
         match self {
-            Self::Gpt5_4 | Self::Gpt5_5 => true,
+            // GPT-5.4 / GPT-5.5 are Standard-tier only on Mantle (no Priority).
+            Self::Gpt5_4 | Self::Gpt5_5 => false,
             // Gemma 4 and Grok 4.3 are all available on the Priority tier.
             Self::Gemma4_31B | Self::Gemma4_26B | Self::Gemma4E2b | Self::Grok4_3 => true,
             Self::Custom { .. } => false,
