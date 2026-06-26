@@ -292,10 +292,13 @@ pub struct ToolCallTerminal {
     is_open: bool,
     elapsed: Option<SharedString>,
     truncated: bool,
+    truncation_tooltip: Option<SharedString>,
     exit_code: Option<i32>,
     command_failed: bool,
+    stop_tooltip: Option<SharedString>,
     on_toggle: Option<ClickHandler>,
     on_stop: Option<ClickHandler>,
+    notice: Option<AnyElement>,
     output: Option<AnyElement>,
     footer: Option<AnyElement>,
 }
@@ -310,10 +313,13 @@ impl ToolCallTerminal {
             is_open: false,
             elapsed: None,
             truncated: false,
+            truncation_tooltip: None,
             exit_code: None,
             command_failed: false,
+            stop_tooltip: None,
             on_toggle: None,
             on_stop: None,
+            notice: None,
             output: None,
             footer: None,
         }
@@ -344,6 +350,11 @@ impl ToolCallTerminal {
         self
     }
 
+    pub fn truncation_tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.truncation_tooltip = Some(tooltip.into());
+        self
+    }
+
     pub fn exit_code(mut self, exit_code: Option<i32>) -> Self {
         self.exit_code = exit_code;
         self
@@ -351,6 +362,11 @@ impl ToolCallTerminal {
 
     pub fn command_failed(mut self, command_failed: bool) -> Self {
         self.command_failed = command_failed;
+        self
+    }
+
+    pub fn stop_tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.stop_tooltip = Some(tooltip.into());
         self
     }
 
@@ -367,6 +383,13 @@ impl ToolCallTerminal {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_stop = Some(Arc::new(handler));
+        self
+    }
+
+    /// A notice rendered between the command block and the output (e.g. a
+    /// "command ran without the sandbox" warning).
+    pub fn notice(mut self, notice: impl IntoElement) -> Self {
+        self.notice = Some(notice.into_any_element());
         self
     }
 
@@ -441,6 +464,7 @@ impl RenderOnce for ToolCallTerminal {
             })
             .when(is_running && !needs_confirmation, |header| {
                 let on_stop = self.on_stop.clone();
+                let stop_tooltip = self.stop_tooltip.clone();
                 header
                     .gap_1p5()
                     .child(
@@ -459,14 +483,19 @@ impl RenderOnce for ToolCallTerminal {
                         IconButton::new((self.id.clone(), "stop-terminal"), IconName::Stop)
                             .icon_size(IconSize::Small)
                             .icon_color(Color::Error)
+                            .when_some(stop_tooltip, |this, tooltip| {
+                                this.tooltip(Tooltip::text(tooltip))
+                            })
                             .when_some(on_stop, |this, on_stop| {
                                 this.on_click(move |event, window, cx| on_stop(event, window, cx))
                             }),
                     )
             })
             .when(self.truncated, |header| {
+                let truncation_tooltip = self.truncation_tooltip.clone();
                 header.child(
                     h_flex()
+                        .id((self.id.clone(), "terminal-truncated"))
                         .gap_1()
                         .child(
                             Icon::new(IconName::Info)
@@ -477,7 +506,10 @@ impl RenderOnce for ToolCallTerminal {
                             Label::new("Truncated")
                                 .color(Color::Muted)
                                 .size(LabelSize::XSmall),
-                        ),
+                        )
+                        .when_some(truncation_tooltip, |this, tooltip| {
+                            this.tooltip(Tooltip::text(tooltip))
+                        }),
                 )
             })
             .when(is_unsuccessful, |header| {
@@ -507,6 +539,7 @@ impl RenderOnce for ToolCallTerminal {
                     .child(header)
                     .children(self.command),
             )
+            .when_some(self.notice, |this, notice| this.child(notice))
             .when(self.is_open, |this| {
                 this.when_some(self.output, |this, output| {
                     this.child(

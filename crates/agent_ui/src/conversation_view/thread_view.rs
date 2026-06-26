@@ -37,7 +37,7 @@ use language_model::{
 use settings::{update_settings_file, update_settings_file_with_completion};
 use ui::{
     ButtonLike, CalloutBorderPosition, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle,
-    Tab,
+    Tab, ToolCallStatusKind, ToolCallTerminal,
 };
 use workspace::notifications::NotificationId;
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
@@ -7538,17 +7538,6 @@ impl ThreadView {
             started_at.elapsed()
         };
 
-        let header_id =
-            SharedString::from(format!("terminal-tool-header-{}", terminal.entity_id()));
-        let header_group = SharedString::from(format!(
-            "terminal-tool-header-group-{}",
-            terminal.entity_id()
-        ));
-        let header_bg = cx
-            .theme()
-            .colors()
-            .element_background
-            .blend(cx.theme().colors().editor_foreground.opacity(0.025));
         let border_color = cx.theme().colors().border.opacity(0.6);
 
         let working_dir = working_dir
@@ -7556,167 +7545,153 @@ impl ThreadView {
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "current directory".to_string());
 
-        let command_element = self.render_collapsible_command(
-            header_group.clone(),
-            false,
-            tool_call.label.clone(),
-            window,
-            cx,
-        );
+        let command_group =
+            SharedString::from(format!("terminal-tool-command-{}", terminal.entity_id()));
+        let command_element =
+            self.render_collapsible_command(command_group, false, tool_call.label.clone(), window, cx);
 
         let is_expanded = self
             .entry_view_state
             .read(cx)
             .is_tool_call_expanded(&tool_call.id);
 
-        let header = h_flex()
-            .id(header_id)
-            .pt_1()
-            .pl_1p5()
-            .pr_1()
-            .flex_none()
-            .gap_1()
-            .justify_between()
-            .rounded_t_md()
-            .child(
-                div()
-                    .id(("command-target-path", terminal.entity_id()))
-                    .w_full()
-                    .max_w_full()
-                    .overflow_x_scroll()
-                    .child(
-                        Label::new(working_dir)
-                            .buffer_font(cx)
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    ),
-            )
-            .child(
-                Disclosure::new(
-                    SharedString::from(format!(
-                        "terminal-tool-disclosure-{}",
-                        terminal.entity_id()
-                    )),
-                    is_expanded,
-                )
-                .opened_icon(IconName::ChevronUp)
-                .closed_icon(IconName::ChevronDown)
-                .visible_on_hover(&header_group)
-                .on_click(cx.listener({
-                    let id = tool_call.id.clone();
-                    move |this, _event, window, cx| {
-                        this.entry_view_state.update(cx, |state, _cx| {
-                            state.toggle_tool_call_expansion(&id);
-                        });
-                        this.refresh_thread_search(window, cx);
-                        cx.notify();
-                    }
-                })),
-            )
-            .when(time_elapsed > Duration::from_secs(10), |header| {
-                header.child(
-                    Label::new(format!("({})", duration_alt_display(time_elapsed)))
-                        .buffer_font(cx)
-                        .color(Color::Muted)
-                        .size(LabelSize::XSmall),
-                )
-            })
-            .when(!command_finished && !needs_confirmation, |header| {
-                header
-                    .gap_1p5()
-                    .child(
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::XSmall)
-                            .color(Color::Muted)
-                            .with_rotate_animation(2)
-                    )
-                    .child(div().h(relative(0.6)).ml_1p5().child(Divider::vertical().color(DividerColor::Border)))
-                    .child(
-                        IconButton::new(
-                            SharedString::from(format!("stop-terminal-{}", terminal.entity_id())),
-                            IconName::Stop
-                        )
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Error)
-                        .tooltip(move |_window, cx| {
-                            Tooltip::with_meta(
-                                "Stop This Command",
-                                None,
-                                "Also possible by placing your cursor inside the terminal and using regular terminal bindings.",
-                                cx,
-                            )
-                        })
-                        .on_click({
-                            let terminal = terminal.clone();
-                            cx.listener(move |this, _event, _window, cx| {
-                                terminal.update(cx, |terminal, cx| {
-                                    terminal.stop_by_user(cx);
-                                });
-                                if AgentSettings::get_global(cx).cancel_generation_on_terminal_stop {
-                                    this.cancel_generation(cx);
-                                }
-                            })
-                        }),
-                    )
-            })
-            .when(truncated_output, |header| {
-                let tooltip = if let Some(output) = output {
-                    if output_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
-                       format!("Output exceeded terminal max lines and was \
-                            truncated, the model received the first {}.", format_file_size(output.content.len() as u64, true))
-                    } else {
-                        format!(
-                            "Output is {} long, and to avoid unexpected token usage, \
-                                only {} was sent back to the agent.",
-                            format_file_size(output.original_content_len as u64, true),
-                             format_file_size(output.content.len() as u64, true)
-                        )
-                    }
-                } else {
-                    "Output was truncated".to_string()
-                };
+        let status_kind = if needs_confirmation {
+            ToolCallStatusKind::AwaitingConfirmation
+        } else if !command_finished {
+            ToolCallStatusKind::InProgress
+        } else if tool_failed {
+            match tool_call.status {
+                ToolCallStatus::Rejected => ToolCallStatusKind::Rejected,
+                ToolCallStatus::Canceled => ToolCallStatusKind::Canceled,
+                _ => ToolCallStatusKind::Failed,
+            }
+        } else {
+            ToolCallStatusKind::Completed
+        };
 
-                header.child(
-                    h_flex()
-                        .id(("terminal-tool-truncated-label", terminal.entity_id()))
-                        .gap_1()
-                        .child(
-                            Icon::new(IconName::Info)
-                                .size(IconSize::XSmall)
-                                .color(Color::Ignored),
-                        )
-                        .child(
-                            Label::new("Truncated")
-                                .color(Color::Muted)
-                                .size(LabelSize::XSmall),
-                        )
-                        .tooltip(Tooltip::text(tooltip)),
-                )
-            })
-            .when(tool_failed || command_failed, |header| {
-                header.child(
-                    div()
-                        .id(("terminal-tool-error-code-indicator", terminal.entity_id()))
-                        .child(
-                            Icon::new(IconName::Close)
-                                .size(IconSize::Small)
-                                .color(Color::Error),
-                        )
-                        .when_some(output.and_then(|o| o.exit_status), |this, status| {
-                            this.tooltip(Tooltip::text(format!(
-                                "Exited with code {}",
-                                status.code().unwrap_or(-1),
-                            )))
-                        }),
-                )
-            })
-;
+        let truncation_tooltip = truncated_output.then(|| {
+            if let Some(output) = output {
+                if output_line_count + 10 > terminal::MAX_SCROLL_HISTORY_LINES {
+                    format!(
+                        "Output exceeded terminal max lines and was \
+                            truncated, the model received the first {}.",
+                        format_file_size(output.content.len() as u64, true)
+                    )
+                } else {
+                    format!(
+                        "Output is {} long, and to avoid unexpected token usage, \
+                                only {} was sent back to the agent.",
+                        format_file_size(output.original_content_len as u64, true),
+                        format_file_size(output.content.len() as u64, true)
+                    )
+                }
+            } else {
+                "Output was truncated".to_string()
+            }
+        });
+
+        let exit_code = output
+            .and_then(|o| o.exit_status)
+            .map(|status| status.code().unwrap_or(-1));
 
         let terminal_view = self
             .entry_view_state
             .read(cx)
             .entry(entry_ix)
             .and_then(|entry| entry.terminal(terminal));
+
+        let output_element = if is_expanded {
+            terminal_view.map(|terminal_view| {
+                let element = if terminal_view
+                    .read(cx)
+                    .content_mode(window, cx)
+                    .is_scrollable()
+                {
+                    div().h_72().child(terminal_view).into_any_element()
+                } else {
+                    terminal_view.into_any_element()
+                };
+
+                div()
+                    .text_ui_sm(cx)
+                    .h_full()
+                    .on_action(cx.listener(|_this, _: &NewTerminal, window, cx| {
+                        window.dispatch_action(NewThread.boxed_clone(), cx);
+                        cx.stop_propagation();
+                    }))
+                    .child(element)
+                    .into_any_element()
+            })
+        } else {
+            None
+        };
+
+        let notice = tool_call
+            .sandbox_not_applied
+            .as_ref()
+            .map(|reason| self.render_sandbox_not_applied_warning(reason, cx));
+
+        let footer = confirmation_options.map(|options| {
+            let is_first = self.is_first_tool_call(active_session_id, &tool_call.id, cx);
+            self.render_permission_buttons(
+                self.thread.read(cx).session_id().clone(),
+                is_first,
+                options,
+                entry_ix,
+                tool_call.id.clone(),
+                focus_handle,
+                cx,
+            )
+        });
+
+        let toggle_view = cx.weak_entity();
+        let stop_view = cx.weak_entity();
+        let toggle_id = tool_call.id.clone();
+        let stop_terminal = terminal.clone();
+
+        let card = ToolCallTerminal::new(
+            SharedString::from(format!("terminal-tool-{}", terminal.entity_id())),
+            working_dir,
+        )
+        .command(command_element)
+        .status(status_kind)
+        .open(is_expanded)
+        .command_failed(command_failed)
+        .exit_code(exit_code)
+        .truncated(truncated_output)
+        .stop_tooltip("Stop This Command")
+        .on_toggle(move |_, window, cx| {
+            toggle_view
+                .update(cx, |this, cx| {
+                    this.entry_view_state.update(cx, |state, _cx| {
+                        state.toggle_tool_call_expansion(&toggle_id);
+                    });
+                    this.refresh_thread_search(window, cx);
+                    cx.notify();
+                })
+                .ok();
+        })
+        .on_stop(move |_, _window, cx| {
+            stop_terminal.update(cx, |terminal, cx| {
+                terminal.stop_by_user(cx);
+            });
+            if AgentSettings::get_global(cx).cancel_generation_on_terminal_stop {
+                stop_view
+                    .update(cx, |this, cx| {
+                        this.cancel_generation(cx);
+                    })
+                    .ok();
+            }
+        })
+        .when(time_elapsed > Duration::from_secs(10), |card| {
+            card.elapsed(duration_alt_display(time_elapsed))
+        })
+        .when_some(truncation_tooltip, |card, tooltip| {
+            card.truncation_tooltip(tooltip)
+        })
+        .when_some(notice, |card, notice| card.notice(notice))
+        .when_some(output_element, |card, output| card.output(output))
+        .when_some(footer, |card, footer| card.footer(footer));
 
         v_flex()
             .when(layout == ToolCallLayout::Standalone, |this| {
@@ -7726,63 +7701,9 @@ impl ThreadView {
                     .when(tool_failed || command_failed, |card| card.border_dashed())
                     .border_color(border_color)
                     .rounded_md()
+                    .overflow_hidden()
             })
-            .overflow_hidden()
-            .child(
-                v_flex()
-                    .group(&header_group)
-                    .bg(header_bg)
-                    .text_xs()
-                    .child(header)
-                    .child(command_element),
-            )
-            .when_some(tool_call.sandbox_not_applied.as_ref(), |this, reason| {
-                this.child(self.render_sandbox_not_applied_warning(reason, cx))
-            })
-            .when(is_expanded && terminal_view.is_some(), |this| {
-                this.child(
-                    div()
-                        .pt_2()
-                        .border_t_1()
-                        .when(tool_failed || command_failed, |card| card.border_dashed())
-                        .border_color(border_color)
-                        .bg(cx.theme().colors().editor_background)
-                        .rounded_b_md()
-                        .text_ui_sm(cx)
-                        .h_full()
-                        .children(terminal_view.map(|terminal_view| {
-                            let element = if terminal_view
-                                .read(cx)
-                                .content_mode(window, cx)
-                                .is_scrollable()
-                            {
-                                div().h_72().child(terminal_view).into_any_element()
-                            } else {
-                                terminal_view.into_any_element()
-                            };
-
-                            div()
-                                .on_action(cx.listener(|_this, _: &NewTerminal, window, cx| {
-                                    window.dispatch_action(NewThread.boxed_clone(), cx);
-                                    cx.stop_propagation();
-                                }))
-                                .child(element)
-                                .into_any_element()
-                        })),
-                )
-            })
-            .when_some(confirmation_options, |this, options| {
-                let is_first = self.is_first_tool_call(active_session_id, &tool_call.id, cx);
-                this.child(self.render_permission_buttons(
-                    self.thread.read(cx).session_id().clone(),
-                    is_first,
-                    options,
-                    entry_ix,
-                    tool_call.id.clone(),
-                    focus_handle,
-                    cx,
-                ))
-            })
+            .child(card)
             .into_any()
     }
 
