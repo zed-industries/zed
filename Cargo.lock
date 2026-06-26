@@ -2040,6 +2040,9 @@ dependencies = [
 name = "aws_http_client"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "aws-credential-types",
+ "aws-sigv4",
  "aws-smithy-runtime-api",
  "aws-smithy-types",
  "http_client",
@@ -2154,9 +2157,11 @@ dependencies = [
  "anyhow",
  "aws-sdk-bedrockruntime",
  "aws-smithy-types",
+ "aws_http_client",
  "futures 0.3.32",
  "http_client",
  "language_model_core",
+ "log",
  "open_ai",
  "schemars 1.0.4",
  "serde",

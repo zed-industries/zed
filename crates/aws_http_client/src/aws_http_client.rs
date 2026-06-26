@@ -1,18 +1,24 @@
 use std::fmt;
 use std::sync::Arc;
+use std::time::SystemTime;
 
+use anyhow::Context as _;
+use aws_credential_types::Credentials;
+use aws_sigv4::http_request::{SignableBody, SignableRequest, SigningSettings, sign};
+use aws_sigv4::sign::v4;
 use aws_smithy_runtime_api::client::http::{
     HttpClient as AwsClient, HttpConnector as AwsConnector,
     HttpConnectorFuture as AwsConnectorFuture, HttpConnectorFuture, HttpConnectorSettings,
     SharedHttpConnector,
 };
+use aws_smithy_runtime_api::client::identity::Identity;
 use aws_smithy_runtime_api::client::orchestrator::{HttpRequest as AwsHttpRequest, HttpResponse};
 use aws_smithy_runtime_api::client::result::ConnectorError;
 use aws_smithy_runtime_api::client::runtime_components::RuntimeComponents;
 use aws_smithy_runtime_api::http::{Headers, StatusCode};
 use aws_smithy_types::body::SdkBody;
 use http_client::AsyncBody;
-use http_client::{HttpClient, Request};
+use http_client::{HttpClient, Request, http};
 
 struct AwsHttpConnector {
     client: Arc<dyn HttpClient>,
@@ -78,6 +84,13 @@ impl AwsHttpClient {
     pub fn new(client: Arc<dyn HttpClient>) -> Self {
         Self { client }
     }
+
+    /// Returns the underlying [`http_client::HttpClient`]. Useful for callers
+    /// that need to issue requests directly (e.g. the Bedrock Mantle path)
+    /// rather than through an AWS SDK client.
+    pub fn client(&self) -> Arc<dyn HttpClient> {
+        self.client.clone()
+    }
 }
 
 impl AwsClient for AwsHttpClient {
@@ -101,4 +114,76 @@ pub fn convert_to_async_body(body: SdkBody) -> AsyncBody {
         Some(bytes) => AsyncBody::from((*bytes).to_vec()),
         None => AsyncBody::empty(),
     }
+}
+
+/// Signs a raw HTTP request with AWS Signature Version 4, stamping the
+/// `authorization`, `x-amz-date`, and (when a session token is present)
+/// `x-amz-security-token` headers onto the request in place.
+///
+/// This exists so callers that issue requests directly through an
+/// [`http_client::HttpClient`] (rather than through an AWS SDK client) can still
+/// authenticate against AWS services. `body` must be the exact bytes that will
+/// be sent, since the payload hash is part of the signature.
+pub fn sign_request_sigv4(
+    request: &mut http::Request<AsyncBody>,
+    body: &[u8],
+    access_key_id: &str,
+    secret_access_key: &str,
+    session_token: Option<&str>,
+    region: &str,
+    service: &str,
+) -> anyhow::Result<()> {
+    // SigV4 requires the `host` header to be present and signed. Derive it from
+    // the request URI so it matches what the transport will ultimately send.
+    if !request.headers().contains_key(http::header::HOST)
+        && let Some(authority) = request.uri().authority()
+    {
+        let host = http::HeaderValue::from_str(authority.as_str())
+            .context("invalid host header derived from request URI")?;
+        request.headers_mut().insert(http::header::HOST, host);
+    }
+
+    let identity: Identity = Credentials::new(
+        access_key_id,
+        secret_access_key,
+        session_token.map(str::to_string),
+        None,
+        "zed-aws-sigv4",
+    )
+    .into();
+
+    let signing_params: aws_sigv4::http_request::SigningParams = v4::SigningParams::builder()
+        .identity(&identity)
+        .region(region)
+        .name(service)
+        .time(SystemTime::now())
+        .settings(SigningSettings::default())
+        .build()
+        .context("building SigV4 signing params")?
+        .into();
+
+    let method = request.method().as_str();
+    let uri = request.uri().to_string();
+    let headers = request
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            value
+                .to_str()
+                .map(|value| (name.as_str(), value))
+                .with_context(|| format!("header {name} is not valid UTF-8 and cannot be signed"))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    let signable_request =
+        SignableRequest::new(method, uri, headers.into_iter(), SignableBody::Bytes(body))
+            .context("constructing signable request")?;
+
+    let (instructions, _signature) = sign(signable_request, &signing_params)
+        .context("signing request with SigV4")?
+        .into_parts();
+
+    instructions.apply_to_request_http1x(request);
+
+    Ok(())
 }
