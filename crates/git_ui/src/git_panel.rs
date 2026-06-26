@@ -2880,7 +2880,7 @@ impl GitPanel {
                     &prompt,
                     user_agents_md.as_deref(),
                     rules_content.as_deref(),
-                    skill_content?.as_deref(),
+                    skill_envelope.as_deref(),
                     instructions.as_deref(),
                     &subject,
                     &diff_text,
