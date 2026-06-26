@@ -1,6 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use file_icons::FileIcons;
+use futures::future::{FutureExt, Shared};
 use fuzzy_nucleo::{Case, LengthPenalty, StringMatchCandidate, match_strings};
 use gpui::{
     App, Context, DismissEvent, Entity, ParentElement, SharedString, Task, WeakEntity, Window,
@@ -9,6 +10,7 @@ use gpui::{
 use language::Buffer;
 use picker::{MatchLocation, Picker, PickerDelegate, PreviewUpdate};
 use project::WorktreeId;
+use project::bookmark_store::ProjectBookmark;
 use project::{Project, ProjectPath, bookmark_store::BookmarkStore};
 use settings::Settings;
 use ui::{Divider, HighlightedLabel, ListItem, ListItemSpacing, prelude::*};
@@ -31,11 +33,11 @@ pub fn init(cx: &mut App) {
         |workspace: &mut Workspace, _window, _: &mut Context<Workspace>| {
             workspace.register_action(|workspace, _: &ToggleProjectBookmarks, window, cx| {
                 let project = workspace.project().clone();
-                let handle = cx.entity().downgrade();
-                let bookmark_store = project.read(cx).bookmark_store();
+                let workspace_handle = cx.entity().downgrade();
+
                 workspace.toggle_modal(window, cx, move |window, cx| {
                     let delegate =
-                        ProjectBookmarksDelegate::new(handle, project.clone(), bookmark_store, cx);
+                        ProjectBookmarksDelegate::new(workspace_handle, project.clone(), cx);
                     Picker::list_with_preview(delegate, project, window, cx)
                 })
             });
@@ -68,21 +70,18 @@ enum Entry {
 struct ProjectBookmarksDelegate {
     workspace: WeakEntity<Workspace>,
     project: Entity<Project>,
-    bookmark_store: Entity<BookmarkStore>,
     group_result_by_path: bool,
     selected_entry_index: usize,
     matches: Vec<Match>,
     entries: Vec<Entry>,
     worktree_root_names: HashMap<WorktreeId, Arc<RelPath>>,
+    bookmarks: Shared<Task<Arc<Vec<ProjectBookmark>>>>,
 }
 
 impl ProjectBookmarksDelegate {
-    fn new(
-        workspace: WeakEntity<Workspace>,
-        project: Entity<Project>,
-        bookmark_store: Entity<BookmarkStore>,
-        cx: &App,
-    ) -> Self {
+    fn new(workspace: WeakEntity<Workspace>, project: Entity<Project>, cx: &App) -> Self {
+        let bookmark_store = project.read(cx).bookmark_store();
+
         let worktree_root_names = project
             .read(cx)
             .worktrees(cx)
@@ -92,26 +91,41 @@ impl ProjectBookmarksDelegate {
             })
             .collect();
 
+        let bookmarks = cx
+            .spawn({
+                async move |cx| {
+                    let bookmarks = BookmarkStore::all_bookmarks(&bookmark_store, cx).await;
+                    bookmarks
+                        .map(|bookmarks| Arc::new(bookmarks))
+                        .unwrap_or_default()
+                }
+            })
+            .shared();
+
         Self {
             workspace,
             project,
-            bookmark_store,
             group_result_by_path: false,
             selected_entry_index: 0,
             matches: Vec::new(),
             entries: Vec::new(),
             worktree_root_names,
+            bookmarks,
         }
     }
 
-    fn with_worktree_root_name(
+    fn with_optional_worktree_root_name(
         &self,
         worktree_id: WorktreeId,
         rel_path: &RelPath,
     ) -> Option<Arc<RelPath>> {
-        self.worktree_root_names
-            .get(&worktree_id)
-            .map(|root_name| root_name.join(rel_path))
+        if self.worktree_root_names.len() > 1 {
+            self.worktree_root_names
+                .get(&worktree_id)
+                .map(|root_name| root_name.join(rel_path))
+        } else {
+            Some(rel_path.into_arc())
+        }
     }
 
     fn labels_for_match(
@@ -129,7 +143,7 @@ impl ProjectBookmarksDelegate {
         } = bookmark_match;
 
         let full_path_name =
-            self.with_worktree_root_name(project_path.worktree_id, &project_path.path);
+            self.with_optional_worktree_root_name(project_path.worktree_id, &project_path.path);
 
         (
             HighlightedLabel::new(label.clone(), positions.clone()),
@@ -190,9 +204,10 @@ impl ProjectBookmarksDelegate {
         let directory = project_path
             .path
             .parent()
-            .and_then(|parent| self.with_worktree_root_name(project_path.worktree_id, parent))
-            .map(|parent| parent.display(path_style).into_owned())
-            .map(SharedString::new)
+            .and_then(|parent| {
+                self.with_optional_worktree_root_name(project_path.worktree_id, parent)
+            })
+            .map(|parent| SharedString::new(parent.display(path_style)))
             .unwrap_or_default();
         let file_icon = ItemSettings::get_global(cx)
             .file_icons
@@ -271,13 +286,10 @@ impl PickerDelegate for ProjectBookmarksDelegate {
         window: &mut Window,
         cx: &mut Context<picker::Picker<Self>>,
     ) -> Task<()> {
-        let bookmark_store = self.bookmark_store.clone();
-        let project = self.project.clone();
+        let bookmarks = self.bookmarks.clone();
+
         cx.spawn_in(window, async move |picker, cx| {
-            let bookmarks = BookmarkStore::all_bookmarks(&bookmark_store, cx).await;
-            let Ok(bookmarks) = bookmarks else {
-                return;
-            };
+            let bookmarks = bookmarks.await;
 
             let candidates: Vec<StringMatchCandidate> = bookmarks
                 .iter()
@@ -294,29 +306,28 @@ impl PickerDelegate for ProjectBookmarksDelegate {
             );
 
             picker
-                .update(cx, |this, cx| {
-                    let project = project.read(cx);
-                    this.delegate.matches = matches
+                .update(cx, |picker, cx| {
+                    picker.delegate.matches = matches
                         .into_iter()
                         .filter_map(|mat| {
-                            let Some(project_path) = project.project_path_for_absolute_path(
-                                &bookmarks[mat.candidate_id].path,
-                                cx,
-                            ) else {
-                                return None;
-                            };
+                            let bookmark = bookmarks.get(mat.candidate_id)?;
+                            let project_path = picker
+                                .delegate
+                                .project
+                                .read(cx)
+                                .project_path_for_absolute_path(&bookmark.path, cx)?;
 
                             Some(Match {
                                 path: project_path,
                                 label: mat.string,
                                 positions: mat.positions,
-                                buffer: bookmarks[mat.candidate_id].buffer.clone(),
-                                anchor: bookmarks[mat.candidate_id].anchor,
+                                buffer: bookmark.buffer.clone(),
+                                anchor: bookmark.anchor,
                             })
                         })
                         .collect();
 
-                    this.delegate.rebuild_entries();
+                    picker.delegate.rebuild_entries();
                 })
                 .ok();
         })
@@ -396,27 +407,61 @@ impl PickerDelegate for ProjectBookmarksDelegate {
                 }
             }
             &Entry::Match(ix) => self.matches.get(ix).map(|mat| {
-                ListItem::new(ix)
+                let item_base = ListItem::new(ix)
                     .spacing(ListItemSpacing::Sparse)
                     .inset(true)
-                    .toggle_state(selected)
-                    .start_slot::<Icon>((!self.group_result_by_path).then(|| icon))
-                    .child({
-                        let (bookmark_label, full_path_label) =
-                            self.labels_for_match(mat, window, cx);
-                        if self.group_result_by_path {
-                            bookmark_label.truncate().into_any_element()
-                        } else {
-                            h_flex()
-                                .w_full()
-                                .min_w_0()
-                                .gap_1p5()
-                                .child(bookmark_label.truncate())
-                                .child(full_path_label)
-                                .into_any_element()
-                        }
-                    })
-                    .into_any_element()
+                    .toggle_state(selected);
+
+                let (bookmark_label, full_path_label) = self.labels_for_match(mat, window, cx);
+
+                if self.group_result_by_path {
+                    item_base.child(bookmark_label.truncate().into_any_element())
+                } else {
+                    item_base.start_slot::<Icon>(Some(icon)).child(
+                        h_flex()
+                            .w_full()
+                            .min_w_0()
+                            .gap_1p5()
+                            .child(bookmark_label.truncate())
+                            .child(full_path_label)
+                            .into_any_element(),
+                    )
+                }
+                // .when_else(
+                //     self.group_result_by_path,
+                //     |this| {
+                //         let (bookmark_label, full_path_label) =
+                //             self.labels_for_match(mat, window, cx);
+                //         this.child(bookmark_label.truncate().into_any_element())
+                //     },
+                //     |this| {
+                //         let (bookmark_label, full_path_label) =
+                //             self.labels_for_match(mat, window, cx);
+                //         this.start_slot::<Icon>(Some(icon)).child(
+                //             h_flex()
+                //                 .w_full()
+                //                 .min_w_0()
+                //                 .gap_1p5()
+                //                 .child(bookmark_label.truncate())
+                //                 .child(full_path_label)
+                //                 .into_any_element(),
+                //         )
+                //     },
+                // )
+                // .child({
+                //     if self.group_result_by_path {
+                //         bookmark_label.truncate().into_any_element()
+                //     } else {
+                //         h_flex()
+                //             .w_full()
+                //             .min_w_0()
+                //             .gap_1p5()
+                //             .child(bookmark_label.truncate())
+                //             .child(full_path_label)
+                //             .into_any_element()
+                //     }
+                // })
+                .into_any_element()
             }),
             Entry::Separator => {
                 if self.group_result_by_path {

@@ -373,26 +373,39 @@ impl BookmarkStore {
     ) -> Result<Vec<ProjectBookmark>> {
         Self::resolve_all(this, cx).await?;
 
-        let bookmarks = cx.read_entity(this, |bookmark_store, _cx| {
-            bookmark_store
-                .bookmarks
-                .iter()
-                .filter_map(|(path, value)| match value {
-                    BookmarkEntry::Loaded(buffer_bookmarks) => Some((path, buffer_bookmarks)),
-                    _ => None,
-                })
-                .flat_map(|(path, buffer_bookmarks)| {
-                    buffer_bookmarks
-                        .bookmarks
-                        .iter()
-                        .map(|bookmark| ProjectBookmark {
-                            path: path.clone(),
-                            label: bookmark.label.clone(),
-                            buffer: buffer_bookmarks.buffer.clone(),
-                            anchor: bookmark.anchor,
-                        })
-                })
-                .collect_vec()
+        let bookmarks = cx.read_entity(this, |bookmark_store, cx| {
+            let mut bookmarks = Vec::new();
+
+            for (path, value) in &bookmark_store.bookmarks {
+                let BookmarkEntry::Loaded(buffer_bookmarks) = value else {
+                    continue;
+                };
+
+                let snapshot = buffer_bookmarks.buffer.read(cx).snapshot();
+                for bookmark in &buffer_bookmarks.bookmarks {
+                    let label = if bookmark.label.is_empty() {
+                        let row = snapshot.summary_for_anchor::<Point>(&bookmark.anchor).row;
+                        snapshot
+                            .text_for_range(
+                                Point::new(row, 0)..Point::new(row, snapshot.line_len(row)),
+                            )
+                            .collect::<String>()
+                            .trim()
+                            .to_string()
+                    } else {
+                        bookmark.label.clone()
+                    };
+
+                    bookmarks.push(ProjectBookmark {
+                        path: path.clone(),
+                        label,
+                        buffer: buffer_bookmarks.buffer.clone(),
+                        anchor: bookmark.anchor,
+                    });
+                }
+            }
+
+            bookmarks
         });
         Ok(bookmarks)
     }
