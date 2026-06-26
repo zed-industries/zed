@@ -12,7 +12,7 @@ use editor::{Editor, EditorEvent, MultiBufferOffset, SelectionEffects};
 use gpui::{
     App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
     InteractiveElement, IntoElement, IsZero, Pixels, Render, Resource, RetainAllImageCache,
-    ScrollHandle, SharedString, SharedUri, Subscription, Task, WeakEntity, Window, point,
+    ScrollHandle, SharedString, SharedUri, Subscription, Task, WeakEntity, Window, point, px,
 };
 use language::LanguageRegistry;
 use markdown::{
@@ -21,9 +21,10 @@ use markdown::{
 };
 use project::search::SearchQuery;
 use project::{Project, ProjectPath};
-use settings::{SeedQuerySetting, Settings};
+use settings::{SeedQuerySetting, Settings, update_settings_file};
 use theme::{SystemAppearance, Theme, ThemeRegistry};
 use theme_settings::ThemeSettings;
+use ui::utils::WithRemSize;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
 use util::markdown::split_local_url_fragment;
 use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions, SerializableItem};
@@ -31,6 +32,7 @@ use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
 use workspace::{ItemId, Pane, Workspace, WorkspaceId, delete_unloaded_items};
+use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
 use crate::markdown_preview_settings::MarkdownPreviewSettings;
 use crate::{
@@ -589,7 +591,64 @@ impl MarkdownPreviewView {
 
     fn line_scroll_amount(&self, cx: &App) -> Pixels {
         let settings = ThemeSettings::get_global(cx);
-        settings.buffer_font_size(cx) * settings.buffer_line_height.value()
+        settings.markdown_preview_font_size(cx) * settings.buffer_line_height.value()
+    }
+
+    fn increase_font_size(
+        &mut self,
+        action: &IncreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.adjust_font_size(action.persist, px(1.0), cx);
+    }
+
+    fn decrease_font_size(
+        &mut self,
+        action: &DecreaseBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.adjust_font_size(action.persist, px(-1.0), cx);
+    }
+
+    fn adjust_font_size(&mut self, persist: bool, delta: Pixels, cx: &mut Context<Self>) {
+        if persist {
+            let Ok(fs) = self
+                .workspace
+                .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
+            else {
+                return;
+            };
+            update_settings_file(fs, cx, move |settings, cx| {
+                let size = ThemeSettings::get_global(cx).markdown_preview_font_size(cx) + delta;
+                settings.theme.markdown_preview_font_size =
+                    Some(f32::from(theme_settings::clamp_font_size(size)).into());
+            });
+        } else {
+            theme_settings::adjust_markdown_preview_font_size(cx, |size| size + delta);
+        }
+    }
+
+    fn reset_font_size(
+        &mut self,
+        action: &ResetBufferFontSize,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if action.persist {
+            let Ok(fs) = self
+                .workspace
+                .read_with(cx, |workspace, _| workspace.app_state().fs.clone())
+            else {
+                return;
+            };
+            update_settings_file(fs, cx, move |settings, _| {
+                settings.theme.markdown_preview_font_size = None;
+            });
+        } else {
+            theme_settings::reset_markdown_preview_font_size(cx);
+        }
     }
 
     fn scroll_by_amount(&self, distance: Pixels) {
@@ -1127,6 +1186,7 @@ impl Render for MarkdownPreviewView {
             .as_ref()
             .map(|theme| theme.colors().editor_background)
             .unwrap_or_else(|| cx.theme().colors().editor_background);
+        let preview_font_size = ThemeSettings::get_global(cx).markdown_preview_font_size(cx);
         div()
             .image_cache(self.image_cache.clone())
             .id("MarkdownPreview")
@@ -1140,44 +1200,51 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::scroll_down_by_item))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_top))
             .on_action(cx.listener(MarkdownPreviewView::scroll_to_bottom))
+            .on_action(cx.listener(MarkdownPreviewView::increase_font_size))
+            .on_action(cx.listener(MarkdownPreviewView::decrease_font_size))
+            .on_action(cx.listener(MarkdownPreviewView::reset_font_size))
             .w_full()
             .flex_1()
             .min_h_0()
             .bg(bg_color)
             .child(
-                div()
-                    .id("markdown-preview-scroll-container")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll_handle)
-                    .p_4()
-                    .child({
-                        let markdown_element =
-                            self.render_markdown_element(&preview_theme, window, cx);
-                        let markdown = self.markdown.clone();
-                        let max_width = MarkdownPreviewSettings::get_global(cx).max_width;
-                        let content = right_click_menu("markdown-preview-context-menu")
-                            .trigger(move |_, _, _| markdown_element)
-                            .menu(move |window, cx| {
-                                let focus = window.focused(cx);
-                                let context_menu_link =
-                                    markdown.read(cx).context_menu_link().cloned();
-                                ContextMenu::build(window, cx, move |menu, _, _cx| {
-                                    menu.when_some(focus, |menu, focus| menu.context(focus))
-                                        .when_some(context_menu_link, |menu, url| {
-                                            menu.entry("Copy Link", None, move |_, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    url.to_string(),
-                                                ));
+                WithRemSize::new(preview_font_size).size_full().child(
+                    div()
+                        .id("markdown-preview-scroll-container")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&self.scroll_handle)
+                        .p_4()
+                        .child({
+                            let markdown_element =
+                                self.render_markdown_element(&preview_theme, window, cx);
+                            let markdown = self.markdown.clone();
+                            let max_width = MarkdownPreviewSettings::get_global(cx).max_width;
+                            let content = right_click_menu("markdown-preview-context-menu")
+                                .trigger(move |_, _, _| markdown_element)
+                                .menu(move |window, cx| {
+                                    let focus = window.focused(cx);
+                                    let context_menu_link =
+                                        markdown.read(cx).context_menu_link().cloned();
+                                    ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                        menu.when_some(focus, |menu, focus| menu.context(focus))
+                                            .when_some(context_menu_link, |menu, url| {
+                                                menu.entry("Copy Link", None, move |_, cx| {
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(url.to_string()),
+                                                    );
+                                                })
                                             })
-                                        })
+                                    })
+                                });
+                            div()
+                                .w_full()
+                                .when_some(max_width, |this, max_width| {
+                                    this.max_w(max_width).mx_auto()
                                 })
-                            });
-                        div()
-                            .w_full()
-                            .when_some(max_width, |this, max_width| this.max_w(max_width).mx_auto())
-                            .child(content)
-                    }),
+                                .child(content)
+                        }),
+                ),
             )
             .vertical_scrollbar_for(&self.scroll_handle, window, cx)
     }
