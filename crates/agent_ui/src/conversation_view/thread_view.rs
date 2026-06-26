@@ -1134,10 +1134,6 @@ impl ThreadView {
             }
             PromptLocalCommand::ThumbsDown => {
                 self.handle_feedback_click(ThreadFeedback::Negative, window, cx);
-                self.show_local_command_toast(
-                    "We appreciate your feedback and will use it to improve in the future.",
-                    cx,
-                );
             }
             PromptLocalCommand::ShareThread => self.share_thread(window, cx),
             PromptLocalCommand::SyncThread => {
@@ -1151,7 +1147,7 @@ impl ThreadView {
     }
 
     fn show_local_command_toast(&self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
-        // Shown after thumbs up/down feedback, replacing the inline button state.
+        // Shown after positive feedback, replacing the inline button state.
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -1310,12 +1306,7 @@ impl ThreadView {
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::SlashAutocompleteOpened) => {
             }
-            ViewEvent::MessageEditorEvent(
-                _editor,
-                MessageEditorEvent::LocalCommandInvoked(command),
-            ) => {
-                self.run_local_command(*command, window, cx);
-            }
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::LocalCommandInvoked(_)) => {}
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Edited) => {}
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::InputAttempted { .. }) => {}
             ViewEvent::OpenDiffLocation {
@@ -6616,9 +6607,6 @@ impl ThreadView {
             .into_any_element()
     }
 
-    /// Whether sending thread feedback (the `/helpful` and `/not-helpful`
-    /// commands) is currently available. Mirrors the gating that the thumbs
-    /// up/down buttons used.
     fn is_thread_feedback_enabled(&self, cx: &App) -> bool {
         util::maybe!({
             let project = self.thread.read(cx).project().read(cx);
@@ -6634,8 +6622,8 @@ impl ThreadView {
         })
     }
 
-    /// Whether thread sharing/syncing (the `/share` and `/sync` commands) is
-    /// currently available. Mirrors the gating that the share/sync button used.
+    // Whether thread sharing/syncing (the `/share` and `/sync` commands) is
+    // currently available. Mirrors the gating that the share/sync button used.
     fn is_thread_sharing_available(&self, cx: &App) -> bool {
         self.project.upgrade().is_some_and(|project| {
             self.server_view.upgrade().is_some()
@@ -6644,9 +6632,9 @@ impl ThreadView {
         })
     }
 
-    /// The local slash commands the message editor should currently expose.
-    /// Kept in sync with the availability of the corresponding actions via
-    /// `sync_local_commands`.
+    // The local slash commands the message editor should currently expose.
+    // Kept in sync with the availability of the corresponding actions via
+    // `sync_local_commands`.
     fn available_local_commands(&self, cx: &App) -> Vec<PromptLocalCommand> {
         let mut commands = vec![
             PromptLocalCommand::OpenAsMarkdown,
@@ -6670,8 +6658,8 @@ impl ThreadView {
         commands
     }
 
-    /// Pushes the current set of available local commands to the message
-    /// editor so they appear in its slash-command popup.
+    // Pushes the current set of available local commands to the message
+    // editor so they appear in its slash-command popup.
     pub(crate) fn sync_local_commands(&self, cx: &App) {
         let commands = self.available_local_commands(cx);
         self.message_editor.read(cx).set_local_commands(commands);

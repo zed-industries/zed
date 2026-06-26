@@ -442,11 +442,11 @@ enum SlashCompletionCandidate {
 }
 
 impl SlashCompletionCandidate {
-    fn name(&self) -> Arc<str> {
+    fn name(&self) -> &str {
         match self {
-            Self::Skill(skill) => skill.name.clone(),
-            Self::Command(command) => command.name.clone(),
-            Self::LocalCommand(command) => command.keyword().into(),
+            Self::Skill(skill) => &skill.name,
+            Self::Command(command) => &command.name,
+            Self::LocalCommand(command) => command.keyword(),
         }
     }
 }
@@ -1065,7 +1065,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
             let string_match_candidates = candidates
                 .iter()
                 .enumerate()
-                .map(|(id, candidate)| StringMatchCandidate::new(id, &candidate.name()))
+                .map(|(id, candidate)| StringMatchCandidate::new(id, candidate.name()))
                 .collect::<Vec<_>>();
 
             let matches = fuzzy::match_strings(
