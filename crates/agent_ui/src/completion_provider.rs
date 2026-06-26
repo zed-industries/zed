@@ -1041,15 +1041,15 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
 
         let mut candidates = self
             .source
-            .available_skills(cx)
+            .available_commands(cx)
             .into_iter()
-            .map(SlashCompletionCandidate::Skill)
+            .map(SlashCompletionCandidate::Command)
             .collect::<Vec<_>>();
         candidates.extend(
             self.source
-                .available_commands(cx)
+                .available_skills(cx)
                 .into_iter()
-                .map(SlashCompletionCandidate::Command),
+                .map(SlashCompletionCandidate::Skill),
         );
         candidates.extend(
             self.source
