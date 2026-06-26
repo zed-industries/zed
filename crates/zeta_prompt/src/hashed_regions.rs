@@ -13,7 +13,7 @@
 //! weren't run through current-file retrieval can be normalized with
 //! [`ensure_cursor_file_excerpt`] before rendering or parsing.
 
-use crate::{ContextSource, RelatedExcerpt, RelatedFile, ZetaPromptInput, multi_region, udiff};
+use crate::{ContextSource, RelatedExcerpt, RelatedFile, Zeta2PromptInput, multi_region, udiff};
 use anyhow::{Context as _, Result, anyhow};
 use std::{
     borrow::Cow,
@@ -50,11 +50,11 @@ pub struct SnippetMarkers {
 ///
 /// The assignment is deterministic and independent of any later budget-based
 /// truncation, so the same table can be rebuilt when parsing model output.
-pub fn build_marker_table(input: &ZetaPromptInput) -> Vec<SnippetMarkers> {
+pub fn build_marker_table(input: &Zeta2PromptInput) -> Vec<SnippetMarkers> {
     build_marker_table_with_filter(input, |_| true)
 }
 
-pub fn build_editable_marker_table(input: &ZetaPromptInput) -> Vec<SnippetMarkers> {
+pub fn build_editable_marker_table(input: &Zeta2PromptInput) -> Vec<SnippetMarkers> {
     build_marker_table_with_filter(input, is_hash_region_editable_context_source)
 }
 
@@ -66,7 +66,7 @@ pub fn is_hash_region_editable_context_source(context_source: ContextSource) -> 
 }
 
 fn build_marker_table_with_filter(
-    input: &ZetaPromptInput,
+    input: &Zeta2PromptInput,
     include_context_source: impl Fn(ContextSource) -> bool,
 ) -> Vec<SnippetMarkers> {
     let mut used_ids = HashSet::new();
@@ -274,7 +274,7 @@ fn line_start_offset(text: &str, row: usize) -> Option<usize> {
     Some(offset)
 }
 
-pub fn locate_cursor_in_related_files(input: &ZetaPromptInput) -> Option<RelatedFileCursor> {
+pub fn locate_cursor_in_related_files(input: &Zeta2PromptInput) -> Option<RelatedFileCursor> {
     let related_files = input.related_files.as_deref()?;
     let excerpt_start_row = input.excerpt_start_row?;
     let cursor_offset = input.cursor_offset_in_excerpt;
@@ -316,7 +316,7 @@ pub fn locate_cursor_in_related_files(input: &ZetaPromptInput) -> Option<Related
 ///
 /// All hashed-region context — including the current file — is addressed
 /// through `related_files` (see module docs), so a prompt built from a
-/// `ZetaPromptInput` whose `related_files` don't cover the cursor cannot be
+/// `Zeta2PromptInput` whose `related_files` don't cover the cursor cannot be
 /// rendered or parsed. Inputs produced by current-file context retrieval
 /// (`ContextSource::CurrentFile`) are already covered and left untouched; this
 /// normalizes the rest (e.g. raw settled-data samples, or any caller that
@@ -333,7 +333,7 @@ pub fn locate_cursor_in_related_files(input: &ZetaPromptInput) -> Option<Related
 /// the synthesized excerpt). Returns `false` only when coverage couldn't be
 /// established — e.g. a missing `excerpt_start_row` or an empty
 /// `cursor_excerpt` — in which case the input is left unchanged.
-pub fn ensure_cursor_file_excerpt(input: &mut ZetaPromptInput) -> bool {
+pub fn ensure_cursor_file_excerpt(input: &mut Zeta2PromptInput) -> bool {
     if locate_cursor_in_related_files(input).is_some() {
         return true;
     }
@@ -391,7 +391,7 @@ pub fn marker_table_for_excerpt(
 }
 
 fn merge_contiguous_snippets(
-    input: &ZetaPromptInput,
+    input: &Zeta2PromptInput,
     marker_table: Vec<SnippetMarkers>,
 ) -> Result<Vec<ParseSnippet<'_>>> {
     let related_files = input
@@ -441,7 +441,7 @@ fn merge_contiguous_snippets(
 }
 
 fn snippet_path_and_start_row(
-    input: &ZetaPromptInput,
+    input: &Zeta2PromptInput,
     snippet: &ParseSnippet<'_>,
 ) -> Result<(PathBuf, u32)> {
     let related_files = input
@@ -565,7 +565,7 @@ pub fn encode_from_old_and_new(
 /// which emits exactly two tags per block and no intermediate tags. Any
 /// unpaired trailing tag is ignored.
 pub fn parse_output_as_patch(
-    input: &ZetaPromptInput,
+    input: &Zeta2PromptInput,
     output: &str,
     cursor_marker: &str,
 ) -> Result<String> {
@@ -651,7 +651,7 @@ fn find_all_marker_tags(text: &str) -> Vec<(String, usize, usize)> {
 /// every region that contains it; the returned [`HashRegionCursor`] reports the
 /// first such position.
 pub fn build_patch_from_spans(
-    input: &ZetaPromptInput,
+    input: &Zeta2PromptInput,
     spans: &[(String, String, String)],
     cursor_marker: &str,
 ) -> Result<(String, Option<HashRegionCursor>)> {
@@ -731,7 +731,7 @@ pub fn build_patch_from_spans(
 /// Apply resolved edits to their snippets and emit one diff section per edited
 /// snippet, in the order snippets first appear in the edit sequence.
 fn assemble_patch_from_edits(
-    input: &ZetaPromptInput,
+    input: &Zeta2PromptInput,
     snippets: &[ParseSnippet<'_>],
     edits: Vec<ParsedSpanEdit>,
 ) -> Result<(String, Option<HashRegionCursor>)> {
@@ -887,7 +887,7 @@ fn detect_trailing_deletion(old_span: &str, new_span: &str) -> Option<String> {
 /// If at least one hunk is reachable, the remaining hunks are still encoded
 /// (partial edit). If no hunk is reachable, the output is `NO_EDITS`.
 pub fn encode_patch_as_output(
-    input: &ZetaPromptInput,
+    input: &Zeta2PromptInput,
     patch: &str,
     cursor_offset: Option<usize>,
     cursor_marker: &str,
@@ -973,8 +973,8 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    fn make_input(cursor_excerpt: &str, related: &[(&str, &[&str])]) -> ZetaPromptInput {
-        ZetaPromptInput {
+    fn make_input(cursor_excerpt: &str, related: &[(&str, &[&str])]) -> Zeta2PromptInput {
+        Zeta2PromptInput {
             cursor_path: PathBuf::from("src/main.rs").into(),
             cursor_excerpt: cursor_excerpt.into(),
             cursor_offset_in_excerpt: 0,
