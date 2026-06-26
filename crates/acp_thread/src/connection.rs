@@ -1011,7 +1011,7 @@ mod test_support {
         }
 
         fn prompt_with_rewind(&self, _cx: &App) -> Option<Rc<dyn AgentSessionPromptWithRewind>> {
-            Some(Rc::new(StubAgentSessionPromptWithClientUserMessageId {
+            Some(Rc::new(StubAgentSessionPromptWithRewind {
                 connection: self.clone(),
             }))
         }
@@ -1058,11 +1058,11 @@ mod test_support {
         }
     }
 
-    struct StubAgentSessionPromptWithClientUserMessageId {
+    struct StubAgentSessionPromptWithRewind {
         connection: StubAgentConnection,
     }
 
-    impl AgentSessionPromptWithRewind for StubAgentSessionPromptWithClientUserMessageId {
+    impl AgentSessionPromptWithRewind for StubAgentSessionPromptWithRewind {
         fn prompt(
             &self,
             _client_user_message_id: ClientUserMessageId,
