@@ -7547,8 +7547,13 @@ impl ThreadView {
 
         let command_group =
             SharedString::from(format!("terminal-tool-command-{}", terminal.entity_id()));
-        let command_element =
-            self.render_collapsible_command(command_group, false, tool_call.label.clone(), window, cx);
+        let command_element = self.render_collapsible_command(
+            command_group,
+            false,
+            tool_call.label.clone(),
+            window,
+            cx,
+        );
 
         let is_expanded = self
             .entry_view_state

@@ -217,7 +217,8 @@ impl RenderOnce for ToolCall {
                     .closed_icon(IconName::ChevronDown)
                     .visible_on_hover(header_group.clone())
                     .when_some(on_toggle, |this, on_toggle| {
-                        this.on_toggle_expanded(Arc::clone(&on_toggle) as Arc<dyn Fn(&ClickEvent, &mut Window, &mut App)>)
+                        this.on_toggle_expanded(Arc::clone(&on_toggle)
+                            as Arc<dyn Fn(&ClickEvent, &mut Window, &mut App)>)
                     }),
             )
         } else {
@@ -230,9 +231,7 @@ impl RenderOnce for ToolCall {
             .w_full()
             .justify_between()
             .when(is_card, |this| {
-                this.p_0p5()
-                    .rounded_t(rems_from_px(5.))
-                    .bg(header_bg)
+                this.p_0p5().rounded_t(rems_from_px(5.)).bg(header_bg)
             })
             .child(
                 h_flex()
@@ -595,16 +594,18 @@ impl Component for ToolCall {
 
     fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let sample_label = |text: &'static str| Label::new(text).color(Color::Muted);
-        let sample_icon = |icon: IconName| Icon::new(icon).size(IconSize::Small).color(Color::Muted);
+        let sample_icon =
+            |icon: IconName| Icon::new(icon).size(IconSize::Small).color(Color::Muted);
         let sample_output = || {
             v_flex().py_1().gap_1().children(
-                [
-                    "fn main() {",
-                    "    println!(\"hello\");",
-                    "}",
-                ]
-                .into_iter()
-                .map(|line| Label::new(line).size(LabelSize::Small).color(Color::Muted).buffer_font(cx)),
+                ["fn main() {", "    println!(\"hello\");", "}"]
+                    .into_iter()
+                    .map(|line| {
+                        Label::new(line)
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                            .buffer_font(cx)
+                    }),
             )
         };
 
@@ -703,15 +704,12 @@ impl Component for ToolCallTerminal {
 
     fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let command = |text: &'static str| {
-            div()
-                .p_1p5()
-                .bg(tool_call_card_header_bg(cx))
-                .child(
-                    Label::new(text)
-                        .buffer_font(cx)
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                )
+            div().p_1p5().bg(tool_call_card_header_bg(cx)).child(
+                Label::new(text)
+                    .buffer_font(cx)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
         };
         let output = || {
             div().p_2().child(
