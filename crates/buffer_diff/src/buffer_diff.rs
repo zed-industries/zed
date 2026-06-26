@@ -1612,6 +1612,45 @@ impl BufferDiff {
         }
     }
 
+    pub fn unstage_staged_hunks(
+        &self,
+        hunks: &[DiffHunk],
+        index_buffer: &text::BufferSnapshot,
+    ) -> Option<Rope> {
+        let diff_snapshot = self.diff_snapshot.as_ref()?;
+        let head_text = diff_snapshot
+            .base_text_exists
+            .then(|| diff_snapshot.base_text.as_rope().clone());
+        let mut edits = hunks
+            .iter()
+            .map(|hunk| {
+                let index_range = hunk.buffer_range.to_offset(index_buffer);
+                let replacement_text = head_text
+                    .as_ref()
+                    .map(|head_text| {
+                        head_text
+                            .chunks_in_range(hunk.diff_base_byte_range.clone())
+                            .collect::<String>()
+                    })
+                    .unwrap_or_default();
+                (index_range, replacement_text)
+            })
+            .collect::<Vec<_>>();
+        edits.sort_by_key(|(range, _)| range.start);
+
+        let mut new_index_text = Rope::new();
+        let index_text = index_buffer.as_rope();
+        let mut index_cursor = index_text.cursor(0);
+        for (old_range, replacement_text) in edits {
+            new_index_text.append(index_cursor.slice(old_range.start));
+            index_cursor.seek_forward(old_range.end);
+            new_index_text.push(&replacement_text);
+        }
+        new_index_text.append(index_cursor.suffix());
+
+        Some(new_index_text)
+    }
+
     pub fn stage_or_unstage_hunks(
         &mut self,
         stage: bool,

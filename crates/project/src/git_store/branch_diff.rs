@@ -427,13 +427,14 @@ impl BranchDiff {
         project_path: crate::ProjectPath,
         repo: Entity<Repository>,
         cx: &Context<'_, Project>,
-    ) -> Task<Result<(Entity<Buffer>, Entity<BufferDiff>, Entity<ConflictSet>)>> {
+    ) -> Task<Result<LoadedDiffBuffer>> {
         let task = cx.spawn(async move |project, cx| {
             let buffer = project
                 .update(cx, |project, cx| project.open_buffer(project_path, cx))?
                 .await?;
 
-            let (buffer, changes) = match diff_base {
+            let operation_buffer = buffer.clone();
+            let (display_buffer, changes) = match diff_base {
                 DiffBase::Head => {
                     let diff = project
                         .update(cx, |project, cx| {
@@ -490,11 +491,16 @@ impl BranchDiff {
             let conflict_set = project
                 .update(cx, |project, cx| {
                     project.git_store().update(cx, |git_store, cx| {
-                        git_store.open_conflict_set(buffer.clone(), cx)
+                        git_store.open_conflict_set(operation_buffer.clone(), cx)
                     })
                 })?
                 .await;
-            Ok((buffer, changes, conflict_set))
+            Ok(LoadedDiffBuffer {
+                display_buffer,
+                operation_buffer,
+                diff: changes,
+                conflict_set,
+            })
         });
         task
     }
@@ -519,8 +525,16 @@ fn diff_status_to_file_status(branch_diff: &git::status::TreeDiffStatus) -> File
 }
 
 #[derive(Debug)]
+pub struct LoadedDiffBuffer {
+    pub display_buffer: Entity<Buffer>,
+    pub operation_buffer: Entity<Buffer>,
+    pub diff: Entity<BufferDiff>,
+    pub conflict_set: Entity<ConflictSet>,
+}
+
+#[derive(Debug)]
 pub struct DiffBuffer {
     pub repo_path: RepoPath,
     pub file_status: FileStatus,
-    pub load: Task<Result<(Entity<Buffer>, Entity<BufferDiff>, Entity<ConflictSet>)>>,
+    pub load: Task<Result<LoadedDiffBuffer>>,
 }

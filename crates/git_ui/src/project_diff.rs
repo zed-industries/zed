@@ -6,12 +6,13 @@ use crate::{
 };
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
-use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
+use buffer_diff::{BufferDiff, DiffHunk, DiffHunkSecondaryStatus};
 use collections::HashMap;
 use editor::{
-    Addon, Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
+    Addon, Editor, EditorEvent, EditorSettings, RenderDiffHunkControlsFn, SelectionEffects,
+    SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
-    multibuffer_context_lines,
+    multibuffer_context_lines, render_diff_hunk_controls,
     scroll::Autoscroll,
 };
 use futures_lite::future::yield_now;
@@ -25,8 +26,9 @@ use gpui::{
     Action, AnyElement, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
 };
-use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
+use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt, Point};
 use multi_buffer::{MultiBuffer, PathKey};
+use project::project_settings::ProjectSettings;
 use project::{
     ConflictSet, Project, ProjectPath,
     git_store::{
@@ -38,6 +40,7 @@ use settings::{GitPanelGroupBy, GitPanelSortBy, Settings, SettingsStore};
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+
 use theme::ActiveTheme;
 use ui::{
     CommonAnimationExt as _, DiffStat, Divider, KeyBinding, PopoverMenu, Tooltip, prelude::*,
@@ -73,7 +76,9 @@ actions!(
 );
 
 struct BufferSubscriptions {
-    _diff: Entity<BufferDiff>,
+    diff: Entity<BufferDiff>,
+    display_buffer: Entity<Buffer>,
+    operation_buffer: Entity<Buffer>,
     _diff_subscription: Subscription,
     _conflict_set: Entity<ConflictSet>,
     _conflict_set_subscription: Subscription,
@@ -574,6 +579,7 @@ impl ProjectDiff {
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer
         });
+        let project_diff = cx.weak_entity();
 
         let editor = cx.new(|cx| {
             let mut diff_display_editor = SplittableEditor::new(
@@ -590,6 +596,7 @@ impl ProjectDiff {
                 &mut diff_display_editor,
                 workspace.downgrade(),
                 branch_diff.clone(),
+                project_diff.clone(),
                 cx,
             );
             diff_display_editor.rhs_editor().update(cx, |editor, cx| {
@@ -687,10 +694,19 @@ impl ProjectDiff {
         editor: &mut SplittableEditor,
         workspace: WeakEntity<Workspace>,
         branch_diff: Entity<branch_diff::BranchDiff>,
+        project_diff: WeakEntity<ProjectDiff>,
         cx: &mut Context<SplittableEditor>,
     ) {
         match diff_base {
             DiffBase::Head | DiffBase::Index | DiffBase::Staged => {
+                let render_diff_hunk_controls = match diff_base {
+                    DiffBase::Head => render_default_project_diff_hunk_controls(),
+                    DiffBase::Index => render_stage_unstaged_hunk_controls(project_diff.clone()),
+                    DiffBase::Staged => render_unstage_staged_hunk_controls(project_diff.clone()),
+                    DiffBase::Merge { .. } => unreachable!(),
+                };
+                editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx);
+                editor.set_rhs_delegate_stage_and_restore(*diff_base == DiffBase::Staged, cx);
                 editor.rhs_editor().update(cx, |rhs_editor, _cx| {
                     rhs_editor.set_read_only(*diff_base == DiffBase::Staged);
                     rhs_editor.unregister_addon::<BranchDiffAddon>();
@@ -704,6 +720,7 @@ impl ProjectDiff {
                     Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
                     cx,
                 );
+                editor.set_rhs_delegate_stage_and_restore(false, cx);
                 editor.rhs_editor().update(cx, |rhs_editor, _cx| {
                     rhs_editor.set_read_only(false);
                     rhs_editor.unregister_addon::<GitPanelAddon>();
@@ -726,12 +743,14 @@ impl ProjectDiff {
         self.branch_diff.update(cx, |branch_diff, cx| {
             branch_diff.set_diff_base(diff_base.clone(), cx);
         });
+        let project_diff = cx.weak_entity();
         self.editor.update(cx, |editor, cx| {
             Self::configure_editor_for_diff_base(
                 &diff_base,
                 editor,
                 self.workspace.clone(),
                 self.branch_diff.clone(),
+                project_diff,
                 cx,
             );
             cx.notify();
@@ -945,67 +964,140 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((project, hunks_by_buffer)) = editor.update(cx, |editor, cx| {
+        let Some((project, ranges_by_buffer)) = editor.update(cx, |editor, cx| {
             let project = editor.project().cloned()?;
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let mut hunks_by_buffer: HashMap<BufferId, Vec<std::ops::Range<Anchor>>> =
+            let mut ranges_by_buffer: HashMap<BufferId, Vec<std::ops::Range<Anchor>>> =
                 HashMap::default();
 
             for hunk in editor.diff_hunks_in_ranges(&ranges, &snapshot) {
-                hunks_by_buffer
+                ranges_by_buffer
                     .entry(hunk.buffer_id)
                     .or_default()
                     .push(hunk.buffer_range.clone());
             }
 
-            Some((project, hunks_by_buffer))
+            Some((project, ranges_by_buffer))
         }) else {
             return;
         };
 
-        if hunks_by_buffer.is_empty() {
+        if ranges_by_buffer.is_empty() {
             return;
         }
 
         cx.spawn_in(window, async move |_, cx| {
-            for (buffer_id, buffer_ranges) in hunks_by_buffer {
+            for (buffer_id, buffer_ranges) in ranges_by_buffer {
                 let Some(buffer) =
                     project.read_with(cx, |project, cx| project.buffer_for_id(buffer_id, cx))
                 else {
                     continue;
                 };
-
-                let uncommitted_diff = project
+                project
                     .update(cx, |project, cx| {
-                        project.open_uncommitted_diff(buffer.clone(), cx)
+                        project.stage_unstaged_hunks(buffer, buffer_ranges, cx)
                     })
                     .await?;
+            }
 
-                let buffer_snapshot = buffer.read_with(cx, |buffer: &Buffer, _| buffer.snapshot());
-                let file_exists = buffer_snapshot
-                    .file()
-                    .is_some_and(|file| file.disk_state().exists());
+            if move_to_next {
+                cx.update(|window, cx| {
+                    editor
+                        .focus_handle(cx)
+                        .dispatch_action(&GoToHunk, window, cx);
+                })?;
+            }
 
-                uncommitted_diff.update(cx, |diff, cx| {
-                    let snapshot = diff.snapshot(cx);
-                    let mut hunks = Vec::new();
-                    for buffer_range in &buffer_ranges {
-                        hunks.extend(
-                            snapshot
-                                .hunks_intersecting_range(buffer_range.clone(), &buffer_snapshot),
-                        );
-                    }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
 
-                    if !hunks.is_empty() {
-                        diff.stage_or_unstage_hunks(
-                            true,
-                            &hunks,
-                            &buffer_snapshot,
-                            file_exists,
+    fn unstage_selected_staged_hunks(
+        &mut self,
+        move_to_next: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.is_staged_mode(cx) {
+            return;
+        }
+
+        let (_, ranges) = self.selected_ranges(cx);
+        let editor = self.editor.read(cx).rhs_editor().clone();
+        self.unstage_staged_hunks(editor, ranges, move_to_next, window, cx);
+    }
+
+    fn unstage_staged_hunks(
+        &mut self,
+        editor: Entity<Editor>,
+        ranges: Vec<std::ops::Range<multi_buffer::Anchor>>,
+        move_to_next: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.is_staged_mode(cx) {
+            return;
+        }
+
+        let Some((project, hunks_by_path)) = editor.update(cx, |editor, cx| {
+            let project = editor.project().cloned()?;
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let mut hunks_by_path: HashMap<Arc<RelPath>, Vec<DiffHunk>> = HashMap::default();
+
+            for hunk in editor.diff_hunks_in_ranges(&ranges, &snapshot) {
+                let Some(path_key) = snapshot.path_for_buffer(hunk.buffer_id) else {
+                    continue;
+                };
+                hunks_by_path
+                    .entry(path_key.path.clone())
+                    .or_default()
+                    .push(DiffHunk {
+                        range: Point::zero()..Point::zero(),
+                        buffer_range: hunk.buffer_range.clone(),
+                        diff_base_byte_range: hunk.diff_base_byte_range.start.0
+                            ..hunk.diff_base_byte_range.end.0,
+                        secondary_status: hunk.status.secondary,
+                        buffer_word_diffs: Vec::new(),
+                        base_word_diffs: Vec::new(),
+                    });
+            }
+
+            Some((project, hunks_by_path))
+        }) else {
+            return;
+        };
+
+        let operations = hunks_by_path
+            .into_iter()
+            .filter_map(|(path, hunks)| {
+                let subscription = self.buffer_subscriptions.get(&path)?;
+                Some((
+                    subscription.operation_buffer.clone(),
+                    subscription.display_buffer.clone(),
+                    subscription.diff.clone(),
+                    hunks,
+                ))
+            })
+            .collect::<Vec<_>>();
+
+        if operations.is_empty() {
+            return;
+        }
+
+        cx.spawn_in(window, async move |_, cx| {
+            for (operation_buffer, display_buffer, diff, hunks) in operations {
+                project
+                    .update(cx, |project, cx| {
+                        project.unstage_staged_hunks(
+                            operation_buffer,
+                            display_buffer,
+                            diff,
+                            hunks,
                             cx,
-                        );
-                    }
-                });
+                        )
+                    })
+                    .await?;
             }
 
             if move_to_next {
@@ -1061,7 +1153,8 @@ impl ProjectDiff {
         &mut self,
         path_key: PathKey,
         file_status: FileStatus,
-        buffer: Entity<Buffer>,
+        display_buffer: Entity<Buffer>,
+        operation_buffer: Entity<Buffer>,
         diff: Entity<BufferDiff>,
         conflict_set: Entity<ConflictSet>,
         window: &mut Window,
@@ -1069,7 +1162,8 @@ impl ProjectDiff {
     ) -> (BufferId, bool) {
         let diff_subscription = cx.subscribe_in(&diff, window, {
             let path_key = path_key.clone();
-            let buffer = buffer.clone();
+            let display_buffer = display_buffer.clone();
+            let operation_buffer = operation_buffer.clone();
             let diff = diff.clone();
             let conflict_set = conflict_set.clone();
             move |this, _, event, window, cx| match event {
@@ -1077,7 +1171,8 @@ impl ProjectDiff {
                     this.buffer_ranges_changed(
                         path_key.clone(),
                         file_status,
-                        buffer.clone(),
+                        display_buffer.clone(),
+                        operation_buffer.clone(),
                         diff.clone(),
                         conflict_set.clone(),
                         window,
@@ -1090,14 +1185,16 @@ impl ProjectDiff {
         });
         let conflict_set_subscription = cx.subscribe_in(&conflict_set, window, {
             let path_key = path_key.clone();
-            let buffer = buffer.clone();
+            let display_buffer = display_buffer.clone();
+            let operation_buffer = operation_buffer.clone();
             let diff = diff.clone();
             let conflict_set = conflict_set.clone();
             move |this, _, _, window, cx| {
                 this.buffer_ranges_changed(
                     path_key.clone(),
                     file_status,
-                    buffer.clone(),
+                    display_buffer.clone(),
+                    operation_buffer.clone(),
                     diff.clone(),
                     conflict_set.clone(),
                     window,
@@ -1108,14 +1205,16 @@ impl ProjectDiff {
         self.buffer_subscriptions.insert(
             path_key.path.clone(),
             BufferSubscriptions {
-                _diff: diff.clone(),
+                diff: diff.clone(),
+                display_buffer: display_buffer.clone(),
+                operation_buffer: operation_buffer.clone(),
                 _diff_subscription: diff_subscription,
                 _conflict_set: conflict_set.clone(),
                 _conflict_set_subscription: conflict_set_subscription,
             },
         );
 
-        let snapshot = buffer.read(cx).snapshot();
+        let snapshot = display_buffer.read(cx).snapshot();
         let diff_snapshot = diff.read(cx).snapshot(cx);
 
         let excerpt_ranges = {
@@ -1146,7 +1245,7 @@ impl ProjectDiff {
             let was_empty = editor.rhs_editor().read(cx).buffer().read(cx).is_empty();
             let is_newly_added = editor.update_excerpts_for_path(
                 path_key.clone(),
-                buffer,
+                display_buffer,
                 excerpt_ranges,
                 multibuffer_context_lines(cx),
                 diff,
@@ -1206,19 +1305,21 @@ impl ProjectDiff {
         &mut self,
         path_key: PathKey,
         file_status: FileStatus,
-        buffer: Entity<Buffer>,
+        display_buffer: Entity<Buffer>,
+        operation_buffer: Entity<Buffer>,
         diff: Entity<BufferDiff>,
         conflict_set: Entity<ConflictSet>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if buffer.read(cx).is_dirty() {
+        if display_buffer.read(cx).is_dirty() {
             return;
         }
         self.register_buffer(
             path_key,
             file_status,
-            buffer,
+            display_buffer,
+            operation_buffer,
             diff,
             conflict_set,
             window,
@@ -1301,7 +1402,7 @@ impl ProjectDiff {
         let mut buffers_to_unfold = Vec::new();
 
         for (path_key, entry) in entries {
-            if let Some((buffer, diff, conflict_set)) = entry.load.await.log_err() {
+            if let Some(loaded_buffer) = entry.load.await.log_err() {
                 // We might be lagging behind enough that all future entry.load futures are no longer pending.
                 // If that is the case, this task will never yield, starving the foreground thread of execution time.
                 yield_now().await;
@@ -1311,9 +1412,10 @@ impl ProjectDiff {
                         let (buffer_id, needs_fold) = this.register_buffer(
                             path_key,
                             entry.file_status,
-                            buffer,
-                            diff,
-                            conflict_set,
+                            loaded_buffer.display_buffer,
+                            loaded_buffer.operation_buffer,
+                            loaded_buffer.diff,
+                            loaded_buffer.conflict_set,
                             window,
                             cx,
                         );
@@ -1376,6 +1478,114 @@ impl ProjectDiff {
             })
             .collect()
     }
+}
+
+fn render_stage_unstaged_hunk_controls(
+    project_diff: WeakEntity<ProjectDiff>,
+) -> RenderDiffHunkControlsFn {
+    Arc::new(
+        move |row, status, hunk_range, _is_created_file, line_height, editor, _window, cx| {
+            if !ProjectSettings::get_global(cx)
+                .git
+                .show_stage_restore_buttons
+            {
+                return gpui::Empty.into_any_element();
+            }
+            let Some(project_diff) = project_diff.upgrade() else {
+                return gpui::Empty.into_any_element();
+            };
+            let hunk_range = hunk_range.start..hunk_range.start;
+            h_flex()
+                .h(line_height)
+                .mr_1()
+                .gap_1()
+                .px_0p5()
+                .pb_1()
+                .border_x_1()
+                .border_b_1()
+                .border_color(cx.theme().colors().border_variant)
+                .rounded_b_lg()
+                .bg(cx.theme().colors().editor_background)
+                .block_mouse_except_scroll()
+                .shadow_md()
+                .child(
+                    Button::new(("stage", row as u64), "Stage")
+                        .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                        .tooltip(Tooltip::text("Stage Hunk"))
+                        .on_click({
+                            let editor = editor.clone();
+                            move |_event, window, cx| {
+                                project_diff.update(cx, |_project_diff, cx| {
+                                    ProjectDiff::stage_unstaged_hunks(
+                                        editor.clone(),
+                                        vec![hunk_range.clone()],
+                                        false,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                        }),
+                )
+                .into_any_element()
+        },
+    )
+}
+
+fn render_unstage_staged_hunk_controls(
+    project_diff: WeakEntity<ProjectDiff>,
+) -> RenderDiffHunkControlsFn {
+    Arc::new(
+        move |row, status, hunk_range, _is_created_file, line_height, editor, _window, cx| {
+            if !ProjectSettings::get_global(cx)
+                .git
+                .show_stage_restore_buttons
+            {
+                return gpui::Empty.into_any_element();
+            }
+            let Some(project_diff) = project_diff.upgrade() else {
+                return gpui::Empty.into_any_element();
+            };
+            let hunk_range = hunk_range.start..hunk_range.start;
+            h_flex()
+                .h(line_height)
+                .mr_1()
+                .gap_1()
+                .px_0p5()
+                .pb_1()
+                .border_x_1()
+                .border_b_1()
+                .border_color(cx.theme().colors().border_variant)
+                .rounded_b_lg()
+                .bg(cx.theme().colors().editor_background)
+                .block_mouse_except_scroll()
+                .shadow_md()
+                .child(
+                    Button::new(("unstage", row as u64), "Unstage")
+                        .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                        .tooltip(Tooltip::text("Unstage Hunk"))
+                        .on_click({
+                            let editor = editor.clone();
+                            move |_event, window, cx| {
+                                project_diff.update(cx, |project_diff, cx| {
+                                    project_diff.unstage_staged_hunks(
+                                        editor.clone(),
+                                        vec![hunk_range.clone()],
+                                        false,
+                                        window,
+                                        cx,
+                                    );
+                                });
+                            }
+                        }),
+                )
+                .into_any_element()
+        },
+    )
+}
+
+fn render_default_project_diff_hunk_controls() -> RenderDiffHunkControlsFn {
+    Arc::new(render_diff_hunk_controls)
 }
 
 fn project_diff_sort_prefix(
@@ -2102,6 +2312,20 @@ impl ProjectDiffToolbar {
             project_diff.stage_selected_unstaged_hunks(move_to_next, window, cx);
         });
     }
+
+    fn unstage_selected_staged_hunks(
+        &mut self,
+        move_to_next: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project_diff) = self.project_diff(cx) else {
+            return;
+        };
+        project_diff.update(cx, |project_diff, cx| {
+            project_diff.unstage_selected_staged_hunks(move_to_next, window, cx);
+        });
+    }
 }
 
 impl EventEmitter<ToolbarItemEvent> for ProjectDiffToolbar {}
@@ -2151,6 +2375,7 @@ impl Render for ProjectDiffToolbar {
         let button_states = project_diff.read(cx).button_states(cx);
         let review_count = project_diff.read(cx).total_review_comment_count();
         let is_unstaged_mode = project_diff.read(cx).is_unstaged_mode(cx);
+        let is_staged_mode = project_diff.read(cx).is_staged_mode(cx);
 
         h_group_xl()
             .my_neg_1()
@@ -2184,54 +2409,84 @@ impl Render for ProjectDiffToolbar {
                                 })),
                         )
                     })
-                    .when(!is_unstaged_mode && button_states.selection, |el| {
+                    .when(is_staged_mode && button_states.selection, |el| {
                         el.child(
-                            Button::new("stage", "Toggle Staged")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Toggle Staged",
-                                    &ToggleStaged,
-                                    &focus_handle,
-                                ))
-                                .disabled(!button_states.stage && !button_states.unstage)
+                            Button::new("unstage", "Unstage")
+                                .disabled(!button_states.unstage)
+                                .tooltip(Tooltip::text("Unstage selected hunks"))
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&ToggleStaged, window, cx)
+                                    this.unstage_selected_staged_hunks(false, window, cx)
                                 })),
                         )
                     })
-                    .when(!is_unstaged_mode && !button_states.selection, |el| {
+                    .when(is_staged_mode && !button_states.selection, |el| {
                         el.child(
-                            Button::new("stage", "Stage")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Stage and go to next hunk",
-                                    &StageAndNext,
-                                    &focus_handle,
-                                ))
-                                .disabled(
-                                    !button_states.prev_next
-                                        && !button_states.stage_all
-                                        && !button_states.unstage_all,
-                                )
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&StageAndNext, window, cx)
-                                })),
-                        )
-                        .child(
                             Button::new("unstage", "Unstage")
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Unstage and go to next hunk",
                                     &UnstageAndNext,
                                     &focus_handle,
                                 ))
-                                .disabled(
-                                    !button_states.prev_next
-                                        && !button_states.stage_all
-                                        && !button_states.unstage_all,
-                                )
+                                .disabled(!button_states.prev_next && !button_states.unstage_all)
                                 .on_click(cx.listener(|this, _, window, cx| {
-                                    this.dispatch_action(&UnstageAndNext, window, cx)
+                                    this.unstage_selected_staged_hunks(true, window, cx)
                                 })),
                         )
-                    }),
+                    })
+                    .when(
+                        !is_unstaged_mode && !is_staged_mode && button_states.selection,
+                        |el| {
+                            el.child(
+                                Button::new("stage", "Toggle Staged")
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Toggle Staged",
+                                        &ToggleStaged,
+                                        &focus_handle,
+                                    ))
+                                    .disabled(!button_states.stage && !button_states.unstage)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&ToggleStaged, window, cx)
+                                    })),
+                            )
+                        },
+                    )
+                    .when(
+                        !is_unstaged_mode && !is_staged_mode && !button_states.selection,
+                        |el| {
+                            el.child(
+                                Button::new("stage", "Stage")
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Stage and go to next hunk",
+                                        &StageAndNext,
+                                        &focus_handle,
+                                    ))
+                                    .disabled(
+                                        !button_states.prev_next
+                                            && !button_states.stage_all
+                                            && !button_states.unstage_all,
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&StageAndNext, window, cx)
+                                    })),
+                            )
+                            .child(
+                                Button::new("unstage", "Unstage")
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Unstage and go to next hunk",
+                                        &UnstageAndNext,
+                                        &focus_handle,
+                                    ))
+                                    .disabled(
+                                        !button_states.prev_next
+                                            && !button_states.stage_all
+                                            && !button_states.unstage_all,
+                                    )
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.dispatch_action(&UnstageAndNext, window, cx)
+                                    })),
+                            )
+                        },
+                    ),
             )
             // n.b. the only reason these arrows are here is because we don't
             // support "undo" for staging so we need a way to go back.

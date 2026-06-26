@@ -25,7 +25,7 @@ pub mod trusted_worktrees;
 pub mod worktree_store;
 
 mod environment;
-use buffer_diff::BufferDiff;
+use buffer_diff::{BufferDiff, DiffHunk};
 use context_server_store::ContextServerStore;
 pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
@@ -3256,6 +3256,36 @@ impl Project {
         }
         self.git_store.update(cx, |git_store, cx| {
             git_store.open_uncommitted_diff(buffer, cx)
+        })
+    }
+
+    pub fn stage_unstaged_hunks(
+        &mut self,
+        buffer: Entity<Buffer>,
+        buffer_ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.stage_unstaged_hunks(buffer, buffer_ranges, cx)
+        })
+    }
+
+    pub fn unstage_staged_hunks(
+        &mut self,
+        buffer: Entity<Buffer>,
+        index_buffer: Entity<Buffer>,
+        staged_diff: Entity<BufferDiff>,
+        hunks: Vec<DiffHunk>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.unstage_staged_hunks(buffer, index_buffer, staged_diff, hunks, cx)
         })
     }
 

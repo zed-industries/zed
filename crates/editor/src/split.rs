@@ -462,6 +462,12 @@ impl SplittableEditor {
         });
     }
 
+    pub fn set_rhs_delegate_stage_and_restore(&self, delegate: bool, cx: &mut Context<Self>) {
+        self.rhs_editor.update(cx, |editor, _| {
+            editor.set_delegate_stage_and_restore(delegate);
+        });
+    }
+
     pub fn disable_diff_hunk_controls(&self, cx: &mut Context<Self>) {
         let empty_controls = Arc::new(|_, _: &_, _, _, _, _: &_, _: &mut _, _: &mut _| {
             gpui::Empty.into_any_element()

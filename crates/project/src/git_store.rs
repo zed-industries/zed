@@ -15,7 +15,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
-use buffer_diff::{BufferDiff, BufferDiffEvent};
+use buffer_diff::{BufferDiff, BufferDiffEvent, DiffHunk};
 use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
@@ -51,7 +51,7 @@ use gpui::{
     Subscription, Task, TaskExt, WeakEntity,
 };
 use language::{
-    Buffer, BufferEvent, Capability, Language, LanguageRegistry,
+    Anchor, Buffer, BufferEvent, Capability, Language, LanguageRegistry,
     proto::{deserialize_version, serialize_version},
 };
 use parking_lot::Mutex;
@@ -1103,6 +1103,71 @@ impl GitStore {
             .clone();
 
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+    }
+
+    pub fn stage_unstaged_hunks(
+        &mut self,
+        buffer: Entity<Buffer>,
+        buffer_ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if buffer_ranges.is_empty() {
+            return Task::ready(Ok(()));
+        }
+
+        let uncommitted_diff = self.open_uncommitted_diff(buffer.clone(), cx);
+        cx.spawn(async move |_, cx| {
+            let uncommitted_diff = uncommitted_diff.await?;
+            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+            let file_exists = buffer_snapshot
+                .file()
+                .is_some_and(|file| file.disk_state().exists());
+
+            uncommitted_diff.update(cx, |diff, cx| {
+                let snapshot = diff.snapshot(cx);
+                let mut hunks = Vec::new();
+                for buffer_range in &buffer_ranges {
+                    hunks.extend(
+                        snapshot.hunks_intersecting_range(buffer_range.clone(), &buffer_snapshot),
+                    );
+                }
+
+                if !hunks.is_empty() {
+                    diff.stage_or_unstage_hunks(true, &hunks, &buffer_snapshot, file_exists, cx);
+                }
+            });
+
+            Ok(())
+        })
+    }
+
+    pub fn unstage_staged_hunks(
+        &mut self,
+        buffer: Entity<Buffer>,
+        index_buffer: Entity<Buffer>,
+        staged_diff: Entity<BufferDiff>,
+        hunks: Vec<DiffHunk>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if hunks.is_empty() {
+            return Task::ready(Ok(()));
+        }
+
+        let buffer_id = buffer.read(cx).remote_id();
+        let index_snapshot = index_buffer.read(cx).text_snapshot();
+        let new_index_text = staged_diff.update(cx, |diff, _| {
+            diff.unstage_staged_hunks(&hunks, &index_snapshot)
+        });
+        if let Some(new_index_text) = new_index_text {
+            self.write_index_text_for_buffer_id(
+                buffer_id,
+                Some(new_index_text.to_string()),
+                None,
+                cx,
+            );
+        }
+
+        Task::ready(Ok(()))
     }
 
     pub fn open_diff_since(
@@ -2263,40 +2328,59 @@ impl GitStore {
     ) {
         if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
             let buffer_id = diff.read(cx).buffer_id;
-            if let Some(diff_state) = self.diffs.get(&buffer_id) {
-                let new_index_text = new_index_text.as_ref().map(|rope| rope.to_string());
-                if new_index_text.as_deref() == diff_state.read(cx).index_text.as_deref() {
-                    return;
-                }
-                let hunk_staging_operation_count = diff_state.update(cx, |diff_state, _| {
-                    diff_state.hunk_staging_operation_count += 1;
-                    diff_state.hunk_staging_operation_count
-                });
-                if let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) {
-                    let recv = repo.update(cx, |repo, cx| {
-                        log::debug!("hunks changed for {}", path.as_unix_str());
-                        repo.spawn_set_index_text_job(
-                            path,
-                            new_index_text,
-                            Some(hunk_staging_operation_count),
-                            cx,
-                        )
-                    });
-                    let diff = diff.downgrade();
-                    cx.spawn(async move |this, cx| {
-                        if let Ok(Err(error)) = cx.background_spawn(recv).await {
-                            diff.update(cx, |diff, cx| {
-                                diff.clear_pending_hunks(cx);
-                            })
-                            .ok();
-                            this.update(cx, |_, cx| cx.emit(GitStoreEvent::IndexWriteError(error)))
-                                .ok();
-                        }
-                    })
-                    .detach();
-                }
-            }
+            let new_index_text = new_index_text.as_ref().map(|rope| rope.to_string());
+            self.write_index_text_for_buffer_id(
+                buffer_id,
+                new_index_text,
+                Some(diff.downgrade()),
+                cx,
+            );
         }
+    }
+
+    fn write_index_text_for_buffer_id(
+        &mut self,
+        buffer_id: BufferId,
+        new_index_text: Option<String>,
+        pending_diff: Option<WeakEntity<BufferDiff>>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(diff_state) = self.diffs.get(&buffer_id) else {
+            return;
+        };
+        if new_index_text.as_deref() == diff_state.read(cx).index_text.as_deref() {
+            return;
+        }
+        let hunk_staging_operation_count = diff_state.update(cx, |diff_state, _| {
+            diff_state.hunk_staging_operation_count += 1;
+            diff_state.hunk_staging_operation_count
+        });
+        let Some((repo, path)) = self.repository_and_path_for_buffer_id(buffer_id, cx) else {
+            return;
+        };
+        let recv = repo.update(cx, |repo, cx| {
+            log::debug!("hunks changed for {}", path.as_unix_str());
+            repo.spawn_set_index_text_job(
+                path,
+                new_index_text,
+                Some(hunk_staging_operation_count),
+                cx,
+            )
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Err(error)) = cx.background_spawn(recv).await {
+                if let Some(pending_diff) = pending_diff {
+                    pending_diff
+                        .update(cx, |diff, cx| {
+                            diff.clear_pending_hunks(cx);
+                        })
+                        .ok();
+                }
+                this.update(cx, |_, cx| cx.emit(GitStoreEvent::IndexWriteError(error)))
+                    .ok();
+            }
+        })
+        .detach();
     }
 
     fn local_worktree_git_repos_changed(

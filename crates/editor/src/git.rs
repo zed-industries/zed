@@ -2626,7 +2626,7 @@ pub fn set_blame_renderer(renderer: impl BlameRenderer + 'static, cx: &mut App) 
     cx.set_global(GlobalBlameRenderer(Arc::new(renderer)));
 }
 
-pub(super) fn render_diff_hunk_controls(
+pub fn render_diff_hunk_controls(
     row: u32,
     status: &DiffHunkStatus,
     hunk_range: Range<Anchor>,
