@@ -267,17 +267,37 @@ impl RunningMode {
         breakpoint_store: &Entity<BreakpointStore>,
         cx: &mut App,
     ) -> Task<()> {
-        let breakpoints =
-            breakpoint_store
-                .read(cx)
-                .source_breakpoints_from_path(&abs_path, cx)
-                .into_iter()
-                .filter(|bp| bp.state.is_enabled())
-                .chain(self.tmp_breakpoint.iter().filter_map(|breakpoint| {
-                    breakpoint.path.eq(&abs_path).then(|| breakpoint.clone())
-                }))
-                .map(Into::into)
-                .collect();
+        let log_path = abs_path.clone();
+        let task = self.send_breakpoints_from_path_result(abs_path, reason, breakpoint_store, cx);
+        cx.spawn(async move |_| {
+            if let Err(error) = task.await {
+                log::warn!("Set breakpoints request failed for path {log_path:?}: {error}");
+            }
+        })
+    }
+
+    fn send_breakpoints_from_path_result(
+        &self,
+        abs_path: Arc<Path>,
+        reason: BreakpointUpdatedReason,
+        breakpoint_store: &Entity<BreakpointStore>,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let breakpoints = breakpoint_store
+            .read(cx)
+            .source_breakpoints_from_path(&abs_path, cx)
+            .into_iter()
+            .filter(|bp| bp.state.is_enabled())
+            .chain(
+                self.tmp_breakpoint
+                    .iter()
+                    .filter(|breakpoint| breakpoint.state.is_enabled())
+                    .filter_map(|breakpoint| {
+                        breakpoint.path.eq(&abs_path).then(|| breakpoint.clone())
+                    }),
+            )
+            .map(Into::into)
+            .collect();
 
         let raw_breakpoints = breakpoint_store
             .read(cx)
@@ -293,28 +313,25 @@ impl RunningMode {
         });
         let session_id = self.client.id();
         let breakpoint_store = breakpoint_store.downgrade();
-        cx.spawn(async move |cx| match cx.background_spawn(task).await {
-            Ok(breakpoints) => {
-                let breakpoints =
-                    breakpoints
-                        .into_iter()
-                        .zip(raw_breakpoints)
-                        .filter_map(|(dap_bp, zed_bp)| {
-                            Some((
-                                zed_bp,
-                                BreakpointSessionState {
-                                    id: dap_bp.id?,
-                                    verified: dap_bp.verified,
-                                },
-                            ))
-                        });
-                breakpoint_store
-                    .update(cx, |this, _| {
-                        this.mark_breakpoints_verified(session_id, &abs_path, breakpoints);
-                    })
-                    .ok();
-            }
-            Err(err) => log::warn!("Set breakpoints request failed for path: {}", err),
+        cx.spawn(async move |cx| {
+            let breakpoints = cx.background_spawn(task).await?;
+            let breakpoints =
+                breakpoints
+                    .into_iter()
+                    .zip(raw_breakpoints)
+                    .filter_map(|(dap_bp, zed_bp)| {
+                        Some((
+                            zed_bp,
+                            BreakpointSessionState {
+                                id: dap_bp.id?,
+                                verified: dap_bp.verified,
+                            },
+                        ))
+                    });
+            breakpoint_store.update(cx, |this, _| {
+                this.mark_breakpoints_verified(session_id, &abs_path, breakpoints);
+            })?;
+            Ok(())
         })
     }
 
@@ -2106,6 +2123,52 @@ impl Session {
         &self.session_state().loaded_sources
     }
 
+    pub(crate) fn agent_fetch_threads(&self) -> Task<Result<Vec<dap::Thread>>> {
+        self.state.request_dap(ThreadsCommand)
+    }
+
+    pub(crate) fn agent_fetch_stack_frames(
+        &self,
+        thread_id: ThreadId,
+        max_frames: usize,
+    ) -> Task<Result<Vec<dap::StackFrame>>> {
+        self.state.request_dap(StackTraceCommand {
+            thread_id: thread_id.0,
+            start_frame: None,
+            levels: Some(u64::try_from(max_frames).unwrap_or(u64::MAX)),
+        })
+    }
+
+    pub(crate) fn agent_fetch_scopes(
+        &self,
+        stack_frame_id: StackFrameId,
+    ) -> Task<Result<Vec<dap::Scope>>> {
+        self.state.request_dap(ScopesCommand { stack_frame_id })
+    }
+
+    pub(crate) fn agent_fetch_variables(
+        &self,
+        variables_reference: VariableReference,
+        max_variables: usize,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Vec<dap::Variable>>> {
+        let request = self.state.request_dap(VariablesCommand {
+            variables_reference,
+            filter: None,
+            start: None,
+            count: Some(u64::try_from(max_variables).unwrap_or(u64::MAX)),
+            format: None,
+        });
+        let adapter = self.adapter.clone();
+        cx.spawn(async move |_, _| {
+            let mut variables = request.await?;
+            Self::normalize_variables_for_adapter(&adapter, &mut variables);
+            // Adapters may ignore the `count` argument, so enforce the bound here.
+            variables.truncate(max_variables);
+            Ok(variables)
+        })
+    }
+
     fn fallback_to_manual_restart(
         &mut self,
         res: Result<()>,
@@ -2156,6 +2219,238 @@ impl Session {
         self.breakpoint_store.update(cx, |store, cx| {
             store.remove_active_position(Some(self.id), cx)
         });
+    }
+
+    fn agent_resume_request<T: LocalDapCommand + PartialEq + Eq + Hash>(
+        &self,
+        thread_id: ThreadId,
+        command: T,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if !T::is_supported(&self.capabilities) {
+            return Task::ready(Err(anyhow!(
+                "debug adapter does not support request: {command:?}"
+            )));
+        }
+
+        let request = self.state.request_dap(command);
+        cx.spawn(async move |this, cx| match request.await {
+            Ok(_) => {
+                this.update(cx, |this, cx| {
+                    this.breakpoint_store.update(cx, |store, cx| {
+                        store.remove_active_position(Some(this.session_id()), cx)
+                    });
+                })?;
+                Ok(())
+            }
+            Err(error) => {
+                this.update(cx, |this, cx| {
+                    this.active_snapshot.thread_states.stop_thread(thread_id);
+                    cx.notify();
+                })?;
+                Err(error)
+            }
+        })
+    }
+
+    pub(crate) fn agent_pause_thread(
+        &mut self,
+        thread_id: ThreadId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if !PauseCommand::is_supported(&self.capabilities) {
+            return Task::ready(Err(anyhow!("debug adapter does not support pause")));
+        }
+
+        let request = self.state.request_dap(PauseCommand {
+            thread_id: thread_id.0,
+        });
+        cx.spawn(async move |_, _| {
+            request.await?;
+            Ok(())
+        })
+    }
+
+    pub(crate) fn agent_continue_thread(
+        &mut self,
+        thread_id: ThreadId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.select_historic_snapshot(None, cx);
+
+        let supports_single_thread_execution_requests =
+            self.capabilities.supports_single_thread_execution_requests;
+        self.active_snapshot
+            .thread_states
+            .continue_thread(thread_id);
+        self.agent_resume_request(
+            thread_id,
+            ContinueCommand {
+                args: ContinueArguments {
+                    thread_id: thread_id.0,
+                    single_thread: supports_single_thread_execution_requests,
+                },
+            },
+            cx,
+        )
+    }
+
+    pub(crate) fn agent_step_over(
+        &mut self,
+        thread_id: ThreadId,
+        granularity: SteppingGranularity,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.select_historic_snapshot(None, cx);
+
+        let supports_single_thread_execution_requests =
+            self.capabilities.supports_single_thread_execution_requests;
+        let supports_stepping_granularity = self
+            .capabilities
+            .supports_stepping_granularity
+            .unwrap_or_default();
+        let command = NextCommand {
+            inner: StepCommand {
+                thread_id: thread_id.0,
+                granularity: supports_stepping_granularity.then(|| granularity),
+                single_thread: supports_single_thread_execution_requests,
+            },
+        };
+
+        self.active_snapshot.thread_states.process_step(thread_id);
+        self.agent_resume_request(thread_id, command, cx)
+    }
+
+    pub(crate) fn agent_step_in(
+        &mut self,
+        thread_id: ThreadId,
+        granularity: SteppingGranularity,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.select_historic_snapshot(None, cx);
+
+        let supports_single_thread_execution_requests =
+            self.capabilities.supports_single_thread_execution_requests;
+        let supports_stepping_granularity = self
+            .capabilities
+            .supports_stepping_granularity
+            .unwrap_or_default();
+        let command = StepInCommand {
+            inner: StepCommand {
+                thread_id: thread_id.0,
+                granularity: supports_stepping_granularity.then(|| granularity),
+                single_thread: supports_single_thread_execution_requests,
+            },
+        };
+
+        self.active_snapshot.thread_states.process_step(thread_id);
+        self.agent_resume_request(thread_id, command, cx)
+    }
+
+    pub(crate) fn agent_step_out(
+        &mut self,
+        thread_id: ThreadId,
+        granularity: SteppingGranularity,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.select_historic_snapshot(None, cx);
+
+        let supports_single_thread_execution_requests =
+            self.capabilities.supports_single_thread_execution_requests;
+        let supports_stepping_granularity = self
+            .capabilities
+            .supports_stepping_granularity
+            .unwrap_or_default();
+        let command = StepOutCommand {
+            inner: StepCommand {
+                thread_id: thread_id.0,
+                granularity: supports_stepping_granularity.then(|| granularity),
+                single_thread: supports_single_thread_execution_requests,
+            },
+        };
+
+        self.active_snapshot.thread_states.process_step(thread_id);
+        self.agent_resume_request(thread_id, command, cx)
+    }
+
+    pub(crate) fn agent_run_to_position(
+        &mut self,
+        breakpoint: SourceBreakpoint,
+        active_thread_id: ThreadId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        self.select_historic_snapshot(None, cx);
+
+        let breakpoint_store = self.breakpoint_store.clone();
+        match &mut self.state {
+            SessionState::Running(local_mode) => {
+                if !matches!(
+                    self.active_snapshot
+                        .thread_states
+                        .thread_state(active_thread_id),
+                    Some(ThreadStatus::Stopped)
+                ) {
+                    return Task::ready(Err(anyhow!(
+                        "cannot run to line because thread {:?} is not stopped",
+                        active_thread_id
+                    )));
+                }
+                let path = breakpoint.path.clone();
+                local_mode.tmp_breakpoint = Some(breakpoint);
+                let task = local_mode.send_breakpoints_from_path_result(
+                    path.clone(),
+                    BreakpointUpdatedReason::Toggled,
+                    &breakpoint_store,
+                    cx,
+                );
+
+                cx.spawn(async move |this, cx| {
+                    if let Err(error) = task.await {
+                        this.update(cx, |this, _| {
+                            if let Some(local_mode) = this.as_running_mut() {
+                                local_mode.tmp_breakpoint.take();
+                            }
+                        })?;
+                        return Err(error);
+                    }
+
+                    let continue_result = this
+                        .update(cx, |this, cx| {
+                            this.agent_continue_thread(active_thread_id, cx)
+                        })?
+                        .await;
+
+                    if let Err(error) = continue_result {
+                        let cleanup = this.update(cx, |this, cx| {
+                            this.as_running_mut().map(|local_mode| {
+                                local_mode.tmp_breakpoint.take();
+                                local_mode.send_breakpoints_from_path_result(
+                                    path,
+                                    BreakpointUpdatedReason::Toggled,
+                                    &breakpoint_store,
+                                    cx,
+                                )
+                            })
+                        })?;
+
+                        if let Some(cleanup) = cleanup
+                            && let Err(cleanup_error) = cleanup.await
+                        {
+                            log::warn!(
+                                "failed to remove temporary run-to-line breakpoint after continue failed: {cleanup_error}"
+                            );
+                        }
+
+                        return Err(error);
+                    }
+
+                    Ok(())
+                })
+            }
+            SessionState::Booting(_) => Task::ready(Err(anyhow!(
+                "cannot run to line while the debug session is booting"
+            ))),
+        }
     }
 
     pub fn pause_thread(&mut self, thread_id: ThreadId, cx: &mut Context<Self>) {
@@ -2635,6 +2930,43 @@ impl Session {
         self.watchers.remove(&expression);
     }
 
+    fn normalize_variables_for_adapter(
+        adapter: &DebugAdapterName,
+        variables: &mut [dap::Variable],
+    ) {
+        if adapter.0.as_ref() != "Debugpy" {
+            return;
+        }
+
+        for variable in variables.iter_mut() {
+            if variable.type_ == Some("str".into()) {
+                // reverse Python repr() escaping
+                let mut unescaped = String::with_capacity(variable.value.len());
+                let mut chars = variable.value.chars();
+                while let Some(c) = chars.next() {
+                    if c != '\\' {
+                        unescaped.push(c);
+                    } else {
+                        match chars.next() {
+                            Some('\\') => unescaped.push('\\'),
+                            Some('n') => unescaped.push('\n'),
+                            Some('t') => unescaped.push('\t'),
+                            Some('r') => unescaped.push('\r'),
+                            Some('\'') => unescaped.push('\''),
+                            Some('"') => unescaped.push('"'),
+                            Some(c) => {
+                                unescaped.push('\\');
+                                unescaped.push(c);
+                            }
+                            None => {}
+                        }
+                    }
+                }
+                variable.value = unescaped;
+            }
+        }
+    }
+
     pub fn variables(
         &mut self,
         variables_reference: VariableReference,
@@ -2655,35 +2987,7 @@ impl Session {
                     return;
                 };
 
-                if this.adapter.0.as_ref() == "Debugpy" {
-                    for variable in variables.iter_mut() {
-                        if variable.type_ == Some("str".into()) {
-                            // reverse Python repr() escaping
-                            let mut unescaped = String::with_capacity(variable.value.len());
-                            let mut chars = variable.value.chars();
-                            while let Some(c) = chars.next() {
-                                if c != '\\' {
-                                    unescaped.push(c);
-                                } else {
-                                    match chars.next() {
-                                        Some('\\') => unescaped.push('\\'),
-                                        Some('n') => unescaped.push('\n'),
-                                        Some('t') => unescaped.push('\t'),
-                                        Some('r') => unescaped.push('\r'),
-                                        Some('\'') => unescaped.push('\''),
-                                        Some('"') => unescaped.push('"'),
-                                        Some(c) => {
-                                            unescaped.push('\\');
-                                            unescaped.push(c);
-                                        }
-                                        None => {}
-                                    }
-                                }
-                            }
-                            variable.value = unescaped;
-                        }
-                    }
-                }
+                Self::normalize_variables_for_adapter(&this.adapter, &mut variables);
 
                 this.active_snapshot
                     .variables

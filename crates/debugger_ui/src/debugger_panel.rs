@@ -41,7 +41,7 @@ use util::{ResultExt, debug_panic, maybe};
 use workspace::SplitDirection;
 use workspace::item::SaveOptions;
 use workspace::{
-    Item, Pane, Workspace,
+    DebugSessionStartInfo, Item, Pane, Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
 use zed_actions::debug_panel::ToggleFocus;
@@ -183,37 +183,67 @@ impl DebugPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.start_session_result(
+            scenario,
+            task_context,
+            active_buffer,
+            worktree_id,
+            window,
+            cx,
+        )
+        .log_err();
+    }
+
+    pub(crate) fn start_session_result(
+        &mut self,
+        scenario: DebugScenario,
+        task_context: SharedTaskContext,
+        active_buffer: Option<Entity<Buffer>>,
+        worktree_id: Option<WorktreeId>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<DebugSessionStartInfo> {
         let dap_store = self.project.read(cx).dap_store();
-        let Some(adapter) = DapRegistry::global(cx).adapter(&scenario.adapter) else {
-            return;
+        let label = scenario.label.clone();
+        let adapter_name = scenario.adapter.clone();
+        let Some(adapter) = DapRegistry::global(cx).adapter(&adapter_name) else {
+            return Err(anyhow!("No debug adapter registered for {adapter_name}"));
         };
         let quirks = SessionQuirks {
             compact: adapter.compact_child_session(),
             prefer_thread_name: adapter.prefer_thread_name(),
         };
+        let project = self.project.read(cx);
+        let worktree = if let Some(worktree_id) = worktree_id {
+            project.worktree_for_id(worktree_id, cx).ok_or_else(|| {
+                anyhow!("Could not find worktree {worktree_id} to spawn the debug session in")
+            })?
+        } else {
+            let worktree_id = active_buffer
+                .as_ref()
+                .and_then(|buffer| buffer.read(cx).file())
+                .map(|file| file.worktree_id(cx));
+
+            worktree_id
+                .and_then(|id| project.worktree_for_id(id, cx))
+                .or_else(|| project.visible_worktrees(cx).next())
+                .ok_or_else(|| anyhow!("Could not find a worktree to spawn the debug session in"))?
+        };
+
         let session = dap_store.update(cx, |dap_store, cx| {
             dap_store.new_session(
-                Some(scenario.label.clone()),
-                DebugAdapterName(scenario.adapter.clone()),
+                Some(label.clone()),
+                DebugAdapterName(adapter_name.clone()),
                 task_context.clone(),
                 None,
                 quirks,
                 cx,
             )
         });
-        let worktree = worktree_id.or_else(|| {
-            active_buffer
-                .as_ref()
-                .and_then(|buffer| buffer.read(cx).file())
-                .map(|f| f.worktree_id(cx))
-        });
-
-        let Some(worktree) = worktree
-            .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
-            .or_else(|| self.project.read(cx).visible_worktrees(cx).next())
-        else {
-            log::debug!("Could not find a worktree to spawn the debug session in");
-            return;
+        let info = DebugSessionStartInfo {
+            session_id: session.read(cx).session_id().to_proto(),
+            label: label.to_string(),
+            adapter: adapter_name.to_string(),
         };
 
         self.debug_scenario_scheduled_last = true;
@@ -300,6 +330,8 @@ impl DebugPanel {
                 debug_panic!("Session state should be in building because we are just starting it");
             }
         });
+
+        Ok(info)
     }
 
     pub(crate) fn rerun_last_session(
@@ -1967,11 +1999,9 @@ impl workspace::DebuggerProvider for DebuggerProvider {
         worktree_id: Option<WorktreeId>,
         window: &mut Window,
         cx: &mut App,
-    ) {
-        self.0.update(cx, |_, cx| {
-            cx.defer_in(window, move |this, window, cx| {
-                this.start_session(definition, context, buffer, worktree_id, window, cx);
-            })
+    ) -> Result<DebugSessionStartInfo> {
+        self.0.update(cx, |debug_panel, cx| {
+            debug_panel.start_session_result(definition, context, buffer, worktree_id, window, cx)
         })
     }
 

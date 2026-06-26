@@ -85,7 +85,7 @@ use gpui::{
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
 use notifications::status_toast::StatusToast;
-use project::{Project, ProjectPath, Worktree};
+use project::{Project, ProjectPath, Worktree, WorktreeId};
 use settings::TerminalDockPosition;
 use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
 
@@ -4665,15 +4665,15 @@ impl AgentPanel {
                 } else {
                     cx.emit(AgentPanelEvent::EntryChanged);
                 }
-                this.ensure_sibling_host_installed(&server_view, window, cx);
+                this.ensure_native_agent_hosts_installed(&server_view, window, cx);
                 cx.notify();
             },
         )
         .detach();
 
-        // Try installing the host eagerly as well, in case the connection is
+        // Try installing the hosts eagerly as well, in case the connection is
         // already established by the time the observe fires.
-        self.ensure_sibling_host_installed(&conversation_view, window, cx);
+        self.ensure_native_agent_hosts_installed(&conversation_view, window, cx);
 
         if let Some(model) = model_override {
             // The native thread is constructed asynchronously after the
@@ -4699,24 +4699,30 @@ impl AgentPanel {
         AgentThread { conversation_view }
     }
 
-    fn ensure_sibling_host_installed(
+    fn ensure_native_agent_hosts_installed(
         &self,
         conversation_view: &Entity<ConversationView>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !cx.has_flag::<CreateThreadToolFeatureFlag>() {
-            return;
-        }
         let Some(native_connection) = conversation_view.read(cx).as_native_connection(cx) else {
             return;
         };
-        let host = Rc::new(AgentPanelSiblingHost::new(
+        let debugger_host = Rc::new(AgentPanelDebuggerHost::new(
             cx.weak_entity(),
             window.window_handle(),
-        )) as Rc<dyn agent::SiblingThreadHost>;
+        )) as Rc<dyn agent::DebuggerHost>;
+        let sibling_thread_host = cx.has_flag::<CreateThreadToolFeatureFlag>().then(|| {
+            Rc::new(AgentPanelSiblingHost::new(
+                cx.weak_entity(),
+                window.window_handle(),
+            )) as Rc<dyn agent::SiblingThreadHost>
+        });
         native_connection.0.update(cx, |native_agent, _cx| {
-            native_agent.set_sibling_thread_host(host);
+            native_agent.set_debugger_host(debugger_host);
+            if let Some(host) = sibling_thread_host {
+                native_agent.set_sibling_thread_host(host);
+            }
         });
     }
 
@@ -4779,6 +4785,194 @@ fn parse_provider_slash_model(input: &str) -> Option<language_model::SelectedMod
     Some(language_model::SelectedModel {
         provider: language_model::LanguageModelProviderId::from(provider.to_string()),
         model: language_model::LanguageModelId::from(model.to_string()),
+    })
+}
+
+pub(crate) struct AgentPanelDebuggerHost {
+    panel: WeakEntity<AgentPanel>,
+    window: gpui::AnyWindowHandle,
+}
+
+impl AgentPanelDebuggerHost {
+    pub(crate) fn new(panel: WeakEntity<AgentPanel>, window: gpui::AnyWindowHandle) -> Self {
+        Self { panel, window }
+    }
+}
+
+impl agent::DebuggerHost for AgentPanelDebuggerHost {
+    fn start_debug_session(
+        &self,
+        request: agent::DebugSessionRequest,
+        cx: &mut gpui::AsyncApp,
+    ) -> Task<Result<agent::DebugSessionInfo>> {
+        let panel = self.panel.clone();
+        let window = self.window;
+        cx.spawn(async move |cx| {
+            let workspace = panel.read_with(cx, |panel, _cx| panel.workspace.clone())?;
+            let workspace = workspace
+                .upgrade()
+                .ok_or_else(|| anyhow!("Workspace is no longer available"))?;
+            let agent::DebugSessionRequest {
+                scenario,
+                mut task_context,
+                mut active_buffer,
+                mut worktree_id,
+            } = request;
+
+            let default_task_context = task::TaskContext::default();
+            let task_context_was_default = *task_context == default_task_context;
+            let explicit_worktree_id = worktree_id;
+            let (
+                active_editor_task_context,
+                inferred_active_buffer,
+                inferred_worktree_id,
+                inferred_worktree_context,
+            ) = window.update(cx, |_root, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    let active_editor = workspace
+                        .active_item(cx)
+                        .and_then(|item| item.act_as::<Editor>(cx));
+
+                    let active_editor_buffer = active_editor.as_ref().and_then(|active_editor| {
+                        active_editor.update(cx, |editor, cx| {
+                            let selection = editor.selections.newest_anchor();
+                            let multi_buffer = editor.buffer().clone();
+                            let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+                            let (buffer_snapshot, _) =
+                                multi_buffer_snapshot.point_to_buffer_offset(selection.head())?;
+                            multi_buffer.read(cx).buffer(buffer_snapshot.remote_id())
+                        })
+                    });
+                    let active_editor_matches_explicit_worktree = explicit_worktree_id
+                        .map(|worktree_id| {
+                            active_editor_buffer
+                                .as_ref()
+                                .and_then(|buffer| buffer.read(cx).file())
+                                .is_some_and(|file| file.worktree_id(cx) == worktree_id)
+                        })
+                        .unwrap_or(true);
+
+                    let inferred_active_buffer = active_buffer
+                        .is_none()
+                        .then_some(active_editor_buffer)
+                        .flatten()
+                        .filter(|_| active_editor_matches_explicit_worktree);
+
+                    let buffer_for_worktree =
+                        active_buffer.as_ref().or(inferred_active_buffer.as_ref());
+                    let inferred_worktree_id = worktree_id
+                        .is_none()
+                        .then(|| {
+                            buffer_for_worktree
+                                .and_then(|buffer| buffer.read(cx).file())
+                                .map(|file| file.worktree_id(cx))
+                                .or_else(|| {
+                                    workspace
+                                        .visible_worktrees(cx)
+                                        .next()
+                                        .map(|worktree| worktree.read(cx).id())
+                                })
+                        })
+                        .flatten();
+
+                    let context_worktree_id = worktree_id.or(inferred_worktree_id);
+                    let inferred_worktree_context = task_context_was_default
+                        .then(|| {
+                            context_worktree_id.and_then(|worktree_id| {
+                                task_context_for_worktree(workspace, worktree_id, cx)
+                            })
+                        })
+                        .flatten();
+                    let should_use_active_editor_task_context = task_context_was_default
+                        && active_editor_matches_explicit_worktree
+                        && !(explicit_worktree_id.is_some() && inferred_worktree_context.is_some());
+                    let active_editor_task_context = should_use_active_editor_task_context
+                        .then(|| {
+                            active_editor.as_ref().map(|active_editor| {
+                                active_editor
+                                    .update(cx, |editor, cx| editor.task_context(window, cx))
+                            })
+                        })
+                        .flatten();
+
+                    (
+                        active_editor_task_context,
+                        inferred_active_buffer,
+                        inferred_worktree_id,
+                        inferred_worktree_context,
+                    )
+                })
+            })?;
+
+            if active_buffer.is_none() {
+                active_buffer = inferred_active_buffer;
+            }
+            if worktree_id.is_none() {
+                worktree_id = inferred_worktree_id;
+            }
+            if task_context_was_default {
+                let inferred_active_editor_task_context =
+                    if let Some(active_editor_task_context) = active_editor_task_context {
+                        active_editor_task_context.await
+                    } else {
+                        None
+                    };
+                let inferred_task_context = if explicit_worktree_id.is_some() {
+                    inferred_worktree_context.or(inferred_active_editor_task_context)
+                } else {
+                    inferred_active_editor_task_context.or(inferred_worktree_context)
+                };
+                if let Some(inferred_task_context) = inferred_task_context {
+                    task_context = inferred_task_context.into();
+                }
+            }
+
+            let info = window.update(cx, |_root, window, cx| {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.start_debug_session(
+                        scenario,
+                        task_context,
+                        active_buffer,
+                        worktree_id,
+                        window,
+                        cx,
+                    )
+                })
+            })??;
+
+            Ok(agent::DebugSessionInfo {
+                session_id: info.session_id,
+                label: info.label,
+                adapter: info.adapter,
+            })
+        })
+    }
+}
+
+fn task_context_for_worktree(
+    workspace: &Workspace,
+    worktree_id: WorktreeId,
+    cx: &App,
+) -> Option<task::TaskContext> {
+    let worktree = workspace
+        .project()
+        .read(cx)
+        .worktree_for_id(worktree_id, cx)?;
+    let worktree = worktree.read(cx);
+    if !worktree.is_visible() || !worktree.root_entry().is_some_and(|entry| entry.is_dir()) {
+        return None;
+    }
+
+    let worktree_abs_path = worktree.abs_path().to_path_buf();
+    let mut task_variables = task::TaskVariables::default();
+    task_variables.insert(
+        task::VariableName::WorktreeRoot,
+        worktree_abs_path.to_string_lossy().into_owned(),
+    );
+    Some(task::TaskContext {
+        cwd: Some(worktree_abs_path),
+        task_variables,
+        project_env: HashMap::default(),
     })
 }
 

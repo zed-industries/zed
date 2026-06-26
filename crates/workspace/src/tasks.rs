@@ -1,6 +1,6 @@
 use std::process::ExitStatus;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use collections::HashSet;
 use gpui::{AppContext, AsyncWindowContext, Context, Entity, Task, TaskExt, WeakEntity};
 use language::Buffer;
@@ -13,7 +13,7 @@ use task::{
 use ui::Window;
 use util::TryFutureExt;
 
-use crate::{SaveIntent, Toast, Workspace, notifications::NotificationId};
+use crate::{DebugSessionStartInfo, SaveIntent, Toast, Workspace, notifications::NotificationId};
 
 impl Workspace {
     pub fn schedule_task(
@@ -147,17 +147,19 @@ impl Workspace {
         worktree_id: Option<WorktreeId>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        if let Some(provider) = self.debugger_provider.as_mut() {
-            provider.start_session(
-                scenario,
-                task_context,
-                active_buffer,
-                worktree_id,
-                window,
-                cx,
-            )
-        }
+    ) -> Result<DebugSessionStartInfo> {
+        let provider = self
+            .debugger_provider
+            .as_ref()
+            .ok_or_else(|| anyhow!("No debugger provider is registered for this workspace"))?;
+        provider.start_session(
+            scenario,
+            task_context,
+            active_buffer,
+            worktree_id,
+            window,
+            cx,
+        )
     }
 
     pub fn spawn_in_terminal(

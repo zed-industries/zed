@@ -3,6 +3,7 @@ mod context_server_registry;
 mod copy_path_tool;
 mod create_directory_tool;
 mod create_thread_tool;
+mod debugger_tool;
 mod delete_path_tool;
 mod diagnostics_tool;
 mod edit_file_tool;
@@ -30,7 +31,8 @@ mod write_file_tool;
 
 use crate::AgentTool;
 use feature_flags::{
-    CreateThreadToolFeatureFlag, FeatureFlagAppExt as _, LspToolFeatureFlag, RenameToolFeatureFlag,
+    CreateThreadToolFeatureFlag, DebuggerToolFeatureFlag, FeatureFlagAppExt as _,
+    LspToolFeatureFlag, RenameToolFeatureFlag,
 };
 use gpui::App;
 use language_model::{LanguageModelRequestTool, LanguageModelToolSchemaFormat};
@@ -67,6 +69,7 @@ pub use context_server_registry::*;
 pub use copy_path_tool::*;
 pub use create_directory_tool::*;
 pub use create_thread_tool::*;
+pub use debugger_tool::*;
 pub use delete_path_tool::*;
 pub use diagnostics_tool::*;
 pub use edit_file_tool::*;
@@ -178,6 +181,7 @@ tools! {
     CopyPathTool,
     CreateDirectoryTool,
     CreateThreadTool,
+    DebuggerTool,
     DeletePathTool,
     DiagnosticsTool,
     EditFileTool,
@@ -209,6 +213,7 @@ tools! {
 pub fn tool_feature_flag_enabled(tool_name: &str, cx: &App) -> bool {
     match tool_name {
         RenameTool::NAME => cx.has_flag::<RenameToolFeatureFlag>(),
+        DebuggerTool::NAME => cx.has_flag::<DebuggerToolFeatureFlag>(),
         FindReferencesTool::NAME
         | GetCodeActionsTool::NAME
         | ApplyCodeActionTool::NAME

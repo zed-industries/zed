@@ -13,6 +13,8 @@ use workspace::MultiWorkspace;
 use crate::{debugger_panel::DebugPanel, session::DebugSession};
 
 #[cfg(test)]
+mod agent_api;
+#[cfg(test)]
 mod attach_modal;
 #[cfg(test)]
 mod console;
@@ -125,7 +127,7 @@ pub fn start_debug_session_with<T: Fn(&Arc<DebugAdapterClient>) + 'static>(
                 cx,
             )
         })
-    })?;
+    })??;
     cx.run_until_parked();
     let session = workspace.read_with(cx, |workspace, cx| {
         workspace

@@ -131,6 +131,18 @@ impl FeatureFlag for AgentSettingsUiFeatureFlag {
 }
 register_feature_flag!(AgentSettingsUiFeatureFlag);
 
+pub struct DebuggerToolFeatureFlag;
+
+impl FeatureFlag for DebuggerToolFeatureFlag {
+    const NAME: &'static str = "debugger-tool";
+    type Value = PresenceFlag;
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+register_feature_flag!(DebuggerToolFeatureFlag);
+
 pub struct AutoWatchFeatureFlag;
 
 impl FeatureFlag for AutoWatchFeatureFlag {
