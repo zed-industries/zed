@@ -1159,7 +1159,10 @@ impl ThreadView {
         workspace.update(cx, |workspace, cx| {
             struct LocalCommandToast;
             workspace.show_toast(
-                Toast::new(NotificationId::unique::<LocalCommandToast>(), message.into()),
+                Toast::new(
+                    NotificationId::unique::<LocalCommandToast>(),
+                    message.into(),
+                ),
                 cx,
             );
         });
@@ -6678,9 +6681,7 @@ impl ThreadView {
     /// editor so they appear in its slash-command popup.
     pub(crate) fn sync_local_commands(&self, cx: &App) {
         let commands = self.available_local_commands(cx);
-        self.message_editor
-            .read(cx)
-            .set_local_commands(commands);
+        self.message_editor.read(cx).set_local_commands(commands);
     }
 
     pub(crate) fn scroll_to_most_recent_user_prompt(&mut self, cx: &mut Context<Self>) {
