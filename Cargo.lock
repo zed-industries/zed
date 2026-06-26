@@ -429,6 +429,7 @@ dependencies = [
  "futures 0.3.32",
  "gpui",
  "paths",
+ "quick-xml 0.38.3",
  "serde",
  "serde_json",
  "serde_yaml_ng",

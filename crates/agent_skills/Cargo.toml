@@ -19,6 +19,7 @@ fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 paths.workspace = true
+quick-xml.workspace = true
 serde.workspace = true
 serde_yaml_ng.workspace = true
 url.workspace = true

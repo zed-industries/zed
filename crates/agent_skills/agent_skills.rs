@@ -3,7 +3,9 @@ use const_format::{concatcp, formatcp};
 use fs::Fs;
 use futures::StreamExt;
 use gpui::{App, Global, SharedString};
+use quick_xml;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -252,6 +254,73 @@ impl std::fmt::Display for SkillLoadError {
 }
 
 impl std::error::Error for SkillLoadError {}
+
+/// XML-escape a string so a malicious skill author cannot break out of the
+/// `<skill_content>` envelope (or the `<available_skills>` catalog) by
+/// embedding closing tags or attribute terminators in their skill name,
+/// description, body, or filenames.
+pub(crate) fn xml_escape(input: &str) -> String {
+    quick_xml::escape::escape(input).into_owned()
+}
+
+/// Neutralize attempts to break out of the `<skill_content>` envelope by
+/// escaping any literal occurrences of the wrapper's tag in `input`. We
+/// replace the leading `<` of `<skill_content` (matching both `<skill_content>`
+/// and `<skill_content name="...">`) and `</skill_content` (matching both
+/// `</skill_content>` and `</skill_content   >`) with `&lt;`. Other markup
+/// (e.g. `<details>`, `<summary>`, `<a href="...">`) passes through verbatim,
+/// so legitimate Markdown HTML in skill bodies isn't entity-mangled.
+fn neutralize_envelope_tags(input: &str) -> String {
+    input
+        .replace("<skill_content", "&lt;skill_content")
+        .replace("</skill_content", "&lt;/skill_content")
+}
+
+/// Render a skill's body wrapped in the `<skill_content>` envelope.
+///
+/// Used by both model-driven activation (the `skill` tool) and user-driven
+/// activation (slash commands), so the model sees the same shape regardless
+/// of who initiated the load. Every interpolated value is XML-escaped so a
+/// hostile skill body cannot break out of the wrapper by embedding closing
+/// tags.
+///
+/// `body` is the SKILL.md body (read on demand via
+/// `read_skill_body`). It's accepted as a parameter rather
+/// than stored on `Skill` so that loading N skills costs O(total
+/// frontmatter), not O(total file size).
+pub fn render_skill_envelope(skill: &Skill, body: &str) -> String {
+    let source = match &skill.source {
+        SkillSource::BuiltIn => "built-in",
+        SkillSource::Global => "global",
+        SkillSource::ProjectLocal { .. } => "project-local",
+    };
+    let worktree = match &skill.source {
+        SkillSource::BuiltIn | SkillSource::Global => None,
+        SkillSource::ProjectLocal {
+            worktree_root_name, ..
+        } => Some(worktree_root_name.clone()),
+    };
+    let directory = skill.directory_path.to_string_lossy();
+
+    // `write!`/`writeln!` into a `String` are infallible, so `.unwrap()` here
+    // matches the local precedent (see `list_directory_tool.rs`).
+    let mut out = String::new();
+    writeln!(out, "<skill_content name=\"{}\">", xml_escape(&skill.name)).unwrap();
+    writeln!(out, "<source>{}</source>", xml_escape(source)).unwrap();
+    if let Some(worktree) = worktree {
+        writeln!(
+            out,
+            "<worktree>{}</worktree>",
+            xml_escape(worktree.as_ref())
+        )
+        .unwrap();
+    }
+    writeln!(out, "<directory>{}</directory>", xml_escape(&directory)).unwrap();
+    out.push_str("Relative paths in this skill resolve against <directory>.\n\n");
+    out.push_str(&neutralize_envelope_tags(body.trim()));
+    out.push_str("\n</skill_content>\n");
+    out
+}
 
 /// Parse the frontmatter of a SKILL.md file into a `Skill` struct.
 ///
@@ -856,6 +925,22 @@ mod tests {
     use super::*;
     use fs::FakeFs;
     use gpui::TestAppContext;
+
+    #[test]
+    fn test_xml_escape_covers_predefined_entities() {
+        assert_eq!(
+            xml_escape("<a href=\"x\">&'</a>"),
+            "&lt;a href=&quot;x&quot;&gt;&amp;&apos;&lt;/a&gt;"
+        );
+    }
+
+    #[test]
+    fn test_xml_escape_preserves_multibyte_utf8() {
+        let escaped = xml_escape("<a>café 🦀</a>");
+        assert_eq!(escaped, "&lt;a&gt;café 🦀&lt;/a&gt;");
+        assert!(escaped.contains("café"));
+        assert!(escaped.contains("🦀"));
+    }
 
     #[test]
     fn test_skill_source_precedence_is_total_and_ordered() {

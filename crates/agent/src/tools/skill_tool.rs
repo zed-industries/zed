@@ -1,5 +1,5 @@
 use agent_client_protocol::schema as acp;
-use agent_skills::Skill;
+use agent_skills::{Skill, render_skill_envelope};
 use anyhow::Result;
 use gpui::{App, AsyncApp, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
@@ -9,73 +9,6 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-
-/// XML-escape a string so a malicious skill author cannot break out of the
-/// `<skill_content>` envelope (or the `<available_skills>` catalog) by
-/// embedding closing tags or attribute terminators in their skill name,
-/// description, body, or filenames.
-pub(crate) fn xml_escape(input: &str) -> String {
-    quick_xml::escape::escape(input).into_owned()
-}
-
-/// Neutralize attempts to break out of the `<skill_content>` envelope by
-/// escaping any literal occurrences of the wrapper's tag in `input`. We
-/// replace the leading `<` of `<skill_content` (matching both `<skill_content>`
-/// and `<skill_content name="...">`) and `</skill_content` (matching both
-/// `</skill_content>` and `</skill_content   >`) with `&lt;`. Other markup
-/// (e.g. `<details>`, `<summary>`, `<a href="...">`) passes through verbatim,
-/// so legitimate Markdown HTML in skill bodies isn't entity-mangled.
-fn neutralize_envelope_tags(input: &str) -> String {
-    input
-        .replace("<skill_content", "&lt;skill_content")
-        .replace("</skill_content", "&lt;/skill_content")
-}
-
-/// Render a skill's body wrapped in the `<skill_content>` envelope.
-///
-/// Used by both model-driven activation (the `skill` tool) and user-driven
-/// activation (slash commands), so the model sees the same shape regardless
-/// of who initiated the load. Every interpolated value is XML-escaped so a
-/// hostile skill body cannot break out of the wrapper by embedding closing
-/// tags.
-///
-/// `body` is the SKILL.md body (read on demand via
-/// `agent_skills::read_skill_body`). It's accepted as a parameter rather
-/// than stored on `Skill` so that loading N skills costs O(total
-/// frontmatter), not O(total file size).
-pub fn render_skill_envelope(skill: &Skill, body: &str) -> String {
-    let source = match &skill.source {
-        agent_skills::SkillSource::BuiltIn => "built-in",
-        agent_skills::SkillSource::Global => "global",
-        agent_skills::SkillSource::ProjectLocal { .. } => "project-local",
-    };
-    let worktree = match &skill.source {
-        agent_skills::SkillSource::BuiltIn | agent_skills::SkillSource::Global => None,
-        agent_skills::SkillSource::ProjectLocal {
-            worktree_root_name, ..
-        } => Some(worktree_root_name.clone()),
-    };
-    let directory = skill.directory_path.to_string_lossy();
-
-    // `write!`/`writeln!` into a `String` are infallible, so `.unwrap()` here
-    // matches the local precedent (see `list_directory_tool.rs`).
-    let mut out = String::new();
-    writeln!(out, "<skill_content name=\"{}\">", xml_escape(&skill.name)).unwrap();
-    writeln!(out, "<source>{}</source>", xml_escape(source)).unwrap();
-    if let Some(worktree) = worktree {
-        writeln!(
-            out,
-            "<worktree>{}</worktree>",
-            xml_escape(worktree.as_ref())
-        )
-        .unwrap();
-    }
-    writeln!(out, "<directory>{}</directory>", xml_escape(&directory)).unwrap();
-    out.push_str("Relative paths in this skill resolve against <directory>.\n\n");
-    out.push_str(&neutralize_envelope_tags(body.trim()));
-    out.push_str("\n</skill_content>\n");
-    out
-}
 
 /// Retrieves the content and resources of a skill by name. Use this when a user's request matches a skill's description.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -88,7 +21,7 @@ pub struct SkillToolInput {
 #[serde(untagged)]
 pub enum SkillToolOutput {
     /// Pre-rendered `<skill_content>` envelope. The wire format must match
-    /// what `render_skill_envelope` produces so model-driven and slash-
+    /// what `agent_skills::render_skill_envelope` produces so model-driven and slash-
     /// command activation are indistinguishable in the conversation.
     Found {
         rendered: String,
@@ -488,22 +421,6 @@ mod tests {
             !text.contains("&lt;details&gt;"),
             "legitimate HTML must not be entity-mangled: {text}"
         );
-    }
-
-    #[test]
-    fn test_xml_escape_covers_predefined_entities() {
-        assert_eq!(
-            xml_escape("<a href=\"x\">&'</a>"),
-            "&lt;a href=&quot;x&quot;&gt;&amp;&apos;&lt;/a&gt;"
-        );
-    }
-
-    #[test]
-    fn test_xml_escape_preserves_multibyte_utf8() {
-        let escaped = xml_escape("<a>café 🦀</a>");
-        assert_eq!(escaped, "&lt;a&gt;café 🦀&lt;/a&gt;");
-        assert!(escaped.contains("café"));
-        assert!(escaped.contains("🦀"));
     }
 
     #[gpui::test]
