@@ -102,7 +102,6 @@ struct LineHighlightSpec {
     breakpoint: bool,
     added: bool,
     deleted: bool,
-    modified: bool,
     _active_stack_frame: bool,
 }
 
@@ -8365,9 +8364,13 @@ impl Element for EditorElement {
 
                         let spec = active_rows.entry(base_display_point.row()).or_default();
                         match diff_status.kind {
+                            DiffHunkStatusKind::Deleted => spec.deleted = true,
                             DiffHunkStatusKind::Added => spec.added = true,
                             DiffHunkStatusKind::Deleted => spec.deleted = true,
-                            DiffHunkStatusKind::Modified => spec.modified = true,
+                            DiffHunkStatusKind::Modified => {
+                                debug_panic!("modified diff status for row info");
+                                continue;
+                            }
                         }
                     }
 
