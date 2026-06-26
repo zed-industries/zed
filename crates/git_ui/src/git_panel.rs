@@ -2667,30 +2667,29 @@ impl GitPanel {
         }
     }
 
-    fn commit_message_skill_name(
+    fn commit_message_skill_setting(
         project: &Entity<Project>,
         repo_work_dir: &Path,
         cx: &App,
-    ) -> Option<(bool, String)> {
+    ) -> Option<(SettingsFile, String)> {
         if let Some(project_settings_file) = project
             .read(cx)
             .find_project_path(repo_work_dir, cx)
             .map(|project_path| {
-                SettingsFile::Project((project_path.worktree_id, project_path.path.clone()))
+                SettingsFile::Project((project_path.worktree_id, project_path.path))
             })
         {
-            let (_, skill_name) = cx
+            if let Some(content) = cx
                 .global::<SettingsStore>()
-                .get_value_from_file(project_settings_file, |settings| {
-                    settings.project.git_commit_message_skill_name.clone()
-                });
-
-            if let Some(skill_name) = skill_name {
-                return Some((true, skill_name));
+                .get_content_for_file(project_settings_file.clone())
+            {
+                if let Some(skill_name) = &content.project.git_commit_message_skill_name {
+                    return Some((project_settings_file, skill_name.clone()));
+                }
             }
         }
 
-        let (_, skill_name) = cx
+        let (user_settings_file, skill_name) = cx
             .global::<SettingsStore>()
             .get_value_from_file(SettingsFile::User, |settings| {
                 settings.project.git_commit_message_skill_name.clone()
