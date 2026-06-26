@@ -22,7 +22,7 @@ use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCo
 use editor::actions::OpenExcerpts;
 use sandbox::{GitSandboxPolicy, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
-use crate::completion_provider::AvailableSkill;
+use crate::completion_provider::{AvailableSkill, PromptLocalCommand};
 use crate::message_editor::SharedSessionCapabilities;
 
 use db::kvp::KeyValueStore;
@@ -1102,9 +1102,67 @@ impl ThreadView {
             }
             MessageEditorEvent::LostFocus => {}
             MessageEditorEvent::SlashAutocompleteOpened => {}
+            MessageEditorEvent::LocalCommandInvoked(command) => {
+                self.run_local_command(*command, window, cx);
+            }
             MessageEditorEvent::InputAttempted { .. } => {}
             MessageEditorEvent::Edited => {}
         }
+    }
+
+    /// Runs a local slash command confirmed in the message editor's completion
+    /// popup. These map one-to-one to the actions that used to be turn-end
+    /// buttons; see `render_thread_controls`.
+    fn run_local_command(
+        &mut self,
+        command: PromptLocalCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match command {
+            PromptLocalCommand::OpenAsMarkdown => {
+                if let Some(workspace) = self.workspace.upgrade() {
+                    self.open_thread_as_markdown(workspace, window, cx)
+                        .detach_and_log_err(cx);
+                }
+            }
+            PromptLocalCommand::ScrollToTop => self.scroll_to_top(cx),
+            PromptLocalCommand::ScrollToRecentUserPrompt => {
+                self.scroll_to_most_recent_user_prompt(cx)
+            }
+            PromptLocalCommand::ThumbsUp => {
+                self.handle_feedback_click(ThreadFeedback::Positive, window, cx);
+                self.show_local_command_toast("Thanks for your feedback!", cx);
+            }
+            PromptLocalCommand::ThumbsDown => {
+                self.handle_feedback_click(ThreadFeedback::Negative, window, cx);
+                self.show_local_command_toast(
+                    "We appreciate your feedback and will use it to improve in the future.",
+                    cx,
+                );
+            }
+            PromptLocalCommand::ShareThread => self.share_thread(window, cx),
+            PromptLocalCommand::SyncThread => {
+                if let Some(project) = self.project.upgrade()
+                    && let Some(server_view) = self.server_view.upgrade()
+                {
+                    self.sync_thread(project, server_view, window, cx);
+                }
+            }
+        }
+    }
+
+    fn show_local_command_toast(&self, message: impl Into<String>, cx: &mut Context<Self>) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        workspace.update(cx, |workspace, cx| {
+            struct LocalCommandToast;
+            workspace.show_toast(
+                Toast::new(NotificationId::unique::<LocalCommandToast>(), message.into()),
+                cx,
+            );
+        });
     }
 
     pub(crate) fn as_native_connection(
@@ -1249,6 +1307,12 @@ impl ThreadView {
                 self.cancel_editing(&Default::default(), window, cx);
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::SlashAutocompleteOpened) => {
+            }
+            ViewEvent::MessageEditorEvent(
+                _editor,
+                MessageEditorEvent::LocalCommandInvoked(command),
+            ) => {
+                self.run_local_command(*command, window, cx);
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Edited) => {}
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::InputAttempted { .. }) => {}
@@ -6500,37 +6564,10 @@ impl ThreadView {
             return Empty.into_any_element();
         }
 
-        let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileMarkdown)
-            .shape(ui::IconButtonShape::Square)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Ignored)
-            .tooltip(Tooltip::text("Open Thread as Markdown"))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                if let Some(workspace) = this.workspace.upgrade() {
-                    this.open_thread_as_markdown(workspace, window, cx)
-                        .detach_and_log_err(cx);
-                }
-            }));
-
-        let scroll_to_recent_user_prompt =
-            IconButton::new("scroll_to_recent_user_prompt", IconName::ForwardArrow)
-                .shape(ui::IconButtonShape::Square)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Ignored)
-                .tooltip(Tooltip::text("Scroll To Most Recent User Prompt"))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.scroll_to_most_recent_user_prompt(cx);
-                }));
-
-        let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUp)
-            .shape(ui::IconButtonShape::Square)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Ignored)
-            .tooltip(Tooltip::text("Scroll To Top"))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.scroll_to_top(cx);
-            }));
-
+        // The scroll/markdown/feedback/share actions that used to live here as
+        // buttons are now exposed as local slash commands in the message
+        // editor; see `available_local_commands` and
+        // `handle_message_editor_event`. Only the turn-stats labels remain.
         let show_stats = AgentSettings::get_global(cx).show_turn_stats;
         let last_turn_clock = show_stats
             .then(|| {
@@ -6559,7 +6596,13 @@ impl ThreadView {
             })
             .flatten();
 
-        let mut container = h_flex()
+        // When there are no stats labels to show there's nothing to render;
+        // the actions previously rendered here are now slash commands.
+        if last_turn_tokens_label.is_none() && last_turn_clock.is_none() {
+            return Empty.into_any_element();
+        }
+
+        h_flex()
             .w_full()
             .py_2()
             .px_5()
@@ -6567,21 +6610,22 @@ impl ThreadView {
             .opacity(0.6)
             .hover(|s| s.opacity(1.))
             .justify_end()
-            .when(
-                last_turn_tokens_label.is_some() || last_turn_clock.is_some(),
-                |this| {
-                    this.child(
-                        h_flex()
-                            .gap_1()
-                            .px_1()
-                            .when_some(last_turn_tokens_label, |this, label| this.child(label))
-                            .when_some(last_turn_clock, |this, label| this.child(label)),
-                    )
-                },
-            );
+            .child(
+                h_flex()
+                    .gap_1()
+                    .px_1()
+                    .when_some(last_turn_tokens_label, |this, label| this.child(label))
+                    .when_some(last_turn_clock, |this, label| this.child(label)),
+            )
+            .into_any_element()
+    }
 
-        let enable_thread_feedback = util::maybe!({
-            let project = thread.read(cx).project().read(cx);
+    /// Whether sending thread feedback (the `/helpful` and `/not-helpful`
+    /// commands) is currently available. Mirrors the gating that the thumbs
+    /// up/down buttons used.
+    fn is_thread_feedback_enabled(&self, cx: &App) -> bool {
+        util::maybe!({
+            let project = self.thread.read(cx).project().read(cx);
             let user_store = project.user_store();
             if let Some(configuration) = user_store.read(cx).current_organization_configuration() {
                 if !configuration.is_agent_thread_feedback_enabled {
@@ -6591,100 +6635,52 @@ impl ThreadView {
 
             AgentSettings::get_global(cx).enable_feedback
                 && self.thread.read(cx).connection().telemetry().is_some()
-        });
+        })
+    }
 
-        if enable_thread_feedback {
-            let feedback = self.thread_feedback.feedback;
+    /// Whether thread sharing/syncing (the `/share` and `/sync` commands) is
+    /// currently available. Mirrors the gating that the share/sync button used.
+    fn is_thread_sharing_available(&self, cx: &App) -> bool {
+        self.project.upgrade().is_some_and(|project| {
+            self.server_view.upgrade().is_some()
+                && cx.has_flag::<AgentSharingFeatureFlag>()
+                && project.read(cx).client().status().borrow().is_connected()
+        })
+    }
 
-            let tooltip_meta = || {
-                SharedString::new(
-                    "Rating the thread sends all of your current conversation to the Zed team.",
-                )
-            };
+    /// The local slash commands the message editor should currently expose.
+    /// Kept in sync with the availability of the corresponding actions via
+    /// `sync_local_commands`.
+    fn available_local_commands(&self, cx: &App) -> Vec<PromptLocalCommand> {
+        let mut commands = vec![
+            PromptLocalCommand::OpenAsMarkdown,
+            PromptLocalCommand::ScrollToRecentUserPrompt,
+            PromptLocalCommand::ScrollToTop,
+        ];
 
-            container = container
-                    .child(
-                        IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
-                            .shape(ui::IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .icon_color(match feedback {
-                                Some(ThreadFeedback::Positive) => Color::Accent,
-                                _ => Color::Ignored,
-                            })
-                            .tooltip(move |window, cx| match feedback {
-                                Some(ThreadFeedback::Positive) => {
-                                    Tooltip::text("Thanks for your feedback!")(window, cx)
-                                }
-                                _ => {
-                                    Tooltip::with_meta("Helpful Response", None, tooltip_meta(), cx)
-                                }
-                            })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.handle_feedback_click(ThreadFeedback::Positive, window, cx);
-                            })),
-                    )
-                    .child(
-                        IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
-                            .shape(ui::IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .icon_color(match feedback {
-                                Some(ThreadFeedback::Negative) => Color::Accent,
-                                _ => Color::Ignored,
-                            })
-                            .tooltip(move |window, cx| match feedback {
-                                Some(ThreadFeedback::Negative) => {
-                                    Tooltip::text(
-                                    "We appreciate your feedback and will use it to improve in the future.",
-                                )(window, cx)
-                                }
-                                _ => {
-                                    Tooltip::with_meta(
-                                        "Not Helpful Response",
-                                        None,
-                                        tooltip_meta(),
-                                        cx,
-                                    )
-                                }
-                            })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.handle_feedback_click(ThreadFeedback::Negative, window, cx);
-                            })),
-                    );
+        if self.is_thread_feedback_enabled(cx) {
+            commands.push(PromptLocalCommand::ThumbsUp);
+            commands.push(PromptLocalCommand::ThumbsDown);
         }
 
-        if let Some(project) = self.project.upgrade()
-            && let Some(server_view) = self.server_view.upgrade()
-            && cx.has_flag::<AgentSharingFeatureFlag>()
-            && project.read(cx).client().status().borrow().is_connected()
-        {
-            let button = if self.is_imported_thread(cx) {
-                IconButton::new("sync-thread", IconName::ArrowCircle)
-                    .shape(ui::IconButtonShape::Square)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Ignored)
-                    .tooltip(Tooltip::text("Sync with source thread"))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.sync_thread(project.clone(), server_view.clone(), window, cx);
-                    }))
+        if self.is_thread_sharing_available(cx) {
+            if self.is_imported_thread(cx) {
+                commands.push(PromptLocalCommand::SyncThread);
             } else {
-                IconButton::new("share-thread", IconName::ArrowUpRight)
-                    .shape(ui::IconButtonShape::Square)
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Ignored)
-                    .tooltip(Tooltip::text("Share Thread"))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.share_thread(window, cx);
-                    }))
-            };
-
-            container = container.child(button);
+                commands.push(PromptLocalCommand::ShareThread);
+            }
         }
 
-        container
-            .child(open_as_markdown)
-            .child(scroll_to_recent_user_prompt)
-            .child(scroll_to_top)
-            .into_any_element()
+        commands
+    }
+
+    /// Pushes the current set of available local commands to the message
+    /// editor so they appear in its slash-command popup.
+    pub(crate) fn sync_local_commands(&self, cx: &App) {
+        let commands = self.available_local_commands(cx);
+        self.message_editor
+            .read(cx)
+            .set_local_commands(commands);
     }
 
     pub(crate) fn scroll_to_most_recent_user_prompt(&mut self, cx: &mut Context<Self>) {
@@ -11480,6 +11476,11 @@ impl ThreadView {
 
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Keep the message editor's local slash commands in sync with the
+        // current availability of feedback/sharing, which can change between
+        // renders (settings, connection state, feature flags).
+        self.sync_local_commands(cx);
+
         let has_messages = self.list_state.item_count() > 0;
         let list_state = self.list_state.clone();
 
