@@ -1,5 +1,5 @@
 use agent_client_protocol::schema as acp;
-use agent_skills::{Skill, render_skill_envelope};
+use agent_skills::Skill;
 use anyhow::Result;
 use gpui::{App, AsyncApp, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
@@ -146,7 +146,7 @@ impl AgentTool for SkillTool {
                     }
                 })?
             };
-            let rendered = render_skill_envelope(&skill, &body);
+            let rendered = agent_skills::render_skill_envelope(&skill, &body);
 
             // Built-in skills ship with Zed and are trusted by default,
             // so they skip the authorization prompt. User-installed skills
