@@ -13223,6 +13223,20 @@ impl LspStore {
                         notify_server_capabilities_updated(&server, cx);
                     }
                 }
+                "textDocument/semanticTokens" => {
+                    if let Some(caps) = reg
+                        .register_options
+                        .map(serde_json::from_value::<lsp::SemanticTokensRegistrationOptions>)
+                        .transpose()?
+                    {
+                        server.update_capabilities(|capabilities| {
+                            capabilities.semantic_tokens_provider = Some(
+                                lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(caps),
+                            );
+                        });
+                        notify_server_capabilities_updated(&server, cx);
+                    }
+                }
                 _ => log::warn!("unhandled capability registration: {reg:?}"),
             }
         }
@@ -13341,6 +13355,12 @@ impl LspStore {
                 "textDocument/signatureHelp" => {
                     server.update_capabilities(|capabilities| {
                         capabilities.signature_help_provider = None;
+                    });
+                    notify_server_capabilities_updated(&server, cx);
+                }
+                "textDocument/semanticTokens" => {
+                    server.update_capabilities(|capabilities| {
+                        capabilities.semantic_tokens_provider = None;
                     });
                     notify_server_capabilities_updated(&server, cx);
                 }
