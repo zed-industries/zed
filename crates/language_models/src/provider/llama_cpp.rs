@@ -1317,10 +1317,7 @@ impl ConfigurationView {
                     .child(
                         ListBulletItem::new("")
                             .child(Label::new("Install llama.cpp from"))
-                            .child(ButtonLink::new(
-                                "github.com/ggml-org/llama.cpp",
-                                LLAMA_CPP_REPO_URL,
-                            )),
+                            .child(ButtonLink::new("llama.app", LLAMA_CPP_DOWNLOAD_URL)),
                     )
                     .child(
                         ListBulletItem::new("")
