@@ -943,7 +943,7 @@ actions!(
     ]
 );
 
-/// Toggles a bookmark at the current line.
+/// Toggles bookmarks on current selections.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
