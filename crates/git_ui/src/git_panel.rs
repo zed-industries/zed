@@ -2698,35 +2698,111 @@ impl GitPanel {
         skill_name.map(|name| (user_settings_file, name))
     }
 
-    async fn load_commit_message_skill_content(
+    async fn load_commit_message_skill(
+        project: &Entity<Project>,
         fs: Arc<dyn Fs>,
         repo_work_dir: &Arc<Path>,
-        skill_name: Option<(bool, String)>,
-    ) -> anyhow::Result<Option<String>> {
-        if let Some((local_setting, skill_name)) = skill_name {
-            if local_setting {
-                let skill_file_path = repo_work_dir
-                    .join(agent_skills::project_skills_relative_path())
-                    .join(skill_name)
-                    .join(agent_skills::SKILL_FILE_NAME);
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<Option<agent_skills::Skill>> {
+        let skill_setting =
+            cx.update(|cx| Self::commit_message_skill_setting(project, repo_work_dir, cx));
 
-                return match agent_skills::read_skill_body(&*fs, &skill_file_path).await {
-                    Ok(content) => Ok(Some(content)),
-                    Err(err) => Err(err.into()),
-                };
-            } else {
-                let user_skill_file_path = agent_skills::global_skills_dir()
-                    .join(skill_name)
-                    .join(agent_skills::SKILL_FILE_NAME);
+        let Some((scope, skill_name)) = skill_setting else {
+            return Ok(None);
+        };
 
-                return match agent_skills::read_skill_body(&*fs, &user_skill_file_path).await {
-                    Ok(content) => Ok(Some(content)),
-                    Err(err) => Err(err.into()),
-                };
-            }
+        if skill_name.trim().is_empty() {
+            return Ok(None);
         }
 
-        Ok(None)
+        match scope {
+            SettingsFile::Project(_) => {
+                let project_path = cx
+                    .update(|cx| project.read(cx).find_project_path(repo_work_dir, cx))
+                    .with_context(|| "could not find project path for repo work dir")?;
+
+                let relative_skill_path_string = format!(
+                    "{}/{skill_name}/{}",
+                    agent_skills::project_skills_relative_path(),
+                    agent_skills::SKILL_FILE_NAME
+                );
+                let relative_skill_path = RelPath::unix(&relative_skill_path_string)?;
+
+                let (worktree_id, root_name, skill_file_path) = cx.update(|cx| {
+                    let worktree = project
+                        .read(cx)
+                        .worktree_for_id(project_path.worktree_id, cx)
+                        .with_context(|| {
+                            format!(
+                                "worktree for commit message skill '{skill_name}' no longer exists"
+                            )
+                        })?;
+                    let worktree_snapshot = worktree.read(cx);
+                    let root_name = worktree_snapshot.root_name_str().to_string();
+                    let skill_file_path = worktree_snapshot
+                        .abs_path()
+                        .join(relative_skill_path.as_std_path());
+                    anyhow::Ok((worktree_snapshot.id(), root_name, skill_file_path))
+                })?;
+
+                if !fs.is_file(&skill_file_path).await {
+                    anyhow::bail!(
+                        "project commit message skill '{skill_name}' was not found in the current workspace"
+                    );
+                }
+
+                let skill = agent_skills::load_skill_frontmatter(
+                    fs.clone(),
+                    skill_file_path,
+                    agent_skills::SkillSource::ProjectLocal {
+                        worktree_id: agent_skills::SkillScopeId(worktree_id.to_usize()),
+                        worktree_root_name: root_name.into(),
+                    },
+                )
+                .await
+                .map_err(anyhow::Error::new)?;
+                Ok(Some(skill))
+            }
+            SettingsFile::User => {
+                let global_skill_path = agent_skills::global_skills_dir()
+                    .join(&skill_name)
+                    .join(agent_skills::SKILL_FILE_NAME);
+
+                if !fs.is_file(&global_skill_path).await {
+                    anyhow::bail!("commit message skill '{skill_name}' was not found");
+                }
+
+                let skill = agent_skills::load_skill_frontmatter(
+                    fs.clone(),
+                    global_skill_path,
+                    agent_skills::SkillSource::Global,
+                )
+                .await
+                .map_err(anyhow::Error::new)?;
+                Ok(Some(skill))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    async fn build_commit_message_skill_envelope(
+        fs: Arc<dyn Fs>,
+        skill: Option<agent_skills::Skill>,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(skill) = skill else {
+            return Ok(None);
+        };
+
+        let body = match &skill.source {
+            agent_skills::SkillSource::Global | agent_skills::SkillSource::ProjectLocal { .. } => {
+                agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
+                    .await
+                    .map_err(anyhow::Error::new)?
+            }
+            agent_skills::SkillSource::BuiltIn => unreachable!(),
+        };
+
+        Ok(Some(agent_skills::render_skill_envelope(&skill, &body)))
     }
 
     fn build_commit_message_prompt(
@@ -2814,7 +2890,6 @@ impl GitPanel {
         let project = self.project.clone();
         let fs = self.fs.clone();
         let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
-        let skill_name = Self::commit_message_skill_name(&project, &repo_work_dir, &cx);
 
         self.generate_commit_message_task = Some(cx.spawn(async move |this, mut cx| {
             async move {
@@ -2851,8 +2926,28 @@ impl GitPanel {
 
                 let rules_content =
                     Self::load_project_rules(&project, &repo_work_dir, &mut cx).await;
-                let skill_content =
-                    Self::load_commit_message_skill_content(fs, &repo_work_dir, skill_name).await;
+                let skill = match Self::load_commit_message_skill(
+                    &project,
+                    fs.clone(),
+                    &repo_work_dir,
+                    &mut cx,
+                )
+                .await
+                {
+                    Ok(skill) => skill,
+                    Err(error) => {
+                        Self::show_commit_message_error(&this, &error, cx);
+                        return anyhow::Ok(());
+                    }
+                };
+                let skill_envelope =
+                    match Self::build_commit_message_commit_message_skill_envelope(fs, skill).await {
+                        Ok(content) => content,
+                        Err(error) => {
+                            Self::show_commit_message_error(&this, &error, cx);
+                            return anyhow::Ok(());
+                        }
+                    };
                 let user_agents_md = cx.update(|cx| {
                     UserAgentsMd::global(cx)
                         .and_then(|user_agents_md| user_agents_md.content().cloned())
