@@ -2667,7 +2667,7 @@ impl GitPanel {
         }
     }
 
-    fn commit_message_skill_setting(
+    fn git_commit_message_skill_setting(
         project: &Entity<Project>,
         repo_work_dir: &Path,
         cx: &App,
@@ -2705,9 +2705,9 @@ impl GitPanel {
         cx: &mut AsyncApp,
     ) -> anyhow::Result<Option<agent_skills::Skill>> {
         let skill_setting =
-            cx.update(|cx| Self::commit_message_skill_setting(project, repo_work_dir, cx));
+            cx.update(|cx| Self::git_commit_message_skill_setting(project, repo_work_dir, cx));
 
-        let Some((scope, skill_name)) = skill_setting else {
+        let Some((settings_file, skill_name)) = skill_setting else {
             return Ok(None);
         };
 
@@ -2715,7 +2715,7 @@ impl GitPanel {
             return Ok(None);
         }
 
-        match scope {
+        match settings_file {
             SettingsFile::Project(_) => {
                 let project_path = cx
                     .update(|cx| project.read(cx).find_project_path(repo_work_dir, cx))
@@ -2747,7 +2747,8 @@ impl GitPanel {
 
                 if !fs.is_file(&skill_file_path).await {
                     anyhow::bail!(
-                        "project commit message skill '{skill_name}' was not found in the current workspace"
+                        "project-local commit message skill '{skill_name}' is not found at '{}'",
+                        skill_file_path.display()
                     );
                 }
 
@@ -2769,7 +2770,10 @@ impl GitPanel {
                     .join(agent_skills::SKILL_FILE_NAME);
 
                 if !fs.is_file(&global_skill_path).await {
-                    anyhow::bail!("commit message skill '{skill_name}' was not found");
+                    anyhow::bail!(
+                        "global commit message skill '{skill_name}' is not found at '{}'",
+                        global_skill_path.display()
+                    );
                 }
 
                 let skill = agent_skills::load_skill_frontmatter(
@@ -2785,7 +2789,7 @@ impl GitPanel {
         }
     }
 
-    async fn build_commit_message_skill_envelope(
+    async fn render_commit_message_skill_envelope(
         fs: Arc<dyn Fs>,
         skill: Option<agent_skills::Skill>,
     ) -> anyhow::Result<Option<String>> {
@@ -2941,7 +2945,7 @@ impl GitPanel {
                     }
                 };
                 let skill_envelope =
-                    match Self::build_commit_message_skill_envelope(fs, skill).await {
+                    match Self::render_commit_message_skill_envelope(fs, skill).await {
                         Ok(content) => content,
                         Err(error) => {
                             Self::show_commit_message_error(&this, &error, cx);
@@ -8969,7 +8973,8 @@ mod tests {
             disable_model_invocation: false,
             embedded_body: None,
         };
-        let skill_content = agent_skills::render_skill_envelope(&skill, "End the commit message with `...`.");
+        let skill_content =
+            agent_skills::render_skill_envelope(&skill, "End the commit message with `...`.");
 
         let prompt = GitPanel::build_commit_message_prompt(
             "Write a commit message.",
