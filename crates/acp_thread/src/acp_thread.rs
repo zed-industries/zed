@@ -3,7 +3,7 @@ mod diff;
 mod mention;
 mod terminal;
 use action_log::{ActionLog, ActionLogTelemetry};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::{MaybeUndefined, v1 as acp};
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashSet;
 pub use connection::*;
@@ -16,7 +16,9 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::language_settings::FormatOnSave;
-use language::{Anchor, Buffer, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff};
+use language::{
+    Anchor, Buffer, BufferEditSource, BufferSnapshot, LanguageRegistry, Point, ToPoint, text_diff,
+};
 use markdown::{Markdown, MarkdownOptions};
 pub use mention::*;
 use project::lsp_store::{FormatTrigger, LspFormatTarget};
@@ -40,7 +42,10 @@ use text::Bias;
 use ui::App;
 use util::markdown::MarkdownEscaped;
 use util::path_list::PathList;
-use util::{ResultExt, get_default_system_shell_preferring_bash, paths::PathStyle};
+use util::{
+    ResultExt, get_default_system_shell_preferring_bash,
+    paths::{PathStyle, is_absolute},
+};
 use uuid::Uuid;
 
 /// Returned when the model stops because it exhausted its output token budget.
@@ -72,8 +77,191 @@ pub fn meta_with_tool_name(tool_name: &str) -> acp::Meta {
     acp::Meta::from_iter([(TOOL_NAME_META_KEY.into(), tool_name.into())])
 }
 
+/// Key used in ACP `AvailableCommand` meta to record which source produced a
+/// slash command, so the completion popup can group commands by category.
+pub const COMMAND_CATEGORY_META_KEY: &str = "command_category";
+
+/// The source category of a slash command, used to group commands in the
+/// completion popup. Only the native Zed agent annotates its commands; commands
+/// from external ACP agents carry no category and are grouped on their own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandCategory {
+    /// Built-in Zed agent commands (e.g. `/compact`).
+    Native,
+    /// Commands sourced from MCP server prompts.
+    Mcp,
+}
+
+impl CommandCategory {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Native => "native",
+            Self::Mcp => "mcp",
+        }
+    }
+
+    fn from_str(value: &str) -> Option<Self> {
+        match value {
+            "native" => Some(Self::Native),
+            "mcp" => Some(Self::Mcp),
+            _ => None,
+        }
+    }
+}
+
+pub fn meta_with_command_category(category: CommandCategory) -> acp::Meta {
+    acp::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), category.as_str().into())])
+}
+
+pub fn command_category_from_meta(meta: &Option<acp::Meta>) -> Option<CommandCategory> {
+    meta.as_ref()
+        .and_then(|m| m.get(COMMAND_CATEGORY_META_KEY))
+        .and_then(|v| v.as_str())
+        .and_then(CommandCategory::from_str)
+}
+
 /// Key used in ACP ToolCall meta to store the session id and message indexes
 pub const SUBAGENT_SESSION_INFO_META_KEY: &str = "subagent_session_info";
+
+pub const SANDBOX_AUTHORIZATION_META_KEY: &str = "sandbox_authorization";
+
+/// Stable `PermissionOption` ids for the sandbox-escalation approval prompt.
+///
+/// These are shared across the option construction (in the agent), the outcome
+/// dispatch, and the UI so the distinct grant lifetimes stay in sync. Note
+/// that `AllowThread` and `AllowAlways` both use
+/// `PermissionOptionKind::AllowAlways`; the id is what distinguishes them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SandboxPermission {
+    AllowOnce,
+    AllowThread,
+    AllowAlways,
+    Deny,
+}
+
+impl SandboxPermission {
+    pub fn as_id(self) -> &'static str {
+        match self {
+            Self::AllowOnce => "allow",
+            Self::AllowThread => "allow_thread",
+            Self::AllowAlways => "allow_always",
+            Self::Deny => "deny",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "allow" => Some(Self::AllowOnce),
+            "allow_thread" => Some(Self::AllowThread),
+            "allow_always" => Some(Self::AllowAlways),
+            "deny" => Some(Self::Deny),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SandboxAuthorizationDetails {
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Specific hosts the command requested network access to, in canonical
+    /// form (`github.com`, `*.npmjs.org`). Empty when no specific hosts were
+    /// requested (see `network_all_hosts`).
+    #[serde(default)]
+    pub network_hosts: Vec<String>,
+    /// Whether the command requested access to any host ("arbitrary network
+    /// access"). The `network` alias deserializes the field this replaced —
+    /// a plain bool meaning "network access" — so details persisted by older
+    /// builds still render the network request.
+    #[serde(default, alias = "network")]
+    pub network_all_hosts: bool,
+    /// Whether the command requested access to protected `.git` directories.
+    #[serde(default)]
+    pub allow_git_access: bool,
+    #[serde(default)]
+    pub allow_fs_write_all: bool,
+    #[serde(default)]
+    pub unsandboxed: bool,
+    #[serde(default)]
+    pub write_paths: Vec<PathBuf>,
+    /// The agent-provided justification for requesting these permissions,
+    /// shown to the user (attributed to the agent) in the approval prompt.
+    #[serde(default)]
+    pub reason: String,
+}
+
+pub fn meta_with_sandbox_authorization(details: SandboxAuthorizationDetails) -> acp::Meta {
+    acp::Meta::from_iter([(
+        SANDBOX_AUTHORIZATION_META_KEY.into(),
+        serde_json::to_value(details).unwrap_or_default(),
+    )])
+}
+
+pub fn sandbox_authorization_details_from_meta(
+    meta: &Option<acp::Meta>,
+) -> Option<SandboxAuthorizationDetails> {
+    meta.as_ref()
+        .and_then(|m| m.get(SANDBOX_AUTHORIZATION_META_KEY))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
+
+pub const SANDBOX_FALLBACK_AUTHORIZATION_META_KEY: &str = "sandbox_fallback_authorization";
+
+/// Stable `PermissionOption` id for the "Retry" choice in the sandbox
+/// *fallback* prompt (shown when the OS sandbox can't be created on this
+/// system). The remaining choices reuse the [`SandboxPermission`] ids.
+pub const SANDBOX_FALLBACK_RETRY_OPTION_ID: &str = "retry";
+
+/// Details shown when the OS sandbox could not be created for a command and
+/// the user is asked whether to run it without a sandbox. Distinct from
+/// [`SandboxAuthorizationDetails`] (a model-requested *escalation*): here the
+/// sandbox itself failed, so the prompt explains why and offers a retry.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SandboxFallbackAuthorizationDetails {
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Human-readable reason the OS sandbox could not be created (for example,
+    /// "bwrap not found on PATH"), shown to the user so they can decide
+    /// whether to run the command without a sandbox.
+    #[serde(default)]
+    pub reason: String,
+}
+
+pub fn meta_with_sandbox_fallback_authorization(
+    details: SandboxFallbackAuthorizationDetails,
+) -> acp::Meta {
+    acp::Meta::from_iter([(
+        SANDBOX_FALLBACK_AUTHORIZATION_META_KEY.into(),
+        serde_json::to_value(details).unwrap_or_default(),
+    )])
+}
+
+pub fn sandbox_fallback_authorization_details_from_meta(
+    meta: &Option<acp::Meta>,
+) -> Option<SandboxFallbackAuthorizationDetails> {
+    meta.as_ref()
+        .and_then(|m| m.get(SANDBOX_FALLBACK_AUTHORIZATION_META_KEY))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
+
+/// Meta key recording why the OS sandbox was not applied to a terminal tool
+/// call, even though sandboxing was active for the thread. The value is a
+/// serialized [`SandboxNotAppliedReason`]. Surfaced as a warning in the UI and
+/// used to explain the situation to both the user and the agent.
+pub const SANDBOX_NOT_APPLIED_META_KEY: &str = "sandbox_not_applied";
+
+pub fn meta_with_sandbox_not_applied(reason: &SandboxNotAppliedReason) -> acp::Meta {
+    acp::Meta::from_iter([(
+        SANDBOX_NOT_APPLIED_META_KEY.into(),
+        serde_json::to_value(reason).unwrap_or_default(),
+    )])
+}
+
+pub fn sandbox_not_applied_from_meta(meta: &Option<acp::Meta>) -> Option<SandboxNotAppliedReason> {
+    meta.as_ref()
+        .and_then(|m| m.get(SANDBOX_NOT_APPLIED_META_KEY))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SubagentSessionInfo {
@@ -180,6 +368,42 @@ pub enum AgentThreadEntry {
     AssistantMessage(AssistantMessage),
     ToolCall(ToolCall),
     CompletedPlan(Vec<PlanEntry>),
+    ContextCompaction(ContextCompaction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextCompactionId(pub Arc<str>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextCompactionStatus {
+    InProgress,
+    Completed,
+    Canceled,
+}
+
+/// A point in the thread where the conversation history was compacted to free
+/// up room in the model's context window. The summary can be expanded to inspect
+/// what the model retained.
+#[derive(Debug)]
+pub struct ContextCompaction {
+    pub id: ContextCompactionId,
+    pub status: ContextCompactionStatus,
+    /// The compaction summary, streamed in as the model produces it. This is
+    /// `None` for provider-native compaction, which produces no summary to show.
+    pub summary: Option<Entity<Markdown>>,
+}
+
+impl ContextCompaction {
+    pub fn is_in_progress(&self) -> bool {
+        self.status == ContextCompactionStatus::InProgress
+    }
+}
+
+#[derive(Debug)]
+pub struct ContextCompactionUpdate {
+    pub id: ContextCompactionId,
+    pub summary_delta: String,
+    pub status: Option<ContextCompactionStatus>,
 }
 
 impl AgentThreadEntry {
@@ -189,6 +413,7 @@ impl AgentThreadEntry {
             Self::AssistantMessage(message) => message.indented,
             Self::ToolCall(_) => false,
             Self::CompletedPlan(_) => false,
+            Self::ContextCompaction(_) => false,
         }
     }
 
@@ -205,6 +430,7 @@ impl AgentThreadEntry {
                 }
                 md
             }
+            Self::ContextCompaction(_) => "--- Context Compacted ---\n\n".to_string(),
         }
     }
 
@@ -263,6 +489,12 @@ pub struct ToolCall {
     pub raw_output: Option<serde_json::Value>,
     pub tool_name: Option<SharedString>,
     pub subagent_session_info: Option<SubagentSessionInfo>,
+    pub sandbox_authorization_details: Option<SandboxAuthorizationDetails>,
+    pub sandbox_fallback_authorization_details: Option<SandboxFallbackAuthorizationDetails>,
+    /// Why this terminal command ran without the OS sandbox even though
+    /// sandboxing was active (see [`SANDBOX_NOT_APPLIED_META_KEY`]). `None` when
+    /// the command was sandboxed normally (or sandboxing was off).
+    pub sandbox_not_applied: Option<SandboxNotAppliedReason>,
 }
 
 impl ToolCall {
@@ -304,6 +536,11 @@ impl ToolCall {
         let tool_name = tool_name_from_meta(&tool_call.meta);
 
         let subagent_session_info = subagent_session_info_from_meta(&tool_call.meta);
+        let sandbox_authorization_details =
+            sandbox_authorization_details_from_meta(&tool_call.meta);
+        let sandbox_fallback_authorization_details =
+            sandbox_fallback_authorization_details_from_meta(&tool_call.meta);
+        let sandbox_not_applied = sandbox_not_applied_from_meta(&tool_call.meta);
 
         let label = if tool_call.kind == acp::ToolKind::Execute {
             cx.new(|cx| Markdown::new_text(title.into(), cx))
@@ -324,6 +561,9 @@ impl ToolCall {
             raw_output: tool_call.raw_output,
             tool_name,
             subagent_session_info,
+            sandbox_authorization_details,
+            sandbox_fallback_authorization_details,
+            sandbox_not_applied,
         };
         Ok(result)
     }
@@ -353,11 +593,24 @@ impl ToolCall {
         }
 
         if let Some(status) = status {
-            self.status = status.into();
+            self.update_acp_status(status);
         }
 
         if let Some(subagent_session_info) = subagent_session_info_from_meta(&meta) {
             self.subagent_session_info = Some(subagent_session_info);
+        }
+        if let Some(sandbox_authorization_details) = sandbox_authorization_details_from_meta(&meta)
+        {
+            self.sandbox_authorization_details = Some(sandbox_authorization_details);
+        }
+        if let Some(sandbox_fallback_authorization_details) =
+            sandbox_fallback_authorization_details_from_meta(&meta)
+        {
+            self.sandbox_fallback_authorization_details =
+                Some(sandbox_fallback_authorization_details);
+        }
+        if let Some(sandbox_not_applied) = sandbox_not_applied_from_meta(&meta) {
+            self.sandbox_not_applied = Some(sandbox_not_applied);
         }
 
         if let Some(title) = title {
@@ -432,6 +685,31 @@ impl ToolCall {
         Ok(())
     }
 
+    fn update_status(&mut self, status: ToolCallStatus) {
+        match status {
+            ToolCallStatus::Pending => self.update_acp_status(acp::ToolCallStatus::Pending),
+            ToolCallStatus::InProgress => self.update_acp_status(acp::ToolCallStatus::InProgress),
+            ToolCallStatus::Completed => self.update_acp_status(acp::ToolCallStatus::Completed),
+            ToolCallStatus::Failed => self.update_acp_status(acp::ToolCallStatus::Failed),
+            status @ (ToolCallStatus::WaitingForConfirmation { .. }
+            | ToolCallStatus::Rejected
+            | ToolCallStatus::Canceled) => self.status = status,
+        }
+    }
+
+    fn update_acp_status(&mut self, status: acp::ToolCallStatus) {
+        if let ToolCallStatus::WaitingForConfirmation { current_status, .. } = &mut self.status
+            && matches!(
+                status,
+                acp::ToolCallStatus::Pending | acp::ToolCallStatus::InProgress
+            )
+        {
+            *current_status = status;
+        } else {
+            self.status = status.into();
+        }
+    }
+
     pub fn diffs(&self) -> impl Iterator<Item = &Entity<Diff>> {
         self.content.iter().filter_map(|content| match content {
             ToolCallContent::Diff(diff) => Some(diff),
@@ -473,9 +751,16 @@ impl ToolCall {
     ) -> Option<ResolvedLocation> {
         let buffer = project
             .update(cx, |project, cx| {
-                project
-                    .project_path_for_absolute_path(&location.path, cx)
-                    .map(|path| project.open_buffer(path, cx))
+                if let Some(path) = project.project_path_for_absolute_path(&location.path, cx) {
+                    Some(project.open_buffer(path, cx))
+                } else if is_absolute(
+                    location.path.to_string_lossy().as_ref(),
+                    project.path_style(cx),
+                ) {
+                    Some(project.open_local_buffer(&location.path, cx))
+                } else {
+                    None
+                }
             })
             .ok()??;
         let buffer = buffer.await.log_err()?;
@@ -533,7 +818,7 @@ pub enum SelectedPermissionParams {
     Terminal { patterns: Vec<String> },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SelectedPermissionOutcome {
     pub option_id: acp::PermissionOptionId,
     pub option_kind: acp::PermissionOptionKind,
@@ -599,6 +884,7 @@ pub enum ToolCallStatus {
     Pending,
     /// The tool call is waiting for confirmation from the user.
     WaitingForConfirmation {
+        current_status: acp::ToolCallStatus,
         options: PermissionOptions,
         respond_tx: oneshot::Sender<SelectedPermissionOutcome>,
         kind: AuthorizationKind,
@@ -627,6 +913,26 @@ impl From<acp::ToolCallStatus> for ToolCallStatus {
     }
 }
 
+impl ToolCallStatus {
+    fn as_acp_status(&self) -> Option<acp::ToolCallStatus> {
+        match self {
+            ToolCallStatus::Pending => Some(acp::ToolCallStatus::Pending),
+            ToolCallStatus::WaitingForConfirmation { current_status, .. } => Some(*current_status),
+            ToolCallStatus::InProgress => Some(acp::ToolCallStatus::InProgress),
+            ToolCallStatus::Completed => Some(acp::ToolCallStatus::Completed),
+            ToolCallStatus::Failed => Some(acp::ToolCallStatus::Failed),
+            ToolCallStatus::Rejected | ToolCallStatus::Canceled => None,
+        }
+    }
+
+    fn status_after_permission_grant(status: acp::ToolCallStatus) -> ToolCallStatus {
+        match ToolCallStatus::from(status) {
+            ToolCallStatus::Pending => ToolCallStatus::InProgress,
+            status => status,
+        }
+    }
+}
+
 impl Display for ToolCallStatus {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -650,6 +956,10 @@ pub enum ContentBlock {
     Empty,
     Markdown {
         markdown: Entity<Markdown>,
+    },
+    EmbeddedResource {
+        resource: acp::EmbeddedResource,
+        markdown: Option<Entity<Markdown>>,
     },
     ResourceLink {
         resource_link: acp::ResourceLink,
@@ -683,6 +993,26 @@ impl ContentBlock {
             this.append(block, &language_registry, path_style, cx);
         }
         this
+    }
+
+    pub fn new_tool_call_content(
+        block: acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) -> Self {
+        match block {
+            acp::ContentBlock::Resource(resource) => {
+                if let Some((image, dimensions)) = Self::decode_embedded_resource_image(&resource) {
+                    Self::Image { image, dimensions }
+                } else {
+                    let markdown =
+                        Self::embedded_resource_markdown(&resource, language_registry, cx);
+                    Self::EmbeddedResource { resource, markdown }
+                }
+            }
+            block => Self::new(block, language_registry, path_style, cx),
+        }
     }
 
     pub fn append(
@@ -720,6 +1050,13 @@ impl ContentBlock {
                 let combined = format!("{}\n{}", existing_content, new_content);
                 *self = Self::create_markdown_block(combined, language_registry, cx);
             }
+            (ContentBlock::EmbeddedResource { resource, .. }, _) => {
+                let existing_content =
+                    Self::embedded_resource_string_contents(resource, path_style);
+                let new_content = Self::block_string_contents(&block, path_style);
+                let combined = format!("{}\n{}", existing_content, new_content);
+                *self = Self::create_markdown_block(combined, language_registry, cx);
+            }
             (ContentBlock::Image { .. }, _) => {
                 let new_content = Self::block_string_contents(&block, path_style);
                 let combined = format!("`Image`\n{}", new_content);
@@ -728,15 +1065,59 @@ impl ContentBlock {
         }
     }
 
+    /// Updates a Markdown block in place from a streaming text `block`, reusing
+    /// the existing `Markdown` entity rather than recreating it. Appends only the
+    /// new suffix when the update is a continuation (the common streaming case),
+    /// otherwise re-sets the source. Returns `false` when an in-place update isn't
+    /// applicable, so the caller can fall back to replacing the block wholesale.
+    ///
+    /// Recreating the entity on every streamed snapshot causes the rendered
+    /// element to tear down and rebuild, which flickers badly.
+    pub fn update_text_in_place(&mut self, block: &acp::ContentBlock, cx: &mut App) -> bool {
+        let ContentBlock::Markdown { markdown } = self else {
+            return false;
+        };
+        let acp::ContentBlock::Text(text_content) = block else {
+            return false;
+        };
+        let new_content = &text_content.text;
+        markdown.update(cx, |markdown, cx| {
+            let current = markdown.source().to_string();
+            match new_content.strip_prefix(&current) {
+                Some("") => {}
+                Some(suffix) => markdown.append(suffix, cx),
+                None => markdown.reset(new_content.clone().into(), cx),
+            }
+        });
+        true
+    }
+
     fn decode_image(
         image_content: &acp::ImageContent,
+    ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
+        Self::decode_image_data(&image_content.data, &image_content.mime_type)
+    }
+
+    fn decode_embedded_resource_image(
+        resource: &acp::EmbeddedResource,
+    ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
+        let acp::EmbeddedResourceResource::BlobResourceContents(blob) = &resource.resource else {
+            return None;
+        };
+        let mime_type = blob.mime_type.as_deref()?;
+        Self::decode_image_data(&blob.blob, mime_type)
+    }
+
+    fn decode_image_data(
+        data: &str,
+        mime_type: &str,
     ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
         use base64::Engine as _;
 
         let bytes = base64::engine::general_purpose::STANDARD
-            .decode(image_content.data.as_bytes())
+            .decode(data.as_bytes())
             .ok()?;
-        let format = gpui::ImageFormat::from_mime_type(&image_content.mime_type)?;
+        let format = gpui::ImageFormat::from_mime_type(mime_type)?;
         let dimensions = Self::image_dimensions(&bytes, format);
         Some((Arc::new(gpui::Image::from_bytes(format, bytes)), dimensions))
     }
@@ -766,18 +1147,141 @@ impl ContentBlock {
         cx: &mut App,
     ) -> ContentBlock {
         ContentBlock::Markdown {
-            markdown: cx.new(|cx| {
-                Markdown::new_with_options(
-                    content.into(),
-                    Some(language_registry.clone()),
-                    None,
-                    MarkdownOptions {
-                        render_mermaid_diagrams: true,
-                        ..Default::default()
-                    },
-                    cx,
-                )
-            }),
+            markdown: Self::create_markdown(content, language_registry, cx),
+        }
+    }
+
+    fn create_markdown(
+        content: String,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Entity<Markdown> {
+        cx.new(|cx| {
+            Markdown::new_with_options(
+                content.into(),
+                Some(language_registry.clone()),
+                None,
+                MarkdownOptions {
+                    render_mermaid_diagrams: true,
+                    render_metadata_blocks: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        })
+    }
+
+    fn embedded_resource_markdown(
+        resource: &acp::EmbeddedResource,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Option<Entity<Markdown>> {
+        match &resource.resource {
+            acp::EmbeddedResourceResource::TextResourceContents(text) => Some(
+                Self::create_markdown(Self::text_resource_markdown(text), language_registry, cx),
+            ),
+            acp::EmbeddedResourceResource::BlobResourceContents(_) => None,
+            _ => None,
+        }
+    }
+
+    fn text_resource_markdown(resource: &acp::TextResourceContents) -> String {
+        match text_resource_render_mode(resource.mime_type.as_deref()) {
+            TextResourceRenderMode::Markdown => resource.text.clone(),
+            TextResourceRenderMode::CodeBlock(language) => {
+                Self::fenced_code_block(&resource.text, language)
+            }
+        }
+    }
+
+    pub fn text_content<'a>(&'a self, cx: &'a App) -> Option<&'a str> {
+        match self {
+            ContentBlock::Markdown { markdown } => Some(markdown.read(cx).source()),
+            ContentBlock::EmbeddedResource { resource, .. } => match &resource.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(text) => Some(&text.text),
+                acp::EmbeddedResourceResource::BlobResourceContents(_) => None,
+                _ => None,
+            },
+            ContentBlock::Empty
+            | ContentBlock::ResourceLink { .. }
+            | ContentBlock::Image { .. } => None,
+        }
+    }
+
+    fn fenced_code_block(text: &str, language: Option<&str>) -> String {
+        let fence_len = text
+            .as_bytes()
+            .chunk_by(|left, right| left == right)
+            .filter(|chunk| chunk.first() == Some(&b'`'))
+            .map(|chunk| chunk.len() + 1)
+            .max()
+            .unwrap_or(3)
+            .max(3);
+        let fence = "`".repeat(fence_len);
+
+        let mut markdown = String::new();
+        markdown.push_str(&fence);
+        if let Some(language) = language {
+            markdown.push_str(language);
+        }
+        markdown.push('\n');
+        markdown.push_str(text);
+        if !text.ends_with('\n') {
+            markdown.push('\n');
+        }
+        markdown.push_str(&fence);
+        markdown
+    }
+
+    fn embedded_resource_string_contents(
+        resource: &acp::EmbeddedResource,
+        path_style: PathStyle,
+    ) -> String {
+        match &resource.resource {
+            acp::EmbeddedResourceResource::TextResourceContents(text) => {
+                Self::resource_link_md(&text.uri, path_style)
+            }
+            acp::EmbeddedResourceResource::BlobResourceContents(blob) => {
+                Self::resource_link_md(&blob.uri, path_style)
+            }
+            _ => String::new(),
+        }
+    }
+
+    fn embedded_resource_text(resource: &acp::EmbeddedResource) -> &str {
+        match &resource.resource {
+            acp::EmbeddedResourceResource::TextResourceContents(text) => &text.text,
+            acp::EmbeddedResourceResource::BlobResourceContents(blob) => &blob.uri,
+            _ => "",
+        }
+    }
+
+    fn embedded_resource_label(resource: &acp::EmbeddedResource) -> &str {
+        match &resource.resource {
+            acp::EmbeddedResourceResource::TextResourceContents(text) => &text.uri,
+            acp::EmbeddedResourceResource::BlobResourceContents(blob) => &blob.uri,
+            _ => "",
+        }
+    }
+
+    pub fn embedded_resource(&self) -> Option<(&acp::EmbeddedResource, Option<&Entity<Markdown>>)> {
+        match self {
+            ContentBlock::EmbeddedResource { resource, markdown } => {
+                Some((resource, markdown.as_ref()))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn visible_content(&self, cx: &App) -> bool {
+        match self {
+            ContentBlock::Empty => false,
+            ContentBlock::Markdown { markdown } => !markdown.read(cx).source().trim().is_empty(),
+            ContentBlock::EmbeddedResource { resource, markdown } => match markdown {
+                Some(markdown) => !markdown.read(cx).source().trim().is_empty(),
+                None => !Self::embedded_resource_text(resource).trim().is_empty(),
+            },
+            ContentBlock::ResourceLink { .. } | ContentBlock::Image { .. } => true,
         }
     }
 
@@ -816,6 +1320,13 @@ impl ContentBlock {
         match self {
             ContentBlock::Empty => "",
             ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
+            ContentBlock::EmbeddedResource { resource, markdown } => {
+                if let Some(markdown) = markdown {
+                    markdown.read(cx).source()
+                } else {
+                    Self::embedded_resource_label(resource)
+                }
+            }
             ContentBlock::ResourceLink { resource_link } => &resource_link.uri,
             ContentBlock::Image { .. } => "`Image`",
         }
@@ -825,6 +1336,7 @@ impl ContentBlock {
         match self {
             ContentBlock::Empty => None,
             ContentBlock::Markdown { markdown } => Some(markdown),
+            ContentBlock::EmbeddedResource { markdown, .. } => markdown.as_ref(),
             ContentBlock::ResourceLink { .. } => None,
             ContentBlock::Image { .. } => None,
         }
@@ -845,6 +1357,61 @@ impl ContentBlock {
     }
 }
 
+enum TextResourceRenderMode {
+    Markdown,
+    CodeBlock(Option<&'static str>),
+}
+
+fn text_resource_render_mode(mime_type: Option<&str>) -> TextResourceRenderMode {
+    let Some(mime_type) = mime_type else {
+        return TextResourceRenderMode::CodeBlock(None);
+    };
+    let Ok(mime) = mime_type.parse::<mime::Mime>() else {
+        return TextResourceRenderMode::CodeBlock(None);
+    };
+
+    let type_ = mime.type_().as_str();
+    let subtype = mime.subtype().as_str();
+    let suffix = mime.suffix().map(|suffix| suffix.as_str());
+
+    if matches!(
+        (type_, subtype),
+        ("text", "markdown") | ("text", "x-markdown")
+    ) {
+        return TextResourceRenderMode::Markdown;
+    }
+
+    let language = match (type_, subtype, suffix) {
+        (_, "json", _) | (_, _, Some("json")) => Some("json"),
+        (_, "xml", _) | (_, _, Some("xml")) => Some("xml"),
+        ("text", "html", _) => Some("html"),
+        ("text", "css", _) => Some("css"),
+        ("text", "csv", _) => Some("csv"),
+        ("text", "tab-separated-values", _) => Some("tsv"),
+        ("text", "javascript", _) | ("application", "javascript", _) => Some("javascript"),
+        ("application", "x-javascript", _) => Some("javascript"),
+        ("text", "typescript", _) | ("application", "typescript", _) => Some("typescript"),
+        ("text", "x-shellscript", _) | ("application", "x-shellscript", _) => Some("sh"),
+        ("application", "x-sh", _) => Some("sh"),
+        ("text", "x-python", _) => Some("python"),
+        ("text", "x-rust", _) => Some("rust"),
+        ("text", "x-go", _) => Some("go"),
+        ("text", "x-ruby", _) => Some("ruby"),
+        ("text", "x-c", _) => Some("c"),
+        // `mime` parses `text/x-c++` as subtype `x-c+` with an empty suffix.
+        ("text", "x-c+", Some("")) => Some("cpp"),
+        ("text", "plain", _) => None,
+        ("text", _, _) => None,
+        ("application", "graphql", _) => Some("graphql"),
+        ("application", "toml", _) => Some("toml"),
+        ("application", "yaml", _) | ("application", "x-yaml", _) => Some("yaml"),
+        (_, _, Some("yaml" | "yml")) => Some("yaml"),
+        _ => return TextResourceRenderMode::CodeBlock(None),
+    };
+
+    TextResourceRenderMode::CodeBlock(language)
+}
+
 #[derive(Debug)]
 pub enum ToolCallContent {
     ContentBlock(ContentBlock),
@@ -861,14 +1428,14 @@ impl ToolCallContent {
         cx: &mut App,
     ) -> Result<Option<Self>> {
         match content {
-            acp::ToolCallContent::Content(acp::Content { content, .. }) => {
-                Ok(Some(Self::ContentBlock(ContentBlock::new(
+            acp::ToolCallContent::Content(acp::Content { content, .. }) => Ok(Some(
+                Self::ContentBlock(ContentBlock::new_tool_call_content(
                     content,
                     &language_registry,
                     path_style,
                     cx,
-                ))))
-            }
+                )),
+            )),
             acp::ToolCallContent::Diff(diff) => Ok(Some(Self::Diff(cx.new(|cx| {
                 Diff::finalized(
                     diff.path.to_string_lossy().into_owned(),
@@ -895,6 +1462,17 @@ impl ToolCallContent {
         terminals: &HashMap<acp::TerminalId, Entity<Terminal>>,
         cx: &mut App,
     ) -> Result<bool> {
+        // Update streaming text in place so the rendered markdown element is
+        // reused across snapshots instead of being recreated (which flickers).
+        if let (
+            Self::ContentBlock(block),
+            acp::ToolCallContent::Content(acp::Content { content, .. }),
+        ) = (&mut *self, &new)
+            && block.update_text_in_place(content, cx)
+        {
+            return Ok(true);
+        }
+
         let needs_update = match (&self, &new) {
             (Self::Diff(old_diff), acp::ToolCallContent::Diff(new_diff)) => {
                 old_diff.read(cx).needs_update(
@@ -1095,6 +1673,20 @@ pub struct RetryStatus {
     pub max_attempts: usize,
     pub started_at: Instant,
     pub duration: Duration,
+    pub meta: Option<acp::Meta>,
+}
+
+pub const REFUSAL_FALLBACK_MODEL_META_KEY: &str = "refusal_fallback_model";
+
+pub fn meta_with_refusal_fallback(model_name: &str) -> acp::Meta {
+    acp::Meta::from_iter([(REFUSAL_FALLBACK_MODEL_META_KEY.into(), model_name.into())])
+}
+
+pub fn refusal_fallback_model_from_meta(meta: &Option<acp::Meta>) -> Option<SharedString> {
+    meta.as_ref()
+        .and_then(|m| m.get(REFUSAL_FALLBACK_MODEL_META_KEY))
+        .and_then(|v| v.as_str())
+        .map(|s| SharedString::from(s.to_owned()))
 }
 
 struct RunningTurn {
@@ -1405,6 +1997,15 @@ impl AcpThread {
         &self.entries
     }
 
+    pub fn is_compacting(&self) -> bool {
+        self.entries.last().is_some_and(|entry| {
+            matches!(
+                entry,
+                AgentThreadEntry::ContextCompaction(compaction) if compaction.is_in_progress()
+            )
+        })
+    }
+
     pub fn invalidate_mermaid_caches(&self, cx: &mut App) {
         for entry in &self.entries {
             let chunks = match entry {
@@ -1464,7 +2065,8 @@ impl AcpThread {
                 }) => return true,
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_) => {}
+                | AgentThreadEntry::CompletedPlan(_)
+                | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
         false
@@ -1492,7 +2094,8 @@ impl AcpThread {
                 }
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_) => {}
+                | AgentThreadEntry::CompletedPlan(_)
+                | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
 
@@ -1511,7 +2114,8 @@ impl AcpThread {
                 }
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::AssistantMessage(_)
-                | AgentThreadEntry::CompletedPlan(_) => {}
+                | AgentThreadEntry::CompletedPlan(_)
+                | AgentThreadEntry::ContextCompaction(_) => {}
             }
         }
 
@@ -1522,9 +2126,9 @@ impl AcpThread {
         for entry in self.entries.iter().rev() {
             match entry {
                 AgentThreadEntry::UserMessage(..) => return false,
-                AgentThreadEntry::AssistantMessage(..) | AgentThreadEntry::CompletedPlan(..) => {
-                    continue;
-                }
+                AgentThreadEntry::AssistantMessage(..)
+                | AgentThreadEntry::CompletedPlan(..)
+                | AgentThreadEntry::ContextCompaction(_) => continue,
                 AgentThreadEntry::ToolCall(..) => return true,
             }
         }
@@ -1567,7 +2171,7 @@ impl AcpThread {
                 self.update_plan(plan, cx);
             }
             acp::SessionUpdate::SessionInfoUpdate(info_update) => {
-                if let acp::MaybeUndefined::Value(title) = info_update.title {
+                if let MaybeUndefined::Value(title) = info_update.title {
                     let had_provisional = self.provisional_title.take().is_some();
                     let title: SharedString = title.into();
                     if self.title.as_ref() != Some(&title) {
@@ -1593,7 +2197,7 @@ impl AcpThread {
                 config_options,
                 ..
             }) => cx.emit(AcpThreadEvent::ConfigOptionsUpdated(config_options)),
-            acp::SessionUpdate::UsageUpdate(update) if cx.has_flag::<AcpBetaFeatureFlag>() => {
+            acp::SessionUpdate::UsageUpdate(update) => {
                 let usage = self.token_usage.get_or_insert_with(Default::default);
                 usage.max_tokens = update.size;
                 usage.used_tokens = update.used;
@@ -1868,6 +2472,71 @@ impl AcpThread {
         cx.emit(AcpThreadEvent::NewEntry);
     }
 
+    pub fn push_context_compaction(
+        &mut self,
+        compaction: ContextCompaction,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(ix) =
+            self.entries
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(ix, entry)| match entry {
+                    AgentThreadEntry::ContextCompaction(c) if &c.id == &compaction.id => Some(ix),
+                    _ => None,
+                })
+        {
+            self.entries[ix] = AgentThreadEntry::ContextCompaction(compaction);
+            cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        } else {
+            self.push_entry(AgentThreadEntry::ContextCompaction(compaction), cx);
+        }
+    }
+
+    pub fn update_context_compaction(
+        &mut self,
+        update: ContextCompactionUpdate,
+        cx: &mut Context<Self>,
+    ) {
+        let language_registry = self.project.read(cx).languages().clone();
+        let Some((ix, compaction)) =
+            self.entries
+                .iter_mut()
+                .enumerate()
+                .rev()
+                .find_map(|(ix, entry)| match entry {
+                    AgentThreadEntry::ContextCompaction(c) if &c.id == &update.id => Some((ix, c)),
+                    _ => None,
+                })
+        else {
+            return;
+        };
+
+        if !update.summary_delta.is_empty() {
+            if compaction.summary.is_none() {
+                compaction.summary = Some(cx.new(|cx| {
+                    Markdown::new(
+                        update.summary_delta.into(),
+                        Some(language_registry),
+                        None,
+                        cx,
+                    )
+                }));
+            } else if let Some(summary) = compaction.summary.clone() {
+                summary.update(cx, |markdown, cx| {
+                    markdown.append(&update.summary_delta, cx)
+                });
+            }
+        }
+
+        if let Some(status) = update.status {
+            compaction.status = status;
+        }
+
+        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+    }
+
     pub fn can_set_title(&mut self, cx: &mut Context<Self>) -> bool {
         self.connection.set_title(&self.session_id, cx).is_some()
     }
@@ -1943,6 +2612,9 @@ impl AcpThread {
                     raw_output: None,
                     tool_name: None,
                     subagent_session_info: None,
+                    sandbox_authorization_details: None,
+                    sandbox_fallback_authorization_details: None,
+                    sandbox_not_applied: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -2035,7 +2707,7 @@ impl AcpThread {
                 &self.terminals,
                 cx,
             )?;
-            call.status = status;
+            call.update_status(status);
 
             cx.emit(AcpThreadEvent::EntryUpdated(ix));
         } else {
@@ -2186,7 +2858,13 @@ impl AcpThread {
     ) -> Result<Task<RequestPermissionOutcome>> {
         let (tx, rx) = oneshot::channel();
 
+        let current_status = self
+            .tool_call(&tool_call.tool_call_id)
+            .and_then(|(_, tool_call)| tool_call.status.as_acp_status())
+            .or(tool_call.fields.status)
+            .unwrap_or(acp::ToolCallStatus::Pending);
         let status = ToolCallStatus::WaitingForConfirmation {
+            current_status,
             options,
             respond_tx: tx,
             kind,
@@ -2211,6 +2889,19 @@ impl AcpThread {
         }))
     }
 
+    pub fn cancel_tool_call_authorization(&mut self, id: &acp::ToolCallId, cx: &mut Context<Self>) {
+        let Some((ix, call)) = self.tool_call_mut(id) else {
+            return;
+        };
+        if !matches!(call.status, ToolCallStatus::WaitingForConfirmation { .. }) {
+            return;
+        }
+
+        call.status = ToolCallStatus::Canceled;
+        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        cx.emit(AcpThreadEvent::ToolAuthorizationReceived(id.clone()));
+    }
+
     pub fn authorize_tool_call(
         &mut self,
         id: acp::ToolCallId,
@@ -2221,24 +2912,30 @@ impl AcpThread {
             return;
         };
 
-        let is_action_choice = matches!(
-            call.status,
-            ToolCallStatus::WaitingForConfirmation {
-                kind: AuthorizationKind::ActionChoice,
-                ..
-            }
-        );
         let new_status =
-            if is_action_choice {
-                ToolCallStatus::InProgress
-            } else {
-                match outcome.option_kind {
+            match &call.status {
+                ToolCallStatus::WaitingForConfirmation {
+                    kind: AuthorizationKind::ActionChoice,
+                    ..
+                } => ToolCallStatus::InProgress,
+                ToolCallStatus::WaitingForConfirmation { current_status, .. } => {
+                    match outcome.option_kind {
+                        acp::PermissionOptionKind::RejectOnce
+                        | acp::PermissionOptionKind::RejectAlways => ToolCallStatus::Rejected,
+                        acp::PermissionOptionKind::AllowOnce
+                        | acp::PermissionOptionKind::AllowAlways => {
+                            ToolCallStatus::status_after_permission_grant(*current_status)
+                        }
+                        _ => ToolCallStatus::status_after_permission_grant(*current_status),
+                    }
+                }
+                _ => match outcome.option_kind {
                     acp::PermissionOptionKind::RejectOnce
                     | acp::PermissionOptionKind::RejectAlways => ToolCallStatus::Rejected,
                     acp::PermissionOptionKind::AllowOnce
                     | acp::PermissionOptionKind::AllowAlways => ToolCallStatus::InProgress,
                     _ => ToolCallStatus::InProgress,
-                }
+                },
             };
 
         let curr_status = mem::replace(&mut call.status, new_status);
@@ -2312,6 +3009,27 @@ impl AcpThread {
         message: Vec<acp::ContentBlock>,
         cx: &mut Context<Self>,
     ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+        self.send_inner(message, true, cx)
+    }
+
+    /// Sends a prompt without displaying a user-message bubble for it.
+    /// This is used for native slash commands (e.g. `/compact`) that run a turn
+    /// which produces its own thread entry (like the compaction summary). The
+    /// typed command isn't sent to the model as an ordinary user turn.
+    pub fn send_command(
+        &mut self,
+        message: Vec<acp::ContentBlock>,
+        cx: &mut Context<Self>,
+    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
+        self.send_inner(message, false, cx)
+    }
+
+    fn send_inner(
+        &mut self,
+        message: Vec<acp::ContentBlock>,
+        push_user_message: bool,
+        cx: &mut Context<Self>,
+    ) -> BoxFuture<'static, Result<Option<acp::PromptResponse>>> {
         let block = ContentBlock::new_combined(
             message.clone(),
             self.project.read(cx).languages().clone(),
@@ -2324,32 +3042,38 @@ impl AcpThread {
         let message_id = UserMessageId::new();
 
         self.run_turn(cx, async move |this, cx| {
-            this.update(cx, |this, cx| {
-                this.push_entry(
-                    AgentThreadEntry::UserMessage(UserMessage {
-                        id: Some(message_id.clone()),
-                        content: block,
-                        chunks: message,
-                        checkpoint: None,
-                        indented: false,
-                    }),
-                    cx,
-                );
-            })
-            .ok();
+            if push_user_message {
+                this.update(cx, |this, cx| {
+                    this.push_entry(
+                        AgentThreadEntry::UserMessage(UserMessage {
+                            id: Some(message_id.clone()),
+                            content: block,
+                            chunks: message,
+                            checkpoint: None,
+                            indented: false,
+                        }),
+                        cx,
+                    );
+                })
+                .ok();
 
-            let old_checkpoint = git_store
-                .update(cx, |git, cx| git.checkpoint(cx))
-                .await
-                .context("failed to get old checkpoint")
-                .log_err();
+                let old_checkpoint = git_store
+                    .update(cx, |git, cx| git.checkpoint(cx))
+                    .await
+                    .context("failed to get old checkpoint")
+                    .log_err();
+                this.update(cx, |this, _cx| {
+                    if let Some((_ix, message)) = this.last_user_message() {
+                        message.checkpoint = old_checkpoint.map(|git_checkpoint| Checkpoint {
+                            git_checkpoint,
+                            show: false,
+                        });
+                    }
+                })
+                .ok();
+            }
+
             this.update(cx, |this, cx| {
-                if let Some((_ix, message)) = this.last_user_message() {
-                    message.checkpoint = old_checkpoint.map(|git_checkpoint| Checkpoint {
-                        git_checkpoint,
-                        show: false,
-                    });
-                }
                 this.connection.prompt(message_id, request, cx)
             })?
             .await
@@ -2450,12 +3174,15 @@ impl AcpThread {
                             } else {
                                 log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
                             }
+                            if is_same_turn {
+                                this.mark_pending_entries_as_canceled(cx);
+                            }
                             return Err(anyhow!(MaxOutputTokensError));
                         }
 
                         let canceled = matches!(r.stop_reason, acp::StopReason::Cancelled);
-                        if canceled {
-                            this.mark_pending_tools_as_canceled();
+                        if canceled && is_same_turn {
+                            this.mark_pending_entries_as_canceled(cx);
                         }
 
                         if !canceled {
@@ -2512,7 +3239,9 @@ impl AcpThread {
                     }
                     Err(e) => {
                         Self::flush_streaming_text(&mut this.streaming_text_buffer, cx);
-
+                        if is_same_turn {
+                            this.mark_pending_entries_as_canceled(cx);
+                        }
                         this.had_error = true;
                         cx.emit(AcpThreadEvent::Error);
                         log::error!("Error in run turn: {:?}", e);
@@ -2531,25 +3260,34 @@ impl AcpThread {
         self.connection.cancel(&self.session_id, cx);
 
         Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
-        self.mark_pending_tools_as_canceled();
+        self.mark_pending_entries_as_canceled(cx);
 
         // Wait for the send task to complete
         cx.background_spawn(turn.send_task)
     }
 
-    fn mark_pending_tools_as_canceled(&mut self) {
-        for entry in self.entries.iter_mut() {
-            if let AgentThreadEntry::ToolCall(call) = entry {
-                let cancel = matches!(
-                    call.status,
-                    ToolCallStatus::Pending
-                        | ToolCallStatus::WaitingForConfirmation { .. }
-                        | ToolCallStatus::InProgress
-                );
-
-                if cancel {
-                    call.status = ToolCallStatus::Canceled;
+    fn mark_pending_entries_as_canceled(&mut self, cx: &mut Context<Self>) {
+        for (ix, entry) in self.entries.iter_mut().enumerate() {
+            match entry {
+                AgentThreadEntry::ToolCall(call) => {
+                    let cancel = matches!(
+                        call.status,
+                        ToolCallStatus::Pending
+                            | ToolCallStatus::WaitingForConfirmation { .. }
+                            | ToolCallStatus::InProgress
+                    );
+                    if cancel {
+                        call.status = ToolCallStatus::Canceled;
+                        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                    }
                 }
+                AgentThreadEntry::ContextCompaction(compaction) => {
+                    if compaction.status == ContextCompactionStatus::InProgress {
+                        compaction.status = ContextCompactionStatus::Canceled;
+                        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -2912,7 +3650,9 @@ impl AcpThread {
                 });
 
                 let format_on_save = buffer.update(cx, |buffer, cx| {
+                    buffer.start_transaction();
                     buffer.edit(edits, None, cx);
+                    buffer.end_transaction_with_source(BufferEditSource::Agent, cx);
 
                     let settings =
                         language::language_settings::LanguageSettings::for_buffer(buffer, cx);
@@ -2955,6 +3695,7 @@ impl AcpThread {
         extra_env: Vec<acp::EnvVariable>,
         cwd: Option<PathBuf>,
         output_byte_limit: Option<u64>,
+        sandbox_wrap: Option<SandboxWrap>,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Terminal>>> {
         let env = match &cwd {
@@ -2991,18 +3732,75 @@ impl AcpThread {
                             .and_then(|r| r.read(cx).default_system_shell())
                     })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());
-                let (task_command, task_args) =
-                    ShellBuilder::new(&Shell::Program(shell), is_windows)
+
+                // The sandbox owns the network proxy (for restricted-network
+                // policies) and injects the child's proxy env vars, returning
+                // the env to spawn with. On Windows, restricted host access is
+                // rejected inside the sandbox before command preparation.
+                #[cfg(target_os = "windows")]
+                let (task_command, task_args, task_env, sandbox, spawn_cwd) =
+                    if sandbox_wrap.is_some() {
+                        let (task_command, task_args) = task::ShellBuilder::new(
+                            &Shell::Program("/bin/sh".to_string()),
+                            false,
+                        )
+                        .non_interactive()
                         .redirect_stdin_to_dev_null()
                         .build(Some(command.clone()), &args);
+                        let wrap = cx.background_spawn(prepare_sandbox_wrap(
+                            task_command,
+                            task_args,
+                            cwd.clone(),
+                            sandbox_wrap,
+                            env,
+                        ));
+                        let timeout = cx.background_executor().timer(WSL_SANDBOX_WRAP_TIMEOUT);
+                        let (task_command, task_args, task_env, sandbox) = futures::select_biased! {
+                            result = wrap.fuse() => result?,
+                            _ = timeout.fuse() => return Err(anyhow::Error::new(
+                                sandbox::SandboxError::WslUnavailable(format!(
+                                    "WSL did not respond within {} seconds while preparing the sandboxed command",
+                                    WSL_SANDBOX_WRAP_TIMEOUT.as_secs()
+                                )),
+                            )),
+                        };
+                        (task_command, task_args, task_env, sandbox, None)
+                    } else {
+                        // No sandbox wrap means we're running unsandboxed, and
+                        // on Windows that deliberately changes the shell: the
+                        // sandboxed path runs under WSL's Linux bash, but this
+                        // fallback uses the host's `shell` against the native cwd.
+                        let (task_command, task_args) =
+                            ShellBuilder::new(&Shell::Program(shell), is_windows)
+                                .redirect_stdin_to_dev_null()
+                                .build(Some(command.clone()), &args);
+                        (task_command, task_args, env, None, cwd.clone())
+                    };
+
+                #[cfg(not(target_os = "windows"))]
+                let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
+                    let (task_command, task_args) =
+                        ShellBuilder::new(&Shell::Program(shell), is_windows)
+                            .redirect_stdin_to_dev_null()
+                            .build(Some(command.clone()), &args);
+                    let (task_command, task_args, task_env, sandbox) = prepare_sandbox_wrap(
+                        task_command,
+                        task_args,
+                        cwd.clone(),
+                        sandbox_wrap,
+                        env,
+                    )
+                    .await?;
+                    (task_command, task_args, task_env, sandbox, cwd.clone())
+                };
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
                             task::SpawnInTerminal {
                                 command: Some(task_command),
                                 args: task_args,
-                                cwd: cwd.clone(),
-                                env,
+                                cwd: spawn_cwd,
+                                env: task_env,
                                 ..Default::default()
                             },
                             cx,
@@ -3018,6 +3816,7 @@ impl AcpThread {
                         output_byte_limit.map(|l| l as usize),
                         terminal,
                         language_registry,
+                        sandbox,
                         cx,
                     )
                 }))
@@ -3097,6 +3896,9 @@ impl AcpThread {
                 output_byte_limit.map(|l| l as usize),
                 terminal,
                 language_registry,
+                // External terminal providers manage their own sandboxing
+                // (if any). We don't wrap their commands.
+                None,
                 cx,
             )
         });
@@ -3260,12 +4062,248 @@ mod tests {
     };
     use util::{path, path_list::PathList};
 
+    #[test]
+    fn command_category_meta_round_trips() {
+        // Exhaustive list of variants. The match below has no wildcard arm, so
+        // adding a `CommandCategory` variant fails to compile here until it's
+        // covered, keeping the `as_str`/`from_str` wire contract in sync.
+        let all = [CommandCategory::Native, CommandCategory::Mcp];
+        for category in all {
+            match category {
+                CommandCategory::Native | CommandCategory::Mcp => {}
+            }
+            let meta = meta_with_command_category(category);
+            assert_eq!(command_category_from_meta(&Some(meta)), Some(category));
+        }
+
+        // Absent meta and unknown categories both decode to `None`.
+        assert_eq!(command_category_from_meta(&None), None);
+        let unknown =
+            acp::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), "future-category".into())]);
+        assert_eq!(command_category_from_meta(&Some(unknown)), None);
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[test]
+    fn text_resource_markdown_uses_mime_type_for_code_blocks() {
+        let shell = acp::TextResourceContents::new("echo 'hello from exec test'", "tool://preview")
+            .mime_type("text/x-shellscript".to_string());
+        assert_eq!(
+            ContentBlock::text_resource_markdown(&shell),
+            "```sh\necho 'hello from exec test'\n```"
+        );
+
+        let markdown = acp::TextResourceContents::new("**approval** requested", "tool://preview")
+            .mime_type("text/markdown".to_string());
+        assert_eq!(
+            ContentBlock::text_resource_markdown(&markdown),
+            "**approval** requested"
+        );
+
+        let plain = acp::TextResourceContents::new("plain preview", "tool://preview")
+            .mime_type("text/plain".to_string());
+        assert_eq!(
+            ContentBlock::text_resource_markdown(&plain),
+            "```\nplain preview\n```"
+        );
+
+        let cpp = acp::TextResourceContents::new("int main() {}", "tool://preview")
+            .mime_type("text/x-c++; charset=utf-8".to_string());
+        assert_eq!(
+            ContentBlock::text_resource_markdown(&cpp),
+            "```cpp\nint main() {}\n```"
+        );
+
+        let untyped = acp::TextResourceContents::new("# plain preview", "tool://preview");
+        assert_eq!(
+            ContentBlock::text_resource_markdown(&untyped),
+            "```\n# plain preview\n```"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_content_preserves_embedded_text_resource(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let content = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::TextResourceContents(
+                    acp::TextResourceContents::new("echo 'hello from exec test'", "tool://preview")
+                        .mime_type("text/x-shellscript".to_string()),
+                ),
+            ));
+
+            let block = ContentBlock::new_tool_call_content(
+                content,
+                &language_registry,
+                PathStyle::local(),
+                cx,
+            );
+
+            let ContentBlock::EmbeddedResource { resource, markdown } = &block else {
+                panic!("expected embedded resource block, got {block:?}");
+            };
+            match &resource.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(text) => {
+                    assert_eq!(text.text, "echo 'hello from exec test'");
+                    assert_eq!(text.uri, "tool://preview");
+                    assert_eq!(text.mime_type.as_deref(), Some("text/x-shellscript"));
+                }
+                other => panic!("expected text resource contents, got {other:?}"),
+            }
+
+            let markdown = markdown
+                .as_ref()
+                .expect("text resources should have renderable markdown")
+                .read(cx)
+                .source()
+                .to_string();
+            assert_eq!(markdown, "```sh\necho 'hello from exec test'\n```");
+            assert_eq!(
+                block.to_markdown(cx),
+                "```sh\necho 'hello from exec test'\n```"
+            );
+            assert_eq!(block.text_content(cx), Some("echo 'hello from exec test'"));
+
+            let untyped = ContentBlock::new_tool_call_content(
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new("# plain preview", "tool://preview"),
+                    ),
+                )),
+                &language_registry,
+                PathStyle::local(),
+                cx,
+            );
+            assert_eq!(untyped.to_markdown(cx), "```\n# plain preview\n```");
+            assert_eq!(untyped.text_content(cx), Some("# plain preview"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_content_renders_embedded_image_blob_resource(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let image_blob = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::BlobResourceContents(
+                    acp::BlobResourceContents::new(
+                        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+                        "tool://preview.png",
+                    )
+                    .mime_type("image/png".to_string()),
+                ),
+            ));
+
+            let block = ContentBlock::new_tool_call_content(
+                image_blob,
+                &language_registry,
+                PathStyle::local(),
+                cx,
+            );
+
+            let ContentBlock::Image { image, dimensions } = &block else {
+                panic!("expected image block, got {block:?}");
+            };
+            assert_eq!(image.format(), gpui::ImageFormat::Png);
+            assert_eq!(
+                dimensions.as_ref().map(|size| (size.width, size.height)),
+                Some((1, 1))
+            );
+            assert_eq!(block.to_markdown(cx), "`Image`");
+            assert_eq!(block.text_content(cx), None);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_content_falls_back_for_non_image_blob_resource(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let archive_blob = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::BlobResourceContents(
+                    acp::BlobResourceContents::new("not an image", "tool://archive.bin")
+                        .mime_type("application/octet-stream".to_string()),
+                ),
+            ));
+
+            let block = ContentBlock::new_tool_call_content(
+                archive_blob,
+                &language_registry,
+                PathStyle::local(),
+                cx,
+            );
+
+            let ContentBlock::EmbeddedResource { resource, markdown } = &block else {
+                panic!("expected embedded resource block, got {block:?}");
+            };
+            assert!(markdown.is_none());
+            match &resource.resource {
+                acp::EmbeddedResourceResource::BlobResourceContents(blob) => {
+                    assert_eq!(blob.uri, "tool://archive.bin");
+                    assert_eq!(blob.mime_type.as_deref(), Some("application/octet-stream"));
+                }
+                other => panic!("expected blob resource contents, got {other:?}"),
+            }
+            assert_eq!(block.to_markdown(cx), "tool://archive.bin");
+            assert_eq!(block.text_content(cx), None);
+
+            let invalid_image_blob = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::BlobResourceContents(
+                    acp::BlobResourceContents::new("not-base64", "tool://preview.png")
+                        .mime_type("image/png".to_string()),
+                ),
+            ));
+            let invalid = ContentBlock::new_tool_call_content(
+                invalid_image_blob,
+                &language_registry,
+                PathStyle::local(),
+                cx,
+            );
+            let ContentBlock::EmbeddedResource { resource, markdown } = &invalid else {
+                panic!("expected embedded resource block, got {invalid:?}");
+            };
+            assert!(markdown.is_none());
+            assert_eq!(
+                ContentBlock::embedded_resource_label(resource),
+                "tool://preview.png"
+            );
+            assert_eq!(invalid.to_markdown(cx), "tool://preview.png");
+        });
+    }
+
+    #[test]
+    fn sandbox_authorization_details_deserialize_legacy_network_bool() {
+        // Older builds persisted `network: bool`; the `alias` on
+        // `network_all_hosts` must keep those details rendering as a
+        // network request rather than silently dropping it.
+        let details: SandboxAuthorizationDetails =
+            serde_json::from_value(json!({ "network": true })).unwrap();
+        assert!(details.network_all_hosts);
+        assert!(details.network_hosts.is_empty());
+
+        let details: SandboxAuthorizationDetails =
+            serde_json::from_value(json!({ "network": false })).unwrap();
+        assert!(!details.network_all_hosts);
     }
 
     #[gpui::test]
@@ -3308,8 +4346,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
-            )
-            .unwrap();
+            );
             builder.subscribe(cx)
         });
 
@@ -3389,8 +4426,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
-            )
-            .unwrap();
+            );
             builder.subscribe(cx)
         });
 
@@ -3698,6 +4734,80 @@ mod tests {
 
             "#}
         );
+    }
+
+    /// `send_command` runs the turn (the connection receives the typed command)
+    /// but never echoes a user-message bubble, so commands like `/compact` don't
+    /// show a fake user message implying the text was sent to the model.
+    #[gpui::test]
+    async fn test_send_command_does_not_echo_user_message(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let received_prompt: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let received_prompt = received_prompt.clone();
+            move |request, thread, mut cx| {
+                let received_prompt = received_prompt.clone();
+                async move {
+                    if let Some(acp::ContentBlock::Text(text)) = request.prompt.first() {
+                        *received_prompt.borrow_mut() = Some(text.text.clone());
+                    }
+                    // Simulate a native command producing its own thread entry
+                    // (here a compaction) rather than echoing a user message.
+                    thread.update(&mut cx, |thread, cx| {
+                        thread.push_context_compaction(
+                            ContextCompaction {
+                                id: ContextCompactionId("c1".into()),
+                                status: ContextCompactionStatus::Completed,
+                                summary: None,
+                            },
+                            cx,
+                        );
+                    })?;
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            }
+        }));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.send_command(vec!["/compact".into()], cx)
+            })
+        })
+        .await
+        .unwrap();
+
+        // The command turn ran: the connection received the typed command.
+        assert_eq!(received_prompt.borrow().as_deref(), Some("/compact"));
+
+        thread.update(cx, |thread, _cx| {
+            assert!(
+                !thread
+                    .entries
+                    .iter()
+                    .any(|entry| matches!(entry, AgentThreadEntry::UserMessage(_))),
+                "send_command must not echo a user message"
+            );
+            // The command's own entry (here a compaction) is still shown.
+            assert!(
+                thread
+                    .entries
+                    .iter()
+                    .any(|entry| matches!(entry, AgentThreadEntry::ContextCompaction(_))),
+                "the command's own thread entry should still be present"
+            );
+        });
     }
 
     #[gpui::test]
@@ -4103,6 +5213,486 @@ mod tests {
                 })
             ));
         });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_location_resolves_external_file(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/tmp/skills/test-skill"),
+            json!({ "SKILL.md": "skill body" }),
+        )
+        .await;
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/project"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let skill_path = std::path::PathBuf::from(path!("/tmp/skills/test-skill/SKILL.md"));
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new("write_file", "Write SKILL.md")
+                            .kind(acp::ToolKind::Edit)
+                            .status(acp::ToolCallStatus::Completed)
+                            .locations(vec![acp::ToolCallLocation::new(skill_path.clone())]),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, cx| {
+            let (tool_call_location, agent_location) = thread.entries[0]
+                .location(0)
+                .expect("external tool-call location should resolve");
+            assert_eq!(tool_call_location.path, skill_path);
+
+            let buffer = agent_location
+                .buffer
+                .upgrade()
+                .expect("resolved location should keep an open buffer");
+            assert_eq!(buffer.read(cx).text(), "skill body");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_duplicate_tool_call_update_preserves_open_permission_request_until_authorized(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("toolu_01duplicate");
+        let allow_option_id = acp::PermissionOptionId::new("allow");
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id.clone(), "Original title")
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::Pending)
+                        .content(vec!["original content".into()])
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        allow_option_id.clone(),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new(tool_call_id.clone(), "Updated title")
+                            .kind(acp::ToolKind::Execute)
+                            .status(acp::ToolCallStatus::Pending)
+                            .content(vec!["updated content".into()]),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert_eq!(tool_call.label.read(cx).source(), "Updated title");
+            assert!(matches!(
+                tool_call.status,
+                ToolCallStatus::WaitingForConfirmation { .. }
+            ));
+            assert_eq!(tool_call.content.len(), 1);
+            assert_eq!(tool_call.content[0].to_markdown(cx), "updated content");
+        });
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp::ToolCallUpdateFields::new()
+                            .status(acp::ToolCallStatus::InProgress)
+                            .title("Updated again")
+                            .content(vec!["updated again".into()]),
+                    )),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert_eq!(tool_call.label.read(cx).source(), "Updated again");
+            assert!(matches!(
+                tool_call.status,
+                ToolCallStatus::WaitingForConfirmation { .. }
+            ));
+            assert_eq!(tool_call.content.len(), 1);
+            assert_eq!(tool_call.content[0].to_markdown(cx), "updated again");
+        });
+
+        let selected_outcome = SelectedPermissionOutcome::new(
+            allow_option_id.clone(),
+            acp::PermissionOptionKind::AllowOnce,
+        );
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(tool_call_id.clone(), selected_outcome, cx);
+        });
+
+        thread.read_with(cx, |thread, _cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert!(matches!(tool_call.status, ToolCallStatus::InProgress));
+        });
+
+        match permission_task.await {
+            RequestPermissionOutcome::Selected(outcome) => {
+                assert_eq!(outcome.option_id, allow_option_id);
+                assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
+            }
+            RequestPermissionOutcome::Cancelled => {
+                panic!("permission request should remain open after duplicate tool call update")
+            }
+        }
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp::ToolCallUpdateFields::new()
+                            .status(acp::ToolCallStatus::Completed)
+                            .title("Completed")
+                            .content(vec!["done".into()]),
+                    )),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert_eq!(tool_call.label.read(cx).source(), "Completed");
+            assert!(matches!(tool_call.status, ToolCallStatus::Completed));
+            assert_eq!(tool_call.content.len(), 1);
+            assert_eq!(tool_call.content[0].to_markdown(cx), "done");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_permission_request_tracks_agent_status_until_resolved(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("toolu_01auto_resolve");
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id.clone(), "Original title")
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::Pending)
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        acp::PermissionOptionId::new("allow"),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
+                    )),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, _cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert!(matches!(
+                tool_call.status,
+                ToolCallStatus::WaitingForConfirmation {
+                    current_status: acp::ToolCallStatus::InProgress,
+                    ..
+                }
+            ));
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(
+                tool_call_id.clone(),
+                SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new("allow"),
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+        });
+
+        thread.read_with(cx, |thread, _cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert!(matches!(tool_call.status, ToolCallStatus::InProgress));
+        });
+
+        match permission_task.await {
+            RequestPermissionOutcome::Selected(outcome) => {
+                assert_eq!(outcome.option_id, acp::PermissionOptionId::new("allow"));
+                assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
+            }
+            RequestPermissionOutcome::Cancelled => {
+                panic!("resolved permission request should select an outcome")
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_permission_request_sets_waiting_status_on_existing_tool_call(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("toolu_01existing_permission");
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCall(
+                        acp::ToolCall::new(tool_call_id.clone(), "Running title")
+                            .kind(acp::ToolKind::Execute)
+                            .status(acp::ToolCallStatus::InProgress),
+                    ),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id.clone(), "Needs permission")
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::Pending)
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        acp::PermissionOptionId::new("allow"),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert_eq!(tool_call.label.read(cx).source(), "Needs permission");
+            assert!(matches!(
+                tool_call.status,
+                ToolCallStatus::WaitingForConfirmation {
+                    current_status: acp::ToolCallStatus::InProgress,
+                    ..
+                }
+            ));
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.authorize_tool_call(
+                tool_call_id.clone(),
+                SelectedPermissionOutcome::new(
+                    acp::PermissionOptionId::new("allow"),
+                    acp::PermissionOptionKind::AllowOnce,
+                ),
+                cx,
+            );
+        });
+
+        match permission_task.await {
+            RequestPermissionOutcome::Selected(outcome) => {
+                assert_eq!(outcome.option_id, acp::PermissionOptionId::new("allow"));
+                assert_eq!(outcome.option_kind, acp::PermissionOptionKind::AllowOnce);
+            }
+            RequestPermissionOutcome::Cancelled => {
+                panic!("permission request should resolve after authorization")
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_cancel_tool_call_authorization_resolves_permission_request(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("toolu_01cancelled_permission");
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id.clone(), "Needs permission")
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::Pending)
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        acp::PermissionOptionId::new("allow"),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread.cancel_tool_call_authorization(&tool_call_id, cx);
+        });
+
+        thread.read_with(cx, |thread, _cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert!(matches!(tool_call.status, ToolCallStatus::Canceled));
+        });
+
+        match permission_task.await {
+            RequestPermissionOutcome::Cancelled => {}
+            RequestPermissionOutcome::Selected(_) => {
+                panic!("cancelled permission request should not select an outcome")
+            }
+        }
+    }
+
+    #[gpui::test]
+    async fn test_terminal_tool_call_update_closes_open_permission_request(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("toolu_01completed_while_waiting");
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id.clone(), "Needs permission")
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::Pending)
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        acp::PermissionOptionId::new("allow"),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread
+            .update(cx, |thread, cx| {
+                thread.handle_session_update(
+                    acp::SessionUpdate::ToolCallUpdate(acp::ToolCallUpdate::new(
+                        tool_call_id.clone(),
+                        acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::Completed),
+                    )),
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.read_with(cx, |thread, _cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert!(matches!(tool_call.status, ToolCallStatus::Completed));
+        });
+
+        match permission_task.await {
+            RequestPermissionOutcome::Cancelled => {}
+            RequestPermissionOutcome::Selected(_) => {
+                panic!("terminal tool call update should close pending permission request")
+            }
+        }
     }
 
     #[gpui::test]
@@ -4943,6 +6533,9 @@ mod tests {
                         ContentBlock::ResourceLink { .. } => {
                             panic!("Expected markdown content, got resource link")
                         }
+                        ContentBlock::EmbeddedResource { .. } => {
+                            panic!("Expected markdown content, got embedded resource")
+                        }
                         ContentBlock::Image { .. } => {
                             panic!("Expected markdown content, got image")
                         }
@@ -5004,8 +6597,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
-            )
-            .unwrap();
+            );
             builder.subscribe(cx)
         });
 
@@ -5051,8 +6643,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
-            )
-            .unwrap();
+            );
             builder.subscribe(cx)
         });
 
@@ -5112,8 +6703,7 @@ mod tests {
                 0,
                 cx.background_executor(),
                 PathStyle::local(),
-            )
-            .unwrap();
+            );
             builder.subscribe(cx)
         });
 
@@ -5411,6 +7001,102 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_stale_cancelled_response_does_not_cancel_current_compaction(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+
+        let (first_complete_tx, first_complete_rx) = futures::channel::oneshot::channel::<()>();
+        let first_complete_rx = RefCell::new(Some(first_complete_rx));
+        let compaction_id = ContextCompactionId("test-compaction".into());
+
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message({
+            let compaction_id = compaction_id.clone();
+            move |params, thread, mut cx| {
+                let first_complete_rx = first_complete_rx.borrow_mut().take();
+                let is_first = params.prompt.iter().any(|content| {
+                    matches!(content, acp::ContentBlock::Text(text) if text.text.contains("first"))
+                });
+                let compaction_id = compaction_id.clone();
+
+                async move {
+                    if is_first {
+                        if let Some(rx) = first_complete_rx {
+                            rx.await
+                                .expect("first completion sender should still be alive");
+                        }
+
+                        thread.update(&mut cx, |thread, cx| {
+                            thread.push_context_compaction(
+                                ContextCompaction {
+                                    id: compaction_id,
+                                    status: ContextCompactionStatus::InProgress,
+                                    summary: None,
+                                },
+                                cx,
+                            );
+                        })?;
+
+                        Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
+                    } else {
+                        Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    }
+                }
+                .boxed_local()
+            }
+        }));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let first_request = thread.update(cx, |thread, cx| thread.send_raw("first", cx));
+        assert_eq!(thread.read_with(cx, |thread, _| thread.turn_id), 1);
+
+        let second_request = thread.update(cx, |thread, cx| thread.send_raw("second", cx));
+        assert_eq!(thread.read_with(cx, |thread, _| thread.turn_id), 2);
+
+        first_complete_tx
+            .send(())
+            .expect("first completion receiver should still be alive");
+
+        let response = first_request
+            .await
+            .expect("first request should complete")
+            .expect("first request should have response");
+        assert_eq!(response.stop_reason, acp::StopReason::Cancelled);
+
+        thread.read_with(cx, |thread, _| {
+            let compaction = thread
+                .entries
+                .iter()
+                .find_map(|entry| {
+                    let AgentThreadEntry::ContextCompaction(compaction) = entry else {
+                        return None;
+                    };
+                    (compaction.id == compaction_id).then_some(compaction)
+                })
+                .expect("compaction entry should exist");
+
+            assert_eq!(
+                compaction.status,
+                ContextCompactionStatus::InProgress,
+                "a stale cancelled response from an older turn should not cancel current compaction"
+            );
+        });
+
+        second_request
+            .await
+            .expect("second request should complete");
+    }
+
+    #[gpui::test]
     async fn test_send_assigns_message_id_without_truncate_support(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -5684,6 +7370,71 @@ mod tests {
             let cost = thread.cost().expect("cost should be set");
             assert!((cost.amount - 0.42).abs() < f64::EPSILON);
             assert_eq!(cost.currency.as_ref(), "USD");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_context_compaction_preserves_token_usage(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UsageUpdate(
+                        acp::UsageUpdate::new(5000, 10000).cost(acp::Cost::new(0.42, "USD")),
+                    ),
+                    cx,
+                )
+                .unwrap();
+
+            thread.push_context_compaction(
+                ContextCompaction {
+                    id: ContextCompactionId("compaction-1".into()),
+                    status: ContextCompactionStatus::InProgress,
+                    summary: None,
+                },
+                cx,
+            );
+        });
+
+        thread.read_with(cx, |thread, _| {
+            let usage = thread
+                .token_usage()
+                .expect("context compaction should not clear token usage on its own");
+            assert_eq!(usage.used_tokens, 5000);
+            assert_eq!(usage.max_tokens, 10000);
+
+            let cost = thread
+                .cost()
+                .expect("context compaction should not clear cost on its own");
+            assert!((cost.amount - 0.42).abs() < f64::EPSILON);
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UsageUpdate(acp::UsageUpdate::new(1000, 10000)),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        thread.read_with(cx, |thread, _| {
+            let usage = thread
+                .token_usage()
+                .expect("token_usage should be restored by the next usage update");
+            assert_eq!(usage.used_tokens, 1000);
+            assert_eq!(usage.max_tokens, 10000);
         });
     }
 

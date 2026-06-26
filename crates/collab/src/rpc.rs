@@ -30,7 +30,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use collections::{HashMap, HashSet};
+use collections::{HashSet, TypeIdHashMap};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use futures::TryFutureExt as _;
@@ -313,7 +313,7 @@ pub struct Server {
     peer: Arc<Peer>,
     pub connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
-    handlers: HashMap<TypeId, MessageHandler>,
+    handlers: TypeIdHashMap<MessageHandler>,
     teardown: watch::Sender<bool>,
 }
 
@@ -364,6 +364,7 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferById>)
             .add_request_handler(forward_read_only_project_request::<proto::SynchronizeBuffers>)
             .add_request_handler(forward_read_only_project_request::<proto::ResolveInlayHint>)
+            .add_request_handler(forward_read_only_project_request::<proto::ResolveDocumentLink>)
             .add_request_handler(forward_read_only_project_request::<proto::GetColorPresentation>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenImageByPath>)
@@ -492,6 +493,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateRemote>)
             .add_request_handler(forward_mutating_project_request::<proto::GitRemoveRemote>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetWorktrees>)
+            .add_request_handler(forward_read_only_project_request::<proto::GitWorktreeCreatedAt>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetHeadSha>)
             .add_request_handler(forward_read_only_project_request::<proto::GetCommitData>)
             .add_request_stream_handler(
@@ -2684,7 +2686,7 @@ async fn get_users(
         .into_iter()
         .map(|user| proto::User {
             id: user.id.to_proto(),
-            avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
+            avatar_url: user.avatar_url,
             github_login: user.github_login,
             name: user.name,
         })
@@ -2722,7 +2724,7 @@ async fn fuzzy_search_users(
         .filter(|user| user.id != session.user_id())
         .map(|user| proto::User {
             id: user.id.to_proto(),
-            avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
+            avatar_url: user.avatar_url,
             github_login: user.github_login,
             name: user.name,
         })

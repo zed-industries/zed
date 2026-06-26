@@ -5,7 +5,8 @@ pub mod responses;
 use anyhow::{Context as _, Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
-    AsyncBody, HttpClient, Method, Request as HttpRequest, StatusCode,
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+    StatusCode,
     http::{HeaderMap, HeaderValue},
 };
 pub use language_model_core::ReasoningEffort;
@@ -259,6 +260,7 @@ impl Model {
                 ReasoningEffort::Medium => &[ReasoningEffort::Medium],
                 ReasoningEffort::High => &[ReasoningEffort::High],
                 ReasoningEffort::XHigh => &[ReasoningEffort::XHigh],
+                ReasoningEffort::Max => &[ReasoningEffort::Max],
             },
             Self::O3 => &[
                 ReasoningEffort::Low,
@@ -341,6 +343,58 @@ impl Model {
     /// If the model does not support the parameter, do not pass it up.
     pub fn supports_prompt_cache_key(&self) -> bool {
         true
+    }
+
+    /// Whether this model supports server-side compaction via the
+    /// `context_management` request parameter. OpenAI doesn't publish a
+    /// support matrix, but the GPT-5.5 guide notes compaction is a feature
+    /// shared with GPT-5.4, and the compaction docs exercise the GPT-5.3
+    /// Codex line, so we treat everything from GPT-5.3 onward as supported.
+    ///
+    /// <https://developers.openai.com/api/docs/guides/compaction>
+    pub fn supports_compaction(&self) -> bool {
+        match self {
+            Self::FivePointThreeCodex
+            | Self::FivePointFourNano
+            | Self::FivePointFourMini
+            | Self::FivePointFour
+            | Self::FivePointFourPro
+            | Self::FivePointFive
+            | Self::FivePointFivePro => true,
+            Self::Four
+            | Self::FourOmniMini
+            | Self::O3
+            | Self::Five
+            | Self::FiveMini
+            | Self::FiveNano
+            | Self::FivePointOne
+            | Self::FivePointTwo
+            | Self::Custom { .. } => false,
+        }
+    }
+
+    /// Whether OpenAI's Priority processing tier is available for this model.
+    /// Sourced from <https://openai.com/api-priority-processing/>. The `*-pro`,
+    /// `*-nano`, and legacy `gpt-4` variants are not eligible.
+    pub fn supports_priority(&self) -> bool {
+        match self {
+            Self::FourOmniMini
+            | Self::O3
+            | Self::Five
+            | Self::FiveMini
+            | Self::FivePointOne
+            | Self::FivePointTwo
+            | Self::FivePointThreeCodex
+            | Self::FivePointFourMini
+            | Self::FivePointFour
+            | Self::FivePointFive => true,
+            Self::Four
+            | Self::FiveNano
+            | Self::FivePointFourNano
+            | Self::FivePointFourPro
+            | Self::FivePointFivePro
+            | Self::Custom { .. } => false,
+        }
     }
 }
 
@@ -441,6 +495,8 @@ pub struct Request {
     pub stream_options: Option<StreamOptions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_completion_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -456,6 +512,23 @@ pub struct Request {
     pub prompt_cache_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<ServiceTier>,
+}
+
+/// Service tier for OpenAI requests. Maps to the top-level `service_tier`
+/// field on Responses and Chat Completions. We only ever send `Priority`
+/// today (in response to Fast Mode being enabled); the other variants are
+/// included for symmetry with the API and so deserialization of echoed
+/// values does not fail.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceTier {
+    Auto,
+    Default,
+    Flex,
+    Scale,
+    Priority,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -597,6 +670,7 @@ pub struct Choice {
 pub struct ResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
+    pub reasoning: Option<String>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
@@ -717,15 +791,15 @@ pub async fn stream_completion(
     api_url: &str,
     api_key: &str,
     request: Request,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
     let uri = format!("{api_url}/chat/completions");
-    let request_builder = HttpRequest::builder()
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()));
-
-    let request = request_builder
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
         .body(AsyncBody::from(
             serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
         ))

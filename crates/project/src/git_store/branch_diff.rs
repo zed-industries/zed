@@ -17,7 +17,7 @@ use util::ResultExt;
 use ztracing::instrument;
 
 use crate::{
-    Project,
+    ConflictSet, Project,
     git_store::{GitStoreEvent, Repository, RepositoryEvent},
 };
 
@@ -79,7 +79,6 @@ impl BranchDiff {
                         .repo
                         .as_ref()
                         .is_some_and(|r| r.read(cx).snapshot().id == *event_repo_id),
-                    GitStoreEvent::ConflictsUpdated => this.repo.is_some(),
                     _ => false,
                 };
 
@@ -405,7 +404,7 @@ impl BranchDiff {
         project_path: crate::ProjectPath,
         repo: Entity<Repository>,
         cx: &Context<'_, Project>,
-    ) -> Task<Result<(Entity<Buffer>, Entity<BufferDiff>)>> {
+    ) -> Task<Result<(Entity<Buffer>, Entity<BufferDiff>, Entity<ConflictSet>)>> {
         let task = cx.spawn(async move |project, cx| {
             let buffer = project
                 .update(cx, |project, cx| project.open_buffer(project_path, cx))?
@@ -431,7 +430,14 @@ impl BranchDiff {
                     })?
                     .await?
             };
-            Ok((buffer, changes))
+            let conflict_set = project
+                .update(cx, |project, cx| {
+                    project.git_store().update(cx, |git_store, cx| {
+                        git_store.open_conflict_set(buffer.clone(), cx)
+                    })
+                })?
+                .await;
+            Ok((buffer, changes, conflict_set))
         });
         task
     }
@@ -459,5 +465,5 @@ fn diff_status_to_file_status(branch_diff: &git::status::TreeDiffStatus) -> File
 pub struct DiffBuffer {
     pub repo_path: RepoPath,
     pub file_status: FileStatus,
-    pub load: Task<Result<(Entity<Buffer>, Entity<BufferDiff>)>>,
+    pub load: Task<Result<(Entity<Buffer>, Entity<BufferDiff>, Entity<ConflictSet>)>>,
 }

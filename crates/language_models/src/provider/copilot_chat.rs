@@ -25,7 +25,8 @@ use language_model::{
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelToolUse, MessageContent, ProviderConfigurationView, RateLimiter, Role, StopReason,
+    TokenUsage,
 };
 use settings::SettingsStore;
 use ui::prelude::*;
@@ -194,6 +195,17 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             )
         })
         .into()
+    }
+
+    fn configuration_view_v2(
+        &self,
+        target_agent: language_model::ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ProviderConfigurationView {
+        // GitHub Copilot's control is just a sign-in button, so render it inline
+        // rather than behind a sub-page.
+        ProviderConfigurationView::Inline(self.configuration_view(target_agent, window, cx))
     }
 
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
@@ -400,7 +412,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                 request_limiter
                     .stream(async move {
                         let events = stream.await?;
-                        let mapper = AnthropicEventMapper::new();
+                        let mapper = AnthropicEventMapper::new(PROVIDER_NAME);
                         Ok(mapper.map_stream(events).boxed())
                     })
                     .await
@@ -773,7 +785,6 @@ impl CopilotResponsesEventMapper {
 
             copilot_responses::StreamEvent::Completed { response } => {
                 let mut events = Vec::new();
-                events.extend(self.capture_reasoning_items_from_output(&response.output));
                 if let Some(usage) = response.usage {
                     events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
                         input_tokens: usage.input_tokens.unwrap_or(0),
@@ -805,7 +816,6 @@ impl CopilotResponsesEventMapper {
                 };
 
                 let mut events = Vec::new();
-                events.extend(self.capture_reasoning_items_from_output(&response.output));
                 if let Some(usage) = response.usage {
                     events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
                         input_tokens: usage.input_tokens.unwrap_or(0),
@@ -845,28 +855,6 @@ impl CopilotResponsesEventMapper {
             copilot_responses::StreamEvent::Created { .. }
             | copilot_responses::StreamEvent::Unknown => Vec::new(),
         }
-    }
-
-    fn capture_reasoning_items_from_output(
-        &mut self,
-        output: &[copilot_responses::ResponseOutputItem],
-    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
-        let mut events = Vec::new();
-        for item in output {
-            if let copilot_responses::ResponseOutputItem::Reasoning {
-                id,
-                summary: _,
-                encrypted_content,
-            } = item
-            {
-                if let Some(reasoning_item) =
-                    reasoning_input_item_from_output(&id, encrypted_content.clone())
-                {
-                    events.extend(self.capture_reasoning_item(reasoning_item));
-                }
-            }
-        }
-        events
     }
 
     fn capture_reasoning_item(
@@ -1086,7 +1074,8 @@ fn into_copilot_chat(
                         | MessageContent::ToolUse(_)
                         | MessageContent::RedactedThinking(_)
                         | MessageContent::ToolResult(_)
-                        | MessageContent::Image(_) => None,
+                        | MessageContent::Image(_)
+                        | MessageContent::Compaction(_) => None,
                     }) {
                         buffer.push_str(string);
                     }
@@ -1213,6 +1202,7 @@ fn into_copilot_responses(
         thinking_allowed,
         thinking_effort,
         speed: _,
+        compact_at_tokens: _,
     } = request;
 
     let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();
@@ -1299,7 +1289,7 @@ fn into_copilot_responses(
 
             Role::Assistant => {
                 append_reasoning_details_to_response_items(
-                    message.reasoning_details.as_ref(),
+                    message.reasoning_details.as_deref(),
                     &mut replayed_reasoning_item_indexes,
                     &mut input_items,
                 );
@@ -1598,6 +1588,60 @@ mod tests {
     }
 
     #[test]
+    fn responses_stream_ignores_reasoning_items_repeated_in_completed_output() {
+        let events = vec![
+            responses::StreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item: responses::ResponseOutputItem::Reasoning {
+                    id: "r1".into(),
+                    summary: Some(Vec::new()),
+                    encrypted_content: Some("ENC1".into()),
+                },
+            },
+            responses::StreamEvent::Completed {
+                response: responses::Response {
+                    output: vec![
+                        responses::ResponseOutputItem::Reasoning {
+                            id: "r1".into(),
+                            summary: Some(Vec::new()),
+                            encrypted_content: Some("ENC1".into()),
+                        },
+                        responses::ResponseOutputItem::Reasoning {
+                            id: "r2".into(),
+                            summary: Some(Vec::new()),
+                            encrypted_content: Some("ENC2".into()),
+                        },
+                    ],
+                    ..Default::default()
+                },
+            },
+        ];
+
+        let mapped = map_events(events);
+        let reasoning_details = mapped
+            .iter()
+            .filter_map(|event| match event {
+                LanguageModelCompletionEvent::ReasoningDetails(details) => Some(details),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            reasoning_details,
+            vec![&json!({
+                "reasoning_items": [
+                    {
+                        "id": "r1",
+                        "summary": [],
+                        "encrypted_content": "ENC1"
+                    }
+                ]
+            })]
+        );
+    }
+
+    #[test]
     fn into_copilot_responses_replays_reasoning_details() {
         let model = test_responses_model();
         let request = LanguageModelRequest {
@@ -1608,7 +1652,7 @@ mod tests {
                     MessageContent::Text("Done".into()),
                 ],
                 cache: false,
-                reasoning_details: Some(json!({
+                reasoning_details: Some(Arc::new(json!({
                     "reasoning_items": [
                         {
                             "id": "r1",
@@ -1621,7 +1665,7 @@ mod tests {
                             "encrypted_content": "ENC"
                         }
                     ]
-                })),
+                }))),
             }],
             ..Default::default()
         };

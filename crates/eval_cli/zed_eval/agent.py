@@ -1,40 +1,33 @@
-"""Harbor agent wrapper for Zed's eval-cli binary.
-
-Usage:
-    # Build eval-cli locally first:
-    cargo build --release -p eval_cli
-
-    # Run via Harbor with a local binary:
-    harbor run -d "dataset@version" \
-        --agent-import-path zed_eval.agent:ZedAgent \
-        --ae binary_path=/path/to/target/release/eval-cli \
-        --agent-model anthropic/claude-sonnet-4-6-latest
-
-    # Or with a download URL (for CI):
-    harbor run -d "dataset@version" \
-        --agent-import-path zed_eval.agent:ZedAgent \
-        --ae download_url=https://example.com/eval-cli \
-        --agent-model anthropic/claude-sonnet-4-6-latest
-"""
+"""Harbor installed-agent adapter for Zed's eval-cli binary."""
 
 import json
 import os
 import shlex
+import tomllib
 from pathlib import Path
 
 from harbor.agents.installed.base import BaseInstalledAgent, with_prompt_template
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
+from .agent_common import (
+    add_anthropic_available_models_env,
+    add_openai_compatible_provider_env,
+    add_zed_eval_env,
+    detect_workdir,
+    eval_cli_with_log_command,
+    patch_command,
+    populate_context_from_result,
+    provider_api_env,
+)
+
+# Leave eval-cli time to exit cleanly and flush logs before Harbor's outer
+# asyncio.wait_for can kill the agent coroutine.
+EVAL_CLI_FINALIZE_BUFFER_SEC = 45
+EVAL_CLI_MIN_TIMEOUT_SEC = 60
+
 
 class ZedAgent(BaseInstalledAgent):
-    """Runs Zed's headless AI agent (eval-cli) to solve tasks.
-
-    The eval-cli binary boots a headless GPUI application and uses the same
-    NativeAgent + AcpThread pipeline as the production Zed editor, driving
-    the full agentic loop (tool calls, subagents, retries) without a GUI.
-    """
-
     def __init__(
         self,
         logs_dir: Path,
@@ -52,52 +45,12 @@ class ZedAgent(BaseInstalledAgent):
         return "zed"
 
     async def _detect_workdir(self, environment: BaseEnvironment) -> str:
-        """Detect the working directory inside the container.
-
-        Checks, in order:
-          1. Explicit ``EVAL_CLI_WORKDIR`` extra-env override
-          2. Well-known dirs with a ``.git`` subdirectory (SWE-bench style)
-          3. First git repo found under ``/`` (max depth 3)
-          4. Well-known dirs that exist at all (terminal-bench style)
-          5. The container's default working directory (``pwd``)
-        """
-        override = self._extra_env.get("EVAL_CLI_WORKDIR")
-        if override:
-            return override
-
-        # First: try to find a git repo (SWE-bench, etc.)
-        result = await self.exec_as_agent(
+        return await detect_workdir(
             environment,
-            command=(
-                "for d in /app /testbed /repo; do "
-                '  if [ -d "$d/.git" ]; then echo "$d"; exit 0; fi; '
-                "done; "
-                "find / -maxdepth 3 -name .git -type d 2>/dev/null "
-                '| head -1 | sed "s|/.git$||"'
-            ),
-        )
-        workdir = (result.stdout or "").strip()
-        if workdir:
-            return workdir
-
-        # Fallback: use the first well-known directory that exists,
-        # even without .git (terminal-bench containers aren't git repos).
-        result = await self.exec_as_agent(
-            environment,
-            command=(
-                "for d in /app /testbed /repo /root /home; do "
-                '  if [ -d "$d" ]; then echo "$d"; exit 0; fi; '
-                "done; "
-                "pwd"
-            ),
-        )
-        workdir = (result.stdout or "").strip()
-        if workdir:
-            return workdir
-
-        raise RuntimeError(
+            self.exec_as_agent,
+            self._extra_env.get,
             "Could not detect a working directory in the container. "
-            "Set EVAL_CLI_WORKDIR explicitly via --ae EVAL_CLI_WORKDIR=/path/to/repo"
+            "Set EVAL_CLI_WORKDIR explicitly via --ae EVAL_CLI_WORKDIR=/path/to/repo",
         )
 
     async def install(self, environment: BaseEnvironment) -> None:
@@ -123,15 +76,24 @@ class ZedAgent(BaseInstalledAgent):
             env={"DEBIAN_FRONTEND": "noninteractive"},
         )
 
-        # ── Non-essential tooling ─────────────────────────────────────
-        # Everything below here (Node.js, LSPs, uv/ruff) is nice-to-have.
-        # If any step fails (e.g. musl incompatibility, network issues),
-        # log a warning and continue — the agent can still work without
-        # pre-installed language servers.
-
+        # Tooling setup is best-effort; benchmark images vary enough that one
+        # unsupported runtime should not fail the trial before eval-cli starts.
         await self._install_node(environment)
         await self._install_lsps(environment)
         await self._install_uv_and_ruff(environment)
+
+        # Modal can mount a prebuilt binary inside each sandbox, avoiding uploads.
+        container_path = self._extra_env.get("EVAL_CLI_CONTAINER_PATH")
+        if container_path:
+            await self.exec_as_root(
+                environment,
+                command=(
+                    f"cp {shlex.quote(container_path)} /usr/local/bin/eval-cli && "
+                    "chmod +x /usr/local/bin/eval-cli && "
+                    "eval-cli --help"
+                ),
+            )
+            return
 
         if self._binary_path:
             binary = Path(self._binary_path)
@@ -164,8 +126,9 @@ class ZedAgent(BaseInstalledAgent):
 
         raise ValueError(
             "No eval-cli binary provided. "
-            "Either pass binary_path=/path/to/target/release/eval-cli "
-            "or set download_url=/EVAL_CLI_DOWNLOAD_URL."
+            "Either pass binary_path=/path/to/target/release/eval-cli, "
+            "set download_url=/EVAL_CLI_DOWNLOAD_URL, "
+            "or set --ae EVAL_CLI_CONTAINER_PATH=/path/inside/container."
         )
 
     async def _install_node(self, environment: BaseEnvironment) -> None:
@@ -346,53 +309,100 @@ class ZedAgent(BaseInstalledAgent):
             self.logger.warning("uv/ruff installation failed (non-fatal): %s", exc)
 
     def populate_context_post_run(self, context: AgentContext) -> None:
-        result_data = None
-        for json_file in self.logs_dir.rglob("result.json"):
-            try:
-                result_data = json.loads(json_file.read_text())
-                break
-            except (json.JSONDecodeError, OSError):
-                continue
-
-        if result_data is None:
-            self.logger.warning("Could not find or parse result.json from eval-cli")
-            return
-
-        if result_data.get("input_tokens") is not None:
-            context.n_input_tokens = result_data["input_tokens"]
-        if result_data.get("output_tokens") is not None:
-            context.n_output_tokens = result_data["output_tokens"]
-        if result_data.get("cache_read_input_tokens") is not None:
-            context.n_cache_tokens = result_data["cache_read_input_tokens"]
-
-        context.metadata = {
-            "status": result_data.get("status"),
-            "duration_secs": result_data.get("duration_secs"),
-            "model": result_data.get("model"),
-        }
+        populate_context_from_result(self.logs_dir, context, self.logger)
 
     def _get_api_env(self) -> dict[str, str]:
-        env: dict[str, str] = {}
-        if not self.model_name or "/" not in self.model_name:
-            return env
-
-        provider = self.model_name.split("/", 1)[0]
-        provider_env_map = {
-            "anthropic": "ANTHROPIC_API_KEY",
-            "openai": "OPENAI_API_KEY",
-            "google": "GEMINI_API_KEY",
-            "gemini": "GEMINI_API_KEY",
-            "deepseek": "DEEPSEEK_API_KEY",
-            "mistral": "MISTRAL_API_KEY",
-        }
-
-        env_var = provider_env_map.get(provider)
-        if env_var:
-            api_key = os.environ.get(env_var, "")
-            if api_key:
-                env[env_var] = api_key
-
+        env = provider_api_env(self.model_name)
+        add_openai_compatible_provider_env(
+            env, self._extra_env.get("ZED_OPENAI_COMPATIBLE_PROVIDERS")
+        )
+        add_anthropic_available_models_env(
+            env, self._extra_env.get("ZED_ANTHROPIC_AVAILABLE_MODELS")
+        )
         return env
+
+    def _harbor_agent_budget_sec(self) -> float | None:
+        """Recover Harbor's hidden outer timeout so eval-cli can exit first.
+
+        Harbor 0.15.0 computes this on ``Trial`` but does not pass it to custom
+        installed agents. Replaying the calculation host-side lets us preserve
+        trajectories instead of losing them to Harbor's coroutine kill.
+        """
+        config_path = Path(self.logs_dir).parent / "config.json"
+        try:
+            trial_config = json.loads(config_path.read_text())
+        except (OSError, ValueError) as exc:
+            print(
+                f"[zed-eval] agent budget: could not read {config_path}: {exc!r}",
+                flush=True,
+            )
+            return None
+
+        agent_cfg = trial_config.get("agent") or {}
+        base_sec = agent_cfg.get("override_timeout_sec")
+        if base_sec is None:
+            base_sec = self._task_declared_agent_timeout_sec(
+                trial_config.get("task") or {}
+            )
+        if base_sec is None:
+            return None
+
+        max_sec = agent_cfg.get("max_timeout_sec")
+        if max_sec is not None:
+            base_sec = min(base_sec, max_sec)
+        multiplier = trial_config.get("agent_timeout_multiplier")
+        if multiplier is None:
+            multiplier = trial_config.get("timeout_multiplier", 1.0)
+        return float(base_sec) * float(multiplier)
+
+    def _task_declared_agent_timeout_sec(self, task_cfg: dict) -> float | None:
+        task_dir = self._resolve_task_dir(task_cfg)
+        if task_dir is None:
+            return None
+        task_toml = task_dir / "task.toml"
+        try:
+            data = tomllib.loads(task_toml.read_text())
+        except (OSError, ValueError) as exc:
+            print(
+                f"[zed-eval] agent budget: could not parse {task_toml}: {exc!r}",
+                flush=True,
+            )
+            return None
+        timeout_sec = (data.get("agent") or {}).get("timeout_sec")
+        return float(timeout_sec) if timeout_sec is not None else None
+
+    def _resolve_task_dir(self, task_cfg: dict) -> Path | None:
+        path = task_cfg.get("path")
+        if path:
+            return Path(path).expanduser().resolve()
+
+        # config.json omits Harbor's package content hash; use the newest cached
+        # digest that contains a task.toml.
+        name = task_cfg.get("name")
+        if name and "/" in name:
+            try:
+                from harbor.constants import PACKAGE_CACHE_DIR
+            except ImportError as exc:
+                print(
+                    f"[zed-eval] agent budget: harbor PACKAGE_CACHE_DIR "
+                    f"unavailable: {exc!r}",
+                    flush=True,
+                )
+                return None
+            download_dir = task_cfg.get("download_dir")
+            base_dir = Path(download_dir) if download_dir else PACKAGE_CACHE_DIR
+            org, package = name.split("/", 1)
+            package_root = base_dir / org / package
+            candidates = [
+                digest_dir
+                for digest_dir in package_root.glob("*")
+                if (digest_dir / "task.toml").is_file()
+            ]
+            if not candidates:
+                return None
+            return max(candidates, key=lambda p: p.stat().st_mtime)
+
+        return None
 
     @with_prompt_template
     async def run(
@@ -400,6 +410,10 @@ class ZedAgent(BaseInstalledAgent):
     ) -> None:
         escaped_instruction = shlex.quote(instruction)
         env = self._get_api_env()
+
+        add_zed_eval_env(
+            env, self._extra_env, exclude={"ZED_EVAL_INSTRUCTION_SUFFIX_FILE"}
+        )
 
         workdir = await self._detect_workdir(environment)
 
@@ -412,9 +426,58 @@ class ZedAgent(BaseInstalledAgent):
         if self.model_name:
             parts.append(f"--model {shlex.quote(self.model_name)}")
 
-        timeout = self._extra_env.get("EVAL_CLI_TIMEOUT")
-        if timeout:
-            parts.append(f"--timeout {shlex.quote(timeout)}")
+        instruction_suffix_file = self._extra_env.get(
+            "ZED_EVAL_INSTRUCTION_SUFFIX_FILE"
+        )
+        if instruction_suffix_file:
+            parts.append(
+                f"--instruction-suffix-file {shlex.quote(instruction_suffix_file)}"
+            )
+
+        # Prefer eval-cli's own timeout over Harbor's coroutine kill so logs and
+        # partial answers are still available for delivery.
+        configured_timeout_raw = self._extra_env.get("EVAL_CLI_TIMEOUT")
+        configured_timeout: int | None
+        if configured_timeout_raw:
+            try:
+                configured_timeout = int(configured_timeout_raw)
+            except ValueError:
+                print(
+                    "[zed-eval] ignoring non-integer EVAL_CLI_TIMEOUT="
+                    f"{configured_timeout_raw!r}",
+                    flush=True,
+                )
+                configured_timeout = None
+        else:
+            configured_timeout = None
+
+        budget_sec = self._harbor_agent_budget_sec()
+        timeout_arg: int | None = None
+        if budget_sec is not None:
+            ceiling = (
+                configured_timeout
+                if configured_timeout is not None
+                else int(budget_sec)
+            )
+            timeout_arg = min(ceiling, int(budget_sec - EVAL_CLI_FINALIZE_BUFFER_SEC))
+            timeout_arg = max(timeout_arg, EVAL_CLI_MIN_TIMEOUT_SEC)
+            print(
+                f"[zed-eval] eval-cli --timeout {timeout_arg}s (harbor agent "
+                f"budget {int(budget_sec)}s - {EVAL_CLI_FINALIZE_BUFFER_SEC}s "
+                f"finalize buffer; EVAL_CLI_TIMEOUT="
+                f"{configured_timeout if configured_timeout is not None else 'unset'})",
+                flush=True,
+            )
+        elif configured_timeout is not None:
+            timeout_arg = configured_timeout
+            print(
+                f"[zed-eval] eval-cli --timeout {timeout_arg}s (harbor agent "
+                "budget unavailable; using EVAL_CLI_TIMEOUT)",
+                flush=True,
+            )
+
+        if timeout_arg is not None:
+            parts.append(f"--timeout {timeout_arg}")
 
         staff = self._extra_env.get("EVAL_CLI_STAFF")
         if staff and staff.lower() == "false":
@@ -427,39 +490,41 @@ class ZedAgent(BaseInstalledAgent):
         enable_thinking = self._extra_env.get("EVAL_CLI_ENABLE_THINKING")
         if enable_thinking:
             if enable_thinking.lower() == "true":
-                parts.append("--enable-thinking")
+                parts.append("--thinking true")
             elif enable_thinking.lower() == "false":
-                parts.append("--disable-thinking")
+                parts.append("--thinking false")
 
         parts.append(f"--instruction {escaped_instruction}")
 
+        # Exit 2 is eval-cli's timeout, not a crash; keep the trajectory judgeable.
         await self.exec_as_agent(
             environment,
-            command=(
-                " ".join(parts) + " 2>&1 | if command -v stdbuf >/dev/null 2>&1;"
-                " then stdbuf -oL tee /logs/agent/eval-cli.txt;"
-                " else tee /logs/agent/eval-cli.txt; fi"
+            command=eval_cli_with_log_command(
+                parts,
+                "/logs/agent/eval-cli.txt",
+                timeout_message=(
+                    "[zed-eval] eval-cli timed out (exit 2); continuing to "
+                    "delivery/verification"
+                ),
+                line_buffered=True,
             ),
             env=env,
         )
 
-        # Only generate a patch if the workdir is a git repo with a valid HEAD
-        # (SWE-bench style). Terminal-bench containers aren't git repos, and
-        # some harnesses mount an initialized repo before creating the first commit.
+        # Modal-style remote runs can differ in agent-log collection behavior.
         await self.exec_as_agent(
             environment,
             command=(
-                "if git rev-parse --git-dir >/dev/null 2>&1; then "
-                "git add -A && "
-                "if git rev-parse --verify HEAD >/dev/null 2>&1; then "
-                "git diff --cached HEAD -- > /logs/agent/patch.diff && "
-                'echo "Patch size: $(wc -c < /logs/agent/patch.diff) bytes"; '
-                "else "
-                'echo "Git repo has no valid HEAD, skipping patch generation"; '
-                "fi; "
-                "else "
-                'echo "No git repo found, skipping patch generation"; '
-                "fi"
+                "mkdir -p /logs/artifacts && "
+                "for f in result.json thread.json thread.md eval-cli.txt; do "
+                '  cp "/logs/agent/$f" /logs/artifacts/ 2>/dev/null || true; '
+                "done; true"
             ),
+        )
+
+        # Some harnesses mount an initialized repo before creating the first commit.
+        await self.exec_as_agent(
+            environment,
+            command=patch_command("/logs/agent"),
             cwd=workdir,
         )

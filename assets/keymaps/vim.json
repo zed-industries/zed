@@ -338,7 +338,7 @@
       "ctrl-x": "vim::Decrement",
       "shift-j": "vim::JoinLines",
       "i": "vim::InsertBefore",
-      "a": "vim::InsertAfter",
+      "a": "vim::HelixAppend",
       "o": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
       "p": "vim::Paste",
@@ -494,6 +494,10 @@
       "n": "vim::HelixSelectNext",
       "shift-n": "vim::HelixSelectPrevious",
 
+      // Macros — Helix swaps Vim's q/Q: Q records, q replays
+      "q": "vim::ReplayLastRecording",
+      "shift-q": "vim::ToggleRecord",
+
       // Goto mode
       "g e": "vim::EndOfDocument",
       "g h": "vim::StartOfLine",
@@ -503,6 +507,8 @@
       "g c": "vim::WindowMiddle",
       "g b": "vim::WindowBottom",
       "g r": "editor::FindAllReferences",
+      "g i": "editor::GoToImplementation",
+      "g a": "pane::AlternateFile",
       "g n": "pane::ActivateNextItem",
       "shift-l": "pane::ActivateNextItem", // not a helix default
       "g p": "pane::ActivatePreviousItem",
@@ -540,6 +546,18 @@
       "space p": "editor::Paste",
       "space y": "editor::Copy",
       "space /": "pane::DeploySearch",
+
+      // Debug mode (Helix space G)
+      "space shift-g l": "debugger::Start",
+      "space shift-g r": "debugger::Restart",
+      "space shift-g b": "editor::ToggleBreakpoint",
+      "space shift-g c": "debugger::Continue",
+      "space shift-g h": "debugger::Pause",
+      "space shift-g i": "debugger::StepInto",
+      "space shift-g o": "debugger::StepOut",
+      "space shift-g n": "debugger::StepOver",
+      "space shift-g t": "debugger::Stop",
+      "space shift-g ctrl-l": "editor::EditLogBreakpoint",
 
       // Other
       ":": "command_palette::Toggle",
