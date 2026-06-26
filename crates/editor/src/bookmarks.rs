@@ -108,13 +108,13 @@ impl Editor {
 
         if absent_targets.is_empty() {
             // All cursors are on existing bookmarks, remove all bookmarks.
-            self.toggle_bookmarks(exist_targets, String::new(), cx);
+            self.toggle_bookmarks(exist_targets, None, cx);
         } else if with_label {
             // Only add new ones (prompting for a label) and leave existing ones unchanged.
             self.add_toggle_bookmark_blocks(absent_targets, bookmark_store, window, cx);
         } else {
             // Only add new (unnamed) bookmarks and leave existing ones unchanged.
-            self.toggle_bookmarks(absent_targets, String::new(), cx);
+            self.toggle_bookmarks(absent_targets, None, cx);
         }
 
         cx.notify();
@@ -166,7 +166,7 @@ impl Editor {
             if with_label {
                 self.add_toggle_bookmark_blocks(vec![target], bookmark_store, window, cx)
             } else {
-                self.toggle_bookmarks(vec![target], String::new(), cx);
+                self.toggle_bookmarks(vec![target], Some(String::new()), cx);
             }
         }
 
@@ -277,18 +277,13 @@ impl Editor {
     fn toggle_bookmarks(
         &mut self,
         targets: Vec<BookmarkTarget>,
-        label: String,
+        label: Option<String>,
         cx: &mut Context<Self>,
     ) {
         if let Some(bookmark_store) = self.bookmark_store.clone() {
             bookmark_store.update(cx, |store, cx| {
                 for target in targets {
-                    store.toggle_bookmark(
-                        target.buffer,
-                        target.buffer_anchor,
-                        Some(label.clone()),
-                        cx,
-                    );
+                    store.toggle_bookmark(target.buffer, target.buffer_anchor, label.clone(), cx);
                 }
             });
         }
