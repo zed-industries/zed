@@ -60,7 +60,7 @@ use std::{
 };
 use theme_settings::ThemeSettings;
 use ui::{
-    ContextMenu, ContextMenuEntry, DecoratedIcon, IconDecoration, IconDecorationKind,
+    ContextMenu, DecoratedIcon, IconDecoration, IconDecorationKind,
     IndentGuideColors, IndentGuideLayout, Indicator, KeyBinding, ListItem, ListItemSpacing,
     ProjectEmptyState, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip,
     WithScrollbar, prelude::*,
@@ -339,6 +339,8 @@ actions!(
         CollapseSelectedEntry,
         /// Collapses the selected entry and its children in the project tree.
         CollapseSelectedEntryAndChildren,
+        /// Expands the selected entry and its children in the project tree.
+        ExpandSelectedEntryAndChildren,
         /// Collapses all entries in the project tree.
         CollapseAllEntries,
         /// Expands all entries in the project tree.
@@ -1098,7 +1100,6 @@ impl ProjectPanel {
             };
 
             let has_pasteable_content = self.has_pasteable_content(cx);
-            let entity = cx.entity();
             let context_menu = ContextMenu::build(window, cx, |menu, _, cx| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
@@ -1195,20 +1196,11 @@ impl ProjectPanel {
                                     .action("Remove from Project", Box::new(RemoveFromProject))
                             })
                             .when(is_dir && !is_root, |menu| {
-                                let entity = entity.clone();
                                 menu.separator()
-                                    .item(ContextMenuEntry::new("Expand All").handler(
-                                        move |window, cx| {
-                                            entity.update(cx, |this, cx| {
-                                                this.expand_all_for_entry_and_refresh(
-                                                    worktree_id,
-                                                    entry_id,
-                                                    window,
-                                                    cx,
-                                                );
-                                            });
-                                        },
-                                    ))
+                                    .action(
+                                        "Expand All",
+                                        Box::new(ExpandSelectedEntryAndChildren),
+                                    )
                                     .action(
                                         "Collapse All",
                                         Box::new(CollapseSelectedEntryAndChildren),
@@ -1485,6 +1477,19 @@ impl ProjectPanel {
     ) {
         self.expand_all_for_entry(worktree_id, entry_id, cx);
         self.synchronously_expand_all_directories(worktree_id, entry_id, window, cx);
+    }
+
+    fn expand_selected_entry_and_children(
+        &mut self,
+        _: &ExpandSelectedEntryAndChildren,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let worktree_id = worktree.id();
+            let entry_id = entry.id;
+            self.expand_all_for_entry_and_refresh(worktree_id, entry_id, window, cx);
+        }
     }
 
     fn synchronously_expand_all_directories(
@@ -6831,6 +6836,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::collapse_all_entries))
                 .on_action(cx.listener(Self::expand_all_entries))
                 .on_action(cx.listener(Self::collapse_selected_entry_and_children))
+                .on_action(cx.listener(Self::expand_selected_entry_and_children))
                 .on_action(cx.listener(Self::open))
                 .on_action(cx.listener(Self::open_permanent))
                 .on_action(cx.listener(Self::open_split_vertical))
