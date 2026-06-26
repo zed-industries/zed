@@ -84,6 +84,7 @@ pub use rename_tool::*;
 pub use skill_tool::*;
 pub use spawn_agent_tool::*;
 pub use symbol_locator::*;
+pub(crate) use terminal_tool::sandbox_git_paths::{SandboxGitPathCandidates, sandbox_git_paths};
 pub use terminal_tool::*;
 pub use tool_permissions::*;
 pub use web_search_tool::*;

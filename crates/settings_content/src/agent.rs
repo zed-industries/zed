@@ -298,6 +298,13 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub expand_terminal_card: Option<bool>,
+    /// Command to automatically run when Zed creates a Terminal Thread shell in the agent panel.
+    /// The command is sent to the shell as if typed, so it is interpreted by your
+    /// configured shell (including on Windows and remote/WSL projects).
+    /// An empty string disables this behavior.
+    ///
+    /// Default: ""
+    pub terminal_init_command: Option<String>,
     /// How thinking blocks should be displayed by default in the agent panel.
     ///
     /// Default: automatic
@@ -472,6 +479,12 @@ impl AgentSettingsContent {
         self.sandbox_permissions
             .get_or_insert_default()
             .allow_fs_write_all = Some(true);
+    }
+
+    pub fn allow_sandbox_git_access(&mut self) {
+        self.sandbox_permissions
+            .get_or_insert_default()
+            .allow_git_access = Some(true);
     }
 
     pub fn allow_sandbox_unsandboxed(&mut self) {
@@ -732,13 +745,22 @@ pub struct SandboxPermissionsContent {
     /// Default: []
     pub network_hosts: Option<ExtendingVec<String>>,
 
+    /// Whether sandboxed terminal commands may always access protected Git
+    /// metadata paths without prompting.
+    /// Default: false
+    pub allow_git_access: Option<bool>,
+
     /// Whether sandboxed terminal commands may always write anywhere on the
     /// filesystem without prompting.
     /// Default: false
     pub allow_fs_write_all: Option<bool>,
 
-    /// Whether terminal commands may always run outside the sandbox without
-    /// prompting when they request `unsandboxed: true`.
+    /// Whether to persistently run agent terminal commands outside the OS
+    /// sandbox. This is the model-facing "off switch": when true, the sandboxed
+    /// terminal tool is not exposed and the system prompt omits the sandbox
+    /// section, so the model uses the plain `terminal` tool. On Windows, WSL
+    /// sandbox setup is skipped. Distinct from the model-requested
+    /// `unsandboxed: true` escape approved "once" or "for this thread".
     /// Default: false
     pub allow_unsandboxed: Option<bool>,
 
@@ -1028,6 +1050,7 @@ mod tests {
             &["github.com".to_string(), "*.npmjs.org".to_string()]
         );
         settings.allow_sandbox_fs_write_all();
+        settings.allow_sandbox_git_access();
         settings.allow_sandbox_unsandboxed();
         settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
 
@@ -1042,6 +1065,7 @@ mod tests {
                 .as_slice(),
             &["github.com".to_string(), "*.npmjs.org".to_string()]
         );
+        assert_eq!(sandbox_permissions.allow_git_access, Some(true));
         assert_eq!(sandbox_permissions.allow_fs_write_all, Some(true));
         assert_eq!(sandbox_permissions.allow_unsandboxed, Some(true));
         assert_eq!(

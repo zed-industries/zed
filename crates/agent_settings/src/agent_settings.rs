@@ -231,6 +231,7 @@ pub struct AgentSettings {
     pub enable_feedback: bool,
     pub expand_edit_card: bool,
     pub expand_terminal_card: bool,
+    pub terminal_init_command: Option<String>,
     pub thinking_display: ThinkingBlockDisplay,
     pub cancel_generation_on_terminal_stop: bool,
     pub use_modifier_to_send: bool,
@@ -420,7 +421,16 @@ pub struct SandboxPermissions {
     /// hostnames or leading-`*.` subdomain wildcards). Parsed/validated where
     /// consumed (`agent::sandboxing`).
     pub network_hosts: Vec<String>,
+    /// Allow sandboxed commands to access protected Git metadata paths.
+    pub allow_git_access: bool,
     pub allow_fs_write_all: bool,
+    /// Persistently run agent terminal commands outside the OS sandbox. This is
+    /// the model-facing "off switch": when set, the sandboxed terminal tool is
+    /// not exposed and the system prompt omits the sandbox section, so the
+    /// model uses the plain `terminal` tool (on Windows, WSL sandbox setup is
+    /// skipped). Distinct from the model-requested `unsandboxed: true` escape
+    /// approved "once" or "for this thread", which keeps the sandboxed
+    /// tool/prompt in place — see `agent::sandboxing`.
     pub allow_unsandboxed: bool,
     pub write_paths: Vec<PathBuf>,
 }
@@ -767,6 +777,9 @@ impl Settings for AgentSettings {
             enable_feedback: agent.enable_feedback.unwrap(),
             expand_edit_card: agent.expand_edit_card.unwrap(),
             expand_terminal_card: agent.expand_terminal_card.unwrap(),
+            terminal_init_command: agent
+                .terminal_init_command
+                .filter(|command| !command.trim().is_empty()),
             thinking_display: agent.thinking_display.unwrap(),
             cancel_generation_on_terminal_stop: agent.cancel_generation_on_terminal_stop.unwrap(),
             use_modifier_to_send: agent.use_modifier_to_send.unwrap(),
@@ -803,6 +816,7 @@ fn compile_sandbox_permissions(
     SandboxPermissions {
         allow_all_hosts: content.allow_all_hosts.unwrap_or(false),
         network_hosts,
+        allow_git_access: content.allow_git_access.unwrap_or(false),
         allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
         allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
         write_paths,
@@ -978,6 +992,56 @@ mod tests {
         assert!(result.is_none());
     }
 
+    #[gpui::test]
+    fn test_terminal_init_command_filters_empty_without_trimming(cx: &mut gpui::App) {
+        let store = SettingsStore::test(cx);
+        cx.set_global(store);
+        project::DisableAiSettings::register(cx);
+        AgentSettings::register(cx);
+
+        SettingsStore::update_global(cx, |store, cx| {
+            let new_text = store
+                .new_text_for_update("{}".to_string(), |settings| {
+                    settings.agent.get_or_insert_default().terminal_init_command =
+                        Some(" claude --resume ".to_string());
+                })
+                .unwrap();
+            assert!(
+                new_text.contains(r#""terminal_init_command": " claude --resume ""#),
+                "updated settings JSON should include terminal_init_command, got {new_text}"
+            );
+            store.set_user_settings(&new_text, cx).unwrap();
+        });
+        assert_eq!(
+            AgentSettings::get_global(cx)
+                .terminal_init_command
+                .as_deref(),
+            Some(" claude --resume ")
+        );
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(r#"{ "agent": { "terminal_init_command": "   " } }"#, cx)
+                .unwrap();
+        });
+        assert!(
+            AgentSettings::get_global(cx)
+                .terminal_init_command
+                .is_none()
+        );
+
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(r#"{ "agent": { "terminal_init_command": null } }"#, cx)
+                .unwrap();
+        });
+        assert!(
+            AgentSettings::get_global(cx)
+                .terminal_init_command
+                .is_none()
+        );
+    }
+
     #[test]
     fn test_tool_permissions_parsing() {
         let json = json!({
@@ -1040,6 +1104,7 @@ mod tests {
         let json = json!({
             "allow_all_hosts": true,
             "network_hosts": ["github.com", "*.npmjs.org"],
+            "allow_git_access": true,
             "allow_unsandboxed": true,
             "write_paths": [
                 "/tmp/build/cache",
@@ -1056,6 +1121,7 @@ mod tests {
             permissions.network_hosts,
             vec!["github.com".to_string(), "*.npmjs.org".to_string()]
         );
+        assert!(permissions.allow_git_access);
         assert!(!permissions.allow_fs_write_all);
         assert!(permissions.allow_unsandboxed);
         assert_eq!(
