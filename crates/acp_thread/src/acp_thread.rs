@@ -3173,13 +3173,10 @@ impl AcpThread {
         let request = acp::PromptRequest::new(self.session_id.clone(), message.clone());
         let git_store = self.project.read(cx).git_store().clone();
 
-        let prompt_with_client_id = self
-            .connection
-            .prompt_with_client_user_message_id(cx)
-            .map(|prompt| (prompt, ClientUserMessageId::new()));
-        let rewind_id = prompt_with_client_id
+        let prompt_with_rewind = self.connection.prompt_with_rewind(cx);
+        let rewind_id = prompt_with_rewind
             .as_ref()
-            .map(|(_, rewind_id)| rewind_id.clone());
+            .map(|_| ClientUserMessageId::new());
 
         self.run_turn(cx, async move |this, cx| {
             if push_user_message {
@@ -3216,7 +3213,7 @@ impl AcpThread {
             }
 
             this.update(cx, |this, cx| {
-                if let Some((prompt, rewind_id)) = prompt_with_client_id {
+                if let (Some(prompt), Some(rewind_id)) = (prompt_with_rewind, rewind_id) {
                     prompt.prompt(rewind_id, request, cx)
                 } else {
                     this.connection.prompt(request, cx)
@@ -6893,7 +6890,7 @@ mod tests {
             }
         }
 
-        fn prompt_with_client_user_message_id(
+        fn prompt_with_rewind(
             &self,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionPromptWithClientUserMessageId>> {

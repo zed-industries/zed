@@ -2619,7 +2619,7 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         }) as Rc<dyn AgentModelSelector>)
     }
 
-    fn prompt_with_client_user_message_id(
+    fn prompt_with_rewind(
         &self,
         _cx: &App,
     ) -> Option<Rc<dyn acp_thread::AgentSessionPromptWithClientUserMessageId>> {

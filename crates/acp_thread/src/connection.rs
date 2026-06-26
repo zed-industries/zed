@@ -185,7 +185,7 @@ pub trait AgentConnection {
     }
 
     /// Returns a capability for agents that accept client-generated user message IDs.
-    fn prompt_with_client_user_message_id(
+    fn prompt_with_rewind(
         &self,
         _cx: &App,
     ) -> Option<Rc<dyn AgentSessionPromptWithClientUserMessageId>> {
@@ -1013,7 +1013,7 @@ mod test_support {
             }
         }
 
-        fn prompt_with_client_user_message_id(
+        fn prompt_with_rewind(
             &self,
             _cx: &App,
         ) -> Option<Rc<dyn AgentSessionPromptWithClientUserMessageId>> {

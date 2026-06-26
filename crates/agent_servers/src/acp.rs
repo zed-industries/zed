@@ -2206,11 +2206,11 @@ pub mod test_support {
             self.inner.logout(cx)
         }
 
-        fn prompt_with_client_user_message_id(
+        fn prompt_with_rewind(
             &self,
             cx: &App,
         ) -> Option<Rc<dyn AgentSessionPromptWithClientUserMessageId>> {
-            self.inner.prompt_with_client_user_message_id(cx)
+            self.inner.prompt_with_rewind(cx)
         }
 
         fn prompt(
