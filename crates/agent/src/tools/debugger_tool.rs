@@ -720,18 +720,15 @@ fn initial_title_for_input(input: &DebuggerToolInput) -> SharedString {
             }
         }
         DebuggerToolInput::Control(input) => match input.action {
-            ControlAction::RunToLine => format!(
-                "Debugger run to line at {}:{}",
-                MarkdownInlineCode(
-                    &input
-                        .path
-                        .as_deref()
-                        .map(std::path::Path::to_string_lossy)
-                        .unwrap_or_default()
-                ),
-                input.line.unwrap_or_default()
-            )
-            .into(),
+            ControlAction::RunToLine => match (input.path.as_deref(), input.line) {
+                (Some(path), Some(line)) => format!(
+                    "Debugger run to line at {}:{}",
+                    MarkdownInlineCode(&path.to_string_lossy()),
+                    line
+                )
+                .into(),
+                _ => "Debugger run to line".into(),
+            },
             ControlAction::Continue
             | ControlAction::Pause
             | ControlAction::StepOver
@@ -873,8 +870,8 @@ async fn choose_thread_for_action(
     match action {
         ControlAction::Pause => {
             if has_threads {
-                // Pause works on a running thread; if none is running, fall back
-                // to the first thread (some adapters pause by id regardless).
+                // Some adapters accept a pause-by-thread-id even when no thread
+                // is currently running, so fall back to the first thread.
                 Ok(snapshot.threads[0].thread_id)
             } else {
                 Err(anyhow!(
@@ -890,9 +887,8 @@ async fn choose_thread_for_action(
         | ControlAction::RunToLine => {
             if has_threads {
                 Err(anyhow!(
-                    "No stopped debugger thread is available in session {:?}. The debugger must be paused at a breakpoint before it can be {}; pause the session or wait for a breakpoint to hit.",
-                    session_id,
-                    action.label()
+                    "No stopped debugger thread is available in session {:?}. The debugger must be paused at a breakpoint before this action can run; pause the session or wait for a breakpoint to hit.",
+                    session_id
                 ))
             } else {
                 Err(anyhow!(
