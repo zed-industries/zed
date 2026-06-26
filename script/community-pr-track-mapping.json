@@ -119,6 +119,7 @@
       "labels": [
         "area:keymap editor",
         "area:popovers",
+        "area:pickers",
         "area:preview/images",
         "area:settings",
         "area:settings/ui",

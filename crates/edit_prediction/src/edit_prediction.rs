@@ -59,7 +59,7 @@ use std::rc::Rc;
 use text::{AnchorRangeExt, Edit};
 use workspace::{AppState, Workspace};
 use zeta_prompt::ContextSource;
-use zeta_prompt::{ZetaFormat, ZetaPromptInput};
+use zeta_prompt::{Zeta2PromptInput, ZetaFormat};
 
 use std::mem;
 use std::ops::Range;
@@ -99,9 +99,8 @@ use crate::license_detection::LicenseDetectionWatcher;
 use crate::mercury::Mercury;
 pub use crate::metrics::{KeptRateResult, compute_kept_rate};
 use crate::onboarding_modal::ZedPredictModal;
-pub use crate::prediction::EditPrediction;
-pub use crate::prediction::EditPredictionId;
 use crate::prediction::EditPredictionResult;
+pub use crate::prediction::{EditPrediction, EditPredictionId, EditPredictionInputs};
 pub use language_model::ApiKeyState;
 pub use telemetry_events::EditPredictionRating;
 pub use zed_edit_prediction_delegate::ZedEditPredictionDelegate;
@@ -2898,7 +2897,7 @@ impl EditPredictionStore {
     }
 
     pub(crate) async fn send_v3_request(
-        input: ZetaPromptInput,
+        input: Zeta2PromptInput,
         preferred_experiment: Option<String>,
         client: Arc<Client>,
         llm_token: LlmApiToken,

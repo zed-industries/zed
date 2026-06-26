@@ -338,6 +338,7 @@
       "ctrl-shift-alt-enter": "agent::SendNextQueuedMessage",
       "ctrl-shift-backspace": "agent::RemoveFirstQueuedMessage",
       "ctrl-alt-e": "agent::EditFirstQueuedMessage",
+      "ctrl-alt-s": "agent::ToggleSteerFirstQueuedMessage",
       "ctrl-alt-backspace": "agent::ClearMessageQueue",
       "ctrl-shift-v": "agent::PasteRaw",
       "ctrl-i": "agent::ToggleProfileSelector",

@@ -662,6 +662,31 @@ mod tests {
         sign_in_task
     }
 
+    fn test_cloud_model(
+        model_id: cloud_llm_client::LanguageModelId,
+    ) -> cloud_llm_client::LanguageModel {
+        cloud_llm_client::LanguageModel {
+            provider: cloud_llm_client::LanguageModelProvider::Anthropic,
+            id: model_id,
+            display_name: "Test Model".to_string(),
+            is_latest: true,
+            max_token_count: 200_000,
+            max_token_count_in_max_mode: None,
+            max_output_tokens: 8_192,
+            supports_tools: true,
+            supports_images: false,
+            supports_thinking: false,
+            supports_disabling_thinking: false,
+            supports_fast_mode: false,
+            supports_server_side_compaction: false,
+            supported_effort_levels: Vec::new(),
+            supports_streaming_tools: false,
+            supports_parallel_tool_calls: false,
+            is_disabled: false,
+            disabled_reason: None,
+        }
+    }
+
     #[gpui::test]
     async fn provider_authenticate_does_not_start_sign_in_when_signed_out(cx: &mut TestAppContext) {
         let (client, _user_store, provider) = cx.update(init_test);
@@ -755,6 +780,41 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn provided_models_surface_disabled_reason(cx: &mut TestAppContext) {
+        let (_client, _user_store, provider) = cx.update(init_test);
+        let model_id = cloud_llm_client::LanguageModelId(Arc::from("disabled-model"));
+        let disabled_reason = "This model is temporarily unavailable.";
+
+        cx.update(|cx| {
+            let cloud_model_provider = provider.state.read(cx).provider.clone();
+            cloud_model_provider.update(cx, |cloud_model_provider, cx| {
+                let mut model = test_cloud_model(model_id.clone());
+                model.is_disabled = true;
+                model.disabled_reason = Some(disabled_reason.to_string());
+                cloud_model_provider.update_models(cloud_llm_client::ListModelsResponse {
+                    models: vec![model],
+                    default_model: Some(model_id.clone()),
+                    default_fast_model: None,
+                    recommended_models: vec![model_id],
+                });
+                cx.notify();
+            });
+        });
+
+        let model = cx.read(|cx| {
+            provider
+                .provided_models(cx)
+                .into_iter()
+                .next()
+                .expect("disabled model should be provided")
+        });
+        assert_eq!(
+            model.is_disabled(),
+            Some(language_model::DisabledReason::new(disabled_reason))
+        );
+    }
+
+    #[gpui::test]
     async fn sign_out_hides_cached_cloud_models(cx: &mut TestAppContext) {
         let (client, _user_store, provider) = cx.update(init_test);
         let (authenticate_tx, authenticate_rx) = futures::channel::oneshot::channel();
@@ -780,24 +840,7 @@ mod tests {
             let cloud_model_provider = provider.state.read(cx).provider.clone();
             cloud_model_provider.update(cx, |cloud_model_provider, cx| {
                 cloud_model_provider.update_models(cloud_llm_client::ListModelsResponse {
-                    models: vec![cloud_llm_client::LanguageModel {
-                        provider: cloud_llm_client::LanguageModelProvider::Anthropic,
-                        id: model_id.clone(),
-                        display_name: "Test Model".to_string(),
-                        is_latest: true,
-                        max_token_count: 200_000,
-                        max_token_count_in_max_mode: None,
-                        max_output_tokens: 8_192,
-                        supports_tools: true,
-                        supports_images: false,
-                        supports_thinking: false,
-                        supports_disabling_thinking: false,
-                        supports_fast_mode: false,
-                        supports_server_side_compaction: false,
-                        supported_effort_levels: Vec::new(),
-                        supports_streaming_tools: false,
-                        supports_parallel_tool_calls: false,
-                    }],
+                    models: vec![test_cloud_model(model_id.clone())],
                     default_model: Some(model_id.clone()),
                     default_fast_model: None,
                     recommended_models: vec![model_id],
