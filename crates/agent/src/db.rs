@@ -1,6 +1,6 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
 use acp_thread::UserMessageId;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -16,7 +16,7 @@ use sqlez::{
     connection::Connection,
     statement::Statement,
 };
-use std::sync::Arc;
+use std::{io::ErrorKind, path::PathBuf, sync::Arc};
 use ui::{App, SharedString};
 use util::path_list::PathList;
 use zed_env_vars::ZED_STATELESS;
@@ -53,7 +53,7 @@ impl From<&DbThreadMetadata> for acp_thread::AgentSessionInfo {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DbThread {
     pub title: SharedString,
-    pub messages: Vec<DbMessage>,
+    pub messages: Vec<Arc<DbMessage>>,
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub detailed_summary: Option<SharedString>,
@@ -81,6 +81,44 @@ pub struct DbThread {
     pub draft_prompt: Option<Vec<acp::ContentBlock>>,
     #[serde(default)]
     pub ui_scroll_position: Option<SerializedScrollPosition>,
+    #[serde(default)]
+    pub sandboxed_terminal_temp_dir: Option<PathBuf>,
+    /// Sandbox escalations the user approved "for the rest of this thread".
+    /// Persisted so reopening a thread keeps its grants. See
+    /// [`crate::sandboxing::ThreadSandboxGrants`].
+    #[serde(default)]
+    pub sandbox_grants: DbSandboxGrants,
+}
+
+/// Serialized form of the sandbox permissions the user granted "for the rest of
+/// this thread" (the "Allow for this thread" prompt option). Stored inside the
+/// thread blob; round-trips with [`crate::sandboxing::ThreadSandboxGrants`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DbSandboxGrants {
+    /// Canonicalized paths granted write access; each covers its whole subtree.
+    #[serde(default)]
+    pub write_paths: Vec<PathBuf>,
+    /// Host patterns granted network access, in canonical string form (e.g.
+    /// `github.com`, `*.npmjs.org`). Parsed back into patterns on load.
+    #[serde(default)]
+    pub network_hosts: Vec<String>,
+    /// Whether arbitrary-host network access was granted.
+    #[serde(default)]
+    pub network_any_host: bool,
+    /// Whether unrestricted filesystem writes (the broad escape hatch) were
+    /// granted.
+    #[serde(default)]
+    pub allow_fs_write_all: bool,
+    /// Whether access to protected Git directories (`.git`) was granted.
+    #[serde(default)]
+    pub allow_git_access: bool,
+    /// Whether the model-requested fully-unsandboxed escape was granted.
+    #[serde(default)]
+    pub unsandboxed: bool,
+    /// Whether running commands unsandboxed was allowed because the OS sandbox
+    /// could not be created (the fallback prompt's "for this thread" option).
+    #[serde(default)]
+    pub sandbox_fallback: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -92,7 +130,7 @@ pub struct SerializedScrollPosition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedThread {
     pub title: SharedString,
-    pub messages: Vec<DbMessage>,
+    pub messages: Vec<Arc<DbMessage>>,
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub model: Option<DbLanguageModel>,
@@ -130,6 +168,8 @@ impl SharedThread {
             thinking_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,
+            sandboxed_terminal_temp_dir: None,
+            sandbox_grants: DbSandboxGrants::default(),
         }
     }
 
@@ -148,6 +188,10 @@ impl SharedThread {
 
 impl DbThread {
     pub const VERSION: &'static str = "0.3.0";
+
+    pub fn to_markdown(&self) -> String {
+        crate::messages_to_markdown(&self.messages)
+    }
 
     pub fn from_json(json: &[u8]) -> Result<Self> {
         let saved_thread_json = serde_json::from_slice::<serde_json::Value>(json)?;
@@ -206,7 +250,7 @@ impl DbThread {
                     crate::Message::User(UserMessage {
                         // MessageId from old format can't be meaningfully converted, so generate a new one
                         id,
-                        content,
+                        content: Arc::from(content),
                     })
                 }
                 language_model::Role::Assistant => {
@@ -285,7 +329,7 @@ impl DbThread {
                 }
             };
 
-            messages.push(message);
+            messages.push(Arc::new(message));
         }
 
         Ok(Self {
@@ -309,6 +353,8 @@ impl DbThread {
             thinking_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,
+            sandboxed_terminal_temp_dir: None,
+            sandbox_grants: DbSandboxGrants::default(),
         })
     }
 }
@@ -569,15 +615,7 @@ impl ThreadsDatabase {
 
             let rows = select(id.0)?;
             if let Some((data_type, data)) = rows.into_iter().next() {
-                let json_data = match data_type {
-                    DataType::Zstd => {
-                        let decompressed = zstd::decode_all(&data[..])?;
-                        String::from_utf8(decompressed)?
-                    }
-                    DataType::Json => String::from_utf8(data)?,
-                };
-                let thread = DbThread::from_json(json_data.as_bytes())?;
-                Ok(Some(thread))
+                Ok(Some(Self::deserialize_thread(data_type, data)?))
             } else {
                 Ok(None)
             }
@@ -596,17 +634,71 @@ impl ThreadsDatabase {
             .spawn(async move { Self::save_thread_sync(&connection, id, thread, &folder_paths) })
     }
 
+    fn deserialize_thread(data_type: DataType, data: Vec<u8>) -> Result<DbThread> {
+        let json_data = match data_type {
+            DataType::Zstd => {
+                let decompressed = zstd::decode_all(&data[..])?;
+                String::from_utf8(decompressed)?
+            }
+            DataType::Json => String::from_utf8(data)?,
+        };
+        DbThread::from_json(json_data.as_bytes())
+    }
+
+    fn sandboxed_terminal_temp_dir(data_type: DataType, data: Vec<u8>) -> Option<PathBuf> {
+        match Self::deserialize_thread(data_type, data) {
+            Ok(thread) => thread.sandboxed_terminal_temp_dir,
+            Err(error) => {
+                log::warn!("failed to deserialize thread before deleting it: {error:#}");
+                None
+            }
+        }
+    }
+
+    fn remove_sandboxed_terminal_temp_dir(temp_dir: PathBuf) {
+        match std::fs::remove_dir_all(&temp_dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => {
+                log::warn!(
+                    "failed to remove sandboxed terminal temp directory {}: {error}",
+                    temp_dir.display()
+                );
+            }
+        }
+    }
+
     pub fn delete_thread(&self, id: acp::SessionId) -> Task<Result<()>> {
         let connection = self.connection.clone();
 
         self.executor.spawn(async move {
-            let connection = connection.lock();
+            let sandboxed_terminal_temp_dir = {
+                let connection = connection.lock();
 
-            let mut delete = connection.exec_bound::<Arc<str>>(indoc! {"
-                DELETE FROM threads WHERE id = ?
-            "})?;
+                let mut select =
+                    connection.select_bound::<Arc<str>, (DataType, Vec<u8>)>(indoc! {"
+                    SELECT data_type, data FROM threads WHERE id = ? LIMIT 1
+                "})?;
 
-            delete(id.0)?;
+                let sandboxed_terminal_temp_dir = select(id.0.clone())?
+                    .into_iter()
+                    .next()
+                    .and_then(|(data_type, data)| {
+                        Self::sandboxed_terminal_temp_dir(data_type, data)
+                    });
+
+                let mut delete = connection.exec_bound::<Arc<str>>(indoc! {"
+                    DELETE FROM threads WHERE id = ?
+                "})?;
+
+                delete(id.0)?;
+
+                sandboxed_terminal_temp_dir
+            };
+
+            if let Some(temp_dir) = sandboxed_terminal_temp_dir {
+                Self::remove_sandboxed_terminal_temp_dir(temp_dir);
+            }
 
             Ok(())
         })
@@ -616,13 +708,32 @@ impl ThreadsDatabase {
         let connection = self.connection.clone();
 
         self.executor.spawn(async move {
-            let connection = connection.lock();
+            let sandboxed_terminal_temp_dirs = {
+                let connection = connection.lock();
 
-            let mut delete = connection.exec_bound::<()>(indoc! {"
-                DELETE FROM threads
-            "})?;
+                let mut select = connection.select_bound::<(), (DataType, Vec<u8>)>(indoc! {"
+                    SELECT data_type, data FROM threads
+                "})?;
 
-            delete(())?;
+                let sandboxed_terminal_temp_dirs = select(())?
+                    .into_iter()
+                    .filter_map(|(data_type, data)| {
+                        Self::sandboxed_terminal_temp_dir(data_type, data)
+                    })
+                    .collect::<Vec<_>>();
+
+                let mut delete = connection.exec_bound::<()>(indoc! {"
+                    DELETE FROM threads
+                "})?;
+
+                delete(())?;
+
+                sandboxed_terminal_temp_dirs
+            };
+
+            for temp_dir in sandboxed_terminal_temp_dirs {
+                Self::remove_sandboxed_terminal_temp_dir(temp_dir);
+            }
 
             Ok(())
         })
@@ -694,6 +805,8 @@ mod tests {
             thinking_effort: None,
             draft_prompt: None,
             ui_scroll_position: None,
+            sandboxed_terminal_temp_dir: None,
+            sandbox_grants: DbSandboxGrants::default(),
         }
     }
 
@@ -795,6 +908,127 @@ mod tests {
             db_thread.draft_prompt.is_none(),
             "Legacy threads without draft_prompt field should default to None"
         );
+    }
+
+    #[test]
+    fn test_sandboxed_terminal_temp_dir_defaults_to_none() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert!(
+            db_thread.sandboxed_terminal_temp_dir.is_none(),
+            "Legacy threads without sandboxed_terminal_temp_dir should default to None"
+        );
+    }
+
+    #[test]
+    fn test_sandbox_grants_default_when_absent() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert_eq!(
+            db_thread.sandbox_grants,
+            DbSandboxGrants::default(),
+            "Legacy threads without sandbox_grants should default to empty grants"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sandbox_grants_roundtrip_through_save_load(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("sandbox-grants-thread");
+        let mut thread = make_thread(
+            "Sandbox Grants Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        let grants = DbSandboxGrants {
+            write_paths: vec![PathBuf::from("/tmp/build")],
+            network_hosts: vec!["github.com".to_string(), "*.npmjs.org".to_string()],
+            network_any_host: false,
+            allow_git_access: true,
+            allow_fs_write_all: false,
+            unsandboxed: true,
+            sandbox_fallback: true,
+        };
+        thread.sandbox_grants = grants.clone();
+
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(thread_id)
+            .await
+            .unwrap()
+            .expect("thread should exist");
+        assert_eq!(loaded.sandbox_grants, grants);
+    }
+
+    #[gpui::test]
+    async fn test_sandboxed_terminal_temp_dir_roundtrips_through_save_load(
+        cx: &mut TestAppContext,
+    ) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("sandbox-temp-dir-thread");
+        let temp_dir = tempfile::Builder::new()
+            .prefix("zed-agent-terminal-test-")
+            .tempdir()
+            .unwrap()
+            .keep();
+        let mut thread = make_thread(
+            "Sandbox Temp Dir Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        thread.sandboxed_terminal_temp_dir = Some(temp_dir.clone());
+
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(thread_id)
+            .await
+            .unwrap()
+            .expect("thread should exist");
+        assert_eq!(loaded.sandboxed_terminal_temp_dir, Some(temp_dir.clone()));
+        std::fs::remove_dir_all(temp_dir).unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_delete_thread_removes_sandboxed_terminal_temp_dir(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("sandbox-temp-dir-delete-thread");
+        let temp_dir = tempfile::Builder::new()
+            .prefix("zed-agent-terminal-test-")
+            .tempdir()
+            .unwrap()
+            .keep();
+        std::fs::write(temp_dir.join("sentinel"), b"content").unwrap();
+        let mut thread = make_thread(
+            "Sandbox Temp Dir Delete Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        thread.sandboxed_terminal_temp_dir = Some(temp_dir.clone());
+
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+        database.delete_thread(thread_id).await.unwrap();
+
+        assert!(!temp_dir.exists());
     }
 
     #[gpui::test]

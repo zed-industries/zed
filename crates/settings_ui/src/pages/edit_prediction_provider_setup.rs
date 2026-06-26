@@ -311,9 +311,10 @@ fn render_api_key_provider(
                         }),
                 )
                 .child(
-                    SettingsInputField::new()
+                    SettingsInputField::new(format!("{}-api-key-input", title))
                         .tab_index(0)
                         .with_placeholder("xxxxxxxxxxxxxxxxxxxx")
+                        .aria_label(format!("{} API Key", title))
                         .on_confirm(move |api_key, _window, cx| {
                             write_key(api_key.filter(|key| !key.is_empty()), cx);
                         }),
@@ -362,6 +363,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             title: "API URL",
             description: "The base URL of your Ollama server.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -395,6 +397,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             title: "Model",
             description: "The Ollama model to use for edit predictions.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -428,6 +431,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             title: "Prompt Format",
             description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -458,6 +462,7 @@ fn ollama_settings() -> Box<[SettingsPageItem]> {
             title: "Max Output Tokens",
             description: "The maximum number of tokens to generate.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -493,6 +498,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
             title: "API URL",
             description: "The URL of your OpenAI-compatible server's completions API.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -526,6 +532,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
             title: "Model",
             description: "The model string to pass to the OpenAI-compatible server.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -559,6 +566,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
             title: "Prompt Format",
             description: "The prompt format to use when requesting predictions. Set to Infer to have the format inferred based on the model name.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -589,6 +597,7 @@ fn open_ai_compatible_settings() -> Box<[SettingsPageItem]> {
             title: "Max Output Tokens",
             description: "The maximum number of tokens to generate.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -624,6 +633,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
             title: "API URL",
             description: "The API URL to use for Codestral.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -657,6 +667,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
             title: "Max Tokens",
             description: "The maximum number of tokens to generate.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project
@@ -687,6 +698,7 @@ fn codestral_settings() -> Box<[SettingsPageItem]> {
             title: "Model",
             description: "The Codestral model id to use.",
             field: Box::new(SettingField {
+                organization_override: None,
                 pick: |settings| {
                     settings
                         .project

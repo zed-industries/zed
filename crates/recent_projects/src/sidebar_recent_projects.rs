@@ -55,6 +55,8 @@ impl SidebarRecentProjects {
                 Picker::list(delegate, window, cx)
                     .list_measure_all()
                     .show_scrollbar(true)
+                    .initial_width(rems(18.))
+                    .popover()
             });
 
             let picker_focus_handle = picker.focus_handle(cx);
@@ -134,8 +136,12 @@ impl EventEmitter<DismissEvent> for SidebarRecentProjectsDelegate {}
 impl PickerDelegate for SidebarRecentProjectsDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "sidebar recent projects"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
-        "Search recent projects…".into()
+        "Search projects…".into()
     }
 
     fn render_editor(
@@ -203,7 +209,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
-                    .join("");
+                    .concat();
                 StringMatchCandidate::new(id, &combined_string)
             })
             .collect();
@@ -368,8 +374,10 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .child(
                     h_flex()
+                        .w_full()
+                        .min_w_0()
                         .gap_3()
-                        .flex_grow()
+                        .flex_grow_1()
                         .when(self.has_any_non_local_projects, |this| {
                             this.child(Icon::new(icon).color(Color::Muted))
                         })
@@ -399,7 +407,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child({
                     let open_action = workspace::Open {
-                        create_new_window: false,
+                        create_new_window: Some(false),
                     };
 
                     ButtonLike::new("open_local_folder")
@@ -408,7 +416,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                                 .w_full()
                                 .gap_1()
                                 .justify_between()
-                                .child(Label::new("Add Local Folders"))
+                                .child(Label::new("Open Local Folders"))
                                 .child(KeyBinding::for_action_in(&open_action, &focus_handle, cx)),
                         )
                         .on_click(cx.listener(move |_, _, window, cx| {
@@ -423,11 +431,11 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                                 .w_full()
                                 .gap_1()
                                 .justify_between()
-                                .child(Label::new("Add Remote Folder"))
+                                .child(Label::new("Open Remote Folder"))
                                 .child(KeyBinding::for_action(
                                     &OpenRemote {
                                         from_existing_connection: false,
-                                        create_new_window: false,
+                                        create_new_window: Some(false),
                                     },
                                     cx,
                                 )),
@@ -436,7 +444,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                             window.dispatch_action(
                                 OpenRemote {
                                     from_existing_connection: false,
-                                    create_new_window: false,
+                                    create_new_window: Some(false),
                                 }
                                 .boxed_clone(),
                                 cx,

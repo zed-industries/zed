@@ -20,14 +20,14 @@ actions!(git_picker, [ActivateBranchesTab, ActivateStashTab,]);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GitPickerTab {
     Branches,
-    Stash,
+    Stashes,
 }
 
 impl Display for GitPickerTab {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let label = match self {
             GitPickerTab::Branches => "Branches",
-            GitPickerTab::Stash => "Stash",
+            GitPickerTab::Stashes => "Stashes",
         };
         write!(f, "{}", label)
     }
@@ -85,7 +85,7 @@ impl GitPicker {
             GitPickerTab::Branches => {
                 self.ensure_branch_list(window, cx);
             }
-            GitPickerTab::Stash => {
+            GitPickerTab::Stashes => {
                 self.ensure_stash_list(window, cx);
             }
         }
@@ -140,7 +140,7 @@ impl GitPicker {
             });
 
             let subscription = cx.subscribe(&stash_list, |this, _, _: &DismissEvent, cx| {
-                if this.tab == GitPickerTab::Stash {
+                if this.tab == GitPickerTab::Stashes {
                     cx.emit(DismissEvent);
                 }
             });
@@ -153,8 +153,8 @@ impl GitPicker {
 
     fn activate_next_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.tab = match self.tab {
-            GitPickerTab::Branches => GitPickerTab::Stash,
-            GitPickerTab::Stash => GitPickerTab::Branches,
+            GitPickerTab::Branches => GitPickerTab::Stashes,
+            GitPickerTab::Stashes => GitPickerTab::Branches,
         };
         self.ensure_active_picker(window, cx);
         self.focus_active_picker(window, cx);
@@ -163,8 +163,8 @@ impl GitPicker {
 
     fn activate_previous_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.tab = match self.tab {
-            GitPickerTab::Branches => GitPickerTab::Stash,
-            GitPickerTab::Stash => GitPickerTab::Branches,
+            GitPickerTab::Branches => GitPickerTab::Stashes,
+            GitPickerTab::Stashes => GitPickerTab::Branches,
         };
         self.ensure_active_picker(window, cx);
         self.focus_active_picker(window, cx);
@@ -178,7 +178,7 @@ impl GitPicker {
                     branch_list.focus_handle(cx).focus(window, cx);
                 }
             }
-            GitPickerTab::Stash => {
+            GitPickerTab::Stashes => {
                 if let Some(stash_list) = &self.stash_list {
                     stash_list.focus_handle(cx).focus(window, cx);
                 }
@@ -213,9 +213,9 @@ impl GitPicker {
                         )
                     }),
                     ToggleButtonSimple::new(
-                        GitPickerTab::Stash.to_string(),
+                        GitPickerTab::Stashes.to_string(),
                         cx.listener(|this, _, window, cx| {
-                            this.tab = GitPickerTab::Stash;
+                            this.tab = GitPickerTab::Stashes;
                             this.ensure_active_picker(window, cx);
                             this.focus_active_picker(window, cx);
                             cx.notify();
@@ -236,7 +236,7 @@ impl GitPicker {
             .auto_width()
             .selected_index(match self.tab {
                 GitPickerTab::Branches => 0,
-                GitPickerTab::Stash => 1,
+                GitPickerTab::Stashes => 1,
             }),
         )
     }
@@ -251,7 +251,7 @@ impl GitPicker {
                 let branch_list = self.ensure_branch_list(window, cx);
                 branch_list.into_any_element()
             }
-            GitPickerTab::Stash => {
+            GitPickerTab::Stashes => {
                 let stash_list = self.ensure_stash_list(window, cx);
                 stash_list.into_any_element()
             }
@@ -272,7 +272,7 @@ impl GitPicker {
                     });
                 }
             }
-            GitPickerTab::Stash => {
+            GitPickerTab::Stashes => {
                 if let Some(stash_list) = &self.stash_list {
                     stash_list.update(cx, |list, cx| {
                         list.handle_modifiers_changed(ev, window, cx);
@@ -359,7 +359,7 @@ impl Focusable for GitPicker {
                     return branch_list.focus_handle(cx);
                 }
             }
-            GitPickerTab::Stash => {
+            GitPickerTab::Stashes => {
                 if let Some(stash_list) = &self.stash_list {
                     return stash_list.focus_handle(cx);
                 }
@@ -387,7 +387,7 @@ impl Render for GitPicker {
                 key_context.add("GitPicker");
                 match self.tab {
                     GitPickerTab::Branches => key_context.add("GitBranchSelector"),
-                    GitPickerTab::Stash => key_context.add("StashList"),
+                    GitPickerTab::Stashes => key_context.add("StashList"),
                 }
                 key_context
             })
@@ -412,7 +412,7 @@ impl Render for GitPicker {
                 cx.notify();
             }))
             .on_action(cx.listener(|this, _: &ActivateStashTab, window, cx| {
-                this.tab = GitPickerTab::Stash;
+                this.tab = GitPickerTab::Stashes;
                 this.ensure_active_picker(window, cx);
                 this.focus_active_picker(window, cx);
                 cx.notify();
@@ -423,7 +423,7 @@ impl Render for GitPicker {
                     .on_action(cx.listener(Self::handle_force_delete_branch))
                     .on_action(cx.listener(Self::handle_filter_remotes))
             })
-            .when(self.tab == GitPickerTab::Stash, |el| {
+            .when(self.tab == GitPickerTab::Stashes, |el| {
                 el.on_action(cx.listener(Self::handle_drop_stash))
                     .on_action(cx.listener(Self::handle_show_stash))
             })
@@ -447,7 +447,7 @@ pub fn open_stash(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    open_with_tab(workspace, GitPickerTab::Stash, window, cx);
+    open_with_tab(workspace, GitPickerTab::Stashes, window, cx);
 }
 
 fn open_with_tab(
@@ -493,6 +493,6 @@ pub fn register(workspace: &mut Workspace) {
         },
     );
     workspace.register_action(|workspace, _: &zed_actions::git::ViewStash, window, cx| {
-        open_with_tab(workspace, GitPickerTab::Stash, window, cx);
+        open_with_tab(workspace, GitPickerTab::Stashes, window, cx);
     });
 }

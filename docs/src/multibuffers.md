@@ -20,7 +20,7 @@ One of the superpowers Zed gives you is the ability to edit multiple files simul
 
 Editing a multibuffer is the same as editing a normal file. Changes you make will be reflected in the open copies of that file in the rest of the editor, and you can save all files with {#action workspace::Save} (bound to `cmd-s` on macOS, `ctrl-s` on Windows/Linux, or `:w` in Vim mode).
 
-When in a multibuffer, it is often useful to use multiple cursors to edit every file simultaneously. If you want to edit a few instances, you can select them with the mouse (`option-click` on macOS, `alt-click` on Window/Linux) or the keyboard. `cmd-d` on macOS, `ctrl-d` on Windows/Linux, or `gl` in Vim mode will select the next match of the word under the cursor.
+When in a multibuffer, it is often useful to use multiple cursors to edit every file simultaneously. If you want to edit a few instances, you can select them with the mouse (`option-click` on macOS, `alt-click` on Windows/Linux) or the keyboard. `cmd-d` on macOS, `ctrl-d` on Windows/Linux, or `gl` in Vim mode will select the next match of the word under the cursor.
 
 When you want to edit all matches you can select them by running the {#action editor::SelectAllMatches} command (`cmd-shift-l` on macOS, `ctrl-shift-l` on Windows/Linux, or `g a` in Vim mode).
 
@@ -40,6 +40,6 @@ If you have a language server installed, the diagnostics pane can show you all e
 
 ## Find References
 
-If you have a language server installed, you can find all references to the symbol under the cursor with the {#action editor::FindAllReferences} command (`cmd-click` on macOS, `ctrl-click` on Windows/Linux, or `g A` in Vim mode.
+If you have a language server installed, you can find all references to the symbol under the cursor with the {#action editor::FindAllReferences} command (`cmd-click` on macOS, `ctrl-click` on Windows/Linux, or `g A` in Vim mode).
 
 Depending on your language server, commands like {#action editor::GoToDefinition} and {#action editor::GoToTypeDefinition} will also open a multibuffer if there are multiple possible definitions.
