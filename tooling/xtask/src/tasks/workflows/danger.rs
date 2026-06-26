@@ -43,7 +43,9 @@ fn danger_job() -> NamedJob {
         job: Job::default()
             .with_repository_owner_guard()
             .runs_on(runners::LINUX_SMALL)
-            .add_step(steps::checkout_repo())
+            .add_step(steps::checkout_repo().with_ref(
+                "${{ !contains(github.event.pull_request.labels.*.name, 'PR:dangerfile') && 'main' || '' }}",
+            ))
             .add_step(steps::setup_pnpm())
             .add_step(
                 steps::setup_node()

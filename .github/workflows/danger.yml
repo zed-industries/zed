@@ -20,6 +20,7 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+        ref: ${{ !contains(github.event.pull_request.labels.*.name, 'PR:dangerfile') && 'main' || '' }}
     - name: steps::setup_pnpm
       uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
       with:
