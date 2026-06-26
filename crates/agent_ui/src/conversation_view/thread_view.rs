@@ -39,6 +39,7 @@ use ui::{
     ButtonLike, CalloutBorderPosition, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle,
     Tab,
 };
+use notifications::status_toast::StatusToast;
 use workspace::notifications::NotificationId;
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
@@ -1152,19 +1153,20 @@ impl ThreadView {
         }
     }
 
-    fn show_local_command_toast(&self, message: impl Into<String>, cx: &mut Context<Self>) {
+    fn show_local_command_toast(&self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
+        // Shown after thumbs up/down feedback, replacing the inline button state.
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
-            struct LocalCommandToast;
-            workspace.show_toast(
-                Toast::new(
-                    NotificationId::unique::<LocalCommandToast>(),
-                    message.into(),
-                ),
-                cx,
-            );
+            let toast = StatusToast::new(message, cx, |this, _cx| {
+                this.icon(
+                    Icon::new(IconName::Check)
+                        .size(IconSize::Small)
+                        .color(Color::Success),
+                )
+            });
+            workspace.toggle_status_toast(toast, cx);
         });
     }
 
