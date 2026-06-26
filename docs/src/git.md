@@ -142,6 +142,8 @@ From the panel, you can simply type a commit message and hit the commit button, 
 
 Entries can be staged using each individual entry's checkbox. All changes can be staged using the button at the top of the panel, or {#action git::StageAll}.
 
+To open a changed file in the editor without a diff view, right-click on the file in the Git Panel and select **View File**. Use **Open Diff** ({#kb menu::Confirm}) or **Open Diff (File)** to review changes in a diff view instead.
+
 <!-- Add media -->
 
 ## Committing

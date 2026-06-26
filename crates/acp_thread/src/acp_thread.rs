@@ -3,7 +3,7 @@ mod diff;
 mod mention;
 mod terminal;
 use action_log::{ActionLog, ActionLogTelemetry};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::{MaybeUndefined, v1 as acp};
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashSet;
 pub use connection::*;
@@ -163,13 +163,31 @@ impl SandboxPermission {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SandboxAuthorizationDetails {
     #[serde(default)]
-    pub network: bool,
+    pub command: Option<String>,
+    /// Specific hosts the command requested network access to, in canonical
+    /// form (`github.com`, `*.npmjs.org`). Empty when no specific hosts were
+    /// requested (see `network_all_hosts`).
+    #[serde(default)]
+    pub network_hosts: Vec<String>,
+    /// Whether the command requested access to any host ("arbitrary network
+    /// access"). The `network` alias deserializes the field this replaced —
+    /// a plain bool meaning "network access" — so details persisted by older
+    /// builds still render the network request.
+    #[serde(default, alias = "network")]
+    pub network_all_hosts: bool,
+    /// Whether the command requested access to protected `.git` directories.
+    #[serde(default)]
+    pub allow_git_access: bool,
     #[serde(default)]
     pub allow_fs_write_all: bool,
     #[serde(default)]
     pub unsandboxed: bool,
     #[serde(default)]
     pub write_paths: Vec<PathBuf>,
+    /// The agent-provided justification for requesting these permissions,
+    /// shown to the user (attributed to the agent) in the approval prompt.
+    #[serde(default)]
+    pub reason: String,
 }
 
 pub fn meta_with_sandbox_authorization(details: SandboxAuthorizationDetails) -> acp::Meta {
@@ -184,6 +202,64 @@ pub fn sandbox_authorization_details_from_meta(
 ) -> Option<SandboxAuthorizationDetails> {
     meta.as_ref()
         .and_then(|m| m.get(SANDBOX_AUTHORIZATION_META_KEY))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
+
+pub const SANDBOX_FALLBACK_AUTHORIZATION_META_KEY: &str = "sandbox_fallback_authorization";
+
+/// Stable `PermissionOption` id for the "Retry" choice in the sandbox
+/// *fallback* prompt (shown when the OS sandbox can't be created on this
+/// system). The remaining choices reuse the [`SandboxPermission`] ids.
+pub const SANDBOX_FALLBACK_RETRY_OPTION_ID: &str = "retry";
+
+/// Details shown when the OS sandbox could not be created for a command and
+/// the user is asked whether to run it without a sandbox. Distinct from
+/// [`SandboxAuthorizationDetails`] (a model-requested *escalation*): here the
+/// sandbox itself failed, so the prompt explains why and offers a retry.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SandboxFallbackAuthorizationDetails {
+    #[serde(default)]
+    pub command: Option<String>,
+    /// Human-readable reason the OS sandbox could not be created (for example,
+    /// "bwrap not found on PATH"), shown to the user so they can decide
+    /// whether to run the command without a sandbox.
+    #[serde(default)]
+    pub reason: String,
+}
+
+pub fn meta_with_sandbox_fallback_authorization(
+    details: SandboxFallbackAuthorizationDetails,
+) -> acp::Meta {
+    acp::Meta::from_iter([(
+        SANDBOX_FALLBACK_AUTHORIZATION_META_KEY.into(),
+        serde_json::to_value(details).unwrap_or_default(),
+    )])
+}
+
+pub fn sandbox_fallback_authorization_details_from_meta(
+    meta: &Option<acp::Meta>,
+) -> Option<SandboxFallbackAuthorizationDetails> {
+    meta.as_ref()
+        .and_then(|m| m.get(SANDBOX_FALLBACK_AUTHORIZATION_META_KEY))
+        .and_then(|v| serde_json::from_value(v.clone()).ok())
+}
+
+/// Meta key recording why the OS sandbox was not applied to a terminal tool
+/// call, even though sandboxing was active for the thread. The value is a
+/// serialized [`SandboxNotAppliedReason`]. Surfaced as a warning in the UI and
+/// used to explain the situation to both the user and the agent.
+pub const SANDBOX_NOT_APPLIED_META_KEY: &str = "sandbox_not_applied";
+
+pub fn meta_with_sandbox_not_applied(reason: &SandboxNotAppliedReason) -> acp::Meta {
+    acp::Meta::from_iter([(
+        SANDBOX_NOT_APPLIED_META_KEY.into(),
+        serde_json::to_value(reason).unwrap_or_default(),
+    )])
+}
+
+pub fn sandbox_not_applied_from_meta(meta: &Option<acp::Meta>) -> Option<SandboxNotAppliedReason> {
+    meta.as_ref()
+        .and_then(|m| m.get(SANDBOX_NOT_APPLIED_META_KEY))
         .and_then(|v| serde_json::from_value(v.clone()).ok())
 }
 
@@ -414,6 +490,11 @@ pub struct ToolCall {
     pub tool_name: Option<SharedString>,
     pub subagent_session_info: Option<SubagentSessionInfo>,
     pub sandbox_authorization_details: Option<SandboxAuthorizationDetails>,
+    pub sandbox_fallback_authorization_details: Option<SandboxFallbackAuthorizationDetails>,
+    /// Why this terminal command ran without the OS sandbox even though
+    /// sandboxing was active (see [`SANDBOX_NOT_APPLIED_META_KEY`]). `None` when
+    /// the command was sandboxed normally (or sandboxing was off).
+    pub sandbox_not_applied: Option<SandboxNotAppliedReason>,
 }
 
 impl ToolCall {
@@ -457,6 +538,9 @@ impl ToolCall {
         let subagent_session_info = subagent_session_info_from_meta(&tool_call.meta);
         let sandbox_authorization_details =
             sandbox_authorization_details_from_meta(&tool_call.meta);
+        let sandbox_fallback_authorization_details =
+            sandbox_fallback_authorization_details_from_meta(&tool_call.meta);
+        let sandbox_not_applied = sandbox_not_applied_from_meta(&tool_call.meta);
 
         let label = if tool_call.kind == acp::ToolKind::Execute {
             cx.new(|cx| Markdown::new_text(title.into(), cx))
@@ -478,6 +562,8 @@ impl ToolCall {
             tool_name,
             subagent_session_info,
             sandbox_authorization_details,
+            sandbox_fallback_authorization_details,
+            sandbox_not_applied,
         };
         Ok(result)
     }
@@ -516,6 +602,15 @@ impl ToolCall {
         if let Some(sandbox_authorization_details) = sandbox_authorization_details_from_meta(&meta)
         {
             self.sandbox_authorization_details = Some(sandbox_authorization_details);
+        }
+        if let Some(sandbox_fallback_authorization_details) =
+            sandbox_fallback_authorization_details_from_meta(&meta)
+        {
+            self.sandbox_fallback_authorization_details =
+                Some(sandbox_fallback_authorization_details);
+        }
+        if let Some(sandbox_not_applied) = sandbox_not_applied_from_meta(&meta) {
+            self.sandbox_not_applied = Some(sandbox_not_applied);
         }
 
         if let Some(title) = title {
@@ -862,6 +957,10 @@ pub enum ContentBlock {
     Markdown {
         markdown: Entity<Markdown>,
     },
+    EmbeddedResource {
+        resource: acp::EmbeddedResource,
+        markdown: Option<Entity<Markdown>>,
+    },
     ResourceLink {
         resource_link: acp::ResourceLink,
     },
@@ -896,6 +995,26 @@ impl ContentBlock {
         this
     }
 
+    pub fn new_tool_call_content(
+        block: acp::ContentBlock,
+        language_registry: &Arc<LanguageRegistry>,
+        path_style: PathStyle,
+        cx: &mut App,
+    ) -> Self {
+        match block {
+            acp::ContentBlock::Resource(resource) => {
+                if let Some((image, dimensions)) = Self::decode_embedded_resource_image(&resource) {
+                    Self::Image { image, dimensions }
+                } else {
+                    let markdown =
+                        Self::embedded_resource_markdown(&resource, language_registry, cx);
+                    Self::EmbeddedResource { resource, markdown }
+                }
+            }
+            block => Self::new(block, language_registry, path_style, cx),
+        }
+    }
+
     pub fn append(
         &mut self,
         block: acp::ContentBlock,
@@ -927,6 +1046,13 @@ impl ContentBlock {
             }
             (ContentBlock::ResourceLink { resource_link }, _) => {
                 let existing_content = Self::resource_link_md(&resource_link.uri, path_style);
+                let new_content = Self::block_string_contents(&block, path_style);
+                let combined = format!("{}\n{}", existing_content, new_content);
+                *self = Self::create_markdown_block(combined, language_registry, cx);
+            }
+            (ContentBlock::EmbeddedResource { resource, .. }, _) => {
+                let existing_content =
+                    Self::embedded_resource_string_contents(resource, path_style);
                 let new_content = Self::block_string_contents(&block, path_style);
                 let combined = format!("{}\n{}", existing_content, new_content);
                 *self = Self::create_markdown_block(combined, language_registry, cx);
@@ -969,12 +1095,29 @@ impl ContentBlock {
     fn decode_image(
         image_content: &acp::ImageContent,
     ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
+        Self::decode_image_data(&image_content.data, &image_content.mime_type)
+    }
+
+    fn decode_embedded_resource_image(
+        resource: &acp::EmbeddedResource,
+    ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
+        let acp::EmbeddedResourceResource::BlobResourceContents(blob) = &resource.resource else {
+            return None;
+        };
+        let mime_type = blob.mime_type.as_deref()?;
+        Self::decode_image_data(&blob.blob, mime_type)
+    }
+
+    fn decode_image_data(
+        data: &str,
+        mime_type: &str,
+    ) -> Option<(Arc<gpui::Image>, Option<gpui::Size<u32>>)> {
         use base64::Engine as _;
 
         let bytes = base64::engine::general_purpose::STANDARD
-            .decode(image_content.data.as_bytes())
+            .decode(data.as_bytes())
             .ok()?;
-        let format = gpui::ImageFormat::from_mime_type(&image_content.mime_type)?;
+        let format = gpui::ImageFormat::from_mime_type(mime_type)?;
         let dimensions = Self::image_dimensions(&bytes, format);
         Some((Arc::new(gpui::Image::from_bytes(format, bytes)), dimensions))
     }
@@ -1004,19 +1147,141 @@ impl ContentBlock {
         cx: &mut App,
     ) -> ContentBlock {
         ContentBlock::Markdown {
-            markdown: cx.new(|cx| {
-                Markdown::new_with_options(
-                    content.into(),
-                    Some(language_registry.clone()),
-                    None,
-                    MarkdownOptions {
-                        render_mermaid_diagrams: true,
-                        render_metadata_blocks: true,
-                        ..Default::default()
-                    },
-                    cx,
-                )
-            }),
+            markdown: Self::create_markdown(content, language_registry, cx),
+        }
+    }
+
+    fn create_markdown(
+        content: String,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Entity<Markdown> {
+        cx.new(|cx| {
+            Markdown::new_with_options(
+                content.into(),
+                Some(language_registry.clone()),
+                None,
+                MarkdownOptions {
+                    render_mermaid_diagrams: true,
+                    render_metadata_blocks: true,
+                    ..Default::default()
+                },
+                cx,
+            )
+        })
+    }
+
+    fn embedded_resource_markdown(
+        resource: &acp::EmbeddedResource,
+        language_registry: &Arc<LanguageRegistry>,
+        cx: &mut App,
+    ) -> Option<Entity<Markdown>> {
+        match &resource.resource {
+            acp::EmbeddedResourceResource::TextResourceContents(text) => Some(
+                Self::create_markdown(Self::text_resource_markdown(text), language_registry, cx),
+            ),
+            acp::EmbeddedResourceResource::BlobResourceContents(_) => None,
+            _ => None,
+        }
+    }
+
+    fn text_resource_markdown(resource: &acp::TextResourceContents) -> String {
+        match text_resource_render_mode(resource.mime_type.as_deref()) {
+            TextResourceRenderMode::Markdown => resource.text.clone(),
+            TextResourceRenderMode::CodeBlock(language) => {
+                Self::fenced_code_block(&resource.text, language)
+            }
+        }
+    }
+
+    pub fn text_content<'a>(&'a self, cx: &'a App) -> Option<&'a str> {
+        match self {
+            ContentBlock::Markdown { markdown } => Some(markdown.read(cx).source()),
+            ContentBlock::EmbeddedResource { resource, .. } => match &resource.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(text) => Some(&text.text),
+                acp::EmbeddedResourceResource::BlobResourceContents(_) => None,
+                _ => None,
+            },
+            ContentBlock::Empty
+            | ContentBlock::ResourceLink { .. }
+            | ContentBlock::Image { .. } => None,
+        }
+    }
+
+    fn fenced_code_block(text: &str, language: Option<&str>) -> String {
+        let fence_len = text
+            .as_bytes()
+            .chunk_by(|left, right| left == right)
+            .filter(|chunk| chunk.first() == Some(&b'`'))
+            .map(|chunk| chunk.len() + 1)
+            .max()
+            .unwrap_or(3)
+            .max(3);
+        let fence = "`".repeat(fence_len);
+
+        let mut markdown = String::new();
+        markdown.push_str(&fence);
+        if let Some(language) = language {
+            markdown.push_str(language);
+        }
+        markdown.push('\n');
+        markdown.push_str(text);
+        if !text.ends_with('\n') {
+            markdown.push('\n');
+        }
+        markdown.push_str(&fence);
+        markdown
+    }
+
+    fn embedded_resource_string_contents(
+        resource: &acp::EmbeddedResource,
+        path_style: PathStyle,
+    ) -> String {
+        match &resource.resource {
+            acp::EmbeddedResourceResource::TextResourceContents(text) => {
+                Self::resource_link_md(&text.uri, path_style)
+            }
+            acp::EmbeddedResourceResource::BlobResourceContents(blob) => {
+                Self::resource_link_md(&blob.uri, path_style)
+            }
+            _ => String::new(),
+        }
+    }
+
+    fn embedded_resource_text(resource: &acp::EmbeddedResource) -> &str {
+        match &resource.resource {
+            acp::EmbeddedResourceResource::TextResourceContents(text) => &text.text,
+            acp::EmbeddedResourceResource::BlobResourceContents(blob) => &blob.uri,
+            _ => "",
+        }
+    }
+
+    fn embedded_resource_label(resource: &acp::EmbeddedResource) -> &str {
+        match &resource.resource {
+            acp::EmbeddedResourceResource::TextResourceContents(text) => &text.uri,
+            acp::EmbeddedResourceResource::BlobResourceContents(blob) => &blob.uri,
+            _ => "",
+        }
+    }
+
+    pub fn embedded_resource(&self) -> Option<(&acp::EmbeddedResource, Option<&Entity<Markdown>>)> {
+        match self {
+            ContentBlock::EmbeddedResource { resource, markdown } => {
+                Some((resource, markdown.as_ref()))
+            }
+            _ => None,
+        }
+    }
+
+    pub fn visible_content(&self, cx: &App) -> bool {
+        match self {
+            ContentBlock::Empty => false,
+            ContentBlock::Markdown { markdown } => !markdown.read(cx).source().trim().is_empty(),
+            ContentBlock::EmbeddedResource { resource, markdown } => match markdown {
+                Some(markdown) => !markdown.read(cx).source().trim().is_empty(),
+                None => !Self::embedded_resource_text(resource).trim().is_empty(),
+            },
+            ContentBlock::ResourceLink { .. } | ContentBlock::Image { .. } => true,
         }
     }
 
@@ -1055,6 +1320,13 @@ impl ContentBlock {
         match self {
             ContentBlock::Empty => "",
             ContentBlock::Markdown { markdown } => markdown.read(cx).source(),
+            ContentBlock::EmbeddedResource { resource, markdown } => {
+                if let Some(markdown) = markdown {
+                    markdown.read(cx).source()
+                } else {
+                    Self::embedded_resource_label(resource)
+                }
+            }
             ContentBlock::ResourceLink { resource_link } => &resource_link.uri,
             ContentBlock::Image { .. } => "`Image`",
         }
@@ -1064,6 +1336,7 @@ impl ContentBlock {
         match self {
             ContentBlock::Empty => None,
             ContentBlock::Markdown { markdown } => Some(markdown),
+            ContentBlock::EmbeddedResource { markdown, .. } => markdown.as_ref(),
             ContentBlock::ResourceLink { .. } => None,
             ContentBlock::Image { .. } => None,
         }
@@ -1084,6 +1357,61 @@ impl ContentBlock {
     }
 }
 
+enum TextResourceRenderMode {
+    Markdown,
+    CodeBlock(Option<&'static str>),
+}
+
+fn text_resource_render_mode(mime_type: Option<&str>) -> TextResourceRenderMode {
+    let Some(mime_type) = mime_type else {
+        return TextResourceRenderMode::CodeBlock(None);
+    };
+    let Ok(mime) = mime_type.parse::<mime::Mime>() else {
+        return TextResourceRenderMode::CodeBlock(None);
+    };
+
+    let type_ = mime.type_().as_str();
+    let subtype = mime.subtype().as_str();
+    let suffix = mime.suffix().map(|suffix| suffix.as_str());
+
+    if matches!(
+        (type_, subtype),
+        ("text", "markdown") | ("text", "x-markdown")
+    ) {
+        return TextResourceRenderMode::Markdown;
+    }
+
+    let language = match (type_, subtype, suffix) {
+        (_, "json", _) | (_, _, Some("json")) => Some("json"),
+        (_, "xml", _) | (_, _, Some("xml")) => Some("xml"),
+        ("text", "html", _) => Some("html"),
+        ("text", "css", _) => Some("css"),
+        ("text", "csv", _) => Some("csv"),
+        ("text", "tab-separated-values", _) => Some("tsv"),
+        ("text", "javascript", _) | ("application", "javascript", _) => Some("javascript"),
+        ("application", "x-javascript", _) => Some("javascript"),
+        ("text", "typescript", _) | ("application", "typescript", _) => Some("typescript"),
+        ("text", "x-shellscript", _) | ("application", "x-shellscript", _) => Some("sh"),
+        ("application", "x-sh", _) => Some("sh"),
+        ("text", "x-python", _) => Some("python"),
+        ("text", "x-rust", _) => Some("rust"),
+        ("text", "x-go", _) => Some("go"),
+        ("text", "x-ruby", _) => Some("ruby"),
+        ("text", "x-c", _) => Some("c"),
+        // `mime` parses `text/x-c++` as subtype `x-c+` with an empty suffix.
+        ("text", "x-c+", Some("")) => Some("cpp"),
+        ("text", "plain", _) => None,
+        ("text", _, _) => None,
+        ("application", "graphql", _) => Some("graphql"),
+        ("application", "toml", _) => Some("toml"),
+        ("application", "yaml", _) | ("application", "x-yaml", _) => Some("yaml"),
+        (_, _, Some("yaml" | "yml")) => Some("yaml"),
+        _ => return TextResourceRenderMode::CodeBlock(None),
+    };
+
+    TextResourceRenderMode::CodeBlock(language)
+}
+
 #[derive(Debug)]
 pub enum ToolCallContent {
     ContentBlock(ContentBlock),
@@ -1100,14 +1428,14 @@ impl ToolCallContent {
         cx: &mut App,
     ) -> Result<Option<Self>> {
         match content {
-            acp::ToolCallContent::Content(acp::Content { content, .. }) => {
-                Ok(Some(Self::ContentBlock(ContentBlock::new(
+            acp::ToolCallContent::Content(acp::Content { content, .. }) => Ok(Some(
+                Self::ContentBlock(ContentBlock::new_tool_call_content(
                     content,
                     &language_registry,
                     path_style,
                     cx,
-                ))))
-            }
+                )),
+            )),
             acp::ToolCallContent::Diff(diff) => Ok(Some(Self::Diff(cx.new(|cx| {
                 Diff::finalized(
                     diff.path.to_string_lossy().into_owned(),
@@ -1843,7 +2171,7 @@ impl AcpThread {
                 self.update_plan(plan, cx);
             }
             acp::SessionUpdate::SessionInfoUpdate(info_update) => {
-                if let acp::MaybeUndefined::Value(title) = info_update.title {
+                if let MaybeUndefined::Value(title) = info_update.title {
                     let had_provisional = self.provisional_title.take().is_some();
                     let title: SharedString = title.into();
                     if self.title.as_ref() != Some(&title) {
@@ -2285,6 +2613,8 @@ impl AcpThread {
                     tool_name: None,
                     subagent_session_info: None,
                     sandbox_authorization_details: None,
+                    sandbox_fallback_authorization_details: None,
+                    sandbox_not_applied: None,
                 };
                 self.push_entry(AgentThreadEntry::ToolCall(failed_tool_call), cx);
                 return Ok(());
@@ -2559,6 +2889,19 @@ impl AcpThread {
         }))
     }
 
+    pub fn cancel_tool_call_authorization(&mut self, id: &acp::ToolCallId, cx: &mut Context<Self>) {
+        let Some((ix, call)) = self.tool_call_mut(id) else {
+            return;
+        };
+        if !matches!(call.status, ToolCallStatus::WaitingForConfirmation { .. }) {
+            return;
+        }
+
+        call.status = ToolCallStatus::Canceled;
+        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+        cx.emit(AcpThreadEvent::ToolAuthorizationReceived(id.clone()));
+    }
+
     pub fn authorize_tool_call(
         &mut self,
         id: acp::ToolCallId,
@@ -2831,6 +3174,9 @@ impl AcpThread {
                             } else {
                                 log::error!("Max tokens reached. Usage: {:?}", this.token_usage);
                             }
+                            if is_same_turn {
+                                this.mark_pending_entries_as_canceled(cx);
+                            }
                             return Err(anyhow!(MaxOutputTokensError));
                         }
 
@@ -2893,7 +3239,9 @@ impl AcpThread {
                     }
                     Err(e) => {
                         Self::flush_streaming_text(&mut this.streaming_text_buffer, cx);
-
+                        if is_same_turn {
+                            this.mark_pending_entries_as_canceled(cx);
+                        }
                         this.had_error = true;
                         cx.emit(AcpThreadEvent::Error);
                         log::error!("Error in run turn: {:?}", e);
@@ -3384,20 +3732,75 @@ impl AcpThread {
                             .and_then(|r| r.read(cx).default_system_shell())
                     })
                     .unwrap_or_else(|| get_default_system_shell_preferring_bash());
-                let (task_command, task_args) =
-                    ShellBuilder::new(&Shell::Program(shell), is_windows)
+
+                // The sandbox owns the network proxy (for restricted-network
+                // policies) and injects the child's proxy env vars, returning
+                // the env to spawn with. On Windows, restricted host access is
+                // rejected inside the sandbox before command preparation.
+                #[cfg(target_os = "windows")]
+                let (task_command, task_args, task_env, sandbox, spawn_cwd) =
+                    if sandbox_wrap.is_some() {
+                        let (task_command, task_args) = task::ShellBuilder::new(
+                            &Shell::Program("/bin/sh".to_string()),
+                            false,
+                        )
+                        .non_interactive()
                         .redirect_stdin_to_dev_null()
                         .build(Some(command.clone()), &args);
-                let (task_command, task_args, sandbox_config) =
-                    apply_sandbox_wrap(task_command, task_args, sandbox_wrap)?;
+                        let wrap = cx.background_spawn(prepare_sandbox_wrap(
+                            task_command,
+                            task_args,
+                            cwd.clone(),
+                            sandbox_wrap,
+                            env,
+                        ));
+                        let timeout = cx.background_executor().timer(WSL_SANDBOX_WRAP_TIMEOUT);
+                        let (task_command, task_args, task_env, sandbox) = futures::select_biased! {
+                            result = wrap.fuse() => result?,
+                            _ = timeout.fuse() => return Err(anyhow::Error::new(
+                                sandbox::SandboxError::WslUnavailable(format!(
+                                    "WSL did not respond within {} seconds while preparing the sandboxed command",
+                                    WSL_SANDBOX_WRAP_TIMEOUT.as_secs()
+                                )),
+                            )),
+                        };
+                        (task_command, task_args, task_env, sandbox, None)
+                    } else {
+                        // No sandbox wrap means we're running unsandboxed, and
+                        // on Windows that deliberately changes the shell: the
+                        // sandboxed path runs under WSL's Linux bash, but this
+                        // fallback uses the host's `shell` against the native cwd.
+                        let (task_command, task_args) =
+                            ShellBuilder::new(&Shell::Program(shell), is_windows)
+                                .redirect_stdin_to_dev_null()
+                                .build(Some(command.clone()), &args);
+                        (task_command, task_args, env, None, cwd.clone())
+                    };
+
+                #[cfg(not(target_os = "windows"))]
+                let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
+                    let (task_command, task_args) =
+                        ShellBuilder::new(&Shell::Program(shell), is_windows)
+                            .redirect_stdin_to_dev_null()
+                            .build(Some(command.clone()), &args);
+                    let (task_command, task_args, task_env, sandbox) = prepare_sandbox_wrap(
+                        task_command,
+                        task_args,
+                        cwd.clone(),
+                        sandbox_wrap,
+                        env,
+                    )
+                    .await?;
+                    (task_command, task_args, task_env, sandbox, cwd.clone())
+                };
                 let terminal = project
                     .update(cx, |project, cx| {
                         project.create_terminal_task(
                             task::SpawnInTerminal {
                                 command: Some(task_command),
                                 args: task_args,
-                                cwd: cwd.clone(),
-                                env,
+                                cwd: spawn_cwd,
+                                env: task_env,
                                 ..Default::default()
                             },
                             cx,
@@ -3413,7 +3816,7 @@ impl AcpThread {
                         output_byte_limit.map(|l| l as usize),
                         terminal,
                         language_registry,
-                        sandbox_config,
+                        sandbox,
                         cx,
                     )
                 }))
@@ -3686,6 +4089,221 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[test]
+    fn text_resource_markdown_uses_mime_type_for_code_blocks() {
+        let shell = acp::TextResourceContents::new("echo 'hello from exec test'", "tool://preview")
+            .mime_type("text/x-shellscript".to_string());
+        assert_eq!(
+            ContentBlock::text_resource_markdown(&shell),
+            "```sh\necho 'hello from exec test'\n```"
+        );
+
+        let markdown = acp::TextResourceContents::new("**approval** requested", "tool://preview")
+            .mime_type("text/markdown".to_string());
+        assert_eq!(
+            ContentBlock::text_resource_markdown(&markdown),
+            "**approval** requested"
+        );
+
+        let plain = acp::TextResourceContents::new("plain preview", "tool://preview")
+            .mime_type("text/plain".to_string());
+        assert_eq!(
+            ContentBlock::text_resource_markdown(&plain),
+            "```\nplain preview\n```"
+        );
+
+        let cpp = acp::TextResourceContents::new("int main() {}", "tool://preview")
+            .mime_type("text/x-c++; charset=utf-8".to_string());
+        assert_eq!(
+            ContentBlock::text_resource_markdown(&cpp),
+            "```cpp\nint main() {}\n```"
+        );
+
+        let untyped = acp::TextResourceContents::new("# plain preview", "tool://preview");
+        assert_eq!(
+            ContentBlock::text_resource_markdown(&untyped),
+            "```\n# plain preview\n```"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_content_preserves_embedded_text_resource(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let content = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::TextResourceContents(
+                    acp::TextResourceContents::new("echo 'hello from exec test'", "tool://preview")
+                        .mime_type("text/x-shellscript".to_string()),
+                ),
+            ));
+
+            let block = ContentBlock::new_tool_call_content(
+                content,
+                &language_registry,
+                PathStyle::local(),
+                cx,
+            );
+
+            let ContentBlock::EmbeddedResource { resource, markdown } = &block else {
+                panic!("expected embedded resource block, got {block:?}");
+            };
+            match &resource.resource {
+                acp::EmbeddedResourceResource::TextResourceContents(text) => {
+                    assert_eq!(text.text, "echo 'hello from exec test'");
+                    assert_eq!(text.uri, "tool://preview");
+                    assert_eq!(text.mime_type.as_deref(), Some("text/x-shellscript"));
+                }
+                other => panic!("expected text resource contents, got {other:?}"),
+            }
+
+            let markdown = markdown
+                .as_ref()
+                .expect("text resources should have renderable markdown")
+                .read(cx)
+                .source()
+                .to_string();
+            assert_eq!(markdown, "```sh\necho 'hello from exec test'\n```");
+            assert_eq!(
+                block.to_markdown(cx),
+                "```sh\necho 'hello from exec test'\n```"
+            );
+            assert_eq!(block.text_content(cx), Some("echo 'hello from exec test'"));
+
+            let untyped = ContentBlock::new_tool_call_content(
+                acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                    acp::EmbeddedResourceResource::TextResourceContents(
+                        acp::TextResourceContents::new("# plain preview", "tool://preview"),
+                    ),
+                )),
+                &language_registry,
+                PathStyle::local(),
+                cx,
+            );
+            assert_eq!(untyped.to_markdown(cx), "```\n# plain preview\n```");
+            assert_eq!(untyped.text_content(cx), Some("# plain preview"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_content_renders_embedded_image_blob_resource(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let image_blob = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::BlobResourceContents(
+                    acp::BlobResourceContents::new(
+                        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+                        "tool://preview.png",
+                    )
+                    .mime_type("image/png".to_string()),
+                ),
+            ));
+
+            let block = ContentBlock::new_tool_call_content(
+                image_blob,
+                &language_registry,
+                PathStyle::local(),
+                cx,
+            );
+
+            let ContentBlock::Image { image, dimensions } = &block else {
+                panic!("expected image block, got {block:?}");
+            };
+            assert_eq!(image.format(), gpui::ImageFormat::Png);
+            assert_eq!(
+                dimensions.as_ref().map(|size| (size.width, size.height)),
+                Some((1, 1))
+            );
+            assert_eq!(block.to_markdown(cx), "`Image`");
+            assert_eq!(block.text_content(cx), None);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tool_call_content_falls_back_for_non_image_blob_resource(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            let language_registry =
+                Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
+            let archive_blob = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::BlobResourceContents(
+                    acp::BlobResourceContents::new("not an image", "tool://archive.bin")
+                        .mime_type("application/octet-stream".to_string()),
+                ),
+            ));
+
+            let block = ContentBlock::new_tool_call_content(
+                archive_blob,
+                &language_registry,
+                PathStyle::local(),
+                cx,
+            );
+
+            let ContentBlock::EmbeddedResource { resource, markdown } = &block else {
+                panic!("expected embedded resource block, got {block:?}");
+            };
+            assert!(markdown.is_none());
+            match &resource.resource {
+                acp::EmbeddedResourceResource::BlobResourceContents(blob) => {
+                    assert_eq!(blob.uri, "tool://archive.bin");
+                    assert_eq!(blob.mime_type.as_deref(), Some("application/octet-stream"));
+                }
+                other => panic!("expected blob resource contents, got {other:?}"),
+            }
+            assert_eq!(block.to_markdown(cx), "tool://archive.bin");
+            assert_eq!(block.text_content(cx), None);
+
+            let invalid_image_blob = acp::ContentBlock::Resource(acp::EmbeddedResource::new(
+                acp::EmbeddedResourceResource::BlobResourceContents(
+                    acp::BlobResourceContents::new("not-base64", "tool://preview.png")
+                        .mime_type("image/png".to_string()),
+                ),
+            ));
+            let invalid = ContentBlock::new_tool_call_content(
+                invalid_image_blob,
+                &language_registry,
+                PathStyle::local(),
+                cx,
+            );
+            let ContentBlock::EmbeddedResource { resource, markdown } = &invalid else {
+                panic!("expected embedded resource block, got {invalid:?}");
+            };
+            assert!(markdown.is_none());
+            assert_eq!(
+                ContentBlock::embedded_resource_label(resource),
+                "tool://preview.png"
+            );
+            assert_eq!(invalid.to_markdown(cx), "tool://preview.png");
+        });
+    }
+
+    #[test]
+    fn sandbox_authorization_details_deserialize_legacy_network_bool() {
+        // Older builds persisted `network: bool`; the `alias` on
+        // `network_all_hosts` must keep those details rendering as a
+        // network request rather than silently dropping it.
+        let details: SandboxAuthorizationDetails =
+            serde_json::from_value(json!({ "network": true })).unwrap();
+        assert!(details.network_all_hosts);
+        assert!(details.network_hosts.is_empty());
+
+        let details: SandboxAuthorizationDetails =
+            serde_json::from_value(json!({ "network": false })).unwrap();
+        assert!(!details.network_all_hosts);
     }
 
     #[gpui::test]
@@ -4962,6 +5580,60 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_cancel_tool_call_authorization_resolves_permission_request(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let tool_call_id = acp::ToolCallId::new("toolu_01cancelled_permission");
+        let permission_task = thread
+            .update(cx, |thread, cx| {
+                thread.request_tool_call_authorization(
+                    acp::ToolCall::new(tool_call_id.clone(), "Needs permission")
+                        .kind(acp::ToolKind::Execute)
+                        .status(acp::ToolCallStatus::Pending)
+                        .into(),
+                    PermissionOptions::Flat(vec![acp::PermissionOption::new(
+                        acp::PermissionOptionId::new("allow"),
+                        "Allow",
+                        acp::PermissionOptionKind::AllowOnce,
+                    )]),
+                    AuthorizationKind::PermissionGrant,
+                    cx,
+                )
+            })
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread.cancel_tool_call_authorization(&tool_call_id, cx);
+        });
+
+        thread.read_with(cx, |thread, _cx| {
+            let (_, tool_call) = thread
+                .tool_call(&tool_call_id)
+                .expect("tool call should exist");
+            assert!(matches!(tool_call.status, ToolCallStatus::Canceled));
+        });
+
+        match permission_task.await {
+            RequestPermissionOutcome::Cancelled => {}
+            RequestPermissionOutcome::Selected(_) => {
+                panic!("cancelled permission request should not select an outcome")
+            }
+        }
+    }
+
+    #[gpui::test]
     async fn test_terminal_tool_call_update_closes_open_permission_request(
         cx: &mut TestAppContext,
     ) {
@@ -5860,6 +6532,9 @@ mod tests {
                         ContentBlock::Empty => panic!("Expected markdown content, got empty"),
                         ContentBlock::ResourceLink { .. } => {
                             panic!("Expected markdown content, got resource link")
+                        }
+                        ContentBlock::EmbeddedResource { .. } => {
+                            panic!("Expected markdown content, got embedded resource")
                         }
                         ContentBlock::Image { .. } => {
                             panic!("Expected markdown content, got image")

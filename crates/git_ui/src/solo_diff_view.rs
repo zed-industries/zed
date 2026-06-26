@@ -659,6 +659,7 @@ impl Render for SoloDiffGitToolbar {
                 DiffStat::new("solo-diff-stat", stat.added as usize, stat.deleted as usize)
                     .into_any_element()
             }))
+            .child(Divider::vertical())
             .child(
                 h_group_sm()
                     .when(button_states.selection, |el| {
@@ -746,7 +747,7 @@ impl Render for SoloDiffGitToolbar {
             .child(vertical_divider())
             .child(
                 h_group_sm()
-                    .child(
+                    .child(if button_states.stage_file {
                         Button::new("stage-file", "Stage File")
                             .tooltip(Tooltip::for_action_title_in(
                                 "Stage file",
@@ -756,9 +757,8 @@ impl Render for SoloDiffGitToolbar {
                             .disabled(!button_states.stage_file)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.stage_file(window, cx)),
-                            ),
-                    )
-                    .child(
+                            )
+                    } else {
                         Button::new("unstage-file", "Unstage File")
                             .tooltip(Tooltip::for_action_title_in(
                                 "Unstage file",
@@ -768,9 +768,8 @@ impl Render for SoloDiffGitToolbar {
                             .disabled(!button_states.unstage_file)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.unstage_file(window, cx)),
-                            ),
-                    )
-                    .child(Divider::vertical())
+                            )
+                    })
                     .child(
                         Button::new("commit", "Commit")
                             .tooltip(Tooltip::for_action_title_in(

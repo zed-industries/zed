@@ -4665,6 +4665,43 @@ async fn test_newline_comments_with_multiple_delimiters(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+async fn test_newline_comments_with_brackets(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.tab_size = NonZeroU32::new(4)
+    });
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["// ".into()],
+            brackets: BracketPairConfig {
+                pairs: vec![BracketPair {
+                    start: "(".to_string(),
+                    end: ")".to_string(),
+                    close: false,
+                    surround: false,
+                    newline: true,
+                }],
+                ..BracketPairConfig::default()
+            },
+            ..LanguageConfig::default()
+        },
+        None,
+    ));
+
+    {
+        let mut cx = EditorTestContext::new(cx).await;
+        cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+        cx.set_state(indoc! {"
+        // (ˇ)
+    "});
+        cx.update_editor(|e, window, cx| e.newline(&Newline, window, cx));
+        cx.assert_editor_state(indoc! {"
+        // (
+        // ˇ)
+    "})
+    }
+}
+
+#[gpui::test]
 async fn test_newline_comments_repl_separators(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.tab_size = NonZeroU32::new(4)
@@ -13696,6 +13733,49 @@ async fn test_snippet_placeholder_choices(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_snippet_choices_menu_survives_completion_refresh(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (text, insertion_ranges) = marked_text_ranges(
+        indoc! {"
+            ˇ
+        "},
+        false,
+    );
+
+    let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    _ = editor.update_in(cx, |editor, window, cx| {
+        let snippet = Snippet::parse("type ${1|i32,u32|} = $2").unwrap();
+
+        editor
+            .insert_snippet(
+                &insertion_ranges
+                    .iter()
+                    .map(|range| MultiBufferOffset(range.start)..MultiBufferOffset(range.end))
+                    .collect::<Vec<_>>(),
+                snippet,
+                window,
+                cx,
+            )
+            .unwrap();
+
+        assert!(
+            editor.context_menu_visible(),
+            "Snippet choices menu should be visible after inserting the choice tabstop"
+        );
+
+        editor.open_or_update_completions_menu(None, None, false, window, cx);
+
+        assert!(
+            editor.context_menu_visible(),
+            "Snippet choices menu should remain visible after a completion refresh with an empty query"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_snippet_tabstop_navigation_with_placeholders(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -18323,6 +18403,58 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_completions_use_selection_head(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Disabled),
+            words_min_length: Some(0),
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions::default()),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let _completion_requests_handler =
+        cx.lsp
+            .server
+            .on_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+                panic!("LSP completions should not be queried when dealing with word completions")
+            });
+
+    cx.set_state(indoc! {"«applˇ»
+        applepie
+        banana
+        cherry
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.show_word_completions(&ShowWordCompletions, window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(
+                completion_menu_entries(menu),
+                &["applepie"],
+                "Completion query should use the selection head (`appl`), filtering to words with that prefix"
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_word_completions_usually_skip_digits(cx: &mut TestAppContext) {
     init_test(cx, |language_settings| {
         language_settings.defaults.completions = Some(CompletionSettingsContent {
@@ -21262,88 +21394,6 @@ async fn test_move_to_enclosing_bracket(cx: &mut TestAppContext) {
             function test() {
                 console.logˇ('test')
             }"},
-        &mut cx,
-    );
-}
-
-#[gpui::test]
-async fn test_select_inside_enclosing_bracket(cx: &mut TestAppContext) {
-    init_test(cx, |_| {});
-
-    let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
-
-    #[track_caller]
-    fn assert_after_runs(before: &str, after: &str, runs: usize, cx: &mut EditorLspTestContext) {
-        let _state_context = cx.set_state(before);
-        cx.run_until_parked();
-        for _ in 0..runs {
-            cx.update_editor(|editor, window, cx| {
-                editor.select_inside_enclosing_bracket(&SelectInsideEnclosingBracket, window, cx)
-            });
-        }
-        cx.run_until_parked();
-        cx.assert_editor_state(after);
-    }
-
-    #[track_caller]
-    fn assert(before: &str, after: &str, cx: &mut EditorLspTestContext) {
-        assert_after_runs(before, after, 1, cx);
-    }
-
-    assert("console.log(ˇvar);", "console.log(«varˇ»);", &mut cx);
-    assert("console.logˇ(var);", "console.log(«varˇ»);", &mut cx);
-    assert("console.log(var)ˇ;", "console.log(«varˇ»);", &mut cx);
-    assert(
-        "let numbers = [1, ˇ2, 3];",
-        "let numbers = [«1, 2, 3ˇ»];",
-        &mut cx,
-    );
-    assert(
-        "const object = { foo: ˇbar };",
-        "const object = {« foo: bar ˇ»};",
-        &mut cx,
-    );
-    assert(
-        r#"const doubleQuoted = "foo ˇbar";"#,
-        r#"const doubleQuoted = "«foo barˇ»";"#,
-        &mut cx,
-    );
-    assert(
-        "const singleQuoted = 'foo ˇbar';",
-        "const singleQuoted = '«foo barˇ»';",
-        &mut cx,
-    );
-    assert(
-        "const template = `foo ˇbar`;",
-        "const template = `«foo barˇ»`;",
-        &mut cx,
-    );
-    assert(
-        "let result = foo(bar(ˇbaz));",
-        "let result = foo(bar(«bazˇ»));",
-        &mut cx,
-    );
-    assert(
-        "let result = foo(«barˇ»(baz));",
-        "let result = foo(«bar(baz)ˇ»);",
-        &mut cx,
-    );
-    assert_after_runs(
-        "let result = foo(bar(ˇbaz));",
-        "let result = foo(«bar(baz)ˇ»);",
-        2,
-        &mut cx,
-    );
-    assert_after_runs(
-        r#"let result = (xx[xxx{xxˇx}] xx"xxx"xx);"#,
-        r#"let result = («xx[xxx{xxx}] xx"xxx"xxˇ»);"#,
-        3,
-        &mut cx,
-    );
-    assert("let plain = ˇvalue;", "let plain = ˇvalue;", &mut cx);
-    assert(
-        "foo(ˇone); bar(ˇtwo);",
-        "foo(«oneˇ»); bar(«twoˇ»);",
         &mut cx,
     );
 }
@@ -28898,6 +28948,10 @@ impl BookmarkTestContext {
         })
     }
 
+    fn assert_bookmarked_file_count(&self, expected_count: usize) {
+        assert_eq!(expected_count, self.all_bookmarks().len());
+    }
+
     fn assert_bookmark_rows(&self, expected_rows: Vec<u32>) {
         let abs_path = self.abs_path();
         let bookmarks = self.all_bookmarks();
@@ -28912,18 +28966,132 @@ impl BookmarkTestContext {
                 .get(&abs_path)
                 .unwrap()
                 .iter()
-                .map(|b| b.0)
+                .map(|b| b.row)
                 .collect();
             rows.sort();
             assert_eq!(expected_rows, rows);
         }
     }
 
-    fn cursor_row(&mut self) -> u32 {
+    fn assert_bookmark_labels(&self, expected_labels: Vec<(u32, &str)>) {
+        let abs_path = self.abs_path();
+        let bookmarks = self.all_bookmarks();
+        let mut labels: Vec<(u32, &str)> = bookmarks
+            .get(&abs_path)
+            .unwrap()
+            .iter()
+            .map(|bookmark| (bookmark.row, bookmark.label.as_str()))
+            .collect();
+        labels.sort_by_key(|(row, _)| *row);
+        assert_eq!(expected_labels, labels);
+    }
+
+    fn confirm_action_available(&mut self) -> bool {
+        self.cx
+            .update(|window, cx| window.is_action_available(&menu::Confirm, cx))
+    }
+
+    fn select_rows(&mut self, rows: &[u32]) {
+        assert!(!rows.is_empty(), "expected at least one row to select");
+
+        self.editor
+            .update_in(&mut self.cx, |editor: &mut Editor, window, cx| {
+                editor.change_selections(SelectionEffects::no_scroll(), window, cx, |selections| {
+                    selections.select_ranges(
+                        rows.iter()
+                            .copied()
+                            .map(|row| Point::new(row, 0)..Point::new(row, 0)),
+                    )
+                });
+            });
+    }
+
+    fn prompt_blocks(&mut self) -> Vec<(DisplayRow, u32)> {
         self.editor.update(&mut self.cx, |editor, cx| {
             let snapshot = editor.display_snapshot(cx);
-            editor.selections.newest::<Point>(&snapshot).head().row
+            let max_row = snapshot.max_point().row().next_row();
+
+            snapshot
+                .blocks_in_range(DisplayRow(0)..max_row)
+                .filter_map(|(row, block)| match block {
+                    crate::display_map::Block::Custom(_) => Some((row, block.height())),
+                    _ => None,
+                })
+                .collect()
         })
+    }
+
+    fn assert_prompt_block_count(&mut self, expected_count: usize) {
+        assert_eq!(expected_count, self.prompt_blocks().len());
+    }
+
+    fn draw_window(&mut self) {
+        self.cx.update(|window, cx| {
+            window.refresh();
+            let _ = window.draw(cx);
+        });
+    }
+
+    fn focus_bookmark_prompt_block(&mut self, block_index: usize) {
+        self.draw_window();
+
+        let prompt_blocks = self.prompt_blocks();
+        let (block_row, block_height) = *prompt_blocks
+            .get(block_index)
+            .expect("expected bookmark prompt block");
+
+        let click_position =
+            self.editor
+                .update_in(&mut self.cx, |editor: &mut Editor, window, cx| {
+                    let snapshot = editor.snapshot(window, cx);
+                    let block_top = DisplayPoint::new(block_row, 0);
+                    let relative_block_top = editor
+                        .display_to_pixel_point(block_top, &snapshot, window, cx)
+                        .expect("expected prompt block to be visible");
+                    let line_height = editor
+                        .style(cx)
+                        .text
+                        .line_height_in_pixels(window.rem_size());
+                    let editor_origin = editor
+                        .last_position_map
+                        .as_ref()
+                        .expect("expected editor position map")
+                        .text_hitbox
+                        .bounds
+                        .origin;
+                    let editor_center_x = editor
+                        .last_bounds
+                        .expect("expected editor bounds")
+                        .center()
+                        .x;
+
+                    gpui::Point {
+                        x: editor_center_x,
+                        y: editor_origin.y
+                            + relative_block_top.y
+                            + line_height * (block_height as f32 / 2.),
+                    }
+                });
+
+        self.cx
+            .simulate_click(click_position, gpui::Modifiers::none());
+        self.cx.run_until_parked();
+
+        assert!(
+            self.confirm_action_available(),
+            "expected bookmark prompt block to be focused"
+        );
+    }
+
+    fn confirm_bookmark_prompt_at_block_index(&mut self, block_index: usize, label: &str) {
+        // Confirming a PromptEditor returns focus to the parent editor, so each remaining
+        // prompt block must be focused explicitly before typing into it.
+        self.focus_bookmark_prompt_block(block_index);
+        self.confirm_bookmark_prompt(label);
+    }
+
+    fn cursor_row(&mut self) -> u32 {
+        self.cursor_point().row
     }
 
     fn cursor_point(&mut self) -> Point {
@@ -28950,10 +29118,23 @@ impl BookmarkTestContext {
             });
     }
 
+    fn confirm_bookmark_prompt(&mut self, label: &str) {
+        if !label.is_empty() {
+            self.cx.simulate_input(label);
+        }
+        self.cx.dispatch_action(menu::Confirm);
+        self.cx.run_until_parked();
+    }
+
+    fn add_bookmark_with_label(&mut self, label: &str) {
+        self.toggle_bookmark();
+        self.confirm_bookmark_prompt(label);
+    }
+
     fn toggle_bookmarks_at_rows(&mut self, rows: &[u32]) {
         for &row in rows {
             self.move_to_row(row);
-            self.toggle_bookmark();
+            self.add_bookmark_with_label("");
         }
     }
 
@@ -28977,32 +29158,26 @@ async fn test_bookmark_toggling(cx: &mut TestAppContext) {
     let mut ctx =
         BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
 
+    ctx.add_bookmark_with_label("");
     ctx.editor
         .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
-            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
             editor.move_to_end(&MoveToEnd, window, cx);
-            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
         });
+    ctx.add_bookmark_with_label("");
 
-    assert_eq!(1, ctx.all_bookmarks().len());
+    ctx.assert_bookmarked_file_count(1);
     ctx.assert_bookmark_rows(vec![0, 3]);
 
-    ctx.editor
-        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
-            editor.move_to_beginning(&MoveToBeginning, window, cx);
-            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-        });
+    ctx.move_to_row(0);
+    ctx.toggle_bookmark();
 
-    assert_eq!(1, ctx.all_bookmarks().len());
+    ctx.assert_bookmarked_file_count(1);
     ctx.assert_bookmark_rows(vec![3]);
 
-    ctx.editor
-        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
-            editor.move_to_end(&MoveToEnd, window, cx);
-            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-        });
+    ctx.move_to_row(3);
+    ctx.toggle_bookmark();
 
-    assert_eq!(0, ctx.all_bookmarks().len());
+    ctx.assert_bookmarked_file_count(0);
     ctx.assert_bookmark_rows(vec![]);
 }
 
@@ -29011,29 +29186,51 @@ async fn test_bookmark_toggling_with_multiple_selections(cx: &mut TestAppContext
     let mut ctx =
         BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
 
-    ctx.editor
-        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
-            editor.move_to_beginning(&MoveToBeginning, window, cx);
-            editor.add_selection_below(&Default::default(), window, cx);
-            editor.add_selection_below(&Default::default(), window, cx);
-            editor.add_selection_below(&Default::default(), window, cx);
-        });
-
+    ctx.select_rows(&[0, 1, 2]);
     ctx.toggle_bookmark();
 
-    assert_eq!(1, ctx.all_bookmarks().len());
-    ctx.assert_bookmark_rows(vec![0, 1, 2, 3]);
+    ctx.assert_prompt_block_count(3);
+    ctx.assert_bookmarked_file_count(0);
 
-    ctx.editor
-        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
-            editor.move_to_beginning(&MoveToBeginning, window, cx);
-            editor.add_selection_below(&Default::default(), window, cx);
-            editor.add_selection_below(&Default::default(), window, cx);
-            editor.add_selection_below(&Default::default(), window, cx);
-            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
-        });
+    ctx.confirm_bookmark_prompt_at_block_index(0, "first label");
+    ctx.assert_prompt_block_count(2);
+    ctx.confirm_bookmark_prompt_at_block_index(0, "second label");
+    ctx.assert_prompt_block_count(1);
+    ctx.confirm_bookmark_prompt_at_block_index(0, "third label");
+    ctx.assert_prompt_block_count(0);
 
-    assert_eq!(0, ctx.all_bookmarks().len());
+    ctx.assert_bookmarked_file_count(1);
+    ctx.assert_bookmark_labels(vec![
+        (0, "first label"),
+        (1, "second label"),
+        (2, "third label"),
+    ]);
+
+    ctx.select_rows(&[0, 1, 2, 3]);
+    ctx.toggle_bookmark();
+
+    ctx.assert_prompt_block_count(1);
+    ctx.assert_bookmark_labels(vec![
+        (0, "first label"),
+        (1, "second label"),
+        (2, "third label"),
+    ]);
+
+    ctx.confirm_bookmark_prompt_at_block_index(0, "fourth label");
+
+    ctx.assert_prompt_block_count(0);
+    ctx.assert_bookmark_labels(vec![
+        (0, "first label"),
+        (1, "second label"),
+        (2, "third label"),
+        (3, "fourth label"),
+    ]);
+
+    ctx.select_rows(&[0, 1, 2, 3]);
+    ctx.toggle_bookmark();
+
+    ctx.assert_prompt_block_count(0);
+    ctx.assert_bookmarked_file_count(0);
     ctx.assert_bookmark_rows(vec![]);
 }
 
@@ -29045,8 +29242,8 @@ async fn test_bookmark_toggle_deduplicates_by_row(cx: &mut TestAppContext) {
     ctx.editor
         .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
             editor.move_to_beginning(&MoveToBeginning, window, cx);
-            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
         });
+    ctx.add_bookmark_with_label("");
 
     ctx.assert_bookmark_rows(vec![0]);
 
@@ -29059,8 +29256,8 @@ async fn test_bookmark_toggle_deduplicates_by_row(cx: &mut TestAppContext) {
                 window,
                 cx,
             );
-            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
         });
+    ctx.toggle_bookmark();
 
     ctx.assert_bookmark_rows(vec![]);
 }
@@ -29071,7 +29268,7 @@ async fn test_bookmark_survives_edits(cx: &mut TestAppContext) {
         BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
 
     ctx.move_to_row(2);
-    ctx.toggle_bookmark();
+    ctx.add_bookmark_with_label("");
     ctx.assert_bookmark_rows(vec![2]);
 
     ctx.editor
@@ -29136,6 +29333,45 @@ async fn test_bookmark_not_available_in_single_line_editor(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn test_edit_bookmark_does_not_open_prompt_without_existing_bookmark(
+    cx: &mut TestAppContext,
+) {
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
+
+    assert!(!ctx.confirm_action_available());
+
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.edit_bookmark(&actions::EditBookmark, window, cx);
+        });
+
+    assert!(!ctx.confirm_action_available());
+    ctx.assert_bookmark_rows(vec![]);
+}
+
+#[gpui::test]
+async fn test_edit_bookmark_updates_label_after_confirmation(cx: &mut TestAppContext) {
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
+
+    ctx.add_bookmark_with_label("old label");
+    ctx.assert_bookmark_labels(vec![(0, "old label")]);
+
+    ctx.editor
+        .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
+            editor.edit_bookmark(&actions::EditBookmark, window, cx);
+        });
+
+    assert!(ctx.confirm_action_available());
+    ctx.cx.dispatch_action(SelectAll);
+    ctx.cx.simulate_input("new label");
+    ctx.cx.dispatch_action(menu::Confirm);
+
+    ctx.assert_bookmark_labels(vec![(0, "new label")]);
+}
+
+#[gpui::test]
 async fn test_bookmark_navigation_lands_at_column_zero(cx: &mut TestAppContext) {
     let mut ctx =
         BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
@@ -29159,7 +29395,7 @@ async fn test_bookmark_navigation_lands_at_column_zero(cx: &mut TestAppContext) 
         "Cursor should be at the 11th column before toggling bookmark, got column {column_before_toggle}"
     );
 
-    ctx.toggle_bookmark();
+    ctx.add_bookmark_with_label("");
 
     ctx.editor
         .update_in(&mut ctx.cx, |editor: &mut Editor, window, cx| {
@@ -29194,8 +29430,8 @@ async fn test_bookmark_set_from_nonzero_column_toggles_off_from_column_zero(
                 window,
                 cx,
             );
-            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
         });
+    ctx.add_bookmark_with_label("");
 
     ctx.assert_bookmark_rows(vec![1]);
 
@@ -29209,8 +29445,8 @@ async fn test_bookmark_set_from_nonzero_column_toggles_off_from_column_zero(
                 window,
                 cx,
             );
-            editor.toggle_bookmark(&actions::ToggleBookmark, window, cx);
         });
+    ctx.toggle_bookmark();
 
     ctx.assert_bookmark_rows(vec![]);
 }
@@ -33895,6 +34131,66 @@ async fn test_sticky_scroll_with_decoration_prefix_in_item(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn test_sticky_scroll_anchors_multiline_c_signature_on_name_row(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let buffer = indoc! {"
+        ˇvoid
+        evdev_post_scroll(struct evdev_device *device,
+                  usec_t time,
+                  enum libinput_pointer_axis_source source,
+                  const struct normalized_coords *delta)
+        {
+            const struct normalized_coords tilt_rot = {
+                cos(SCROLL_DELTA_TILT_ANGLE),
+                sin(SCROLL_DELTA_TILT_ANGLE),
+            };
+        }
+    "};
+    cx.set_state(buffer);
+
+    cx.update_editor(|editor, _, cx| {
+        editor
+            .buffer()
+            .read(cx)
+            .as_singleton()
+            .unwrap()
+            .update(cx, |buffer, cx| {
+                buffer.set_language(
+                    Some(languages::language("c", tree_sitter_c::LANGUAGE.into())),
+                    cx,
+                );
+            })
+    });
+
+    let mut sticky_headers = |offset: ScrollOffset| {
+        cx.update_editor(|editor, window, cx| {
+            editor.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+        });
+        cx.run_until_parked();
+        cx.update_editor(|editor, window, cx| {
+            EditorElement::sticky_headers(&editor, &editor.snapshot(window, cx))
+                .into_iter()
+                .map(
+                    |StickyHeader {
+                         start_point,
+                         offset,
+                         ..
+                     }| { (start_point, offset) },
+                )
+                .collect::<Vec<_>>()
+        })
+    };
+
+    let function_name_row = Point { row: 1, column: 0 };
+
+    assert_eq!(sticky_headers(1.0), vec![]);
+    assert_eq!(sticky_headers(1.5), vec![(function_name_row, 0.0)]);
+    assert_eq!(sticky_headers(5.0), vec![(function_name_row, 0.0)]);
+}
+
+#[gpui::test]
 async fn test_sticky_scroll_with_expanded_deleted_diff_hunks(
     executor: BackgroundExecutor,
     cx: &mut TestAppContext,
@@ -38321,4 +38617,181 @@ async fn test_toggle_markdown_block_quote(cx: &mut TestAppContext) {
         third
         fourthˇ»
     "});
+}
+
+#[track_caller]
+fn assert_select_delimiters(around: bool, before: &str, after: &str, cx: &mut EditorTestContext) {
+    let _state_context = cx.set_state(before);
+
+    if around {
+        cx.dispatch_action(SelectAroundDelimiters);
+    } else {
+        cx.dispatch_action(SelectInsideDelimiters);
+    }
+
+    cx.assert_editor_state(after);
+}
+
+#[gpui::test]
+async fn test_select_delimiters(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
+
+    // Inside.
+    assert_select_delimiters(false, "foo(ˇbar);", "foo(«barˇ»);", &mut cx);
+    assert_select_delimiters(false, "foo(a, ˇb, c);", "foo(«a, b, cˇ»);", &mut cx);
+    assert_select_delimiters(false, "foo([1, ˇ2, 3]);", "foo([«1, 2, 3ˇ»]);", &mut cx);
+    assert_select_delimiters(false, "let x = { aˇ: 1 };", "let x = {« a: 1 ˇ»};", &mut cx);
+    assert_select_delimiters(false, "let xˇ = 42;", "let xˇ = 42;", &mut cx);
+    assert_select_delimiters(false, "foo(a, «bˇ», c);", "foo(«a, b, cˇ»);", &mut cx);
+    assert_select_delimiters(
+        false,
+        "const s = \"hello ˇworld\";",
+        "const s = \"«hello worldˇ»\";",
+        &mut cx,
+    );
+
+    assert_select_delimiters(
+        false,
+        "const s = \"ˇhello world\";",
+        "const s = \"«hello worldˇ»\";",
+        &mut cx,
+    );
+
+    assert_select_delimiters(
+        false,
+        "const s = \"hello worldˇ\";",
+        "const s = \"«hello worldˇ»\";",
+        &mut cx,
+    );
+
+    assert_select_delimiters(
+        false,
+        "console.log(\"deˇbug\");",
+        "console.log(\"«debugˇ»\");",
+        &mut cx,
+    );
+
+    // Around.
+    assert_select_delimiters(true, "foo(ˇbar);", "foo«(bar)ˇ»;", &mut cx);
+    assert_select_delimiters(true, "foo([1, ˇ2, 3]);", "foo(«[1, 2, 3]ˇ»);", &mut cx);
+    assert_select_delimiters(true, "let x = {ˇ a: 1 };", "let x = «{ a: 1 }ˇ»;", &mut cx);
+    assert_select_delimiters(true, "let xˇ = 42;", "let xˇ = 42;", &mut cx);
+    assert_select_delimiters(
+        true,
+        "console.log(\"deˇbug\");",
+        "console.log(«\"debug\"ˇ»);",
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_select_delimiters_in_markdown(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(markdown_lang()), cx));
+
+    // Inside.
+    assert_select_delimiters(
+        false,
+        r#"This is "ˇhello, world!"."#,
+        r#"This is "«hello, world!ˇ»"."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is "hello, ˇworld!"."#,
+        r#"This is "«hello, world!ˇ»"."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is "hello, world!ˇ"."#,
+        r#"This is "«hello, world!ˇ»"."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is ˇ"hello, world!"."#,
+        r#"This is "«hello, world!ˇ»"."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is "hello, world!"ˇ."#,
+        r#"This is "«hello, world!ˇ»"."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is 'hello, ˇworld!'."#,
+        r#"This is '«hello, world!ˇ»'."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is `hello, ˇworld!`."#,
+        r#"This is `«hello, world!ˇ»`."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is ("hello, ˇworld!")."#,
+        r#"This is ("«hello, world!ˇ»")."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        false,
+        r#"This is hello, ˇworld!."#,
+        r#"This is hello, ˇworld!."#,
+        &mut cx,
+    );
+
+    // Around.
+    assert_select_delimiters(
+        true,
+        r#"This is "hello, ˇworld!"."#,
+        r#"This is «"hello, world!"ˇ»."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        true,
+        r#"This is 'hello, ˇworld!'."#,
+        r#"This is «'hello, world!'ˇ»."#,
+        &mut cx,
+    );
+    assert_select_delimiters(
+        true,
+        r#"This is `hello, ˇworld!`."#,
+        r#"This is «`hello, world!`ˇ»."#,
+        &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_select_delimiters_expansion(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
+
+    let _state_context = cx.set_state("foo([1, ˇ2, 3]);");
+    cx.dispatch_action(SelectInsideDelimiters);
+    cx.assert_editor_state("foo([«1, 2, 3ˇ»]);");
+    cx.dispatch_action(SelectInsideDelimiters);
+    cx.assert_editor_state("foo(«[1, 2, 3]ˇ»);");
+
+    let _state_context = cx.set_state("foo([1, ˇ2, 3]);");
+    cx.dispatch_action(SelectInsideDelimiters);
+    cx.assert_editor_state("foo([«1, 2, 3ˇ»]);");
+    cx.dispatch_action(SelectAroundDelimiters);
+    cx.assert_editor_state("foo(«[1, 2, 3]ˇ»);");
+    cx.dispatch_action(SelectAroundDelimiters);
+    cx.assert_editor_state("foo«([1, 2, 3])ˇ»;");
+
+    let _state_context = cx.set_state("foo(x, { ˇa: 1 });");
+    cx.dispatch_action(SelectInsideDelimiters);
+    cx.assert_editor_state("foo(x, {« a: 1 ˇ»});");
+    cx.dispatch_action(SelectAroundDelimiters);
+    cx.assert_editor_state("foo(x, «{ a: 1 }ˇ»);");
+    cx.dispatch_action(SelectInsideDelimiters);
+    cx.assert_editor_state("foo(«x, { a: 1 }ˇ»);");
 }

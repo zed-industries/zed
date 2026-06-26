@@ -12,7 +12,7 @@ use std::{
 
 use acp_thread::{AcpThread, AcpThreadEvent, MentionUri, ThreadStatus, line_range_suffix};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_servers::AgentServer;
 use agent_settings::UserAgentsMd;
 use collections::HashSet;
@@ -65,14 +65,17 @@ use anyhow::{Context as _, Result, anyhow};
 #[cfg(feature = "audio")]
 use audio::{Audio, Sound};
 use chrono::{DateTime, Utc};
-use client::{UserStore, zed_urls};
+use client::UserStore;
 use cloud_api_types::Plan;
 use collections::HashMap;
 use editor::{Editor, MultiBuffer};
 use extension_host::ExtensionStore;
-use feature_flags::{CreateThreadToolFeatureFlag, FeatureFlagAppExt as _};
+use feature_flags::{
+    AgentSettingsUiFeatureFlag, CreateThreadToolFeatureFlag, FeatureFlagAppExt as _,
+};
 
 use fs::Fs;
+use futures::FutureExt as _;
 use gpui::{
     Action, Anchor, Animation, AnimationExt, AnyElement, App, AsyncWindowContext, ClipboardItem,
     Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, KeyContext, Pixels,
@@ -107,6 +110,7 @@ const MIN_PANEL_WIDTH: Pixels = px(300.);
 const LAST_USED_AGENT_KEY: &str = "agent_panel__last_used_external_agent";
 const LAST_CREATED_ENTRY_KIND_KEY: &str = "agent_panel__last_created_entry_kind";
 const TERMINAL_AGENT_TELEMETRY_ID: &str = "terminal";
+const TERMINAL_INIT_COMMAND_STARTUP_TIMEOUT: Duration = Duration::from_secs(5);
 const KNOWN_TERMINAL_AGENT_COMMANDS: &[&str] = &[
     "agent", // Unfortunately, both Cursor cli + grok
     "agy",
@@ -1941,6 +1945,7 @@ impl AgentPanel {
             None,
             true,
             true,
+            true,
             source,
             window,
             cx,
@@ -1994,11 +1999,13 @@ impl AgentPanel {
         created_at: Option<DateTime<Utc>>,
         select: bool,
         focus: bool,
+        run_init_command: bool,
         source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let terminal_working_directory = working_directory.clone();
+        let init_command = Self::terminal_init_command(run_init_command, cx);
         let terminal_task = self.project.update(cx, |project, cx| {
             project.create_terminal_shell(working_directory, cx)
         });
@@ -2025,6 +2032,7 @@ impl AgentPanel {
                 }
             };
             this.update_in(cx, |this, window, cx| {
+                let terminal_for_init_command = terminal.clone();
                 let terminal_view = cx.new(|cx| {
                     TerminalView::new(terminal, workspace, workspace_id, project, window, cx)
                 });
@@ -2041,10 +2049,74 @@ impl AgentPanel {
                     window,
                     cx,
                 );
+                Self::write_terminal_init_command(&terminal_for_init_command, init_command, cx);
             })?;
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    fn terminal_init_command(run_init_command: bool, cx: &App) -> Option<String> {
+        run_init_command
+            .then(|| AgentSettings::get_global(cx).terminal_init_command.clone())
+            .flatten()
+            .filter(|command| !command.trim().is_empty())
+    }
+
+    fn write_terminal_init_command(
+        terminal: &Entity<terminal::Terminal>,
+        init_command: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(command) = init_command else {
+            return;
+        };
+
+        if !terminal.read(cx).is_pty() {
+            terminal.update(cx, |terminal, _| {
+                terminal.write_init_command(Self::terminal_init_command_input(command))
+            });
+            return;
+        }
+
+        let startup = terminal.update(cx, |terminal, _| {
+            terminal.start_init_command_startup_handshake()
+        });
+
+        let terminal = terminal.downgrade();
+        cx.spawn(async move |_this, cx| {
+            // Fall back to the timeout so the init command is still delivered if
+            // the shell never echoes the marker.
+            let timeout = cx
+                .background_executor()
+                .timer(TERMINAL_INIT_COMMAND_STARTUP_TIMEOUT);
+            futures::select_biased! {
+                _ = startup.fuse() => {}
+                _ = timeout.fuse() => {}
+            }
+
+            let input = Self::terminal_init_command_input(command);
+            if let Err(error) = terminal.update(cx, move |terminal, cx| {
+                if !terminal.write_init_command_after_startup(input, cx) {
+                    log::debug!(
+                        "skipping terminal init command because the terminal is no longer eligible"
+                    );
+                }
+            }) {
+                log::debug!("skipping terminal init command because the terminal closed: {error}");
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+    }
+
+    fn terminal_init_command_input(command: String) -> Vec<u8> {
+        let mut input = command.into_bytes();
+        // CR, not "\r\n": "\r\n" puts PowerShell into continuation
+        // mode (same convention as the activation-script writes in
+        // `TerminalBuilder::new`).
+        input.push(b'\x0d');
+        input
     }
 
     fn insert_terminal(
@@ -2322,6 +2394,7 @@ impl AgentPanel {
             Some(metadata.created_at),
             true,
             focus,
+            true,
             source,
             window,
             cx,
@@ -3569,6 +3642,21 @@ impl AgentPanel {
     }
 
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // When the agent settings have been moved into the settings UI, the
+        // panel no longer shows its own configuration overlay. Instead, route to
+        // the settings UI at the LLM providers page (where the model selector's
+        // "Configure" button expects to land).
+        if cx.has_flag::<AgentSettingsUiFeatureFlag>() {
+            window.dispatch_action(
+                Box::new(zed_actions::OpenSettingsAt {
+                    path: "llm_providers".to_string(),
+                    target: None,
+                }),
+                cx,
+            );
+            return;
+        }
+
         if matches!(self.overlay_view, Some(OverlayView::Configuration)) {
             self.clear_overlay(true, window, cx);
             return;
@@ -5132,6 +5220,7 @@ impl AgentPanel {
             None,
             true,
             false,
+            true,
             source,
             window,
             cx,
@@ -5155,6 +5244,7 @@ impl AgentPanel {
             None,
             true,
             false,
+            true,
             source,
             window,
             cx,
@@ -5624,7 +5714,8 @@ impl AgentPanel {
                         if !showing_terminal {
                             menu = menu
                                 .header("MCP Servers")
-                                .action("Add Custom Server…", Box::new(AddContextServer))
+                                .action("Add Custom Server…", Box::new(AddContextServer::local()))
+                                .action("Add Remote Server…", Box::new(AddContextServer::remote()))
                                 .action(
                                     "Install New Servers…",
                                     Box::new(zed_actions::Extensions {
@@ -5689,10 +5780,6 @@ impl AgentPanel {
                                         },
                                     );
                                 }
-
-                                menu = menu.entry("Rules Library", None, |_window, cx| {
-                                    cx.open_url(&zed_urls::rules_docs(cx));
-                                });
 
                                 menu = menu.separator();
                             }
@@ -6673,6 +6760,7 @@ impl AgentPanel {
             None,
             focus,
             focus,
+            true,
             AgentThreadSource::AgentPanel,
             window,
             cx,
@@ -6709,6 +6797,7 @@ impl AgentPanel {
             Some(metadata.created_at),
             true,
             focus,
+            true,
             source,
             window,
             cx,
@@ -6725,10 +6814,12 @@ impl AgentPanel {
         created_at: Option<DateTime<Utc>>,
         select: bool,
         focus: bool,
+        run_init_command: bool,
         source: AgentThreadSource,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        let init_command = Self::terminal_init_command(run_init_command, cx);
         let settings = TerminalSettings::get_global(cx).clone();
         let path_style = self.project.read(cx).path_style(cx);
         let builder = terminal::TerminalBuilder::new_display_only(
@@ -6740,6 +6831,7 @@ impl AgentPanel {
             path_style,
         );
         let terminal = cx.new(|cx| builder.subscribe(cx));
+        let terminal_for_init_command = terminal.clone();
         let terminal_view = cx.new(|cx| {
             TerminalView::new(
                 terminal,
@@ -6763,6 +6855,7 @@ impl AgentPanel {
             window,
             cx,
         );
+        Self::write_terminal_init_command(&terminal_for_init_command, init_command, cx);
         Ok(())
     }
 
@@ -7358,6 +7451,170 @@ mod tests {
                 "the single initial terminal should become active"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_restored_terminal_runs_init_command_once(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.update(|_, cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.terminal_init_command = Some(" claude --resume ".to_string());
+            AgentSettings::override_global(settings, cx);
+        });
+
+        let metadata = TerminalThreadMetadata {
+            terminal_id: TerminalId::new(),
+            title: "Restored Terminal".into(),
+            custom_title: None,
+            created_at: Utc::now(),
+            worktree_paths: WorktreePaths::from_folder_paths(&PathList::new(&[PathBuf::from(
+                "/project",
+            )])),
+            remote_connection: None,
+            working_directory: None,
+        };
+        let terminal_id = metadata.terminal_id;
+        panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.restore_test_terminal(
+                    metadata.clone(),
+                    true,
+                    AgentThreadSource::AgentPanel,
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .expect("test terminal should be restored");
+        cx.run_until_parked();
+
+        let terminal = panel.read_with(&cx, |panel, cx| {
+            panel
+                .terminals
+                .get(&terminal_id)
+                .expect("terminal should exist")
+                .view
+                .read(cx)
+                .terminal()
+                .clone()
+        });
+        let input_log = terminal.update(&mut cx, |terminal, _| terminal.take_input_log());
+        assert_eq!(input_log, vec![b" claude --resume \r".to_vec()]);
+        assert!(
+            !terminal.read_with(&cx, |terminal, _| terminal.keyboard_input_sent()),
+            "writing the init command must not mark the terminal as having received \
+             user keyboard input, otherwise a shell that fails to spawn would be \
+             auto-closed before the user can see the error"
+        );
+
+        panel
+            .update_in(&mut cx, |panel, window, cx| {
+                panel.restore_test_terminal(
+                    metadata,
+                    true,
+                    AgentThreadSource::AgentPanel,
+                    None,
+                    window,
+                    cx,
+                )
+            })
+            .expect("restoring an existing test terminal should succeed");
+        cx.run_until_parked();
+
+        let input_log = terminal.update(&mut cx, |terminal, _| terminal.take_input_log());
+        assert!(
+            input_log.is_empty(),
+            "activating an already-restored terminal should not re-run the init command, got {input_log:?}"
+        );
+    }
+
+    /// Exercises the real `spawn_terminal` path with a genuine shell PTY (not the
+    /// display-only test terminal, where `write_to_pty` is a no-op) to verify the
+    /// init command is actually delivered to the shell and executed.
+    #[cfg(unix)]
+    #[gpui::test]
+    async fn test_spawn_terminal_runs_init_command_in_real_shell(cx: &mut TestAppContext) {
+        let (panel, mut cx) = setup_panel(cx).await;
+        cx.executor().allow_parking();
+        cx.update(|_, cx| {
+            let mut settings = AgentSettings::get_global(cx).clone();
+            // `init_ran_42` is the command's output, not its echoed text, so finding
+            // it proves the shell executed the command rather than just echoing it.
+            settings.terminal_init_command = Some("printf 'init_ran_%s\\n' 42".to_string());
+            AgentSettings::override_global(settings, cx);
+
+            // Force a known POSIX shell so the test doesn't depend on the developer's login shell.
+            let mut terminal_settings = TerminalSettings::get_global(cx).clone();
+            terminal_settings.shell = task::Shell::Program("/bin/sh".to_string());
+            TerminalSettings::override_global(terminal_settings, cx);
+        });
+
+        let terminal_id = TerminalId::new();
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.spawn_terminal(
+                terminal_id,
+                // No working directory: the FakeFs project path doesn't exist on
+                // the real filesystem the shell process runs against.
+                None,
+                None,
+                None,
+                None,
+                true,
+                true,
+                true,
+                AgentThreadSource::AgentPanel,
+                window,
+                cx,
+            );
+        });
+
+        // The shell spawns on a background thread and produces output
+        // asynchronously, so poll (with a deadline) rather than using a fixed
+        // sleep, matching the real-PTY test in `acp_thread`.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let terminal = loop {
+            cx.run_until_parked();
+            let terminal = panel.read_with(&cx, |panel, cx| {
+                panel
+                    .terminals
+                    .get(&terminal_id)
+                    .map(|terminal| terminal.view.read(cx).terminal().clone())
+            });
+            if let Some(terminal) = &terminal
+                && terminal
+                    .read_with(&cx, |terminal, _| terminal.get_content())
+                    .contains("init_ran_42")
+            {
+                break terminal.clone();
+            }
+            if Instant::now() >= deadline {
+                let terminal_created = terminal.is_some();
+                let (content, input_log) = if let Some(terminal) = terminal {
+                    let content = terminal.read_with(&cx, |terminal, _| terminal.get_content());
+                    let input_log =
+                        terminal.update(&mut cx, |terminal, _| terminal.take_input_log());
+                    (content, input_log)
+                } else {
+                    (String::new(), Vec::new())
+                };
+                panic!(
+                    "init command output never appeared in the terminal; terminal_created={terminal_created}, content={content:?}, input_log={input_log:?}"
+                );
+            }
+            cx.executor().timer(Duration::from_millis(50)).await;
+        };
+
+        let input_log = terminal.update(&mut cx, |terminal, _| terminal.take_input_log());
+        assert_eq!(
+            input_log,
+            vec![b"printf 'init_ran_%s\\n' 42\r".to_vec()],
+            "init command should be written only after terminal startup has settled"
+        );
+        assert!(
+            !terminal.read_with(&cx, |terminal, _| terminal.keyboard_input_sent()),
+            "writing the init command must not mark the terminal as having received \
+             user keyboard input"
+        );
     }
 
     #[gpui::test]
@@ -8805,6 +9062,7 @@ mod tests {
                     None,
                     true,
                     true,
+                    false,
                     AgentThreadSource::AgentPanel,
                     window,
                     cx,
@@ -10751,6 +11009,7 @@ mod tests {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            sandbox_grants: Default::default(),
         };
 
         let thread_store = cx.update(|cx| ThreadStore::global(cx));

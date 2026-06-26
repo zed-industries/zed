@@ -3,7 +3,7 @@ use acp_thread::{
     AgentConnection, AgentModelGroupName, AgentModelList, PermissionOptions, ThreadStatus,
     UserMessageId,
 };
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentProfileId;
 use anyhow::Result;
 use client::{Client, RefreshLlmTokenListener, UserStore};
@@ -277,6 +277,19 @@ fn always_allow_tools(cx: &mut TestAppContext) {
     cx.update(|cx| {
         let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
         settings.tool_permissions.default = settings::ToolPermissionMode::Allow;
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+}
+
+/// Turns terminal sandboxing off so the non-sandboxed `TerminalTool` is the
+/// variant exposed to the model as `terminal`. Tests that register
+/// `TerminalTool` directly need this because sandboxing is enabled by default
+/// for staff (and in debug builds), in which case `Thread::enabled_tools`
+/// would otherwise expose `SandboxedTerminalTool` under that name instead.
+fn disable_sandboxing(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.sandbox_permissions.allow_unsandboxed = true;
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 }
@@ -2215,6 +2228,7 @@ async fn test_cancellation(cx: &mut TestAppContext) {
 async fn test_terminal_tool_cancellation_captures_output(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     always_allow_tools(cx);
+    disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
     let environment = Rc::new(cx.update(|cx| {
@@ -2494,6 +2508,7 @@ async fn collect_events_until_stop(
 async fn test_truncate_while_terminal_tool_running(cx: &mut TestAppContext) {
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     always_allow_tools(cx);
+    disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
     let environment = Rc::new(cx.update(|cx| {
@@ -2562,6 +2577,7 @@ async fn test_cancel_multiple_concurrent_terminal_tools(cx: &mut TestAppContext)
     // Tests that cancellation properly kills all running terminal tools when multiple are active.
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     always_allow_tools(cx);
+    disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
     let environment = Rc::new(MultiTerminalEnvironment::new());
@@ -2672,6 +2688,7 @@ async fn test_terminal_tool_stopped_via_terminal_card_button(cx: &mut TestAppCon
     // cancel button) properly reports user stopped via the was_stopped_by_user path.
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     always_allow_tools(cx);
+    disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
     let environment = Rc::new(cx.update(|cx| {
@@ -2763,6 +2780,7 @@ async fn test_terminal_tool_timeout_expires(cx: &mut TestAppContext) {
     // Tests that when a timeout is configured and expires, the tool result indicates timeout.
     let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
     always_allow_tools(cx);
+    disable_sandboxing(cx);
     let fake_model = model.as_fake();
 
     let environment = Rc::new(cx.update(|cx| {
@@ -7469,9 +7487,9 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
     fake_model
         .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::ToolUse));
 
-    // Signal that a message is queued before ending the stream
+    // Request that the turn end at the next boundary (a "steering" queued message)
     thread.update(cx, |thread, _cx| {
-        thread.set_has_queued_message(true);
+        thread.set_end_turn_at_next_boundary(true);
     });
 
     // Now end the stream - tool will run, and the boundary check should see the queue
@@ -7502,11 +7520,11 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
         "Turn should have ended after tool completion due to queued message"
     );
 
-    // Verify the queued message flag is still set
+    // Verify the boundary flag is still set
     thread.update(cx, |thread, _cx| {
         assert!(
-            thread.has_queued_message(),
-            "Should still have queued message flag set"
+            thread.end_turn_at_next_boundary(),
+            "Should still have the end-turn-at-boundary flag set"
         );
     });
 
@@ -7517,6 +7535,68 @@ async fn test_queued_message_ends_turn_at_boundary(cx: &mut TestAppContext) {
             "Thread should not be running after turn ends"
         );
     });
+}
+
+#[gpui::test]
+async fn test_queued_message_does_not_end_turn_without_boundary_flag(cx: &mut TestAppContext) {
+    init_test(cx);
+    always_allow_tools(cx);
+
+    let ThreadTest { model, thread, .. } = setup(cx, TestModel::Fake).await;
+    let fake_model = model.as_fake();
+
+    thread.update(cx, |thread, _cx| {
+        thread.add_tool(EchoTool);
+    });
+
+    let mut events = thread
+        .update(cx, |thread, cx| {
+            thread.send(UserMessageId::new(), ["Use the echo tool"], cx)
+        })
+        .unwrap();
+    cx.run_until_parked();
+
+    fake_model.send_last_completion_stream_event(LanguageModelCompletionEvent::ToolUse(
+        LanguageModelToolUse {
+            id: "tool_1".into(),
+            name: "echo".into(),
+            raw_input: r#"{"text": "hello"}"#.into(),
+            input: json!({"text": "hello"}),
+            is_input_complete: true,
+            thought_signature: None,
+        },
+    ));
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::ToolUse));
+
+    // Default behavior: even though a message is conceptually queued, we do NOT
+    // set the boundary flag, so the agent must keep going past the tool boundary
+    // (running to completion) rather than ending the turn early.
+    fake_model.end_last_completion_stream();
+    cx.run_until_parked();
+
+    // The agent should have issued a fresh completion request with the tool
+    // results instead of stopping — proof it continued past the boundary.
+    let continuation = fake_model.pending_completions();
+    assert_eq!(
+        continuation.len(),
+        1,
+        "Without the boundary flag, the turn should continue with another completion request"
+    );
+
+    // Let the continuation finish the turn naturally.
+    fake_model.send_last_completion_stream_text_chunk("All done");
+    fake_model
+        .send_last_completion_stream_event(LanguageModelCompletionEvent::Stop(StopReason::EndTurn));
+    fake_model.end_last_completion_stream();
+
+    let all_events = collect_events_until_stop(&mut events, cx).await;
+    let stop_reasons = stop_events(all_events);
+    assert_eq!(
+        stop_reasons,
+        vec![acp::StopReason::EndTurn],
+        "Turn should end only after the agent finishes, not at the tool boundary"
+    );
 }
 
 #[gpui::test]

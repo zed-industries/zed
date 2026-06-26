@@ -260,6 +260,7 @@ impl Model {
                 ReasoningEffort::Medium => &[ReasoningEffort::Medium],
                 ReasoningEffort::High => &[ReasoningEffort::High],
                 ReasoningEffort::XHigh => &[ReasoningEffort::XHigh],
+                ReasoningEffort::Max => &[ReasoningEffort::Max],
             },
             Self::O3 => &[
                 ReasoningEffort::Low,
@@ -342,6 +343,34 @@ impl Model {
     /// If the model does not support the parameter, do not pass it up.
     pub fn supports_prompt_cache_key(&self) -> bool {
         true
+    }
+
+    /// Whether this model supports server-side compaction via the
+    /// `context_management` request parameter. OpenAI doesn't publish a
+    /// support matrix, but the GPT-5.5 guide notes compaction is a feature
+    /// shared with GPT-5.4, and the compaction docs exercise the GPT-5.3
+    /// Codex line, so we treat everything from GPT-5.3 onward as supported.
+    ///
+    /// <https://developers.openai.com/api/docs/guides/compaction>
+    pub fn supports_compaction(&self) -> bool {
+        match self {
+            Self::FivePointThreeCodex
+            | Self::FivePointFourNano
+            | Self::FivePointFourMini
+            | Self::FivePointFour
+            | Self::FivePointFourPro
+            | Self::FivePointFive
+            | Self::FivePointFivePro => true,
+            Self::Four
+            | Self::FourOmniMini
+            | Self::O3
+            | Self::Five
+            | Self::FiveMini
+            | Self::FiveNano
+            | Self::FivePointOne
+            | Self::FivePointTwo
+            | Self::Custom { .. } => false,
+        }
     }
 
     /// Whether OpenAI's Priority processing tier is available for this model.
@@ -466,6 +495,8 @@ pub struct Request {
     pub stream_options: Option<StreamOptions>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_completion_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stop: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -639,6 +670,7 @@ pub struct Choice {
 pub struct ResponseMessageDelta {
     pub role: Option<Role>,
     pub content: Option<String>,
+    pub reasoning: Option<String>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]
     pub tool_calls: Option<Vec<ToolCallChunk>>,
     #[serde(default, skip_serializing_if = "is_none_or_empty")]

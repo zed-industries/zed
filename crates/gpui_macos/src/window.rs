@@ -41,6 +41,7 @@ use core_foundation_sys::number::{CFBooleanGetValue, CFBooleanRef};
 use core_graphics::display::{CGDirectDisplayID, CGRect};
 use ctor::ctor;
 use futures::channel::oneshot;
+use gpui_util::ResultExt;
 use objc::{
     class,
     declare::ClassDecl,
@@ -71,7 +72,6 @@ use std::{
     },
     time::Duration,
 };
-use util::ResultExt;
 
 const WINDOW_STATE_IVAR: &str = "windowState";
 
@@ -2827,12 +2827,20 @@ extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
 extern "C" fn view_did_change_effective_appearance(this: &Object, _: Sel) {
     unsafe {
         let state = get_window_state(this);
-        let mut lock = state.as_ref().lock();
-        if let Some(mut callback) = lock.appearance_changed_callback.take() {
-            drop(lock);
+        let appearance_changed_callback = {
+            let mut lock = state.as_ref().lock();
+            lock.appearance_changed_callback.take()
+        };
+
+        if let Some(mut callback) = appearance_changed_callback {
             callback();
             state.lock().appearance_changed_callback = Some(callback);
         }
+
+        // AppKit can relayout the standard traffic light buttons as part of
+        // applying a new appearance. Reapply GPUI's custom position after
+        // notifying appearance observers.
+        state.lock().move_traffic_light();
     }
 }
 

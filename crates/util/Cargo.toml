@@ -60,6 +60,7 @@ mach2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 tendril = "0.4.3"
+windows.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
