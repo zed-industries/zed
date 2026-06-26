@@ -56,7 +56,7 @@ mod integration {
             for &row in rows {
                 let anchor = snapshot.anchor_after(text::Point::new(row, 0));
                 bookmark_store.update(cx, |store, cx| {
-                    store.toggle_bookmark(buffer.clone(), anchor, String::new(), cx);
+                    store.toggle_bookmark(buffer.clone(), anchor, None, cx);
                 });
             }
         });
@@ -75,7 +75,7 @@ mod integration {
             let snapshot = buffer.read(cx).snapshot();
             let anchor = snapshot.anchor_after(text::Point::new(row, 0));
             bookmark_store.update(cx, |store, cx| {
-                store.toggle_bookmark(buffer.clone(), anchor, label.to_string(), cx);
+                store.toggle_bookmark(buffer.clone(), anchor, Some(label.to_string()), cx);
             });
         });
     }

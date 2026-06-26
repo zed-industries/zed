@@ -120,16 +120,27 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn toggle_bookmark_at_row(&mut self, row: DisplayRow, cx: &mut Context<Self>) {
+    pub fn toggle_bookmark_at_row(
+        &mut self,
+        row: DisplayRow,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let display_snapshot = self.display_snapshot(cx);
         let point = display_snapshot.display_point_to_point(row.as_display_point(), Bias::Left);
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let anchor = buffer_snapshot.anchor_before(point);
 
-        self.toggle_bookmark_at_anchor(anchor, cx);
+        self.toggle_bookmark_at_anchor(anchor, false, window, cx);
     }
 
-    pub fn toggle_bookmark_at_anchor(&mut self, anchor: Anchor, cx: &mut Context<Self>) {
+    pub fn toggle_bookmark_at_anchor(
+        &mut self,
+        anchor: Anchor,
+        with_label: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let Some((position, _)) = buffer_snapshot.anchor_to_buffer_anchor(anchor) else {
             return;
@@ -142,9 +153,22 @@ impl Editor {
             return;
         };
 
-        bookmark_store.update(cx, |bookmark_store, cx| {
-            bookmark_store.toggle_bookmark(buffer, position, String::new(), cx);
-        });
+        let target = BookmarkTarget {
+            buffer,
+            anchor,
+            buffer_anchor: position,
+        };
+        if Self::bookmark_exists_for_target(&bookmark_store, &target, cx) {
+            bookmark_store.update(cx, |bookmark_store, cx| {
+                bookmark_store.toggle_bookmark(target.buffer, position, None, cx);
+            });
+        } else {
+            if with_label {
+                self.add_toggle_bookmark_blocks(vec![target], bookmark_store, window, cx)
+            } else {
+                self.toggle_bookmarks(vec![target], String::new(), cx);
+            }
+        }
 
         cx.notify();
     }
@@ -240,7 +264,7 @@ impl Editor {
                 "Enter bookmark label (Optional)",
                 Some(Box::new(move |label: String, _, cx| {
                     bookmark_store.update(cx, |store, cx| {
-                        store.toggle_bookmark(target.buffer, target.buffer_anchor, label, cx);
+                        store.toggle_bookmark(target.buffer, target.buffer_anchor, Some(label), cx);
                     });
                 })),
                 None,
@@ -259,7 +283,12 @@ impl Editor {
         if let Some(bookmark_store) = self.bookmark_store.clone() {
             bookmark_store.update(cx, |store, cx| {
                 for target in targets {
-                    store.toggle_bookmark(target.buffer, target.buffer_anchor, label.clone(), cx);
+                    store.toggle_bookmark(
+                        target.buffer,
+                        target.buffer_anchor,
+                        Some(label.clone()),
+                        cx,
+                    );
                 }
             });
         }

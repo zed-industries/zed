@@ -4079,8 +4079,8 @@ impl Editor {
             .size(ui::ButtonSize::None)
             .icon_color(Color::Info)
             .style(ButtonStyle::Transparent)
-            .on_click(cx.listener(move |editor, _, _window, cx| {
-                editor.toggle_bookmark_at_row(row, cx);
+            .on_click(cx.listener(move |editor, _, window, cx| {
+                editor.toggle_bookmark_at_row(row, window, cx);
             }))
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
                 editor.set_gutter_context_menu(row, None, event.position(), window, cx);
@@ -4371,13 +4371,29 @@ impl Editor {
                 .separator()
                 .entry(set_bookmark_msg, Some(ToggleBookmark.boxed_clone()), {
                     let weak_editor = weak_editor.clone();
-                    move |_window, cx| {
+                    move |window, cx| {
                         weak_editor
                             .update(cx, |this, cx| {
-                                this.toggle_bookmark_at_anchor(anchor, cx);
+                                this.toggle_bookmark_at_anchor(anchor, false, window, cx);
                             })
                             .log_err();
                     }
+                })
+                .when(!has_bookmark, |this| {
+                    this.entry(
+                        "Add Bookmark With Label",
+                        Some(ToggleBookmarkWithLabel.boxed_clone()),
+                        {
+                            let weak_editor = weak_editor.clone();
+                            move |window, cx| {
+                                weak_editor
+                                    .update(cx, |this, cx| {
+                                        this.toggle_bookmark_at_anchor(anchor, true, window, cx);
+                                    })
+                                    .log_err();
+                            }
+                        },
+                    )
                 })
                 .when(has_bookmark, |this| {
                     this.entry(
@@ -4529,7 +4545,9 @@ impl Editor {
                     };
 
                     match intent {
-                        GutterButtonIntent::SetBookmark => editor.toggle_bookmark_at_row(row, cx),
+                        GutterButtonIntent::SetBookmark => {
+                            editor.toggle_bookmark_at_row(row, window, cx)
+                        }
                         GutterButtonIntent::SetBreakpoint => editor.edit_breakpoint_at_anchor(
                             position,
                             Breakpoint::new_standard(),

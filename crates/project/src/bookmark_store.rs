@@ -175,7 +175,7 @@ impl BookmarkStore {
         &mut self,
         buffer: Entity<Buffer>,
         anchor: text::Anchor,
-        label: String,
+        label: Option<String>,
         cx: &mut Context<Self>,
     ) {
         let Some(abs_path) = Self::abs_path_from_buffer(&buffer, cx) else {
@@ -206,7 +206,10 @@ impl BookmarkStore {
                 self.bookmarks.remove(&abs_path);
             }
         } else {
-            buffer_bookmarks.bookmarks.push(Bookmark { anchor, label });
+            buffer_bookmarks.bookmarks.push(Bookmark {
+                anchor,
+                label: label.unwrap_or_default(),
+            });
         }
 
         cx.notify();
