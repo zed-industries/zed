@@ -8180,7 +8180,7 @@ impl ThreadView {
         let header_style = if use_card_layout {
             ToolCallStyle::Card
         } else {
-            ToolCallStyle::Inline
+            ToolCallStyle::ReadOnly
         };
         let status_kind = if needs_confirmation {
             ToolCallStatusKind::AwaitingConfirmation

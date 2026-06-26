@@ -40,17 +40,20 @@ impl ToolCallStatusKind {
     }
 }
 
-/// The visual framing of a tool call. This is intentionally separate from
+/// The visual style of a tool call. This is intentionally separate from
 /// *where* the tool call is mounted in a conversation (inline list, floating
 /// permission row, embedded subagent) — callers own those outer margins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolCallStyle {
-    /// A bordered card with a tinted header. Used for edits, terminals, and
-    /// any tool call that is awaiting confirmation.
+    /// Read-only tools (read, list, search, fetch). The header sits flush; when
+    /// expanded, the output is contained in its own bordered card.
+    ReadOnly,
+    /// Thinking blocks. The header sits flush; when expanded, the output hangs
+    /// off a thin left guideline.
+    Thinking,
+    /// Edits, terminals, and confirmations. Everything lives inside one bordered
+    /// card with a tinted header; the output flows directly below the header.
     Card,
-    /// No card framing; the header sits flush and any output hangs off a left
-    /// guideline. Used for lightweight read-only tools inline in the list.
-    Inline,
 }
 
 type ClickHandler = Arc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
@@ -72,7 +75,7 @@ type ClickHandler = Arc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 ///     .icon(Icon::new(IconName::ToolSearch).color(Color::Muted))
 ///     .label(Label::new("Read src/main.rs").color(Color::Muted))
 ///     .status(ToolCallStatusKind::Completed)
-///     .style(ToolCallStyle::Inline)
+///     .style(ToolCallStyle::ReadOnly)
 ///     .collapsible(true)
 ///     .open(false);
 /// ```
@@ -100,7 +103,7 @@ impl ToolCall {
             icon: None,
             label: None,
             status: ToolCallStatusKind::Completed,
-            style: ToolCallStyle::Inline,
+            style: ToolCallStyle::ReadOnly,
             is_open: false,
             is_collapsible: false,
             fade_label: true,
@@ -160,8 +163,9 @@ impl ToolCall {
 
     /// Whether to draw the outer card frame (border, background, clipped
     /// corners). Defaults to following the style (`Card` is framed, `Inline`
-    /// is not). Override for a card-styled header mounted inside another
-    /// container that shouldn't draw its own box.
+    /// is not). Override this for a card-styled header that is mounted inside
+    /// another container (e.g. a floating permission row) and shouldn't draw
+    /// its own box.
     pub fn framed(mut self, framed: bool) -> Self {
         self.framed = Some(framed);
         self
@@ -264,6 +268,7 @@ impl RenderOnce for ToolCall {
 
         v_flex()
             .w_full()
+            .when(!is_card, |this| this.gap_1())
             .when(is_framed, |this| {
                 this.rounded_md()
                     .border_1()
@@ -285,13 +290,26 @@ impl RenderOnce for ToolCall {
                             .border_color(border_color)
                             .child(content),
                     )
-                } else {
-                    // Inline output hangs off a left guideline so it reads as
-                    // belonging to the tool call above it.
+                } else if self.style == ToolCallStyle::ReadOnly {
+                    // Read-only output is contained in its own bordered card.
                     this.child(
                         v_flex()
-                            .ml(rems(0.4))
-                            .px_3p5()
+                            .w_full()
+                            .p_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(border_color)
+                            .bg(cx.theme().colors().editor_background)
+                            .overflow_hidden()
+                            .child(content),
+                    )
+                } else {
+                    // Thinking output hangs off a thin left guideline so it
+                    // reads as belonging to the header above it.
+                    this.child(
+                        v_flex()
+                            .ml_1p5()
+                            .pl_3p5()
                             .border_l_1()
                             .border_color(border_color)
                             .child(content),
@@ -587,9 +605,11 @@ impl Component for ToolCall {
     }
 
     fn description() -> &'static str {
-        "A standardized card for displaying a read-only or edit tool call in an \
-        agent conversation, with a header (icon + label), optional collapsible \
-        output, and card or inline framing."
+        "A standardized presentation for a tool call in an agent conversation, \
+        with a header (icon + label) and optional collapsible output. The style \
+        controls how the output reads: read-only tools contain it in a card, \
+        thinking blocks hang it off a left guideline, and edits/terminals wrap \
+        the whole thing in a card."
     }
 
     fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
@@ -609,26 +629,26 @@ impl Component for ToolCall {
             )
         };
 
-        let inline_examples = vec![
+        let read_only_examples = vec![
             single_example(
                 "Collapsed",
-                ToolCall::new("inline-collapsed")
+                ToolCall::new("read-collapsed")
                     .icon(sample_icon(IconName::ToolSearch))
                     .label(sample_label("Read src/main.rs"))
                     .status(ToolCallStatusKind::Completed)
-                    .style(ToolCallStyle::Inline)
+                    .style(ToolCallStyle::ReadOnly)
                     .collapsible(true)
                     .open(false)
                     .into_any_element(),
             )
             .width(px(560.)),
             single_example(
-                "Expanded With Output",
-                ToolCall::new("inline-expanded")
+                "Expanded With Carded Output",
+                ToolCall::new("read-expanded")
                     .icon(sample_icon(IconName::ToolSearch))
                     .label(sample_label("Read src/main.rs"))
                     .status(ToolCallStatusKind::Completed)
-                    .style(ToolCallStyle::Inline)
+                    .style(ToolCallStyle::ReadOnly)
                     .collapsible(true)
                     .open(true)
                     .content(sample_output())
@@ -637,11 +657,11 @@ impl Component for ToolCall {
             .width(px(560.)),
             single_example(
                 "Failed",
-                ToolCall::new("inline-failed")
+                ToolCall::new("read-failed")
                     .icon(sample_icon(IconName::ToolSearch))
                     .label(sample_label("Read missing.rs"))
                     .status(ToolCallStatusKind::Failed)
-                    .style(ToolCallStyle::Inline)
+                    .style(ToolCallStyle::ReadOnly)
                     .header_action(
                         Icon::new(IconName::Close)
                             .color(Color::Error)
@@ -651,6 +671,20 @@ impl Component for ToolCall {
             )
             .width(px(560.)),
         ];
+
+        let thinking_examples = vec![single_example(
+            "Expanded With Guideline Output",
+            ToolCall::new("thinking-expanded")
+                .icon(sample_icon(IconName::ToolThink))
+                .label(sample_label("Thinking"))
+                .status(ToolCallStatusKind::Completed)
+                .style(ToolCallStyle::Thinking)
+                .collapsible(true)
+                .open(true)
+                .content(sample_output())
+                .into_any_element(),
+        )
+        .width(px(560.))];
 
         let card_examples = vec![
             single_example(
@@ -685,7 +719,8 @@ impl Component for ToolCall {
 
         v_flex()
             .gap_4()
-            .child(example_group_with_title("Inline", inline_examples).vertical())
+            .child(example_group_with_title("Read-only", read_only_examples).vertical())
+            .child(example_group_with_title("Thinking", thinking_examples).vertical())
             .child(example_group_with_title("Card", card_examples).vertical())
             .into_any_element()
     }
