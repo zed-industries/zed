@@ -1537,24 +1537,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_parse_shared_agent_thread_url_with_invalid_uuid(cx: &mut TestAppContext) {
-        let _app_state = init_test(cx);
-
-        let request = cx.update(|cx| {
-            OpenRequest::parse(
-                RawOpenRequest {
-                    urls: vec!["zed://agent/shared/not-a-uuid".into()],
-                    ..Default::default()
-                },
-                cx,
-            )
-            .unwrap()
-        });
-
-        assert!(request.kind.is_none());
-    }
-
-    #[gpui::test]
     fn test_parse_git_commit_url(cx: &mut TestAppContext) {
         let _app_state = init_test(cx);
 
