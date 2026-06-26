@@ -371,7 +371,7 @@ impl AssistantMessageChunk {
     }
 }
 
-fn protocol_message_ids_compatible(
+fn can_merge_message_chunks(
     existing: Option<&acp::MessageId>,
     incoming: Option<&acp::MessageId>,
 ) -> bool {
@@ -2179,10 +2179,7 @@ impl AcpThread {
                     .is_some_and(|message| {
                         let already_in_user_message = message.is_optimistic
                             && message.chunks.contains(&content)
-                            && protocol_message_ids_compatible(
-                                message.id.as_ref(),
-                                message_id.as_ref(),
-                            );
+                            && can_merge_message_chunks(message.id.as_ref(), message_id.as_ref());
                         if already_in_user_message && message.id.is_none() {
                             message.id = message_id.clone();
                         }
@@ -2322,7 +2319,7 @@ impl AcpThread {
                 ..
             }) = last_entry
             && *existing_indented == indented
-            && protocol_message_ids_compatible(existing_id.as_ref(), id.as_ref())
+            && can_merge_message_chunks(existing_id.as_ref(), id.as_ref())
             && !(*existing_is_optimistic && !is_optimistic && existing_id.is_none() && id.is_some())
         {
             Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
@@ -2423,7 +2420,7 @@ impl AcpThread {
                         block,
                     }),
                     true,
-                ) if protocol_message_ids_compatible(existing_id.as_ref(), message_id.as_ref()) => {
+                ) if can_merge_message_chunks(existing_id.as_ref(), message_id.as_ref()) => {
                     if existing_id.is_none() {
                         *existing_id = message_id;
                     }
@@ -2498,7 +2495,7 @@ impl AcpThread {
                         block: ContentBlock::Markdown { markdown },
                     },
                     true,
-                ) if protocol_message_ids_compatible(existing_id.as_ref(), message_id) => {
+                ) if can_merge_message_chunks(existing_id.as_ref(), message_id) => {
                     if existing_id.is_none() {
                         *existing_id = message_id.cloned();
                     }
