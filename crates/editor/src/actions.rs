@@ -854,8 +854,6 @@ actions!(
         Tab,
         /// Removes a tab character or outdents.
         Backtab,
-        /// Toggles a bookmark at the current line.
-        ToggleBookmark,
         /// Edits the bookmark's label at the current line.
         EditBookmark,
         /// Toggles a breakpoint at the current line.
@@ -944,6 +942,15 @@ actions!(
         ToggleBreadcrumb,
     ]
 );
+
+/// Toggles a bookmark at the current line.
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct ToggleBookmark {
+    #[serde(default)]
+    pub prompt_for_label: bool,
+}
 
 /// Finds all references to the symbol at cursor.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]

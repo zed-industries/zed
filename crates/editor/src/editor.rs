@@ -3970,7 +3970,9 @@ impl Editor {
             .tooltip(move |_window, cx| {
                 Tooltip::with_meta_in(
                     "Remove Bookmark",
-                    Some(&ToggleBookmark),
+                    Some(&ToggleBookmark {
+                        prompt_for_label: false,
+                    }),
                     SharedString::from("Right-click for more options"),
                     &focus_handle,
                     cx,
@@ -4251,15 +4253,45 @@ impl Editor {
                     }
                 })
                 .separator()
-                .entry(set_bookmark_msg, Some(ToggleBookmark.boxed_clone()), {
-                    let weak_editor = weak_editor.clone();
-                    move |window, cx| {
-                        weak_editor
-                            .update(cx, |this, cx| {
-                                this.toggle_bookmark_at_anchor(anchor, window, cx);
-                            })
-                            .log_err();
-                    }
+                .entry(
+                    set_bookmark_msg,
+                    Some(
+                        ToggleBookmark {
+                            prompt_for_label: false,
+                        }
+                        .boxed_clone(),
+                    ),
+                    {
+                        let weak_editor = weak_editor.clone();
+                        move |window, cx| {
+                            weak_editor
+                                .update(cx, |this, cx| {
+                                    this.toggle_bookmark_at_anchor(anchor, false, window, cx);
+                                })
+                                .log_err();
+                        }
+                    },
+                )
+                .when(!has_bookmark, |this| {
+                    this.entry(
+                        "Add Bookmark With Label",
+                        Some(
+                            ToggleBookmark {
+                                prompt_for_label: true,
+                            }
+                            .boxed_clone(),
+                        ),
+                        {
+                            let weak_editor = weak_editor.clone();
+                            move |window, cx| {
+                                weak_editor
+                                    .update(cx, |this, cx| {
+                                        this.toggle_bookmark_at_anchor(anchor, true, window, cx);
+                                    })
+                                    .log_err();
+                            }
+                        },
+                    )
                 })
                 .when(has_bookmark, |this| {
                     this.entry(
