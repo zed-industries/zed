@@ -2738,8 +2738,8 @@ impl GitPanel {
         prompt: &str,
         user_agents_md: Option<&str>,
         rules_content: Option<&str>,
-        instructions: Option<&str>,
         skill_content: Option<&str>,
+        instructions: Option<&str>,
         subject: &str,
         diff_text: &str,
     ) -> String {
@@ -2881,8 +2881,8 @@ impl GitPanel {
                     &prompt,
                     user_agents_md.as_deref(),
                     rules_content.as_deref(),
-                    instructions.as_deref(),
                     skill_content?.as_deref(),
+                    instructions.as_deref(),
                     &subject,
                     &diff_text,
                 );
@@ -8868,19 +8868,20 @@ mod tests {
     }
 
     #[test]
-    fn test_commit_message_prompt_includes_user_agents_md_before_project_rules() {
+    fn test_build_commit_message_prompt_content_and_ordering() {
         let prompt = GitPanel::build_commit_message_prompt(
             "Write a commit message.",
             Some("Use terse commit messages."),
             Some("Use the git_ui prefix."),
-            Some("Follow the configured commit message format."),
             Some("End the commit message with `...`."),
+            Some("Follow the configured commit message format."),
             "Update generated message",
             "diff --git a/file b/file",
         );
 
         assert!(prompt.contains("Use terse commit messages."));
         assert!(prompt.contains("Use the git_ui prefix."));
+        assert!(prompt.contains("End the commit message with `...`."));
         assert!(prompt.contains("Follow the configured commit message format."));
         assert!(prompt.contains("Update generated message"));
         assert!(prompt.contains("diff --git a/file b/file"));
