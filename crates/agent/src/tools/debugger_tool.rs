@@ -694,12 +694,50 @@ fn initial_title_for_input(input: &DebuggerToolInput) -> SharedString {
             .unwrap_or_else(|| "Inspect debugger".into()),
         DebuggerToolInput::ListBreakpoints => "List debugger breakpoints".into(),
         DebuggerToolInput::SetBreakpoints { breakpoints } => {
-            format!("Set {} debugger breakpoint(s)", breakpoints.len()).into()
+            if breakpoints.len() == 1 {
+                let breakpoint = &breakpoints[0];
+                format!(
+                    "Set debugger breakpoint at {}:{}",
+                    MarkdownInlineCode(&breakpoint.path.to_string_lossy()),
+                    breakpoint.line
+                )
+                .into()
+            } else {
+                format!("Set {} debugger breakpoints", breakpoints.len()).into()
+            }
         }
         DebuggerToolInput::RemoveBreakpoints { breakpoints } => {
-            format!("Remove {} debugger breakpoint(s)", breakpoints.len()).into()
+            if breakpoints.len() == 1 {
+                let breakpoint = &breakpoints[0];
+                format!(
+                    "Remove debugger breakpoint at {}:{}",
+                    MarkdownInlineCode(&breakpoint.path.to_string_lossy()),
+                    breakpoint.line
+                )
+                .into()
+            } else {
+                format!("Remove {} debugger breakpoints", breakpoints.len()).into()
+            }
         }
-        DebuggerToolInput::Control(input) => format!("Debugger {}", input.action.label()).into(),
+        DebuggerToolInput::Control(input) => match input.action {
+            ControlAction::RunToLine => format!(
+                "Debugger run to line at {}:{}",
+                MarkdownInlineCode(
+                    &input
+                        .path
+                        .as_deref()
+                        .map(std::path::Path::to_string_lossy)
+                        .unwrap_or_default()
+                ),
+                input.line.unwrap_or_default()
+            )
+            .into(),
+            ControlAction::Continue
+            | ControlAction::Pause
+            | ControlAction::StepOver
+            | ControlAction::StepIn
+            | ControlAction::StepOut => format!("Debugger {}", input.action.label()).into(),
+        },
         DebuggerToolInput::ListAdapters => "List debug adapters".into(),
         DebuggerToolInput::StartSession(input) => format!(
             "Start debug session {}",
@@ -831,18 +869,39 @@ async fn choose_thread_for_action(
         return Ok(thread.thread_id);
     }
 
-    if action == ControlAction::Pause {
-        return snapshot
-            .threads
-            .first()
-            .map(|thread| thread.thread_id)
-            .ok_or_else(|| anyhow!("No debugger threads available in session {:?}", session_id));
+    let has_threads = !snapshot.threads.is_empty();
+    match action {
+        ControlAction::Pause => {
+            if has_threads {
+                // Pause works on a running thread; if none is running, fall back
+                // to the first thread (some adapters pause by id regardless).
+                Ok(snapshot.threads[0].thread_id)
+            } else {
+                Err(anyhow!(
+                    "No debugger threads available in session {:?}. The session must be running before it can be paused.",
+                    session_id
+                ))
+            }
+        }
+        ControlAction::Continue
+        | ControlAction::StepOver
+        | ControlAction::StepIn
+        | ControlAction::StepOut
+        | ControlAction::RunToLine => {
+            if has_threads {
+                Err(anyhow!(
+                    "No stopped debugger thread is available in session {:?}. The debugger must be paused at a breakpoint before it can be {}; pause the session or wait for a breakpoint to hit.",
+                    session_id,
+                    action.label()
+                ))
+            } else {
+                Err(anyhow!(
+                    "No debugger threads available in session {:?}. Inspect a snapshot to confirm the session is still running.",
+                    session_id
+                ))
+            }
+        }
     }
-
-    Err(anyhow!(
-        "No stopped debugger thread is available in session {:?}; inspect a snapshot or pause the session first",
-        session_id
-    ))
 }
 
 fn sessions_to_json(sessions: Vec<AgentDebuggerSession>) -> Value {

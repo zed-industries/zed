@@ -10,6 +10,7 @@ use crate::{
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
+use feature_flags::{DebuggerToolFeatureFlag, FeatureFlagAppExt as _};
 
 use crate::sandboxing::{
     SandboxRequest, ThreadSandbox, ThreadSandboxGrants, sandboxing_available_for_project,
@@ -2168,11 +2169,13 @@ impl Thread {
             self.project.clone(),
             self.action_log.clone(),
         ));
-        self.add_tool(DebuggerTool::new(
-            self.project.clone(),
-            environment.clone(),
-            cx.weak_entity(),
-        ));
+        if cx.has_flag::<DebuggerToolFeatureFlag>() {
+            self.add_tool(DebuggerTool::new(
+                self.project.clone(),
+                environment.clone(),
+                cx.weak_entity(),
+            ));
+        }
         self.add_tool(EditFileTool::new(
             self.project.clone(),
             cx.weak_entity(),
