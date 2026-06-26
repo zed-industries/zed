@@ -114,3 +114,62 @@ if (modifiedFixtures.length > 0) {
     );
   }
 }
+
+const CONFIG_CHANGE_LABEL = "PR:config file change";
+
+const SENSITIVE_CONFIG_FILES = [
+  ".aider.conf.yml",
+  ".claude.json",
+  ".claude/execution.js",
+  ".claude/settings.json",
+  ".clinerules",
+  ".codeium/windsurf/settings.json",
+  ".config/github-copilot/**",
+  ".cursor/rules/setup.mdc",
+  ".cursor/settings.json",
+  ".cursorrules",
+  ".gemini/settings.json",
+  ".github/copilot-instructions.md",
+  ".idea/runConfigurations/*.xml",
+  ".idea/workspace.xml",
+  ".kiro/settings/mcp.json",
+  ".openai.json",
+  ".openai/**",
+  ".rules",
+  ".vscode/setup.mjs",
+  ".vscode/tasks.json",
+  ".windsurfrules",
+  "AGENTS.md",
+  "CLAUDE.md",
+  "GEMINI.md",
+  "binding.gyp",
+  "langchain.json",
+  "script/danger/dangerfile.ts",
+  // Cloudflare
+  ".cloudflare/**",
+  // Zed
+  ".zed/settings.json",
+  ".zed/tasks.json",
+  ".zed/settings.local.json",
+];
+
+const prLabels = danger.github.issue.labels.map((label) => label.name);
+const hasConfigChangeLabel = prLabels.includes(CONFIG_CHANGE_LABEL);
+
+const configMatches = danger.git.fileMatch(...SENSITIVE_CONFIG_FILES).getKeyedPaths();
+const touchedConfigFiles = Array.from(
+  new Set([...configMatches.created, ...configMatches.edited, ...configMatches.deleted, ...configMatches.modified]),
+);
+
+if (touchedConfigFiles.length > 0) {
+  const touchedConfigFilesStr = touchedConfigFiles.map((path) => "`" + path + "`").join(", ");
+  const notify = hasConfigChangeLabel ? message : fail;
+
+  notify(
+    [
+      `:rotating_light: This PR touches sensitive configuration files (${touchedConfigFilesStr}).`,
+      "",
+      "These files can influence local developer tooling and AI agents (auto-running commands, injecting instructions), are deployed to production infrastructure, or define the repository's default editor configuration, so changes to them must be reviewed with **extreme caution**.",
+    ].join("\n"),
+  );
+}
