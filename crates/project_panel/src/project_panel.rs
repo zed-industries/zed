@@ -1711,7 +1711,11 @@ impl ProjectPanel {
             worktree_id: worktree.id(),
             path: entry.path.clone(),
         };
-        MarkdownPreviewView::open_for_project_path(project_path, self.workspace.clone(), window, cx);
+        self.workspace
+            .update(cx, |workspace, cx| {
+                MarkdownPreviewView::open_for_project_path(project_path, workspace, window, cx);
+            })
+            .ok();
     }
 
     fn open_internal(

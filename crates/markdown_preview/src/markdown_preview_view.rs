@@ -27,11 +27,11 @@ use theme_settings::ThemeSettings;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
 use util::markdown::split_local_url_fragment;
 use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions, SerializableItem};
+use workspace::notifications::NotifyResultExt;
 use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
-use workspace::notifications::NotifyResultExt;
-use workspace::{ItemId, OpenOptions, OpenVisible, Pane, Workspace, WorkspaceId, delete_unloaded_items};
+use workspace::{ItemId, Pane, Workspace, WorkspaceId, delete_unloaded_items};
 
 use crate::markdown_preview_settings::MarkdownPreviewSettings;
 use crate::{
@@ -337,62 +337,38 @@ impl MarkdownPreviewView {
     }
 
     pub fn is_markdown_path(path: impl AsRef<Path>) -> bool {
-        path.as_ref()
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown"))
+        path.as_ref().extension().is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown")
+        })
     }
 
-    /// Opens a markdown preview for a file that may not yet be open in an editor.
-    /// The raw editor tab is added transiently to load the buffer, then removed unless
-    /// the file was already open before this call.
-    pub fn open_for_project_path<V: 'static>(
+    pub fn open_for_project_path(
         project_path: ProjectPath,
-        workspace: WeakEntity<Workspace>,
+        workspace: &mut Workspace,
         window: &mut Window,
-        cx: &mut Context<V>,
+        cx: &mut Context<Workspace>,
     ) {
-        let was_already_open = workspace
-            .update(cx, |workspace, cx| {
-                workspace.panes().iter().any(|pane| {
-                    pane.read(cx).item_for_path(project_path.clone(), cx).is_some()
-                })
-            })
-            .unwrap_or(false);
+        let open_buffer = workspace
+            .project()
+            .update(cx, |project, cx| project.open_buffer(project_path, cx));
 
-        let Ok(open_task) = workspace.update(cx, |workspace, cx| {
-            workspace.open_path_preview(project_path, None, false, false, false, window, cx)
-        }) else {
-            return;
-        };
-
-        cx.spawn_in(window, async move |_this, mut cx| {
-            let Some(item) = open_task.await.notify_workspace_async_err(workspace.clone(), &mut cx)
+        cx.spawn_in(window, async move |workspace, mut cx| {
+            let Some(buffer) = open_buffer
+                .await
+                .notify_workspace_async_err(workspace.clone(), &mut cx)
             else {
                 return;
             };
-            let item_id = item.item_id();
-            cx.update(|window, cx| {
-                let Some(editor) = item.act_as::<Editor>(cx) else {
-                    return;
-                };
-                let Some((preview, pane)) = workspace
-                    .update(cx, |workspace, cx| {
-                        let preview =
-                            Self::create_markdown_view(workspace, editor, window, cx);
-                        (preview, workspace.active_pane().clone())
-                    })
-                    .ok()
-                else {
-                    return;
-                };
-                pane.update(cx, |pane, cx| {
-                    pane.add_item(Box::new(preview), true, true, None, window, cx);
-                    if !was_already_open {
-                        pane.remove_item(item_id, false, false, window, cx);
-                    }
-                });
-            })
-            .ok();
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    let project = workspace.project().clone();
+                    let editor = cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+                    let preview = Self::create_markdown_view(workspace, editor, window, cx);
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(preview), true, true, None, window, cx);
+                    });
+                })
+                .ok();
         })
         .detach();
     }
