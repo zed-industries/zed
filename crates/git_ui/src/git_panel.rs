@@ -2941,7 +2941,7 @@ impl GitPanel {
                     }
                 };
                 let skill_envelope =
-                    match Self::build_commit_message_commit_message_skill_envelope(fs, skill).await {
+                    match Self::build_commit_message_skill_envelope(fs, skill).await {
                         Ok(content) => content,
                         Err(error) => {
                             Self::show_commit_message_error(&this, &error, cx);
@@ -8959,11 +8959,23 @@ mod tests {
 
     #[test]
     fn test_build_commit_message_prompt_content_and_ordering() {
+        let skill = agent_skills::Skill {
+            name: "write-commit-message".to_string(),
+            description: "Follow the configured commit message format.".to_string(),
+            source: agent_skills::SkillSource::Global,
+            directory_path: std::path::PathBuf::from("/path/to/skill"),
+            skill_file_path: std::path::PathBuf::from("/path/to/skill/SKILL.md"),
+            load_warnings: Vec::new(),
+            disable_model_invocation: false,
+            embedded_body: None,
+        };
+        let skill_content = agent_skills::render_skill_envelope(&skill, "End the commit message with `...`.");
+
         let prompt = GitPanel::build_commit_message_prompt(
             "Write a commit message.",
             Some("Use terse commit messages."),
             Some("Use the git_ui prefix."),
-            Some("End the commit message with `...`."),
+            Some(&skill_content),
             Some("Follow the configured commit message format."),
             "Update generated message",
             "diff --git a/file b/file",
