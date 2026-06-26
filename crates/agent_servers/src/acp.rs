@@ -1992,7 +1992,7 @@ pub mod test_support {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use acp_thread::{
-        AgentSessionConfigOptions, AgentSessionModes, AgentSessionPromptWithClientUserMessageId,
+        AgentSessionConfigOptions, AgentSessionModes, AgentSessionPromptWithRewind,
         AgentSessionRetry, AgentSessionSetTitle, AgentSessionTruncate, AgentTelemetry,
     };
 
@@ -2206,10 +2206,7 @@ pub mod test_support {
             self.inner.logout(cx)
         }
 
-        fn prompt_with_rewind(
-            &self,
-            cx: &App,
-        ) -> Option<Rc<dyn AgentSessionPromptWithClientUserMessageId>> {
+        fn prompt_with_rewind(&self, cx: &App) -> Option<Rc<dyn AgentSessionPromptWithRewind>> {
             self.inner.prompt_with_rewind(cx)
         }
 

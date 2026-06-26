@@ -6890,14 +6890,11 @@ mod tests {
             }
         }
 
-        fn prompt_with_rewind(
-            &self,
-            _cx: &App,
-        ) -> Option<Rc<dyn AgentSessionPromptWithClientUserMessageId>> {
+        fn prompt_with_rewind(&self, _cx: &App) -> Option<Rc<dyn AgentSessionPromptWithRewind>> {
             self.supports_truncate.then(|| {
                 Rc::new(FakeAgentSessionPromptWithClientUserMessageId {
                     connection: self.clone(),
-                }) as Rc<dyn AgentSessionPromptWithClientUserMessageId>
+                }) as Rc<dyn AgentSessionPromptWithRewind>
             })
         }
 
@@ -6959,7 +6956,7 @@ mod tests {
         connection: FakeAgentConnection,
     }
 
-    impl AgentSessionPromptWithClientUserMessageId for FakeAgentSessionPromptWithClientUserMessageId {
+    impl AgentSessionPromptWithRewind for FakeAgentSessionPromptWithClientUserMessageId {
         fn prompt(
             &self,
             _client_user_message_id: ClientUserMessageId,
