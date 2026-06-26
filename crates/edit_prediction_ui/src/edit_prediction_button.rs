@@ -86,7 +86,7 @@ impl Render for EditPredictionButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Return empty div if AI is disabled
         if DisableAiSettings::get_global(cx).disable_ai {
-            self.popover_menu_handle.clear();
+            self.popover_menu_handle.clear(cx);
             return div().hidden();
         }
 
@@ -98,7 +98,7 @@ impl Render for EditPredictionButton {
                 let Some(copilot) = EditPredictionStore::try_global(cx)
                     .and_then(|store| store.read(cx).copilot_for_project(&self.project.upgrade()?))
                 else {
-                    self.popover_menu_handle.clear();
+                    self.popover_menu_handle.clear(cx);
                     return div().hidden();
                 };
                 let status = copilot.read(cx).status();
@@ -118,7 +118,7 @@ impl Render for EditPredictionButton {
                 };
 
                 if let Status::Error(e) = status {
-                    self.popover_menu_handle.clear();
+                    self.popover_menu_handle.clear(cx);
                     if !show_status_button {
                         return div().hidden();
                     }
@@ -398,7 +398,7 @@ impl Render for EditPredictionButton {
                 };
 
                 if edit_prediction::should_show_upsell_modal(cx) {
-                    self.popover_menu_handle.clear();
+                    self.popover_menu_handle.clear(cx);
                     if !show_status_button {
                         return div().hidden();
                     }
@@ -546,7 +546,7 @@ impl Render for EditPredictionButton {
             }
 
             EditPredictionProvider::None => {
-                self.popover_menu_handle.clear();
+                self.popover_menu_handle.clear(cx);
                 div().hidden()
             }
         }

@@ -79,8 +79,31 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
         }
     }
 
-    pub fn clear(&self) {
-        self.0.borrow_mut().take();
+    pub fn clear(&self, cx: &mut App) {
+        let Some((menu_cell, deployed_menu)) = self
+            .0
+            .borrow()
+            .as_ref()
+            .map(|state| (state.menu.clone(), state.menu.borrow().as_ref().cloned()))
+        else {
+            return;
+        };
+
+        if let Some(menu) = deployed_menu {
+            menu.update(cx, |_, cx| cx.emit(DismissEvent));
+            let this = self.clone();
+            cx.defer(move |_| {
+                let mut state = this.0.borrow_mut();
+                if state
+                    .as_ref()
+                    .is_some_and(|state| Rc::ptr_eq(&state.menu, &menu_cell))
+                {
+                    state.take();
+                }
+            });
+        } else {
+            self.0.borrow_mut().take();
+        }
     }
 
     pub fn toggle(&self, window: &mut Window, cx: &mut App) {
