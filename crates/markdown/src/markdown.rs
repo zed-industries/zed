@@ -314,14 +314,14 @@ impl MarkdownStyle {
         };
 
         if is_preview {
-            style.with_preview_overrides(ui_font_size, colors)
+            style.with_preview_overrides(colors)
         } else {
             style
         }
     }
 
-    fn with_preview_overrides(mut self, ui_font_size: Pixels, colors: &theme::ThemeColors) -> Self {
-        let body_font_size = ui_font_size * 0.92;
+    fn with_preview_overrides(mut self, colors: &theme::ThemeColors) -> Self {
+        let body_font_size = rems(0.92);
         self.base_text_style.font_size = body_font_size.into();
         self.container_style.text.font_size = Some(body_font_size.into());
 
@@ -5173,6 +5173,28 @@ mod tests {
         });
         cx.update(|_window, cx| {
             assert!(markdown.read(cx).context_menu_link().is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn test_preview_body_font_size_is_rem_based(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.update(|window, cx| {
+            let style = MarkdownStyle::themed(MarkdownFont::Preview, window, cx);
+            assert!(
+                matches!(style.base_text_style.font_size, AbsoluteLength::Rems(_)),
+                "preview body font size must be rem-based, got {:?}",
+                style.base_text_style.font_size
+            );
+            assert!(
+                matches!(
+                    style.container_style.text.font_size,
+                    Some(AbsoluteLength::Rems(_))
+                ),
+                "preview container font size must be rem-based, got {:?}",
+                style.container_style.text.font_size
+            );
         });
     }
 
