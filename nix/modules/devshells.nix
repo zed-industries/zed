@@ -64,6 +64,20 @@
           ]
           ++ lib.optionals stdenv.hostPlatform.isLinux [ accerciser ];
 
+        shellHook = ''
+          # On non-NixOS Linux, the Nix shell may not see system GPU libs/ICDs.
+          # Expose host driver paths so Vulkan can load the platform ICD.
+          if [[ "$(uname)" == "Linux" && ! -d /run/opengl-driver ]]; then
+            export LD_LIBRARY_PATH="/usr/lib:/usr/lib32''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+            if [[ -f /usr/share/vulkan/icd.d/nvidia_icd.json ]]; then
+              export VK_ICD_FILENAMES="/usr/share/vulkan/icd.d/nvidia_icd.json"
+            elif [[ -f /usr/share/vulkan/icd.d/intel_icd.json ]]; then
+              export VK_ICD_FILENAMES="/usr/share/vulkan/icd.d/intel_icd.json"
+            fi
+          fi
+        '';
+
         env =
           (removeAttrs baseEnv [
             "LK_CUSTOM_WEBRTC" # download the staticlib during the build as usual
