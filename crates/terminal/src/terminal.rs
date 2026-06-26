@@ -1810,7 +1810,8 @@ impl Terminal {
     pub fn write_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         // Inject bytes directly into the terminal emulator and refresh the UI.
         // This bypasses the PTY/event loop for display-only terminals.
-        let converted = convert_lf_to_crlf(bytes);
+        let mut previous_byte_was_cr = false;
+        let converted = convert_lf_to_crlf(bytes, &mut previous_byte_was_cr);
 
         let mut term = self.term.lock();
         self.output_processor.advance(&mut *term, &converted);
@@ -2916,15 +2917,14 @@ fn task_summary(task: &TaskState, exit_status: Option<ExitStatus>) -> (bool, Str
 /// emits `\n`, which moves Alacritty's cursor down without returning it to
 /// column zero and makes the rendered output look misaligned. Alacritty has no
 /// setting for this, so we insert a `\r` before each `\n` that lacks one.
-fn convert_lf_to_crlf(bytes: &[u8]) -> Vec<u8> {
+fn convert_lf_to_crlf(bytes: &[u8], previous_byte_was_cr: &mut bool) -> Vec<u8> {
     let mut converted = Vec::with_capacity(bytes.len());
-    let mut prev_byte = 0u8;
     for &byte in bytes {
-        if byte == b'\n' && prev_byte != b'\r' {
+        if byte == b'\n' && !*previous_byte_was_cr {
             converted.push(b'\r');
         }
         converted.push(byte);
-        prev_byte = byte;
+        *previous_byte_was_cr = byte == b'\r';
     }
     converted
 }
@@ -2987,11 +2987,17 @@ fn spawn_task_subprocess(
                     let Some(mut reader) = reader else { return };
                     let mut processor = Processor::<StdSyncHandler>::new();
                     let mut buffer = [0u8; 8192];
+                    let mut previous_byte_was_cr = false;
                     loop {
                         match reader.read(&mut buffer).await {
-                            Ok(0) | Err(_) => return,
+                            Ok(0) => return,
+                            Err(error) => {
+                                log::warn!("failed to read subprocess output: {error}");
+                                return;
+                            }
                             Ok(count) => {
-                                let converted = convert_lf_to_crlf(&buffer[..count]);
+                                let converted =
+                                    convert_lf_to_crlf(&buffer[..count], &mut previous_byte_was_cr);
                                 {
                                     let mut term = term.lock();
                                     processor.advance(&mut *term, &converted);
@@ -3012,17 +3018,25 @@ fn spawn_task_subprocess(
             // Poll for its status without holding the lock across an await.
             let status = loop {
                 let status = match child.lock().as_mut() {
-                    Some(child) => child.try_status().ok().flatten(),
+                    Some(child) => match child.try_status() {
+                        Ok(status) => status,
+                        Err(error) => {
+                            log::warn!("failed to get subprocess exit status: {error}");
+                            break None;
+                        }
+                    },
                     None => Some(ExitStatus::default()),
                 };
                 match status {
-                    Some(status) => break status,
+                    Some(status) => break Some(status),
                     None => executor.timer(Duration::from_millis(20)).await,
                 }
             };
-            events_tx
-                .unbounded_send(PtyEvent::Event(TerminalBackendEvent::ChildExit(status)))
-                .ok();
+            let event = match status {
+                Some(status) => TerminalBackendEvent::ChildExit(status),
+                None => TerminalBackendEvent::Exit,
+            };
+            events_tx.unbounded_send(PtyEvent::Event(event)).ok();
         }
     });
 
@@ -3460,6 +3474,28 @@ mod tests {
             .unwrap();
         let terminal = cx.new(|cx| builder.subscribe(cx));
         (terminal, completion_rx)
+    }
+
+    #[test]
+    fn test_convert_lf_to_crlf_preserves_split_crlf() {
+        let mut previous_byte_was_cr = false;
+        assert_eq!(
+            convert_lf_to_crlf(b"one\n", &mut previous_byte_was_cr),
+            b"one\r\n"
+        );
+        assert!(!previous_byte_was_cr);
+
+        let mut previous_byte_was_cr = false;
+        assert_eq!(
+            convert_lf_to_crlf(b"two\r", &mut previous_byte_was_cr),
+            b"two\r"
+        );
+        assert!(previous_byte_was_cr);
+        assert_eq!(
+            convert_lf_to_crlf(b"\nthree", &mut previous_byte_was_cr),
+            b"\nthree"
+        );
+        assert!(!previous_byte_was_cr);
     }
 
     /// Regression test for the agent terminal failing with `Not a tty (os error
