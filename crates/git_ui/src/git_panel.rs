@@ -8874,6 +8874,7 @@ mod tests {
             Some("Use terse commit messages."),
             Some("Use the git_ui prefix."),
             Some("Follow the configured commit message format."),
+            Some("End the commit message with `...`."),
             "Update generated message",
             "diff --git a/file b/file",
         );
@@ -8886,9 +8887,13 @@ mod tests {
 
         let user_agents_md_index = prompt.find("<rules>").unwrap();
         let project_rules_index = prompt.find("<project_rules>").unwrap();
+        let skill_index = prompt
+            .find("<skill_content name=\"write-commit-message\">")
+            .unwrap();
         let instructions_index = prompt.find("<commit_message_instructions>").unwrap();
         assert!(user_agents_md_index < project_rules_index);
-        assert!(project_rules_index < instructions_index);
+        assert!(project_rules_index < skill_index);
+        assert!(skill_index < instructions_index);
     }
 
     #[test]
@@ -8898,6 +8903,7 @@ mod tests {
             None,
             None,
             Some("   \n  "),
+            None,
             "",
             "diff --git a/file b/file",
         );
