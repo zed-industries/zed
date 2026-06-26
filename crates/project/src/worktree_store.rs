@@ -827,6 +827,7 @@ impl WorktreeStore {
                         visible,
                         abs_path: response.canonicalized_path,
                         root_repo_common_dir: response.root_repo_common_dir,
+                        root_repo_is_linked_worktree: response.root_repo_is_linked_worktree,
                     },
                     client,
                     path_style,
@@ -1096,7 +1097,7 @@ impl WorktreeStore {
 
         let update = proto::UpdateProject {
             project_id,
-            worktrees: self.worktree_metadata_protos(cx),
+            worktrees: self.worktree_metadata_protos_for_project(project_id, cx),
         };
 
         // collab has bad concurrency guarantees, so we send requests in serial.
@@ -1144,6 +1145,15 @@ impl WorktreeStore {
     }
 
     pub fn worktree_metadata_protos(&self, cx: &App) -> Vec<proto::WorktreeMetadata> {
+        self.worktree_metadata_protos_for_project(u64::MAX, cx)
+    }
+
+    fn worktree_metadata_protos_for_project(
+        &self,
+        project_id: u64,
+        cx: &App,
+    ) -> Vec<proto::WorktreeMetadata> {
+        let include_linked_worktree_metadata = project_id == REMOTE_SERVER_PROJECT_ID;
         self.worktrees()
             .map(|worktree| {
                 let worktree = worktree.read(cx);
@@ -1155,6 +1165,8 @@ impl WorktreeStore {
                     root_repo_common_dir: worktree
                         .root_repo_common_dir()
                         .map(|p| p.to_string_lossy().into_owned()),
+                    root_repo_is_linked_worktree: include_linked_worktree_metadata
+                        && worktree.root_repo_is_linked_worktree(),
                 }
             })
             .collect()
@@ -1371,7 +1383,9 @@ impl WorktreeStore {
                     .root_repo_common_dir()
                     .map(|dir| crate::git_store::repo_identity_path(dir))
                     .filter(|repo_path| {
-                        *repo_path == folder_path.as_path() || !folder_path.starts_with(*repo_path)
+                        snapshot.root_repo_is_linked_worktree()
+                            || *repo_path == folder_path.as_path()
+                            || !folder_path.starts_with(*repo_path)
                     })
                     .map(Path::to_path_buf)
                     .unwrap_or_else(|| folder_path.clone());
