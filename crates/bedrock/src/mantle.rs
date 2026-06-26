@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use aws_http_client::sign_request_sigv4;
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
 use http_client::{
@@ -10,7 +10,7 @@ pub use language_model_core::ReasoningEffort;
 use open_ai::responses as MantleResponses;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{convert::TryFrom, future::Future};
+use std::convert::TryFrom;
 use strum::EnumIter;
 use thiserror::Error;
 
@@ -624,7 +624,10 @@ pub enum RequestError {
         provider: String,
         status_code: StatusCode,
         body: String,
-        headers: HeaderMap<HeaderValue>,
+        // Boxed to keep `RequestError` small: an unboxed `HeaderMap` makes the
+        // error variant large enough to trip `clippy::result_large_err` on every
+        // function returning `Result<_, RequestError>`.
+        headers: Box<HeaderMap<HeaderValue>>,
     },
     #[error(transparent)]
     Other(#[from] anyhow::Error),
@@ -703,7 +706,7 @@ pub async fn non_streaming_completion(
             provider: PROVIDER_NAME.to_owned(),
             status_code: response.status(),
             body,
-            headers: response.headers().clone(),
+            headers: Box::new(response.headers().clone()),
         })
     }
 }
@@ -773,7 +776,7 @@ pub async fn stream_completion(
             provider: PROVIDER_NAME.to_owned(),
             status_code: response.status(),
             body,
-            headers: response.headers().clone(),
+            headers: Box::new(response.headers().clone()),
         })
     }
 }
@@ -850,7 +853,7 @@ pub async fn stream_responses(
             provider: PROVIDER_NAME.to_owned(),
             status_code: response.status(),
             body,
-            headers: response.headers().clone(),
+            headers: Box::new(response.headers().clone()),
         })
     }
 }
