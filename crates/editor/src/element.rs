@@ -100,8 +100,6 @@ use workspace::{
 struct LineHighlightSpec {
     selection: bool,
     breakpoint: bool,
-    added: bool,
-    deleted: bool,
     _active_stack_frame: bool,
 }
 
@@ -2727,21 +2725,33 @@ impl EditorElement {
                 let number = relative_number.unwrap_or(&non_relative_number);
                 write!(&mut line_number, "{number}").unwrap();
 
-                let color = active_rows
-                    .get(&display_row)
-                    .map(|spec| match spec {
-                        LineHighlightSpec {
+                let colors = cx.theme().colors();
+                let spec = active_rows.get(&display_row);
+                let color = match (spec, row_info.diff_status) {
+                    (
+                        Some(LineHighlightSpec {
                             breakpoint: true, ..
-                        } => cx.theme().colors().debugger_accent,
-                        LineHighlightSpec { added: true, .. } => {
-                            cx.theme().colors().version_control_added
-                        }
-                        LineHighlightSpec { deleted: true, .. } => {
-                            cx.theme().colors().version_control_deleted
-                        }
-                        _ => cx.theme().colors().editor_active_line_number,
-                    })
-                    .unwrap_or_else(|| cx.theme().colors().editor_line_number);
+                        }),
+                        _,
+                    ) => colors.debugger_accent,
+                    (
+                        _,
+                        Some(DiffHunkStatus {
+                            kind: DiffHunkStatusKind::Added,
+                            ..
+                        }),
+                    ) => colors.version_control_added,
+                    (
+                        _,
+                        Some(DiffHunkStatus {
+                            kind: DiffHunkStatusKind::Deleted,
+                            ..
+                        }),
+                    ) => colors.version_control_deleted,
+                    (Some(_), _) => colors.editor_active_line_number,
+                    (_, _) => colors.editor_line_number,
+                };
+
                 let shaped_line =
                     self.shape_line_number(SharedString::from(&line_number), color, window);
                 let scroll_top =
@@ -8186,6 +8196,48 @@ impl Element for EditorElement {
                     let drag_highlight_color = colors.editor_active_line_background;
                     let drag_border_color = colors.border_focused;
 
+                    for (ix, row_info) in row_infos.iter().enumerate() {
+                        let Some(diff_status) = row_info.diff_status else {
+                            continue;
+                        };
+
+                        let diff_hunk_colors = match diff_status.kind {
+                            DiffHunkStatusKind::Added => &added_diff_hunk_colors,
+                            DiffHunkStatusKind::Deleted => &deleted_diff_hunk_colors,
+                            DiffHunkStatusKind::Modified => {
+                                debug_panic!("modified diff status for row info");
+                                continue;
+                            }
+                        };
+
+                        let hollow_highlight = LineHighlight {
+                            background: diff_hunk_colors.hollow_background.into(),
+                            border: Some(diff_hunk_colors.hollow_border),
+                            include_gutter: true,
+                            type_id: None,
+                        };
+
+                        let filled_highlight = LineHighlight {
+                            background: solid_background(diff_hunk_colors.filled_background),
+                            border: None,
+                            include_gutter: true,
+                            type_id: None,
+                        };
+
+                        let background = if self.diff_hunk_hollow(diff_status, cx) {
+                            hollow_highlight
+                        } else {
+                            filled_highlight
+                        };
+
+                        let base_display_point =
+                            DisplayPoint::new(start_row + DisplayRow(ix as u32), 0);
+
+                        highlighted_rows
+                            .entry(base_display_point.row())
+                            .or_insert(background);
+                    }
+
                     // Add diff review drag selection highlight to text area
                     if let Some(drag_state) = &self.editor.read(cx).diff_review_drag_state {
                         let range = drag_state.row_range(&snapshot.display_snapshot);
@@ -8320,59 +8372,6 @@ impl Element for EditorElement {
                             window,
                             cx,
                         );
-
-                    for (ix, row_info) in row_infos.iter().enumerate() {
-                        let Some(diff_status) = row_info.diff_status else {
-                            continue;
-                        };
-
-                        let diff_hunk_colors = match diff_status.kind {
-                            DiffHunkStatusKind::Added => &added_diff_hunk_colors,
-                            DiffHunkStatusKind::Deleted => &deleted_diff_hunk_colors,
-                            DiffHunkStatusKind::Modified => {
-                                debug_panic!("modified diff status for row info");
-                                continue;
-                            }
-                        };
-
-                        let hollow_highlight = LineHighlight {
-                            background: diff_hunk_colors.hollow_background.into(),
-                            border: Some(diff_hunk_colors.hollow_border),
-                            include_gutter: true,
-                            type_id: None,
-                        };
-
-                        let filled_highlight = LineHighlight {
-                            background: solid_background(diff_hunk_colors.filled_background),
-                            border: None,
-                            include_gutter: true,
-                            type_id: None,
-                        };
-
-                        let background = if self.diff_hunk_hollow(diff_status, cx) {
-                            hollow_highlight
-                        } else {
-                            filled_highlight
-                        };
-
-                        let base_display_point =
-                            DisplayPoint::new(start_row + DisplayRow(ix as u32), 0);
-
-                        highlighted_rows
-                            .entry(base_display_point.row())
-                            .or_insert(background);
-
-                        let spec = active_rows.entry(base_display_point.row()).or_default();
-                        match diff_status.kind {
-                            DiffHunkStatusKind::Deleted => spec.deleted = true,
-                            DiffHunkStatusKind::Added => spec.added = true,
-                            DiffHunkStatusKind::Deleted => spec.deleted = true,
-                            DiffHunkStatusKind::Modified => {
-                                debug_panic!("modified diff status for row info");
-                                continue;
-                            }
-                        }
-                    }
 
                     // relative rows are based on newest selection, even outside the visible area
                     let current_selection_head = self.editor.update(cx, |editor, cx| {
