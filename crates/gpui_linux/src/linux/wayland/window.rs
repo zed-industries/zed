@@ -1631,7 +1631,7 @@ static KDE_BLUR_FALLBACK_ONCE: Once = Once::new();
 
 /// Applies the background blur for the window via the cross-compositor
 /// `ext-background-effect` protocol, if the compositor supports it.
-fn update_blur(state: &mut RefMut<WaylandWindowState>, content_area: Bounds<i32>) {
+fn update_blur(state: &mut RefMut<WaylandWindowState>) {
     let Some(manager) = state.globals.ext_background_effect_manager.clone() else {
         return;
     };
@@ -1649,12 +1649,19 @@ fn update_blur(state: &mut RefMut<WaylandWindowState>, content_area: Bounds<i32>
             .globals
             .compositor
             .create_region(&state.globals.qh, ());
+        // The blur region covers the entire visible surface so that the title
+        // bar and decoration-shadow areas also receive blur. Rounding is
+        // applied to match the client-side decoration corners.
         let rounding = if state.decorations == WindowDecorations::Client {
             f32::from(theme::CLIENT_SIDE_DECORATION_ROUNDING) as i32
         } else {
             0
         };
-        add_rounded_region(&region, content_area, rounding, state.tiling);
+        let full_surface = state
+            .bounds
+            .map_origin(|_| px(0.0))
+            .map(|v| f32::from(v) as i32);
+        add_rounded_region(&region, full_surface, rounding, state.tiling);
         effect.set_blur_region(Some(&region));
         region.destroy();
     } else if let Some(BlurSurface::ExtBackgroundEffect(effect)) = state.blur.take() {
@@ -1799,7 +1806,7 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
     }
     region.destroy();
 
-    update_blur(&mut state, content_area);
+    update_blur(&mut state);
 
     if let Some(ref blur_manager) = state.globals.blur_manager {
         // Fallback to the deprecated KDE blur protocol for older compositors
