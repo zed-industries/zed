@@ -175,8 +175,12 @@ impl MarkdownStyle {
                 theme_settings.agent_buffer_font_size(cx),
                 theme_settings.agent_ui_font_size(cx),
             ),
-            MarkdownFont::Editor | MarkdownFont::Preview => (
+            MarkdownFont::Editor => (
                 theme_settings.buffer_font_size(cx),
+                theme_settings.ui_font_size(cx),
+            ),
+            MarkdownFont::Preview => (
+                theme_settings.markdown_preview_font_size(cx),
                 theme_settings.ui_font_size(cx),
             ),
         };
@@ -3970,7 +3974,7 @@ impl RenderedText {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{RenderImage, TestAppContext, size};
+    use gpui::{RenderImage, TestAppContext, UpdateGlobal, size};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use std::sync::{
         Arc,
@@ -5282,74 +5286,67 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_themed_body_font_size_per_font_flavor(cx: &mut TestAppContext) {
-        struct TestWindow;
-        impl Render for TestWindow {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div()
-            }
-        }
-
+    fn test_editor_zoom_does_not_affect_markdown_preview(cx: &mut TestAppContext) {
         ensure_theme_initialized(cx);
-        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
 
-        cx.update(|window, cx| {
-            // Preview body is rem-based so it scales inside the preview's `WithRemSize` subtree.
-            let preview = MarkdownStyle::themed(MarkdownFont::Preview, window, cx);
-            assert!(
-                matches!(
-                    preview.base_text_style.font_size,
-                    AbsoluteLength::Rems(r) if r == rems(1.0)
-                ),
-                "preview body font_size should be Rems(1.0), got {:?}",
-                preview.base_text_style.font_size
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.buffer_font_size = Some(16.0.into());
+                    settings.theme.markdown_preview_font_size = None;
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let before = ThemeSettings::get_global(cx).markdown_preview_font_size(cx);
+            assert_eq!(before, px(16.0));
+
+            theme_settings::increase_buffer_font_size(cx);
+            theme_settings::increase_buffer_font_size(cx);
+            theme_settings::increase_buffer_font_size(cx);
+
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(19.0));
+            assert_eq!(
+                ThemeSettings::get_global(cx).markdown_preview_font_size(cx),
+                before
             );
-
-            // Editor and Agent are not wrapped in `WithRemSize`, so their bodies stay in absolute pixels.
-            for font in [MarkdownFont::Editor, MarkdownFont::Agent] {
-                let style = MarkdownStyle::themed(font, window, cx);
-                assert!(
-                    matches!(style.base_text_style.font_size, AbsoluteLength::Pixels(_)),
-                    "{:?} body font_size should be Pixels(_), got {:?}",
-                    match font {
-                        MarkdownFont::Editor => "Editor",
-                        MarkdownFont::Agent => "Agent",
-                        MarkdownFont::Preview => unreachable!(),
-                    },
-                    style.base_text_style.font_size
-                );
-            }
         });
     }
 
     #[gpui::test]
-    fn test_themed_heading_level_styles_per_font_flavor(cx: &mut TestAppContext) {
-        struct TestWindow;
-        impl Render for TestWindow {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div()
-            }
-        }
-
+    fn test_markdown_preview_follows_buffer_font_size_setting_when_unset(cx: &mut TestAppContext) {
         ensure_theme_initialized(cx);
-        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
 
-        cx.update(|window, cx| {
-            // Only Agent overrides per-level heading sizes; Editor/Preview rely on rem-based defaults.
-            assert!(
-                MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
-                    .heading_level_styles
-                    .is_some()
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.buffer_font_size = Some(20.0.into());
+                    settings.theme.markdown_preview_font_size = None;
+                });
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                ThemeSettings::get_global(cx).markdown_preview_font_size(cx),
+                px(20.0)
             );
-            assert!(
-                MarkdownStyle::themed(MarkdownFont::Editor, window, cx)
-                    .heading_level_styles
-                    .is_none()
-            );
-            assert!(
-                MarkdownStyle::themed(MarkdownFont::Preview, window, cx)
-                    .heading_level_styles
-                    .is_none()
+        });
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.buffer_font_size = Some(24.0.into());
+                });
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                ThemeSettings::get_global(cx).markdown_preview_font_size(cx),
+                px(24.0)
             );
         });
     }
