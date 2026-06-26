@@ -2695,11 +2695,7 @@ impl GitPanel {
                 settings.project.git_commit_message_skill_name.clone()
             });
 
-        if let Some(skill_name) = skill_name {
-            return Some((false, skill_name));
-        }
-
-        None
+        skill_name.map(|name| (user_settings_file, name))
     }
 
     async fn load_commit_message_skill_content(
