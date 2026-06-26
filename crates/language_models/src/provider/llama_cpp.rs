@@ -46,10 +46,9 @@ static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
 /// How long to wait before reconnecting to `/models/sse` after the stream ends.
 const MODEL_EVENT_RECONNECT_INTERVAL: Duration = Duration::from_secs(5);
 
-/// Context length assumed for an unloaded router model, which can't be probed
-/// without loading it. A generous default keeps the first message working
-/// instead of tripping a small limit; re-discovery refines it once the model
-/// loads, and `context_window` / `available_models` override it.
+/// Context length assumed for an unloaded router model (it can't be probed
+/// without loading it). Generous so early messages work; re-discovery refines
+/// it once the model loads.
 const ASSUMED_UNLOADED_CONTEXT: u64 = 131_072;
 
 #[derive(Default, Debug, Clone, PartialEq)]
@@ -64,8 +63,7 @@ pub struct LlamaCppSettings {
 pub struct LlamaCppLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: Entity<State>,
-    /// Live capabilities shared with the models handed to the agent and refreshed
-    /// by re-discovery on `/models/sse` events (see [`LiveCapabilities`]).
+    /// Live capabilities shared with the agent's models (see [`LiveCapabilities`]).
     capability_cells: CapabilityCells,
     /// Live model-load progress shared with the models (see [`LoadingProgress`]).
     loading_progress: LoadingProgress,
@@ -77,8 +75,7 @@ pub struct State {
     http_client: Arc<dyn HttpClient>,
     fetched_models: Vec<llama_cpp::Model>,
     fetch_model_task: Option<Task<Result<()>>>,
-    /// In router mode, a long-lived task subscribed to `/models/sse` that
-    /// re-runs discovery as models load and unload.
+    /// Router-mode task on `/models/sse`; re-runs discovery as models load/unload.
     model_event_task: Option<Task<()>>,
     /// Same `Arc` as the provider's; re-discovery keeps these cells in sync.
     capability_cells: CapabilityCells,
@@ -131,14 +128,12 @@ impl State {
 
         let fetch_models_task = self.fetch_models(cx);
         cx.spawn(async move |_this, _cx| {
-            // The API key is optional for a local server, so a failure to load
-            // it shouldn't prevent us from attempting to connect.
+            // The API key is optional for a local server, so a load failure is fine.
             load_key_task.await.ok();
             match fetch_models_task.await {
                 Ok(()) => Ok(()),
                 Err(err) => {
-                    // Treat a refused connection as "not configured yet" (i.e.
-                    // the llama.cpp server isn't running) rather than an error.
+                    // A refused connection means the server isn't running yet, not an error.
                     let connection_refused = err.chain().any(|cause| {
                         cause
                             .downcast_ref::<std::io::Error>()
@@ -174,10 +169,9 @@ impl State {
 
             let is_router = entries.iter().any(ModelEntry::is_router_entry);
 
-            // Models the server currently reports as loading; used below to prune
-            // stale progress labels. A preempted/aborted load may never send a
-            // terminal event, and an SSE reconnect can miss one, so we reconcile
-            // against the live listing rather than trusting events alone.
+            // Models the server reports as loading, used below to prune stale
+            // progress labels by reconciling against the live listing (a preempted
+            // load or missed SSE event can skip the terminal event).
             let loading_ids: HashSet<String> = entries
                 .iter()
                 .filter(|entry| entry.is_loading())
@@ -185,10 +179,9 @@ impl State {
                 .collect();
 
             let models: Vec<llama_cpp::Model> = if is_router {
-                // Router mode: per-model metadata comes from `/v1/models`. We
-                // only probe `/props` for already-loaded models, so listing
-                // never triggers a model load; unloaded models fall back to the
-                // listing's modality hints and user-configured overrides.
+                // Router mode: metadata comes from `/v1/models`. We probe
+                // `/props` only for loaded models so listing never triggers a
+                // load; unloaded models use the listing's hints and overrides.
                 let tasks = entries.into_iter().map(|entry| {
                     let http_client = Arc::clone(&http_client);
                     let api_url = api_url.clone();
@@ -239,15 +232,12 @@ impl State {
                     LlamaCppLanguageModelProvider::settings(cx),
                 );
                 sync_capability_cells(&this.capability_cells, &effective);
-                // Drop progress labels for models the server no longer reports as
-                // loading, so a stale "Loading … 0%" can't stick in a name after a
-                // preempted load or a missed terminal event.
+                // Drop progress labels for models no longer loading, so a stale
+                // "Loading …" can't stick after a preempted load or missed event.
                 write_recover(&this.loading_progress).retain(|id, _| loading_ids.contains(id));
-                // In router mode, models load on demand; subscribe to the
-                // server's event stream so capabilities self-correct as models
-                // load and unload. Start it once — re-discovery is triggered by
-                // those events and must not re-spawn the stream. Single-model
-                // mode already probed its one loaded model, so it needs none.
+                // Router mode loads models on demand: subscribe so capabilities
+                // self-correct as they load/unload. Start it once (events trigger
+                // re-discovery, not a re-spawn); single-model mode needs no stream.
                 if is_router {
                     if this.model_event_task.is_none() {
                         this.start_model_event_stream(cx);
@@ -260,12 +250,9 @@ impl State {
         })
     }
 
-    /// Subscribes to the router's `/models/sse` feed and re-runs discovery
-    /// whenever a model loads, unloads, or the model list changes, so
-    /// capabilities stay current. Reconnects if the stream drops and stops when
-    /// the state entity is dropped. Requires a llama.cpp build that exposes
-    /// `/models/sse`; on older builds the stream is unavailable and capabilities
-    /// aren't refreshed after the initial discovery.
+    /// Subscribes to `/models/sse` and re-runs discovery as models load, unload,
+    /// or the list changes, so capabilities stay current. Reconnects if the stream
+    /// drops; on builds without `/models/sse` the refresh is simply skipped.
     fn start_model_event_stream(&mut self, cx: &mut Context<Self>) {
         let http_client = Arc::clone(&self.http_client);
         let api_url = LlamaCppLanguageModelProvider::api_url(cx);
@@ -295,10 +282,8 @@ impl State {
                                     event.model
                                 );
                             }
-                            // A loading-progress tick: record it for the model
-                            // selector's progress indicator, no re-discovery. The
-                            // `cx.notify()` drives `Event::ProviderStateChanged`,
-                            // which the selector observes to re-render.
+                            // Loading-progress tick: record it for the selector (no
+                            // re-discovery). `cx.notify()` drives `ProviderStateChanged`.
                             if let Some(progress) = event.load_progress() {
                                 let label = SharedString::from(progress.progress_label());
                                 if this
@@ -316,11 +301,8 @@ impl State {
                             if !event.changes_model_state() {
                                 continue;
                             }
-                            // Terminal load/unload (or list change): the model is
-                            // no longer loading, so drop its progress and
-                            // re-discover — re-probing `/props` for whatever is now
-                            // loaded, reverting unloaded models to their defaults,
-                            // and refreshing the shared capability map.
+                            // Terminal load/unload (or list change): drop the
+                            // progress label and re-discover to refresh capabilities.
                             if this
                                 .update(cx, |this, cx| {
                                     write_recover(&this.loading_progress).remove(&event.model);
@@ -332,8 +314,7 @@ impl State {
                             }
                         }
                     }
-                    // The endpoint is missing (older build) or the connection
-                    // failed; we retry after a backoff.
+                    // Endpoint missing (older build) or connection failed; retry after a backoff.
                     Err(error) => {
                         log::warn!("llama.cpp model event stream unavailable: {error:#}");
                     }
@@ -355,14 +336,11 @@ impl State {
     }
 }
 
-/// The capabilities that change once a router model loads — its real context
-/// length and tool support, unknowable until then.
-///
-/// `LanguageModel`'s methods take no `cx`, yet the agent snapshots the selected
-/// model and reads them live each turn. So we share these through a map that
-/// re-discovery updates, letting an already-selected model pick up its real
-/// values without being re-selected. Image and thinking support can't change
-/// after load, so they stay plain fields on the model.
+/// Capabilities that only become known once a router model loads (its real
+/// context length and tool support). `LanguageModel`'s methods take no `cx`, yet
+/// the agent reads them live each turn, so we share them through a map that
+/// re-discovery updates — an already-selected model picks up real values without
+/// re-selection. (Image/thinking support is fixed at load, so it stays a field.)
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct LiveCapabilities {
     max_tokens: u64,
@@ -378,18 +356,15 @@ impl LiveCapabilities {
     }
 }
 
-/// Live capabilities keyed by model name, shared between the provider and the
-/// `LanguageModel` instances handed to the agent, and refreshed by re-discovery.
+/// Live capabilities keyed by model name, shared by the provider and its models.
 type CapabilityCells = Arc<RwLock<HashMap<String, LiveCapabilities>>>;
 
-/// Model name → a short load-status label (e.g. `"Loading weights 42%"`) while a
-/// router model loads, shared between the provider, the event stream, and the
-/// models so the model selector can show progress live. Absent once loaded.
+/// Model name → load-status label (e.g. `"Loading weights 42%"`) while a router
+/// model loads, shared so the model selector can show progress. Absent once loaded.
 type LoadingProgress = Arc<RwLock<HashMap<String, SharedString>>>;
 
-/// Locks for reading, recovering the guard if a previous holder panicked. The
-/// critical sections here are infallible map operations, so a poisoned lock is
-/// effectively unreachable; recovering just avoids a panicking `unwrap()`.
+/// Locks for reading, recovering instead of panicking on a poisoned lock. The
+/// critical sections are infallible map ops, so poisoning is unreachable anyway.
 fn read_recover<T>(lock: &RwLock<T>) -> RwLockReadGuard<'_, T> {
     lock.read().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
@@ -400,9 +375,8 @@ fn write_recover<T>(lock: &RwLock<T>) -> RwLockWriteGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Merges discovered models with user `available_models` overrides and the
-/// `context_window` override — the exact set of models `provided_models`
-/// exposes. Shared so re-discovery recomputes capabilities the same way.
+/// The exact set of models `provided_models` exposes: discovery merged with the
+/// `available_models` and `context_window` overrides. Shared with re-discovery.
 fn compute_effective_models(
     fetched_models: &[llama_cpp::Model],
     settings: &LlamaCppSettings,
@@ -425,9 +399,8 @@ fn compute_effective_models(
     models
 }
 
-/// Updates the shared capability map from the current effective models, so a
-/// model already held by an open conversation observes the new values (it reads
-/// the map live by name).
+/// Updates the shared capability map from the effective models, so a model held
+/// by an open conversation observes the new values (it reads the map by name).
 fn sync_capability_cells(cells: &CapabilityCells, effective: &HashMap<String, llama_cpp::Model>) {
     let mut cells = write_recover(cells);
     for model in effective.values() {
@@ -435,19 +408,17 @@ fn sync_capability_cells(cells: &CapabilityCells, effective: &HashMap<String, ll
     }
 }
 
-/// Builds a model from a `/v1/models` entry, using the loaded model's `/props`
-/// when available and optimistic assumptions otherwise — an unloaded router model
-/// can't be probed without loading it, so we keep it usable from the first
-/// message and let re-discovery refine it once it loads (see [`State::start_model_event_stream`]).
+/// Builds a model from a `/v1/models` entry, refined by `/props` when the model
+/// is loaded. An unloaded router model can't be probed, so we assume optimistic
+/// capabilities and let re-discovery refine them on load.
 fn model_from_entry(entry: &ModelEntry, props: Option<&Props>) -> llama_cpp::Model {
     let max_tokens = props
         .and_then(Props::context_length)
         .or_else(|| entry.meta.as_ref().and_then(|meta| meta.n_ctx))
         .or_else(|| entry.meta.as_ref().and_then(|meta| meta.n_ctx_train))
         .unwrap_or(ASSUMED_UNLOADED_CONTEXT);
-    // Trust `/props` when we have it. Without it, assume tools for an unloaded
-    // model (re-discovery corrects it on load) but not for a loaded model whose
-    // probe failed.
+    // Trust `/props` when present. Without it, assume tools for an unloaded model
+    // (re-discovery corrects on load) but not for a loaded model whose probe failed.
     let supports_tools = match props {
         Some(props) => props.supports_tools(),
         None => !entry.is_loaded(),
@@ -464,8 +435,7 @@ fn model_from_entry(entry: &ModelEntry, props: Option<&Props>) -> llama_cpp::Mod
     )
 }
 
-/// Derives a friendly display name from a model id, which is often a `.gguf`
-/// file path (e.g. `../models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf`).
+/// Friendly display name from a model id, which is often a `.gguf` file path.
 fn display_name_for(id: &str) -> String {
     let base = id.rsplit(['/', '\\']).next().unwrap_or(id);
     base.strip_suffix(".gguf").unwrap_or(base).to_string()
@@ -526,8 +496,7 @@ impl LlamaCppLanguageModelProvider {
                 }
             }),
         };
-        // Eagerly discover models so a running server is picked up without the
-        // user having to open the provider settings first.
+        // Discover eagerly so a running server is picked up without opening settings.
         this.state
             .update(cx, |state, cx| state.restart_fetch_models_task(cx));
         this
@@ -573,9 +542,8 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
     }
 
     fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
-        // We shouldn't pick a default model, because in router mode that might
-        // trigger a load for an unloaded model in a resource-constrained
-        // environment, which would be a poor experience.
+        // No default model: in router mode it could trigger an expensive load of
+        // an unloaded model on a constrained machine.
         None
     }
 
@@ -588,8 +556,7 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
         let settings = LlamaCppLanguageModelProvider::settings(cx);
         let effective = compute_effective_models(&self.state.read(cx).fetched_models, settings);
 
-        // Refresh the shared capability map so an open conversation picks up
-        // settings changes and newly seen models.
+        // Refresh the shared capability map so open conversations pick up settings changes.
         sync_capability_cells(&self.capability_cells, &effective);
         let mut models = effective
             .into_values()
@@ -643,19 +610,16 @@ pub struct LlamaCppLanguageModel {
     /// The model id sent to the server (and used for telemetry).
     name: String,
     display_name: String,
-    /// Live capabilities shared with the provider, read fresh by `name` on every
-    /// access so an open conversation reflects a router model's real context
-    /// length and tool support once it has loaded.
+    /// Live capabilities shared with the provider, read fresh on each access so an
+    /// open conversation reflects the model's real values once it has loaded.
     capability_cells: CapabilityCells,
-    /// Used when `capability_cells` has no entry for this model (e.g. it was
-    /// removed from settings mid-conversation).
+    /// Used when `capability_cells` has no entry (e.g. model removed mid-conversation).
     fallback_capabilities: LiveCapabilities,
-    /// Image and thinking support don't change once a model loads, so they're
-    /// captured when the model is built rather than tracked live.
+    /// Fixed once a model loads (unlike context/tools), so captured at build time.
     supports_images: bool,
     supports_thinking: bool,
-    /// Shared with the provider; reports this model's load progress (read by
-    /// `name`) so the model selector can show a loading indicator.
+    /// Shared with the provider; this model's load progress, read by `name` so the
+    /// selector can show a loading indicator.
     loading_progress: LoadingProgress,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
@@ -663,8 +627,7 @@ pub struct LlamaCppLanguageModel {
 }
 
 impl LlamaCppLanguageModel {
-    /// The model's live capabilities, or its build-time fallback if the shared
-    /// map no longer has an entry for it.
+    /// The model's live capabilities, or the build-time fallback if the map lacks it.
     fn capabilities(&self) -> LiveCapabilities {
         read_recover(&self.capability_cells)
             .get(&self.name)
@@ -672,8 +635,7 @@ impl LlamaCppLanguageModel {
             .unwrap_or(self.fallback_capabilities)
     }
 
-    /// This model's current load-status label (e.g. `"Loading weights 42%"`) if
-    /// it is loading, read live from the shared map the event stream updates.
+    /// This model's load-status label while loading, read live from the shared map.
     fn loading_label(&self) -> Option<SharedString> {
         read_recover(&self.loading_progress)
             .get(&self.name)
@@ -785,8 +747,8 @@ impl LlamaCppLanguageModel {
         } else {
             Vec::new()
         };
-        // Only send `tool_choice` alongside actual tools; some OpenAI-compatible
-        // servers reject `tool_choice` when no `tools` are present.
+        // Only send `tool_choice` with actual tools; some OpenAI-compatible servers
+        // reject it otherwise.
         let tool_choice = if tools.is_empty() {
             None
         } else {
@@ -801,16 +763,15 @@ impl LlamaCppLanguageModel {
             model: self.name.clone(),
             messages,
             stream: true,
-            // Let the server decide the output length (its `n_predict` default),
-            // bounded by the context window.
+            // Let the server decide the output length (its `n_predict` default).
             max_tokens: None,
             stop: if request.stop.is_empty() {
                 None
             } else {
                 Some(request.stop)
             },
-            // llama.cpp models often ship recommended sampler settings, so we
-            // only override the temperature when the request sets one.
+            // llama.cpp models often ship recommended sampler settings, so override
+            // temperature only when the request sets one.
             temperature: request.temperature,
             tools,
             tool_choice,
@@ -860,11 +821,9 @@ impl LanguageModel for LlamaCppLanguageModel {
 
     fn name(&self) -> LanguageModelName {
         match self.loading_label() {
-            // Surface the loading stage + percent in the model's display name so
-            // it shows wherever the model is named (the selector button, the
-            // picker) while a router model loads — no provider-agnostic UI
-            // changes needed. The agent rebuilds the name on
-            // `ProviderStateChanged`, which our progress ticks emit.
+            // Surface load progress in the display name so it shows wherever the
+            // model is named, without provider-agnostic UI changes. The agent
+            // rebuilds the name on `ProviderStateChanged`, which our ticks emit.
             Some(label) => LanguageModelName::from(format!("{} · {}", self.display_name, label)),
             None => LanguageModelName::from(self.display_name.clone()),
         }
@@ -1194,7 +1153,7 @@ impl ConfigurationView {
             return;
         }
 
-        // url changes can cause the editor to be displayed again
+        // A URL change can cause the editor to be shown again.
         self.api_key_editor
             .update(cx, |input, cx| input.set_text("", window, cx));
 
