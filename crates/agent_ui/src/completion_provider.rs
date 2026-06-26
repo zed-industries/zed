@@ -202,8 +202,6 @@ pub enum PromptLocalCommand {
     ScrollToRecentUserPrompt,
     ThumbsUp,
     ThumbsDown,
-    ShareThread,
-    SyncThread,
 }
 
 impl PromptLocalCommand {
@@ -214,8 +212,6 @@ impl PromptLocalCommand {
             Self::ScrollToRecentUserPrompt => "scroll-to-prompt",
             Self::ThumbsUp => "helpful",
             Self::ThumbsDown => "not-helpful",
-            Self::ShareThread => "share",
-            Self::SyncThread => "sync",
         }
     }
 
@@ -226,8 +222,6 @@ impl PromptLocalCommand {
             Self::ScrollToRecentUserPrompt => "Scroll to Most Recent User Prompt",
             Self::ThumbsUp => "Helpful Response",
             Self::ThumbsDown => "Not Helpful Response",
-            Self::ShareThread => "Share Thread",
-            Self::SyncThread => "Sync with Source Thread",
         }
     }
 
@@ -244,8 +238,6 @@ impl PromptLocalCommand {
             Self::ThumbsDown => {
                 "Rate this response as not helpful. Sends the current conversation to the Zed team."
             }
-            Self::ShareThread => "Share this thread.",
-            Self::SyncThread => "Sync this thread with its source thread.",
         }
     }
 
@@ -256,8 +248,6 @@ impl PromptLocalCommand {
             Self::ScrollToRecentUserPrompt => IconName::ForwardArrow,
             Self::ThumbsUp => IconName::ThumbsUp,
             Self::ThumbsDown => IconName::ThumbsDown,
-            Self::ShareThread => IconName::ArrowUpRight,
-            Self::SyncThread => IconName::ArrowCircle,
         }
     }
 }
