@@ -40,6 +40,7 @@ Some Zed AI features have their own model or prompt settings in `settings.json`,
 - `agent.subagent_model`
 - `agent.commit_message_instructions`
 - `agent.inline_alternatives`
+- `git_commit_message_skill`
 
 Use `agent.commit_message_instructions` for instructions that apply only to generated Git commit messages:
 
@@ -48,6 +49,14 @@ Use `agent.commit_message_instructions` for instructions that apply only to gene
   "agent": {
     "commit_message_instructions": "Use the Conventional Commits format: <type>(<scope>): <description>."
   }
+}
+```
+
+Or use `git_commit_message_skill` to select a reusable [Skill](./skills.md) for commit messages:
+
+```json [settings]
+{
+  "git_commit_message_skill": "write-conventional-commit-message"
 }
 ```
 
