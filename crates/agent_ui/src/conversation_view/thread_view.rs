@@ -6470,7 +6470,7 @@ impl ThreadView {
                 .w_full()
                 .child(primary)
                 .when(!needs_confirmation, |this| {
-                    this.child(self.render_thread_controls(&thread, cx))
+                    this.child(self.render_thread_stats(&thread, cx))
                 })
                 .when_some(comments_editor, |this, editor| {
                     this.child(Self::render_feedback_feedback_editor(editor, cx))
@@ -6547,18 +6547,20 @@ impl ThreadView {
             )
     }
 
-    fn render_thread_controls(
+    fn render_thread_stats(
         &self,
         thread: &Entity<AcpThread>,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
+
         if is_generating {
             return Empty.into_any_element();
         }
 
         let show_stats = AgentSettings::get_global(cx).show_turn_stats;
-        let last_turn_clock = show_stats
+
+        let Some(last_turn_clock) = show_stats
             .then(|| {
                 self.turn_fields
                     .last_turn_duration
@@ -6569,41 +6571,34 @@ impl ThreadView {
                             .color(Color::Muted)
                     })
             })
-            .flatten();
-
-        let last_turn_tokens_label = last_turn_clock
-            .is_some()
-            .then(|| {
-                self.turn_fields
-                    .last_turn_tokens
-                    .filter(|&tokens| tokens > TOKEN_THRESHOLD)
-                    .map(|tokens| {
-                        Label::new(format!("{} tokens", crate::humanize_token_count(tokens)))
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                    })
-            })
-            .flatten();
-
-        if last_turn_tokens_label.is_none() && last_turn_clock.is_none() {
+            .flatten()
+        else {
             return Empty.into_any_element();
-        }
+        };
+
+        let last_turn_tokens_label = self
+            .turn_fields
+            .last_turn_tokens
+            .filter(|&tokens| tokens > TOKEN_THRESHOLD)
+            .map(|tokens| {
+                Label::new(format!("{} tokens", crate::humanize_token_count(tokens)))
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+            });
 
         h_flex()
             .w_full()
             .py_2()
             .px_5()
-            .gap_px()
-            .opacity(0.6)
-            .hover(|s| s.opacity(1.))
-            .justify_end()
+            .gap_1()
+            .when_some(last_turn_tokens_label, |this, label| this.child(label))
             .child(
-                h_flex()
-                    .gap_1()
-                    .px_1()
-                    .when_some(last_turn_tokens_label, |this, label| this.child(label))
-                    .when_some(last_turn_clock, |this, label| this.child(label)),
+                Label::new("•")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .alpha(0.5),
             )
+            .child(last_turn_clock)
             .into_any_element()
     }
 
