@@ -261,6 +261,39 @@ async fn rename_undo_redo(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn rename_with_dir_undo_redo(cx: &mut gpui::TestAppContext) {
+    let mut cx = TestContext::new(cx).await;
+
+    // Renaming a file like `a.txt` to `files/a.txt` will create the `files`
+    // directory, in case it doesn't exist yet.
+    cx.rename("a.txt", "files/a.txt").await;
+    cx.assert_fs_state_is(&["b.txt", "files/", "files/a.txt"]);
+
+    // Undoing the rename operation should also delete the `files` directory, as
+    // it was created specifically for the rename operation.
+    cx.undo().await;
+    cx.assert_fs_state_is(&["a.txt", "b.txt"]);
+
+    // Redoing the rename operation should recreate the `files` directory and
+    // move `a.txt` back into it.
+    cx.redo().await;
+    cx.assert_fs_state_is(&["b.txt", "files/", "files/a.txt"]);
+
+    // Lastly, let's insert a different file into the `files` directory (as if it
+    // had been created outside of the project panel) to ensure that undoing the
+    // rename will now leave the directory in place, since it is no longer empty.
+    let external = path("/workspace/files/external.txt");
+    cx.fs
+        .write(Path::new(&external), b"external")
+        .await
+        .unwrap();
+    cx.cx.run_until_parked();
+
+    cx.undo().await;
+    cx.assert_fs_state_is(&["a.txt", "b.txt", "files/", "files/external.txt"]);
+}
+
+#[gpui::test]
 async fn create_undo_redo(cx: &mut gpui::TestAppContext) {
     let mut cx = TestContext::new(cx).await;
     let path = path("/workspace/c.txt");

@@ -1855,6 +1855,7 @@ impl ProjectPanel {
         let edited_entry_id;
         let edited_entry;
         let new_project_path: ProjectPath;
+        let created_dirs: Vec<ProjectPath>;
         if is_new_entry {
             self.selection = Some(SelectedEntry {
                 worktree_id,
@@ -1868,6 +1869,7 @@ impl ProjectPanel {
             edited_entry = None;
             edited_entry_id = NEW_ENTRY_ID;
             new_project_path = (worktree_id, new_path).into();
+            created_dirs = Vec::new();
             edit_task = self.project.update(cx, |project, cx| {
                 project.create_entry(new_project_path.clone(), is_dir, cx)
             });
@@ -1886,6 +1888,13 @@ impl ProjectPanel {
             edited_entry_id = entry.id;
             edited_entry = Some(entry);
             new_project_path = (worktree_id, new_path).into();
+            // Compute the directories the rename will create *before* it runs,
+            // so that undoing the rename can remove them again (if still empty).
+            created_dirs = crate::undo::created_ancestor_dirs(
+                worktree.read(cx),
+                worktree_id,
+                new_project_path.path.as_ref(),
+            );
             edit_task = self.project.update(cx, |project, cx| {
                 project.rename_entry(edited_entry_id, new_project_path.clone(), cx)
             })
@@ -1905,7 +1914,11 @@ impl ProjectPanel {
                 // Record the operation if the edit was applied
                 if new_entry.is_ok() {
                     let operation = if let Some(old_entry) = edited_entry {
-                        Change::Renamed((worktree_id, old_entry.path).into(), new_project_path)
+                        Change::Renamed {
+                            from: (worktree_id, old_entry.path).into(),
+                            to: new_project_path,
+                            created_dirs,
+                        }
                     } else {
                         Change::Created(new_project_path)
                     };
@@ -3280,7 +3293,11 @@ impl ProjectPanel {
                                 .await
                                 .notify_workspace_async_err(workspace.clone(), &mut cx)
                             {
-                                changes.push(Change::Renamed(from, to));
+                                changes.push(Change::Renamed {
+                                    from,
+                                    to,
+                                    created_dirs: Vec::new(),
+                                });
                                 last_succeed = Some(entry);
                             }
                         }
@@ -4730,10 +4747,11 @@ impl ProjectPanel {
                             if let (Some(old_path), Some(worktree_id)) =
                                 (old_paths.get(&entry_id), destination_worktree_id)
                             {
-                                changes.push(Change::Renamed(
-                                    old_path.clone(),
-                                    (worktree_id, new_entry.path).into(),
-                                ));
+                                changes.push(Change::Renamed {
+                                    from: old_path.clone(),
+                                    to: (worktree_id, new_entry.path).into(),
+                                    created_dirs: Vec::new(),
+                                });
                             }
                         }
                     }
@@ -4757,10 +4775,11 @@ impl ProjectPanel {
                             if let (Some(old_path), Some(worktree_id)) =
                                 (old_paths.get(&entry_id), destination_worktree_id)
                             {
-                                operations.push(Change::Renamed(
-                                    old_path.clone(),
-                                    (worktree_id, new_entry.path.clone()).into(),
-                                ));
+                                operations.push(Change::Renamed {
+                                    from: old_path.clone(),
+                                    to: (worktree_id, new_entry.path.clone()).into(),
+                                    created_dirs: Vec::new(),
+                                });
                             }
                             move_results.push((entry_id, new_entry));
                         }
