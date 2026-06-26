@@ -140,13 +140,6 @@ impl SessionCapabilities {
 
 pub type SharedSessionCapabilities = Arc<RwLock<SessionCapabilities>>;
 
-/// The set of local slash commands (scrolling, exporting, feedback) the
-/// containing `ThreadView` currently wants this editor to expose. `ThreadView`
-/// keeps this in sync with the availability of the corresponding turn-end
-/// actions; the completion delegate reads it. Shared so `ThreadView` can
-/// update it without `MessageEditor` needing to know about `ThreadView`.
-/// `Arc<RwLock<_>>` rather than `Rc<RefCell<_>>` because the completion
-/// delegate that reads it must be `Send + Sync`.
 pub type SharedLocalCommands = Arc<RwLock<Vec<PromptLocalCommand>>>;
 
 struct MessageEditorCompletionDelegate {
@@ -621,9 +614,6 @@ impl MessageEditor {
         }
     }
 
-    /// Sets the local slash commands this editor exposes in its completion
-    /// popup. `ThreadView` calls this to keep the list in sync with the
-    /// availability of the corresponding turn-end actions.
     pub fn set_local_commands(&self, commands: Vec<PromptLocalCommand>) {
         *self.local_commands.write() = commands;
     }

@@ -1111,9 +1111,6 @@ impl ThreadView {
         }
     }
 
-    /// Runs a local slash command confirmed in the message editor's completion
-    /// popup. These map one-to-one to the actions that used to be turn-end
-    /// buttons; see `render_thread_controls`.
     fn run_local_command(
         &mut self,
         command: PromptLocalCommand,
@@ -6569,10 +6566,6 @@ impl ThreadView {
             return Empty.into_any_element();
         }
 
-        // The scroll/markdown/feedback/share actions that used to live here as
-        // buttons are now exposed as local slash commands in the message
-        // editor; see `available_local_commands` and
-        // `handle_message_editor_event`. Only the turn-stats labels remain.
         let show_stats = AgentSettings::get_global(cx).show_turn_stats;
         let last_turn_clock = show_stats
             .then(|| {
@@ -6601,8 +6594,6 @@ impl ThreadView {
             })
             .flatten();
 
-        // When there are no stats labels to show there's nothing to render;
-        // the actions previously rendered here are now slash commands.
         if last_turn_tokens_label.is_none() && last_turn_clock.is_none() {
             return Empty.into_any_element();
         }

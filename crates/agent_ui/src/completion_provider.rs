@@ -207,7 +207,6 @@ pub enum PromptLocalCommand {
 }
 
 impl PromptLocalCommand {
-    /// The `/keyword` typed to invoke this command.
     pub fn keyword(&self) -> &'static str {
         match self {
             Self::OpenAsMarkdown => "markdown",
@@ -220,7 +219,6 @@ impl PromptLocalCommand {
         }
     }
 
-    /// Human-readable label shown in the completion popup.
     pub fn label(&self) -> &'static str {
         match self {
             Self::OpenAsMarkdown => "Open Thread as Markdown",
@@ -233,7 +231,6 @@ impl PromptLocalCommand {
         }
     }
 
-    /// Longer description shown as documentation in the completion popup.
     pub fn description(&self) -> &'static str {
         match self {
             Self::OpenAsMarkdown => "Open this thread as a Markdown document.",
@@ -462,7 +459,6 @@ fn slash_completion_group_key(candidate: &SlashCompletionCandidate) -> u32 {
     match candidate {
         SlashCompletionCandidate::Skill(_) => 0,
         SlashCompletionCandidate::Command(command) => 1 + command.category_order() as u32,
-        // `category_order()` tops out at 2, so command keys occupy 1..=3.
         SlashCompletionCandidate::LocalCommand(_) => 4,
     }
 }
@@ -491,17 +487,10 @@ pub trait PromptCompletionProviderDelegate: Send + Sync + 'static {
         Vec::new()
     }
 
-    /// Local UI commands this editor exposes as slash commands (scrolling,
-    /// exporting, feedback). Unlike `available_commands`, confirming one of
-    /// these runs a local action via `run_local_command` instead of sending
-    /// a prompt to the agent. The default is none.
     fn available_local_commands(&self, _cx: &App) -> Vec<PromptLocalCommand> {
         Vec::new()
     }
 
-    /// Runs a local command that was confirmed in the completion popup. The
-    /// `/keyword` text has already been removed from the editor by the time
-    /// this is called.
     fn run_local_command(&self, _command: PromptLocalCommand, _cx: &mut App) {}
 
     fn confirm_command(&self, cx: &mut App);
