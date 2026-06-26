@@ -5,7 +5,6 @@ use gpui::{App, AsyncApp, SharedString, Task};
 use language_model::LanguageModelToolResultContent;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::fmt::Write as _;
 use std::sync::Arc;
 
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
