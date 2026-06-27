@@ -6,9 +6,7 @@ use acp_thread::{
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
-use agent::{
-    NativeAgentServer, NativeAgentSessionList, NoModelConfiguredError, SharedThread, ThreadStore,
-};
+use agent::{NativeAgentServer, NoModelConfiguredError, ThreadStore};
 use agent_client_protocol::schema::v1 as acp;
 #[cfg(test)]
 use agent_servers::AgentServerDelegate;
@@ -24,7 +22,6 @@ use editor::scroll::Autoscroll;
 use editor::{
     Editor, EditorEvent, EditorMode, MultiBuffer, PathKey, SelectionEffects, SizingBehavior,
 };
-use feature_flags::{AgentSharingFeatureFlag, FeatureFlagAppExt as _};
 use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
@@ -32,8 +29,8 @@ use gpui::{
     Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
     ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
     ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription, Task,
-    TaskExt, TextRun, TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img,
-    linear_color_stop, linear_gradient, list, pulsating_between,
+    TextRun, TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop,
+    linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, Rope};
 use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
@@ -70,8 +67,7 @@ use util::{
     time::duration_alt_display,
 };
 use workspace::{
-    CollaboratorId, MultiWorkspace, NewTerminal, PathList, Toast, Workspace,
-    path_link::sanitize_path_text,
+    CollaboratorId, MultiWorkspace, NewTerminal, PathList, Workspace, path_link::sanitize_path_text,
 };
 use zed_actions::agent::{Chat, ToggleModelSelector};
 
@@ -98,7 +94,8 @@ use crate::{
     ScrollOutputLineDown, ScrollOutputLineUp, ScrollOutputPageDown, ScrollOutputPageUp,
     ScrollOutputToBottom, ScrollOutputToNextMessage, ScrollOutputToPreviousMessage,
     ScrollOutputToTop, SendImmediately, SendNextQueuedMessage, ToggleFastMode,
-    ToggleProfileSelector, ToggleThinkingEffortMenu, ToggleThinkingMode, UndoLastReject,
+    ToggleProfileSelector, ToggleSteerFirstQueuedMessage, ToggleThinkingEffortMenu,
+    ToggleThinkingMode, UndoLastReject,
 };
 
 const STOPWATCH_THRESHOLD: Duration = Duration::from_secs(30);
@@ -106,14 +103,11 @@ const TOKEN_THRESHOLD: u64 = 250;
 
 pub(crate) const DRAFT_PROMPT_PERSIST_DEBOUNCE: Duration = Duration::from_millis(250);
 
+mod message_queue;
 mod thread_search_bar;
 mod thread_view;
+pub use message_queue::*;
 pub use thread_view::*;
-
-pub struct QueuedMessage {
-    pub content: Vec<acp::ContentBlock>,
-    pub tracked_buffers: Vec<Entity<Buffer>>,
-}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ThreadFeedback {
@@ -1473,41 +1467,6 @@ impl ConversationView {
         matches!(self.server_state, ServerState::Loading { .. })
     }
 
-    fn send_queued_message_at_index(
-        &mut self,
-        index: usize,
-        is_send_now: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(active) = self.root_thread_view() {
-            active.update(cx, |active, cx| {
-                active.send_queued_message_at_index(index, is_send_now, window, cx);
-            });
-        }
-    }
-
-    fn move_queued_message_to_main_editor(
-        &mut self,
-        index: usize,
-        attempt: Option<InputAttempt>,
-        cursor_offset: Option<usize>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(active) = self.root_thread_view() {
-            active.update(cx, |active, cx| {
-                active.move_queued_message_to_main_editor(
-                    index,
-                    attempt,
-                    cursor_offset,
-                    window,
-                    cx,
-                );
-            });
-        }
-    }
-
     fn handle_thread_event(
         &mut self,
         thread: &Entity<AcpThread>,
@@ -1611,34 +1570,31 @@ impl ConversationView {
                     return;
                 }
 
-                let should_send_queued = if let Some(active) = self.root_thread_view() {
+                let sent_queued_message = if let Some(active) = self.root_thread_view() {
                     active.update(cx, |active, cx| {
-                        if active.skip_queue_processing_count > 0 {
-                            active.skip_queue_processing_count -= 1;
-                            false
-                        } else if active.user_interrupted_generation {
-                            // Manual interruption: don't auto-process queue.
-                            // Reset the flag so future completions can process normally.
-                            active.user_interrupted_generation = false;
-                            false
+                        // Don't auto-send while the user is editing the next message.
+                        let is_first_editor_focused = active
+                            .message_queue
+                            .first()
+                            .is_some_and(|entry| entry.editor.focus_handle(cx).is_focused(window));
+                        if let Some(entry) = active
+                            .message_queue
+                            .on_generation_stopped(is_first_editor_focused)
+                        {
+                            active.dispatch_queued_entry(entry, window, cx);
+                            true
                         } else {
-                            let has_queued = !active.local_queued_messages.is_empty();
-                            // Don't auto-send if the first message editor is currently focused
-                            let is_first_editor_focused = active
-                                .queued_message_editors
-                                .first()
-                                .is_some_and(|editor| editor.focus_handle(cx).is_focused(window));
-                            has_queued && !is_first_editor_focused
+                            false
                         }
                     })
                 } else {
                     false
                 };
 
-                // Skip notifying when a queued message is about to be auto-sent: the agent
+                // Skip notifying when a queued message was just auto-sent: the agent
                 // is not actually idle and a notification here would fire just before the
                 // next turn starts.
-                if !should_send_queued {
+                if !sent_queued_message {
                     let used_tools = thread.read(cx).used_tools_since_last_user_message();
                     self.notify_with_sound(
                         if used_tools {
@@ -1650,8 +1606,6 @@ impl ConversationView {
                         window,
                         cx,
                     );
-                } else {
-                    self.send_queued_message_at_index(0, false, window, cx);
                 }
             }
             AcpThreadEvent::Refusal => {
@@ -2407,185 +2361,6 @@ impl ConversationView {
             .thread(self.root_session_id.as_ref()?, cx)
     }
 
-    fn queued_messages_len(&self, cx: &App) -> usize {
-        self.root_thread_view()
-            .map(|thread| thread.read(cx).local_queued_messages.len())
-            .unwrap_or_default()
-    }
-
-    fn update_queued_message(
-        &mut self,
-        index: usize,
-        content: Vec<acp::ContentBlock>,
-        tracked_buffers: Vec<Entity<Buffer>>,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        match self.root_thread_view() {
-            Some(thread) => thread.update(cx, |thread, _cx| {
-                if index < thread.local_queued_messages.len() {
-                    thread.local_queued_messages[index] = QueuedMessage {
-                        content,
-                        tracked_buffers,
-                    };
-                    true
-                } else {
-                    false
-                }
-            }),
-            None => false,
-        }
-    }
-
-    fn queued_message_contents(&self, cx: &App) -> Vec<Vec<acp::ContentBlock>> {
-        match self.root_thread_view() {
-            None => Vec::new(),
-            Some(thread) => thread
-                .read(cx)
-                .local_queued_messages
-                .iter()
-                .map(|q| q.content.clone())
-                .collect(),
-        }
-    }
-
-    fn save_queued_message_at_index(&mut self, index: usize, cx: &mut Context<Self>) {
-        let editor = match self.root_thread_view() {
-            Some(thread) => thread.read(cx).queued_message_editors.get(index).cloned(),
-            None => None,
-        };
-        let Some(editor) = editor else {
-            return;
-        };
-
-        let contents_task = editor.update(cx, |editor, cx| editor.contents(false, cx));
-
-        cx.spawn(async move |this, cx| {
-            let Ok((content, tracked_buffers)) = contents_task.await else {
-                return Ok::<(), anyhow::Error>(());
-            };
-
-            this.update(cx, |this, cx| {
-                this.update_queued_message(index, content, tracked_buffers, cx);
-                cx.notify();
-            })?;
-
-            Ok(())
-        })
-        .detach_and_log_err(cx);
-    }
-
-    fn sync_queued_message_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let needed_count = self.queued_messages_len(cx);
-        let queued_messages = self.queued_message_contents(cx);
-
-        let agent_name = self.agent.agent_id();
-        let workspace = self.workspace.clone();
-        let project = self.project.downgrade();
-        let Some(connected) = self.as_connected() else {
-            return;
-        };
-        let Some(thread) = connected.active_view() else {
-            return;
-        };
-        let session_capabilities = thread.read(cx).session_capabilities.clone();
-
-        let current_count = thread.read(cx).queued_message_editors.len();
-        let last_synced = thread.read(cx).last_synced_queue_length;
-
-        if current_count == needed_count && needed_count == last_synced {
-            return;
-        }
-
-        if current_count > needed_count {
-            thread.update(cx, |thread, _cx| {
-                thread.queued_message_editors.truncate(needed_count);
-                thread
-                    .queued_message_editor_subscriptions
-                    .truncate(needed_count);
-            });
-
-            let editors = thread.read(cx).queued_message_editors.clone();
-            for (index, editor) in editors.into_iter().enumerate() {
-                if let Some(content) = queued_messages.get(index) {
-                    editor.update(cx, |editor, cx| {
-                        editor.set_read_only(true, cx);
-                        editor.set_message(content.clone(), window, cx);
-                    });
-                }
-            }
-        }
-
-        while thread.read(cx).queued_message_editors.len() < needed_count {
-            let index = thread.read(cx).queued_message_editors.len();
-            let content = queued_messages.get(index).cloned().unwrap_or_default();
-
-            let editor = cx.new(|cx| {
-                let mut editor = MessageEditor::new(
-                    workspace.clone(),
-                    project.clone(),
-                    None,
-                    session_capabilities.clone(),
-                    agent_name.clone(),
-                    "",
-                    EditorMode::AutoHeight {
-                        min_lines: 1,
-                        max_lines: Some(10),
-                    },
-                    window,
-                    cx,
-                );
-                editor.set_read_only(true, cx);
-                editor.set_message(content, window, cx);
-                editor
-            });
-
-            let subscription = cx.subscribe_in(
-                &editor,
-                window,
-                move |this, _editor, event, window, cx| match event {
-                    MessageEditorEvent::InputAttempted {
-                        attempt,
-                        cursor_offset,
-                    } => {
-                        this.move_queued_message_to_main_editor(
-                            index,
-                            Some(attempt.clone()),
-                            Some(*cursor_offset),
-                            window,
-                            cx,
-                        );
-                    }
-                    MessageEditorEvent::LostFocus => {
-                        this.save_queued_message_at_index(index, cx);
-                    }
-                    MessageEditorEvent::Cancel => {
-                        window.focus(&this.focus_handle(cx), cx);
-                    }
-                    MessageEditorEvent::Send => {
-                        window.focus(&this.focus_handle(cx), cx);
-                    }
-                    MessageEditorEvent::SendImmediately => {
-                        this.send_queued_message_at_index(index, true, window, cx);
-                    }
-                    _ => {}
-                },
-            );
-
-            thread.update(cx, |thread, _cx| {
-                thread.queued_message_editors.push(editor);
-                thread
-                    .queued_message_editor_subscriptions
-                    .push(subscription);
-            });
-        }
-
-        if let Some(active) = self.root_thread_view() {
-            active.update(cx, |active, _cx| {
-                active.last_synced_queue_length = needed_count;
-            });
-        }
-    }
-
     fn render_markdown(
         &self,
         markdown: Entity<Markdown>,
@@ -3140,8 +2915,6 @@ impl ConversationView {
 
 impl Render for ConversationView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.sync_queued_message_editors(window, cx);
-
         v_flex()
             .track_focus(&self.focus_handle)
             .size_full()
@@ -3433,6 +3206,7 @@ pub(crate) mod tests {
     use agent_servers::FakeAcpAgentServer;
     use editor::MultiBufferOffset;
     use editor::actions::Paste;
+    use feature_flags::FeatureFlagAppExt as _;
     use fs::FakeFs;
     use gpui::{ClipboardItem, EventEmitter, TestAppContext, VisualTestContext, point, size};
     use parking_lot::Mutex;
@@ -3659,12 +3433,13 @@ pub(crate) mod tests {
                 .clone()
         });
 
-        active_thread(&conversation_view, cx).update_in(cx, |thread, _window, cx| {
+        active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
             thread.add_to_queue(
                 vec![acp::ContentBlock::Text(acp::TextContent::new(
                     "queued".to_string(),
                 ))],
                 vec![],
+                window,
                 cx,
             );
         });
@@ -3692,6 +3467,116 @@ pub(crate) mod tests {
                 .count(),
             0,
             "No notification should fire when a queued message will be auto-sent on Stopped"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_queued_message_steer_defaults_off_and_toggles(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::default_response(), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let id = active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "queued".to_string(),
+                ))],
+                vec![],
+                window,
+                cx,
+            );
+            thread.message_queue.first_id().unwrap()
+        });
+        cx.run_until_parked();
+
+        // Default: steering is off, so the message waits for end-of-generation
+        // rather than interrupting the agent at the next boundary.
+        active_thread(&conversation_view, cx).read_with(cx, |thread, _cx| {
+            assert!(
+                !thread.message_queue.front_wants_steer(),
+                "steering should default off"
+            );
+        });
+
+        active_thread(&conversation_view, cx).update(cx, |thread, _cx| {
+            thread.message_queue.toggle_steer(id);
+        });
+        active_thread(&conversation_view, cx).read_with(cx, |thread, _cx| {
+            assert!(
+                thread.message_queue.front_wants_steer(),
+                "steering should be on after toggling"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_queue_resumes_after_stop_and_new_message(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+        add_to_workspace(conversation_view.clone(), cx);
+
+        let message_editor = message_editor(&conversation_view, cx);
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("first", window, cx);
+        });
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        // Queue a follow-up while the agent is generating.
+        active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
+            thread.add_to_queue(
+                vec![acp::ContentBlock::Text(acp::TextContent::new(
+                    "queued".to_string(),
+                ))],
+                vec![],
+                window,
+                cx,
+            );
+        });
+
+        // User stops generation: the queued message must NOT be sent.
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |thread, _window, cx| thread.cancel_generation(cx));
+        cx.run_until_parked();
+
+        let queue_len = active_thread(&conversation_view, cx)
+            .read_with(cx, |thread, _cx| thread.message_queue.len());
+        assert_eq!(queue_len, 1, "stopping must not send the queued message");
+
+        // User sends a new message, which should resume queue auto-processing.
+        message_editor.update_in(cx, |editor, window, cx| {
+            editor.set_text("second", window, cx);
+        });
+        active_thread(&conversation_view, cx)
+            .update_in(cx, |view, window, cx| view.send(window, cx));
+        cx.run_until_parked();
+
+        let session_id = conversation_view.read_with(cx, |view, cx| {
+            view.active_thread()
+                .unwrap()
+                .read(cx)
+                .thread
+                .read(cx)
+                .session_id()
+                .clone()
+        });
+
+        // When this generation completes, the queued message should be picked
+        // up automatically (regression test for the "frozen queue" bug).
+        connection.end_turn(session_id, acp::StopReason::EndTurn);
+        cx.run_until_parked();
+
+        let queue_len = active_thread(&conversation_view, cx)
+            .read_with(cx, |thread, _cx| thread.message_queue.len());
+        assert_eq!(
+            queue_len, 0,
+            "queued message should be auto-sent after the user re-engages"
         );
     }
 
@@ -9744,19 +9629,21 @@ pub(crate) mod tests {
                     "queued message".to_string(),
                 ))],
                 vec![],
+                window,
                 cx,
             );
             // Main editor must be empty for this path — it is by default, but
             // assert to make the precondition explicit.
             assert!(thread.message_editor.read(cx).is_empty(cx));
-            thread.move_queued_message_to_main_editor(0, None, None, window, cx);
+            let id = thread.message_queue.first_id().unwrap();
+            thread.move_queued_message_to_main_editor(id, None, None, window, cx);
         });
 
         cx.run_until_parked();
 
         // Queue should now be empty.
         let queue_len = active_thread(&conversation_view, cx)
-            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+            .read_with(cx, |thread, _cx| thread.message_queue.len());
         assert_eq!(queue_len, 0, "Queue should be empty after move");
 
         // Main editor should contain the queued message text.
@@ -9792,16 +9679,18 @@ pub(crate) mod tests {
                     "queued message".to_string(),
                 ))],
                 vec![],
+                window,
                 cx,
             );
-            thread.move_queued_message_to_main_editor(0, None, None, window, cx);
+            let id = thread.message_queue.first_id().unwrap();
+            thread.move_queued_message_to_main_editor(id, None, None, window, cx);
         });
 
         cx.run_until_parked();
 
         // Queue should now be empty.
         let queue_len = active_thread(&conversation_view, cx)
-            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+            .read_with(cx, |thread, _cx| thread.message_queue.len());
         assert_eq!(queue_len, 0, "Queue should be empty after move");
 
         // Main editor should contain existing content + separator + queued content.
@@ -9820,12 +9709,13 @@ pub(crate) mod tests {
             setup_conversation_view(StubAgentServer::default_response(), cx).await;
         add_to_workspace(conversation_view.clone(), cx);
 
-        active_thread(&conversation_view, cx).update(cx, |thread, cx| {
+        active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
             thread.add_to_queue(
                 vec![acp::ContentBlock::Text(acp::TextContent::new(
                     "first queued".to_string(),
                 ))],
                 vec![],
+                window,
                 cx,
             );
             thread.add_to_queue(
@@ -9833,6 +9723,7 @@ pub(crate) mod tests {
                     "second queued".to_string(),
                 ))],
                 vec![],
+                window,
                 cx,
             );
         });
@@ -9847,7 +9738,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         let queue_len = active_thread(&conversation_view, cx)
-            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+            .read_with(cx, |thread, _cx| thread.message_queue.len());
         assert_eq!(
             queue_len, 1,
             "Up arrow should pull the last queued message out of the queue"
@@ -9865,7 +9756,7 @@ pub(crate) mod tests {
         cx.run_until_parked();
 
         let queue_len = active_thread(&conversation_view, cx)
-            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+            .read_with(cx, |thread, _cx| thread.message_queue.len());
         assert_eq!(queue_len, 1, "Queue should be untouched");
         let text = editor.update(cx, |editor, cx| editor.text(cx));
         assert_eq!(text, "second queued");
@@ -9879,7 +9770,7 @@ pub(crate) mod tests {
             paste_into_queued_message(cx, ClipboardItem::new_string("PASTED".to_string())).await;
 
         let queue_len = active_thread(&conversation_view, cx)
-            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+            .read_with(cx, |thread, _cx| thread.message_queue.len());
         assert_eq!(queue_len, 0);
 
         let text = message_editor(&conversation_view, cx).update(cx, |editor, cx| editor.text(cx));
@@ -9909,7 +9800,7 @@ pub(crate) mod tests {
         .await;
 
         let queue_len = active_thread(&conversation_view, cx)
-            .read_with(cx, |thread, _cx| thread.local_queued_messages.len());
+            .read_with(cx, |thread, _cx| thread.message_queue.len());
         assert_eq!(queue_len, 0);
 
         let text = message_editor(&conversation_view, cx).update(cx, |editor, cx| editor.text(cx));
@@ -9933,7 +9824,7 @@ pub(crate) mod tests {
             setup_conversation_view(StubAgentServer::default_response(), cx).await;
         add_to_workspace(conversation_view.clone(), cx);
 
-        active_thread(&conversation_view, cx).update_in(cx, |thread, _window, cx| {
+        active_thread(&conversation_view, cx).update_in(cx, |thread, window, cx| {
             thread
                 .session_capabilities
                 .write()
@@ -9943,6 +9834,7 @@ pub(crate) mod tests {
                     "queued message".to_string(),
                 ))],
                 vec![],
+                window,
                 cx,
             );
         });
@@ -9951,10 +9843,10 @@ pub(crate) mod tests {
 
         let queued_editor = active_thread(&conversation_view, cx).read_with(cx, |thread, _cx| {
             thread
-                .queued_message_editors
+                .message_queue
                 .first()
-                .cloned()
-                .expect("queued message editor not synced")
+                .map(|entry| entry.editor.clone())
+                .expect("queued message editor not created")
         });
 
         cx.write_to_clipboard(clipboard);

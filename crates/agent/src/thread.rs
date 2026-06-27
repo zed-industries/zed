@@ -1209,9 +1209,10 @@ pub struct Thread {
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
     running_turn: Option<RunningTurn>,
-    /// Flag indicating the UI has a queued message waiting to be sent.
-    /// Used to signal that the turn should end at the next message boundary.
-    has_queued_message: bool,
+    /// When set, the current turn ends at the next message boundary instead of
+    /// running to completion. The UI sets this to deliver a "steering" queued
+    /// message mid-task; by default queued messages wait for the turn to finish.
+    end_turn_at_next_boundary: bool,
     pending_message: Option<AgentMessage>,
     pub(crate) tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
     request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
@@ -1236,8 +1237,6 @@ pub struct Thread {
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
-    /// True if this thread was imported from a shared thread and can be synced.
-    imported: bool,
     /// If this is a subagent thread, contains context about the parent
     subagent_context: Option<SubagentContext>,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
@@ -1349,7 +1348,7 @@ impl Thread {
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
             running_turn: None,
-            has_queued_message: false,
+            end_turn_at_next_boundary: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: HashMap::default(),
@@ -1375,7 +1374,6 @@ impl Thread {
             prompt_capabilities_rx,
             project,
             action_log,
-            imported: false,
             subagent_context: None,
             draft_prompt: None,
             ui_scroll_position: None,
@@ -1452,11 +1450,6 @@ impl Thread {
         self.sandboxed_terminal_temp_dir = Some(temp_dir.clone());
         cx.notify();
         Ok(temp_dir)
-    }
-
-    /// Returns true if this thread was imported from a shared thread.
-    pub fn is_imported(&self) -> bool {
-        self.imported
     }
 
     pub fn replay(
@@ -1735,7 +1728,7 @@ impl Thread {
             messages: db_thread.messages,
             user_store: project.read(cx).user_store(),
             running_turn: None,
-            has_queued_message: false,
+            end_turn_at_next_boundary: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: db_thread.request_token_usage.clone(),
@@ -1757,7 +1750,6 @@ impl Thread {
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
-            imported: db_thread.imported,
             subagent_context: db_thread.subagent_context,
             draft_prompt: db_thread.draft_prompt,
             ui_scroll_position: db_thread.ui_scroll_position.map(|sp| gpui::ListOffset {
@@ -1901,7 +1893,6 @@ impl Thread {
             request_token_usage: self.request_token_usage.clone(),
             model: (&self.model).into(),
             profile: Some(self.profile_id.clone()),
-            imported: self.imported,
             subagent_context: self.subagent_context.clone(),
             speed: self.speed,
             thinking_enabled: self.thinking_enabled,
@@ -2246,12 +2237,12 @@ impl Thread {
         })
     }
 
-    pub fn set_has_queued_message(&mut self, has_queued: bool) {
-        self.has_queued_message = has_queued;
+    pub fn set_end_turn_at_next_boundary(&mut self, end_at_boundary: bool) {
+        self.end_turn_at_next_boundary = end_at_boundary;
     }
 
-    pub fn has_queued_message(&self) -> bool {
-        self.has_queued_message
+    pub fn end_turn_at_next_boundary(&self) -> bool {
+        self.end_turn_at_next_boundary
     }
 
     fn accumulate_token_usage(&mut self, update: language_model::TokenUsage) {
@@ -2981,9 +2972,10 @@ impl Thread {
             } else if end_turn {
                 return Ok(());
             } else {
-                let has_queued = this.update(cx, |this, _| this.has_queued_message())?;
-                if has_queued {
-                    log::debug!("Queued message found, ending turn at message boundary");
+                let end_at_boundary =
+                    this.update(cx, |this, _| this.end_turn_at_next_boundary())?;
+                if end_at_boundary {
+                    log::debug!("Steering message queued, ending turn at message boundary");
                     return Ok(());
                 }
                 intent = CompletionIntent::ToolResults;
