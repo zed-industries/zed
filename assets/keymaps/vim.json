@@ -547,6 +547,18 @@
       "space y": "editor::Copy",
       "space /": "pane::DeploySearch",
 
+      // Debug mode (Helix space G)
+      "space shift-g l": "debugger::Start",
+      "space shift-g r": "debugger::Restart",
+      "space shift-g b": "editor::ToggleBreakpoint",
+      "space shift-g c": "debugger::Continue",
+      "space shift-g h": "debugger::Pause",
+      "space shift-g i": "debugger::StepInto",
+      "space shift-g o": "debugger::StepOut",
+      "space shift-g n": "debugger::StepOver",
+      "space shift-g t": "debugger::Stop",
+      "space shift-g ctrl-l": "editor::EditLogBreakpoint",
+
       // Other
       ":": "command_palette::Toggle",
       "m": "vim::PushHelixMatch",

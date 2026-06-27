@@ -1,16 +1,18 @@
 use anyhow::{Result, anyhow};
+use collections::HashMap;
 use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use futures::{Stream, TryFutureExt, stream};
 use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task, TaskExt};
-use http_client::HttpClient;
+use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelRequestTool, LanguageModelToolChoice, LanguageModelToolUse,
-    LanguageModelToolUseId, MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    ApiKeyState, AuthenticateError, DisabledReason, EnvVar, IconOrSvg, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestTool,
+    LanguageModelToolChoice, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
+    RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 use menu;
 use ollama::{
@@ -20,8 +22,8 @@ use ollama::{
 pub use settings::OllamaAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::LazyLock;
-use std::{collections::HashMap, sync::Arc};
 use ui::{
     ButtonLike, ButtonLink, ConfiguredApiCard, ElevationIndex, List, ListBulletItem, Tooltip,
     prelude::*,
@@ -46,6 +48,7 @@ pub struct OllamaSettings {
     pub auto_discover: bool,
     pub available_models: Vec<AvailableModel>,
     pub context_window: Option<u64>,
+    pub custom_headers: CustomHeaders,
 }
 
 pub struct OllamaLanguageModelProvider {
@@ -109,12 +112,20 @@ impl State {
 
     fn fetch_models(&mut self, cx: &mut Context<Self>) -> Task<Result<()>> {
         let http_client = Arc::clone(&self.http_client);
+        let settings = OllamaLanguageModelProvider::settings(cx);
         let api_url = OllamaLanguageModelProvider::api_url(cx);
         let api_key = self.api_key_state.key(&api_url);
+        let extra_headers = settings.custom_headers.clone();
 
         // As a proxy for the server being "authenticated", we'll check if its up by fetching the models
         cx.spawn(async move |this, cx| {
-            let models = get_models(http_client.as_ref(), &api_url, api_key.as_deref()).await?;
+            let models = get_models(
+                http_client.as_ref(),
+                &api_url,
+                api_key.as_deref(),
+                &extra_headers,
+            )
+            .await?;
 
             let tasks = models
                 .into_iter()
@@ -126,20 +137,35 @@ impl State {
                     let http_client = Arc::clone(&http_client);
                     let api_url = api_url.clone();
                     let api_key = api_key.clone();
+                    let extra_headers = extra_headers.clone();
                     async move {
                         let name = model.name.as_str();
-                        let model =
-                            show_model(http_client.as_ref(), &api_url, api_key.as_deref(), name)
-                                .await?;
-                        let ollama_model = ollama::Model::new(
+
+                        show_model(
+                            http_client.as_ref(),
+                            &api_url,
+                            api_key.as_deref(),
                             name,
-                            None,
-                            model.context_length,
-                            Some(model.supports_tools()),
-                            Some(model.supports_vision()),
-                            Some(model.supports_thinking()),
-                        );
-                        Ok(ollama_model)
+                            &extra_headers,
+                        )
+                        .await
+                        .map_or_else(
+                            |error| {
+                                ollama::Model::new_disabled(
+                                    name,
+                                    format!("Failed to fetch model from API: {error}",),
+                                )
+                            },
+                            |model| {
+                                ollama::Model::new(
+                                    name,
+                                    model.context_length,
+                                    Some(model.supports_tools()),
+                                    Some(model.supports_vision()),
+                                    Some(model.supports_thinking()),
+                                )
+                            },
+                        )
                     }
                 });
 
@@ -147,10 +173,8 @@ impl State {
             // since there is an arbitrary number of models available
             let mut ollama_models: Vec<_> = futures::stream::iter(tasks)
                 .buffer_unordered(5)
-                .collect::<Vec<Result<_>>>()
-                .await
-                .into_iter()
-                .collect::<Result<Vec<_>>>()?;
+                .collect()
+                .await;
 
             ollama_models.sort_by(|a, b| a.name.cmp(&b.name));
 
@@ -266,7 +290,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
-        let mut models: HashMap<String, ollama::Model> = HashMap::new();
+        let mut models: HashMap<String, ollama::Model> = HashMap::default();
         let settings = OllamaLanguageModelProvider::settings(cx);
 
         if settings.auto_discover {
@@ -292,6 +316,7 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
             .map(|model| {
                 Arc::new(OllamaLanguageModel {
                     id: LanguageModelId::from(model.name.clone()),
+                    disabled: model.disabled.as_ref().map(|d| DisabledReason::new(d)),
                     model,
                     http_client: self.http_client.clone(),
                     request_limiter: RateLimiter::new(4),
@@ -334,6 +359,7 @@ pub struct OllamaLanguageModel {
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
     state: Entity<State>,
+    disabled: Option<DisabledReason>,
 }
 
 impl OllamaLanguageModel {
@@ -494,6 +520,10 @@ impl LanguageModel for OllamaLanguageModel {
         format!("ollama/{}", self.model.id())
     }
 
+    fn is_disabled(&self) -> Option<DisabledReason> {
+        self.disabled.clone()
+    }
+
     fn max_token_count(&self) -> u64 {
         self.model.max_token_count()
     }
@@ -512,15 +542,23 @@ impl LanguageModel for OllamaLanguageModel {
         let request = self.to_ollama_request(request);
 
         let http_client = self.http_client.clone();
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = OllamaLanguageModelProvider::api_url(cx);
-            (state.api_key_state.key(&api_url), api_url)
+            let extra_headers = OllamaLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
         let future = self.request_limiter.stream(async move {
-            let stream =
-                stream_chat_completion(http_client.as_ref(), &api_url, api_key.as_deref(), request)
-                    .await?;
+            let stream = stream_chat_completion(
+                http_client.as_ref(),
+                &api_url,
+                api_key.as_deref(),
+                request,
+                &extra_headers,
+            )
+            .await?;
             let stream = map_to_language_model_completion_events(stream);
             Ok(stream)
         });
@@ -1065,6 +1103,7 @@ fn merge_settings_into_models(
                     supports_tools: setting_model.supports_tools,
                     supports_vision: setting_model.supports_images,
                     supports_thinking: setting_model.supports_thinking,
+                    disabled: None,
                 },
             );
         }
@@ -1091,7 +1130,7 @@ mod tests {
         // When multiple models share the same base name (e.g., qwen2.5-coder:1.5b and qwen2.5-coder:3b),
         // each model should get its own display_name from settings, not a random one.
 
-        let mut models: HashMap<String, ollama::Model> = HashMap::new();
+        let mut models: HashMap<String, ollama::Model> = HashMap::default();
         models.insert(
             "qwen2.5-coder:1.5b".to_string(),
             ollama::Model {
@@ -1102,6 +1141,7 @@ mod tests {
                 supports_tools: None,
                 supports_vision: None,
                 supports_thinking: None,
+                disabled: None,
             },
         );
         models.insert(
@@ -1114,6 +1154,7 @@ mod tests {
                 supports_tools: None,
                 supports_vision: None,
                 supports_thinking: None,
+                disabled: None,
             },
         );
 

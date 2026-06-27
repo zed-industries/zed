@@ -15,7 +15,8 @@ use git::{
 use gpui::{
     AnyElement, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, Entity,
     EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement, ParentElement,
-    PromptLevel, Render, Styled, Task, WeakEntity, Window, actions,
+    PromptLevel, Render, ScrollHandle, StatefulInteractiveElement as _, Styled, Task, WeakEntity,
+    Window, actions,
 };
 use language::{
     Buffer, Capability, DiskState, File, LanguageRegistry, LineEnding, OffsetRangeExt as _,
@@ -32,7 +33,7 @@ use std::{
     sync::Arc,
 };
 use theme::ActiveTheme;
-use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, prelude::*};
+use ui::{ContextMenu, DiffStat, Disclosure, Divider, Tooltip, WithScrollbar, prelude::*};
 use util::{ResultExt, paths::PathStyle, rel_path::RelPath, truncate_and_trailoff};
 use workspace::item::TabTooltipContent;
 use workspace::{
@@ -77,9 +78,11 @@ pub struct CommitView {
     editor: Entity<SplittableEditor>,
     message: Entity<Markdown>,
     message_expanded: bool,
+    message_scroll_handle: ScrollHandle,
     stash: Option<usize>,
     multibuffer: Entity<MultiBuffer>,
     repository: Entity<Repository>,
+    project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     remote: Option<GitRemote>,
 }
@@ -272,6 +275,7 @@ impl CommitView {
                 window,
                 cx,
             );
+            editor.disable_diff_hunk_controls(cx);
 
             editor.rhs_editor().update(cx, |editor, cx| {
                 editor.set_show_bookmarks(false, cx);
@@ -321,7 +325,9 @@ impl CommitView {
                             .or(first_worktree_id)
                     })
                     .context("project has no worktrees")?;
-                let short_sha = commit_sha.get(0..7).unwrap_or(&commit_sha);
+                let short_sha = commit_sha
+                    .get(0..git::SHORT_SHA_LENGTH)
+                    .unwrap_or(&commit_sha);
                 let file_name = file
                     .path
                     .file_name()
@@ -362,7 +368,14 @@ impl CommitView {
                 let buffer_diff = if is_binary {
                     cx.update(|_, cx| {
                         let snapshot = buffer.read(cx).snapshot();
-                        cx.new(|cx| BufferDiff::new_unchanged(&snapshot, cx))
+                        cx.new(|cx| {
+                            BufferDiff::new_unchanged(
+                                &snapshot,
+                                snapshot.language().cloned(),
+                                Some(language_registry.clone()),
+                                cx,
+                            )
+                        })
                     })?
                 } else {
                     build_buffer_diff(old_text, &buffer, &language_registry, cx).await?
@@ -462,9 +475,11 @@ impl CommitView {
             editor,
             message,
             message_expanded: false,
+            message_scroll_handle: ScrollHandle::new(),
             multibuffer,
             stash,
             repository,
+            project,
             workspace,
             remote,
         }
@@ -707,6 +722,7 @@ impl CommitView {
         let has_more = message.contains('\n');
         let collapsed = has_more && !is_expanded;
         let collapsed_height = window.line_height();
+        let max_expanded_height = window.line_height() * 12.;
 
         Some(
             h_flex()
@@ -718,9 +734,20 @@ impl CommitView {
                         .relative()
                         .flex_1()
                         .min_w_0()
-                        .text_sm()
-                        .when(collapsed, |this| this.h(collapsed_height).overflow_hidden())
-                        .child(MarkdownElement::new(self.message.clone(), markdown_style)),
+                        .child(
+                            div()
+                                .id("commit-message")
+                                .size_full()
+                                .text_sm()
+                                .when(collapsed, |this| this.h(collapsed_height).overflow_hidden())
+                                .when(!collapsed, |this| {
+                                    this.max_h(max_expanded_height)
+                                        .overflow_y_scroll()
+                                        .track_scroll(&self.message_scroll_handle)
+                                })
+                                .child(MarkdownElement::new(self.message.clone(), markdown_style)),
+                        )
+                        .vertical_scrollbar_for(&self.message_scroll_handle, window, cx),
                 ),
         )
     }
@@ -976,23 +1003,15 @@ async fn build_buffer_diff(
     let language = cx.update(|_, cx| buffer.read(cx).language().cloned())?;
     let buffer = cx.update(|_, cx| buffer.read(cx).snapshot())?;
 
-    let diff = cx.new(|cx| BufferDiff::new(&buffer.text, cx));
-
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                buffer.text.clone(),
-                old_text.map(|old_text| Arc::from(old_text.as_str())),
-                Some(true),
-                language.clone(),
-                cx,
-            )
-        })
-        .await;
+    let diff =
+        cx.new(|cx| BufferDiff::new(&buffer.text, language, Some(language_registry.clone()), cx));
 
     diff.update(cx, |diff, cx| {
-        diff.language_changed(language, Some(language_registry.clone()), cx);
-        diff.set_snapshot(update, &buffer.text, cx)
+        diff.set_base_text(
+            old_text.map(|old_text| Arc::from(old_text.as_str())),
+            buffer.text.clone(),
+            cx,
+        )
     })
     .await;
 
@@ -1155,7 +1174,7 @@ impl Item for CommitView {
         let Some(workspace_entity) = self.workspace.upgrade() else {
             return Task::ready(None);
         };
-        let project = workspace_entity.read(cx).project().clone();
+        let project = self.project.clone();
         let diff_view_style = self.editor.read(cx).diff_view_style();
         let multibuffer = self.multibuffer.clone();
         Task::ready(Some(cx.new(|cx| {
@@ -1174,6 +1193,7 @@ impl Item for CommitView {
                         window,
                         cx,
                     );
+                    editor.disable_diff_hunk_controls(cx);
                     editor.rhs_editor().update(cx, |editor, cx| {
                         editor.set_show_bookmarks(false, cx);
                         editor.set_show_breakpoints(false, cx);
@@ -1199,10 +1219,12 @@ impl Item for CommitView {
                 editor,
                 message,
                 message_expanded: self.message_expanded,
+                message_scroll_handle: ScrollHandle::new(),
                 multibuffer: self.multibuffer.clone(),
                 commit: self.commit.clone(),
                 stash: self.stash,
                 repository: self.repository.clone(),
+                project: self.project.clone(),
                 workspace: self.workspace.clone(),
                 remote: self.remote.clone(),
             }
@@ -1306,7 +1328,7 @@ impl Render for CommitViewToolbar {
                         .tooltip(Tooltip::text("Show in Git Graph"))
                         .on_click(move |_, window, cx| {
                             window.dispatch_action(
-                                Box::new(crate::git_panel::OpenAtCommit {
+                                Box::new(crate::git_graph::OpenAtCommit {
                                     sha: sha_for_graph.clone(),
                                 }),
                                 cx,
