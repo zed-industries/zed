@@ -544,6 +544,9 @@ impl<D: PickerDelegate> Picker<D> {
             size_bounds,
             actions_menu_handle: PopoverMenuHandle::default(),
         };
+        // give delegate the initial preview layout
+        this.delegate
+            .preview_layout_changed(matches!(initial_layout, preview::Layout::Right));
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
         this.delegate
