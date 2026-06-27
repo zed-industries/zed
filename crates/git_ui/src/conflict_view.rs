@@ -252,6 +252,7 @@ fn conflicts_updated(
                 move |cx| render_conflict_buttons(&conflict, editor_handle.clone(), cx)
             }),
             priority: 0,
+            hide_when_folded: false,
         })
     }
     let new_block_ids = editor.insert_blocks(blocks, None, cx);

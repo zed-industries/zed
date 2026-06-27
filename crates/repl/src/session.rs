@@ -111,6 +111,7 @@ impl EditorBlock {
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
                 priority: 0,
+                hide_when_folded: false,
             };
 
             let block_id = editor.insert_blocks([block], None, cx)[0];

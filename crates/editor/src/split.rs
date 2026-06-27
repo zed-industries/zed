@@ -4565,6 +4565,7 @@ mod tests {
                 let anchor = snapshot.anchor_before(Point::new(2, 0));
                 rhs_editor.insert_blocks(
                     [BlockProperties {
+                        hide_when_folded: false,
                         placement: BlockPlacement::Above(anchor),
                         height: Some(1),
                         style: BlockStyle::Fixed,
@@ -4714,6 +4715,7 @@ mod tests {
                 rhs_editor.insert_blocks(
                     [
                         BlockProperties {
+                            hide_when_folded: false,
                             placement: BlockPlacement::Above(anchor1),
                             height: Some(1),
                             style: BlockStyle::Fixed,
@@ -4721,6 +4723,7 @@ mod tests {
                             priority: 0,
                         },
                         BlockProperties {
+                            hide_when_folded: false,
                             placement: BlockPlacement::Above(anchor2),
                             height: Some(1),
                             style: BlockStyle::Fixed,
@@ -4925,6 +4928,7 @@ mod tests {
                 rhs_editor.insert_blocks(
                     [
                         BlockProperties {
+                            hide_when_folded: false,
                             placement: BlockPlacement::Above(anchor1),
                             height: Some(1),
                             style: BlockStyle::Fixed,
@@ -4932,6 +4936,7 @@ mod tests {
                             priority: 0,
                         },
                         BlockProperties {
+                            hide_when_folded: false,
                             placement: BlockPlacement::Above(anchor2),
                             height: Some(1),
                             style: BlockStyle::Fixed,
@@ -5112,6 +5117,7 @@ mod tests {
                 let anchor = snapshot.anchor_before(Point::new(2, 0));
                 rhs_editor.insert_blocks(
                     [BlockProperties {
+                        hide_when_folded: false,
                         placement: BlockPlacement::Above(anchor),
                         height: Some(1),
                         style: BlockStyle::Fixed,
@@ -5440,6 +5446,7 @@ mod tests {
                 let anchor = snapshot.anchor_before(Point::new(2, 0));
                 rhs_editor.insert_blocks(
                     [BlockProperties {
+                        hide_when_folded: false,
                         placement: BlockPlacement::Above(anchor),
                         height: Some(1),
                         style: BlockStyle::Fixed,
@@ -5601,6 +5608,7 @@ mod tests {
                 let anchor = snapshot.anchor_after(Point::new(1, 3));
                 rhs_editor.insert_blocks(
                     [BlockProperties {
+                        hide_when_folded: false,
                         placement: BlockPlacement::Below(anchor),
                         height: Some(1),
                         style: BlockStyle::Fixed,
@@ -5737,6 +5745,7 @@ mod tests {
                 let anchor = snapshot.anchor_before(Point::new(2, 0));
                 rhs_editor.insert_blocks(
                     [BlockProperties {
+                        hide_when_folded: false,
                         placement: BlockPlacement::Above(anchor),
                         height: Some(1),
                         style: BlockStyle::Fixed,

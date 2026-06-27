@@ -276,6 +276,7 @@ pub struct CustomBlock {
     style: BlockStyle,
     render: Arc<Mutex<RenderBlock>>,
     priority: usize,
+    hide_when_folded: bool,
 }
 
 #[derive(Clone)]
@@ -287,6 +288,7 @@ pub struct BlockProperties<P> {
     pub style: BlockStyle,
     pub render: RenderBlock,
     pub priority: usize,
+    pub hide_when_folded: bool,
 }
 
 impl<P: Debug> Debug for BlockProperties<P> {
@@ -777,6 +779,7 @@ impl BlockMap {
             style: block.style,
             render: Arc::new(Mutex::new(block.render.clone())),
             priority: block.priority,
+            hide_when_folded: block.hide_when_folded,
         });
         self.custom_blocks.insert(block_ix, new_block.clone());
         self.custom_blocks_by_id.insert(id, new_block);
@@ -1075,6 +1078,18 @@ impl BlockMap {
                     .iter()
                     .filter_map(|block| {
                         let placement = block.placement.to_wrap_row(wrap_snapshot)?;
+                        if block.hide_when_folded
+                            && wrap_snapshot.intersects_fold(Point::new(
+                                block
+                                    .placement
+                                    .start()
+                                    .to_point(wrap_snapshot.buffer_snapshot())
+                                    .row,
+                                0,
+                            ))
+                        {
+                            return None;
+                        }
                         if let BlockPlacement::Above(row) = placement
                             && row < new_start
                         {
@@ -1779,6 +1794,7 @@ pub(crate) fn balancing_block(
             )
         }),
         priority: my_block.priority,
+        hide_when_folded: my_block.hide_when_folded,
     })
 }
 
@@ -1903,6 +1919,7 @@ impl BlockMapWriter<'_> {
                         style: block.style,
                         render: block.render.clone(),
                         priority: block.priority,
+                        hide_when_folded: block.hide_when_folded,
                     };
                     let new_block = Arc::new(new_block);
                     *block = new_block.clone();
@@ -2895,6 +2912,7 @@ impl CustomBlock {
                 gpui::Empty.into_any_element()
             }),
             priority: self.priority,
+            hide_when_folded: self.hide_when_folded,
         }
     }
 }
@@ -2907,6 +2925,7 @@ impl Debug for CustomBlock {
             .field("height", &self.height)
             .field("style", &self.style)
             .field("priority", &self.priority)
+            .field("hide_when_folded", &self.hide_when_folded)
             .finish_non_exhaustive()
     }
 }
@@ -2934,7 +2953,8 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{
-            Companion, fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
+            Companion, fold_map::FoldMap, fold_map::FoldPlaceholder, inlay_map::InlayMap,
+            tab_map::TabMap, wrap_map::WrapMap,
         },
         test::test_font,
     };
@@ -2993,6 +3013,7 @@ mod tests {
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         let block_ids = writer.insert(vec![
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
                 height: Some(1),
@@ -3000,6 +3021,7 @@ mod tests {
                 priority: 0,
             },
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 2))),
                 height: Some(2),
@@ -3007,6 +3029,7 @@ mod tests {
                 priority: 0,
             },
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(3, 3))),
                 height: Some(3),
@@ -3145,6 +3168,82 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_hide_when_folded_blocks(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "line0\nline1\nline2\nline3\nline4";
+
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let tab_size = 1.try_into().unwrap();
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, tab_size);
+        let (wrap_map, wraps_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
+
+        let hidden = |row| BlockProperties {
+            style: BlockStyle::Fixed,
+            placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(row, 0))),
+            height: Some(1),
+            render: Arc::new(|_| div().into_any()),
+            priority: 0,
+            hide_when_folded: true,
+        };
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
+        // A: above the fold-start line (stays visible), B: above a fully folded
+        // line, C: same line as B but opted out, D: above a line past the fold.
+        let block_ids = writer.insert(vec![
+            hidden(1),
+            hidden(2),
+            BlockProperties {
+                hide_when_folded: false,
+                ..hidden(2)
+            },
+            hidden(4),
+        ]);
+        let (block_a, block_b, block_c, block_d) =
+            (block_ids[0], block_ids[1], block_ids[2], block_ids[3]);
+
+        let present_blocks =
+            |block_map: &mut BlockMap, wraps_snapshot: WrapSnapshot, wrap_edits: WrapPatch| {
+                let snapshot = block_map.read(wraps_snapshot, wrap_edits, None);
+                let max_row = snapshot.max_point().row;
+                snapshot
+                    .blocks_in_range(BlockRow(0)..BlockRow(max_row + 1))
+                    .filter_map(|(_, block)| Some(block.as_custom()?.id))
+                    .collect::<HashSet<_>>()
+            };
+
+        // Before folding, every block is present.
+        assert_eq!(
+            present_blocks(&mut block_map, wraps_snapshot, Default::default()),
+            HashSet::from_iter([block_a, block_b, block_c, block_d]),
+        );
+
+        // Fold lines 2 and 3 entirely, leaving line1 (the fold start) visible.
+        let (inlay_snapshot, inlay_edits) = inlay_map.sync(buffer_snapshot.clone(), vec![]);
+        let (mut fold_writer, _, _) = fold_map.write(inlay_snapshot, inlay_edits);
+        let (fold_snapshot, fold_edits) = fold_writer.fold(vec![(
+            Point::new(1, 5)..Point::new(3, 5),
+            FoldPlaceholder::test(),
+        )]);
+        let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
+        let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+            wrap_map.sync(tab_snapshot, tab_edits, cx)
+        });
+
+        // B is dropped because its anchored line is collapsed inside the fold.
+        // C stays because it opted out, A/D stay because their lines are visible.
+        assert_eq!(
+            present_blocks(&mut block_map, wraps_snapshot, wrap_edits),
+            HashSet::from_iter([block_a, block_c, block_d]),
+        );
+    }
+
+    #[gpui::test]
     fn test_multibuffer_headers_and_footers(cx: &mut App) {
         init_test(cx);
 
@@ -3242,6 +3341,7 @@ mod tests {
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         let block_ids = writer.insert(vec![
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
                 height: Some(1),
@@ -3249,6 +3349,7 @@ mod tests {
                 priority: 0,
             },
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 2))),
                 height: Some(2),
@@ -3256,6 +3357,7 @@ mod tests {
                 priority: 0,
             },
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(3, 3))),
                 height: Some(3),
@@ -3347,6 +3449,7 @@ mod tests {
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         writer.insert(vec![
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 12))),
                 render: Arc::new(|_| div().into_any()),
@@ -3354,6 +3457,7 @@ mod tests {
                 priority: 0,
             },
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(1, 1))),
                 render: Arc::new(|_| div().into_any()),
@@ -3389,6 +3493,7 @@ mod tests {
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         let block_id = writer.insert(vec![BlockProperties {
+            hide_when_folded: false,
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(0, 12))),
             render: Arc::new(|_| div().into_any()),
@@ -3425,6 +3530,7 @@ mod tests {
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         let replace_block_id = writer.insert(vec![BlockProperties {
+            hide_when_folded: false,
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Replace(
                 buffer_snapshot.anchor_after(Point::new(1, 3))
@@ -3479,6 +3585,7 @@ mod tests {
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         writer.insert(vec![
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(0, 3))),
                 height: Some(1),
@@ -3486,6 +3593,7 @@ mod tests {
                 priority: 0,
             },
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 3))),
                 height: Some(1),
@@ -3493,6 +3601,7 @@ mod tests {
                 priority: 0,
             },
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(6, 2))),
                 height: Some(1),
@@ -3507,6 +3616,7 @@ mod tests {
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         writer.insert(vec![
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(1, 3))),
                 height: Some(1),
@@ -3514,6 +3624,7 @@ mod tests {
                 priority: 0,
             },
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(2, 1))),
                 height: Some(1),
@@ -3521,6 +3632,7 @@ mod tests {
                 priority: 0,
             },
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(6, 1))),
                 height: Some(1),
@@ -3622,6 +3734,7 @@ mod tests {
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default(), None);
         let excerpt_blocks_2 = writer.insert(vec![
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
                 height: Some(1),
@@ -3629,6 +3742,7 @@ mod tests {
                 priority: 0,
             },
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(2, 0))),
                 height: Some(1),
@@ -3636,6 +3750,7 @@ mod tests {
                 priority: 0,
             },
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(3, 0))),
                 height: Some(1),
@@ -3645,6 +3760,7 @@ mod tests {
         ]);
         let excerpt_blocks_3 = writer.insert(vec![
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(4, 0))),
                 height: Some(1),
@@ -3652,6 +3768,7 @@ mod tests {
                 priority: 0,
             },
             BlockProperties {
+                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(5, 0))),
                 height: Some(1),
@@ -3699,6 +3816,7 @@ mod tests {
             writer.fold_buffers([buffer_id_1], buffer, cx);
         });
         let excerpt_blocks_1 = writer.insert(vec![BlockProperties {
+            hide_when_folded: false,
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(0, 0))),
             height: Some(1),
@@ -4053,6 +4171,7 @@ mod tests {
 
                             let height = rng.random_range(min_height..512);
                             BlockProperties {
+                                hide_when_folded: false,
                                 style: BlockStyle::Fixed,
                                 placement,
                                 height: Some(height),
@@ -4073,6 +4192,7 @@ mod tests {
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits, None);
                     let block_ids =
                         block_map.insert(block_properties.iter().map(|props| BlockProperties {
+                            hide_when_folded: false,
                             placement: props.placement.clone(),
                             height: props.height,
                             style: props.style,
@@ -4607,6 +4727,7 @@ mod tests {
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
         let _block_id = writer.insert(vec![BlockProperties {
+            hide_when_folded: false,
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
             height: Some(1),
@@ -4657,6 +4778,7 @@ mod tests {
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default(), None);
         writer.insert(vec![BlockProperties {
+            hide_when_folded: false,
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Near(buffer_snapshot.anchor_after(Point::new(0, 0))),
             height: Some(1),
@@ -4702,6 +4824,7 @@ mod tests {
 
         let mut writer = block_map.write(wrap_snapshot.clone(), Patch::default(), None);
         writer.insert(vec![BlockProperties {
+            hide_when_folded: false,
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Near(buffer_snapshot.anchor_after(Point::new(3, 6))),
             height: Some(1),

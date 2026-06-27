@@ -1382,6 +1382,7 @@ mod tests {
             let buffer_snapshot = buffer.read(cx).snapshot(cx);
             map.insert_blocks(
                 [BlockProperties {
+                    hide_when_folded: false,
                     placement: BlockPlacement::Above(
                         buffer_snapshot.anchor_after(MultiBufferOffset(text.len() / 2)),
                     ),

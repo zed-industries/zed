@@ -11366,6 +11366,7 @@ mod tests {
                 editor.set_placeholder_text("hello", window, cx);
                 editor.insert_blocks(
                     [BlockProperties {
+                        hide_when_folded: false,
                         style: BlockStyle::Fixed,
                         placement: BlockPlacement::Above(Anchor::Min),
                         height: Some(3),

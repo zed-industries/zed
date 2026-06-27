@@ -219,6 +219,7 @@ impl EditPredictionContextView {
                     .map(|(anchor, order)| {
                         let label = SharedString::from(format!("order: {order}"));
                         BlockProperties {
+                            hide_when_folded: false,
                             placement: BlockPlacement::Above(anchor),
                             height: Some(1),
                             style: BlockStyle::Sticky,

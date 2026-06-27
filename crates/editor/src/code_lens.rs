@@ -346,6 +346,7 @@ impl Editor {
                 style: BlockStyle::Spacer,
                 render: build_code_lens_renderer(new_line.clone(), editor_handle.clone()),
                 priority: 0,
+                hide_when_folded: true,
             };
             to_insert.push((props, anchor, new_line));
         }

@@ -549,6 +549,7 @@ impl BufferDiagnosticsEditor {
                         let editor = buffer_diagnostics_editor.editor.downgrade();
 
                         BlockProperties {
+                            hide_when_folded: false,
                             placement: BlockPlacement::Near(anchor.start),
                             height: Some(1),
                             style: BlockStyle::Flex,
