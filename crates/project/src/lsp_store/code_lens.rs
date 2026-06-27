@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use clock::Global;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::{
     FutureExt as _,
     future::{Shared, join_all},
@@ -15,8 +15,6 @@ use rpc::{TypedEnvelope, proto};
 use settings::Settings as _;
 use std::time::Duration;
 use text::OffsetRangeExt as _;
-use util::ResultExt as _;
-
 use util::ResultExt as _;
 
 use crate::{
@@ -124,21 +122,23 @@ impl LspStore {
     ) -> CodeLensTask {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
-        let existing_servers = self.as_local().map(|local| {
+        let existing_servers = if let Some(local) = self.as_local() {
             local
                 .buffers_opened_in_servers
                 .get(&buffer_id)
                 .cloned()
                 .unwrap_or_default()
-        });
+        } else {
+            self.relevant_server_ids_for_capability_check(buffer, cx)
+                .into_iter()
+                .collect()
+        };
 
         if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
             if let Some(cached_lens) = &lsp_data.code_lens {
                 if !version_queried_for.changed_since(&lsp_data.buffer_version) {
-                    let has_different_servers = existing_servers.is_some_and(|existing_servers| {
-                        existing_servers != cached_lens.lens.keys().copied().collect()
-                    });
-                    if !has_different_servers {
+                    let cached_servers = cached_lens.lens.keys().copied().collect::<HashSet<_>>();
+                    if existing_servers == cached_servers {
                         return Task::ready(Ok(Some(flatten_cache(&cached_lens.lens)))).shared();
                     }
                 } else if let Some((updating_for, running_update)) = cached_lens.update.as_ref() {

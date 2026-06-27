@@ -1054,6 +1054,141 @@ async fn test_remote_code_action_resolve(cx: &mut TestAppContext, server_cx: &mu
 }
 
 #[gpui::test]
+async fn test_remote_code_lens_fetch_after_lsp_starts(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+
+    let capabilities = lsp::ServerCapabilities {
+        code_lens_provider: Some(lsp::CodeLensOptions {
+            resolve_provider: None,
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
+
+    cx.update_entity(&project, |project, _| {
+        project.languages().register_test_language(LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: capabilities.clone(),
+                ..FakeLspAdapter::default()
+            },
+        );
+    });
+
+    cx.run_until_parked();
+
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.languages().add(rust_lang());
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap()
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+    cx.run_until_parked();
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    // Prime the code lens cache while no LSP server exists on the host.
+    // This simulates the race where the editor fetches code lenses during
+    // initial paint before the language server has started.
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let initial_actions = lsp_store
+        .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(&buffer, cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        initial_actions.map(|a| a.len()),
+        Some(0),
+        "Before any LSP starts, code lenses should be empty"
+    );
+
+    // Now register the LSP on the host. This triggers server startup and
+    // buffer registration, propagating capabilities to the client.
+    server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName("rust-analyzer".into()),
+            capabilities,
+            Some(Box::new(|fake_lsp| {
+                fake_lsp.set_request_handler::<lsp::request::CodeLensRequest, _, _>(
+                    |_, _| async move {
+                        Ok(Some(vec![lsp::CodeLens {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 0),
+                                lsp::Position::new(0, 9),
+                            ),
+                            command: Some(lsp::Command {
+                                title: "1 reference".to_string(),
+                                command: "lens_cmd".to_string(),
+                                arguments: None,
+                            }),
+                            data: None,
+                        }]))
+                    },
+                );
+            })),
+        );
+    });
+
+    // Trigger re-evaluation of language servers for the already-open buffer.
+    server_cx.update_entity(&headless, |headless, cx| {
+        headless.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.restart_all_language_servers(cx);
+        });
+    });
+    cx.run_until_parked();
+
+    // A subsequent fetch must bypass the stale (empty) cache now that a
+    // new server is available.
+    let actions = lsp_store
+        .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(&buffer, cx))
+        .await
+        .unwrap();
+    let actions = actions.expect("Should have code lens actions after LSP starts");
+    assert_eq!(
+        actions.len(),
+        1,
+        "Should have fetched one code lens from the newly started LSP"
+    );
+    assert_eq!(
+        actions.values().next().unwrap().lsp_action.title(),
+        "1 reference",
+    );
+}
+
+#[gpui::test]
 async fn test_remote_code_lens_resolve(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
