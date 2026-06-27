@@ -8035,6 +8035,18 @@ mod tests {
         });
     }
 
+    fn register_git_commit_language(project: &Entity<Project>, cx: &mut VisualTestContext) {
+        project.read_with(cx, |project, _| {
+            project.languages().add(Arc::new(language::Language::new(
+                language::LanguageConfig {
+                    name: "Git Commit".into(),
+                    ..Default::default()
+                },
+                None,
+            )));
+        });
+    }
+
     fn entry_index_for_repo_path(panel: &GitPanel, repo_path: &RepoPath) -> Option<usize> {
         panel.entries.iter().position(|entry| {
             entry
@@ -9096,6 +9108,7 @@ mod tests {
             .unwrap();
         let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
 
+        register_git_commit_language(&project, cx);
         let panel = workspace.update_in(cx, GitPanel::new);
         cx.run_until_parked();
 
@@ -9259,6 +9272,7 @@ mod tests {
             .unwrap();
         let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
 
+        register_git_commit_language(&project, cx);
         let panel = workspace.update_in(cx, GitPanel::new);
         cx.run_until_parked();
 
