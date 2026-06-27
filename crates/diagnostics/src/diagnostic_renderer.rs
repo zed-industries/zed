@@ -144,7 +144,6 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
             .map(|block| {
                 let editor = editor.clone();
                 BlockProperties {
-                    hide_when_folded: false,
                     placement: BlockPlacement::Near(
                         snapshot
                             .buffer_snapshot()

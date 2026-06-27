@@ -776,7 +776,6 @@ impl DisplayMap {
                 let start = buffer_snapshot.anchor_before(range.start);
                 let end = buffer_snapshot.anchor_after(range.end);
                 BlockProperties {
-                    hide_when_folded: false,
                     placement: BlockPlacement::Replace(start..=end),
                     render,
                     height: Some(height),
@@ -2796,10 +2795,7 @@ pub mod tests {
                                         height
                                     );
                                     let priority = rng.random_range(1..100);
-                                    let hide_when_folded =
-                                        placement.start().to_point(&buffer).row % 2 == 0;
                                     BlockProperties {
-                                        hide_when_folded,
                                         placement,
                                         style: BlockStyle::Fixed,
                                         height: Some(height),
@@ -3167,7 +3163,6 @@ pub mod tests {
         map.update(cx, |map, cx| {
             map.insert_blocks(
                 [BlockProperties {
-                    hide_when_folded: false,
                     placement: BlockPlacement::Above(
                         buffer_snapshot.anchor_before(Point::new(0, 0)),
                     ),
@@ -3373,7 +3368,6 @@ pub mod tests {
             map.insert_blocks(
                 [
                     BlockProperties {
-                        hide_when_folded: false,
                         placement: BlockPlacement::Below(
                             buffer_snapshot.anchor_before(Point::new(1, 0)),
                         ),
@@ -3383,7 +3377,6 @@ pub mod tests {
                         priority: 0,
                     },
                     BlockProperties {
-                        hide_when_folded: false,
                         placement: BlockPlacement::Below(
                             buffer_snapshot.anchor_before(Point::new(2, 0)),
                         ),
@@ -3492,7 +3485,6 @@ pub mod tests {
             );
             map.insert_blocks(
                 [BlockProperties {
-                    hide_when_folded: false,
                     placement: BlockPlacement::Below(
                         buffer_snapshot.anchor_before(Point::new(1, 0)),
                     ),
@@ -3575,7 +3567,6 @@ pub mod tests {
         let snapshot = map.update(cx, |map, cx| {
             map.insert_blocks(
                 [BlockProperties {
-                    hide_when_folded: false,
                     placement: BlockPlacement::Replace(
                         buffer_snapshot.anchor_before(Point::new(1, 2))
                             ..=buffer_snapshot.anchor_after(Point::new(2, 3)),

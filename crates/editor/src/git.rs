@@ -468,7 +468,6 @@ impl Editor {
         let hunk_key_for_render = hunk_key.clone();
         let editor_handle = cx.entity().downgrade();
         let block = BlockProperties {
-            hide_when_folded: false,
             style: BlockStyle::Sticky,
             placement: BlockPlacement::Below(anchor),
             height: Some(initial_height),

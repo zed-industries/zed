@@ -5799,7 +5799,6 @@ impl Editor {
         });
         let cloned_prompt = bp_prompt.clone();
         let blocks = vec![BlockProperties {
-            hide_when_folded: false,
             style: BlockStyle::Sticky,
             placement: BlockPlacement::Above(anchor),
             height: Some(height),
@@ -7758,7 +7757,6 @@ impl Editor {
                     window.focus(&rename_focus_handle, cx);
                     let block_id = this.insert_blocks(
                         [BlockProperties {
-                            hide_when_folded: false,
                             style: BlockStyle::Flex,
                             placement: BlockPlacement::Below(range.start),
                             height: Some(1),

@@ -615,7 +615,6 @@ impl InlineAssistant {
         });
         let assist_blocks = vec![
             BlockProperties {
-                hide_when_folded: false,
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Above(range.start),
                 height: Some(prompt_editor_height),
@@ -624,7 +623,6 @@ impl InlineAssistant {
             },
             // Placeholder for tool description - will be updated dynamically
             BlockProperties {
-                hide_when_folded: false,
                 style: BlockStyle::Flex,
                 placement: BlockPlacement::Below(range.end),
                 height: Some(0),
@@ -632,7 +630,6 @@ impl InlineAssistant {
                 priority: 0,
             },
             BlockProperties {
-                hide_when_folded: false,
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Below(range.end),
                 height: None,
@@ -1436,7 +1433,6 @@ impl InlineAssistant {
                 let height =
                     deleted_lines_editor.update(cx, |editor, cx| editor.max_point(cx).row().0 + 1);
                 new_blocks.push(BlockProperties {
-                    hide_when_folded: false,
                     placement: BlockPlacement::Above(new_row),
                     height: Some(height),
                     style: BlockStyle::Flex,

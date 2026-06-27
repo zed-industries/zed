@@ -7668,7 +7668,6 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
         let snapshot = editor.buffer.read(cx).snapshot(cx);
         editor.insert_blocks(
             [BlockProperties {
-                hide_when_folded: false,
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(snapshot.anchor_after(Point::new(2, 0))),
                 height: Some(1),
@@ -7711,7 +7710,6 @@ async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
         );
         editor.insert_blocks(
             [BlockProperties {
-                hide_when_folded: false,
                 placement,
                 height: Some(4),
                 style: BlockStyle::Sticky,

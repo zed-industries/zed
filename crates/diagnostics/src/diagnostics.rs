@@ -672,7 +672,6 @@ impl ProjectDiagnosticsEditor {
                         let block = block?;
                         let editor = this.editor.downgrade();
                         Some(BlockProperties {
-                            hide_when_folded: false,
                             placement: BlockPlacement::Near(anchor.start),
                             height: Some(1),
                             style: BlockStyle::Flex,
