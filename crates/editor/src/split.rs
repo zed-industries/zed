@@ -477,9 +477,13 @@ impl SplittableEditor {
         });
     }
 
-    pub fn set_render_diff_hunks_as_unstaged(&self, cx: &mut Context<Self>) {
+    pub fn set_render_diff_hunks_as_unstaged(
+        &self,
+        render_as_unstaged: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.update_editors(cx, |editor, cx| {
-            editor.set_render_diff_hunks_as_unstaged(true, cx);
+            editor.set_render_diff_hunks_as_unstaged(render_as_unstaged, cx);
         });
     }
 

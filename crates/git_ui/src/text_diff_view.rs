@@ -185,7 +185,7 @@ impl TextDiffView {
                 cx,
             );
             splittable.disable_diff_hunk_controls(cx);
-            splittable.set_render_diff_hunks_as_unstaged(cx);
+            splittable.set_render_diff_hunks_as_unstaged(true, cx);
             splittable.rhs_editor().update(cx, |editor, _cx| {
                 editor.start_temporary_diff_override();
             });

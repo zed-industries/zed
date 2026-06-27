@@ -697,6 +697,7 @@ impl ProjectDiff {
         project_diff: WeakEntity<ProjectDiff>,
         cx: &mut Context<SplittableEditor>,
     ) {
+        editor.set_render_diff_hunks_as_unstaged(*diff_base == DiffBase::Index, cx);
         match diff_base {
             DiffBase::Head | DiffBase::Index | DiffBase::Staged => {
                 let render_diff_hunk_controls = match diff_base {
