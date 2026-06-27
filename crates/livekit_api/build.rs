@@ -1,4 +1,4 @@
-fn main() -> std::io::Result<()> {
+fn main() {
     println!("cargo:rerun-if-changed=vendored/protocol");
     // Compile the descriptor set with protox (a pure-Rust protobuf compiler) so
     // building Zed doesn't require a system `protoc` binary.
@@ -6,8 +6,9 @@ fn main() -> std::io::Result<()> {
         ["vendored/protocol/livekit_room.proto"],
         ["vendored/protocol"],
     )
-    .map_err(|err| std::io::Error::other(err.to_string()))?;
+    .unwrap();
     prost_build::Config::new()
         .type_attribute("SendDataResponse", "#[allow(clippy::empty_docs)]")
         .compile_fds(file_descriptors)
+        .unwrap();
 }
