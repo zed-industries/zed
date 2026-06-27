@@ -582,6 +582,7 @@ mod tests {
             commit_message_model: None,
             commit_message_instructions: None,
             thread_summary_model: None,
+            compaction_model: None,
             inline_alternatives: vec![],
             favorite_models: vec![],
             default_profile: AgentProfileId::default(),
