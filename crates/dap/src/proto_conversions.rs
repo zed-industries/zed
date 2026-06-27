@@ -55,7 +55,7 @@ impl ProtoConversion for dap_types::Scope {
     fn from_proto(payload: Self::ProtoType) -> Self {
         let presentation_hint = payload
             .presentation_hint
-            .and_then(DapScopePresentationHint::from_i32);
+            .and_then(|hint| DapScopePresentationHint::try_from(hint).ok());
         Self {
             name: payload.name,
             presentation_hint: presentation_hint.map(ScopePresentationHint::from_proto),
@@ -222,7 +222,7 @@ impl ProtoConversion for dap_types::Source {
             source_reference: payload.source_reference,
             presentation_hint: payload
                 .presentation_hint
-                .and_then(DapSourcePresentationHint::from_i32)
+                .and_then(|hint| DapSourcePresentationHint::try_from(hint).ok())
                 .map(dap_types::SourcePresentationHint::from_proto),
             origin: payload.origin,
             sources: Some(Vec::<dap_types::Source>::from_proto(payload.sources)),
@@ -401,7 +401,7 @@ impl ProtoConversion for dap_types::OutputEvent {
         Self {
             category: payload
                 .category
-                .and_then(proto::DapOutputCategory::from_i32)
+                .and_then(|category| proto::DapOutputCategory::try_from(category).ok())
                 .map(OutputEventCategory::from_proto),
             output: payload.output,
             variables_reference: payload.variables_reference,
@@ -410,7 +410,7 @@ impl ProtoConversion for dap_types::OutputEvent {
             column: payload.column.map(|column| column as u64),
             group: payload
                 .group
-                .and_then(proto::DapOutputEventGroup::from_i32)
+                .and_then(|group| proto::DapOutputEventGroup::try_from(group).ok())
                 .map(OutputEventGroup::from_proto),
             data: None,
             location_reference: None,
