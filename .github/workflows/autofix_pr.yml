@@ -74,8 +74,8 @@ jobs:
             git diff > autofix.patch
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
         fi
-    - name: upload artifact autofix-patch
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+    - name: autofix_pr::upload_patch_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
         name: autofix-patch
         path: autofix.patch
@@ -112,7 +112,7 @@ jobs:
         PR_NUMBER: ${{ inputs.pr_number }}
         GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
     - name: autofix_pr::download_patch_artifact
-      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         name: autofix-patch
     - name: autofix_pr::commit_changes::apply_patch
@@ -122,10 +122,10 @@ jobs:
         git commit -am "Autofix"
         git push
       env:
-        GIT_COMMITTER_NAME: Zed Zippy
-        GIT_COMMITTER_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
-        GIT_AUTHOR_NAME: Zed Zippy
+        GIT_AUTHOR_NAME: zed-zippy[bot]
         GIT_AUTHOR_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
+        GIT_COMMITTER_NAME: zed-zippy[bot]
+        GIT_COMMITTER_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
         GITHUB_TOKEN: ${{ steps.generate-token.outputs.token }}
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.pr_number }}

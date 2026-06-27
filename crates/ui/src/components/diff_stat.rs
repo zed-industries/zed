@@ -1,5 +1,6 @@
 use crate::Tooltip;
 use crate::prelude::*;
+use num_format::{Locale, ToFormattedString};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct DiffStat {
@@ -35,16 +36,19 @@ impl DiffStat {
 impl RenderOnce for DiffStat {
     fn render(self, _: &mut Window, _cx: &mut App) -> impl IntoElement {
         let tooltip = self.tooltip;
+        let added = self.added.to_formatted_string(&Locale::en);
+        let removed = self.removed.to_formatted_string(&Locale::en);
+
         h_flex()
             .id(self.id)
             .gap_1()
             .child(
-                Label::new(format!("+\u{2009}{}", self.added))
+                Label::new(format!("+\u{2009}{added}"))
                     .color(Color::Success)
                     .size(self.label_size),
             )
             .child(
-                Label::new(format!("\u{2012}\u{2009}{}", self.removed))
+                Label::new(format!("\u{2012}\u{2009}{removed}"))
                     .color(Color::Error)
                     .size(self.label_size),
             )
@@ -59,7 +63,12 @@ impl Component for DiffStat {
         ComponentScope::VersionControl
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
+    fn description() -> &'static str {
+        "A compact summary of additions and deletions for a diff, \
+        displayed as colored insertion and deletion counts."
+    }
+
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
         let container = || {
             h_flex()
                 .py_4()
@@ -73,14 +82,12 @@ impl Component for DiffStat {
         let diff_stat_example = vec![single_example(
             "Default",
             container()
-                .child(DiffStat::new("id", 1, 2))
+                .child(DiffStat::new("id", 1_234, 5_678))
                 .into_any_element(),
         )];
 
-        Some(
-            example_group(diff_stat_example)
-                .vertical()
-                .into_any_element(),
-        )
+        example_group(diff_stat_example)
+            .vertical()
+            .into_any_element()
     }
 }

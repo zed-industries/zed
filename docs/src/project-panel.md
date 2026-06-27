@@ -1,6 +1,6 @@
 ---
 title: Project Panel - Zed
-description: Navigate workspace files and directories with Zed's project panel. Create, rename, trash and delete file and directories.
+description: Navigate workspace files and directories with Zed's project panel. Create, rename, trash and delete files and directories.
 ---
 
 # Project Panel
@@ -17,7 +17,8 @@ status bar.
 Use the arrow keys to move through entries. {#kb
 project_panel::ExpandSelectedEntry} expands a directory and {#kb
 project_panel::CollapseSelectedEntry} collapses it. {#kb
-project_panel::CollapseAllEntries} collapses every directory at once. Press {#kb
+project_panel::CollapseAllEntries} collapses every directory at once. {#kb
+project_panel::ExpandAllEntries} expands every directory at once. Press {#kb
 project_panel::Open} or click to preview a selected file, without giving it a
 permanent tab. Editing the file or double-clicking it promotes it to a permanent tab.
 
