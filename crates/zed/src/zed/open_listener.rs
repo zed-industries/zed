@@ -59,9 +59,6 @@ pub enum OpenRequestKind {
     AgentPanel {
         external_source_prompt: Option<ExternalSourcePrompt>,
     },
-    SharedAgentThread {
-        session_id: String,
-    },
     InstallSkill {
         /// Full `SKILL.md` contents embedded in a `zed://skill` share link.
         content: String,
@@ -98,10 +95,6 @@ impl std::fmt::Debug for OpenRequestKind {
             } => f
                 .debug_struct("AgentPanel")
                 .field("external_source_prompt", external_source_prompt)
-                .finish(),
-            Self::SharedAgentThread { session_id } => f
-                .debug_struct("SharedAgentThread")
-                .field("session_id", session_id)
                 .finish(),
             Self::InstallSkill { content } => f
                 .debug_struct("InstallSkill")
@@ -178,14 +171,6 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
                 });
-            } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
-                if uuid::Uuid::parse_str(session_id_str).is_ok() {
-                    this.kind = Some(OpenRequestKind::SharedAgentThread {
-                        session_id: session_id_str.to_string(),
-                    });
-                } else {
-                    log::error!("Invalid session ID in URL: {}", session_id_str);
-                }
             } else if url.starts_with(agent_skills::SKILL_SHARE_LINK_PREFIX) {
                 this.parse_skill_install_url(&url)?
             } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
@@ -761,13 +746,9 @@ pub(crate) fn open_options_for_request(
     location: &SerializedWorkspaceLocation,
     cx: &App,
 ) -> workspace::OpenOptions {
-    let open_behavior = open_behavior.unwrap_or_else(|| {
-        match workspace::WorkspaceSettings::get_global(cx).default_open_behavior {
-            settings::DefaultOpenBehavior::ExistingWindow => cli::OpenBehavior::ExistingWindow,
-            settings::DefaultOpenBehavior::NewWindow => cli::OpenBehavior::Classic,
-        }
-    });
-    open_options_for_behavior(open_behavior, location, cx)
+    open_behavior.map_or_else(workspace::OpenOptions::default, |open_behavior| {
+        open_options_for_behavior(open_behavior, location, cx)
+    })
 }
 
 pub(crate) fn open_options_for_behavior(
@@ -1366,48 +1347,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn test_open_options_for_request_respects_default_open_behavior(cx: &mut TestAppContext) {
-        use gpui::UpdateGlobal as _;
-
-        let _app_state = init_test(cx);
-
-        // A `None` behavior (e.g. a Finder or URL open) consults the UI-level
-        // `default_open_behavior` setting rather than falling back to fixed
-        // defaults.
-        cx.update(|cx| {
-            settings::SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.workspace.default_open_behavior =
-                        Some(settings::DefaultOpenBehavior::NewWindow);
-                });
-            });
-        });
-        let options =
-            cx.update(|cx| open_options_for_request(None, &SerializedWorkspaceLocation::Local, cx));
-        assert_eq!(
-            options.workspace_matching,
-            workspace::WorkspaceMatching::MatchExact
-        );
-        assert!(!options.add_dirs_to_sidebar);
-
-        cx.update(|cx| {
-            settings::SettingsStore::update_global(cx, |store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.workspace.default_open_behavior =
-                        Some(settings::DefaultOpenBehavior::ExistingWindow);
-                });
-            });
-        });
-        let options =
-            cx.update(|cx| open_options_for_request(None, &SerializedWorkspaceLocation::Local, cx));
-        assert_eq!(
-            options.workspace_matching,
-            workspace::WorkspaceMatching::MatchExact
-        );
-        assert!(options.add_dirs_to_sidebar);
-    }
-
-    #[gpui::test]
     fn test_parse_agent_url(cx: &mut TestAppContext) {
         let _app_state = init_test(cx);
 
@@ -1595,50 +1534,6 @@ mod tests {
             }
             _ => panic!("Expected AgentPanel kind"),
         }
-    }
-
-    #[gpui::test]
-    fn test_parse_shared_agent_thread_url(cx: &mut TestAppContext) {
-        let _app_state = init_test(cx);
-        let session_id = "123e4567-e89b-12d3-a456-426614174000";
-
-        let request = cx.update(|cx| {
-            OpenRequest::parse(
-                RawOpenRequest {
-                    urls: vec![format!("zed://agent/shared/{session_id}")],
-                    ..Default::default()
-                },
-                cx,
-            )
-            .unwrap()
-        });
-
-        match request.kind {
-            Some(OpenRequestKind::SharedAgentThread {
-                session_id: parsed_session_id,
-            }) => {
-                assert_eq!(parsed_session_id, session_id);
-            }
-            _ => panic!("Expected SharedAgentThread kind"),
-        }
-    }
-
-    #[gpui::test]
-    fn test_parse_shared_agent_thread_url_with_invalid_uuid(cx: &mut TestAppContext) {
-        let _app_state = init_test(cx);
-
-        let request = cx.update(|cx| {
-            OpenRequest::parse(
-                RawOpenRequest {
-                    urls: vec!["zed://agent/shared/not-a-uuid".into()],
-                    ..Default::default()
-                },
-                cx,
-            )
-            .unwrap()
-        });
-
-        assert!(request.kind.is_none());
     }
 
     #[gpui::test]

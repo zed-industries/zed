@@ -314,6 +314,31 @@ mod tests {
     }
 
     #[test]
+    fn text_with_split_glyph_clusters_in_mixed_fonts_does_not_panic() {
+        let mut db = Database::new();
+        db.load_font_data(IBM_PLEX_REGULAR.to_vec());
+        db.load_font_data(LILEX_REGULAR.to_vec());
+        let options = usvg::Options {
+            fontdb: std::sync::Arc::new(db),
+            ..Default::default()
+        };
+
+        // A base letter followed by a stack of combining marks. Under HarfBuzz's
+        // default cluster merging every mark glyph shares the base's byte index,
+        // which is the "glyph splitting" condition that triggered the panic. The
+        // chunk must use two different fonts so the buggy merge path runs.
+        let zalgo = "e\u{0301}\u{0302}\u{0303}\u{0304}\u{0306}\u{0307}\u{0308}\u{030a}";
+        let svg = format!(
+            r#"<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"><text font-family="Lilex" font-size="32">{zalgo}<tspan font-family="IBM Plex Sans">{zalgo}</tspan></text></svg>"#
+        );
+
+        // Before the fix this aborts via panic with a message like
+        // "removal index (is 5) should be < len (is 5)".
+        usvg::Tree::from_data(svg.as_bytes(), &options)
+            .expect("SVG with mixed-font text should parse");
+    }
+
+    #[test]
     fn test_is_emoji_presentation() {
         let cases = [
             ("a", false),
