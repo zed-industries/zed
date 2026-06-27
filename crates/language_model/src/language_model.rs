@@ -24,6 +24,15 @@ pub fn init(cx: &mut App) {
     registry::init(cx);
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisabledReason(pub SharedString);
+
+impl DisabledReason {
+    pub fn new(reason: impl Into<SharedString>) -> Self {
+        Self(reason.into())
+    }
+}
+
 pub struct LanguageModelTextStream {
     pub message_id: Option<String>,
     pub stream: BoxStream<'static, Result<String, LanguageModelCompletionError>>,
@@ -56,6 +65,11 @@ pub trait LanguageModel: Send + Sync {
     /// Returns whether this model is the "latest", so we can highlight it in the UI.
     fn is_latest(&self) -> bool {
         false
+    }
+
+    /// Whether the model is currently disabled and, if so, why this is the case.
+    fn is_disabled(&self) -> Option<DisabledReason> {
+        None
     }
 
     /// Whether requests to this model require the user to consent to the

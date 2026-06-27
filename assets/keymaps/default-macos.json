@@ -388,6 +388,7 @@
       "cmd-shift-alt-enter": "agent::SendNextQueuedMessage",
       "cmd-shift-backspace": "agent::RemoveFirstQueuedMessage",
       "cmd-ctrl-e": "agent::EditFirstQueuedMessage",
+      "cmd-ctrl-s": "agent::ToggleSteerFirstQueuedMessage",
       "cmd-alt-backspace": "agent::ClearMessageQueue",
       "cmd-shift-v": "agent::PasteRaw",
       "cmd-i": "agent::ToggleProfileSelector",
@@ -515,7 +516,7 @@
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ToggleRegex",
       "alt-cmd-x": "search::ToggleRegex",
-      "cmd-alt-p": "project_search::OpenTextFinder",
+      "alt-cmd-f": "project_search::OpenTextFinder",
     },
   },
   {
@@ -549,7 +550,7 @@
       "cmd-shift-h": "search::ToggleReplace",
       "alt-cmd-g": "search::ToggleRegex",
       "alt-cmd-x": "search::ToggleRegex",
-      "cmd-alt-p": "project_search::OpenTextFinder",
+      "alt-cmd-f": "project_search::OpenTextFinder",
     },
   },
   {
@@ -1025,6 +1026,7 @@
       "left": "project_panel::CollapseSelectedEntry",
       "cmd-left": "project_panel::CollapseAllEntries",
       "right": "project_panel::ExpandSelectedEntry",
+      "cmd-right": "project_panel::ExpandAllEntries",
       "cmd-n": "project_panel::NewFile",
       "cmd-d": "project_panel::Duplicate",
       "alt-cmd-n": "project_panel::NewDirectory",
