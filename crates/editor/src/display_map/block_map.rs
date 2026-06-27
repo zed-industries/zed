@@ -1075,14 +1075,16 @@ impl BlockMap {
                     .iter()
                     .filter_map(|block| {
                         let placement = block.placement.to_wrap_row(wrap_snapshot)?;
-                        if wrap_snapshot.intersects_fold(Point::new(
-                            block
-                                .placement
-                                .start()
-                                .to_point(wrap_snapshot.buffer_snapshot())
-                                .row,
-                            0,
-                        )) {
+                        if !matches!(placement, BlockPlacement::Replace(_))
+                            && wrap_snapshot.intersects_fold(Point::new(
+                                block
+                                    .placement
+                                    .start()
+                                    .to_point(wrap_snapshot.buffer_snapshot())
+                                    .row,
+                                0,
+                            ))
+                        {
                             return None;
                         }
                         if let BlockPlacement::Above(row) = placement
