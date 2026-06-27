@@ -1,5 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
+#[cfg(test)]
+mod project_bookmarks_test;
+
 use file_icons::FileIcons;
 use futures::future::{FutureExt, Shared};
 use fuzzy_nucleo::{Case, LengthPenalty, StringMatchCandidate, match_strings};
