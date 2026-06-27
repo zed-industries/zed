@@ -52,13 +52,7 @@ struct Match {
     pub buffer: Entity<Buffer>,
     pub positions: Vec<usize>,
     pub anchor: text::Anchor,
-}
-
-impl Match {
-    fn line_number(&self, cx: &App) -> u32 {
-        let snapshot = self.buffer.read(cx).snapshot();
-        snapshot.summary_for_anchor::<text::Point>(&self.anchor).row + 1
-    }
+    pub line_number: u32,
 }
 
 enum Entry {
@@ -73,6 +67,7 @@ struct ProjectBookmarksDelegate {
     group_result_by_path: bool,
     selected_entry_index: usize,
     matches: Vec<Match>,
+    max_match_line_number: u32,
     entries: Vec<Entry>,
     worktree_root_names: HashMap<WorktreeId, Arc<RelPath>>,
     bookmarks: Shared<Task<Arc<Vec<ProjectBookmark>>>>,
@@ -109,6 +104,7 @@ impl ProjectBookmarksDelegate {
             entries: Vec::new(),
             worktree_root_names,
             bookmarks,
+            max_match_line_number: 0,
         }
     }
 
@@ -157,7 +153,7 @@ impl ProjectBookmarksDelegate {
                     .truncate_start(),
                 )
                 .child(
-                    Label::new(format!(":{}", bookmark_match.line_number(cx)))
+                    Label::new(format!(":{}", bookmark_match.line_number,))
                         .size(LabelSize::Small)
                         .color(Color::Placeholder),
                 ),
@@ -306,23 +302,42 @@ impl PickerDelegate for ProjectBookmarksDelegate {
                     picker.delegate.matches = matches
                         .into_iter()
                         .filter_map(|mat| {
-                            let bookmark = bookmarks.get(mat.candidate_id)?;
+                            let ProjectBookmark {
+                                buffer,
+                                anchor,
+                                path,
+                                ..
+                            } = bookmarks.get(mat.candidate_id)?;
+
                             let project_path = picker
                                 .delegate
                                 .project
                                 .read(cx)
-                                .project_path_for_absolute_path(&bookmark.path, cx)?;
+                                .project_path_for_absolute_path(path, cx)?;
+
+                            let line_number = {
+                                let snapshot = buffer.read(cx).text_snapshot();
+                                snapshot.summary_for_anchor::<text::Point>(anchor).row + 1
+                            };
 
                             Some(Match {
                                 path: project_path,
                                 label: mat.string,
                                 positions: mat.positions,
-                                buffer: bookmark.buffer.clone(),
-                                anchor: bookmark.anchor,
+                                buffer: buffer.clone(),
+                                anchor: *anchor,
+                                line_number,
                             })
                         })
                         .collect();
 
+                    picker.delegate.max_match_line_number = picker
+                        .delegate
+                        .matches
+                        .iter()
+                        .map(|m| m.line_number)
+                        .max()
+                        .unwrap_or(0);
                     picker.delegate.rebuild_entries();
                 })
                 .ok();
@@ -407,7 +422,19 @@ impl PickerDelegate for ProjectBookmarksDelegate {
                 let (bookmark_label, full_path_label) = self.labels_for_match(mat, window, cx);
 
                 if self.group_result_by_path {
-                    item_base.child(bookmark_label.truncate().into_any_element())
+                    item_base
+                        .child(
+                            h_flex()
+                                .text_sm()
+                                .w(rems(
+                                    (self.max_match_line_number.max(1).ilog10() + 1) as f32 * 0.5,
+                                ))
+                                .justify_end()
+                                .child(Label::new(mat.line_number.to_string()).color(
+                                    Color::Custom(cx.theme().colors().text_muted.opacity(0.5)),
+                                )),
+                        )
+                        .child(bookmark_label.truncate().into_any_element())
                 } else {
                     item_base.start_slot::<Icon>(Some(icon)).child(
                         h_flex()
