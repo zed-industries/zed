@@ -14041,19 +14041,25 @@ dependencies = [
 name = "project_bookmarks"
 version = "0.1.0"
 dependencies = [
+ "ctor",
  "editor",
  "file_icons",
  "futures 0.3.32",
  "fuzzy_nucleo",
  "gpui",
  "language",
+ "menu",
  "picker",
  "project",
+ "serde_json",
  "settings",
  "text",
+ "theme",
+ "theme_settings",
  "ui",
  "util",
  "workspace",
+ "zlog",
 ]
 
 [[package]]
