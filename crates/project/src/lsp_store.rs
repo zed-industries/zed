@@ -1139,9 +1139,7 @@ impl LocalLspStore {
                     let result = lsp_store.update(cx, |lsp_store, cx| {
                         lsp_store.refresh_code_lens(cx);
                     });
-                    async move {
-                        result
-                    }
+                    async move { result }
                 }
             })
             .detach();
