@@ -14469,7 +14469,10 @@ impl LanguageServerLogType {
         use proto::rpc_message;
         match log_type {
             proto::language_server_log::LogType::Log(message_type) => Self::Log(
-                match LogLevel::try_from(message_type.level).ok().unwrap_or(LogLevel::Log) {
+                match LogLevel::try_from(message_type.level)
+                    .ok()
+                    .unwrap_or(LogLevel::Log)
+                {
                     LogLevel::Error => MessageType::ERROR,
                     LogLevel::Warning => MessageType::WARNING,
                     LogLevel::Info => MessageType::INFO,
@@ -14480,7 +14483,8 @@ impl LanguageServerLogType {
                 verbose_info: trace_message.verbose_info,
             },
             proto::language_server_log::LogType::Rpc(message) => Self::Rpc {
-                received: match rpc_message::Kind::try_from(message.kind).ok()
+                received: match rpc_message::Kind::try_from(message.kind)
+                    .ok()
                     .unwrap_or(rpc_message::Kind::Received)
                 {
                     rpc_message::Kind::Received => true,

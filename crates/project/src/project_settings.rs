@@ -1042,7 +1042,8 @@ impl SettingsObserver {
         mut cx: AsyncApp,
     ) -> anyhow::Result<()> {
         let kind = match envelope.payload.kind {
-            Some(kind) => proto::LocalSettingsKind::try_from(kind).ok()
+            Some(kind) => proto::LocalSettingsKind::try_from(kind)
+                .ok()
                 .with_context(|| format!("unknown kind {kind}"))?,
             None => proto::LocalSettingsKind::Settings,
         };

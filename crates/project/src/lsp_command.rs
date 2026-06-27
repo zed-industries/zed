@@ -4213,7 +4213,9 @@ impl GetDocumentDiagnostics {
 
         Ok(lsp::Diagnostic {
             range: language::range_to_lsp(range)?,
-            severity: match proto::lsp_diagnostic::Severity::try_from(diagnostic.severity).ok().unwrap()
+            severity: match proto::lsp_diagnostic::Severity::try_from(diagnostic.severity)
+                .ok()
+                .unwrap()
             {
                 proto::lsp_diagnostic::Severity::Error => Some(lsp::DiagnosticSeverity::ERROR),
                 proto::lsp_diagnostic::Severity::Warning => Some(lsp::DiagnosticSeverity::WARNING),

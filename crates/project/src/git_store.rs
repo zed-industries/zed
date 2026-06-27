@@ -10086,7 +10086,8 @@ fn status_from_proto(
     use proto::git_file_status::Variant;
 
     let Some(variant) = status.and_then(|status| status.variant) else {
-        let code = proto::GitStatus::try_from(simple_status).ok()
+        let code = proto::GitStatus::try_from(simple_status)
+            .ok()
             .with_context(|| format!("Invalid git status code: {simple_status}"))?;
         let result = match code {
             proto::GitStatus::Added => TrackedStatus {
@@ -10120,7 +10121,8 @@ fn status_from_proto(
         Variant::Unmerged(unmerged) => {
             let [first_head, second_head] =
                 [unmerged.first_head, unmerged.second_head].map(|head| {
-                    let code = proto::GitStatus::try_from(head).ok()
+                    let code = proto::GitStatus::try_from(head)
+                        .ok()
                         .with_context(|| format!("Invalid git status code: {head}"))?;
                     let result = match code {
                         proto::GitStatus::Added => UnmergedStatusCode::Added,
@@ -10140,7 +10142,8 @@ fn status_from_proto(
         Variant::Tracked(tracked) => {
             let [index_status, worktree_status] = [tracked.index_status, tracked.worktree_status]
                 .map(|status| {
-                    let code = proto::GitStatus::try_from(status).ok()
+                    let code = proto::GitStatus::try_from(status)
+                        .ok()
                         .with_context(|| format!("Invalid git status code: {status}"))?;
                     let result = match code {
                         proto::GitStatus::Modified => StatusCode::Modified,

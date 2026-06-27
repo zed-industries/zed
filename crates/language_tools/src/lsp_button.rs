@@ -914,7 +914,8 @@ impl LspButton {
                     let Some(name) = name.as_ref() else {
                         return;
                     };
-                    if let Some(binary_status) = proto::ServerBinaryStatus::try_from(*binary_status).ok()
+                    if let Some(binary_status) =
+                        proto::ServerBinaryStatus::try_from(*binary_status).ok()
                     {
                         let binary_status = match binary_status {
                             proto::ServerBinaryStatus::None => BinaryStatus::None,
