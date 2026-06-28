@@ -594,7 +594,7 @@ mod tests {
         let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
 
         let full_counter = Arc::new(AtomicUsize::new(0));
-        let mut full_request = cx
+        let _full_request = cx
             .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>({
                 let full_counter = full_counter.clone();
                 move |_, _, _| {
@@ -611,6 +611,9 @@ mod tests {
             });
 
         cx.set_state("ˇfn main() {}");
+        // Drain the refresh scheduled on open (while no capability exists yet), so a
+        // later request can only come from the dynamic-registration refresh itself.
+        cx.executor().advance_clock(Duration::from_millis(200));
         cx.run_until_parked();
         assert_eq!(
             full_counter.load(atomic::Ordering::Acquire),
@@ -656,11 +659,12 @@ mod tests {
             .into_response()
             .expect("register capability request failed");
 
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
         assert!(
-            full_request.next().await.is_some(),
+            full_counter.load(atomic::Ordering::Acquire) >= 1,
             "dynamic registration should re-query semantic tokens for the open document"
         );
-        cx.run_until_parked();
 
         assert_eq!(
             extract_semantic_highlights(&cx.editor, &cx),
