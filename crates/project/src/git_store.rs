@@ -8646,18 +8646,28 @@ impl Repository {
                             .boxed()
                         };
 
-                        let (statuses, diff_stats) =
-                            futures::future::try_join(status_task, diff_stat_future).await?;
+                        let (statuses, diff_stats, untracked_diff_stats) = futures::future::try_join3(
+                            status_task,
+                            diff_stat_future,
+                            backend.diff_stat_untracked(&changed_paths_vec),
+                        )
+                        .await?;
 
                         let diff_stats: HashMap<RepoPath, DiffStat> =
                             HashMap::from_iter(diff_stats.entries.into_iter().cloned());
+                        let untracked_diff_stats: HashMap<RepoPath, DiffStat> =
+                            HashMap::from_iter(untracked_diff_stats.entries.into_iter().cloned());
 
                         let mut changed_path_statuses = Vec::new();
                         let prev_statuses = prev_snapshot.statuses_by_path.clone();
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
 
                         for (repo_path, status) in &*statuses.entries {
-                            let current_diff_stat = diff_stats.get(repo_path).copied();
+                            let current_diff_stat = if status.is_untracked() {
+                                untracked_diff_stats.get(repo_path).copied()
+                            } else {
+                                diff_stats.get(repo_path).copied()
+                            };
 
                             changed_paths.remove(repo_path);
                             if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
@@ -10024,17 +10034,37 @@ async fn compute_snapshot(
             }
         }
     };
+    let untracked_diff_stat_future = {
+        let backend = backend.clone();
+        async move {
+            backend
+                .diff_stat_untracked(&[])
+                .await
+                .log_err()
+                .unwrap_or_default()
+        }
+    };
     let stash_entries_future = {
         let backend = backend.clone();
         async move { backend.stash_entries().await.log_err().unwrap_or_default() }
     };
 
-    let (statuses, diff_stats, stash_entries) =
-        futures::future::join3(statuses_future, diff_stat_future, stash_entries_future).await;
+    let (statuses, diff_stats, untracked_diff_stats, stash_entries) = futures::future::join4(
+        statuses_future,
+        diff_stat_future,
+        untracked_diff_stat_future,
+        stash_entries_future,
+    )
+    .await;
     log::debug!("fetched statuses, diff stats, stash entries");
 
     let diff_stat_map: HashMap<&RepoPath, DiffStat> =
         diff_stats.entries.iter().map(|(p, s)| (p, *s)).collect();
+    let untracked_diff_stat_map: HashMap<&RepoPath, DiffStat> = untracked_diff_stats
+        .entries
+        .iter()
+        .map(|(p, s)| (p, *s))
+        .collect();
     let mut conflicted_paths = Vec::new();
     let statuses_by_path = SumTree::from_iter(
         statuses.entries.iter().map(|(repo_path, status)| {
@@ -10044,7 +10074,11 @@ async fn compute_snapshot(
             StatusEntry {
                 repo_path: repo_path.clone(),
                 status: *status,
-                diff_stat: diff_stat_map.get(repo_path).copied(),
+                diff_stat: if status.is_untracked() {
+                    untracked_diff_stat_map.get(repo_path).copied()
+                } else {
+                    diff_stat_map.get(repo_path).copied()
+                },
             }
         }),
         (),
