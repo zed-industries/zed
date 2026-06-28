@@ -92,8 +92,8 @@ use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::OffsetRangeExt;
 use theme_settings::ThemeSettings;
 use ui::{
-    ContextMenu, ContextMenuEntry, GradientFade, IconButton, KeyBinding, PopoverMenu,
-    PopoverMenuHandle, ProjectEmptyState, Tab, Tooltip, prelude::*, utils::WithRemSize,
+    ContextMenu, ContextMenuEntry, GradientFade, IconButton, PopoverMenu, PopoverMenuHandle, Tab,
+    Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -1301,9 +1301,15 @@ impl AgentPanel {
                 })
                 .await;
 
-            let has_open_project = workspace
-                .read_with(cx, |workspace, cx| !workspace.root_paths(cx).is_empty())
-                .unwrap_or(false);
+            let (has_open_project, is_via_collab) = workspace
+                .read_with(cx, |workspace, cx| {
+                    (
+                        !workspace.root_paths(cx).is_empty(),
+                        workspace.project().read(cx).is_via_collab(),
+                    )
+                })
+                .unwrap_or_default();
+            let supports_external_agents = has_open_project && !is_via_collab;
             let terminal_id_to_restore = if has_open_project {
                 serialized_panel
                     .as_ref()
@@ -1354,7 +1360,7 @@ impl AgentPanel {
                 None
             };
 
-            let thread_to_restore = if has_open_project && terminal_to_restore.is_none() {
+            let thread_to_restore = if terminal_to_restore.is_none() {
                 if let Some(info) = serialized_panel
                     .as_ref()
                     .and_then(|panel| panel.last_active_thread.as_ref())
@@ -1367,7 +1373,7 @@ impl AgentPanel {
                     }) {
                         Ok(Some((store, reload_task))) => {
                             reload_task.await;
-                            let thread_id = store.read_with(cx, |store, _cx| {
+                            let thread = store.read_with(cx, |store, _cx| {
                                 let primary = info.thread_id.and_then(|tid| store.entry(tid));
                                 let fallback = info.session_id.as_ref().and_then(|sid| {
                                     store.entry_by_session(&acp::SessionId::new(sid.clone()))
@@ -1375,13 +1381,17 @@ impl AgentPanel {
                                 primary
                                     .or(fallback)
                                     .filter(|entry| !entry.archived)
-                                    .map(|entry| entry.thread_id)
+                                    .and_then(|entry| {
+                                        let agent = info.agent_type.clone();
+                                        (supports_external_agents || agent.is_native())
+                                            .then_some((entry.thread_id, agent))
+                                    })
                             });
-                            match thread_id {
-                                Some(thread_id) => Some((info, thread_id)),
+                            match thread {
+                                Some((thread_id, agent)) => Some((info, thread_id, agent)),
                                 None => {
                                     log::info!(
-                                        "last active thread is archived or missing, skipping restoration"
+                                        "last active thread is archived, missing, or unsupported, skipping restoration"
                                     );
                                     None
                                 }
@@ -1407,7 +1417,6 @@ impl AgentPanel {
                 let panel = cx.new(|cx| Self::new(workspace, window, cx));
 
                 panel.update(cx, |panel, cx| {
-                    let is_via_collab = panel.project.read(cx).is_via_collab();
                     // Collab workspaces only support NativeAgent; clamp any
                     // non-native choice so `set_active` can't bypass the
                     // collab guard in `external_thread`.
@@ -1435,22 +1444,25 @@ impl AgentPanel {
                     // backend; otherwise fall back to the serialized
                     // selection, then the global last-used agent.
                     // Keep a session's agent so users can resume it after reinstalling the agent.
-                    let restored_thread_agent = thread_to_restore.as_ref().and_then(|(info, _)| {
-                        let agent = clamp(info.agent_type.clone());
-                        (info.session_id.is_some() || panel.should_restore_agent(&agent, cx))
-                            .then_some(agent)
-                    });
-                    let initial_agent = restored_thread_agent.or_else(|| {
-                        serialized_panel
-                            .as_ref()
-                            .and_then(|p| p.selected_agent.clone())
-                            .map(clamp)
-                            .filter(|agent| panel.should_restore_agent(agent, cx))
-                            .or_else(|| {
-                                global_fallback
-                                    .filter(|agent| panel.should_restore_agent(agent, cx))
-                            })
-                    });
+                    let restored_thread_agent = thread_to_restore
+                        .as_ref()
+                        .and_then(|(info, _, agent)| {
+                            (info.session_id.is_some() || panel.should_restore_agent(agent, cx))
+                                .then_some(agent.clone())
+                        });
+                    let preferred_agent = serialized_panel
+                        .as_ref()
+                        .and_then(|panel| panel.selected_agent.clone())
+                        .map(clamp)
+                        .filter(|agent| panel.should_restore_agent(agent, cx))
+                        .or_else(|| {
+                            global_fallback.filter(|agent| panel.should_restore_agent(agent, cx))
+                        });
+                    let initial_agent = if has_open_project {
+                        restored_thread_agent.or(preferred_agent)
+                    } else {
+                        preferred_agent
+                    };
                     if let Some(agent) = initial_agent {
                         panel.selected_agent = agent;
                     }
@@ -1464,8 +1476,14 @@ impl AgentPanel {
                             window,
                             cx,
                         );
-                    } else if let Some((info, thread_id)) = thread_to_restore {
-                        let agent = panel.selected_agent.clone();
+                    } else if let Some((info, thread_id, agent)) = thread_to_restore {
+                        let agent = if info.session_id.is_some()
+                            || panel.should_restore_agent(&agent, cx)
+                        {
+                            agent
+                        } else {
+                            panel.restorable_agent_selection(cx)
+                        };
                         panel.load_agent_thread(
                             agent,
                             thread_id,
@@ -1660,7 +1678,10 @@ impl AgentPanel {
     }
 
     pub fn selected_agent(&self, cx: &App) -> Agent {
-        if self.project.read(cx).is_via_collab() {
+        // Collab projects and project-less windows only support the native
+        // in-process agent: collab has no local fs, and external agents need a
+        // real working directory we don't have without a worktree.
+        if self.project.read(cx).is_via_collab() || !self.has_open_project(cx) {
             Agent::NativeAgent
         } else {
             self.selected_agent.clone()
@@ -1777,10 +1798,6 @@ impl AgentPanel {
     }
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         self.new_thread_with_workspace(None, window, cx);
     }
 
@@ -1804,10 +1821,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         self.set_last_created_entry_kind_from_user_action(AgentPanelEntryKind::Thread, cx);
 
         // If the user is viewing a *parked* draft and the ephemeral
@@ -1886,10 +1899,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         let active_matching = match &self.base_view {
             BaseView::AgentThread { conversation_view }
                 if conversation_view.read(cx).thread_id == thread_id =>
@@ -1911,16 +1920,12 @@ impl AgentPanel {
             return;
         };
 
-        let agent = if self.project.read(cx).is_via_collab() {
-            Agent::NativeAgent
+        // Draft text is stored locally, so use the selected agent if the original was uninstalled.
+        let agent = Agent::from(metadata.agent_id.clone());
+        let agent = if self.supports_agent(&agent, cx) && self.should_restore_agent(&agent, cx) {
+            agent
         } else {
-            // Draft text is stored locally, so use the selected agent if the original was uninstalled.
-            let agent = Agent::from(metadata.agent_id.clone());
-            if self.should_restore_agent(&agent, cx) {
-                agent
-            } else {
-                self.restorable_agent_selection(cx)
-            }
+            self.restorable_agent_selection(cx)
         };
         let initial_content = crate::draft_prompt_store::read(thread_id, cx).map(|blocks| {
             AgentInitialContent::ContentBlock {
@@ -1950,7 +1955,7 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.has_open_project(cx) {
+        if !self.supports_external_agents(cx) {
             return;
         }
 
@@ -1977,7 +1982,7 @@ impl AgentPanel {
     /// right away, if the panel is already showing the empty new-thread
     /// draft).
     pub fn select_agent(&mut self, agent: Agent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.project.read(cx).is_via_collab() && !agent.is_native() {
+        if !self.supports_agent(&agent, cx) {
             return;
         }
 
@@ -2036,8 +2041,7 @@ impl AgentPanel {
     }
 
     pub fn should_create_terminal_for_new_entry(&self, cx: &App) -> bool {
-        self.last_created_entry_kind == AgentPanelEntryKind::Terminal
-            && self.project.read(cx).supports_terminal(cx)
+        self.last_created_entry_kind == AgentPanelEntryKind::Terminal && self.supports_terminal(cx)
     }
 
     fn set_last_created_entry_kind_from_user_action(
@@ -2954,11 +2958,15 @@ impl AgentPanel {
         self.project.read(cx).visible_worktrees(cx).next().is_some()
     }
 
-    fn ensure_native_agent_connection(&self, cx: &mut Context<Self>) {
-        if !self.has_open_project(cx) {
-            return;
-        }
+    fn supports_external_agents(&self, cx: &App) -> bool {
+        self.has_open_project(cx) && !self.project.read(cx).is_via_collab()
+    }
 
+    fn supports_agent(&self, agent: &Agent, cx: &App) -> bool {
+        agent.is_native() || self.supports_external_agents(cx)
+    }
+
+    fn ensure_native_agent_connection(&self, cx: &mut Context<Self>) {
         let fs = self.fs.clone();
         let thread_store = self.thread_store.clone();
         self.connection_store.update(cx, |store, cx| {
@@ -2977,10 +2985,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         let draft = self.ensure_draft(source, window, cx);
         if let BaseView::AgentThread { conversation_view } = &self.base_view {
             if conversation_view.entity_id() == draft.entity_id() {
@@ -3232,12 +3236,12 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> ThreadId {
-        let (agent, override_used) = if self.project.read(cx).is_via_collab() {
-            (Agent::NativeAgent, false)
-        } else if let Some(override_agent) = options.agent {
-            (override_agent, true)
+        let override_used = options.agent.is_some();
+        let requested_agent = options.agent.unwrap_or_else(|| self.selected_agent(cx));
+        let agent = if self.supports_agent(&requested_agent, cx) {
+            requested_agent
         } else {
-            (self.selected_agent.clone(), false)
+            Agent::NativeAgent
         };
         // If the caller explicitly overrode the agent (e.g., the `create_thread`
         // tool wants to spawn a sibling thread using a specific agent), we
@@ -3525,10 +3529,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if resume_thread_id.is_none() && !self.has_open_project(cx) {
-            return;
-        }
-
         let agent = agent_choice.unwrap_or_else(|| self.selected_agent(cx));
         let thread = self.create_agent_thread_with_server(
             agent,
@@ -3562,10 +3562,6 @@ impl AgentPanel {
 
     /// Refresh the native agent's view of available skills
     pub fn refresh_skills(&mut self, cx: &mut Context<Self>) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         self.ensure_native_agent_connection(cx);
         let Some(connect_task) = self.connection_store.update(cx, |store, cx| {
             store
@@ -3619,10 +3615,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         self.new_thread_menu_handle.toggle(window, cx);
     }
 
@@ -3829,11 +3821,6 @@ impl AgentPanel {
     }
 
     fn load_thread_from_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.has_open_project(cx) {
-            Self::show_deferred_toast(&self.workspace, "Open a project to load a thread", cx);
-            return;
-        }
-
         let Some(clipboard) = cx.read_from_clipboard() else {
             Self::show_deferred_toast(&self.workspace, "No clipboard content available", cx);
             return;
@@ -4165,8 +4152,16 @@ impl AgentPanel {
     }
 
     fn update_thread_work_dirs(&self, cx: &mut Context<Self>) {
-        let new_work_dirs = self.project.read(cx).default_path_list(cx);
-        let new_worktree_paths = self.project.read(cx).worktree_paths(cx);
+        let (new_worktree_paths, new_work_dirs) = {
+            let project = self.project.read(cx);
+            let worktree_paths = project.worktree_paths(cx);
+            let work_dirs = if worktree_paths.is_empty() {
+                PathList::default()
+            } else {
+                project.default_path_list(cx)
+            };
+            (worktree_paths, work_dirs)
+        };
 
         if let Some(conversation_view) = self.active_conversation_view() {
             conversation_view.update(cx, |conversation_view, cx| {
@@ -4278,7 +4273,7 @@ impl AgentPanel {
         if let BaseView::AgentThread { conversation_view } = &self.base_view {
             let conversation_view = conversation_view.read(cx);
             let thread_agent = conversation_view.agent_key().clone();
-            if self.selected_agent != thread_agent {
+            if self.has_open_project(cx) && self.selected_agent != thread_agent {
                 self.selected_agent = thread_agent;
                 self.serialize(cx);
             }
@@ -4433,6 +4428,10 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.supports_agent(&agent, cx) {
+            return;
+        }
+
         if let Some(store) = ThreadMetadataStore::try_global(cx) {
             store.update(cx, |store, cx| {
                 store.unarchive(thread_id, cx);
@@ -4587,7 +4586,9 @@ impl AgentPanel {
         let workspace = self.workspace.clone();
         let project = self.project.clone();
 
-        self.set_selected_agent_and_persist(agent.clone(), cx);
+        if self.has_open_project(cx) {
+            self.set_selected_agent_and_persist(agent.clone(), cx);
+        }
 
         let server = server_override
             .unwrap_or_else(|| agent.server(self.fs.clone(), self.thread_store.clone()));
@@ -4771,6 +4772,17 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
         let panel = self.panel.clone();
         let window = self.window;
         cx.spawn(async move |cx| {
+            let supports_external_agents =
+                panel.read_with(cx, |panel, cx| panel.supports_external_agents(cx))?;
+            if request
+                .agent_id
+                .as_deref()
+                .is_some_and(|agent_id| agent_id != agent::ZED_AGENT_ID.as_ref())
+                && !supports_external_agents
+            {
+                return Err(anyhow!("External agents require an open project"));
+            }
+
             let agent_choice = match request.agent_id.as_deref() {
                 None => None,
                 Some(id) if id == agent::ZED_AGENT_ID.as_ref() => Some(Agent::NativeAgent),
@@ -4900,7 +4912,7 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
                     );
                     let resolved_agent = agent_choice
                         .clone()
-                        .unwrap_or_else(|| panel.selected_agent.clone());
+                        .unwrap_or_else(|| panel.selected_agent(cx));
                     resolved_agent.id()
                 })
             })??;
@@ -4955,21 +4967,21 @@ impl agent::SiblingThreadHost for AgentPanelSiblingHost {
             models: native_models,
         });
 
-        let project = panel.read(cx).project.clone();
-        let agent_server_store = project.read(cx).agent_server_store().clone();
-        let store = agent_server_store.read(cx);
-        for agent_id in store.external_agents() {
-            let display = store
-                .agent_display_name(agent_id)
-                .unwrap_or_else(|| agent_id.0.clone());
-            agents.push(agent::AvailableAgent {
-                id: agent_id.0.to_string(),
-                name: display,
-                is_native: false,
-                // External agents pick their own models dynamically; we don't
-                // try to enumerate them ahead of time.
-                models: Vec::new(),
-            });
+        let panel = panel.read(cx);
+        if panel.supports_external_agents(cx) {
+            let agent_server_store = panel.project.read(cx).agent_server_store().clone();
+            let store = agent_server_store.read(cx);
+            for agent_id in store.external_agents() {
+                let display = store
+                    .agent_display_name(agent_id)
+                    .unwrap_or_else(|| agent_id.0.clone());
+                agents.push(agent::AvailableAgent {
+                    id: agent_id.0.to_string(),
+                    name: display,
+                    is_native: false,
+                    models: Vec::new(),
+                });
+            }
         }
 
         Ok(agent::AvailableAgents { agents })
@@ -5376,8 +5388,7 @@ impl AgentPanel {
         matches!(
             self.visible_surface(),
             VisibleSurface::AgentThread(_) | VisibleSurface::Terminal(_)
-        ) && self.has_open_project(cx)
-            && !self.is_title_editor_focused(window, cx)
+        ) && !self.is_title_editor_focused(window, cx)
     }
 
     fn render_title_view(&self, window: &mut Window, cx: &Context<Self>) -> AnyElement {
@@ -5822,59 +5833,37 @@ impl AgentPanel {
             })
     }
 
-    fn render_no_project_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let focus_handle = self.focus_handle(cx);
-
-        ProjectEmptyState::new(
-            "Agent Panel",
-            focus_handle.clone(),
-            KeyBinding::for_action_in(&workspace::Open::default(), &focus_handle, cx),
-        )
-        .on_open_project(|_, window, cx| {
-            telemetry::event!("Agent Panel Add Project Clicked");
-            window.dispatch_action(workspace::Open::default().boxed_clone(), cx);
-        })
-        .on_clone_repo(|_, window, cx| {
-            telemetry::event!("Agent Panel Clone Repo Clicked");
-            window.dispatch_action(git::Clone.boxed_clone(), cx);
-        })
-    }
-
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
 
         let focus_handle = self.focus_handle(cx);
 
-        let can_create_entries = self.has_open_project(cx);
         let supports_terminal = self.supports_terminal(cx);
+        let supports_external_agents = self.supports_external_agents(cx);
         let showing_terminal = matches!(self.visible_surface(), VisibleSurface::Terminal(_));
+        let effective_selected_agent = self.selected_agent(cx);
 
         let (selected_agent_custom_icon, selected_agent_label) = if showing_terminal {
             (None, SharedString::from("Terminal"))
-        } else if let Agent::Custom { id, .. } = &self.selected_agent {
+        } else if let Agent::Custom { id, .. } = &effective_selected_agent {
             let store = agent_server_store.read(cx);
             let icon = store.agent_icon(&id);
 
             let label = store
                 .agent_display_name(&id)
-                .unwrap_or_else(|| self.selected_agent.label());
+                .unwrap_or_else(|| effective_selected_agent.label());
             (icon, label)
         } else {
-            (None, self.selected_agent.label())
+            (None, effective_selected_agent.label())
         };
 
         let new_thread_menu_builder: Rc<
             dyn Fn(&mut Window, &mut App) -> Option<Entity<ContextMenu>>,
         > = {
-            let selected_agent = self.selected_agent.clone();
+            let selected_agent = effective_selected_agent.clone();
             let is_agent_selected = move |agent: Agent| selected_agent == agent;
 
             let workspace = self.workspace.clone();
-            let is_via_collab = workspace
-                .update(cx, |workspace, cx| {
-                    workspace.project().read(cx).is_via_collab()
-                })
-                .unwrap_or_default();
 
             let focus_handle = focus_handle.clone();
             let agent_server_store = agent_server_store;
@@ -6004,7 +5993,7 @@ impl AgentPanel {
                                         |this| this.action(Box::new(NewThread)),
                                     )
                                     .icon_color(Color::Muted)
-                                    .disabled(is_via_collab)
+                                    .disabled(!supports_external_agents)
                                     .handler({
                                         let workspace = workspace.clone();
                                         let agent_id = item.id.clone();
@@ -6059,7 +6048,7 @@ impl AgentPanel {
         let selected_agent_builtin_icon = if showing_terminal {
             Some(IconName::Terminal)
         } else {
-            self.selected_agent.icon()
+            effective_selected_agent.icon()
         };
         let selected_agent_label_for_tooltip = selected_agent_label.clone();
 
@@ -6197,7 +6186,7 @@ impl AgentPanel {
                         .flex_none()
                         .gap_1()
                         .children(sandbox_status)
-                        .when(can_create_entries, |this| this.child(new_thread_menu))
+                        .child(new_thread_menu)
                         .child(full_screen_button)
                         .child(self.render_panel_options_menu(window, cx)),
                 )
@@ -6547,9 +6536,6 @@ impl Render for AgentPanel {
             .child(self.render_toolbar(window, cx))
             .children(self.render_new_user_onboarding(window, cx))
             .map(|parent| match self.visible_surface() {
-                VisibleSurface::Uninitialized if !self.has_open_project(cx) => {
-                    parent.child(self.render_no_project_state(cx))
-                }
                 VisibleSurface::Uninitialized => parent,
                 VisibleSurface::AgentThread(conversation_view) => parent
                     .child(conversation_view.clone())
@@ -7131,6 +7117,7 @@ mod tests {
         });
 
         let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
         let project = Project::test(fs, [], cx).await;
         let multi_workspace =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
@@ -7246,6 +7233,7 @@ mod tests {
         });
 
         let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
         let project = Project::test(fs, [], cx).await;
         let multi_workspace =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
@@ -9147,7 +9135,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_empty_workspace_does_not_create_agent_entries(cx: &mut TestAppContext) {
+    async fn test_empty_workspace_hosts_native_agent_but_not_external_or_terminals(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         cx.update(|cx| {
             agent::ThreadStore::init_global(cx);
@@ -9155,6 +9145,7 @@ mod tests {
         });
 
         let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
         let project = Project::test(fs.clone(), [], cx).await;
         let multi_workspace =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
@@ -9171,20 +9162,33 @@ mod tests {
             panel
         });
 
-        panel.read_with(cx, |panel, cx| {
-            assert_eq!(
-                panel
-                    .connection_store()
-                    .read(cx)
-                    .connection_status(&Agent::NativeAgent, cx),
-                crate::agent_connection_store::AgentConnectionStatus::Disconnected,
-                "empty workspaces should not start the native agent connection"
-            );
-        });
-
+        // Without a worktree the panel still hosts the native agent, so a new
+        // thread yields a native draft.
         panel.update_in(cx, |panel, window, cx| {
             panel.new_thread(&NewThread, window, cx);
-            panel.activate_draft(true, AgentThreadSource::AgentPanel, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, cx| {
+            assert!(
+                panel.active_conversation_view().is_some(),
+                "project-less workspaces should host a native agent thread"
+            );
+            assert!(
+                panel.draft_thread.is_some(),
+                "project-less workspaces should create a native draft thread"
+            );
+            assert!(panel.selected_agent(cx).is_native());
+        });
+
+        // External agents need a real working directory we don't have, so they
+        // remain blocked and must not replace the native draft.
+        let native_draft_id = panel
+            .read_with(cx, |panel, cx| {
+                panel.draft_thread.as_ref().map(|d| d.read(cx).thread_id)
+            })
+            .unwrap();
+        panel.update_in(cx, |panel, window, cx| {
             panel.new_external_agent_thread(
                 &NewExternalAgentThread {
                     agent: AgentId::new("external-agent"),
@@ -9196,20 +9200,15 @@ mod tests {
         cx.run_until_parked();
 
         panel.read_with(cx, |panel, cx| {
-            assert!(
-                panel.active_conversation_view().is_none(),
-                "empty workspaces should not create agent threads"
+            assert_eq!(
+                panel.draft_thread.as_ref().map(|d| d.read(cx).thread_id),
+                Some(native_draft_id),
+                "external agents are blocked without a project and must not replace the native draft"
             );
-            assert!(
-                panel.draft_thread.is_none(),
-                "empty workspaces should not create draft threads"
-            );
-            assert!(
-                panel.terminals(cx).is_empty(),
-                "empty workspaces should not create agent panel terminals"
-            );
+            assert!(panel.selected_agent(cx).is_native());
         });
 
+        // Terminals require a project working directory, so they stay blocked.
         cx.update(|_, cx| {
             cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
         });
@@ -9221,15 +9220,7 @@ mod tests {
         panel.read_with(cx, |panel, cx| {
             assert!(
                 panel.terminals(cx).is_empty(),
-                "empty workspaces should not create terminals after the terminal feature is enabled"
-            );
-            assert_eq!(
-                panel
-                    .connection_store()
-                    .read(cx)
-                    .connection_status(&Agent::NativeAgent, cx),
-                crate::agent_connection_store::AgentConnectionStatus::Disconnected,
-                "empty workspace actions should not start the native agent connection"
+                "empty workspaces should not create agent panel terminals"
             );
         });
     }
