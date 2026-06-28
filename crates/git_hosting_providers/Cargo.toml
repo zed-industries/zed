@@ -23,11 +23,14 @@ regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+time.workspace = true
 url.workspace = true
 urlencoding.workspace = true
 util.workspace = true
 
 [dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 serde_json.workspace = true
 pretty_assertions.workspace = true

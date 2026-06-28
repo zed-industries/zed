@@ -8,12 +8,14 @@ use gpui::SharedString;
 use http_client::{AsyncBody, HttpClient, HttpRequestExt, Request};
 use regex::Regex;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
+use time::OffsetDateTime;
 use url::Url;
 use urlencoding::encode;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
-    PullRequest, RemoteUrl,
+    PullRequest, PullRequestComment, RemoteUrl,
 };
 
 use crate::get_host_from_git_remote_url;
@@ -60,6 +62,31 @@ struct User {
     )]
     pub id: u64,
     pub avatar_url: String,
+}
+
+/// A pull request as returned by the GitHub REST API. Mapped into the
+/// provider-agnostic [`PullRequest`] before leaving this module.
+#[derive(Debug, Deserialize)]
+struct GithubPullRequest {
+    number: u32,
+    /// The browser-facing URL (e.g. `https://github.com/owner/repo/pull/1`),
+    /// as opposed to the API URL returned in the `url` field.
+    html_url: Url,
+}
+
+/// A pull request review comment as returned by the GitHub REST API. Mapped
+/// into the provider-agnostic [`PullRequestComment`] before leaving this module.
+#[derive(Debug, Deserialize)]
+struct GithubPullRequestComment {
+    user: GithubCommentAuthor,
+    body: String,
+    #[serde(with = "time::serde::rfc3339")]
+    created_at: OffsetDateTime,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubCommentAuthor {
+    login: String,
 }
 
 #[derive(Debug)]
@@ -121,22 +148,24 @@ impl Github {
         ))
     }
 
-    async fn fetch_github_commit_author(
+    /// Sends an authenticated GET request to the given GitHub API URL and
+    /// deserializes the JSON response body into `T`.
+    //
+    // TODO(pr-comments): authentication is currently limited to the
+    // `GITHUB_TOKEN` environment variable. Replace this with real auth (reuse
+    // the user's git credentials or `gh auth token`) before shipping. Responses
+    // are also not paginated yet, so only the first page of results is returned.
+    async fn get_json<T: DeserializeOwned>(
         &self,
-        repo_owner: &str,
-        repo: &str,
-        commit: &str,
+        url: &str,
+        accept: Option<&str>,
         client: &Arc<dyn HttpClient>,
-    ) -> Result<Option<User>> {
-        let Some(host) = self.base_url.host_str() else {
-            bail!("failed to get host from github base url");
-        };
-        let url = format!("https://api.{host}/repos/{repo_owner}/{repo}/commits/{commit}");
-
-        let mut request = Request::get(&url)
-            .header("Content-Type", "application/json")
-            .follow_redirects(http_client::RedirectPolicy::FollowAll);
-
+    ) -> Result<T> {
+        let mut request =
+            Request::get(url).follow_redirects(http_client::RedirectPolicy::FollowAll);
+        if let Some(accept) = accept {
+            request = request.header("Accept", accept);
+        }
         if let Ok(github_token) = std::env::var("GITHUB_TOKEN") {
             request = request.header("Authorization", format!("Bearer {}", github_token));
         }
@@ -144,7 +173,7 @@ impl Github {
         let mut response = client
             .send(request.body(AsyncBody::default())?)
             .await
-            .with_context(|| format!("error fetching GitHub commit details at {:?}", url))?;
+            .with_context(|| format!("error fetching GitHub API at {url:?}"))?;
 
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
@@ -159,9 +188,83 @@ impl Github {
 
         let body_str = std::str::from_utf8(&body)?;
 
-        serde_json::from_str::<CommitDetails>(body_str)
-            .map(|commit| commit.author)
-            .context("failed to deserialize GitHub commit details")
+        serde_json::from_str::<T>(body_str)
+            .with_context(|| format!("failed to deserialize GitHub API response from {url:?}"))
+    }
+
+    async fn fetch_github_commit_author(
+        &self,
+        repo_owner: &str,
+        repo: &str,
+        commit: &str,
+        client: &Arc<dyn HttpClient>,
+    ) -> Result<Option<User>> {
+        let Some(host) = self.base_url.host_str() else {
+            bail!("failed to get host from github base url");
+        };
+        let url = format!("https://api.{host}/repos/{repo_owner}/{repo}/commits/{commit}");
+
+        let details = self.get_json::<CommitDetails>(&url, None, client).await?;
+        Ok(details.author)
+    }
+
+    async fn fetch_github_pull_request_for_branch(
+        &self,
+        repo_owner: &str,
+        repo: &str,
+        branch: &str,
+        client: &Arc<dyn HttpClient>,
+    ) -> Result<Option<PullRequest>> {
+        let Some(host) = self.base_url.host_str() else {
+            bail!("failed to get host from github base url");
+        };
+        let url = format!(
+            "https://api.{host}/repos/{repo_owner}/{repo}/pulls?head={repo_owner}:{branch}"
+        );
+
+        // The list-pull-requests endpoint always returns a JSON array, even when
+        // no pull request matches the branch. Take the first match, if any.
+        let pull_requests = self
+            .get_json::<Vec<GithubPullRequest>>(&url, None, client)
+            .await?;
+        Ok(pull_requests
+            .into_iter()
+            .next()
+            .map(|pull_request| PullRequest {
+                number: pull_request.number,
+                url: pull_request.html_url,
+            }))
+    }
+
+    async fn fetch_github_pull_request_comments(
+        &self,
+        repo_owner: &str,
+        repo: &str,
+        pull_request_id: &str,
+        client: &Arc<dyn HttpClient>,
+    ) -> Result<Vec<PullRequestComment>> {
+        let Some(host) = self.base_url.host_str() else {
+            bail!("failed to get host from github base url");
+        };
+        let url = format!(
+            "https://api.{host}/repos/{repo_owner}/{repo}/pulls/{pull_request_id}/comments"
+        );
+
+        let comments = self
+            .get_json::<Vec<GithubPullRequestComment>>(
+                &url,
+                Some("application/vnd.github+json"),
+                client,
+            )
+            .await?;
+        Ok(comments
+            .into_iter()
+            .map(|comment| PullRequestComment {
+                author_name: comment.user.login,
+                body: comment.body,
+                created_at: comment.created_at,
+            })
+            .collect())
     }
 }
 
@@ -298,13 +401,39 @@ impl GitHostingProvider for Github {
             .transpose()?;
         Ok(avatar_url)
     }
+
+    async fn pull_request_for_branch(
+        &self,
+        repo_owner: &str,
+        repo: &str,
+        branch: &str,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Result<Option<PullRequest>> {
+        self.fetch_github_pull_request_for_branch(repo_owner, repo, branch, &http_client)
+            .await
+    }
+
+    async fn pull_request_comments(
+        &self,
+        repo_owner: &str,
+        repo: &str,
+        pull_request_id: &str,
+        http_client: Arc<dyn HttpClient>,
+    ) -> Result<Vec<PullRequestComment>> {
+        self.fetch_github_pull_request_comments(repo_owner, repo, pull_request_id, &http_client)
+            .await
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use git::repository::repo_path;
+    use http_client::{FakeHttpClient, Response};
     use indoc::indoc;
     use pretty_assertions::assert_eq;
+    use time::macros::datetime;
 
     use super::*;
 
@@ -665,5 +794,179 @@ mod tests {
             url.as_str(),
             "https://avatars.githubusercontent.com/u/e?email=12345%2Boctocat%40users.noreply.github.com&s=128"
         );
+    }
+
+    /// A [`FakeHttpClient`] that records the URL and headers of the last request
+    /// it received, then replies with the given status and body.
+    fn recording_client(
+        status: u16,
+        body: &'static str,
+    ) -> (Arc<dyn HttpClient>, Arc<Mutex<Option<RecordedRequest>>>) {
+        let recorded = Arc::new(Mutex::new(None));
+        let client: Arc<dyn HttpClient> = FakeHttpClient::create({
+            let recorded = recorded.clone();
+            move |request| {
+                let recorded = recorded.clone();
+                async move {
+                    *recorded.lock().unwrap() = Some(RecordedRequest {
+                        url: request.uri().to_string(),
+                        accept: request
+                            .headers()
+                            .get("Accept")
+                            .and_then(|value| value.to_str().ok())
+                            .map(str::to_owned),
+                    });
+                    Ok(Response::builder()
+                        .status(status)
+                        .body(body.into())
+                        .unwrap())
+                }
+            }
+        });
+        (client, recorded)
+    }
+
+    struct RecordedRequest {
+        url: String,
+        accept: Option<String>,
+    }
+
+    #[gpui::test]
+    async fn test_pull_request_for_branch() {
+        let (client, recorded) = recording_client(
+            200,
+            r#"[
+                {
+                    "number": 1234,
+                    "url": "https://api.github.com/repos/zed-industries/zed/pulls/1234",
+                    "html_url": "https://github.com/zed-industries/zed/pull/1234"
+                }
+            ]"#,
+        );
+
+        let pull_request = Github::public_instance()
+            .pull_request_for_branch("zed-industries", "zed", "some-branch", client)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            recorded.lock().unwrap().as_ref().unwrap().url,
+            "https://api.github.com/repos/zed-industries/zed/pulls?head=zed-industries:some-branch"
+        );
+        assert_eq!(
+            pull_request,
+            Some(PullRequest {
+                number: 1234,
+                url: Url::parse("https://github.com/zed-industries/zed/pull/1234").unwrap(),
+            })
+        );
+    }
+
+    #[gpui::test]
+    async fn test_pull_request_for_branch_when_none_exists() {
+        let (client, _recorded) = recording_client(200, "[]");
+
+        let pull_request = Github::public_instance()
+            .pull_request_for_branch("zed-industries", "zed", "some-branch", client)
+            .await
+            .unwrap();
+
+        assert_eq!(pull_request, None);
+    }
+
+    #[gpui::test]
+    async fn test_pull_request_for_branch_self_hosted_url() {
+        let (client, recorded) = recording_client(200, "[]");
+
+        let github = Github::new(
+            "GitHub Self-Hosted",
+            Url::parse("https://github.my-enterprise.com").unwrap(),
+        );
+        github
+            .pull_request_for_branch("zed-industries", "zed", "some-branch", client)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            recorded.lock().unwrap().as_ref().unwrap().url,
+            "https://api.github.my-enterprise.com/repos/zed-industries/zed/pulls?head=zed-industries:some-branch"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_pull_request_for_branch_returns_error_on_client_error() {
+        let (client, _recorded) = recording_client(404, "{ \"message\": \"Not Found\" }");
+
+        let result = Github::public_instance()
+            .pull_request_for_branch("zed-industries", "zed", "some-branch", client)
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[gpui::test]
+    async fn test_pull_request_comments() {
+        let (client, recorded) = recording_client(
+            200,
+            r#"[
+                {
+                    "user": { "login": "octocat" },
+                    "body": "Looks good to me!",
+                    "created_at": "2024-01-01T00:00:00Z"
+                },
+                {
+                    "user": { "login": "nanobot" },
+                    "body": "One nit below.",
+                    "created_at": "2024-01-02T00:00:00Z"
+                }
+            ]"#,
+        );
+
+        let comments = Github::public_instance()
+            .pull_request_comments("zed-industries", "zed", "1234", client)
+            .await
+            .unwrap();
+
+        let recorded = recorded.lock().unwrap();
+        let recorded = recorded.as_ref().unwrap();
+        assert_eq!(
+            recorded.url,
+            "https://api.github.com/repos/zed-industries/zed/pulls/1234/comments"
+        );
+        assert_eq!(
+            recorded.accept.as_deref(),
+            Some("application/vnd.github+json")
+        );
+
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[0].author_name, "octocat");
+        assert_eq!(comments[0].body, "Looks good to me!");
+        assert_eq!(comments[0].created_at, datetime!(2024-01-01 0:00 UTC));
+        assert_eq!(comments[1].author_name, "nanobot");
+        assert_eq!(comments[1].body, "One nit below.");
+        assert_eq!(comments[1].created_at, datetime!(2024-01-02 0:00 UTC));
+    }
+
+    #[gpui::test]
+    async fn test_pull_request_comments_when_empty() {
+        let (client, _recorded) = recording_client(200, "[]");
+
+        let comments = Github::public_instance()
+            .pull_request_comments("zed-industries", "zed", "1234", client)
+            .await
+            .unwrap();
+
+        assert!(comments.is_empty());
+    }
+
+    #[gpui::test]
+    async fn test_pull_request_comments_returns_error_on_client_error() {
+        let (client, _recorded) = recording_client(403, "{ \"message\": \"Forbidden\" }");
+
+        let result = Github::public_instance()
+            .pull_request_comments("zed-industries", "zed", "1234", client)
+            .await;
+
+        assert!(result.is_err());
     }
 }

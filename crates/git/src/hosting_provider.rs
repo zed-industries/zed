@@ -7,6 +7,7 @@ use gpui::{App, Global, SharedString};
 use http_client::HttpClient;
 use itertools::Itertools;
 use parking_lot::RwLock;
+use time::OffsetDateTime;
 use url::Url;
 
 use crate::repository::RepoPath;
@@ -15,6 +16,13 @@ use crate::repository::RepoPath;
 pub struct PullRequest {
     pub number: u32,
     pub url: Url,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct PullRequestComment {
+    pub author_name: String,
+    pub body: String,
+    pub created_at: OffsetDateTime,
 }
 
 #[derive(Clone)]
@@ -143,6 +151,26 @@ pub trait GitHostingProvider {
         _author_email: Option<SharedString>,
         _http_client: Arc<dyn HttpClient>,
     ) -> Result<Option<Url>> {
+        Ok(None)
+    }
+
+    async fn pull_request_comments(
+        &self,
+        _repo_owner: &str,
+        _repo: &str,
+        _pull_request_id: &str,
+        _client: Arc<dyn HttpClient>,
+    ) -> Result<Vec<PullRequestComment>> {
+        Ok(vec![])
+    }
+
+    async fn pull_request_for_branch(
+        &self,
+        _repo_owner: &str,
+        _repo: &str,
+        _branch: &str,
+        _client: Arc<dyn HttpClient>,
+    ) -> Result<Option<PullRequest>> {
         Ok(None)
     }
 }
