@@ -258,6 +258,8 @@
       "g w": "vim::PushRewrap",
       "g q": "vim::PushRewrap",
       "insert": "vim::InsertBefore",
+      "] d": "editor::GoToDiagnostic",
+      "[ d": "editor::GoToPreviousDiagnostic",
       "] c": "editor::GoToHunk",
       "[ c": "editor::GoToPreviousHunk",
       "g c": "vim::PushToggleComments",
@@ -413,8 +415,6 @@
       "\"": "vim::PushRegister",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePreviousItem",
-      "] d": "editor::GoToDiagnostic",
-      "[ d": "editor::GoToPreviousDiagnostic",
     },
   },
   {
@@ -454,8 +454,6 @@
       "shift-t": ["vim::PushFindBackward", { "after": true, "multiline": true }],
       "shift-f": ["vim::PushFindBackward", { "after": false, "multiline": true }],
       "alt-.": "vim::RepeatFind",
-      "] g": "editor::GoToHunk",
-      "[ g": "editor::GoToPreviousHunk",
       "alt-b": "editor::MoveToStartOfLargerSyntaxNode",
       "alt-e": "editor::MoveToEndOfLargerSyntaxNode",
 
@@ -476,8 +474,6 @@
       "alt-d": "editor::Delete", // Delete selection, without yanking
       "c": "vim::HelixSubstitute",
       "alt-c": "vim::HelixSubstituteNoYank",
-      "] space": "vim::InsertEmptyLineBelow",
-      "[ space": "vim::InsertEmptyLineAbove",
 
       // Selection manipulation
       "s": "vim::HelixSelectRegex",
@@ -695,7 +691,9 @@
       "shift-b": "pane::ActivateLastItem",
       "x": "editor::SelectSmallerSyntaxNode",
       "d": "editor::GoToDiagnostic",
-      "c": "editor::GoToHunk",
+      "c": "vim::NextComment",
+      "g": "editor::GoToHunk",
+      "space": "vim::InsertEmptyLineBelow",
     },
   },
   {
@@ -712,7 +710,8 @@
       "shift-b": ["pane::ActivateItem", 0],
       "x": "editor::SelectLargerSyntaxNode",
       "d": "editor::GoToPreviousDiagnostic",
-      "c": "editor::GoToPreviousHunk",
+      "c": "vim::PreviousComment",
+      "g": "editor::GoToPreviousHunk",
       "space": "vim::InsertEmptyLineAbove",
     },
   },
