@@ -3282,20 +3282,29 @@ async fn test_move_page_up_page_down(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_delete_to_beginning_of_line(cx: &mut TestAppContext) {
+async fn test_delete_to_line_boundary(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
-    cx.set_state("one «two threeˇ» four");
-    cx.update_editor(|editor, window, cx| {
-        editor.delete_to_beginning_of_line(
-            &DeleteToBeginningOfLine {
-                stop_at_indent: false,
-            },
-            window,
-            cx,
-        );
-        assert_eq!(editor.text(cx), " four");
-    });
+
+    for selection in ["one «two threeˇ» four", "one «ˇtwo three» four"] {
+        cx.set_state(selection);
+        cx.update_editor(|editor, window, cx| {
+            editor.delete_to_beginning_of_line(
+                &DeleteToBeginningOfLine {
+                    stop_at_indent: false,
+                },
+                window,
+                cx,
+            );
+            assert_eq!(editor.text(cx), " four");
+        });
+
+        cx.set_state(selection);
+        cx.update_editor(|editor, window, cx| {
+            editor.delete_to_end_of_line(&DeleteToEndOfLine, window, cx);
+            assert_eq!(editor.text(cx), "one ");
+        });
+    }
 }
 
 #[gpui::test]
@@ -8968,6 +8977,19 @@ async fn test_cut_line_ends(cx: &mut TestAppContext) {
     cx.assert_editor_state(indoc! {"
         The quickˇ
         fox jumps overˇthe lazy dog"});
+
+    for selection in ["The quick «brownˇ» fox", "The quick «ˇbrown» fox"] {
+        cx.set_state(selection);
+        cx.update_editor(|e, window, cx| {
+            e.cut_to_end_of_line(&CutToEndOfLine::default(), window, cx)
+        });
+        cx.assert_editor_state("The quick ˇ");
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text().as_deref().map(str::to_string)),
+            Some("brown fox".to_string())
+        );
+    }
 }
 
 #[gpui::test]
@@ -13733,6 +13755,49 @@ async fn test_snippet_placeholder_choices(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_snippet_choices_menu_survives_completion_refresh(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let (text, insertion_ranges) = marked_text_ranges(
+        indoc! {"
+            ˇ
+        "},
+        false,
+    );
+
+    let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+
+    _ = editor.update_in(cx, |editor, window, cx| {
+        let snippet = Snippet::parse("type ${1|i32,u32|} = $2").unwrap();
+
+        editor
+            .insert_snippet(
+                &insertion_ranges
+                    .iter()
+                    .map(|range| MultiBufferOffset(range.start)..MultiBufferOffset(range.end))
+                    .collect::<Vec<_>>(),
+                snippet,
+                window,
+                cx,
+            )
+            .unwrap();
+
+        assert!(
+            editor.context_menu_visible(),
+            "Snippet choices menu should be visible after inserting the choice tabstop"
+        );
+
+        editor.open_or_update_completions_menu(None, None, false, window, cx);
+
+        assert!(
+            editor.context_menu_visible(),
+            "Snippet choices menu should remain visible after a completion refresh with an empty query"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_snippet_tabstop_navigation_with_placeholders(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -18352,6 +18417,58 @@ async fn test_word_completions_continue_on_typing(cx: &mut TestAppContext) {
                 completion_menu_entries(menu),
                 &["last"],
                 "After showing word completions, further editing should filter them and not query the LSP"
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_completions_use_selection_head(cx: &mut TestAppContext) {
+    init_test(cx, |language_settings| {
+        language_settings.defaults.completions = Some(CompletionSettingsContent {
+            words: Some(WordsCompletionMode::Disabled),
+            words_min_length: Some(0),
+            lsp_insert_mode: Some(LspInsertMode::Insert),
+            ..Default::default()
+        });
+    });
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions::default()),
+            ..lsp::ServerCapabilities::default()
+        },
+        cx,
+    )
+    .await;
+
+    let _completion_requests_handler =
+        cx.lsp
+            .server
+            .on_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+                panic!("LSP completions should not be queried when dealing with word completions")
+            });
+
+    cx.set_state(indoc! {"«applˇ»
+        applepie
+        banana
+        cherry
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.show_word_completions(&ShowWordCompletions, window, cx);
+    });
+    cx.executor().run_until_parked();
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _, _| {
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            assert_eq!(
+                completion_menu_entries(menu),
+                &["applepie"],
+                "Completion query should use the selection head (`appl`), filtering to words with that prefix"
             );
         } else {
             panic!("expected completion menu to be open");
