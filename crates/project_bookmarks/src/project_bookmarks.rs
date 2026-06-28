@@ -82,7 +82,7 @@ impl ProjectBookmarksDelegate {
 
         let worktree_root_names = project
             .read(cx)
-            .worktrees(cx)
+            .visible_worktrees(cx)
             .map(|worktree| {
                 let worktree = worktree.read(cx);
                 (worktree.id(), worktree.root_name().into_arc())
