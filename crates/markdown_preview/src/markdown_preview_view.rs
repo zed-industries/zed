@@ -28,6 +28,7 @@ use ui::utils::WithRemSize;
 use ui::{ContextMenu, WithScrollbar, prelude::*, right_click_menu};
 use util::markdown::split_local_url_fragment;
 use workspace::item::{Item, ItemBufferKind, ItemHandle, SaveOptions, SerializableItem};
+use workspace::notifications::NotifyResultExt;
 use workspace::searchable::{
     Direction, SearchEvent, SearchOptions, SearchToken, SearchableItem, SearchableItemHandle,
 };
@@ -208,7 +209,7 @@ impl MarkdownPreviewView {
         None
     }
 
-    fn create_markdown_view(
+    pub fn create_markdown_view(
         workspace: &mut Workspace,
         editor: Entity<Editor>,
         window: &mut Window,
@@ -335,6 +336,43 @@ impl MarkdownPreviewView {
         {
             self.set_editor(editor, window, cx);
         }
+    }
+
+    pub fn is_markdown_path(path: impl AsRef<Path>) -> bool {
+        path.as_ref().extension().is_some_and(|ext| {
+            ext.eq_ignore_ascii_case("md") || ext.eq_ignore_ascii_case("markdown")
+        })
+    }
+
+    pub fn open_for_project_path(
+        project_path: ProjectPath,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        let open_buffer = workspace
+            .project()
+            .update(cx, |project, cx| project.open_buffer(project_path, cx));
+
+        cx.spawn_in(window, async move |workspace, mut cx| {
+            let Some(buffer) = open_buffer
+                .await
+                .notify_workspace_async_err(workspace.clone(), &mut cx)
+            else {
+                return;
+            };
+            workspace
+                .update_in(cx, |workspace, window, cx| {
+                    let project = workspace.project().clone();
+                    let editor = cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+                    let preview = Self::create_markdown_view(workspace, editor, window, cx);
+                    workspace.active_pane().update(cx, |pane, cx| {
+                        pane.add_item(Box::new(preview), true, true, None, window, cx);
+                    });
+                })
+                .ok();
+        })
+        .detach();
     }
 
     pub fn is_markdown_file<V>(editor: &Entity<Editor>, cx: &mut Context<V>) -> bool {
@@ -1222,12 +1260,48 @@ impl Render for MarkdownPreviewView {
                             let max_width = MarkdownPreviewSettings::get_global(cx).max_width;
                             let content = right_click_menu("markdown-preview-context-menu")
                                 .trigger(move |_, _, _| markdown_element)
-                                .menu(move |window, cx| {
+                                .maybe_menu(move |window, cx| {
                                     let focus = window.focused(cx);
-                                    let context_menu_link =
-                                        markdown.read(cx).context_menu_link().cloned();
-                                    ContextMenu::build(window, cx, move |menu, _, _cx| {
+                                    let markdown = markdown.read(cx);
+                                    let context_menu_link = markdown.context_menu_link().cloned();
+                                    let selected_text =
+                                        markdown.context_menu_selected_text().cloned();
+                                    let selected_markdown =
+                                        markdown.context_menu_selected_markdown().cloned();
+                                    if context_menu_link.is_none()
+                                        && selected_text.is_none()
+                                        && selected_markdown.is_none()
+                                    {
+                                        return None;
+                                    }
+                                    Some(ContextMenu::build(window, cx, move |menu, _, _cx| {
                                         menu.when_some(focus, |menu, focus| menu.context(focus))
+                                            .when_some(selected_text, |menu, text| {
+                                                menu.entry(
+                                                    "Copy",
+                                                    Some(Box::new(markdown::Copy)),
+                                                    move |_, cx| {
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string(
+                                                                text.to_string(),
+                                                            ),
+                                                        );
+                                                    },
+                                                )
+                                            })
+                                            .when_some(selected_markdown, |menu, text| {
+                                                menu.entry(
+                                                    "Copy as Markdown",
+                                                    Some(Box::new(markdown::CopyAsMarkdown)),
+                                                    move |_, cx| {
+                                                        cx.write_to_clipboard(
+                                                            ClipboardItem::new_string(
+                                                                text.to_string(),
+                                                            ),
+                                                        );
+                                                    },
+                                                )
+                                            })
                                             .when_some(context_menu_link, |menu, url| {
                                                 menu.entry("Copy Link", None, move |_, cx| {
                                                     cx.write_to_clipboard(
@@ -1235,7 +1309,7 @@ impl Render for MarkdownPreviewView {
                                                     );
                                                 })
                                             })
-                                    })
+                                    }))
                                 });
                             div()
                                 .w_full()
