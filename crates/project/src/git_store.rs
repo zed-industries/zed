@@ -5421,6 +5421,10 @@ impl Repository {
             .starts_with(&self.snapshot.work_directory_abs_path)
     }
 
+    pub fn commit_message_buffer(&self) -> Option<&Entity<Buffer>> {
+        self.commit_message_buffer.as_ref()
+    }
+
     pub fn open_commit_buffer(
         &mut self,
         languages: Option<Arc<LanguageRegistry>>,
