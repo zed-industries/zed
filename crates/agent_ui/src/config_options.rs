@@ -1,7 +1,7 @@
 use std::{cmp::Reverse, rc::Rc, sync::Arc};
 
 use acp_thread::AgentSessionConfigOptions;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_servers::AgentServer;
 
 use collections::HashSet;
@@ -18,6 +18,7 @@ use ui::{
     ElevationIndex, IconButton, KeyBinding, ListItem, ListItemSpacing, PopoverMenuHandle, Tooltip,
     prelude::*,
 };
+use unicode_segmentation::UnicodeSegmentation;
 use util::ResultExt as _;
 use zed_actions::agent::ToggleModelSelector;
 
@@ -299,8 +300,7 @@ impl ConfigOptionSelector {
                     Picker::nonsearchable_list(delegate, window, picker_cx)
                 }
                 .show_scrollbar(true)
-                .width(rems(20.))
-                .max_height(Some(rems(20.).into()))
+                .initial_width(rems(20.))
             })
         };
 
@@ -364,9 +364,18 @@ impl ConfigOptionSelector {
             IconName::ChevronDown
         };
 
+        let value_name = self.current_value_name();
+        let mut graphemes = value_name.graphemes(true);
+        let truncated = graphemes.by_ref().take(32).collect::<String>();
+        let display_name = if graphemes.next().is_some() {
+            format!("{truncated}…")
+        } else {
+            truncated
+        };
+
         Button::new(
             ElementId::Name(format!("config-option-{}", option.id.0).into()),
-            self.current_value_name(),
+            display_name,
         )
         .label_size(LabelSize::Small)
         .color(Color::Muted)
@@ -551,6 +560,10 @@ impl ConfigOptionPickerDelegate {
 
 impl PickerDelegate for ConfigOptionPickerDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "config options"
+    }
 
     fn match_count(&self) -> usize {
         self.filtered_entries.len()

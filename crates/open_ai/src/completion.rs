@@ -2,8 +2,8 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use futures::{Stream, StreamExt};
 use language_model_core::{
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelImage,
-    LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolChoice,
+    CompactionContent, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelImage, LanguageModelRequest, LanguageModelRequestMessage, LanguageModelToolChoice,
     LanguageModelToolResultContent, LanguageModelToolUse, LanguageModelToolUseId, MessageContent,
     Role, StopReason, TokenUsage,
     util::{fix_streamed_json, parse_tool_arguments},
@@ -12,10 +12,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use crate::responses::{
-    Request as ResponseRequest, ResponseError, ResponseFunctionCallItem,
-    ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem, ResponseIncludable,
-    ResponseInputContent, ResponseInputItem, ResponseMessageItem, ResponseOutputItem,
-    ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
+    ContextManagement, Request as ResponseRequest, ResponseCompactionItem, ResponseError,
+    ResponseFunctionCallItem, ResponseFunctionCallOutputContent, ResponseFunctionCallOutputItem,
+    ResponseIncludable, ResponseInputContent, ResponseInputItem, ResponseMessageItem,
+    ResponseOutputItem, ResponseOutputMessage, ResponseReasoningInputItem, ResponseReasoningItem,
     ResponseReasoningSummaryPart, ResponseSummary as ResponsesSummary,
     ResponseUsage as ResponsesUsage, StreamEvent as ResponsesStreamEvent,
 };
@@ -37,12 +37,19 @@ fn service_tier_for(speed: Option<language_model_core::Speed>) -> Option<Service
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChatCompletionMaxTokensParameter {
+    MaxCompletionTokens,
+    MaxTokens,
+}
+
 pub fn into_open_ai(
     request: LanguageModelRequest,
     model_id: &str,
     supports_parallel_tool_calls: bool,
     supports_prompt_cache_key: bool,
     max_output_tokens: Option<u64>,
+    max_tokens_parameter: ChatCompletionMaxTokensParameter,
     reasoning_effort: Option<ReasoningEffort>,
     interleaved_reasoning: bool,
 ) -> crate::Request {
@@ -82,7 +89,7 @@ pub fn into_open_ai(
                         }
                     }
                 }
-                MessageContent::RedactedThinking(_) => {}
+                MessageContent::RedactedThinking(_) | MessageContent::Compaction(_) => {}
                 MessageContent::Image(image) => {
                     add_message_content_part(
                         MessagePart::Image {
@@ -156,7 +163,14 @@ pub fn into_open_ai(
         },
         stop: request.stop,
         temperature: request.temperature.or(Some(1.0)),
-        max_completion_tokens: max_output_tokens,
+        max_completion_tokens: match max_tokens_parameter {
+            ChatCompletionMaxTokensParameter::MaxCompletionTokens => max_output_tokens,
+            ChatCompletionMaxTokensParameter::MaxTokens => None,
+        },
+        max_tokens: match max_tokens_parameter {
+            ChatCompletionMaxTokensParameter::MaxCompletionTokens => None,
+            ChatCompletionMaxTokensParameter::MaxTokens => max_output_tokens,
+        },
         parallel_tool_calls: if supports_parallel_tool_calls && !request.tools.is_empty() {
             Some(supports_parallel_tool_calls)
         } else {
@@ -211,6 +225,7 @@ pub fn into_open_ai_response(
         thinking_allowed,
         thinking_effort,
         speed,
+        compact_at_tokens,
     } = request;
 
     let service_tier = service_tier_for(speed);
@@ -299,6 +314,8 @@ pub fn into_open_ai_response(
         },
         reasoning,
         service_tier,
+        context_management: compact_at_tokens
+            .map(|compact_threshold| vec![ContextManagement::Compaction { compact_threshold }]),
     }
 }
 
@@ -336,6 +353,27 @@ fn append_message_to_response_items(
                 push_response_text_part(&role, text, &mut content_parts);
             }
             MessageContent::Thinking { .. } | MessageContent::RedactedThinking(_) => {}
+            MessageContent::Compaction(CompactionContent::Encrypted {
+                id,
+                encrypted_content,
+            }) => {
+                flush_response_parts(
+                    &role,
+                    index,
+                    phase.as_deref(),
+                    &mut content_parts,
+                    input_items,
+                );
+                input_items.push(ResponseInputItem::Compaction(ResponseCompactionItem {
+                    id,
+                    encrypted_content,
+                }));
+            }
+            // Summary compaction blocks come from other providers, and a
+            // Pending block is a streaming-only UI signal; neither is replayed.
+            MessageContent::Compaction(
+                CompactionContent::Summary { .. } | CompactionContent::Pending,
+            ) => {}
             MessageContent::Image(image) => {
                 push_response_image_part(&role, image, &mut content_parts);
             }
@@ -584,13 +622,11 @@ impl OpenAiEventMapper {
         };
 
         if let Some(delta) = choice.delta.as_ref() {
+            if let Some(reasoning) = delta.reasoning.clone() {
+                push_thinking_event(reasoning, &mut events);
+            }
             if let Some(reasoning_content) = delta.reasoning_content.clone() {
-                if !reasoning_content.is_empty() {
-                    events.push(Ok(LanguageModelCompletionEvent::Thinking {
-                        text: reasoning_content,
-                        signature: None,
-                    }));
-                }
+                push_thinking_event(reasoning_content, &mut events);
             }
             if let Some(content) = delta.content.clone() {
                 if !content.is_empty() {
@@ -679,6 +715,18 @@ impl OpenAiEventMapper {
     }
 }
 
+fn push_thinking_event(
+    text: String,
+    events: &mut Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+) {
+    if !text.is_empty() {
+        events.push(Ok(LanguageModelCompletionEvent::Thinking {
+            text,
+            signature: None,
+        }));
+    }
+}
+
 #[derive(Default)]
 struct RawToolCall {
     id: String,
@@ -756,6 +804,11 @@ impl OpenAiResponseEventMapper {
                             };
                             self.function_calls_by_item.insert(item_id, entry);
                         }
+                    }
+                    ResponseOutputItem::Compaction(_) => {
+                        events.push(Ok(LanguageModelCompletionEvent::Compaction(
+                            CompactionContent::Pending,
+                        )));
                     }
                     ResponseOutputItem::Reasoning(_) | ResponseOutputItem::Unknown => {}
                 }
@@ -905,6 +958,14 @@ impl OpenAiResponseEventMapper {
             ResponsesStreamEvent::OutputItemDone { item, .. } => match item {
                 ResponseOutputItem::Reasoning(reasoning) => self.capture_reasoning_item(&reasoning),
                 ResponseOutputItem::Message(message) => self.capture_message_phase(&message),
+                ResponseOutputItem::Compaction(compaction) => {
+                    vec![Ok(LanguageModelCompletionEvent::Compaction(
+                        CompactionContent::Encrypted {
+                            id: compaction.id,
+                            encrypted_content: compaction.encrypted_content,
+                        },
+                    ))]
+                }
                 ResponseOutputItem::FunctionCall(_) | ResponseOutputItem::Unknown => Vec::new(),
             },
             ResponsesStreamEvent::OutputTextDone { .. }
@@ -1411,6 +1472,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: Some("high".into()),
             speed: None,
+            compact_at_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -1532,6 +1594,7 @@ mod tests {
             thinking_allowed: false,
             thinking_effort: None,
             speed: None,
+            compact_at_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -1614,6 +1677,7 @@ mod tests {
             thinking_allowed: false,
             thinking_effort: None,
             speed: None,
+            compact_at_tokens: None,
         };
 
         let response =
@@ -1670,6 +1734,7 @@ mod tests {
             thinking_allowed: false,
             thinking_effort: Some("high".into()),
             speed: None,
+            compact_at_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -1713,6 +1778,7 @@ mod tests {
                 thinking_allowed: false,
                 thinking_effort: None,
                 speed,
+                compact_at_tokens: None,
             };
 
             let response = into_open_ai_response(request, "gpt-5.4", true, true, None, None, true);
@@ -1754,9 +1820,19 @@ mod tests {
                 thinking_allowed: false,
                 thinking_effort: None,
                 speed,
+                compact_at_tokens: None,
             };
 
-            let chat = into_open_ai(request, "gpt-5.4", true, true, None, None, false);
+            let chat = into_open_ai(
+                request,
+                "gpt-5.4",
+                true,
+                true,
+                None,
+                ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+                None,
+                false,
+            );
 
             let serialized = serde_json::to_value(&chat)?;
             assert_eq!(
@@ -1767,6 +1843,45 @@ mod tests {
                 "speed = {speed:?} should produce service_tier = {expected:?}",
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn into_open_ai_can_send_max_tokens_parameter() -> Result<()> {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+            compact_at_tokens: None,
+        };
+
+        let chat = into_open_ai(
+            request,
+            "compatible-model",
+            false,
+            false,
+            Some(4096),
+            ChatCompletionMaxTokensParameter::MaxTokens,
+            None,
+            false,
+        );
+
+        let serialized = serde_json::to_value(&chat)?;
+        assert_eq!(serialized.get("max_completion_tokens"), None);
+        assert_eq!(serialized["max_tokens"], json!(4096));
         Ok(())
     }
 
@@ -1789,6 +1904,7 @@ mod tests {
             thinking_allowed: false,
             thinking_effort: Some("high".into()),
             speed: None,
+            compact_at_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -1827,6 +1943,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: Some("none".into()),
             speed: None,
+            compact_at_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -1877,6 +1994,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            compact_at_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -1966,6 +2084,7 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            compact_at_tokens: None,
         };
 
         let response = into_open_ai_response(
@@ -2053,6 +2172,7 @@ mod tests {
             thinking_allowed: false,
             thinking_effort: None,
             speed: None,
+            compact_at_tokens: None,
         };
 
         let response =
@@ -3109,9 +3229,19 @@ mod tests {
             thinking_allowed: true,
             thinking_effort: None,
             speed: None,
+            compact_at_tokens: None,
         };
 
-        let result = into_open_ai(request.clone(), "model", false, false, None, None, true);
+        let result = into_open_ai(
+            request.clone(),
+            "model",
+            false,
+            false,
+            None,
+            ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+            None,
+            true,
+        );
         assert_eq!(
             serde_json::to_value(&result).unwrap()["messages"],
             json!([
@@ -3126,7 +3256,16 @@ mod tests {
             ])
         );
 
-        let result = into_open_ai(request, "model", false, false, None, None, false);
+        let result = into_open_ai(
+            request,
+            "model",
+            false,
+            false,
+            None,
+            ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+            None,
+            false,
+        );
         assert_eq!(
             serde_json::to_value(&result).unwrap()["messages"],
             json!([
@@ -3145,6 +3284,32 @@ mod tests {
     }
 
     #[test]
+    fn stream_maps_reasoning() {
+        let events = map_completion_events(vec![ResponseStreamEvent {
+            choices: vec![ChoiceDelta {
+                index: 0,
+                delta: Some(ResponseMessageDelta {
+                    role: None,
+                    content: None,
+                    reasoning: Some("thinking".into()),
+                    tool_calls: None,
+                    reasoning_content: None,
+                }),
+                finish_reason: None,
+            }],
+            usage: None,
+        }]);
+
+        assert_eq!(
+            events,
+            vec![LanguageModelCompletionEvent::Thinking {
+                text: "thinking".into(),
+                signature: None,
+            }]
+        );
+    }
+
+    #[test]
     fn stream_maps_preserves_tool_id_and_name_across_empty_deltas() {
         // DashScope sends id="" and name="" in subsequent tool_calls delta
         // chunks after the first chunk. OpenAiEventMapper must not overwrite
@@ -3158,6 +3323,7 @@ mod tests {
                     delta: Some(ResponseMessageDelta {
                         role: None,
                         content: None,
+                        reasoning: None,
                         tool_calls: Some(vec![ToolCallChunk {
                             index: 0,
                             id: Some("call_dashscope_test".into()),
@@ -3179,6 +3345,7 @@ mod tests {
                     delta: Some(ResponseMessageDelta {
                         role: None,
                         content: None,
+                        reasoning: None,
                         tool_calls: Some(vec![ToolCallChunk {
                             index: 0,
                             id: Some("".into()),
@@ -3199,6 +3366,7 @@ mod tests {
                     delta: Some(ResponseMessageDelta {
                         role: None,
                         content: None,
+                        reasoning: None,
                         tool_calls: Some(vec![ToolCallChunk {
                             index: 0,
                             id: Some("".into()),
@@ -3270,5 +3438,122 @@ mod tests {
                 LanguageModelCompletionEvent::Stop(StopReason::ToolUse)
             )
         }));
+    }
+
+    #[test]
+    fn into_open_ai_response_maps_compact_at_tokens_to_context_management() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            compact_at_tokens: Some(100_000),
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+
+        assert_eq!(
+            serde_json::to_value(&response).unwrap()["context_management"],
+            json!([{ "type": "compaction", "compact_threshold": 100_000 }])
+        );
+    }
+
+    #[test]
+    fn into_open_ai_response_omits_context_management_without_compact_at_tokens() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Hello".into())],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+
+        assert!(
+            serde_json::to_value(&response)
+                .unwrap()
+                .get("context_management")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn into_open_ai_response_replays_encrypted_compaction_block() {
+        let request = LanguageModelRequest {
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    MessageContent::Compaction(CompactionContent::Encrypted {
+                        id: Some("cmp_1".into()),
+                        encrypted_content: "encrypted-blob".into(),
+                    }),
+                    MessageContent::Text("Done.".into()),
+                ],
+                cache: false,
+                reasoning_details: None,
+            }],
+            ..Default::default()
+        };
+
+        let response = into_open_ai_response(request, "gpt-5.1", true, true, None, None, false);
+
+        assert_eq!(
+            serde_json::to_value(&response).unwrap()["input"],
+            json!([
+                {
+                    "type": "compaction",
+                    "id": "cmp_1",
+                    "encrypted_content": "encrypted-blob"
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        { "type": "output_text", "text": "Done.", "annotations": [] }
+                    ]
+                }
+            ])
+        );
+    }
+
+    #[test]
+    fn responses_stream_maps_compaction_output_item() {
+        let item: ResponseOutputItem = serde_json::from_value(json!({
+            "type": "compaction",
+            "id": "cmp_1",
+            "encrypted_content": "encrypted-blob"
+        }))
+        .unwrap();
+        let events = vec![
+            ResponsesStreamEvent::OutputItemAdded {
+                output_index: 0,
+                sequence_number: None,
+                item: item.clone(),
+            },
+            ResponsesStreamEvent::OutputItemDone {
+                output_index: 0,
+                sequence_number: None,
+                item,
+            },
+        ];
+
+        let mapped = map_response_events(events);
+
+        assert_eq!(
+            mapped,
+            vec![
+                LanguageModelCompletionEvent::Compaction(CompactionContent::Pending),
+                LanguageModelCompletionEvent::Compaction(CompactionContent::Encrypted {
+                    id: Some("cmp_1".into()),
+                    encrypted_content: "encrypted-blob".into(),
+                }),
+            ]
+        );
     }
 }

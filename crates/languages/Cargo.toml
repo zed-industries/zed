@@ -30,7 +30,7 @@ futures.workspace = true
 globset.workspace = true
 gpui.workspace = true
 grammars.workspace = true
-http_client.workspace = true
+http_client = { workspace = true, features = ["github-download"] }
 itertools.workspace = true
 json_schema_store.workspace = true
 language.workspace = true

@@ -26,6 +26,11 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -65,6 +70,11 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -88,6 +98,74 @@ jobs:
         path: target/zed-remote-server-linux-x86_64.gz
         if-no-files-found: error
     timeout-minutes: 60
+  build_static_bwrap_linux_aarch64:
+    if: |-
+      (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+    runs-on: namespace-profile-8x32-ubuntu-2004-arm-m4
+    steps:
+    - name: steps::cache_nix_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: nix
+    - name: run_bundling::build_static_bwrap
+      uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+      with:
+        github_access_token: ${{ secrets.GITHUB_TOKEN }}
+    - name: run_bundling::build_static_bwrap
+      uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
+      with:
+        name: zed
+        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        cachixArgs: -v
+    - name: run_bundling::build_static_bwrap
+      run: nix build nixpkgs#pkgsStatic.bubblewrap -L
+    - name: run_bundling::build_static_bwrap
+      run: |
+        cp result/bin/bwrap bwrap-linux-aarch64
+        chmod 755 bwrap-linux-aarch64
+        gzip -f --stdout --best bwrap-linux-aarch64 > bwrap-linux-aarch64.gz
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: bwrap-linux-aarch64.gz
+        path: bwrap-linux-aarch64.gz
+        if-no-files-found: error
+    timeout-minutes: 60
+  build_static_bwrap_linux_x86_64:
+    if: |-
+      (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'run-bundling'))
+    runs-on: namespace-profile-32x64-ubuntu-2004
+    steps:
+    - name: steps::cache_nix_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: nix
+    - name: run_bundling::build_static_bwrap
+      uses: cachix/install-nix-action@02a151ada4993995686f9ed4f1be7cfbb229e56f
+      with:
+        github_access_token: ${{ secrets.GITHUB_TOKEN }}
+    - name: run_bundling::build_static_bwrap
+      uses: cachix/cachix-action@0fc020193b5a1fa3ac4575aa3a7d3aa6a35435ad
+      with:
+        name: zed
+        authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        cachixArgs: -v
+    - name: run_bundling::build_static_bwrap
+      run: nix build nixpkgs#pkgsStatic.bubblewrap -L
+    - name: run_bundling::build_static_bwrap
+      run: |
+        cp result/bin/bwrap bwrap-linux-x86_64
+        chmod 755 bwrap-linux-x86_64
+        gzip -f --stdout --best bwrap-linux-x86_64 > bwrap-linux-x86_64.gz
+    - name: run_bundling::upload_artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: bwrap-linux-x86_64.gz
+        path: bwrap-linux-x86_64.gz
+        if-no-files-found: error
+    timeout-minutes: 60
   bundle_mac_aarch64:
     if: |-
       (github.event.action == 'labeled' && github.event.label.name == 'run-bundling') ||
@@ -107,10 +185,16 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
-    - name: steps::setup_node
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
-        node-version: '20'
+        cache: rust
+        path: ~/.rustup
+    - name: steps::setup_node
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+      with:
+        node-version: '24'
+        check-latest: true
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -151,10 +235,16 @@ jobs:
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
-    - name: steps::setup_node
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
-        node-version: '20'
+        cache: rust
+        path: ~/.rustup
+    - name: steps::setup_node
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+      with:
+        node-version: '24'
+        check-latest: true
     - name: steps::setup_sentry
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
@@ -203,6 +293,9 @@ jobs:
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than.ps1 350 200
+      shell: pwsh
     - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture aarch64
       shell: pwsh
@@ -247,6 +340,9 @@ jobs:
       uses: matbour/setup-sentry-cli@3e938c54b3018bdd019973689ef984e033b0454b
       with:
         token: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    - name: steps::clear_target_dir_if_large
+      run: ./script/clear-target-dir-if-larger-than.ps1 350 200
+      shell: pwsh
     - name: run_bundling::bundle_windows::bundle_windows
       run: script/bundle-windows.ps1 -Architecture x86_64
       shell: pwsh

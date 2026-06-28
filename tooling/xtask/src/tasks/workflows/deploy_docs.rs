@@ -162,7 +162,7 @@ pub(crate) fn check_docs() -> NamedJob {
     NamedJob {
         name: "check_docs".to_owned(),
         job: docs_build_steps(
-            release_job(&[]),
+            release_job(&[]).add_step(steps::harden_runner()),
             None,
             DocsChannel::Stable.channel_name(),
             DocsChannel::Stable.site_url(),
@@ -258,7 +258,9 @@ pub(crate) fn deploy_docs_workflow_call(
             "zed-industries",
             "zed",
             ".github/workflows/deploy_docs.yml",
-            "main",
+            // Pinned to a commit rather than the mutable `main` ref (supply-chain hardening).
+            // Same-repo reusable workflow; bump via Dependabot or alongside deploy_docs.yml changes.
+            "3f16f7b9082f8828e4d6ae207d2349b1ef932517",
         )
         .with(
             Input::default()

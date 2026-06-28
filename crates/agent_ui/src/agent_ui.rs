@@ -40,7 +40,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ::ui::IconName;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{AgentProfileId, AgentSettings};
 use command_palette_hooks::CommandPaletteFilter;
 use editor::{Editor, SelectionEffects, scroll::Autoscroll};
@@ -75,10 +75,11 @@ pub use crate::agent_panel::{
 };
 use crate::agent_registry_ui::AgentRegistryPage;
 pub use crate::inline_assistant::InlineAssistant;
+pub use crate::message_editor::MessageEditorEvent;
 pub use crate::thread_metadata_store::ThreadId;
 pub use agent_diff::{AgentDiffPane, AgentDiffToolbar};
-pub use conversation_view::ConversationView;
 pub use conversation_view::open_markdown_in_workspace;
+pub use conversation_view::{ConversationView, StateChange};
 pub use external_source_prompt::ExternalSourcePrompt;
 pub(crate) use mode_selector::ModeSelector;
 pub(crate) use model_selector::ModelSelector;
@@ -195,8 +196,6 @@ actions!(
         CycleFavoriteModels,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
-        /// Adds a context server to the configuration.
-        AddContextServer,
         /// Archives the currently selected thread.
         ArchiveSelectedThread,
         /// Removes the currently selected thread.
@@ -261,6 +260,9 @@ actions!(
         RemoveFirstQueuedMessage,
         /// Edits the first message in the queue (the next one to be sent).
         EditFirstQueuedMessage,
+        /// Toggles steering for the first queued message: when on, it interrupts
+        /// the agent at its next step instead of waiting for it to finish.
+        ToggleSteerFirstQueuedMessage,
         /// Clears all messages from the queue.
         ClearMessageQueue,
         /// Opens the permission granularity dropdown for the current tool call.
@@ -289,6 +291,8 @@ actions!(
         ScrollOutputToPreviousMessage,
         /// Scroll the output to the next user message.
         ScrollOutputToNextMessage,
+        /// Toggles in-thread search over the current agent thread's contents.
+        ToggleSearch,
         /// Import agent threads from other Zed release channels (e.g. Preview, Nightly).
         ImportThreadsFromOtherChannels,
         /// Starts a new terminal thread.
@@ -348,6 +352,49 @@ pub struct ToggleCommandPattern {
 #[action(namespace = agent)]
 #[serde(deny_unknown_fields)]
 pub struct NewThread;
+
+/// The kind of context server to configure when adding a new one.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextServerType {
+    /// A context server that runs locally via stdin/stdout.
+    #[default]
+    Local,
+    /// A context server that is connected to over HTTP.
+    Remote,
+}
+
+/// Adds a context server to the configuration.
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+#[action(namespace = agent)]
+#[serde(deny_unknown_fields)]
+pub struct AddContextServer {
+    /// The kind of context server to add.
+    #[serde(default)]
+    pub context_server_type: ContextServerType,
+}
+
+impl Default for AddContextServer {
+    fn default() -> Self {
+        Self::local()
+    }
+}
+
+impl AddContextServer {
+    /// Returns an action that adds a local (stdin/stdout) context server.
+    pub fn local() -> Self {
+        Self {
+            context_server_type: ContextServerType::Local,
+        }
+    }
+
+    /// Returns an action that adds a remote (HTTP) context server.
+    pub fn remote() -> Self {
+        Self {
+            context_server_type: ContextServerType::Remote,
+        }
+    }
+}
 
 /// Creates a new external agent conversation thread.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -555,7 +602,26 @@ pub fn init(
 ) {
     agent::ThreadStore::init_global(cx);
     prompt_store::init(cx);
-    skill_creator::init(cx);
+
+    cx.set_global(agent_skills::SkillsUpdatedHook(std::rc::Rc::new(|cx| {
+        let workspaces: Vec<_> = workspace::AppState::global(cx)
+            .workspace_store
+            .read(cx)
+            .workspaces()
+            .cloned()
+            .collect();
+
+        for workspace in workspaces {
+            workspace
+                .update(cx, |workspace, cx| {
+                    if let Some(panel) = workspace.panel::<AgentPanel>(cx) {
+                        panel.update(cx, |panel, cx| panel.refresh_skills(cx));
+                    }
+                })
+                .ok();
+        }
+    })));
+
     if !is_eval {
         // Initializing the language model from the user settings messes with the eval, so we only initialize them when
         // we're not running inside of the eval.
@@ -762,7 +828,7 @@ fn update_command_palette_filter(cx: &mut App) {
             TypeId::of::<ToggleEditPrediction>(),
         ];
 
-        let open_rules_library_action = [TypeId::of::<zed_actions::assistant::OpenRulesLibrary>()];
+        let manage_skills_action = [TypeId::of::<zed_actions::assistant::ManageSkills>()];
         let skill_creator_actions = [
             TypeId::of::<zed_actions::assistant::OpenSkillCreator>(),
             TypeId::of::<zed_actions::assistant::CreateSkillFromUrl>(),
@@ -817,16 +883,15 @@ fn update_command_palette_filter(cx: &mut App) {
             filter.show_namespace("multi_workspace");
         }
 
-        // Hide `assistant: open rules library` — Rules are surfaced
-        // through the Skills UI now. Applied after the disable-ai /
-        // agent-enabled branches so it overrides the
-        // `show_namespace("assistant")` call above without affecting the
-        // rest of that namespace's actions.
+        // Hide `agent: manage skills` — skills are surfaced through the
+        // settings UI now. Applied after the disable-ai / agent-enabled
+        // branches so it overrides the `show_namespace("assistant")` call
+        // above without affecting the rest of that namespace's actions.
         if !disable_ai {
-            filter.hide_action_types(&open_rules_library_action);
+            filter.hide_action_types(&manage_skills_action);
             filter.show_action_types(skill_creator_actions.iter());
         } else {
-            filter.show_action_types(open_rules_library_action.iter());
+            filter.show_action_types(manage_skills_action.iter());
             filter.hide_action_types(&skill_creator_actions);
         }
     });
@@ -938,9 +1003,14 @@ mod tests {
             play_sound_when_agent_done: PlaySoundWhenAgentDone::Never,
             single_file_review: false,
             model_parameters: vec![],
+            auto_compact: agent_settings::AutoCompactSettings {
+                enabled: false,
+                threshold: agent_settings::AutoCompactThreshold::DEFAULT,
+            },
             enable_feedback: false,
             expand_edit_card: true,
             expand_terminal_card: true,
+            terminal_init_command: None,
             cancel_generation_on_terminal_stop: true,
             use_modifier_to_send: true,
             message_editor_min_lines: 1,
