@@ -105,7 +105,7 @@ pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
     render_breadcrumb_text,
 };
-pub use git::blame::BlameRenderer;
+pub use git::blame::{BlameRenderer, BlameRevisions};
 pub(crate) use git::{DiffHunkKey, StoredReviewComment};
 use git::{
     DiffReviewDragState, DiffReviewOverlay, InlineBlamePopover, render_diff_hunk_controls,
@@ -1075,6 +1075,7 @@ pub struct Editor {
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
     git_blame_inline_enabled: bool,
+    blame_revisions: git::blame::BlameRevisions,
     render_diff_hunk_controls: RenderDiffHunkControlsFn,
     buffer_serialization: Option<BufferSerialization>,
     show_selection_menu: Option<bool>,
@@ -2291,6 +2292,7 @@ impl Editor {
             custom_context_menu: None,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
+            blame_revisions: git::blame::BlameRevisions::default(),
             show_selection_menu: None,
             show_git_blame_inline_delay_task: None,
             git_blame_inline_enabled: full_mode

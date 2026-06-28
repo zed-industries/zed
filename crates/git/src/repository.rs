@@ -775,6 +775,18 @@ impl LogSource {
     }
 }
 
+/// Identifies which revision a blame should be computed against.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BlameRevision {
+    /// A concrete revision: a sha, ref name, or any expression git understands
+    /// (e.g. `HEAD`, `abc123^`).
+    Revision(String),
+    /// The merge base of `HEAD` and `base_ref`. Used to blame the base text of a
+    /// `--merge-base` diff, so deleted lines are attributed against the actual
+    /// fork point rather than the tip of `base_ref`.
+    MergeBaseWithHead { base_ref: String },
+}
+
 pub struct SearchCommitArgs {
     pub query: SharedString,
     pub case_sensitive: bool,
@@ -926,6 +938,7 @@ pub trait GitRepository: Send + Sync {
         path: RepoPath,
         content: Rope,
         line_ending: LineEnding,
+        revision: Option<BlameRevision>,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>>;
 
     /// Returns the absolute path to the repository. For worktrees, this will be the path to the
@@ -2217,13 +2230,35 @@ impl GitRepository for RealGitRepository {
         path: RepoPath,
         content: Rope,
         line_ending: LineEnding,
+        revision: Option<BlameRevision>,
     ) -> BoxFuture<'_, Result<crate::blame::Blame>> {
         let git = self.git_binary_in_worktree();
 
         self.executor
             .spawn(async move {
                 let git = git?;
-                crate::blame::Blame::for_path(&git, &path, &content, line_ending).await
+                // Resolve the requested revision to a concrete revision string.
+                // `MergeBaseWithHead` requires an extra `git merge-base` call so
+                // we attribute base-text lines against the actual fork point.
+                let revision = match revision {
+                    None => None,
+                    Some(BlameRevision::Revision(revision)) => Some(revision),
+                    Some(BlameRevision::MergeBaseWithHead { base_ref }) => {
+                        let output = git
+                            .run(&["merge-base", "HEAD", base_ref.as_str()])
+                            .await
+                            .context("computing merge base for blame")?;
+                        Some(output.trim().to_string())
+                    }
+                };
+                crate::blame::Blame::for_path(
+                    &git,
+                    &path,
+                    &content,
+                    line_ending,
+                    revision.as_deref(),
+                )
+                .await
             })
             .boxed()
     }

@@ -66,6 +66,8 @@ pub struct FakeGitRepositoryState {
     pub merge_base_contents: HashMap<RepoPath, Oid>,
     pub oids: HashMap<Oid, String>,
     pub blames: HashMap<RepoPath, Blame>,
+    /// Blame keyed by `(revision, path)`, used when blaming a specific revision.
+    pub blames_by_revision: HashMap<(String, RepoPath), Blame>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
     /// List of remotes, keys are names and values are URLs
@@ -89,6 +91,7 @@ impl FakeGitRepositoryState {
             index_contents: Default::default(),
             unmerged_paths: Default::default(),
             blames: Default::default(),
+            blames_by_revision: Default::default(),
             current_branch_name: Default::default(),
             branches: Default::default(),
             simulated_index_write_error_message: Default::default(),
@@ -955,13 +958,30 @@ impl GitRepository for FakeGitRepository {
         path: RepoPath,
         _content: Rope,
         _line_ending: LineEnding,
+        revision: Option<git::repository::BlameRevision>,
     ) -> BoxFuture<'_, Result<git::blame::Blame>> {
+        let revision = revision.map(|revision| match revision {
+            git::repository::BlameRevision::Revision(revision) => revision,
+            git::repository::BlameRevision::MergeBaseWithHead { base_ref } => {
+                format!("merge-base:{base_ref}")
+            }
+        });
         self.with_state_async(false, move |state| {
-            state
-                .blames
-                .get(&path)
-                .with_context(|| format!("failed to get blame for {:?}", path))
-                .cloned()
+            if let Some(revision) = revision {
+                state
+                    .blames_by_revision
+                    .get(&(revision.clone(), path.clone()))
+                    .with_context(|| {
+                        format!("failed to get blame for {:?} at {:?}", path, revision)
+                    })
+                    .cloned()
+            } else {
+                state
+                    .blames
+                    .get(&path)
+                    .with_context(|| format!("failed to get blame for {:?}", path))
+                    .cloned()
+            }
         })
     }
 

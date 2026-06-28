@@ -25,8 +25,9 @@ impl Blame {
         path: &RepoPath,
         content: &Rope,
         line_ending: LineEnding,
+        revision: Option<&str>,
     ) -> Result<Self> {
-        let mut entries = run_git_blame(git, path, content, line_ending).await?;
+        let mut entries = run_git_blame(git, path, content, line_ending, revision).await?;
 
         let mut unique_shas = HashSet::default();
 
@@ -53,11 +54,22 @@ async fn run_git_blame(
     path: &RepoPath,
     contents: &Rope,
     line_ending: LineEnding,
+    revision: Option<&str>,
 ) -> Result<Vec<BlameEntry>> {
+    // When a revision is provided, blame the committed blob at that revision
+    // directly. Otherwise, blame the working-tree contents that are piped in via
+    // stdin (`--contents -`), which lets us blame unsaved/uncommitted changes.
     let mut child = {
         let span = ztracing::debug_span!("spawning git-blame command", path = path.as_unix_str());
         let _enter = span.enter();
-        git.build_command(&["blame", "--incremental", "--contents", "-", "--"])
+        let mut command = git.build_command(&["blame", "--incremental"]);
+        if let Some(revision) = revision {
+            command.arg(revision);
+        } else {
+            command.arg("--contents").arg("-");
+        }
+        command
+            .arg("--")
             .arg(path.as_unix_str())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -80,11 +92,18 @@ async fn run_git_blame(
         .take()
         .context("failed to get stderr from git blame command")?;
 
+    let writes_contents = revision.is_none();
     let write_stdin = async move {
-        for chunk in text::chunks_with_line_ending(contents, line_ending) {
-            stdin.write_all(chunk.as_bytes()).await?;
+        if writes_contents {
+            for chunk in text::chunks_with_line_ending(contents, line_ending) {
+                stdin.write_all(chunk.as_bytes()).await?;
+            }
+            stdin.flush().await?;
         }
-        stdin.flush().await.map_err(Into::into)
+        // Dropping stdin closes the pipe, which is required so that git blame
+        // does not wait for further input when blaming a committed revision.
+        drop(stdin);
+        Result::<()>::Ok(())
     };
 
     let read_stdout = async move {

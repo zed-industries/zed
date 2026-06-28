@@ -1518,7 +1518,7 @@ impl GitStore {
                 .map_err(|err| anyhow::anyhow!(err))?;
             match repository_state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
-                    .blame(repo_path.clone(), content, line_ending)
+                    .blame(repo_path.clone(), content, line_ending, None)
                     .await
                     .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref()))
                     .map(Some),
@@ -5620,6 +5620,36 @@ impl Repository {
                         author_email: resp.author_email.into(),
                         author_name: resp.author_name.into(),
                     })
+                }
+            }
+        })
+    }
+
+    /// Blames a path at a specific revision, reading the committed blob directly.
+    ///
+    /// Unlike [`GitStore::blame_buffer`], this does not depend on a registered
+    /// buffer, so it can be used to blame diff base text (deleted lines) and the
+    /// synthetic buffers used by the commit view.
+    pub fn blame_path(
+        &mut self,
+        repo_path: RepoPath,
+        revision: git::repository::BlameRevision,
+    ) -> oneshot::Receiver<Result<Blame>> {
+        self.send_job("blame_path", None, move |git_repo, _cx| async move {
+            match git_repo {
+                RepositoryState::Local(LocalRepositoryState { backend, .. }) => backend
+                    .blame(
+                        repo_path.clone(),
+                        text::Rope::default(),
+                        text::LineEnding::Unix,
+                        Some(revision),
+                    )
+                    .await
+                    .with_context(|| format!("Failed to blame {:?}", repo_path.as_ref())),
+                RepositoryState::Remote(_) => {
+                    anyhow::bail!(
+                        "blaming a specific revision is not supported for remote projects"
+                    )
                 }
             }
         })

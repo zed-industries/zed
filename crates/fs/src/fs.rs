@@ -2263,6 +2263,25 @@ impl FakeFs {
         .unwrap();
     }
 
+    pub fn set_blame_for_repo_at_revision(
+        &self,
+        dot_git: &Path,
+        revision: &str,
+        blames: Vec<(RepoPath, git::blame::Blame)>,
+    ) {
+        self.with_git_state(dot_git, true, |state| {
+            state
+                .blames_by_revision
+                .retain(|(rev, _), _| rev != revision);
+            state.blames_by_revision.extend(
+                blames
+                    .into_iter()
+                    .map(|(path, blame)| ((revision.to_string(), path), blame)),
+            );
+        })
+        .unwrap();
+    }
+
     pub fn set_graph_commits(&self, dot_git: &Path, commits: Vec<Arc<InitialGraphCommitData>>) {
         self.with_git_state(dot_git, true, |state| {
             state.graph_commits = commits;

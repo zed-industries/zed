@@ -8,7 +8,7 @@ use anyhow::{Context as _, Result, anyhow};
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::HashMap;
 use editor::{
-    Addon, Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
+    Addon, BlameRevisions, Editor, EditorEvent, EditorSettings, SelectionEffects, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk, SendReviewToAgent},
     multibuffer_context_lines,
     scroll::Autoscroll,
@@ -543,6 +543,30 @@ impl ProjectDiff {
         let editor_subscription = cx.subscribe_in(&editor, window, Self::handle_editor_event);
 
         let primary_editor = editor.read(cx).rhs_editor().clone();
+
+        // Blame deleted lines against the diff base so they show the commit that
+        // last touched them, instead of nothing. Working-tree lines keep using
+        // the default working-tree blame.
+        let base_text_revision = match branch_diff.read(cx).diff_base() {
+            // `None` defaults to `HEAD`, which is the base text in this mode.
+            DiffBase::Head => None,
+            // The base text is the merge base of `HEAD` and `base_ref`, so blame
+            // it there rather than at the tip of `base_ref`.
+            DiffBase::Merge { base_ref } => Some(git::repository::BlameRevision::MergeBaseWithHead {
+                base_ref: base_ref.to_string(),
+            }),
+        };
+        primary_editor.update(cx, |primary_editor, cx| {
+            primary_editor.set_blame_revisions(
+                BlameRevisions {
+                    blame_base_text: true,
+                    base_text_revision,
+                    buffer_revision: None,
+                },
+                window,
+                cx,
+            );
+        });
         let review_comment_subscription =
             cx.subscribe(&primary_editor, |this, _editor, event: &EditorEvent, cx| {
                 if let EditorEvent::ReviewCommentsChanged { total_count } = event {

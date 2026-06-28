@@ -71,6 +71,41 @@ struct GitBlameBuffer {
     commit_details: HashMap<Oid, ParsedCommitMessage>,
 }
 
+/// Controls which revisions a [`GitBlame`] blames against. The default blames
+/// the working-tree contents of each buffer, which is what normal editors want.
+///
+/// Diff views (project diff, commit view) use this to additionally blame the
+/// diff base text (so deleted lines show the commit that last touched them), and
+/// to blame the main buffer against a historical revision.
+#[derive(Clone, Debug, Default)]
+pub struct BlameRevisions {
+    /// When `true`, also compute blame for each buffer's diff base text, keyed by
+    /// the base text buffer's id, so deleted lines can show inline blame.
+    pub blame_base_text: bool,
+    /// Revision used to blame diff base text. `None` defaults to `HEAD`.
+    pub base_text_revision: Option<git::repository::BlameRevision>,
+    /// Revision used to blame the main buffer content. `None` blames the
+    /// working-tree contents (piped to git blame via stdin).
+    pub buffer_revision: Option<git::repository::BlameRevision>,
+}
+
+/// A pending blame computation for a single buffer (a main buffer or a diff base
+/// text). Resolves to the target buffer id, its snapshot, an edit subscription,
+/// the blame result, and the remote url used to parse commit metadata.
+type BlameTargetFuture = std::pin::Pin<
+    Box<
+        dyn std::future::Future<
+                Output = (
+                    BufferId,
+                    BufferSnapshot,
+                    text::Subscription<usize>,
+                    Result<Option<Blame>>,
+                    Option<String>,
+                ),
+            > + Send,
+    >,
+>;
+
 pub struct GitBlame {
     project: Entity<Project>,
     multi_buffer: WeakEntity<MultiBuffer>,
@@ -79,6 +114,7 @@ pub struct GitBlame {
     focused: bool,
     changed_while_blurred: bool,
     user_triggered: bool,
+    revisions: BlameRevisions,
     regenerate_on_edit_task: Task<Result<()>>,
     _regenerate_subscriptions: Vec<Subscription>,
 }
@@ -194,6 +230,7 @@ impl GitBlame {
         project: Entity<Project>,
         user_triggered: bool,
         focused: bool,
+        revisions: BlameRevisions,
         cx: &mut Context<Self>,
     ) -> Self {
         let multi_buffer_subscription = cx.subscribe(
@@ -250,6 +287,7 @@ impl GitBlame {
             multi_buffer: multi_buffer.downgrade(),
             buffers: HashMap::default(),
             user_triggered,
+            revisions,
             focused,
             changed_while_blurred: false,
             task: Task::ready(Ok(())),
@@ -505,6 +543,8 @@ impl GitBlame {
             })
             .unwrap_or_default();
         let project = self.project.downgrade();
+        let revisions = self.revisions.clone();
+        let multi_buffer = self.multi_buffer.clone();
 
         self.task = cx.spawn(async move |this, cx| {
             let mut all_results = Vec::new();
@@ -514,38 +554,98 @@ impl GitBlame {
                 let span = ztracing::debug_span!("for each chunk of buffers");
                 let _enter = span.enter();
                 let blame = cx.update(|cx| {
-                    buffers
-                        .iter()
-                        .map(|buffer| {
-                            let buffer = buffer.upgrade().context("buffer was dropped")?;
-                            let project = project.upgrade().context("project was dropped")?;
-                            let id = buffer.read(cx).remote_id();
-                            let snapshot = buffer.read(cx).snapshot();
-                            let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
+                    let mut blame_futures: Vec<BlameTargetFuture> = Vec::new();
+                    for buffer in buffers {
+                        let buffer = buffer.upgrade().context("buffer was dropped")?;
+                        let project = project.upgrade().context("project was dropped")?;
+                        let id = buffer.read(cx).remote_id();
+                        let snapshot = buffer.read(cx).snapshot();
+                        let buffer_edits = buffer.update(cx, |buffer, _| buffer.subscribe());
 
-                            let repository = project
-                                .read(cx)
-                                .git_store()
-                                .read(cx)
-                                .repository_and_path_for_buffer_id(id, cx);
-
-                            let remote_url = repository
-                                .as_ref()
-                                .and_then(|(repo, _)| repo.read(cx).default_remote_url());
-
-                            let blame_buffer = if repository.is_some() {
-                                project.update(cx, |project, cx| {
-                                    project.blame_buffer(&buffer, None, cx)
+                        // Resolve the repository and path for this buffer. Buffers
+                        // registered in the project resolve by id; synthetic
+                        // buffers (e.g. the commit view's historical blobs) are
+                        // not in the buffer store, so fall back to resolving via
+                        // their project path.
+                        let repository = {
+                            let git_store = project.read(cx).git_store().clone();
+                            let git_store = git_store.read(cx);
+                            git_store
+                                .repository_and_path_for_buffer_id(id, cx)
+                                .or_else(|| {
+                                    let project_path = buffer.read(cx).project_path(cx)?;
+                                    git_store
+                                        .repository_and_path_for_project_path(&project_path, cx)
                                 })
-                            } else {
-                                Task::ready(Ok(None))
+                        };
+
+                        let remote_url = repository
+                            .as_ref()
+                            .and_then(|(repo, _)| repo.read(cx).default_remote_url());
+
+                        // Blame for the main buffer: either at a specific revision
+                        // (commit view) or against the working-tree contents.
+                        let main_blame: Task<Result<Option<Blame>>> =
+                            match (&repository, &revisions.buffer_revision) {
+                                (Some((repo, repo_path)), Some(revision)) => {
+                                    let receiver = repo.update(cx, |repo, _| {
+                                        repo.blame_path(repo_path.clone(), revision.clone())
+                                    });
+                                    cx.background_spawn(async move {
+                                        let blame =
+                                            receiver.await.map_err(|e| anyhow::anyhow!(e))?;
+                                        blame.map(Some)
+                                    })
+                                }
+                                (Some(_), None) => project.update(cx, |project, cx| {
+                                    project.blame_buffer(&buffer, None, cx)
+                                }),
+                                (None, _) => Task::ready(Ok(None)),
                             };
 
-                            Ok(async move {
-                                (id, snapshot, buffer_edits, blame_buffer.await, remote_url)
-                            })
-                        })
-                        .collect::<Result<Vec<_>>>()
+                        {
+                            let remote_url = remote_url.clone();
+                            blame_futures.push(Box::pin(async move {
+                                (id, snapshot, buffer_edits, main_blame.await, remote_url)
+                            }));
+                        }
+
+                        // Blame for the diff base text, so deleted lines show the
+                        // commit that last touched them in diff views.
+                        if revisions.blame_base_text
+                            && let Some((repo, repo_path)) = repository
+                            && let Some(diff) = multi_buffer
+                                .upgrade()
+                                .and_then(|multi_buffer| multi_buffer.read(cx).diff_for(id))
+                        {
+                            let base_buffer = diff.read(cx).base_text_buffer().clone();
+                            let base_id = base_buffer.read(cx).remote_id();
+                            let base_snapshot = base_buffer.read(cx).snapshot();
+                            let base_edits =
+                                base_buffer.update(cx, |buffer, _| buffer.subscribe());
+                            let revision = revisions.base_text_revision.clone().unwrap_or_else(
+                                || git::repository::BlameRevision::Revision("HEAD".to_string()),
+                            );
+                            let receiver = repo.update(cx, |repo, _| {
+                                repo.blame_path(repo_path.clone(), revision)
+                            });
+                            let base_blame: Task<Result<Option<Blame>>> =
+                                cx.background_spawn(async move {
+                                    let blame = receiver.await.map_err(|e| anyhow::anyhow!(e))?;
+                                    blame.map(Some)
+                                });
+                            blame_futures.push(Box::pin(async move {
+                                (
+                                    base_id,
+                                    base_snapshot,
+                                    base_edits,
+                                    base_blame.await,
+                                    remote_url,
+                                )
+                            }));
+                        }
+                    }
+                    Result::<_>::Ok(blame_futures)
                 })?;
                 let provider_registry =
                     cx.update(|cx| GitHostingProviderRegistry::default_global(cx));
@@ -791,7 +891,16 @@ mod tests {
             .unwrap();
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
-        let blame = cx.new(|cx| GitBlame::new(buffer.clone(), project.clone(), true, true, cx));
+        let blame = cx.new(|cx| {
+            GitBlame::new(
+                buffer.clone(),
+                project.clone(),
+                true,
+                true,
+                BlameRevisions::default(),
+                cx,
+            )
+        });
 
         let event = project.next_event(cx).await;
         assert_eq!(
@@ -864,7 +973,16 @@ mod tests {
             })
         });
 
-        let blame = cx.new(|cx| GitBlame::new(buffer.clone(), project.clone(), true, true, cx));
+        let blame = cx.new(|cx| {
+            GitBlame::new(
+                buffer.clone(),
+                project.clone(),
+                true,
+                true,
+                BlameRevisions::default(),
+                cx,
+            )
+        });
 
         cx.executor().run_until_parked();
 
@@ -940,7 +1058,16 @@ mod tests {
         let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
-        let git_blame = cx.new(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
+        let git_blame = cx.new(|cx| {
+            GitBlame::new(
+                buffer.clone(),
+                project,
+                false,
+                true,
+                BlameRevisions::default(),
+                cx,
+            )
+        });
 
         cx.executor().run_until_parked();
 
@@ -1012,6 +1139,133 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_blame_base_text_at_revision(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/my-repo"),
+            json!({
+                ".git": {},
+                "file.txt": "AAA\nCCC\n",
+            }),
+        )
+        .await;
+
+        // HEAD has an extra line (BBB) that was deleted in the working tree, so
+        // the diff base text contains all three lines.
+        fs.set_head_for_repo(
+            Path::new(path!("/my-repo/.git")),
+            &[("file.txt", "AAA\nBBB\nCCC\n".to_owned())],
+            "deadbeef",
+        );
+
+        // Working-tree blame (no revision).
+        fs.set_blame_for_repo(
+            Path::new(path!("/my-repo/.git")),
+            vec![(
+                repo_path("file.txt"),
+                Blame {
+                    entries: vec![blame_entry("aaaaaa", 0..1), blame_entry("cccccc", 1..2)],
+                    ..Default::default()
+                },
+            )],
+        );
+
+        // Blame of the committed (HEAD) content, used for the diff base text.
+        fs.set_blame_for_repo_at_revision(
+            Path::new(path!("/my-repo/.git")),
+            "HEAD",
+            vec![(
+                repo_path("file.txt"),
+                Blame {
+                    entries: vec![
+                        blame_entry("aaaaaa", 0..1),
+                        blame_entry("bbbbbb", 1..2),
+                        blame_entry("cccccc", 2..3),
+                    ],
+                    ..Default::default()
+                },
+            )],
+        );
+
+        let project = Project::test(fs.clone(), [path!("/my-repo").as_ref()], cx).await;
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/my-repo/file.txt"), cx)
+            })
+            .await
+            .unwrap();
+        let main_buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+
+        let uncommitted_diff = project
+            .update(cx, |project, cx| {
+                project.open_uncommitted_diff(buffer.clone(), cx)
+            })
+            .await
+            .unwrap();
+        let base_text_buffer_id = uncommitted_diff
+            .read_with(cx, |diff, cx| diff.base_text_buffer().read(cx).remote_id());
+
+        let multi_buffer = cx.new(|cx| {
+            let mut multi_buffer = MultiBuffer::singleton(buffer.clone(), cx);
+            multi_buffer.add_diff(uncommitted_diff.clone(), cx);
+            multi_buffer.set_all_diff_hunks_expanded(cx);
+            multi_buffer
+        });
+
+        let git_blame = cx.new(|cx| {
+            GitBlame::new(
+                multi_buffer.clone(),
+                project,
+                false,
+                true,
+                BlameRevisions {
+                    blame_base_text: true,
+                    base_text_revision: None,
+                    buffer_revision: None,
+                },
+                cx,
+            )
+        });
+
+        cx.executor().run_until_parked();
+
+        git_blame.update(cx, |blame, cx| {
+            // A working-tree line still resolves against the working-tree blame.
+            assert_eq!(
+                blame
+                    .blame_for_rows(
+                        &[RowInfo {
+                            buffer_id: Some(main_buffer_id),
+                            buffer_row: Some(0),
+                            ..Default::default()
+                        }],
+                        cx
+                    )
+                    .next(),
+                Some(Some((main_buffer_id, blame_entry("aaaaaa", 0..1))))
+            );
+
+            // A deleted line (base text row 1, "BBB") resolves against the
+            // committed (HEAD) blame, showing the commit that last touched it.
+            assert_eq!(
+                blame
+                    .blame_for_rows(
+                        &[RowInfo {
+                            buffer_id: Some(base_text_buffer_id),
+                            buffer_row: Some(1),
+                            ..Default::default()
+                        }],
+                        cx
+                    )
+                    .next(),
+                Some(Some((base_text_buffer_id, blame_entry("bbbbbb", 1..2))))
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_blame_for_rows_with_edits(cx: &mut gpui::TestAppContext) {
         init_test(cx);
 
@@ -1051,7 +1305,16 @@ mod tests {
         let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
-        let git_blame = cx.new(|cx| GitBlame::new(buffer.clone(), project, false, true, cx));
+        let git_blame = cx.new(|cx| {
+            GitBlame::new(
+                buffer.clone(),
+                project,
+                false,
+                true,
+                BlameRevisions::default(),
+                cx,
+            )
+        });
 
         cx.executor().run_until_parked();
 
@@ -1218,7 +1481,16 @@ mod tests {
             .unwrap();
         let mbuffer = cx.new(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
-        let git_blame = cx.new(|cx| GitBlame::new(mbuffer.clone(), project, false, true, cx));
+        let git_blame = cx.new(|cx| {
+            GitBlame::new(
+                mbuffer.clone(),
+                project,
+                false,
+                true,
+                BlameRevisions::default(),
+                cx,
+            )
+        });
         cx.executor().run_until_parked();
         git_blame.update(cx, |blame, cx| blame.check_invariants(cx));
 
