@@ -573,6 +573,103 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn lsp_semantic_tokens_dynamic_registration_requeries_open_document(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, &|language_settings| {
+            language_settings.languages.0.insert(
+                "Rust".into(),
+                LanguageSettingsContent {
+                    semantic_tokens: Some(SemanticTokens::Full),
+                    ..LanguageSettingsContent::default()
+                },
+            );
+        });
+
+        // The server advertises no semantic tokens capability up front; it only
+        // registers `textDocument/semanticTokens` dynamically, after the document
+        // is already open (as Roslyn does).
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+        let full_counter = Arc::new(AtomicUsize::new(0));
+        let mut full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>({
+                let full_counter = full_counter.clone();
+                move |_, _, _| {
+                    full_counter.fetch_add(1, atomic::Ordering::Release);
+                    async move {
+                        Ok(Some(lsp::SemanticTokensResult::Tokens(
+                            lsp::SemanticTokens {
+                                data: vec![0, 3, 4, 0, 0],
+                                result_id: None,
+                            },
+                        )))
+                    }
+                }
+            });
+
+        cx.set_state("ˇfn main() {}");
+        cx.run_until_parked();
+        assert_eq!(
+            full_counter.load(atomic::Ordering::Acquire),
+            0,
+            "no semantic tokens should be requested before the capability is registered"
+        );
+        assert!(
+            extract_semantic_highlights(&cx.editor, &cx).is_empty(),
+            "no semantic highlights before the capability is registered"
+        );
+
+        cx.lsp
+            .request::<lsp::request::RegisterCapability>(
+                lsp::RegistrationParams {
+                    registrations: vec![lsp::Registration {
+                        id: "semantic-tokens".to_string(),
+                        method: "textDocument/semanticTokens".to_string(),
+                        register_options: Some(
+                            serde_json::to_value(lsp::SemanticTokensRegistrationOptions {
+                                text_document_registration_options:
+                                    lsp::TextDocumentRegistrationOptions {
+                                        document_selector: None,
+                                    },
+                                semantic_tokens_options: lsp::SemanticTokensOptions {
+                                    legend: lsp::SemanticTokensLegend {
+                                        token_types: vec!["function".into()],
+                                        token_modifiers: Vec::new(),
+                                    },
+                                    full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                                    ..lsp::SemanticTokensOptions::default()
+                                },
+                                static_registration_options: lsp::StaticRegistrationOptions {
+                                    id: None,
+                                },
+                            })
+                            .unwrap(),
+                        ),
+                    }],
+                },
+                lsp::DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
+            .await
+            .into_response()
+            .expect("register capability request failed");
+
+        assert!(
+            full_request.next().await.is_some(),
+            "dynamic registration should re-query semantic tokens for the open document"
+        );
+        cx.run_until_parked();
+
+        assert_eq!(
+            extract_semantic_highlights(&cx.editor, &cx),
+            vec![MultiBufferOffset(3)..MultiBufferOffset(7)],
+            "the open document should display semantic tokens after dynamic registration"
+        );
+    }
+
+    #[gpui::test]
     async fn lsp_semantic_tokens_full_none_result_id(cx: &mut TestAppContext) {
         init_test(cx, |_| {});
 
