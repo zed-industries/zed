@@ -145,6 +145,7 @@ impl ProjectBookmarksDelegate {
         (
             HighlightedLabel::new(label.clone(), positions.clone()),
             h_flex()
+                .min_w_0()
                 .child(
                     Label::new(
                         full_path_name
@@ -225,6 +226,7 @@ impl ProjectBookmarksDelegate {
             .children(file_icon)
             .child(
                 h_flex()
+                    .min_w_0()
                     .gap_1()
                     .child(Label::new(file_name).size(LabelSize::Small))
                     .when(!directory.is_empty(), |this| {
