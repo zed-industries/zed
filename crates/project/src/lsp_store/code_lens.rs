@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use clock::Global;
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::{
     FutureExt as _,
     future::{Shared, join_all},
@@ -122,21 +122,23 @@ impl LspStore {
     ) -> CodeLensTask {
         let version_queried_for = buffer.read(cx).version();
         let buffer_id = buffer.read(cx).remote_id();
-        let existing_servers = self.as_local().map(|local| {
+        let existing_servers = if let Some(local) = self.as_local() {
             local
                 .buffers_opened_in_servers
                 .get(&buffer_id)
                 .cloned()
                 .unwrap_or_default()
-        });
+        } else {
+            self.relevant_server_ids_for_capability_check(buffer, cx)
+                .into_iter()
+                .collect()
+        };
 
         if let Some(lsp_data) = self.current_lsp_data(buffer_id) {
             if let Some(cached_lens) = &lsp_data.code_lens {
                 if !version_queried_for.changed_since(&lsp_data.buffer_version) {
-                    let has_different_servers = existing_servers.is_some_and(|existing_servers| {
-                        existing_servers != cached_lens.lens.keys().copied().collect()
-                    });
-                    if !has_different_servers {
+                    let cached_servers = cached_lens.lens.keys().copied().collect::<HashSet<_>>();
+                    if existing_servers == cached_servers {
                         return Task::ready(Ok(Some(flatten_cache(&cached_lens.lens)))).shared();
                     }
                 } else if let Some((updating_for, running_update)) = cached_lens.update.as_ref() {
@@ -304,7 +306,7 @@ impl LspStore {
     /// `(id, resolved_action)` pair is returned.
     ///
     /// All visibility / batching policy lives in the caller. Remote (proto)
-    /// resolves are not yet supported and currently yield `None`.
+    /// resolves are forwarded to the host via [`Self::resolve_code_action`].
     pub fn resolve_code_lens(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -339,6 +341,47 @@ impl LspStore {
             return Task::ready(None).shared();
         };
         let lens = lens.clone();
+        let action = cached.clone();
+
+        if self.upstream_client().is_some() {
+            if !self.check_if_capable_for_proto_request(buffer, GetCodeLens::can_resolve_lens, cx) {
+                return Task::ready(None).shared();
+            }
+            let resolve = self.resolve_code_action(buffer, action, cx);
+            let task = cx
+                .spawn(async move |lsp_store, cx| {
+                    let resolved = resolve
+                        .await
+                        .context("resolving remote code lens")
+                        .log_err()?;
+                    lsp_store
+                        .update(cx, |lsp_store, _| {
+                            let code_lens = lsp_store
+                                .lsp_data
+                                .get_mut(&buffer_id)
+                                .and_then(|data| data.code_lens.as_mut())?;
+                            code_lens.resolving.remove(&key);
+                            let action = code_lens
+                                .lens
+                                .get_mut(&server_id)
+                                .and_then(|cache| cache.get_mut(&lens_id))?;
+                            action.resolved = true;
+                            action.lsp_action = resolved.lsp_action;
+                            Some((lens_id, action.clone()))
+                        })
+                        .ok()
+                        .flatten()
+                })
+                .shared();
+            if let Some(code_lens) = self
+                .lsp_data
+                .get_mut(&buffer_id)
+                .and_then(|data| data.code_lens.as_mut())
+            {
+                code_lens.resolving.insert(key, task.clone());
+            }
+            return task;
+        }
 
         let Some(server) = self.language_server_for_id(server_id) else {
             return Task::ready(None).shared();
