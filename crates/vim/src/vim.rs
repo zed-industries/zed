@@ -1477,14 +1477,24 @@ impl Vim {
         }
 
         if let Some(active_operator) = active_operator {
-            operator_id = active_operator.id();
             if active_operator.is_waiting(self.mode) {
                 if matches!(active_operator, Operator::Literal { .. }) {
                     mode = "literal".to_string();
                 } else {
                     mode = "waiting".to_string();
                 }
+                // HelixNext/HelixPrevious dispatch follow-up keys via keymap context
+                // predicates (vim_operator == helix_next/helix_previous), so operator_id
+                // must be set even in waiting mode. Other waiting operators use raw text
+                // input and must not set operator_id to avoid activating unrelated contexts.
+                if matches!(
+                    active_operator,
+                    Operator::HelixNext { .. } | Operator::HelixPrevious { .. }
+                ) {
+                    operator_id = active_operator.id();
+                }
             } else {
+                operator_id = active_operator.id();
                 mode = "operator".to_string();
             }
         }
