@@ -94,8 +94,8 @@ use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::OffsetRangeExt;
 use theme_settings::ThemeSettings;
 use ui::{
-    ContextMenu, ContextMenuEntry, GradientFade, IconButton, KeyBinding, PopoverMenu,
-    PopoverMenuHandle, ProjectEmptyState, Tab, Tooltip, prelude::*, utils::WithRemSize,
+    ContextMenu, ContextMenuEntry, GradientFade, IconButton, PopoverMenu, PopoverMenuHandle, Tab,
+    Tooltip, prelude::*, utils::WithRemSize,
 };
 use util::ResultExt as _;
 use workspace::{
@@ -1651,7 +1651,10 @@ impl AgentPanel {
     }
 
     pub fn selected_agent(&self, cx: &App) -> Agent {
-        if self.project.read(cx).is_via_collab() {
+        // Collab projects and project-less windows only support the native
+        // in-process agent: collab has no local fs, and external agents need a
+        // real working directory we don't have without a worktree.
+        if self.project.read(cx).is_via_collab() || !self.has_open_project(cx) {
             Agent::NativeAgent
         } else {
             self.selected_agent.clone()
@@ -1750,10 +1753,6 @@ impl AgentPanel {
     }
 
     pub fn new_thread(&mut self, _action: &NewThread, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         self.new_thread_with_workspace(None, window, cx);
     }
 
@@ -1777,10 +1776,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         self.set_last_created_entry_kind_from_user_action(AgentPanelEntryKind::Thread, cx);
 
         // If the user is viewing a *parked* draft and the ephemeral
@@ -1859,10 +1854,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         let active_matching = match &self.base_view {
             BaseView::AgentThread { conversation_view }
                 if conversation_view.read(cx).thread_id == thread_id =>
@@ -1967,8 +1958,7 @@ impl AgentPanel {
     }
 
     pub fn should_create_terminal_for_new_entry(&self, cx: &App) -> bool {
-        self.last_created_entry_kind == AgentPanelEntryKind::Terminal
-            && self.project.read(cx).supports_terminal(cx)
+        self.last_created_entry_kind == AgentPanelEntryKind::Terminal && self.supports_terminal(cx)
     }
 
     fn set_last_created_entry_kind_from_user_action(
@@ -2870,10 +2860,6 @@ impl AgentPanel {
     }
 
     fn ensure_native_agent_connection(&self, cx: &mut Context<Self>) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         let fs = self.fs.clone();
         let thread_store = self.thread_store.clone();
         self.connection_store.update(cx, |store, cx| {
@@ -2892,10 +2878,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         let draft = self.ensure_draft(source, window, cx);
         if let BaseView::AgentThread { conversation_view } = &self.base_view {
             if conversation_view.entity_id() == draft.entity_id() {
@@ -3440,10 +3422,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if resume_thread_id.is_none() && !self.has_open_project(cx) {
-            return;
-        }
-
         let agent = agent_choice.unwrap_or_else(|| self.selected_agent(cx));
         let thread = self.create_agent_thread_with_server(
             agent,
@@ -3477,10 +3455,6 @@ impl AgentPanel {
 
     /// Refresh the native agent's view of available skills
     pub fn refresh_skills(&mut self, cx: &mut Context<Self>) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         self.ensure_native_agent_connection(cx);
         let Some(connect_task) = self.connection_store.update(cx, |store, cx| {
             store
@@ -3541,10 +3515,6 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.has_open_project(cx) {
-            return;
-        }
-
         self.new_thread_menu_handle.toggle(window, cx);
     }
 
@@ -3795,11 +3765,6 @@ impl AgentPanel {
     }
 
     fn load_thread_from_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.has_open_project(cx) {
-            Self::show_deferred_toast(&self.workspace, "Open a project to load a thread", cx);
-            return;
-        }
-
         let Some(clipboard) = cx.read_from_clipboard() else {
             Self::show_deferred_toast(&self.workspace, "No clipboard content available", cx);
             return;
@@ -5414,8 +5379,7 @@ impl AgentPanel {
         matches!(
             self.visible_surface(),
             VisibleSurface::AgentThread(_) | VisibleSurface::Terminal(_)
-        ) && self.has_open_project(cx)
-            && !self.is_title_editor_focused(window, cx)
+        ) && !self.is_title_editor_focused(window, cx)
     }
 
     fn render_title_view(&self, window: &mut Window, cx: &Context<Self>) -> AnyElement {
@@ -5823,30 +5787,11 @@ impl AgentPanel {
             })
     }
 
-    fn render_no_project_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let focus_handle = self.focus_handle(cx);
-
-        ProjectEmptyState::new(
-            "Agent Panel",
-            focus_handle.clone(),
-            KeyBinding::for_action_in(&workspace::Open::default(), &focus_handle, cx),
-        )
-        .on_open_project(|_, window, cx| {
-            telemetry::event!("Agent Panel Add Project Clicked");
-            window.dispatch_action(workspace::Open::default().boxed_clone(), cx);
-        })
-        .on_clone_repo(|_, window, cx| {
-            telemetry::event!("Agent Panel Clone Repo Clicked");
-            window.dispatch_action(git::Clone.boxed_clone(), cx);
-        })
-    }
-
     fn render_toolbar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let agent_server_store = self.project.read(cx).agent_server_store().clone();
 
         let focus_handle = self.focus_handle(cx);
 
-        let can_create_entries = self.has_open_project(cx);
         let supports_terminal = self.supports_terminal(cx);
         let showing_terminal = matches!(self.visible_surface(), VisibleSurface::Terminal(_));
 
@@ -6235,7 +6180,7 @@ impl AgentPanel {
                         .gap_1()
                         .pl_1()
                         .pr_1()
-                        .when(can_create_entries, |this| this.child(new_thread_menu))
+                        .child(new_thread_menu)
                         .child(full_screen_button)
                         .child(self.render_panel_options_menu(window, cx)),
                 )
@@ -6584,9 +6529,6 @@ impl Render for AgentPanel {
             .child(self.render_toolbar(window, cx))
             .children(self.render_new_user_onboarding(window, cx))
             .map(|parent| match self.visible_surface() {
-                VisibleSurface::Uninitialized if !self.has_open_project(cx) => {
-                    parent.child(self.render_no_project_state(cx))
-                }
                 VisibleSurface::Uninitialized => parent,
                 VisibleSurface::AgentThread(conversation_view) => parent
                     .child(conversation_view.clone())
@@ -8932,7 +8874,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_empty_workspace_does_not_create_agent_entries(cx: &mut TestAppContext) {
+    async fn test_empty_workspace_hosts_native_agent_but_not_external_or_terminals(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
         cx.update(|cx| {
             agent::ThreadStore::init_global(cx);
@@ -8940,6 +8884,7 @@ mod tests {
         });
 
         let fs = FakeFs::new(cx.executor());
+        cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
         let project = Project::test(fs.clone(), [], cx).await;
         let multi_workspace =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
@@ -8956,20 +8901,33 @@ mod tests {
             panel
         });
 
-        panel.read_with(cx, |panel, cx| {
-            assert_eq!(
-                panel
-                    .connection_store()
-                    .read(cx)
-                    .connection_status(&Agent::NativeAgent, cx),
-                crate::agent_connection_store::AgentConnectionStatus::Disconnected,
-                "empty workspaces should not start the native agent connection"
-            );
-        });
-
+        // Without a worktree the panel still hosts the native agent, so a new
+        // thread yields a native draft.
         panel.update_in(cx, |panel, window, cx| {
             panel.new_thread(&NewThread, window, cx);
-            panel.activate_draft(true, AgentThreadSource::AgentPanel, window, cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, cx| {
+            assert!(
+                panel.active_conversation_view().is_some(),
+                "project-less workspaces should host a native agent thread"
+            );
+            assert!(
+                panel.draft_thread.is_some(),
+                "project-less workspaces should create a native draft thread"
+            );
+            assert!(panel.selected_agent(cx).is_native());
+        });
+
+        // External agents need a real working directory we don't have, so they
+        // remain blocked and must not replace the native draft.
+        let native_draft_id = panel
+            .read_with(cx, |panel, cx| {
+                panel.draft_thread.as_ref().map(|d| d.read(cx).thread_id)
+            })
+            .unwrap();
+        panel.update_in(cx, |panel, window, cx| {
             panel.new_external_agent_thread(
                 &NewExternalAgentThread {
                     agent: AgentId::new("external-agent"),
@@ -8981,20 +8939,15 @@ mod tests {
         cx.run_until_parked();
 
         panel.read_with(cx, |panel, cx| {
-            assert!(
-                panel.active_conversation_view().is_none(),
-                "empty workspaces should not create agent threads"
+            assert_eq!(
+                panel.draft_thread.as_ref().map(|d| d.read(cx).thread_id),
+                Some(native_draft_id),
+                "external agents are blocked without a project and must not replace the native draft"
             );
-            assert!(
-                panel.draft_thread.is_none(),
-                "empty workspaces should not create draft threads"
-            );
-            assert!(
-                panel.terminals(cx).is_empty(),
-                "empty workspaces should not create agent panel terminals"
-            );
+            assert!(panel.selected_agent(cx).is_native());
         });
 
+        // Terminals require a project working directory, so they stay blocked.
         cx.update(|_, cx| {
             cx.update_flags(true, vec!["agent-panel-terminal".to_string()]);
         });
@@ -9006,15 +8959,7 @@ mod tests {
         panel.read_with(cx, |panel, cx| {
             assert!(
                 panel.terminals(cx).is_empty(),
-                "empty workspaces should not create terminals after the terminal feature is enabled"
-            );
-            assert_eq!(
-                panel
-                    .connection_store()
-                    .read(cx)
-                    .connection_status(&Agent::NativeAgent, cx),
-                crate::agent_connection_store::AgentConnectionStatus::Disconnected,
-                "empty workspace actions should not start the native agent connection"
+                "empty workspaces should not create agent panel terminals"
             );
         });
     }

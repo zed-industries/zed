@@ -863,6 +863,90 @@ async fn test_single_workspace_no_threads(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_project_less_window_shows_no_project_group(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+    let project = project::Project::test(fs, None::<&Path>, cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    for (id, title, hour) in [
+        ("p1", "Draft a haiku", 2),
+        ("p2", "Explain borrow checker", 1),
+    ] {
+        save_thread_metadata(
+            acp::SessionId::new(Arc::from(id)),
+            Some(title.into()),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+            None,
+            None,
+            &project,
+            cx,
+        )
+    }
+    cx.run_until_parked();
+
+    // Threads created in a project-less window land in a shared "No project"
+    // group, ordered most-recently-updated first.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [No project]",
+            "  Draft a haiku",
+            "  Explain borrow checker",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_window_with_project_shows_no_project_group_for_orphan_threads(
+    cx: &mut TestAppContext,
+) {
+    let project = init_test_project("/my-project", cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    save_named_thread_metadata("s1", "Project thread", &project, cx).await;
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec!["v [my-project]", "  Project thread"],
+        "windows without project-less threads should not show a \"No project\" group"
+    );
+
+    seed_thread_metadata(
+        ThreadMetadata {
+            thread_id: ThreadId::new(),
+            session_id: Some(acp::SessionId::new(Arc::from("orphan"))),
+            agent_id: agent::ZED_AGENT_ID.clone(),
+            title: Some("Orphan thread".into()),
+            title_override: None,
+            updated_at: chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, 0, 0, 0).unwrap(),
+            created_at: None,
+            interacted_at: None,
+            worktree_paths: WorktreePaths::from_folder_paths(&PathList::default()),
+            archived: false,
+            remote_connection: None,
+        },
+        cx,
+    );
+
+    // Project-less threads stay reachable from windows that have projects.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [my-project]",
+            "  Project thread",
+            "v [No project]",
+            "  Orphan thread",
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_single_workspace_with_saved_threads(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =
@@ -1595,8 +1679,8 @@ async fn test_new_entry_noops_without_open_project(cx: &mut TestAppContext) {
     });
 
     assert!(
-        !sidebar.read_with(cx, |sidebar, _cx| sidebar.contents.has_open_projects),
-        "empty workspaces should be treated as having no open projects"
+        !sidebar.read_with(cx, |sidebar, _cx| sidebar.contents.has_thread_list_content),
+        "empty workspaces without threads should render the empty state"
     );
 
     sidebar.update_in(cx, |sidebar, window, cx| {
@@ -1648,10 +1732,7 @@ async fn test_selection_clamps_after_entry_removal(cx: &mut TestAppContext) {
     );
 }
 
-async fn init_test_project_with_agent_panel(
-    worktree_path: &str,
-    cx: &mut TestAppContext,
-) -> Entity<project::Project> {
+fn init_test_with_agent_panel_support(cx: &mut TestAppContext) {
     agent_ui::test_support::init_test(cx);
     cx.update(|cx| {
         cx.set_global(agent_ui::MaxIdleRetainedThreads(1));
@@ -1660,6 +1741,13 @@ async fn init_test_project_with_agent_panel(
         language_model::LanguageModelRegistry::test(cx);
         prompt_store::init(cx);
     });
+}
+
+async fn init_test_project_with_agent_panel(
+    worktree_path: &str,
+    cx: &mut TestAppContext,
+) -> Entity<project::Project> {
+    init_test_with_agent_panel_support(cx);
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(worktree_path, serde_json::json!({ "src": {} }))
@@ -4245,6 +4333,9 @@ async fn test_search_only_shows_workspace_headers_with_matches(cx: &mut TestAppC
             "v [project-a]",
             "  Fix bug in sidebar",
             "  Add tests for editor",
+            "v [No project]",
+            "  Refactor sidebar layout",
+            "  Fix typo in README",
         ]
     );
 
@@ -4256,6 +4347,8 @@ async fn test_search_only_shows_workspace_headers_with_matches(cx: &mut TestAppC
             //
             "v [project-a]",
             "  Fix bug in sidebar  <== selected",
+            "v [No project]",
+            "  Refactor sidebar layout",
         ]
     );
 
@@ -4263,7 +4356,11 @@ async fn test_search_only_shows_workspace_headers_with_matches(cx: &mut TestAppC
     type_in_search(&sidebar, "typo", cx);
     assert_eq!(
         visible_entries_as_strings(&sidebar, cx),
-        Vec::<String>::new()
+        vec![
+            //
+            "v [No project]",
+            "  Fix typo in README  <== selected",
+        ]
     );
 
     // "project-a" matches the first workspace name — the header appears
@@ -4350,6 +4447,8 @@ async fn test_search_matches_workspace_name(cx: &mut TestAppContext) {
             //
             "v [alpha-project]",
             "  Fix bug in sidebar  <== selected",
+            "v [No project]",
+            "  Refactor sidebar layout",
         ]
     );
 
@@ -4364,6 +4463,8 @@ async fn test_search_matches_workspace_name(cx: &mut TestAppContext) {
             //
             "v [alpha-project]",
             "  Fix bug in sidebar  <== selected",
+            "v [No project]",
+            "  Fix typo in README",
         ]
     );
 
@@ -7877,6 +7978,234 @@ async fn test_activate_archived_thread_reuses_workspace_in_another_window_with_t
             sidebar,
             &session_id,
             "target window's sidebar should eagerly focus the activated archived thread",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_row_click_routes_to_window_hosting_live_project_less_thread(cx: &mut TestAppContext) {
+    init_test_with_agent_panel_support(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project-b", serde_json::json!({ "src": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project_a = project::Project::test(fs.clone(), [], cx).await;
+    let project_b = project::Project::test(fs.clone(), ["/project-b".as_ref()], cx).await;
+
+    let multi_workspace_a =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+    let multi_workspace_b =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project_b, window, cx));
+    let multi_workspace_a_entity = multi_workspace_a.root(cx).unwrap();
+    let multi_workspace_b_entity = multi_workspace_b.root(cx).unwrap();
+
+    let cx_a = &mut gpui::VisualTestContext::from_window(multi_workspace_a.into(), cx);
+    let sidebar_a = setup_sidebar(&multi_workspace_a_entity, cx_a);
+    let workspace_a = multi_workspace_a_entity.read_with(cx_a, |mw, _| mw.workspace().clone());
+    let panel_a = add_agent_panel(&workspace_a, cx_a);
+
+    let cx_b = &mut gpui::VisualTestContext::from_window(multi_workspace_b.into(), cx);
+    let sidebar_b = setup_sidebar(&multi_workspace_b_entity, cx_b);
+    let workspace_b = multi_workspace_b_entity.read_with(cx_b, |mw, _| mw.workspace().clone());
+    let panel_b = add_agent_panel(&workspace_b, cx_b);
+
+    let connection = StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Done".into()),
+    )]);
+    open_thread_with_connection(&panel_a, connection, cx_a);
+    send_message(&panel_a, cx_a);
+
+    let session_id = active_session_id(&panel_a, cx_a);
+    let thread_id = active_thread_id(&panel_a, cx_a);
+    save_test_thread_metadata(&session_id, &project_a, cx_a).await;
+    cx_b.run_until_parked();
+
+    let (metadata, workspace_entry) = sidebar_b.read_with(cx_b, |sidebar, _| {
+        sidebar
+            .contents
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                ListEntry::Thread(thread) if thread.metadata.thread_id == thread_id => {
+                    Some((thread.metadata.clone(), thread.workspace.clone()))
+                }
+                _ => None,
+            })
+            .expect("project-less thread should be listed in the project window's sidebar")
+    });
+    assert!(
+        matches!(workspace_entry, ThreadEntryWorkspace::Closed { .. }),
+        "a window without an empty workspace should list project-less threads as closed entries"
+    );
+
+    sidebar_b.update_in(cx_b, |sidebar, window, cx| {
+        sidebar.activate_thread_entry(metadata, workspace_entry, false, window, cx);
+    });
+    cx_b.run_until_parked();
+
+    assert!(
+        cx_b.read(|cx| cx.active_window().unwrap()) == *multi_workspace_a,
+        "activation should jump to the window hosting the live session"
+    );
+    assert_eq!(
+        multi_workspace_b
+            .read_with(cx_b, |mw, _| mw.workspaces().count())
+            .unwrap(),
+        1,
+        "the source window should not open a workspace for the live thread"
+    );
+    panel_b.read_with(cx_b, |panel, cx| {
+        assert!(
+            panel.conversation_view_for_id(&thread_id, cx).is_none(),
+            "the source window's panel should not load a duplicate copy of the live thread"
+        );
+    });
+    sidebar_a.read_with(cx_a, |sidebar, _| {
+        assert_active_thread(
+            sidebar,
+            &session_id,
+            "target window's sidebar should focus the activated thread",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_archive_open_routes_to_window_hosting_live_project_less_thread(
+    cx: &mut TestAppContext,
+) {
+    init_test_with_agent_panel_support(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/project-b", serde_json::json!({ "src": {} }))
+        .await;
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+
+    let project_a = project::Project::test(fs.clone(), [], cx).await;
+    let project_b = project::Project::test(fs.clone(), ["/project-b".as_ref()], cx).await;
+
+    let multi_workspace_a =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+    let multi_workspace_b =
+        cx.add_window(|window, cx| MultiWorkspace::test_new(project_b, window, cx));
+    let multi_workspace_a_entity = multi_workspace_a.root(cx).unwrap();
+    let multi_workspace_b_entity = multi_workspace_b.root(cx).unwrap();
+
+    let cx_a = &mut gpui::VisualTestContext::from_window(multi_workspace_a.into(), cx);
+    let sidebar_a = setup_sidebar(&multi_workspace_a_entity, cx_a);
+    let workspace_a = multi_workspace_a_entity.read_with(cx_a, |mw, _| mw.workspace().clone());
+    let panel_a = add_agent_panel(&workspace_a, cx_a);
+
+    let cx_b = &mut gpui::VisualTestContext::from_window(multi_workspace_b.into(), cx);
+    let sidebar_b = setup_sidebar(&multi_workspace_b_entity, cx_b);
+    let workspace_b = multi_workspace_b_entity.read_with(cx_b, |mw, _| mw.workspace().clone());
+    let panel_b = add_agent_panel(&workspace_b, cx_b);
+
+    let connection = StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Done".into()),
+    )]);
+    open_thread_with_connection(&panel_a, connection, cx_a);
+    send_message(&panel_a, cx_a);
+
+    let session_id = active_session_id(&panel_a, cx_a);
+    let thread_id = active_thread_id(&panel_a, cx_a);
+    save_test_thread_metadata(&session_id, &project_a, cx_a).await;
+    cx_b.run_until_parked();
+
+    let metadata = cx_b.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&session_id)
+            .cloned()
+            .expect("metadata for the live thread should exist")
+    });
+
+    sidebar_b.update_in(cx_b, |sidebar, window, cx| {
+        sidebar.open_thread_from_archive(metadata, window, cx);
+    });
+    cx_b.run_until_parked();
+
+    assert!(
+        cx_b.read(|cx| cx.active_window().unwrap()) == *multi_workspace_a,
+        "archive activation should jump to the window hosting the live session"
+    );
+    assert_eq!(
+        multi_workspace_b
+            .read_with(cx_b, |mw, _| mw.workspaces().count())
+            .unwrap(),
+        1,
+        "the source window should not open a workspace for the live thread"
+    );
+    panel_b.read_with(cx_b, |panel, cx| {
+        assert!(
+            panel.conversation_view_for_id(&thread_id, cx).is_none(),
+            "the source window's panel should not load a duplicate copy of the live thread"
+        );
+    });
+    sidebar_a.read_with(cx_a, |sidebar, _| {
+        assert_active_thread(
+            sidebar,
+            &session_id,
+            "target window's sidebar should focus the activated thread",
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_archive_open_activates_live_project_less_thread_in_same_window(
+    cx: &mut TestAppContext,
+) {
+    init_test_with_agent_panel_support(cx);
+    let fs = FakeFs::new(cx.executor());
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+    let project = project::Project::test(fs, [], cx).await;
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let (sidebar, panel) = setup_sidebar_with_agent_panel(&multi_workspace, cx);
+
+    let connection = StubAgentConnection::new();
+    connection.set_next_prompt_updates(vec![acp::SessionUpdate::AgentMessageChunk(
+        acp::ContentChunk::new("Done".into()),
+    )]);
+    open_thread_with_connection(&panel, connection, cx);
+    send_message(&panel, cx);
+
+    let session_id = active_session_id(&panel, cx);
+    let thread_id = active_thread_id(&panel, cx);
+    save_test_thread_metadata(&session_id, &project, cx).await;
+
+    let metadata = cx.update(|_, cx| {
+        ThreadMetadataStore::global(cx)
+            .read(cx)
+            .entry_by_session(&session_id)
+            .cloned()
+            .expect("metadata for the live thread should exist")
+    });
+
+    // Regression check: this used to resolve the current window through the
+    // cross-window lookup and re-entrantly update this sidebar, panicking.
+    sidebar.update_in(cx, |sidebar, window, cx| {
+        sidebar.open_thread_from_archive(metadata, window, cx);
+    });
+    cx.run_until_parked();
+
+    assert_eq!(
+        multi_workspace.read_with(cx, |mw, _| mw.workspaces().count()),
+        1,
+        "activating a live thread in the same window should not open another workspace"
+    );
+    panel.read_with(cx, |panel, cx| {
+        assert!(
+            panel.conversation_view_for_id(&thread_id, cx).is_some(),
+            "the panel should keep hosting the live thread"
+        );
+    });
+    sidebar.read_with(cx, |sidebar, _| {
+        assert_active_thread(
+            sidebar,
+            &session_id,
+            "live project-less thread should activate locally",
         );
     });
 }
