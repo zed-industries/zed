@@ -237,6 +237,9 @@ pub struct AgentSettingsContent {
     pub default_model: Option<LanguageModelSelection>,
     /// The model to use for subagents spawned via the `spawn_agent` tool. Defaults to the parent agent's model when not specified.
     pub subagent_model: Option<LanguageModelSelection>,
+    /// Model metadata used to route spawned subagents by task complexity. When empty, subagents use `subagent_model` or the parent model.
+    #[serde(default)]
+    pub model_registry: Vec<AgentModelRegistryEntry>,
     /// Favorite models to show at the top of the model selector.
     #[serde(default)]
     pub favorite_models: Vec<LanguageModelSelection>,
@@ -586,6 +589,19 @@ pub struct LanguageModelSelection {
     pub enable_thinking: bool,
     pub effort: Option<String>,
     pub speed: Option<language_model_core::Speed>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, PartialEq)]
+pub struct AgentModelRegistryEntry {
+    pub provider: LanguageModelProviderSetting,
+    pub model: String,
+    #[serde(serialize_with = "crate::serialize_f32_with_two_decimal_places")]
+    pub intelligence_score: f32,
+    #[serde(serialize_with = "crate::serialize_f32_with_two_decimal_places")]
+    pub cost_per_1m_input_tokens: f32,
+    #[serde(serialize_with = "crate::serialize_f32_with_two_decimal_places")]
+    pub cost_per_1m_output_tokens: f32,
 }
 
 #[with_fallible_options]

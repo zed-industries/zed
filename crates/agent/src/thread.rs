@@ -6,6 +6,7 @@ use crate::{
     RenameTool, SandboxedTerminalTool, SpawnAgentTool, SystemPromptTemplate, Template, Templates,
     TerminalTool, ToolPermissionDecision, WebSearchTool, WriteFileTool,
     decide_permission_from_settings,
+    model_router::{ModelRoutingDecision, SubagentTaskProfile, route_model_for_task},
 };
 use acp_thread::{MentionUri, UserMessageId};
 use action_log::ActionLog;
@@ -744,6 +745,15 @@ pub trait ThreadEnvironment {
 
     fn create_subagent(&self, label: String, cx: &mut App) -> Result<Rc<dyn SubagentHandle>>;
 
+    fn create_subagent_for_task(
+        &self,
+        label: String,
+        _task_complexity_score: f32,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        self.create_subagent(label, cx)
+    }
+
     fn resume_subagent(
         &self,
         _session_id: acp::SessionId,
@@ -1262,6 +1272,14 @@ impl Thread {
     }
 
     pub fn new_subagent(parent_thread: &Entity<Thread>, cx: &mut Context<Self>) -> Self {
+        Self::new_subagent_for_task(parent_thread, None, cx)
+    }
+
+    pub(crate) fn new_subagent_for_task(
+        parent_thread: &Entity<Thread>,
+        task_profile: Option<SubagentTaskProfile>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let project = parent_thread.read(cx).project.clone();
         let project_context = parent_thread.read(cx).project_context.clone();
         let context_server_registry = parent_thread.read(cx).context_server_registry.clone();
@@ -1287,6 +1305,29 @@ impl Thread {
         if let Some(subagent_model) = AgentSettings::get_global(cx).subagent_model.clone() {
             thread.inherits_parent_model_settings = false;
             thread.apply_model_selection(&subagent_model, cx);
+        } else if let Some(task_profile) = task_profile {
+            let model_registry = AgentSettings::get_global(cx).model_registry.clone();
+            if let Some(decision) = route_model_for_task(&model_registry, task_profile) {
+                if let Some(model) = Self::resolve_model_from_routing_decision(&decision, cx) {
+                    log::debug!(
+                        "routed subagent task score {:.1} ({}) to model {}/{} with intelligence score {:.1} and cost {:.2} per 1m tokens",
+                        decision.task_complexity_score,
+                        decision.tier.as_str(),
+                        decision.provider,
+                        decision.model,
+                        decision.model_intelligence_score,
+                        decision.cost_per_1m_tokens
+                    );
+                    thread.set_model(model, cx);
+                    thread.inherits_parent_model_settings = false;
+                } else {
+                    log::warn!(
+                        "failed to resolve routed subagent model: {}/{}",
+                        decision.provider,
+                        decision.model
+                    );
+                }
+            }
         }
         thread
     }
@@ -2384,9 +2425,27 @@ impl Thread {
             provider: LanguageModelProviderId::from(selection.provider.0.clone()),
             model: LanguageModelId::from(selection.model.clone()),
         };
+        Self::resolve_model_from_selected_model(&selected, cx)
+    }
+
+    fn resolve_model_from_routing_decision(
+        decision: &ModelRoutingDecision,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<dyn LanguageModel>> {
+        let selected = SelectedModel {
+            provider: LanguageModelProviderId::from(decision.provider.clone()),
+            model: LanguageModelId::from(decision.model.clone()),
+        };
+        Self::resolve_model_from_selected_model(&selected, cx)
+    }
+
+    fn resolve_model_from_selected_model(
+        selected: &SelectedModel,
+        cx: &mut Context<Self>,
+    ) -> Option<Arc<dyn LanguageModel>> {
         LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
             registry
-                .select_model(&selected, cx)
+                .select_model(selected, cx)
                 .map(|configured| configured.model)
         })
     }

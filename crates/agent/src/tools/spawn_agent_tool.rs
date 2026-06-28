@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
+use crate::{
+    AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput, model_router::SubagentTaskProfile,
+};
 
 /// Spawn a sub-agent for a well-scoped task.
 ///
@@ -145,7 +147,13 @@ impl AgentTool for SpawnAgentTool {
                 let subagent = if let Some(session_id) = input.session_id {
                     self.environment.resume_subagent(session_id, cx)
                 } else {
-                    self.environment.create_subagent(input.label, cx)
+                    let task_profile =
+                        SubagentTaskProfile::for_spawn_agent(&input.label, &input.message);
+                    self.environment.create_subagent_for_task(
+                        input.label,
+                        task_profile.complexity_score(),
+                        cx,
+                    )
                 };
                 let subagent = subagent.map_err(|err| SpawnAgentToolOutput::Error {
                     session_id: None,

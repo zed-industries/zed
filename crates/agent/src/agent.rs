@@ -1,5 +1,6 @@
 mod db;
 mod legacy_thread;
+mod model_router;
 mod native_agent_server;
 pub mod outline;
 mod pattern_extraction;
@@ -2992,6 +2993,7 @@ impl NativeThreadEnvironment {
     pub(crate) fn create_subagent_thread(
         &self,
         label: String,
+        task_profile: Option<model_router::SubagentTaskProfile>,
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         let Some(parent_thread_entity) = self.thread.upgrade() else {
@@ -3009,7 +3011,7 @@ impl NativeThreadEnvironment {
         }
 
         let subagent_thread: Entity<Thread> = cx.new(|cx| {
-            let mut thread = Thread::new_subagent(&parent_thread_entity, cx);
+            let mut thread = Thread::new_subagent_for_task(&parent_thread_entity, task_profile, cx);
             thread.set_title(label.into(), cx);
             thread
         });
@@ -3192,7 +3194,18 @@ impl ThreadEnvironment for NativeThreadEnvironment {
     }
 
     fn create_subagent(&self, label: String, cx: &mut App) -> Result<Rc<dyn SubagentHandle>> {
-        self.create_subagent_thread(label, cx)
+        self.create_subagent_thread(label, None, cx)
+    }
+
+    fn create_subagent_for_task(
+        &self,
+        label: String,
+        task_complexity_score: f32,
+        cx: &mut App,
+    ) -> Result<Rc<dyn SubagentHandle>> {
+        let task_profile =
+            model_router::SubagentTaskProfile::from_complexity_score(task_complexity_score);
+        self.create_subagent_thread(label, Some(task_profile), cx)
     }
 
     fn resume_subagent(

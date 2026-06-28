@@ -41,7 +41,10 @@ use reqwest_client::ReqwestClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use settings::{LanguageModelProviderSetting, LanguageModelSelection, Settings, SettingsStore};
+use settings::{
+    AgentModelRegistryEntry, LanguageModelProviderSetting, LanguageModelSelection, Settings,
+    SettingsStore,
+};
 use std::{
     path::Path,
     pin::Pin,
@@ -5719,6 +5722,12 @@ async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppCon
         "Subagent Model",
         true,
     ));
+    let registry_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+        "fake-corp",
+        "registry-model",
+        "Registry Model",
+        false,
+    ));
 
     cx.update(|cx| {
         LanguageModelRegistry::test(cx);
@@ -5728,7 +5737,7 @@ async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppCon
                 LanguageModelProviderId::from("fake-corp".to_string()),
                 LanguageModelProviderName::from("Fake Corp".to_string()),
             )
-            .with_models(vec![subagent_model.clone()]),
+            .with_models(vec![subagent_model.clone(), registry_model.clone()]),
         );
         LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
             registry.register_provider(provider, cx);
@@ -5742,6 +5751,13 @@ async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppCon
             effort: Some("high".to_string()),
             speed: None,
         });
+        settings.model_registry = vec![model_registry_entry(
+            "fake-corp",
+            "registry-model",
+            30.0,
+            0.1,
+            0.1,
+        )];
         agent_settings::AgentSettings::override_global(settings, cx);
     });
 
@@ -5783,6 +5799,119 @@ async fn test_subagent_thread_uses_configured_subagent_model(cx: &mut TestAppCon
         assert!(subagent_thread.thinking_enabled());
         assert_eq!(subagent_thread.thinking_effort(), Some(&"high".to_string()));
     });
+}
+
+#[gpui::test]
+async fn test_subagent_thread_uses_model_registry_route(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(path!("/test"), json!({})).await;
+    let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
+    let project_context = cx.new(|_cx| ProjectContext::default());
+    let context_server_store = project.read_with(cx, |project, _| project.context_server_store());
+    let context_server_registry =
+        cx.new(|cx| ContextServerRegistry::new(context_server_store.clone(), cx));
+    let parent_model = Arc::new(FakeLanguageModel::default());
+    let cheap_boot_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+        "fake-corp",
+        "cheap-boot-model",
+        "Cheap Boot Model",
+        false,
+    ));
+    let expensive_boot_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+        "fake-corp",
+        "expensive-boot-model",
+        "Expensive Boot Model",
+        false,
+    ));
+    let mid_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+        "fake-corp",
+        "mid-model",
+        "Mid Model",
+        false,
+    ));
+
+    cx.update(|cx| {
+        LanguageModelRegistry::test(cx);
+
+        let provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
+            )
+            .with_models(vec![
+                cheap_boot_model.clone(),
+                expensive_boot_model.clone(),
+                mid_model.clone(),
+            ]),
+        );
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            registry.register_provider(provider, cx);
+        });
+
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.subagent_model = None;
+        settings.model_registry = vec![
+            model_registry_entry("fake-corp", "expensive-boot-model", 35.0, 1.0, 2.0),
+            model_registry_entry("fake-corp", "cheap-boot-model", 30.0, 0.1, 0.2),
+            model_registry_entry("fake-corp", "mid-model", 65.0, 0.5, 0.5),
+        ];
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let parent_thread = cx.new(|cx| {
+        Thread::new(
+            project.clone(),
+            project_context,
+            context_server_registry,
+            Templates::new(),
+            Some(parent_model.clone()),
+            cx,
+        )
+    });
+
+    let task_profile =
+        crate::model_router::SubagentTaskProfile::for_spawn_agent("Format imports", "Sort imports");
+    let subagent_thread =
+        cx.new(|cx| Thread::new_subagent_for_task(&parent_thread, Some(task_profile), cx));
+
+    subagent_thread.read_with(cx, |subagent_thread, _cx| {
+        assert_eq!(
+            subagent_thread.model().map(|model| model.id()),
+            Some(cheap_boot_model.id())
+        );
+    });
+
+    parent_thread.update(cx, |parent_thread, _cx| {
+        parent_thread.register_running_subagent(subagent_thread.downgrade());
+    });
+    parent_thread.update(cx, |parent_thread, cx| {
+        parent_thread.set_model(mid_model.clone(), cx);
+    });
+
+    subagent_thread.read_with(cx, |subagent_thread, _cx| {
+        assert_eq!(
+            subagent_thread.model().map(|model| model.id()),
+            Some(cheap_boot_model.id())
+        );
+    });
+}
+
+fn model_registry_entry(
+    provider: &str,
+    model: &str,
+    intelligence_score: f32,
+    input_cost: f32,
+    output_cost: f32,
+) -> AgentModelRegistryEntry {
+    AgentModelRegistryEntry {
+        provider: LanguageModelProviderSetting(provider.to_string()),
+        model: model.to_string(),
+        intelligence_score,
+        cost_per_1m_input_tokens: input_cost,
+        cost_per_1m_output_tokens: output_cost,
+    }
 }
 
 #[gpui::test]

@@ -38,6 +38,7 @@ Some Zed AI features have their own model or prompt settings in `settings.json`,
 - `agent.commit_message_model`
 - `agent.thread_summary_model`
 - `agent.subagent_model`
+- `agent.model_registry`
 - `agent.commit_message_instructions`
 - `agent.inline_alternatives`
 
@@ -128,6 +129,43 @@ Some AI settings are not configured in the Agent Settings panel:
 Zed supports feature-specific model settings for Inline Assistant, Git commit generation, thread summaries, and subagents. Configure these in settings when you need a different model for a specific workflow.
 
 See [LLM Providers](./llm-providers.md) for model access, and [All Settings](../reference/all-settings.md) for the complete settings reference.
+
+## Subagent Model Routing {#subagent-model-routing}
+
+By default, subagents spawned with `spawn_agent` inherit the parent thread's
+model. Set `agent.subagent_model` when every subagent should use one fixed
+model.
+
+When `agent.subagent_model` is unset, you can use `agent.model_registry` to
+route spawned subagents by task complexity. Zed scores the delegated task,
+maps it to a wide tier, and selects the cheapest configured model in that tier.
+
+```json [settings]
+{
+  "agent": {
+    "model_registry": [
+      {
+        "provider": "ollama",
+        "model": "qwen2.5-coder:0.5b",
+        "intelligence_score": 30,
+        "cost_per_1m_input_tokens": 0.01,
+        "cost_per_1m_output_tokens": 0.02
+      },
+      {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4",
+        "intelligence_score": 70,
+        "cost_per_1m_input_tokens": 3,
+        "cost_per_1m_output_tokens": 15
+      }
+    ]
+  }
+}
+```
+
+The tier bands are `0-40` for boot tasks, `41-70` for mid tasks, and `71-100`
+for heavy tasks. If no registry entry matches the task tier or the selected
+model is not configured, the subagent inherits the parent model.
 
 ## Model Temperature {#model-temperature}
 
