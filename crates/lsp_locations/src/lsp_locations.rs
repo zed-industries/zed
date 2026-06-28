@@ -1,12 +1,12 @@
 use std::ops::Range;
 
-use collections::HashMap;
+use collections::{HashMap, HashSet};
+use editor::actions::{FindAllReferences, GoToDefinition, GoToImplementation, OpenResultsIn};
 use editor::{Editor, GotoDefinitionKind};
 use file_icons::FileIcons;
 use gpui::{
     AnyElement, App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity, actions,
-    prelude::*,
+    Focusable, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity, prelude::*,
 };
 use language::{Buffer, HighlightId, LanguageAwareStyling};
 use picker::{Picker, PickerDelegate};
@@ -21,32 +21,74 @@ use workspace::item::ItemSettings;
 use workspace::notifications::NotificationId;
 use workspace::{ModalView, Toast, Workspace};
 
-actions!(
-    editor,
-    [
-        /// Lists references to the symbol under the cursor in a filterable picker.
-        ListReferences,
-        /// Lists definitions of the symbol under the cursor in a filterable picker.
-        ListDefinitions,
-        /// Lists implementations of the symbol under the cursor in a filterable picker.
-        ListImplementations,
-    ]
-);
-
 pub fn init(cx: &mut App) {
     cx.observe_new(register).detach();
 }
 
-fn register(workspace: &mut Workspace, _window: Option<&mut Window>, _cx: &mut Context<Workspace>) {
-    workspace.register_action(|workspace, _: &ListReferences, window, cx| {
-        LspLocationsPicker::open(LspPickerKind::References, workspace, window, cx);
-    });
-    workspace.register_action(|workspace, _: &ListDefinitions, window, cx| {
-        LspLocationsPicker::open(LspPickerKind::Definition, workspace, window, cx);
-    });
-    workspace.register_action(|workspace, _: &ListImplementations, window, cx| {
-        LspLocationsPicker::open(LspPickerKind::Implementation, workspace, window, cx);
-    });
+/// Registers handlers for the navigation actions on each full editor. When the
+/// action resolves to [`OpenResultsIn::Picker`], we open the filterable picker;
+/// otherwise we `cx.propagate()` so the editor's own handler runs and builds a
+/// multibuffer.
+fn register(editor: &mut Editor, _window: Option<&mut Window>, cx: &mut Context<Editor>) {
+    if !editor.mode().is_full() {
+        return;
+    }
+    let handle = cx.entity().downgrade();
+    editor
+        .register_action({
+            let handle = handle.clone();
+            move |action: &GoToDefinition, window, cx| {
+                handle_nav_action(
+                    action.open_results_in,
+                    LspPickerKind::Definition,
+                    &handle,
+                    window,
+                    cx,
+                );
+            }
+        })
+        .detach();
+    editor
+        .register_action({
+            let handle = handle.clone();
+            move |action: &GoToImplementation, window, cx| {
+                handle_nav_action(
+                    action.open_results_in,
+                    LspPickerKind::Implementation,
+                    &handle,
+                    window,
+                    cx,
+                );
+            }
+        })
+        .detach();
+    editor
+        .register_action(move |action: &FindAllReferences, window, cx| {
+            handle_nav_action(
+                action.open_results_in,
+                LspPickerKind::References,
+                &handle,
+                window,
+                cx,
+            );
+        })
+        .detach();
+}
+
+/// Either opens the picker for the editor, or propagates the action so the
+/// editor's built-in (multibuffer) handler runs.
+fn handle_nav_action(
+    open_results_in: Option<OpenResultsIn>,
+    kind: LspPickerKind,
+    editor: &WeakEntity<Editor>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if open_results_in != Some(OpenResultsIn::Picker) {
+        cx.propagate();
+        return;
+    }
+    LspLocationsPicker::open_for_editor(kind, editor.clone(), window, cx);
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -101,25 +143,32 @@ pub struct LspLocationsPicker {
 }
 
 impl LspLocationsPicker {
+    fn open_for_editor(
+        kind: LspPickerKind,
+        editor: WeakEntity<Editor>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(editor) = editor.upgrade() else {
+            return;
+        };
+        let Some(workspace) = editor.read(cx).workspace() else {
+            return;
+        };
+        workspace.update(cx, |workspace, cx| {
+            Self::open(kind, editor, workspace, window, cx);
+        });
+    }
+
     /// Opens the picker for `kind`: runs a fresh LSP query and shows the
-    /// results. If the picker is already open, dismisses it instead.
+    /// results.
     fn open(
         kind: LspPickerKind,
+        editor: Entity<Editor>,
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        if workspace.active_modal::<Self>(cx).is_some() {
-            workspace.hide_modal(window, cx);
-            return;
-        }
-
-        let Some(editor) = workspace
-            .active_item(cx)
-            .and_then(|item| item.act_as::<Editor>(cx))
-        else {
-            return;
-        };
         let project = workspace.project().clone();
         let Some(query) = editor.update(cx, |editor, cx| kind.run_query(editor, &project, cx))
         else {
@@ -127,7 +176,7 @@ impl LspLocationsPicker {
         };
         let editor = editor.downgrade();
         cx.spawn_in(window, async move |workspace, cx| {
-            let locations = match query.await {
+            let mut locations = match query.await {
                 Ok(locations) => locations,
                 Err(error) => {
                     log::error!("LSP {kind:?} query failed: {error:#}");
@@ -137,6 +186,11 @@ impl LspLocationsPicker {
                     return;
                 }
             };
+            // Drop exact-duplicate locations a server may report more than once,
+            // so a single distinct result jumps directly instead of opening a one-row picker.
+            let mut seen = HashSet::default();
+            locations.retain(|location| seen.insert(location.clone()));
+
             if locations.is_empty() {
                 workspace
                     .update(cx, |workspace, cx| {
@@ -151,6 +205,17 @@ impl LspLocationsPicker {
                         );
                     })
                     .log_err();
+                return;
+            }
+
+            if locations.len() == 1 {
+                if let Some(location) = locations.into_iter().next()
+                    && let Ok(task) = editor.update_in(cx, |editor, window, cx| {
+                        editor.open_location(location, false, window, cx)
+                    })
+                {
+                    task.await.log_err();
+                }
                 return;
             }
 
