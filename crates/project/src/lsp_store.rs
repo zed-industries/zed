@@ -1134,23 +1134,12 @@ impl LocalLspStore {
 
         language_server
             .on_request::<lsp::request::CodeLensRefresh, _, _>({
-                let this = lsp_store.clone();
+                let lsp_store = lsp_store.clone();
                 move |(), cx| {
-                    let this = this.clone();
-                    let mut cx = cx.clone();
-                    async move {
-                        this.update(&mut cx, |this, cx| {
-                            this.invalidate_code_lens();
-                            cx.emit(LspStoreEvent::RefreshCodeLens);
-                            this.downstream_client.as_ref().map(|(client, project_id)| {
-                                client.send(proto::RefreshCodeLens {
-                                    project_id: *project_id,
-                                })
-                            })
-                        })?
-                        .transpose()?;
-                        Ok(())
-                    }
+                    let result = lsp_store.update(cx, |lsp_store, cx| {
+                        lsp_store.refresh_code_lens(cx);
+                    });
+                    async move { result }
                 }
             })
             .detach();
@@ -13128,6 +13117,7 @@ impl LspStore {
                             capabilities.code_lens_provider = Some(caps);
                         });
                         notify_server_capabilities_updated(&server, cx);
+                        self.refresh_code_lens(cx);
                     }
                 }
                 "textDocument/diagnostic" => {

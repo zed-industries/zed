@@ -125,11 +125,7 @@ impl CommandPalette {
         );
 
         let picker = cx.new(|cx| {
-            let picker = Picker::uniform_list(delegate, window, cx)
-                .initial_width(rems(34.))
-                .minimum_results_width(rems(34.))
-                .height(rems(24.))
-                .no_vertical_padding();
+            let picker = Picker::uniform_list(delegate, window, cx);
             picker.set_query(query, window, cx);
             picker
         });
