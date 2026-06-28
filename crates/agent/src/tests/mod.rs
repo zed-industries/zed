@@ -7566,7 +7566,7 @@ async fn test_queued_message_does_not_end_turn_without_boundary_flag(cx: &mut Te
 
     let mut events = thread
         .update(cx, |thread, cx| {
-            thread.send(UserMessageId::new(), ["Use the echo tool"], cx)
+            thread.send(ClientUserMessageId::new(), ["Use the echo tool"], cx)
         })
         .unwrap();
     cx.run_until_parked();
