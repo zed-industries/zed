@@ -13,6 +13,7 @@ use cloud_llm_client::predict_edits_v3::{
     PREDICT_EDITS_TRIGGER_HEADER_NAME, PredictEditsMode, PredictEditsV3Request,
     PredictEditsV3Response, RawCompletionRequest, RawCompletionResponse,
 };
+use cloud_llm_client::predict_edits_v4::{PredictEditsV4Request, PredictEditsV4Response};
 use cloud_llm_client::{
     EditPredictionRejectReason, EditPredictionRejection,
     MAX_EDIT_PREDICTION_REJECTIONS_PER_REQUEST, MINIMUM_REQUIRED_VERSION_HEADER_NAME,
@@ -59,7 +60,7 @@ use std::rc::Rc;
 use text::{AnchorRangeExt, Edit};
 use workspace::{AppState, Workspace};
 use zeta_prompt::ContextSource;
-use zeta_prompt::{Zeta2PromptInput, ZetaFormat};
+use zeta_prompt::{Zeta2PromptInput, Zeta3PromptInput, ZetaFormat};
 
 use std::mem;
 use std::ops::Range;
@@ -190,7 +191,6 @@ pub enum EditPredictionModel {
     Mercury,
 }
 
-#[derive(Clone)]
 pub struct EditPredictionModelInput {
     project: Entity<Project>,
     buffer: Entity<Buffer>,
@@ -198,12 +198,14 @@ pub struct EditPredictionModelInput {
     position: Anchor,
     events: Vec<Arc<zeta_prompt::Event>>,
     related_files: Vec<RelatedFile>,
+    editable_context: Option<Task<anyhow::Result<Vec<RelatedFile>>>>,
     mode: PredictEditsMode,
     trigger: PredictEditsRequestTrigger,
     diagnostic_search_range: Range<Point>,
     debug_tx: Option<mpsc::UnboundedSender<DebugEvent>>,
     can_collect_data: bool,
     is_open_source: bool,
+    allow_jump: bool,
 }
 
 #[derive(Debug)]
@@ -1107,6 +1109,7 @@ impl EditPredictionStore {
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
         let app_version = AppVersion::global(cx);
+        let is_jumps_api = cx.has_flag::<EditPredictionJumpsFeatureFlag>();
         let organization_id = self
             .user_store
             .read(cx)
@@ -1118,9 +1121,10 @@ impl EditPredictionStore {
                 .background_spawn(async move {
                     let organization_id =
                         organization_id.ok_or_else(|| anyhow!("No organization selected."))?;
-                    let url = client
-                        .http_client()
-                        .build_zed_llm_url("/edit_prediction_experiments", &[])?;
+                    let url = client.http_client().build_zed_llm_url(
+                        "/edit_prediction_experiments",
+                        &[("is_jumps_api", if is_jumps_api { "true" } else { "false" })],
+                    )?;
                     let mut response = client
                         .authenticated_llm_request(&llm_token, organization_id, |token| {
                             Ok(http_client::Request::builder()
@@ -2740,23 +2744,27 @@ impl EditPredictionStore {
         }
 
         self.get_or_init_project(&project, cx);
-        let project_state = self.projects.get(&project.entity_id()).unwrap();
-        let stored_events = project_state.events(cx);
-        let prompt_history_boundary = Some(PromptHistoryBoundary {
-            first_event_seq: project_state
-                .last_event
-                .as_ref()
-                .map_or(project_state.next_last_event_seq, |last_event| {
-                    last_event.seq
+        let (stored_events, prompt_history_boundary, debug_tx) = {
+            let project_state = self.projects.get(&project.entity_id()).unwrap();
+            (
+                project_state.events(cx),
+                Some(PromptHistoryBoundary {
+                    first_event_seq: project_state
+                        .last_event
+                        .as_ref()
+                        .map_or(project_state.next_last_event_seq, |last_event| {
+                            last_event.seq
+                        }),
+                    snapshot: project_state
+                        .last_event
+                        .as_ref()
+                        .map(|last_event| last_event.new_snapshot.clone()),
                 }),
-            snapshot: project_state
-                .last_event
-                .as_ref()
-                .map(|last_event| last_event.new_snapshot.clone()),
-        });
+                project_state.debug_tx.clone(),
+            )
+        };
         let events: Vec<Arc<zeta_prompt::Event>> =
             stored_events.iter().map(|e| e.event.clone()).collect();
-        let debug_tx = project_state.debug_tx.clone();
 
         let snapshot = active_buffer.read(cx).snapshot();
         let cursor_point = position.to_point(&snapshot);
@@ -2766,6 +2774,7 @@ impl EditPredictionStore {
             Point::new(diagnostic_search_start, 0)..Point::new(diagnostic_search_end, 0);
 
         let related_files = self.context_for_project(&project, cx);
+        let allow_jump = is_cloud_zeta && cx.has_flag::<EditPredictionJumpsFeatureFlag>();
         let mode = match all_language_settings(snapshot.file(), cx).edit_predictions_mode() {
             EditPredictionsMode::Eager => PredictEditsMode::Eager,
             EditPredictionsMode::Subtle => PredictEditsMode::Subtle,
@@ -2807,6 +2816,16 @@ impl EditPredictionStore {
             && is_open_source
             && self.is_data_collection_enabled(cx)
             && matches!(self.edit_prediction_model, EditPredictionModel::Zeta);
+        let editable_context = allow_jump.then(|| {
+            self.collect_editable_context(
+                project.clone(),
+                active_buffer.clone(),
+                position,
+                Vec::new(),
+                vec![ContextSource::CurrentFile, ContextSource::EditHistory],
+                cx,
+            )
+        });
         let inputs = EditPredictionModelInput {
             project: project.clone(),
             buffer: active_buffer,
@@ -2814,12 +2833,14 @@ impl EditPredictionStore {
             position,
             events,
             related_files,
+            editable_context,
             mode,
             trigger,
             diagnostic_search_range,
             debug_tx,
             can_collect_data,
             is_open_source,
+            allow_jump,
         };
 
         let task = match self.edit_prediction_model {
@@ -2906,11 +2927,62 @@ impl EditPredictionStore {
         trigger: PredictEditsRequestTrigger,
         mode: PredictEditsMode,
     ) -> Result<(PredictEditsV3Response, Option<EditPredictionUsage>)> {
-        let url = client
-            .http_client()
-            .build_zed_llm_url("/predict_edits/v3", &[])?;
-
         let request = PredictEditsV3Request { input };
+        Self::send_predict_edits_request(
+            "/predict_edits/v3",
+            request,
+            preferred_experiment,
+            client,
+            llm_token,
+            organization_id,
+            app_version,
+            trigger,
+            mode,
+        )
+        .await
+    }
+
+    pub(crate) async fn send_v4_request(
+        input: Zeta3PromptInput,
+        preferred_experiment: Option<String>,
+        client: Arc<Client>,
+        llm_token: LlmApiToken,
+        organization_id: Option<OrganizationId>,
+        app_version: Version,
+        trigger: PredictEditsRequestTrigger,
+        mode: PredictEditsMode,
+    ) -> Result<(PredictEditsV4Response, Option<EditPredictionUsage>)> {
+        let request = PredictEditsV4Request { input };
+        Self::send_predict_edits_request(
+            "/predict_edits/v4",
+            request,
+            preferred_experiment,
+            client,
+            llm_token,
+            organization_id,
+            app_version,
+            trigger,
+            mode,
+        )
+        .await
+    }
+
+    async fn send_predict_edits_request<Req, Res>(
+        path: &str,
+        request: Req,
+        preferred_experiment: Option<String>,
+        client: Arc<Client>,
+        llm_token: LlmApiToken,
+        organization_id: Option<OrganizationId>,
+        app_version: Version,
+        trigger: PredictEditsRequestTrigger,
+        mode: PredictEditsMode,
+    ) -> Result<(Res, Option<EditPredictionUsage>)>
+    where
+        Req: serde::Serialize,
+        Res: serde::de::DeserializeOwned,
+    {
+        let url = client.http_client().build_zed_llm_url(path, &[])?;
         let request_id = uuid::Uuid::new_v4().to_string();
 
         let json_bytes = serde_json::to_vec(&request)?;
