@@ -1,8 +1,8 @@
 use std::ops::Range;
 
 use collections::{HashMap, HashSet};
-use editor::actions::{FindAllReferences, GoToDefinition, GoToImplementation, OpenResultsIn};
-use editor::{Editor, GotoDefinitionKind};
+use editor::actions::{FindAllReferences, GoToDefinition, GoToImplementation};
+use editor::{Editor, EditorSettings, GotoDefinitionKind, OpenResultsIn};
 use file_icons::FileIcons;
 use gpui::{
     AnyElement, App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
@@ -76,7 +76,8 @@ fn register(editor: &mut Editor, _window: Option<&mut Window>, cx: &mut Context<
 }
 
 /// Either opens the picker for the editor, or propagates the action so the
-/// editor's built-in (multibuffer) handler runs.
+/// editor's built-in (multibuffer) handler runs. A `None` argument falls back to
+/// the `lsp_results_location` setting.
 fn handle_nav_action(
     open_results_in: Option<OpenResultsIn>,
     kind: LspPickerKind,
@@ -84,7 +85,9 @@ fn handle_nav_action(
     window: &mut Window,
     cx: &mut App,
 ) {
-    if open_results_in != Some(OpenResultsIn::Picker) {
+    let open_results_in =
+        open_results_in.unwrap_or_else(|| EditorSettings::get_global(cx).lsp_results_location);
+    if open_results_in != OpenResultsIn::Picker {
         cx.propagate();
         return;
     }

@@ -947,13 +947,6 @@ actions!(
     ]
 );
 
-#[derive(PartialEq, Eq, Clone, Copy, Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum OpenResultsIn {
-    MultiBuffer,
-    Picker,
-}
-
 #[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
