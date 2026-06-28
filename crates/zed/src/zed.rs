@@ -377,8 +377,8 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         focus: false,
         show: false,
         kind: WindowKind::Normal,
-        // Zed handles window movement itself, so disable AppKit's titlebar dragging.
-        is_movable: false,
+        // Zed handles window movement itself, so disable AppKit's titlebar dragging on macOS.
+        is_movable: !cfg!(target_os = "macos"),
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
