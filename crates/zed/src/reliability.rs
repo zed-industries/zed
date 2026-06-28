@@ -103,7 +103,7 @@ fn start_memory_usage_logging(cx: &App) {
         let Some(pid) = sysinfo::get_current_pid().log_err() else {
             return;
         };
-        let refresh_kind = ProcessRefreshKind::nothing().with_memory();
+        let refresh_kind = ProcessRefreshKind::nothing().without_tasks().with_memory();
         let mut system = System::new();
         let mut last_logged_resident: Option<u64> = None;
         let mut last_logged_at = Instant::now();

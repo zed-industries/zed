@@ -70,15 +70,20 @@ impl std::fmt::Debug for LanguageServerState {
 const PROCESS_MEMORY_CACHE_DURATION: Duration = Duration::from_secs(5);
 
 struct ProcessMemoryCache {
-    system: System,
+    processes: HashMap<Pid, CachedProcessMemory>,
     memory_usage: HashMap<u32, u64>,
     last_refresh: Option<Instant>,
+}
+
+struct CachedProcessMemory {
+    parent: Option<Pid>,
+    memory: u64,
 }
 
 impl ProcessMemoryCache {
     fn new() -> Self {
         Self {
-            system: System::new(),
+            processes: HashMap::new(),
             memory_usage: HashMap::new(),
             last_refresh: None,
         }
@@ -91,9 +96,7 @@ impl ProcessMemoryCache {
             .unwrap_or(true);
 
         if cache_expired {
-            let refresh_kind = RefreshKind::nothing()
-                .with_processes(ProcessRefreshKind::nothing().without_tasks().with_memory());
-            self.system.refresh_specifics(refresh_kind);
+            self.refresh();
             self.memory_usage.clear();
             self.last_refresh = Some(Instant::now());
         }
@@ -104,38 +107,214 @@ impl ProcessMemoryCache {
 
         let root_pid = Pid::from_u32(process_id);
 
-        let parent_map: HashMap<Pid, Pid> = self
-            .system
-            .processes()
-            .iter()
-            .filter_map(|(&pid, process)| Some((pid, process.parent()?)))
-            .collect();
-
         let total_memory = self
-            .system
-            .processes()
+            .processes
             .iter()
-            .filter(|(pid, _)| self.is_descendant_of(**pid, root_pid, &parent_map))
-            .map(|(_, process)| process.memory())
+            .filter(|(pid, _)| self.is_descendant_of(**pid, root_pid))
+            .map(|(_, process)| process.memory)
             .sum();
 
         self.memory_usage.insert(process_id, total_memory);
         total_memory
     }
 
-    fn is_descendant_of(&self, pid: Pid, root_pid: Pid, parent_map: &HashMap<Pid, Pid>) -> bool {
+    fn refresh(&mut self) {
+        let refresh_kind = RefreshKind::nothing()
+            .with_processes(ProcessRefreshKind::nothing().without_tasks().with_memory());
+        let system = System::new_with_specifics(refresh_kind);
+        self.processes = system
+            .processes()
+            .iter()
+            .map(|(&pid, process)| {
+                (
+                    pid,
+                    CachedProcessMemory {
+                        parent: process.parent(),
+                        memory: process.memory(),
+                    },
+                )
+            })
+            .collect();
+    }
+
+    fn is_descendant_of(&self, pid: Pid, root_pid: Pid) -> bool {
         let mut current = pid;
         let mut visited = HashSet::default();
         while current != root_pid {
             if !visited.insert(current) {
                 return false;
             }
-            match parent_map.get(&current) {
-                Some(&parent) => current = parent,
+            match self
+                .processes
+                .get(&current)
+                .and_then(|process| process.parent)
+            {
+                Some(parent) => current = parent,
                 None => return false,
             }
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod process_memory_cache_tests {
+    use super::*;
+
+    #[test]
+    fn computes_descendant_memory_from_derived_process_data() {
+        let root_pid = Pid::from_u32(1);
+        let child_pid = Pid::from_u32(2);
+        let grandchild_pid = Pid::from_u32(3);
+        let unrelated_pid = Pid::from_u32(4);
+
+        let mut cache = ProcessMemoryCache {
+            processes: HashMap::from([
+                (
+                    root_pid,
+                    CachedProcessMemory {
+                        parent: None,
+                        memory: 10,
+                    },
+                ),
+                (
+                    child_pid,
+                    CachedProcessMemory {
+                        parent: Some(root_pid),
+                        memory: 20,
+                    },
+                ),
+                (
+                    grandchild_pid,
+                    CachedProcessMemory {
+                        parent: Some(child_pid),
+                        memory: 30,
+                    },
+                ),
+                (
+                    unrelated_pid,
+                    CachedProcessMemory {
+                        parent: None,
+                        memory: 40,
+                    },
+                ),
+            ]),
+            memory_usage: HashMap::new(),
+            last_refresh: Some(Instant::now()),
+        };
+
+        assert_eq!(cache.get_memory_usage(root_pid.as_u32()), 60);
+    }
+
+    #[test]
+    fn cycles_are_not_counted_as_descendants() {
+        let root_pid = Pid::from_u32(1);
+        let first_cycle_pid = Pid::from_u32(2);
+        let second_cycle_pid = Pid::from_u32(3);
+
+        let mut cache = ProcessMemoryCache {
+            processes: HashMap::from([
+                (
+                    root_pid,
+                    CachedProcessMemory {
+                        parent: None,
+                        memory: 10,
+                    },
+                ),
+                (
+                    first_cycle_pid,
+                    CachedProcessMemory {
+                        parent: Some(second_cycle_pid),
+                        memory: 20,
+                    },
+                ),
+                (
+                    second_cycle_pid,
+                    CachedProcessMemory {
+                        parent: Some(first_cycle_pid),
+                        memory: 30,
+                    },
+                ),
+            ]),
+            memory_usage: HashMap::new(),
+            last_refresh: Some(Instant::now()),
+        };
+
+        assert_eq!(cache.get_memory_usage(root_pid.as_u32()), 10);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn repeated_refreshes_do_not_retain_procfs_task_fds() {
+        let current_pid = match sysinfo::get_current_pid() {
+            Ok(pid) => pid,
+            Err(error) => panic!("failed to get current pid: {error}"),
+        };
+        let mut cache = ProcessMemoryCache::new();
+        let before = procfs_fd_snapshot();
+
+        for _ in 0..500 {
+            cache.last_refresh = None;
+            cache.get_memory_usage(current_pid.as_u32());
+            let snapshot = procfs_fd_snapshot();
+            assert!(
+                snapshot.task <= before.task,
+                "procfs task fd count grew: before={before:?}, current={snapshot:?}"
+            );
+        }
+
+        let after = procfs_fd_snapshot();
+        assert!(
+            after.procfs.saturating_sub(before.procfs) < 10,
+            "procfs fd growth too high: before={before:?}, after={after:?}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[derive(Clone, Copy, Debug, Default)]
+    struct ProcfsFdSnapshot {
+        procfs: usize,
+        task: usize,
+        stat: usize,
+        status: usize,
+        statm: usize,
+        other: usize,
+    }
+
+    #[cfg(target_os = "linux")]
+    fn procfs_fd_snapshot() -> ProcfsFdSnapshot {
+        let mut snapshot = ProcfsFdSnapshot::default();
+        let Ok(entries) = std::fs::read_dir("/proc/self/fd") else {
+            return snapshot;
+        };
+
+        for entry in entries {
+            let Ok(entry) = entry else {
+                continue;
+            };
+            let Ok(target) = std::fs::read_link(entry.path()) else {
+                continue;
+            };
+            let target = target.to_string_lossy();
+            if !target.starts_with("/proc/") {
+                continue;
+            }
+
+            snapshot.procfs += 1;
+            if target.ends_with("/task") || target.contains("/task/") {
+                snapshot.task += 1;
+            } else if target.ends_with("/stat") {
+                snapshot.stat += 1;
+            } else if target.ends_with("/status") {
+                snapshot.status += 1;
+            } else if target.ends_with("/statm") {
+                snapshot.statm += 1;
+            } else {
+                snapshot.other += 1;
+            }
+        }
+
+        snapshot
     }
 }
 

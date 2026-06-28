@@ -75,6 +75,7 @@ fn collect_process_tree() -> anyhow::Result<Value> {
         .map_err(|e| anyhow::anyhow!("sysinfo::get_current_pid failed: {e}"))?;
 
     let refresh = ProcessRefreshKind::nothing()
+        .without_tasks()
         .with_cmd(UpdateKind::Always)
         .with_exe(UpdateKind::Always);
     let mut system = System::new_with_specifics(RefreshKind::nothing().with_processes(refresh));
@@ -232,6 +233,85 @@ mod tests {
         let cmd: Vec<String> = Vec::new();
         assert_eq!(sanitize_cmd(cmd), None);
     }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn repeated_process_collectors_do_not_retain_procfs_task_fds() {
+        let before = procfs_fd_snapshot();
+
+        for _ in 0..500 {
+            if let Err(error) = collect_process_tree() {
+                panic!("failed to collect process tree: {error:#}");
+            }
+            if let Err(error) = collect_linux_proc_info() {
+                panic!("failed to collect linux proc info: {error:#}");
+            }
+
+            let snapshot = procfs_fd_snapshot();
+            assert!(
+                snapshot.task <= before.task,
+                "procfs task fd count grew: before={before:?}, current={snapshot:?}"
+            );
+        }
+
+        let after = procfs_fd_snapshot();
+        assert!(
+            after.procfs.saturating_sub(before.procfs) < 10,
+            "procfs fd growth too high: before={before:?}, after={after:?}"
+        );
+        assert_eq!(
+            after.procfs,
+            after.task + after.stat + after.status + after.statm + after.other,
+            "procfs fd snapshot did not classify all procfs fds: after={after:?}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[derive(Clone, Copy, Debug, Default)]
+    struct ProcfsFdSnapshot {
+        procfs: usize,
+        task: usize,
+        stat: usize,
+        status: usize,
+        statm: usize,
+        other: usize,
+    }
+
+    #[cfg(target_os = "linux")]
+    fn procfs_fd_snapshot() -> ProcfsFdSnapshot {
+        let mut snapshot = ProcfsFdSnapshot::default();
+        let Ok(entries) = std::fs::read_dir("/proc/self/fd") else {
+            return snapshot;
+        };
+
+        for entry in entries {
+            let Ok(entry) = entry else {
+                continue;
+            };
+            let Ok(target) = std::fs::read_link(entry.path()) else {
+                continue;
+            };
+            let target = target.to_string_lossy();
+            if !target.starts_with("/proc/") {
+                continue;
+            }
+
+            snapshot.procfs += 1;
+            if target.ends_with("/task") || target.contains("/task/") {
+                snapshot.task += 1;
+            } else if target.ends_with("/stat") {
+                snapshot.stat += 1;
+            } else if target.ends_with("/status") {
+                snapshot.status += 1;
+            } else if target.ends_with("/statm") {
+                snapshot.statm += 1;
+            } else {
+                snapshot.other += 1;
+            }
+        }
+
+        snapshot
+    }
 }
 
 fn descendants_of(system: &sysinfo::System, root: sysinfo::Pid) -> Vec<sysinfo::Pid> {
@@ -261,7 +341,7 @@ fn collect_linux_proc_info() -> anyhow::Result<Value> {
 
     let current_pid = sysinfo::get_current_pid()
         .map_err(|e| anyhow::anyhow!("sysinfo::get_current_pid failed: {e}"))?;
-    let refresh = ProcessRefreshKind::nothing();
+    let refresh = ProcessRefreshKind::nothing().without_tasks();
     let mut system = System::new_with_specifics(RefreshKind::nothing().with_processes(refresh));
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
 
@@ -322,7 +402,9 @@ async fn collect_macos_git_child_diagnostics() -> anyhow::Result<Value> {
     let current_pid = sysinfo::get_current_pid()
         .map_err(|e| anyhow::anyhow!("sysinfo::get_current_pid failed: {e}"))?;
 
-    let refresh = ProcessRefreshKind::nothing().with_exe(UpdateKind::Always);
+    let refresh = ProcessRefreshKind::nothing()
+        .without_tasks()
+        .with_exe(UpdateKind::Always);
     let mut system = System::new_with_specifics(RefreshKind::nothing().with_processes(refresh));
     system.refresh_processes_specifics(ProcessesToUpdate::All, true, refresh);
 

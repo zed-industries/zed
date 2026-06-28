@@ -995,7 +995,8 @@ pub(crate) fn execute_proxy(
 fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<(), ExecuteProxyError> {
     log::info!("killing existing server with PID {}", pid);
     let system = sysinfo::System::new_with_specifics(
-        sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
+        sysinfo::RefreshKind::nothing()
+            .with_processes(sysinfo::ProcessRefreshKind::nothing().without_tasks()),
     );
 
     if let Some(process) = system.process(sysinfo::Pid::from_u32(pid)) {
@@ -1161,7 +1162,8 @@ fn check_pid_file(path: &Path) -> Result<Option<u32>, CheckPidError> {
     log::debug!("Checking if process with PID {} exists...", pid);
 
     let system = sysinfo::System::new_with_specifics(
-        sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
+        sysinfo::RefreshKind::nothing()
+            .with_processes(sysinfo::ProcessRefreshKind::nothing().without_tasks()),
     );
 
     if system.process(sysinfo::Pid::from_u32(pid)).is_some() {
@@ -1359,9 +1361,13 @@ fn is_new_version(version: &str) -> bool {
 }
 
 fn is_file_in_use(file_name: &OsStr) -> bool {
-    let info = sysinfo::System::new_with_specifics(sysinfo::RefreshKind::nothing().with_processes(
-        sysinfo::ProcessRefreshKind::nothing().with_exe(sysinfo::UpdateKind::Always),
-    ));
+    let info = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing().with_processes(
+            sysinfo::ProcessRefreshKind::nothing()
+                .without_tasks()
+                .with_exe(sysinfo::UpdateKind::Always),
+        ),
+    );
 
     for process in info.processes().values() {
         if process
