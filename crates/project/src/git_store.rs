@@ -15,7 +15,10 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
-use buffer_diff::{BufferDiff, BufferDiffEvent, DiffHunk};
+use buffer_diff::{
+    BufferDiff, BufferDiffEvent, DiffHunk, DiffHunkSecondaryStatus, PendingHunk, PendingSense,
+    splice_index_edits,
+};
 use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
@@ -82,7 +85,7 @@ use std::{
 };
 use sum_tree::{Edit, SumTree, TreeMap};
 use task::Shell;
-use text::{Bias, BufferId};
+use text::{Bias, BufferId, OffsetRangeExt, Rope, ToOffset};
 use util::{
     ResultExt, debug_panic,
     paths::{PathStyle, SanitizedPath},
@@ -142,6 +145,24 @@ struct BufferGitState {
 
     head_text: Option<Arc<str>>,
     index_text: Option<Arc<str>>,
+    /// The optimistic, in-flight index state: the sole input to the index write,
+    /// expressed relative to the currently-loaded index text (`I0`). Never shown
+    /// to any view (views use per-diff pending hunks). Cleared when a
+    /// recalculation settles.
+    ///
+    /// `I0` is immutable for the lifetime of any pending edit (the index text
+    /// buffer is only fast-forwarded when a recalculation settles, which clears
+    /// this state in the same update), so byte offsets stay valid for the whole
+    /// window.
+    pending_index_edits: Option<Vec<(Range<usize>, Arc<str>)>>,
+    /// The index text most recently scheduled to be written to disk by the
+    /// optimistic path, if any write is outstanding since the last recalculation
+    /// settled. Used to dedupe writes against what the index *will* be (which may
+    /// differ from the currently-loaded `index_text` while writes are in flight),
+    /// so an operation that returns the index to a value matching the stale
+    /// loaded text is not wrongly skipped. `Some(None)` means "scheduled to be
+    /// removed".
+    last_scheduled_index_text: Option<Option<Arc<str>>>,
     oid_texts: HashMap<git::Oid, Arc<str>>,
     head_text_buffer: WeakEntity<Buffer>,
     index_text_buffer: WeakEntity<Buffer>,
@@ -149,6 +170,24 @@ struct BufferGitState {
     head_changed: bool,
     index_changed: bool,
     language_changed: bool,
+}
+
+fn pending_hunks(
+    hunks: &[DiffHunk],
+    version: &clock::Global,
+    sense: PendingSense,
+) -> Vec<PendingHunk> {
+    hunks
+        .iter()
+        .map(|hunk| {
+            PendingHunk::new(
+                hunk.buffer_range.clone(),
+                hunk.diff_base_byte_range.clone(),
+                version.clone(),
+                sense,
+            )
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -1105,69 +1144,281 @@ impl GitStore {
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
-    pub fn stage_unstaged_hunks(
+    /// Stages the worktree changes covered by `worktree_ranges`. Used by both the
+    /// unstaged-changes view and the uncommitted (gutter) controls: "stage" means
+    /// the same index change regardless of which view it was invoked from.
+    ///
+    /// Decomposes the worktree region into the unstaged hunks it covers (the
+    /// unstaged diff is the uncommitted diff's always-present secondary), so no
+    /// worktree->index projection is needed. Optimistically suppresses the staged
+    /// hunks from the unstaged diff and marks the corresponding uncommitted hunks
+    /// as staging.
+    pub fn stage_hunks(
         &mut self,
         buffer: Entity<Buffer>,
-        buffer_ranges: Vec<Range<Anchor>>,
+        worktree_ranges: Vec<Range<Anchor>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        if buffer_ranges.is_empty() {
+        if worktree_ranges.is_empty() {
             return Task::ready(Ok(()));
         }
-
         let uncommitted_diff = self.open_uncommitted_diff(buffer.clone(), cx);
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |this, cx| {
             let uncommitted_diff = uncommitted_diff.await?;
-            let buffer_snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
-            let file_exists = buffer_snapshot
-                .file()
-                .is_some_and(|file| file.disk_state().exists());
-
-            uncommitted_diff.update(cx, |diff, cx| {
-                let snapshot = diff.snapshot(cx);
-                let mut hunks = Vec::new();
-                for buffer_range in &buffer_ranges {
-                    hunks.extend(
-                        snapshot.hunks_intersecting_range(buffer_range.clone(), &buffer_snapshot),
-                    );
-                }
-
-                if !hunks.is_empty() {
-                    diff.stage_or_unstage_hunks(true, &hunks, &buffer_snapshot, file_exists, cx);
-                }
-            });
-
+            this.update(cx, |this, cx| {
+                this.stage_hunks_optimistically(buffer, uncommitted_diff, worktree_ranges, cx);
+            })?;
             Ok(())
         })
     }
 
+    fn stage_hunks_optimistically(
+        &mut self,
+        buffer: Entity<Buffer>,
+        uncommitted_diff: Entity<BufferDiff>,
+        worktree_ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer_id = buffer_snapshot.remote_id();
+        let file_exists = buffer_snapshot
+            .file()
+            .is_some_and(|file| file.disk_state().exists());
+
+        let uncommitted_snapshot = uncommitted_diff.read(cx).snapshot(cx);
+        let Some(unstaged_snapshot) = uncommitted_snapshot.secondary_diff() else {
+            return;
+        };
+
+        // Decompose: the unstaged hunks the worktree region covers carry the
+        // index range directly. Sorting by buffer offset also sorts by index
+        // offset, since the hunks are non-overlapping. We read the raw hunks
+        // (ignoring optimistic suppression) so that re-staging a hunk that was
+        // optimistically staged and then unstaged still finds it.
+        let mut unstaged_hunks = Vec::new();
+        for range in &worktree_ranges {
+            unstaged_hunks.extend(
+                unstaged_snapshot.raw_hunks_intersecting_range(range.clone(), &buffer_snapshot),
+            );
+        }
+        unstaged_hunks.sort_by_key(|hunk| hunk.buffer_range.start.to_offset(&buffer_snapshot));
+        unstaged_hunks.dedup_by(|a, b| a.buffer_range.start == b.buffer_range.start);
+
+        // The uncommitted hunks the region covers get the optimistic
+        // "staging" secondary status (free cross-view update).
+        let mut uncommitted_hunks = Vec::new();
+        for range in &worktree_ranges {
+            uncommitted_hunks.extend(
+                uncommitted_snapshot
+                    .hunks_intersecting_range(range.clone(), &buffer_snapshot)
+                    .filter(|hunk| {
+                        hunk.secondary_status != DiffHunkSecondaryStatus::NoSecondaryHunk
+                    }),
+            );
+        }
+        uncommitted_hunks.sort_by_key(|hunk| hunk.buffer_range.start.to_offset(&buffer_snapshot));
+        uncommitted_hunks.dedup_by(|a, b| a.buffer_range.start == b.buffer_range.start);
+
+        let index_edits = if !file_exists {
+            // The worktree file is gone: staging removes it from the index.
+            None
+        } else {
+            Some(
+                unstaged_hunks
+                    .iter()
+                    .map(|hunk| {
+                        let worktree_range = hunk.buffer_range.to_offset(&buffer_snapshot);
+                        let replacement: Arc<str> = Arc::from(
+                            buffer_snapshot
+                                .text_for_range(worktree_range)
+                                .collect::<String>(),
+                        );
+                        (hunk.diff_base_byte_range.clone(), replacement)
+                    })
+                    .collect(),
+            )
+        };
+
+        let version = buffer_snapshot.version().clone();
+        let unstaged_pending = pending_hunks(&unstaged_hunks, &version, PendingSense::Suppress);
+        let uncommitted_pending = pending_hunks(
+            &uncommitted_hunks,
+            &version,
+            PendingSense::SetSecondaryStatus { stage: true },
+        );
+        drop(uncommitted_snapshot);
+
+        let Some(diff_state) = self.diffs.get(&buffer_id).cloned() else {
+            return;
+        };
+        diff_state.update(cx, |diff_state, _| {
+            diff_state.apply_index_edits(index_edits)
+        });
+
+        uncommitted_diff.update(cx, |diff, cx| {
+            diff.set_pending_hunks(&uncommitted_pending, cx);
+        });
+        if let Some(unstaged_diff) = self.get_unstaged_diff(buffer_id, cx) {
+            unstaged_diff.update(cx, |diff, cx| {
+                diff.set_pending_hunks(&unstaged_pending, cx);
+            });
+        }
+
+        self.write_optimistic_index(buffer_id, cx);
+    }
+
+    /// Unstages the worktree changes covered by `worktree_ranges`, invoked from
+    /// the uncommitted (gutter) controls. Uses the worktree->index projection
+    /// (the hard part) because the acted-on hunks are HEAD-vs-worktree.
+    pub fn unstage_uncommitted_hunks(
+        &mut self,
+        buffer: Entity<Buffer>,
+        worktree_ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if worktree_ranges.is_empty() {
+            return Task::ready(Ok(()));
+        }
+        let uncommitted_diff = self.open_uncommitted_diff(buffer.clone(), cx);
+        cx.spawn(async move |this, cx| {
+            let uncommitted_diff = uncommitted_diff.await?;
+            this.update(cx, |this, cx| {
+                this.unstage_uncommitted_hunks_optimistically(
+                    buffer,
+                    uncommitted_diff,
+                    worktree_ranges,
+                    cx,
+                );
+            })?;
+            Ok(())
+        })
+    }
+
+    fn unstage_uncommitted_hunks_optimistically(
+        &mut self,
+        buffer: Entity<Buffer>,
+        uncommitted_diff: Entity<BufferDiff>,
+        worktree_ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer_snapshot = buffer.read(cx).snapshot();
+        let buffer_id = buffer_snapshot.remote_id();
+        let file_exists = buffer_snapshot
+            .file()
+            .is_some_and(|file| file.disk_state().exists());
+
+        let uncommitted_snapshot = uncommitted_diff.read(cx).snapshot(cx);
+        let Some(unstaged_snapshot) = uncommitted_snapshot.secondary_diff() else {
+            return;
+        };
+
+        let mut hunks = Vec::new();
+        for range in &worktree_ranges {
+            hunks.extend(
+                uncommitted_snapshot.hunks_intersecting_range(range.clone(), &buffer_snapshot),
+            );
+        }
+        hunks.sort_by_key(|hunk| hunk.buffer_range.start.to_offset(&buffer_snapshot));
+        hunks.dedup_by(|a, b| a.buffer_range.start == b.buffer_range.start);
+
+        let (index_edits, pending) = uncommitted_snapshot.compute_uncommitted_index_edits(
+            unstaged_snapshot,
+            false,
+            &hunks,
+            &buffer_snapshot,
+            file_exists,
+        );
+        drop(uncommitted_snapshot);
+
+        let Some(diff_state) = self.diffs.get(&buffer_id).cloned() else {
+            return;
+        };
+        diff_state.update(cx, |diff_state, _| {
+            diff_state.apply_index_edits(index_edits)
+        });
+
+        uncommitted_diff.update(cx, |diff, cx| {
+            diff.set_pending_hunks(&pending, cx);
+        });
+
+        self.write_optimistic_index(buffer_id, cx);
+    }
+
+    /// Unstages staged (HEAD-vs-index) hunks covered by `index_ranges`, invoked
+    /// from the staged-changes view. The acted-on hunks already carry an index
+    /// range, so no projection is needed; optimistically suppresses them from the
+    /// staged diff.
     pub fn unstage_staged_hunks(
         &mut self,
         buffer: Entity<Buffer>,
-        index_buffer: Entity<Buffer>,
-        staged_diff: Entity<BufferDiff>,
-        hunks: Vec<DiffHunk>,
+        index_ranges: Vec<Range<Anchor>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        if hunks.is_empty() {
+        if index_ranges.is_empty() {
             return Task::ready(Ok(()));
         }
+        let staged_diff = self.open_staged_diff(buffer.clone(), cx);
+        cx.spawn(async move |this, cx| {
+            let staged_diff = staged_diff.await?;
+            this.update(cx, |this, cx| {
+                this.unstage_staged_hunks_optimistically(buffer, staged_diff, index_ranges, cx);
+            })?;
+            Ok(())
+        })
+    }
 
+    fn unstage_staged_hunks_optimistically(
+        &mut self,
+        buffer: Entity<Buffer>,
+        staged_diff: Entity<BufferDiff>,
+        index_ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) {
         let buffer_id = buffer.read(cx).remote_id();
+        let Some(diff_state) = self.diffs.get(&buffer_id).cloned() else {
+            return;
+        };
+        let Some(index_buffer) = diff_state.read(cx).index_text_buffer() else {
+            return;
+        };
         let index_snapshot = index_buffer.read(cx).text_snapshot();
-        let new_index_text = staged_diff.update(cx, |diff, _| {
-            diff.unstage_staged_hunks(&hunks, &index_snapshot)
-        });
-        if let Some(new_index_text) = new_index_text {
-            self.write_index_text_for_buffer_id(
-                buffer_id,
-                Some(new_index_text.to_string()),
-                None,
-                cx,
-            );
-        }
+        let staged_snapshot = staged_diff.read(cx).snapshot(cx);
 
-        Task::ready(Ok(()))
+        let mut hunks = Vec::new();
+        for range in &index_ranges {
+            hunks.extend(staged_snapshot.hunks_intersecting_range(range.clone(), &index_snapshot));
+        }
+        hunks.sort_by_key(|hunk| hunk.buffer_range.start.to_offset(&index_snapshot));
+        hunks.dedup_by(|a, b| a.buffer_range.start == b.buffer_range.start);
+
+        let index_edits = staged_diff
+            .read(cx)
+            .unstage_staged_hunks(&hunks, &index_snapshot);
+        let version = index_snapshot.version().clone();
+        let pending = pending_hunks(&hunks, &version, PendingSense::Suppress);
+        drop(staged_snapshot);
+
+        diff_state.update(cx, |diff_state, _| {
+            diff_state.apply_index_edits(index_edits)
+        });
+        staged_diff.update(cx, |diff, cx| {
+            diff.set_pending_hunks(&pending, cx);
+        });
+
+        self.write_optimistic_index(buffer_id, cx);
+    }
+
+    /// Derives the desired index text from the buffer's optimistic patch and
+    /// schedules the write.
+    fn write_optimistic_index(&mut self, buffer_id: BufferId, cx: &mut Context<Self>) {
+        let Some(diff_state) = self.diffs.get(&buffer_id) else {
+            return;
+        };
+        let new_index_text = diff_state
+            .read(cx)
+            .desired_index_text(cx)
+            .map(|rope| rope.to_string());
+        self.write_index_text_for_buffer_id(buffer_id, new_index_text, cx);
     }
 
     pub fn open_diff_since(
@@ -2322,36 +2573,38 @@ impl GitStore {
 
     fn on_buffer_diff_event(
         &mut self,
-        diff: Entity<buffer_diff::BufferDiff>,
-        event: &BufferDiffEvent,
-        cx: &mut Context<Self>,
+        _diff: Entity<buffer_diff::BufferDiff>,
+        _event: &BufferDiffEvent,
+        _cx: &mut Context<Self>,
     ) {
-        if let BufferDiffEvent::HunksStagedOrUnstaged(new_index_text) = event {
-            let buffer_id = diff.read(cx).buffer_id;
-            let new_index_text = new_index_text.as_ref().map(|rope| rope.to_string());
-            self.write_index_text_for_buffer_id(
-                buffer_id,
-                new_index_text,
-                Some(diff.downgrade()),
-                cx,
-            );
-        }
+        // Index writes are driven explicitly by the stage/unstage methods, which
+        // also install the corresponding optimistic state.
     }
 
     fn write_index_text_for_buffer_id(
         &mut self,
         buffer_id: BufferId,
         new_index_text: Option<String>,
-        pending_diff: Option<WeakEntity<BufferDiff>>,
         cx: &mut Context<Self>,
     ) {
         let Some(diff_state) = self.diffs.get(&buffer_id) else {
             return;
         };
-        if new_index_text.as_deref() == diff_state.read(cx).index_text.as_deref() {
+        // Compare against what the index will become after any in-flight writes
+        // (tracked in `last_scheduled_index_text`), falling back to the loaded
+        // index text when nothing is outstanding. Comparing against the loaded
+        // index text alone would wrongly skip a write that returns the index to
+        // that value while a different write is still in flight.
+        let already_scheduled = diff_state.read(cx).last_scheduled_index_text.clone();
+        let baseline = match &already_scheduled {
+            Some(scheduled) => scheduled.as_deref(),
+            None => diff_state.read(cx).index_text.as_deref(),
+        };
+        if new_index_text.as_deref() == baseline {
             return;
         }
         let hunk_staging_operation_count = diff_state.update(cx, |diff_state, _| {
+            diff_state.last_scheduled_index_text = Some(new_index_text.as_deref().map(Arc::from));
             diff_state.hunk_staging_operation_count += 1;
             diff_state.hunk_staging_operation_count
         });
@@ -2369,15 +2622,15 @@ impl GitStore {
         });
         cx.spawn(async move |this, cx| {
             if let Ok(Err(error)) = cx.background_spawn(recv).await {
-                if let Some(pending_diff) = pending_diff {
-                    pending_diff
-                        .update(cx, |diff, cx| {
-                            diff.clear_pending_hunks(cx);
-                        })
-                        .ok();
-                }
-                this.update(cx, |_, cx| cx.emit(GitStoreEvent::IndexWriteError(error)))
-                    .ok();
+                this.update(cx, |this, cx| {
+                    if let Some(diff_state) = this.diffs.get(&buffer_id).cloned() {
+                        diff_state.update(cx, |diff_state, cx| {
+                            diff_state.clear_pending_optimistic_state(cx);
+                        });
+                    }
+                    cx.emit(GitStoreEvent::IndexWriteError(error));
+                })
+                .ok();
             }
         })
         .detach();
@@ -4216,6 +4469,8 @@ impl BufferGitState {
             hunk_staging_operation_count_as_of_write: 0,
             head_text: Default::default(),
             index_text: Default::default(),
+            pending_index_edits: Some(Vec::new()),
+            last_scheduled_index_text: Default::default(),
             oid_texts: Default::default(),
             head_text_buffer: WeakEntity::new_invalid(),
             index_text_buffer: WeakEntity::new_invalid(),
@@ -4352,6 +4607,64 @@ impl BufferGitState {
             (Some(index), Some(head)) => Arc::ptr_eq(index, head),
             (None, None) => true,
             _ => false,
+        }
+    }
+
+    /// Merges a stage/unstage operation's index edits into the pending index
+    /// state (the patch). Overlapping edits are resolved newest-wins; the patch
+    /// stays sorted by start offset and non-overlapping.
+    fn apply_index_edits(&mut self, edits: Option<Vec<(Range<usize>, Arc<str>)>>) {
+        match edits {
+            None => {
+                self.pending_index_edits = None;
+            }
+            Some(new_edits) => {
+                let mut edits = self.pending_index_edits.take().unwrap_or_default();
+                for (range, replacement) in new_edits {
+                    edits.retain(|(existing, _)| {
+                        existing.end <= range.start || range.end <= existing.start
+                    });
+                    let position =
+                        edits.partition_point(|(existing, _)| existing.start < range.start);
+                    edits.insert(position, (range, replacement));
+                }
+                self.pending_index_edits = Some(edits);
+            }
+        }
+    }
+
+    /// Derives the index text to write to disk by splicing the pending edits into
+    /// the currently-loaded index text. Returns `None` when the file should be
+    /// absent from the index. The only place index text is derived.
+    fn desired_index_text(&self, cx: &App) -> Option<Rope> {
+        let index_text_buffer = self.index_text_buffer.upgrade()?;
+        let loaded_index = index_text_buffer.read(cx).text_snapshot().as_rope().clone();
+        self.pending_index_edits
+            .as_ref()
+            .map(|edits| splice_index_edits(&loaded_index, edits))
+    }
+
+    /// Clears the optimistic index patch. Pending hunks on the diffs are cleared
+    /// separately (at recalc-settle, by the diffs' own snapshots).
+    fn clear_pending_index_text(&mut self) {
+        self.pending_index_edits = Some(Vec::new());
+        self.last_scheduled_index_text = None;
+    }
+
+    /// Clears all optimistic state for this buffer: the index patch and every
+    /// diff's pending hunks. Used on write-error paths where no recalculation
+    /// will arrive to reconcile.
+    fn clear_pending_optimistic_state(&mut self, cx: &mut Context<Self>) {
+        self.clear_pending_index_text();
+        for diff in [
+            self.uncommitted_diff(),
+            self.unstaged_diff(),
+            self.staged_diff(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            diff.update(cx, |diff, cx| diff.clear_pending_hunks(cx));
         }
     }
 
@@ -4682,7 +4995,13 @@ impl BufferGitState {
                 return Ok(());
             }
 
-            this.update(cx, |_, cx| {
+            this.update(cx, |this, cx| {
+                // The freshly-loaded index now reflects everything the patch
+                // described, and the index text buffer is about to be
+                // fast-forwarded to it, invalidating the patch's offsets. Clear
+                // the patch in the same update so the two never drift.
+                this.clear_pending_index_text();
+
                 if let (Some(staged_diff), Some(new_staged_diff)) =
                     (staged_diff.as_ref(), new_staged_diff.clone())
                 {
@@ -4701,7 +5020,8 @@ impl BufferGitState {
                                 head_text_buffer.fast_forward(edited_head_text, cx)
                             });
                         }
-                        diff.set_snapshot(new_staged_diff, cx)
+                        // Clear the staged diff's optimistic (Cancel) pending hunks.
+                        diff.set_snapshot_with_secondary(new_staged_diff, None, true, cx)
                     });
                 }
 
@@ -4716,7 +5036,8 @@ impl BufferGitState {
                                 index_text_buffer.fast_forward(edited_index_text, cx)
                             });
                         }
-                        diff.set_snapshot(new_unstaged_diff, cx)
+                        // Clear the unstaged diff's optimistic (Cancel) pending hunks.
+                        diff.set_snapshot_with_secondary(new_unstaged_diff, None, true, cx)
                     }))
                 } else {
                     None
@@ -6737,22 +7058,16 @@ impl Repository {
                                             continue;
                                         };
                                         let buffer_snapshot = buffer.read(cx).text_snapshot();
-                                        let file_exists = buffer
-                                            .read(cx)
-                                            .file()
-                                            .is_some_and(|file| file.disk_state().exists());
                                         let hunk_staging_operation_count =
                                             diff_state.update(cx, |diff_state, cx| {
                                                 uncommitted_diff.update(
                                                     cx,
                                                     |uncommitted_diff, cx| {
-                                                        uncommitted_diff
-                                                            .stage_or_unstage_all_hunks(
-                                                                stage,
-                                                                &buffer_snapshot,
-                                                                file_exists,
-                                                                cx,
-                                                            );
+                                                        uncommitted_diff.mark_all_hunks_pending(
+                                                            stage,
+                                                            &buffer_snapshot,
+                                                            cx,
+                                                        );
                                                     },
                                                 );
 

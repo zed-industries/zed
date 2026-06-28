@@ -6,7 +6,7 @@ use crate::{
 };
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
-use buffer_diff::{BufferDiff, DiffHunk, DiffHunkSecondaryStatus};
+use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::HashMap;
 use editor::{
     Addon, Editor, EditorEvent, EditorSettings, RenderDiffHunkControlsFn, SelectionEffects,
@@ -26,7 +26,7 @@ use gpui::{
     Action, AnyElement, App, AppContext as _, AsyncWindowContext, Entity, EventEmitter,
     FocusHandle, Focusable, Render, Subscription, Task, WeakEntity, actions,
 };
-use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt, Point};
+use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
 use project::project_settings::ProjectSettings;
 use project::{
@@ -76,8 +76,8 @@ actions!(
 );
 
 struct BufferSubscriptions {
-    diff: Entity<BufferDiff>,
-    display_buffer: Entity<Buffer>,
+    _diff: Entity<BufferDiff>,
+    _display_buffer: Entity<Buffer>,
     operation_buffer: Entity<Buffer>,
     _diff_subscription: Subscription,
     _conflict_set: Entity<ConflictSet>,
@@ -994,7 +994,7 @@ impl ProjectDiff {
                 };
                 project
                     .update(cx, |project, cx| {
-                        project.stage_unstaged_hunks(buffer, buffer_ranges, cx)
+                        project.stage_hunks(buffer, buffer_ranges, cx)
                     })
                     .await?;
             }
@@ -1039,44 +1039,33 @@ impl ProjectDiff {
             return;
         }
 
-        let Some((project, hunks_by_path)) = editor.update(cx, |editor, cx| {
+        let Some((project, ranges_by_path)) = editor.update(cx, |editor, cx| {
             let project = editor.project().cloned()?;
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            let mut hunks_by_path: HashMap<Arc<RelPath>, Vec<DiffHunk>> = HashMap::default();
+            // In staged mode the display buffer is the index text buffer, so the
+            // hunks' buffer ranges are index-coordinate anchors.
+            let mut ranges_by_path: HashMap<Arc<RelPath>, Vec<_>> = HashMap::default();
 
             for hunk in editor.diff_hunks_in_ranges(&ranges, &snapshot) {
                 let Some(path_key) = snapshot.path_for_buffer(hunk.buffer_id) else {
                     continue;
                 };
-                hunks_by_path
+                ranges_by_path
                     .entry(path_key.path.clone())
                     .or_default()
-                    .push(DiffHunk {
-                        range: Point::zero()..Point::zero(),
-                        buffer_range: hunk.buffer_range.clone(),
-                        diff_base_byte_range: hunk.diff_base_byte_range.start.0
-                            ..hunk.diff_base_byte_range.end.0,
-                        secondary_status: hunk.status.secondary,
-                        buffer_word_diffs: Vec::new(),
-                        base_word_diffs: Vec::new(),
-                    });
+                    .push(hunk.buffer_range.clone());
             }
 
-            Some((project, hunks_by_path))
+            Some((project, ranges_by_path))
         }) else {
             return;
         };
 
-        let operations = hunks_by_path
+        let operations = ranges_by_path
             .into_iter()
-            .filter_map(|(path, hunks)| {
+            .filter_map(|(path, index_ranges)| {
                 let subscription = self.buffer_subscriptions.get(&path)?;
-                Some((
-                    subscription.operation_buffer.clone(),
-                    subscription.display_buffer.clone(),
-                    subscription.diff.clone(),
-                    hunks,
-                ))
+                Some((subscription.operation_buffer.clone(), index_ranges))
             })
             .collect::<Vec<_>>();
 
@@ -1085,16 +1074,10 @@ impl ProjectDiff {
         }
 
         cx.spawn_in(window, async move |_, cx| {
-            for (operation_buffer, display_buffer, diff, hunks) in operations {
+            for (operation_buffer, index_ranges) in operations {
                 project
                     .update(cx, |project, cx| {
-                        project.unstage_staged_hunks(
-                            operation_buffer,
-                            display_buffer,
-                            diff,
-                            hunks,
-                            cx,
-                        )
+                        project.unstage_staged_hunks(operation_buffer, index_ranges, cx)
                     })
                     .await?;
             }
@@ -1178,8 +1161,7 @@ impl ProjectDiff {
                         cx,
                     );
                 }
-                buffer_diff::BufferDiffEvent::BaseTextChanged
-                | buffer_diff::BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
+                buffer_diff::BufferDiffEvent::BaseTextChanged => {}
             }
         });
         let conflict_set_subscription = cx.subscribe_in(&conflict_set, window, {
@@ -1204,8 +1186,8 @@ impl ProjectDiff {
         self.buffer_subscriptions.insert(
             path_key.path.clone(),
             BufferSubscriptions {
-                diff: diff.clone(),
-                display_buffer: display_buffer.clone(),
+                _diff: diff.clone(),
+                _display_buffer: display_buffer.clone(),
                 operation_buffer: operation_buffer.clone(),
                 _diff_subscription: diff_subscription,
                 _conflict_set: conflict_set.clone(),

@@ -25,7 +25,7 @@ pub mod trusted_worktrees;
 pub mod worktree_store;
 
 mod environment;
-use buffer_diff::{BufferDiff, DiffHunk};
+use buffer_diff::BufferDiff;
 use context_server_store::ContextServerStore;
 pub use environment::ProjectEnvironmentEvent;
 use git::repository::get_git_committer;
@@ -3260,33 +3260,52 @@ impl Project {
         })
     }
 
-    pub fn stage_unstaged_hunks(
+    /// Stages the worktree changes covered by `worktree_ranges` (in the worktree
+    /// buffer's coordinates). Used by both the unstaged-changes view and the
+    /// uncommitted (gutter) controls.
+    pub fn stage_hunks(
         &mut self,
         buffer: Entity<Buffer>,
-        buffer_ranges: Vec<Range<Anchor>>,
+        worktree_ranges: Vec<Range<Anchor>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
         self.git_store.update(cx, |git_store, cx| {
-            git_store.stage_unstaged_hunks(buffer, buffer_ranges, cx)
+            git_store.stage_hunks(buffer, worktree_ranges, cx)
         })
     }
 
-    pub fn unstage_staged_hunks(
+    /// Unstages the worktree changes covered by `worktree_ranges` (in the worktree
+    /// buffer's coordinates). Used by the uncommitted (gutter) controls.
+    pub fn unstage_uncommitted_hunks(
         &mut self,
         buffer: Entity<Buffer>,
-        index_buffer: Entity<Buffer>,
-        staged_diff: Entity<BufferDiff>,
-        hunks: Vec<DiffHunk>,
+        worktree_ranges: Vec<Range<Anchor>>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
         self.git_store.update(cx, |git_store, cx| {
-            git_store.unstage_staged_hunks(buffer, index_buffer, staged_diff, hunks, cx)
+            git_store.unstage_uncommitted_hunks(buffer, worktree_ranges, cx)
+        })
+    }
+
+    /// Unstages the staged changes covered by `index_ranges` (in the index
+    /// buffer's coordinates). Used by the staged-changes view.
+    pub fn unstage_staged_hunks(
+        &mut self,
+        buffer: Entity<Buffer>,
+        index_ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.unstage_staged_hunks(buffer, index_ranges, cx)
         })
     }
 

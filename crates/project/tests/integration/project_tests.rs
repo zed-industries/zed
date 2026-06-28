@@ -20,10 +20,7 @@ mod yarn;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use buffer_diff::{
-    BufferDiffEvent, DiffChanged, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
-    assert_hunks,
-};
+use buffer_diff::{DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind, assert_hunks};
 use collections::{BTreeSet, HashMap, HashSet};
 use encoding_rs;
 use fs::{FakeFs, PathEventKind};
@@ -10029,7 +10026,6 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    let mut diff_events = cx.events(&uncommitted_diff);
 
     // The hunks are initially unstaged.
     uncommitted_diff.read_with(cx, |diff, cx| {
@@ -10061,15 +10057,14 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     });
 
     // Stage a hunk. It appears as optimistically staged.
-    uncommitted_diff.update(cx, |diff, cx| {
-        let range =
-            snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_before(Point::new(2, 0));
-        let hunks = diff
-            .snapshot(cx)
-            .hunks_intersecting_range(range, &snapshot)
-            .collect::<Vec<_>>();
-        diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
-
+    let range = snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_before(Point::new(2, 0));
+    project
+        .update(cx, |project, cx| {
+            project.stage_hunks(buffer.clone(), vec![range], cx)
+        })
+        .await
+        .unwrap();
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10097,28 +10092,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    // The diff emits a change event for the range of the staged hunk.
-    assert!(matches!(
-        diff_events.next().await.unwrap(),
-        BufferDiffEvent::HunksStagedOrUnstaged(_)
-    ));
-    let event = diff_events.next().await.unwrap();
-    if let BufferDiffEvent::DiffChanged(DiffChanged {
-        changed_range: Some(changed_range),
-        base_text_changed_range: _,
-        extended_range: _,
-        base_text_changed: _,
-    }) = event
-    {
-        let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(1, 0)..Point::new(2, 0));
-    } else {
-        panic!("Unexpected event {event:?}");
-    }
-
     // When the write to the index completes, it appears as staged.
     cx.run_until_parked();
-    uncommitted_diff.update(cx, |diff, cx| {
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10145,21 +10121,6 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
             ],
         );
     });
-
-    // The diff emits a change event for the changed index text.
-    let event = diff_events.next().await.unwrap();
-    if let BufferDiffEvent::DiffChanged(DiffChanged {
-        changed_range: Some(changed_range),
-        base_text_changed_range: _,
-        extended_range: _,
-        base_text_changed: _,
-    }) = event
-    {
-        let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(1, 0)..Point::new(2, 0));
-    } else {
-        panic!("Unexpected event {event:?}");
-    }
 
     // Simulate a problem writing to the git index.
     fs.set_error_message_for_index_write(
@@ -10168,15 +10129,14 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     );
 
     // Stage another hunk.
-    uncommitted_diff.update(cx, |diff, cx| {
-        let range =
-            snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_before(Point::new(4, 0));
-        let hunks = diff
-            .snapshot(cx)
-            .hunks_intersecting_range(range, &snapshot)
-            .collect::<Vec<_>>();
-        diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
-
+    let range = snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_before(Point::new(4, 0));
+    project
+        .update(cx, |project, cx| {
+            project.stage_hunks(buffer.clone(), vec![range], cx)
+        })
+        .await
+        .unwrap();
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10203,27 +10163,10 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
             ],
         );
     });
-    assert!(matches!(
-        diff_events.next().await.unwrap(),
-        BufferDiffEvent::HunksStagedOrUnstaged(_)
-    ));
-    let event = diff_events.next().await.unwrap();
-    if let BufferDiffEvent::DiffChanged(DiffChanged {
-        changed_range: Some(changed_range),
-        base_text_changed_range: _,
-        extended_range: _,
-        base_text_changed: _,
-    }) = event
-    {
-        let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(3, 0)..Point::new(4, 0));
-    } else {
-        panic!("Unexpected event {event:?}");
-    }
 
     // When the write fails, the hunk returns to being unstaged.
     cx.run_until_parked();
-    uncommitted_diff.update(cx, |diff, cx| {
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10251,32 +10194,29 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    let event = diff_events.next().await.unwrap();
-    if let BufferDiffEvent::DiffChanged(DiffChanged {
-        changed_range: Some(changed_range),
-        base_text_changed_range: _,
-        extended_range: _,
-        base_text_changed: _,
-    }) = event
-    {
-        let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(0, 0)..Point::new(5, 0));
-    } else {
-        panic!("Unexpected event {event:?}");
-    }
-
     // Allow writing to the git index to succeed again.
     fs.set_error_message_for_index_write("/dir/.git".as_ref(), None);
 
     // Stage two hunks with separate operations.
-    uncommitted_diff.update(cx, |diff, cx| {
+    let (range0, range2) = uncommitted_diff.read_with(cx, |diff, cx| {
         let hunks = diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>();
-        diff.stage_or_unstage_hunks(true, &hunks[0..1], &snapshot, true, cx);
-        diff.stage_or_unstage_hunks(true, &hunks[2..3], &snapshot, true, cx);
+        (hunks[0].buffer_range.clone(), hunks[2].buffer_range.clone())
     });
+    project
+        .update(cx, |project, cx| {
+            project.stage_hunks(buffer.clone(), vec![range0], cx)
+        })
+        .await
+        .unwrap();
+    project
+        .update(cx, |project, cx| {
+            project.stage_hunks(buffer.clone(), vec![range2], cx)
+        })
+        .await
+        .unwrap();
 
     // Both staged hunks appear as pending.
-    uncommitted_diff.update(cx, |diff, cx| {
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10306,7 +10246,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
 
     // Both staging operations take effect.
     cx.run_until_parked();
-    uncommitted_diff.update(cx, |diff, cx| {
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10503,9 +10443,20 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     fs.pause_events();
 
     // Stage the first hunk.
-    uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.snapshot(cx).hunks(&snapshot).next().unwrap();
-        diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
+    let range = uncommitted_diff.read_with(cx, |diff, cx| {
+        diff.snapshot(cx)
+            .hunks(&snapshot)
+            .next()
+            .unwrap()
+            .buffer_range
+    });
+    project
+        .update(cx, |project, cx| {
+            project.stage_hunks(buffer.clone(), vec![range], cx)
+        })
+        .await
+        .unwrap();
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10535,9 +10486,20 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
 
     // Stage the second hunk *before* receiving the FS event for the first hunk.
     cx.run_until_parked();
-    uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.snapshot(cx).hunks(&snapshot).nth(1).unwrap();
-        diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
+    let range = uncommitted_diff.read_with(cx, |diff, cx| {
+        diff.snapshot(cx)
+            .hunks(&snapshot)
+            .nth(1)
+            .unwrap()
+            .buffer_range
+    });
+    project
+        .update(cx, |project, cx| {
+            project.stage_hunks(buffer.clone(), vec![range], cx)
+        })
+        .await
+        .unwrap();
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10570,10 +10532,19 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     cx.run_until_parked();
 
     // Stage the third hunk before receiving the second FS event.
-    uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.snapshot(cx).hunks(&snapshot).nth(2).unwrap();
-        diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
+    let range = uncommitted_diff.read_with(cx, |diff, cx| {
+        diff.snapshot(cx)
+            .hunks(&snapshot)
+            .nth(2)
+            .unwrap()
+            .buffer_range
     });
+    project
+        .update(cx, |project, cx| {
+            project.stage_hunks(buffer.clone(), vec![range], cx)
+        })
+        .await
+        .unwrap();
 
     // Wait for all remaining IO.
     cx.run_until_parked();
@@ -10581,7 +10552,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
 
     // Now all hunks are staged.
     cx.run_until_parked();
-    uncommitted_diff.update(cx, |diff, cx| {
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10674,17 +10645,27 @@ async fn test_staging_random_hunks(
         let hunk = &mut hunks[hunk_ix];
         let row = hunk.range.start.row;
 
+        let range = hunk.buffer_range.clone();
+        // Await so the optimistic state is applied in issue order (matching the
+        // expectation tracking below); the index write it kicks off remains
+        // in-flight, so writes from successive operations still race.
         if hunk.status().has_secondary_hunk() {
             log::info!("staging hunk at {row}");
-            uncommitted_diff.update(cx, |diff, cx| {
-                diff.stage_or_unstage_hunks(true, std::slice::from_ref(hunk), &snapshot, true, cx);
-            });
+            project
+                .update(cx, |project, cx| {
+                    project.stage_hunks(buffer.clone(), vec![range], cx)
+                })
+                .await
+                .unwrap();
             hunk.secondary_status = SecondaryHunkRemovalPending;
         } else {
             log::info!("unstaging hunk at {row}");
-            uncommitted_diff.update(cx, |diff, cx| {
-                diff.stage_or_unstage_hunks(false, std::slice::from_ref(hunk), &snapshot, true, cx);
-            });
+            project
+                .update(cx, |project, cx| {
+                    project.unstage_uncommitted_hunks(buffer.clone(), vec![range], cx)
+                })
+                .await
+                .unwrap();
             hunk.secondary_status = SecondaryHunkAdditionPending;
         }
 
@@ -10847,10 +10828,18 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
         .await
         .unwrap();
 
-    uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>();
-        diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
+    let ranges = uncommitted_diff.read_with(cx, |diff, cx| {
+        diff.snapshot(cx)
+            .hunks(&snapshot)
+            .map(|hunk| hunk.buffer_range)
+            .collect::<Vec<_>>()
     });
+    project
+        .update(cx, |project, cx| {
+            project.stage_hunks(buffer.clone(), ranges, cx)
+        })
+        .await
+        .unwrap();
 
     cx.run_until_parked();
 
