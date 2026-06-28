@@ -582,16 +582,12 @@ actions!(
         GoToDeclaration,
         /// Goes to declaration in a split pane.
         GoToDeclarationSplit,
-        /// Goes to the definition of the symbol at cursor.
-        GoToDefinition,
         /// Goes to definition in a split pane.
         GoToDefinitionSplit,
         /// Goes to the next diff hunk.
         GoToHunk,
         /// Goes to the previous diff hunk.
         GoToPreviousHunk,
-        /// Goes to the implementation of the symbol at cursor.
-        GoToImplementation,
         /// Goes to implementation in a split pane.
         GoToImplementationSplit,
         /// Goes to the next bookmark in the file.
@@ -951,6 +947,29 @@ actions!(
     ]
 );
 
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenResultsIn {
+    MultiBuffer,
+    Picker,
+}
+
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToDefinition {
+    #[serde(default)]
+    pub open_results_in: Option<OpenResultsIn>,
+}
+
+#[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct GoToImplementation {
+    #[serde(default)]
+    pub open_results_in: Option<OpenResultsIn>,
+}
+
 /// Finds all references to the symbol at cursor.
 #[derive(PartialEq, Clone, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
@@ -958,12 +977,15 @@ actions!(
 pub struct FindAllReferences {
     #[serde(default = "default_true")]
     pub always_open_multibuffer: bool,
+    #[serde(default)]
+    pub open_results_in: Option<OpenResultsIn>,
 }
 
 impl Default for FindAllReferences {
     fn default() -> Self {
         Self {
             always_open_multibuffer: true,
+            open_results_in: None,
         }
     }
 }

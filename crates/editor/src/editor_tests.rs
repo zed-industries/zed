@@ -28879,7 +28879,9 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
     );
     set_up_lsp_handlers(false, &mut cx);
     let navigated = cx
-        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .update_editor(|editor, window, cx| {
+            editor.go_to_definition(&GoToDefinition::default(), window, cx)
+        })
         .await
         .expect("Failed to navigate to definition");
     assert_eq!(
@@ -28913,7 +28915,9 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut TestApp
 
     set_up_lsp_handlers(true, &mut cx);
     let navigated = cx
-        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .update_editor(|editor, window, cx| {
+            editor.go_to_definition(&GoToDefinition::default(), window, cx)
+        })
         .await
         .expect("Failed to navigate to lookup references");
     assert_eq!(
@@ -28990,7 +28994,9 @@ async fn test_goto_definition_no_fallback(cx: &mut TestAppContext) {
         });
 
     let navigated = cx
-        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .update_editor(|editor, window, cx| {
+            editor.go_to_definition(&GoToDefinition::default(), window, cx)
+        })
         .await
         .expect("Failed to navigate to lookup references");
     go_to_definition
@@ -29059,7 +29065,9 @@ async fn test_goto_definition_close_ranges_open_singleton(cx: &mut TestAppContex
     });
 
     let navigated = cx
-        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .update_editor(|editor, window, cx| {
+            editor.go_to_definition(&GoToDefinition::default(), window, cx)
+        })
         .await
         .expect("Failed to navigate to definitions");
     assert_eq!(navigated, Navigated::Yes);
@@ -29143,7 +29151,9 @@ async fn test_goto_definition_far_ranges_open_multibuffer(cx: &mut TestAppContex
     });
 
     let navigated = cx
-        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .update_editor(|editor, window, cx| {
+            editor.go_to_definition(&GoToDefinition::default(), window, cx)
+        })
         .await
         .expect("Failed to navigate to definitions");
     assert_eq!(navigated, Navigated::Yes);
@@ -29216,7 +29226,9 @@ async fn test_goto_definition_contained_ranges(cx: &mut TestAppContext) {
     });
 
     let navigated = cx
-        .update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
+        .update_editor(|editor, window, cx| {
+            editor.go_to_definition(&GoToDefinition::default(), window, cx)
+        })
         .await
         .expect("Failed to navigate to definitions");
     assert_eq!(navigated, Navigated::Yes);
@@ -29313,9 +29325,11 @@ async fn test_goto_definition_preserve_scroll_strategy(cx: &mut TestAppContext) 
     cx.update_editor(|editor, window, cx| {
         editor.set_scroll_position(gpui::Point::new(0.0, caller_row - offset), window, cx);
     });
-    cx.update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
-        .await
-        .expect("Failed to navigate to definition");
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_definition(&GoToDefinition::default(), window, cx)
+    })
+    .await
+    .expect("Failed to navigate to definition");
     cx.run_until_parked();
     cx.update_editor(|editor, window, cx| {
         assert_eq!(
@@ -29346,9 +29360,11 @@ async fn test_goto_definition_preserve_scroll_strategy(cx: &mut TestAppContext) 
         assert!(cursor_row >= visible_lines, "Cursor should be offscreen");
     });
 
-    cx.update_editor(|editor, window, cx| editor.go_to_definition(&GoToDefinition, window, cx))
-        .await
-        .expect("Failed to navigate to definition");
+    cx.update_editor(|editor, window, cx| {
+        editor.go_to_definition(&GoToDefinition::default(), window, cx)
+    })
+    .await
+    .expect("Failed to navigate to definition");
     cx.run_until_parked();
     cx.update_editor(|editor, window, cx| {
         assert_eq!(
@@ -37896,6 +37912,7 @@ async fn test_find_references_single_case(cx: &mut TestAppContext) {
 
     let action = FindAllReferences {
         always_open_multibuffer: false,
+        open_results_in: None,
     };
 
     let navigated = cx
