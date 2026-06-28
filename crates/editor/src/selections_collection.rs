@@ -7,7 +7,7 @@ use std::{
 use gpui::Pixels;
 use itertools::{Either, Itertools as _};
 use language::{Bias, Point, PointUtf16, Selection, SelectionGoal};
-use multi_buffer::{MultiBufferDimension, MultiBufferOffset};
+use multi_buffer::{MultiBufferDimension, MultiBufferOffset, ToPoint};
 use util::post_inc;
 
 use crate::{
@@ -220,18 +220,25 @@ impl SelectionsCollection {
     where
         D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord + std::fmt::Debug,
     {
-        let start_ix = match self
-            .disjoint
-            .binary_search_by(|probe| probe.end.cmp(&range.start, snapshot.buffer_snapshot()))
-        {
-            Ok(ix) | Err(ix) => ix,
-        };
-        let end_ix = match self
-            .disjoint
-            .binary_search_by(|probe| probe.start.cmp(&range.end, snapshot.buffer_snapshot()))
-        {
-            Ok(ix) => ix + 1,
-            Err(ix) => ix,
+        let buffer = snapshot.buffer_snapshot();
+        let (start_ix, end_ix) = if self.line_mode {
+            let start_row = range.start.to_point(snapshot).row;
+            let end_row = range.end.to_point(snapshot).row;
+            let start_ix = self
+                .disjoint
+                .partition_point(|probe| probe.end.to_point(snapshot).row < start_row);
+            let end_ix = self
+                .disjoint
+                .partition_point(|probe| probe.start.to_point(snapshot).row <= end_row);
+            (start_ix, end_ix)
+        } else {
+            let start_ix = self
+                .disjoint
+                .partition_point(|probe| probe.end.cmp(&range.start, buffer).is_lt());
+            let end_ix = self
+                .disjoint
+                .partition_point(|probe| probe.start.cmp(&range.end, buffer).is_le());
+            (start_ix, end_ix)
         };
         resolve_selections_wrapping_blocks(&self.disjoint[start_ix..end_ix], snapshot).collect()
     }
