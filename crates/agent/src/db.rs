@@ -68,8 +68,6 @@ pub struct DbThread {
     #[serde(default)]
     pub profile: Option<AgentProfileId>,
     #[serde(default)]
-    pub imported: bool,
-    #[serde(default)]
     pub subagent_context: Option<crate::SubagentContext>,
     #[serde(default)]
     pub speed: Option<Speed>,
@@ -161,7 +159,6 @@ impl SharedThread {
             request_token_usage: Default::default(),
             model: self.model,
             profile: None,
-            imported: true,
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
@@ -346,7 +343,6 @@ impl DbThread {
             request_token_usage,
             model: thread.model,
             profile: thread.profile,
-            imported: false,
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
@@ -766,23 +762,6 @@ mod tests {
         assert_eq!(restored.updated_at, original.updated_at);
     }
 
-    #[test]
-    fn test_imported_flag_defaults_to_false() {
-        // Simulate deserializing a thread without the imported field (backwards compatibility).
-        let json = r#"{
-            "title": "Old Thread",
-            "messages": [],
-            "updated_at": "2024-01-01T00:00:00Z"
-        }"#;
-
-        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
-
-        assert!(
-            !db_thread.imported,
-            "Legacy threads without imported field should default to false"
-        );
-    }
-
     fn session_id(value: &str) -> acp::SessionId {
         acp::SessionId::new(Arc::<str>::from(value))
     }
@@ -798,7 +777,6 @@ mod tests {
             request_token_usage: HashMap::default(),
             model: None,
             profile: None,
-            imported: false,
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
