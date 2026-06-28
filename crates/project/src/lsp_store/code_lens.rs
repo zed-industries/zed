@@ -15,6 +15,7 @@ use rpc::{TypedEnvelope, proto};
 use settings::Settings as _;
 use std::time::Duration;
 use text::OffsetRangeExt as _;
+use util::ResultExt as _;
 
 use crate::{
     CodeAction, LspAction, LspStore, LspStoreEvent, Project,
@@ -71,9 +72,19 @@ fn flatten_cache(lens: &HashMap<LanguageServerId, CodeLensActions>) -> CodeLensA
 }
 
 impl LspStore {
-    pub(super) fn invalidate_code_lens(&mut self) {
+    pub(super) fn refresh_code_lens(&mut self, cx: &mut Context<Self>) {
         for lsp_data in self.lsp_data.values_mut() {
             lsp_data.code_lens = None;
+        }
+
+        cx.emit(LspStoreEvent::RefreshCodeLens);
+        if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
+            downstream_client
+                .send(proto::RefreshCodeLens {
+                    project_id: *project_id,
+                })
+                .context("sending refresh code lens downstream")
+                .log_err();
         }
     }
 
@@ -403,8 +414,7 @@ impl LspStore {
         mut cx: AsyncApp,
     ) -> Result<proto::Ack> {
         lsp_store.update(&mut cx, |lsp_store, cx| {
-            lsp_store.invalidate_code_lens();
-            cx.emit(LspStoreEvent::RefreshCodeLens);
+            lsp_store.refresh_code_lens(cx);
         });
         Ok(proto::Ack {})
     }
