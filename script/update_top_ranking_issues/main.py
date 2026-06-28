@@ -42,9 +42,12 @@ def main(
     if not token:
         try:
             result = subprocess.run(
-                ["gh", "auth", "token"], capture_output=True, text=True, check=True
+                ["gh", "auth", "token"], capture_output=True, text=True, check=True, shell=False
             )
             token = result.stdout.strip()
+            if not token or not all(c.isalnum() or c in "-_." for c in token):
+                raise typer.BadParameter("Retrieved token contains invalid characters.")
+
         except (subprocess.CalledProcessError, FileNotFoundError):
             raise typer.BadParameter(
                 "GitHub token is required. Pass --github-token, set GITHUB_ACCESS_TOKEN env var, or log in with `gh auth login`."
