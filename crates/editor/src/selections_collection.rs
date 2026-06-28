@@ -1358,6 +1358,65 @@ mod tests {
     use settings::SettingsStore;
     use std::sync::Arc;
 
+    /// In line mode, `disjoint_in_range` selects by whole rows, so a selection sharing a queried
+    /// row must be returned even when its columns don't overlap the queried range. The non-line-mode
+    /// path compares exact offsets and would miss this case.
+    #[gpui::test]
+    fn disjoint_in_range_line_mode_matches_whole_row(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let settings = SettingsStore::test(cx);
+            cx.set_global(settings);
+            crate::init(cx);
+        });
+
+        let text = "aaaa\nbbbbbbbb\ncccc";
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let display_map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                test_font(),
+                px(14.),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = display_map.update(cx, |map, cx| map.snapshot(cx));
+        let buffer_snapshot = snapshot.buffer_snapshot();
+
+        // A selection on row 1 spanning columns 3..5 (buffer offsets 8..10).
+        let selection = selection_to_anchor_selection(
+            Selection {
+                id: 0,
+                start: MultiBufferOffset(8),
+                end: MultiBufferOffset(10),
+                reversed: false,
+                goal: SelectionGoal::None,
+            },
+            buffer_snapshot,
+        );
+        let mut collection = SelectionsCollection::new();
+        collection.disjoint = Arc::from([selection]);
+        collection.pending = None;
+        collection.line_mode = true;
+
+        // Query row 1 at columns 0..1, entirely before the selection's columns.
+        let range = buffer_snapshot.anchor_before(MultiBufferOffset(5))
+            ..buffer_snapshot.anchor_before(MultiBufferOffset(6));
+        let result = collection.disjoint_in_range::<Point>(range, &snapshot);
+
+        assert_eq!(
+            result.len(),
+            1,
+            "line mode should include the selection sharing the queried row"
+        );
+        assert_eq!(result[0].start, Point::new(1, 3));
+        assert_eq!(result[0].end, Point::new(1, 5));
+    }
+
     #[gpui::test(iterations = 20)]
     fn fast_and_slow_selection_resolution_match_without_collapsed_content(
         cx: &mut gpui::TestAppContext,
