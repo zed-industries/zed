@@ -222,14 +222,14 @@ impl SelectionsCollection {
     {
         let buffer = snapshot.buffer_snapshot();
         let (start_ix, end_ix) = if self.line_mode {
-            let start_row = range.start.to_point(snapshot).row;
-            let end_row = range.end.to_point(snapshot).row;
+            let start_row = range.start.to_point(buffer).row;
+            let end_row = range.end.to_point(buffer).row;
             let start_ix = self
                 .disjoint
-                .partition_point(|probe| probe.end.to_point(snapshot).row < start_row);
+                .partition_point(|probe| probe.end.to_point(buffer).row < start_row);
             let end_ix = self
                 .disjoint
-                .partition_point(|probe| probe.start.to_point(snapshot).row <= end_row);
+                .partition_point(|probe| probe.start.to_point(buffer).row <= end_row);
             (start_ix, end_ix)
         } else {
             let start_ix = self
