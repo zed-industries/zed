@@ -1322,13 +1322,10 @@ impl ThreadMetadataStore {
                 (worktree_paths, remote_connection)
             };
 
-        // Threads without a folder path (e.g. started in an empty
-        // window) are archived by default so they don't get lost,
-        // because they won't show up in the sidebar. Users can reload
-        // them from the archive.
-        let archived = existing_thread
-            .map(|t| t.archived)
-            .unwrap_or(worktree_paths.is_empty());
+        // Threads without a folder path (e.g. started in a project-less
+        // window) are surfaced under the sidebar's "No project" group, so
+        // they're kept unarchived by default like any other new thread.
+        let archived = existing_thread.map(|t| t.archived).unwrap_or(false);
 
         let was_draft = existing_thread.map_or(true, |t| t.is_draft());
         if was_draft && !is_draft {
@@ -2750,9 +2747,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_threads_without_project_association_are_archived_by_default(
-        cx: &mut TestAppContext,
-    ) {
+    async fn test_threads_without_project_association_stay_unarchived(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -2802,8 +2797,9 @@ mod tests {
                 .expect("missing metadata for thread without project association");
             assert!(without_worktree.folder_paths().is_empty());
             assert!(
-                without_worktree.archived,
-                "expected thread without project association to be archived"
+                !without_worktree.archived,
+                "project-less threads stay unarchived so they show under the sidebar's \
+                 \"No project\" group"
             );
 
             let with_worktree = store
