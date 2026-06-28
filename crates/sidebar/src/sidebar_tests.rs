@@ -863,6 +863,45 @@ async fn test_single_workspace_no_threads(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_project_less_window_shows_no_project_group(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    cx.update(|cx| <dyn fs::Fs>::set_global(fs.clone(), cx));
+    let project = project::Project::test(fs, None::<&Path>, cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let sidebar = setup_sidebar(&multi_workspace, cx);
+
+    for (id, title, hour) in [
+        ("p1", "Draft a haiku", 2),
+        ("p2", "Explain borrow checker", 1),
+    ] {
+        save_thread_metadata(
+            acp::SessionId::new(Arc::from(id)),
+            Some(title.into()),
+            chrono::TimeZone::with_ymd_and_hms(&Utc, 2024, 1, 1, hour, 0, 0).unwrap(),
+            None,
+            None,
+            &project,
+            cx,
+        )
+    }
+    cx.run_until_parked();
+
+    // Threads created in a project-less window land in a shared "No project"
+    // group, ordered most-recently-updated first.
+    assert_eq!(
+        visible_entries_as_strings(&sidebar, cx),
+        vec![
+            "v [No project]",
+            "  Draft a haiku",
+            "  Explain borrow checker",
+        ]
+    );
+}
+
+#[gpui::test]
 async fn test_single_workspace_with_saved_threads(cx: &mut TestAppContext) {
     let project = init_test_project("/my-project", cx).await;
     let (multi_workspace, cx) =

@@ -1987,6 +1987,192 @@ impl Sidebar {
             }
         }
 
+        // Synthetic "No project" group. Threads started in project-less
+        // windows have empty worktree paths, so they never belong to any
+        // `ProjectGroupKey` handled above. Surface them under a single shared
+        // group so they stay visible — and collapse — across every empty
+        // window. The group's key matches a project-less workspace's
+        // `project_group_key`, so the header's new-thread/menu controls
+        // resolve to that workspace.
+        // Only in a purely project-less window: a window that also has a real
+        // project keeps project threads scoped to their group, while the
+        // project-less threads remain visible in genuinely empty windows.
+        let project_less_workspace = (!has_open_projects)
+            .then(|| {
+                workspaces
+                    .iter()
+                    .find(|ws| workspace_path_list(ws, cx).paths().is_empty())
+                    .cloned()
+            })
+            .flatten();
+        let mut no_project_group_shown = false;
+        if let Some(no_project_ws) = project_less_workspace.clone() {
+            let empty_paths = PathList::default();
+            let no_project_key = ProjectGroupKey::new(None, empty_paths.clone());
+            let workspace_entry = ThreadEntryWorkspace::Open(no_project_ws);
+            let is_collapsed = self.is_group_collapsed(&no_project_key, cx);
+            let should_load_threads = !is_collapsed || !query.is_empty();
+
+            let mut threads: Vec<Arc<ThreadEntry>> = Vec::new();
+            let mut has_running_threads = false;
+            let mut waiting_thread_count: usize = 0;
+
+            if should_load_threads {
+                let thread_store = ThreadMetadataStore::global(cx);
+                let rows = thread_store
+                    .read(cx)
+                    .entries_for_path(&empty_paths, None)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for row in rows {
+                    if !seen_thread_ids.insert(row.thread_id) {
+                        continue;
+                    }
+                    let (icon, icon_from_external_svg) = resolve_agent_icon(&row.agent_id);
+                    let worktrees =
+                        worktree_info_from_thread_paths(&row.worktree_paths, &branch_by_path);
+                    let draft = row.is_draft().then_some(DraftKind::WithContent);
+                    threads.push(Arc::new(ThreadEntry {
+                        metadata: row,
+                        icon,
+                        icon_from_external_svg,
+                        status: AgentThreadStatus::default(),
+                        workspace: workspace_entry.clone(),
+                        is_live: false,
+                        is_background: false,
+                        is_title_generating: false,
+                        draft,
+                        highlight_positions: Vec::new(),
+                        worktrees,
+                        diff_stats: DiffStats::default(),
+                    }));
+                }
+
+                for thread in &mut threads {
+                    if thread.draft.is_none() {
+                        continue;
+                    }
+                    if let Some((label, kind)) = draft_display_label_for_thread_metadata(
+                        &thread.metadata,
+                        &thread.workspace,
+                        cx,
+                    ) {
+                        let thread = Arc::make_mut(thread);
+                        thread.metadata.title = Some(label);
+                        thread.draft = Some(kind);
+                    }
+                }
+                threads.retain(|t| t.draft.is_none() || t.metadata.title.is_some());
+
+                let pending_activation = self.pending_thread_activation;
+                let active_panel_thread_id = active_workspace
+                    .as_ref()
+                    .and_then(|ws| ws.read(cx).panel::<AgentPanel>(cx))
+                    .and_then(|panel| panel.read(cx).active_thread_id(cx));
+                threads.retain(|t| {
+                    if t.draft != Some(DraftKind::Empty) {
+                        return true;
+                    }
+                    if pending_activation.is_some() {
+                        return false;
+                    }
+                    Some(t.metadata.thread_id) == active_panel_thread_id
+                });
+
+                let live_infos = workspaces
+                    .iter()
+                    .filter(|ws| workspace_path_list(ws, cx).paths().is_empty())
+                    .flat_map(|ws| all_thread_infos_for_workspace(ws, cx))
+                    .collect::<Vec<_>>();
+                let mut live_info_by_session: HashMap<acp::SessionId, ActiveThreadInfo> =
+                    HashMap::new();
+                for info in live_infos {
+                    if info.status == AgentThreadStatus::Running {
+                        has_running_threads = true;
+                    }
+                    if info.status == AgentThreadStatus::WaitingForConfirmation {
+                        waiting_thread_count += 1;
+                    }
+                    live_info_by_session.insert(info.session_id.clone(), info);
+                }
+                for thread in &mut threads {
+                    if let Some(session_id) = thread.metadata.session_id.clone()
+                        && let Some(info) = live_info_by_session.get(&session_id)
+                    {
+                        let status = info.status;
+                        let thread_id = thread.metadata.thread_id;
+                        Arc::make_mut(thread).apply_active_info(info);
+                        new_live_statuses.insert(session_id, (status, thread_id));
+                    }
+                }
+
+                threads.sort_by(|a, b| {
+                    Self::thread_display_time(&b.metadata)
+                        .cmp(&Self::thread_display_time(&a.metadata))
+                });
+            }
+
+            // Only surface the group when it actually has threads, so a stray
+            // empty workspace tab doesn't add a permanent empty header. When
+            // collapsed the rows aren't loaded, so query the store directly.
+            let has_threads = if should_load_threads {
+                !threads.is_empty()
+            } else {
+                ThreadMetadataStore::global(cx)
+                    .read(cx)
+                    .entries_for_path(&empty_paths, None)
+                    .any(|metadata| {
+                        thread_metadata_would_render_sidebar_row(metadata, &workspace_entry, cx)
+                    })
+            };
+
+            let label: SharedString = "No project".into();
+            let mut header_highlight_positions = Vec::new();
+            let mut show_group = has_threads;
+            if !query.is_empty() {
+                header_highlight_positions =
+                    fuzzy_match_positions(&query, &label).unwrap_or_default();
+                let label_matched = !header_highlight_positions.is_empty();
+                let mut matched: Vec<Arc<ThreadEntry>> = Vec::new();
+                for mut thread in threads {
+                    let title = thread.metadata.display_title();
+                    if let Some(positions) = fuzzy_match_positions(&query, title.as_ref()) {
+                        Arc::make_mut(&mut thread).highlight_positions = positions;
+                        matched.push(thread);
+                    } else if label_matched {
+                        matched.push(thread);
+                    }
+                }
+                threads = matched;
+                show_group = label_matched || !threads.is_empty();
+            }
+
+            if show_group {
+                let is_active = active_workspace.as_ref() == project_less_workspace.as_ref();
+                project_header_indices.push(entries.len());
+                entries.push(ListEntry::ProjectHeader {
+                    key: no_project_key,
+                    label,
+                    highlight_positions: header_highlight_positions,
+                    has_running_threads,
+                    waiting_thread_count,
+                    has_notifications: false,
+                    is_active,
+                    has_threads,
+                });
+                if !is_collapsed {
+                    Self::push_entries_by_display_time(
+                        &mut entries,
+                        Vec::new(),
+                        threads,
+                        &mut current_session_ids,
+                        &mut current_thread_ids,
+                    );
+                }
+            }
+            no_project_group_shown = show_group;
+        }
+
         notified_threads.retain(|id| current_thread_ids.contains(id));
 
         self.thread_last_accessed
@@ -2001,7 +2187,7 @@ impl Sidebar {
             notified_threads,
             notified_terminals,
             project_header_indices,
-            has_open_projects,
+            has_open_projects: has_open_projects || no_project_group_shown,
         };
     }
 
@@ -4063,6 +4249,28 @@ impl Sidebar {
         })
     }
 
+    /// Finds an open workspace (in any window) whose agent panel currently
+    /// holds a live conversation for `thread_id`. Project-less threads have no
+    /// worktree path to route on, so this routes them back to the window that
+    /// actually owns the running session instead of opening a duplicate.
+    fn find_open_workspace_for_live_thread(
+        &self,
+        thread_id: ThreadId,
+        cx: &App,
+    ) -> Option<(WindowHandle<MultiWorkspace>, Entity<Workspace>)> {
+        self.find_workspace_across_windows(cx, |workspace, cx| {
+            workspace
+                .read(cx)
+                .panel::<AgentPanel>(cx)
+                .is_some_and(|panel| {
+                    panel
+                        .read(cx)
+                        .conversation_view_for_id(&thread_id, cx)
+                        .is_some()
+                })
+        })
+    }
+
     fn find_open_workspace_for_path_list(
         &self,
         path_list: &PathList,
@@ -4098,28 +4306,27 @@ impl Sidebar {
         if metadata.folder_paths().paths().is_empty() {
             ThreadMetadataStore::global(cx).update(cx, |store, cx| store.unarchive(thread_id, cx));
 
-            let active_workspace = self
+            // Project-less threads have no worktree path to route on. If the
+            // thread is already live in some open window, jump there rather
+            // than opening a second copy of the same session; otherwise load
+            // it into the active window.
+            if let Some((target_window, workspace)) =
+                self.find_open_workspace_for_live_thread(thread_id, cx)
+            {
+                self.activate_thread_in_other_window(metadata, workspace, target_window, cx);
+            } else if let Some(workspace) = self
                 .multi_workspace
                 .upgrade()
-                .map(|w| w.read(cx).workspace().clone());
-
-            if let Some(workspace) = active_workspace {
+                .map(|w| w.read(cx).workspace().clone())
+            {
                 self.activate_thread_locally(&metadata, &workspace, false, window, cx);
             } else {
                 let path_list = metadata.folder_paths().clone();
-                if let Some((target_window, workspace)) = self.find_open_workspace_for_path_list(
-                    &path_list,
-                    metadata.remote_connection.as_ref(),
-                    cx,
-                ) {
-                    self.activate_thread_in_other_window(metadata, workspace, target_window, cx);
-                } else {
-                    let key = ProjectGroupKey::from_worktree_paths(
-                        &metadata.worktree_paths,
-                        metadata.remote_connection.clone(),
-                    );
-                    self.open_workspace_and_activate_thread(metadata, path_list, &key, window, cx);
-                }
+                let key = ProjectGroupKey::from_worktree_paths(
+                    &metadata.worktree_paths,
+                    metadata.remote_connection.clone(),
+                );
+                self.open_workspace_and_activate_thread(metadata, path_list, &key, window, cx);
             }
             self.show_thread_list(window, cx);
             return;
