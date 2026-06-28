@@ -4,17 +4,14 @@ use collections::HashMap;
 use editor::{Editor, GotoDefinitionKind};
 use file_icons::FileIcons;
 use gpui::{
-    Action, AnyElement, App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    AnyElement, App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
     Focusable, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity, actions,
     prelude::*,
 };
 use language::{Buffer, HighlightId, LanguageAwareStyling};
 use picker::{Picker, PickerDelegate};
-use project::project_settings::DiagnosticSeverity;
 use project::{Location, Project, ProjectPath};
-use schemars::JsonSchema;
-use serde::Deserialize;
-use settings::{DiagnosticSeverityContent, Settings as _};
+use settings::Settings as _;
 use text::{Anchor, Point};
 use theme_settings::ThemeSettings;
 use ui::{Divider, FluentBuilder};
@@ -36,29 +33,6 @@ actions!(
     ]
 );
 
-/// Lists the project's diagnostics in a filterable picker. `severity` is the
-/// least-severe level to include (default `warning` = errors and warnings;
-/// `error` = errors only, `all`/`hint` = everything, `off` = none).
-#[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema, Action)]
-#[action(namespace = editor)]
-#[serde(deny_unknown_fields)]
-pub struct ListDiagnostics {
-    #[serde(default = "default_severity")]
-    pub severity: DiagnosticSeverityContent,
-}
-
-impl Default for ListDiagnostics {
-    fn default() -> Self {
-        Self {
-            severity: default_severity(),
-        }
-    }
-}
-
-fn default_severity() -> DiagnosticSeverityContent {
-    DiagnosticSeverityContent::Warning
-}
-
 pub fn init(cx: &mut App) {
     cx.observe_new(register).detach();
 }
@@ -73,12 +47,6 @@ fn register(workspace: &mut Workspace, _window: Option<&mut Window>, _cx: &mut C
     workspace.register_action(|workspace, _: &ListImplementations, window, cx| {
         LspLocationsPicker::open(LspPickerKind::Implementation, workspace, window, cx);
     });
-    workspace.register_action(|workspace, action: &ListDiagnostics, window, cx| {
-        let kind = LspPickerKind::Diagnostics {
-            severity: action.severity.into(),
-        };
-        LspLocationsPicker::open(kind, workspace, window, cx);
-    });
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -86,7 +54,6 @@ pub enum LspPickerKind {
     References,
     Definition,
     Implementation,
-    Diagnostics { severity: DiagnosticSeverity },
 }
 
 impl LspPickerKind {
@@ -95,7 +62,6 @@ impl LspPickerKind {
             LspPickerKind::References => "Filter references…",
             LspPickerKind::Definition => "Filter definitions…",
             LspPickerKind::Implementation => "Filter implementations…",
-            LspPickerKind::Diagnostics { .. } => "Filter diagnostics…",
         }
     }
 
@@ -106,7 +72,6 @@ impl LspPickerKind {
             LspPickerKind::References => "No references found",
             LspPickerKind::Definition => "No definitions found",
             LspPickerKind::Implementation => "No implementations found",
-            LspPickerKind::Diagnostics { .. } => "No diagnostics found",
         }
     }
 
@@ -125,9 +90,6 @@ impl LspPickerKind {
             }
             LspPickerKind::Implementation => {
                 editor.definition_locations_of_kind(GotoDefinitionKind::Implementation, cx)
-            }
-            LspPickerKind::Diagnostics { severity } => {
-                Some(editor.diagnostic_locations(project, severity, cx))
             }
         }
     }
