@@ -405,16 +405,15 @@ impl Editor {
                         },
                     );
 
-                    target_left = target_left.min(ScrollOffset::from(
+                    target_left = target_left.min(
                         layouts[head.row().minus(start_row) as usize]
-                            .x_for_index(start_column as usize)
-                            + self.gutter_dimensions.margin,
-                    ));
+                            .x_for_index_f64(start_column as usize)
+                            + ScrollOffset::from(self.gutter_dimensions.margin),
+                    );
                     target_right = target_right.max(
-                        ScrollOffset::from(
-                            layouts[head.row().minus(start_row) as usize]
-                                .x_for_index(end_column as usize),
-                        ) + em_advance,
+                        layouts[head.row().minus(start_row) as usize]
+                            .x_for_index_f64(end_column as usize)
+                            + em_advance,
                     );
                 }
             }

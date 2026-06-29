@@ -30,7 +30,7 @@ use text::{BufferId, Edit};
 use ui::{ElementId, IntoElement};
 
 const NEWLINES: &[u8; rope::Chunk::MASK_BITS] = &[b'\n'; _];
-const BULLETS: &[u8; rope::Chunk::MASK_BITS] = &[b'*'; _];
+pub(super) const BULLETS: &[u8; rope::Chunk::MASK_BITS] = &[b'*'; _];
 
 /// Tracks custom blocks such as diagnostics that should be displayed within buffer.
 ///
@@ -2254,7 +2254,7 @@ impl BlockSnapshot {
 
         BlockChunks {
             input_chunks: self.wrap_snapshot.chunks(
-                input_start..input_end,
+                WrapPoint::new(input_start, 0)..WrapPoint::new(input_end, 0),
                 language_aware,
                 highlights,
             ),
@@ -2660,7 +2660,8 @@ impl BlockChunks<'_> {
                     self.transforms.end().1,
                     start_input_row + (self.max_output_row - start_output_row),
                 );
-                self.input_chunks.seek(start_input_row..end_input_row);
+                self.input_chunks
+                    .seek(WrapPoint::new(start_input_row, 0)..WrapPoint::new(end_input_row, 0));
             }
         }
     }

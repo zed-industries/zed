@@ -1526,9 +1526,8 @@
   // How to soft-wrap long lines of text.
   // Possible values:
   //
-  // 1. Prefer a single line generally, unless an overly long line is encountered.
+  // 1. Do not soft-wrap; long lines extend horizontally and scroll.
   //      "soft_wrap": "none",
-  //      "soft_wrap": "prefer_line", // (deprecated, same as "none")
   // 2. Soft wrap lines that overflow the editor.
   //      "soft_wrap": "editor_width",
   // 3. Soft wrap lines at the preferred line length or the editor width (whichever is smaller).
