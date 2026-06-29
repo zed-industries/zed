@@ -185,6 +185,31 @@ pub fn render_to_svg(source: &str, theme: &MermaidTheme) -> Result<String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn mermaid_diagram_with_mixed_weight_combining_marks_does_not_panic() {
+        const IBM_PLEX_REGULAR: &[u8] =
+            include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf");
+        const IBM_PLEX_SEMIBOLD: &[u8] =
+            include_bytes!("../../../assets/fonts/ibm-plex-sans/IBMPlexSans-SemiBold.ttf");
+
+        let zalgo = "Ne\u{0301}\u{0302}\u{0303}\u{0304}\u{0306}\u{0307}\u{0308}\u{030a}d";
+        let source = format!("flowchart TD\n  A[\"**{zalgo}** {zalgo}\"]");
+        let svg = render_to_svg(&source, &MermaidTheme::default())
+            .expect("mermaid diagram should render to SVG");
+
+        let mut db = usvg::fontdb::Database::new();
+        db.load_font_data(IBM_PLEX_REGULAR.to_vec());
+        db.load_font_data(IBM_PLEX_SEMIBOLD.to_vec());
+        db.set_sans_serif_family("IBM Plex Sans");
+        let options = usvg::Options {
+            fontdb: std::sync::Arc::new(db),
+            ..Default::default()
+        };
+
+        usvg::Tree::from_data(svg.as_bytes(), &options)
+            .expect("rasterizing mermaid text should not panic");
+    }
+
     /// An ER diagram whose attribute-block tokens begin with a multibyte
     /// UTF-8 character (e.g. CJK type/field names) must not panic while the
     /// lexer probes for the two-character `PK`/`FK`/`UK` keys.

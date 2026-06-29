@@ -1433,9 +1433,7 @@ impl RegistersView {
             matches,
         };
 
-        Picker::nonsearchable_uniform_list(delegate, window, cx)
-            .initial_width(rems(36.))
-            .modal(true)
+        Picker::nonsearchable_uniform_list(delegate, window, cx).initial_width(rems(36.))
     }
 }
 
@@ -1800,9 +1798,7 @@ impl MarksView {
             matches,
             workspace,
         };
-        Picker::nonsearchable_uniform_list(delegate, window, cx)
-            .initial_width(rems(36.))
-            .modal(true)
+        Picker::nonsearchable_uniform_list(delegate, window, cx).initial_width(rems(36.))
     }
 }
 
