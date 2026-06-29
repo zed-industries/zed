@@ -1601,9 +1601,6 @@ impl ProjectSearchView {
         self.included_opened_only = enabled;
     }
 
-    /// The open buffers to restrict the search to when "Only Search Open Files"
-    /// is enabled, or `None` when it is off. Shared with the text finder, which
-    /// is backed by the same view.
     pub(crate) fn opened_only_buffers(&self, cx: &App) -> Option<Vec<Entity<Buffer>>> {
         if !self.included_opened_only {
             return None;
