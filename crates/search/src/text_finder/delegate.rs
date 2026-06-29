@@ -1094,6 +1094,24 @@ async fn stream_results_to_picker(
 
         smol::future::yield_now().await;
     }
+
+    // The search finished without ever producing a batch (e.g. the include
+    // filter matched no files), so the first-batch clear above never ran and the
+    // previous results would linger. Clear them now — unless a newer search has
+    // already superseded this one (cancel_flag set), in which case it owns the
+    // results and clearing here would wipe its output.
+    if clear_existing && !cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+        picker
+            .update(cx, |picker, cx| {
+                let delegate = &mut picker.delegate;
+                delegate.matches.clear();
+                delegate.entries.clear();
+                delegate.unique_files.clear();
+                delegate.selected_index = 0;
+                cx.notify();
+            })
+            .log_err();
+    }
     None
 }
 
