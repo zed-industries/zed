@@ -60,16 +60,14 @@ impl SandboxRow {
         h_flex()
             .items_start()
             .min_w_0()
-            .w_full()
             .gap_1p5()
             .child(icon)
             .child(
-                div().w_full().child(
-                    Label::new(label)
-                        .size(LabelSize::XSmall)
-                        .buffer_font(cx)
-                        .flex_1(),
-                ),
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .child(Label::new(label).size(LabelSize::XSmall).buffer_font(cx)),
             )
             .into_any_element()
     }
@@ -101,7 +99,7 @@ impl SandboxGroup {
 
     fn render(self, cx: &App) -> impl IntoElement {
         v_flex()
-            .gap_1()
+            .gap_1p5()
             .child(
                 Label::new(self.heading)
                     .size(LabelSize::Small)
@@ -199,7 +197,7 @@ impl RenderOnce for SandboxStatusTooltip {
         };
 
         v_flex()
-            .w(rems_from_px(300.))
+            .w(rems_from_px(280.))
             .gap_1()
             .child(Label::new("Sandboxing"))
             .child(content)
