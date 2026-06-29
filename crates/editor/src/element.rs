@@ -1505,6 +1505,7 @@ impl EditorElement {
             minimap_line_height,
             minimap_scroll_top,
             max_scroll_top: total_editor_lines,
+            visible_editor_lines,
         })
     }
 
@@ -6378,17 +6379,13 @@ impl EditorElement {
             }
 
             let minimap_axis = ScrollbarAxis::Vertical;
-            let pixels_per_line = Pixels::from(
-                ScrollPixelOffset::from(minimap_hitbox.size.height) / layout.max_scroll_top,
-            )
-            .min(layout.minimap_line_height);
-
-            let mut mouse_position = window.mouse_position();
 
             window.on_mouse_event({
                 let editor = self.editor.clone();
 
                 let minimap_hitbox = minimap_hitbox.clone();
+
+                let mut mouse_position = window.mouse_position();
 
                 move |event: &MouseMoveEvent, phase, window, cx| {
                     if phase == DispatchPhase::Capture {
@@ -6399,6 +6396,25 @@ impl EditorElement {
                         if event.pressed_button == Some(MouseButton::Left)
                             && editor.scroll_manager.is_dragging_minimap()
                         {
+                            let Some(thumb_bounds) = layout.thumb_layout.thumb_bounds else {
+                                return;
+                            };
+
+                            let max_thumb_moving_distance =
+                                minimap_hitbox.size.height - thumb_bounds.size.height;
+                            // `max_scroll_top` equals the total lines of the editor (document).
+                            let non_visible_editor_lines =
+                                (layout.max_scroll_top - layout.visible_editor_lines).max(0.);
+
+                            let pixels_per_line = if layout.minimap_scroll_top == 0. {
+                                layout.minimap_line_height
+                            } else {
+                                Pixels::from(
+                                    ScrollPixelOffset::from(max_thumb_moving_distance)
+                                        / non_visible_editor_lines,
+                                )
+                            };
+
                             let old_position = mouse_position.along(minimap_axis);
                             let new_position = event.position.along(minimap_axis);
                             if (minimap_hitbox.origin.along(minimap_axis)
@@ -10067,6 +10083,7 @@ struct MinimapLayout {
     pub minimap_line_height: Pixels,
     pub thumb_border_style: MinimapThumbBorder,
     pub max_scroll_top: ScrollOffset,
+    pub visible_editor_lines: f64,
 }
 
 impl MinimapLayout {
