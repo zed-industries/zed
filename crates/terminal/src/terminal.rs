@@ -2214,10 +2214,7 @@ impl Terminal {
             self.last_content.display_offset,
         );
 
-        if e.button == MouseButton::Left
-            && e.modifiers.secondary()
-            && !self.mouse_mode(e.modifiers.shift)
-        {
+        if e.button == MouseButton::Left && e.modifiers.secondary() {
             self.mouse_down_hyperlink = self.find_hyperlink_at_point(point);
 
             if self.mouse_down_hyperlink.is_some() {
@@ -2279,6 +2276,24 @@ impl Terminal {
         let setting = TerminalSettings::get_global(cx);
 
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
+        if let Some(mouse_down_hyperlink) = self.mouse_down_hyperlink.take() {
+            let point = grid_point(
+                position,
+                self.last_content.terminal_bounds,
+                self.last_content.display_offset,
+            );
+
+            if let Some(mouse_up_hyperlink) = self.find_hyperlink_at_point(point) {
+                if mouse_down_hyperlink == mouse_up_hyperlink {
+                    self.events
+                        .push_back(InternalEvent::ProcessHyperlink(mouse_up_hyperlink, true));
+                    self.selection_phase = SelectionPhase::Ended;
+                    self.last_mouse = None;
+                    return;
+                }
+            }
+        }
+
         if self.mouse_mode(e.modifiers.shift) {
             let point = grid_point(
                 position,
@@ -2295,24 +2310,6 @@ impl Terminal {
         } else {
             if e.button == MouseButton::Left && setting.copy_on_select {
                 self.copy(Some(true));
-            }
-
-            if let Some(mouse_down_hyperlink) = self.mouse_down_hyperlink.take() {
-                let point = grid_point(
-                    position,
-                    self.last_content.terminal_bounds,
-                    self.last_content.display_offset,
-                );
-
-                if let Some(mouse_up_hyperlink) = self.find_hyperlink_at_point(point) {
-                    if mouse_down_hyperlink == mouse_up_hyperlink {
-                        self.events
-                            .push_back(InternalEvent::ProcessHyperlink(mouse_up_hyperlink, true));
-                        self.selection_phase = SelectionPhase::Ended;
-                        self.last_mouse = None;
-                        return;
-                    }
-                }
             }
 
             //Hyperlinks
