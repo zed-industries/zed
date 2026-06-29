@@ -1,6 +1,6 @@
 use std::{ops::Range, sync::atomic::Ordering};
 
-use editor::Editor;
+use editor::{Editor, EditorEvent};
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Modifiers, Subscription, Task, WeakEntity, actions,
@@ -25,7 +25,7 @@ actions!(text_finder, [ToProjectSearch,]);
 pub struct TextFinder {
     picker: Entity<Picker<Delegate>>,
     init_modifiers: Option<Modifiers>,
-    _subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 pub fn init(cx: &mut App) {
@@ -268,22 +268,51 @@ impl TextFinder {
         let picker = cx.new(|cx| Picker::list_with_preview(delegate, project, window, cx));
         let picker_weak = picker.downgrade();
         let picker_focus_handle = picker.focus_handle(cx);
+
+        // The filter inputs are built here, where a `Window` is available, and
+        // handed to the delegate which only renders them when filters are shown.
+        let included_files_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Include: e.g. src/**/*.rs", window, cx);
+            editor
+        });
+        let excluded_files_editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Exclude: e.g. vendor/*, *.lock", window, cx);
+            editor
+        });
+
         picker.update(cx, |picker, cx| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
+            picker.delegate.included_files_editor = Some(included_files_editor.clone());
+            picker.delegate.excluded_files_editor = Some(excluded_files_editor.clone());
             picker.delegate.hook_up_any_ongoing_search(picker_weak, cx);
             if let Some(seed_query) = seed_query.as_deref() {
                 picker.set_query(seed_query, window, cx);
                 picker.select_query(window, cx);
             }
         });
-        let subscription = cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
+        let mut subscriptions = vec![cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
             cx.emit(DismissEvent);
-        });
+        })];
+
+        // Re-run the search whenever the include/exclude filters change, matching
+        // the live-search behavior of typing in the query editor.
+        for editor in [included_files_editor, excluded_files_editor] {
+            subscriptions.push(cx.subscribe_in(&editor, window, {
+                let picker = picker.clone();
+                move |_, _, event: &EditorEvent, window, cx| {
+                    if let EditorEvent::Edited { .. } = event {
+                        picker.update(cx, |picker, cx| picker.refresh(window, cx));
+                    }
+                }
+            }));
+        }
 
         Self {
             picker,
             init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
-            _subscription: subscription,
+            _subscriptions: subscriptions,
         }
     }
 
