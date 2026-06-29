@@ -3048,7 +3048,6 @@ impl GitPanel {
         let instructions = AgentSettings::get_global(cx)
             .commit_message_instructions
             .clone();
-
         let project = self.project.clone();
         let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
 
