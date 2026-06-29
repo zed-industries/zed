@@ -541,6 +541,45 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_prediction_edits_for_single_file_diff_drops_marker_only_edit(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = init_test(cx);
+        fs.insert_tree(
+            path!("/root"),
+            json!({
+                "file": "Name</Update>\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+        let diff = indoc! {r#"
+            --- a/file
+            +++ b/file
+            @@ ... @@
+            -Name</Update>
+            +<|user_cursor|>Name</Update>
+        "#};
+
+        let (buffer, snapshot, edits, cursor_position) =
+            prediction_edits_for_single_file_diff(diff, &project, &mut cx.to_async())
+                .await
+                .unwrap()
+                .unwrap();
+
+        assert!(edits.is_empty());
+        let cursor_position = cursor_position.unwrap();
+        assert_eq!(cursor_position.anchor.to_offset(&snapshot), 0);
+        assert_eq!(cursor_position.offset, 0);
+
+        buffer.update(cx, |buffer, cx| buffer.edit(edits, None, cx));
+        buffer.read_with(cx, |buffer, _cx| {
+            assert_eq!(buffer.text(), "Name</Update>\n");
+        });
+    }
+
+    #[gpui::test]
     async fn test_prediction_edits_for_single_file_diff_does_not_treat_completed_literal_marker_as_cursor(
         cx: &mut TestAppContext,
     ) {
