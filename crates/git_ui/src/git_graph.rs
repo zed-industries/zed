@@ -1257,8 +1257,7 @@ fn reachable_oids(
     let mut queue: Vec<Oid> = Vec::new();
     for commit in commits {
         let is_tip = commit.ref_names.iter().any(|name| {
-            GitGraph::extract_branch_name(name)
-                .is_some_and(|branch| filter.contains(branch))
+            GitGraph::extract_branch_name(name).is_some_and(|branch| filter.contains(branch))
         });
         if is_tip {
             queue.push(commit.sha);
@@ -1581,10 +1580,7 @@ impl GitGraph {
         if let Some(rest) = ref_name.strip_prefix("HEAD -> ") {
             return Some(rest);
         }
-        if ref_name == "HEAD"
-            || ref_name.starts_with("tag: ")
-            || ref_name.starts_with("refs/")
-        {
+        if ref_name == "HEAD" || ref_name.starts_with("tag: ") || ref_name.starts_with("refs/") {
             return None;
         }
         Some(ref_name)
@@ -4503,7 +4499,9 @@ impl Render for GitGraph {
                 v_flex()
                     .size_full()
                     .child(self.render_search_bar(cx))
-                    .when_some(self.render_filter_chips_row(cx), |this, row| this.child(row))
+                    .when_some(self.render_filter_chips_row(cx), |this, row| {
+                        this.child(row)
+                    })
                     .child(div().flex_1().child(content)),
             )
             .children(self.context_menu.as_ref().map(|context_menu| {
