@@ -595,7 +595,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         });
 
         let cursor_position =
-            cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
+            cx.new(|cx| go_to_line::cursor_position::CursorPosition::new(workspace, cx));
         let line_ending_indicator =
             cx.new(|_| line_ending_selector::LineEndingIndicator::default());
         let merge_conflict_indicator =

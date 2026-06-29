@@ -3810,6 +3810,29 @@ fn window_and_layout_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Word Count Button",
+                description: "Show the word count in the status bar.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("status_bar.word_count_button"),
+                    pick: |settings_content| {
+                        settings_content
+                            .status_bar
+                            .as_ref()?
+                            .word_count_button
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .status_bar
+                            .get_or_insert_default()
+                            .word_count_button = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Line Endings Button",
                 description: "Show the active line endings button in the status bar.",
                 field: Box::new(SettingField {

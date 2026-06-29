@@ -539,7 +539,7 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
-            let cursor_position = cx.new(|_| CursorPosition::new(workspace));
+            let cursor_position = cx.new(|cx| CursorPosition::new(workspace, cx));
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_right_item(cursor_position, window, cx);
             });
@@ -571,6 +571,7 @@ mod tests {
                 &SelectionStats {
                     lines: 0,
                     characters: 0,
+                    words: 0,
                     selections: 1,
                 },
                 workspace
@@ -592,6 +593,7 @@ mod tests {
                 &SelectionStats {
                     lines: 1,
                     characters: 3,
+                    words: 0,
                     selections: 1,
                 },
                 workspace
@@ -625,7 +627,7 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
-            let cursor_position = cx.new(|_| CursorPosition::new(workspace));
+            let cursor_position = cx.new(|cx| CursorPosition::new(workspace, cx));
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_right_item(cursor_position, window, cx);
             });
@@ -704,7 +706,7 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
-            let cursor_position = cx.new(|_| CursorPosition::new(workspace));
+            let cursor_position = cx.new(|cx| CursorPosition::new(workspace, cx));
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_right_item(cursor_position, window, cx);
             });
