@@ -15,6 +15,7 @@ use futures::{
     channel::mpsc::{UnboundedReceiver, unbounded},
 };
 
+use alacritty_terminal::grid::Dimensions as _;
 use itertools::Itertools as _;
 use mappings::mouse::{
     alt_scroll, grid_point, grid_point_and_side, mouse_button_report, mouse_moved_report,
@@ -648,7 +649,7 @@ pub struct PathLikeTarget {
     /// Might have line and column number(s) attached as `file.rs:1:23`
     pub maybe_path: String,
     /// Current working directory of the terminal
-    pub terminal_dir: Option<PathBuf>,
+    pub working_directory: Option<PathBuf>,
 }
 
 /// A string inside terminal, potentially useful as a URI that can be opened.
@@ -1213,7 +1214,12 @@ impl TerminalBuilder {
                 path_style,
                 cwd_history: working_directory
                     .as_ref()
-                    .map(|cwd| vec![(i32::MIN, cwd.clone())])
+                    .map(|working_directory| {
+                        vec![CwdHistoryEntry {
+                            scrollback_position: i32::MIN,
+                            working_directory: working_directory.clone(),
+                        }]
+                    })
                     .unwrap_or_default(),
                 #[cfg(any(test, feature = "test-support"))]
                 input_log: Vec::new(),
@@ -1379,9 +1385,16 @@ pub struct Terminal {
     event_loop_task: Task<Result<(), anyhow::Error>>,
     background_executor: BackgroundExecutor,
     path_style: PathStyle,
-    cwd_history: Vec<(i32, PathBuf)>,
+    cwd_history: Vec<CwdHistoryEntry>,
     #[cfg(any(test, feature = "test-support"))]
     input_log: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CwdHistoryEntry {
+    /// Line offset in the retained scrollback buffer.
+    scrollback_position: i32,
+    working_directory: PathBuf,
 }
 
 struct CopyTemplate {
@@ -1655,7 +1668,7 @@ impl Terminal {
                     self.path_style,
                 ) {
                     Some(hyperlink) => {
-                        let history_size = term.history_size() as i32;
+                        let history_size = term.history_size();
                         self.process_hyperlink(hyperlink, *open, history_size, cx);
                     }
                     None => {
@@ -1667,7 +1680,7 @@ impl Terminal {
             InternalEvent::ProcessHyperlink(hyperlink, open) => {
                 // history_size must be read here since process_hyperlink cannot lock term
                 // (sync() already holds the lock when dispatching events)
-                let history_size = term.history_size() as i32;
+                let history_size = term.history_size();
                 self.process_hyperlink(hyperlink.clone(), *open, history_size, cx);
             }
         }
@@ -1677,7 +1690,7 @@ impl Terminal {
         &mut self,
         hyperlink: HyperlinkMatch,
         open: bool,
-        history_size: i32,
+        history_size: usize,
         cx: &mut Context<Self>,
     ) {
         let HyperlinkMatch {
@@ -1687,7 +1700,7 @@ impl Terminal {
         } = hyperlink;
         let prev_hovered_word = self.last_content.last_hovered_word.take();
         let match_line = range.start().line;
-        let terminal_dir = self.cwd_at_line(match_line, history_size);
+        let working_directory = self.cwd_at_line(match_line, history_size);
 
         let target = if is_url {
             if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
@@ -1697,7 +1710,7 @@ impl Terminal {
 
                 MaybeNavigationTarget::PathLike(PathLikeTarget {
                     maybe_path: decoded_path,
-                    terminal_dir,
+                    working_directory,
                 })
             } else {
                 MaybeNavigationTarget::Url(maybe_url_or_path.clone())
@@ -1705,7 +1718,7 @@ impl Terminal {
         } else {
             MaybeNavigationTarget::PathLike(PathLikeTarget {
                 maybe_path: maybe_url_or_path.clone(),
-                terminal_dir,
+                working_directory,
             })
         };
 
@@ -2657,24 +2670,35 @@ impl Terminal {
         }
     }
 
-    pub(crate) fn record_cwd_change(&mut self, new_cwd: PathBuf) {
+    pub(crate) fn record_cwd_change(&mut self, new_working_directory: PathBuf) {
         let term = self.term.lock_unfair();
-        let pos = term.history_size() as i32 + term.grid().cursor.point.line.0;
+        let scrollback_position =
+            Self::scrollback_position(term.grid().cursor.point.line.0, term.history_size());
         drop(term);
-        self.cwd_history.push((pos, new_cwd));
+        self.cwd_history.push(CwdHistoryEntry {
+            scrollback_position,
+            working_directory: new_working_directory,
+        });
     }
 
-    fn cwd_at_line(&self, line: i32, history_size: i32) -> Option<PathBuf> {
+    fn cwd_at_line(&self, line: i32, history_size: usize) -> Option<PathBuf> {
         if self.cwd_history.is_empty() {
             return self.working_directory();
         }
-        let click_pos = history_size + line;
+        let scrollback_position = Self::scrollback_position(line, history_size);
         self.cwd_history
             .iter()
             .rev()
-            .find(|(pos, _)| *pos <= click_pos)
-            .map(|(_, cwd)| cwd.clone())
+            .find(|entry| entry.scrollback_position <= scrollback_position)
+            .map(|entry| entry.working_directory.clone())
             .or_else(|| self.working_directory())
+    }
+
+    fn scrollback_position(line: i32, history_size: usize) -> i32 {
+        // `history_size` is capped when old scrollback is trimmed, so this is a
+        // coordinate in the retained terminal buffer rather than a global line number.
+        let history_size = i32::try_from(history_size).unwrap_or(i32::MAX);
+        history_size.saturating_add(line)
     }
 
     pub fn title(&self, truncate: bool) -> String {
@@ -4479,74 +4503,89 @@ mod tests {
         let dispatcher = gpui::TestDispatcher::new(rand::random());
         let executor = gpui::BackgroundExecutor::new(std::sync::Arc::new(dispatcher));
         TerminalBuilder::new_display_only(
-            CursorShape::default(),
+            SettingsCursorShape::default(),
             AlternateScroll::On,
             None,
             0,
             &executor,
             PathStyle::local(),
         )
-        .unwrap()
         .terminal
     }
 
     #[test]
     fn test_cwd_at_line_empty_history_returns_none() {
         let terminal = make_display_only_terminal();
-        assert_eq!(terminal.cwd_at_line(Line(0), 0), None);
+        assert_eq!(terminal.cwd_at_line(0, 0), None);
     }
 
     #[test]
     fn test_cwd_at_line_returns_cwd_for_line_at_or_after_recorded_position() {
         let mut terminal = make_display_only_terminal();
-        let dir_a = PathBuf::from("/home/user/project_a");
-        terminal.cwd_history.push((5, dir_a.clone()));
+        let working_directory_a = PathBuf::from("/home/user/project_a");
+        terminal.cwd_history.push(CwdHistoryEntry {
+            scrollback_position: 5,
+            working_directory: working_directory_a.clone(),
+        });
 
-        // click_pos = history_size(5) + line(3) = 8 ≥ 5
-        assert_eq!(terminal.cwd_at_line(Line(3), 5), Some(dir_a.clone()));
+        // click_pos = history_size(5) + line(3) = 8 >= 5
+        assert_eq!(
+            terminal.cwd_at_line(3, 5),
+            Some(working_directory_a.clone())
+        );
         // click_pos = history_size(5) + line(0) = 5 == 5 (exact match)
-        assert_eq!(terminal.cwd_at_line(Line(0), 5), Some(dir_a));
+        assert_eq!(terminal.cwd_at_line(0, 5), Some(working_directory_a));
     }
 
     #[test]
     fn test_cwd_at_line_returns_none_when_line_is_before_any_recorded_cwd() {
         let mut terminal = make_display_only_terminal();
-        terminal
-            .cwd_history
-            .push((10, PathBuf::from("/home/user/project_a")));
+        terminal.cwd_history.push(CwdHistoryEntry {
+            scrollback_position: 10,
+            working_directory: PathBuf::from("/home/user/project_a"),
+        });
 
-        // click_pos = 0 + 3 = 3 < 10 → no match, falls back to working_directory (None)
-        assert_eq!(terminal.cwd_at_line(Line(3), 0), None);
+        // click_pos = 0 + 3 = 3 < 10, no match, falls back to working_directory (None)
+        assert_eq!(terminal.cwd_at_line(3, 0), None);
     }
 
     #[test]
     fn test_cwd_at_line_selects_most_recent_cwd_before_click() {
         let mut terminal = make_display_only_terminal();
-        let dir_a = PathBuf::from("/home/user/project_a");
-        let dir_b = PathBuf::from("/home/user/project_b");
-        let dir_c = PathBuf::from("/home/user/project_c");
-        terminal.cwd_history.push((0, dir_a.clone()));
-        terminal.cwd_history.push((10, dir_b.clone()));
-        terminal.cwd_history.push((20, dir_c.clone()));
+        let working_directory_a = PathBuf::from("/home/user/project_a");
+        let working_directory_b = PathBuf::from("/home/user/project_b");
+        let working_directory_c = PathBuf::from("/home/user/project_c");
+        terminal.cwd_history.push(CwdHistoryEntry {
+            scrollback_position: 0,
+            working_directory: working_directory_a.clone(),
+        });
+        terminal.cwd_history.push(CwdHistoryEntry {
+            scrollback_position: 10,
+            working_directory: working_directory_b.clone(),
+        });
+        terminal.cwd_history.push(CwdHistoryEntry {
+            scrollback_position: 20,
+            working_directory: working_directory_c.clone(),
+        });
 
-        // click_pos=5: between 0 and 10 → dir_a
-        assert_eq!(terminal.cwd_at_line(Line(5), 0), Some(dir_a));
-        // click_pos=15: between 10 and 20 → dir_b
-        assert_eq!(terminal.cwd_at_line(Line(15), 0), Some(dir_b));
-        // click_pos=25: after 20 → dir_c
-        assert_eq!(terminal.cwd_at_line(Line(25), 0), Some(dir_c));
+        // click_pos=5: between 0 and 10, working_directory_a
+        assert_eq!(terminal.cwd_at_line(5, 0), Some(working_directory_a));
+        // click_pos=15: between 10 and 20, working_directory_b
+        assert_eq!(terminal.cwd_at_line(15, 0), Some(working_directory_b));
+        // click_pos=25: after 20, working_directory_c
+        assert_eq!(terminal.cwd_at_line(25, 0), Some(working_directory_c));
     }
 
     #[test]
     fn test_record_cwd_change_stores_entry_at_current_cursor_position() {
         let mut terminal = make_display_only_terminal();
-        let dir = PathBuf::from("/tmp/test");
-        // Fresh display-only terminal: history_size=0, cursor at line 0 → pos=0
-        terminal.record_cwd_change(dir.clone());
+        let working_directory = PathBuf::from("/tmp/test");
+        // Fresh display-only terminal: history_size=0, cursor at line 0, scrollback_position=0
+        terminal.record_cwd_change(working_directory.clone());
 
         assert_eq!(terminal.cwd_history.len(), 1);
-        let (pos, recorded_dir) = &terminal.cwd_history[0];
-        assert_eq!(*pos, 0);
-        assert_eq!(*recorded_dir, dir);
+        let entry = &terminal.cwd_history[0];
+        assert_eq!(entry.scrollback_position, 0);
+        assert_eq!(entry.working_directory, working_directory);
     }
 }
