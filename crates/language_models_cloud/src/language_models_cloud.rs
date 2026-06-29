@@ -19,12 +19,13 @@ use http_client::{
     AsyncBody, HttpClient, HttpClientWithUrl, HttpRequestExt, Method, Response, StatusCode,
 };
 use language_model::{
-    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME,
-    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
-    LanguageModelEffortLevel, LanguageModelId, LanguageModelName, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, OPEN_AI_PROVIDER_ID, OPEN_AI_PROVIDER_NAME, RateLimiter,
-    X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME, ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
+    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, DisabledReason, GOOGLE_PROVIDER_ID,
+    GOOGLE_PROVIDER_NAME, LanguageModel, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
+    LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolSchemaFormat, OPEN_AI_PROVIDER_ID,
+    OPEN_AI_PROVIDER_NAME, RateLimiter, X_AI_PROVIDER_ID, X_AI_PROVIDER_NAME,
+    ZED_CLOUD_PROVIDER_ID, ZED_CLOUD_PROVIDER_NAME,
 };
 
 use schemars::JsonSchema;
@@ -41,7 +42,8 @@ use thiserror::Error;
 use anthropic::completion::{AnthropicEventMapper, AnthropicPromptCacheMode, into_anthropic};
 use google_ai::completion::{GoogleEventMapper, into_google};
 use open_ai::completion::{
-    OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai, into_open_ai_response,
+    ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
+    into_open_ai_response,
 };
 
 const PROVIDER_ID: LanguageModelProviderId = ZED_CLOUD_PROVIDER_ID;
@@ -321,6 +323,14 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
         self.model.is_latest
     }
 
+    fn is_disabled(&self) -> Option<DisabledReason> {
+        if self.model.is_disabled {
+            self.model.disabled_reason.clone().map(DisabledReason::new)
+        } else {
+            None
+        }
+    }
+
     fn requires_data_retention(&self) -> bool {
         // Anthropic cannot offer Fable models with Zero Data Retention
         self.id
@@ -588,6 +598,7 @@ impl<TP: CloudLlmTokenProvider + 'static> LanguageModel for CloudLanguageModel<T
                     self.model.supports_parallel_tool_calls,
                     false,
                     None,
+                    ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                     None,
                     false,
                 );

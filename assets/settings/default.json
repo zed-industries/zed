@@ -73,6 +73,12 @@
   "agent_buffer_font_size": 12,
   // The default font size for the commit editor in the git panel and commit modal.
   "git_commit_buffer_font_size": 12,
+  // The default font size for the markdown preview. Falls back to the editor font size if unset.
+  "markdown_preview_font_size": null,
+  // The font family for the markdown preview. Falls back to the UI font family if unset.
+  "markdown_preview_font_family": null,
+  // The font family for code blocks in the markdown preview. Falls back to the editor font family if unset.
+  "markdown_preview_code_font_family": null,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
   // Active pane styling settings.
@@ -974,10 +980,14 @@
     //
     // Default: main
     "fallback_branch_name": "main",
-    // Whether to sort entries in the panel by path or by status (the default).
+    // How to sort entries in the git panel.
     //
-    // Default: false
-    "sort_by_path": false,
+    // Default: path
+    "sort_by": "path",
+    // How to group entries in the git panel.
+    //
+    // Default: status
+    "group_by": "status",
     // Whether to collapse untracked files in the diff panel.
     //
     // Default: false
@@ -1010,6 +1020,11 @@
     //
     // Default: 0
     "commit_title_max_length": 0,
+    // Default action when clicking a changed file in the Git panel.
+    //
+    // Choices: project_diff, file_diff, view_file
+    // Default: project_diff
+    "entry_primary_click_action": "project_diff",
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
