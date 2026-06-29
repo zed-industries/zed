@@ -299,8 +299,6 @@ impl TextFinder {
             cx.emit(DismissEvent);
         })];
 
-        // Re-run the search whenever the include/exclude filters change, matching
-        // the live-search behavior of typing in the query editor.
         let (included_editor, excluded_editor) = picker
             .read(cx)
             .delegate
