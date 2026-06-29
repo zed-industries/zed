@@ -42,7 +42,7 @@ def main(
     if not token:
         try:
             result = subprocess.run(
-                ["gh", "auth", "token"], capture_output=True, text=True, check=True
+                ["gh", "auth", "token"], capture_output=True, text=True, check=True, shell=False
             )
             token = result.stdout.strip()
         except (subprocess.CalledProcessError, FileNotFoundError):
