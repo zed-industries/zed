@@ -2,6 +2,7 @@ mod connection;
 mod diff;
 mod mention;
 mod terminal;
+pub use ::terminal::HeadlessTerminal;
 use action_log::{ActionLog, ActionLogTelemetry};
 use agent_client_protocol::schema::{MaybeUndefined, v1 as acp};
 use anyhow::{Context as _, Result, anyhow};
@@ -3877,6 +3878,10 @@ impl AcpThread {
         let project = self.project.clone();
         let language_registry = project.read(cx).languages().clone();
         let is_windows = project.read(cx).path_style(cx).is_windows();
+        // Headless hosts (e.g. the eval CLI) have no controlling TTY, so PTY
+        // setup fails with `ENOTTY`. Run the command non-interactively and
+        // without a PTY in that case.
+        let headless = HeadlessTerminal::is_enabled(cx);
 
         let terminal_id = acp::TerminalId::new(Uuid::new_v4().to_string());
         let terminal_task = cx.spawn({
@@ -3928,19 +3933,25 @@ impl AcpThread {
                         // on Windows that deliberately changes the shell: the
                         // sandboxed path runs under WSL's Linux bash, but this
                         // fallback uses the host's `shell` against the native cwd.
-                        let (task_command, task_args) =
-                            ShellBuilder::new(&Shell::Program(shell), is_windows)
-                                .redirect_stdin_to_dev_null()
-                                .build(Some(command.clone()), &args);
+                        let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
+                        if headless {
+                            builder = builder.non_interactive();
+                        }
+                        let (task_command, task_args) = builder
+                            .redirect_stdin_to_dev_null()
+                            .build(Some(command.clone()), &args);
                         (task_command, task_args, env, None, cwd.clone())
                     };
 
                 #[cfg(not(target_os = "windows"))]
                 let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
-                    let (task_command, task_args) =
-                        ShellBuilder::new(&Shell::Program(shell), is_windows)
-                            .redirect_stdin_to_dev_null()
-                            .build(Some(command.clone()), &args);
+                    let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
+                    if headless {
+                        builder = builder.non_interactive();
+                    }
+                    let (task_command, task_args) = builder
+                        .redirect_stdin_to_dev_null()
+                        .build(Some(command.clone()), &args);
                     let (task_command, task_args, task_env, sandbox) = cx
                         .background_spawn(prepare_sandbox_wrap(
                             task_command,
