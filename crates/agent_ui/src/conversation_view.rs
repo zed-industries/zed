@@ -1,8 +1,8 @@
 use acp_thread::{
     AcpThread, AcpThreadEvent, AgentThreadEntry, AssistantMessage, AssistantMessageChunk,
-    AuthRequired, LoadError, MaxOutputTokensError, MentionUri, PermissionOptionChoice,
-    PermissionOptions, PermissionPattern, RetryStatus, SelectedPermissionOutcome, ThreadStatus,
-    ToolCall, ToolCallContent, ToolCallStatus, UserMessageId,
+    AuthRequired, ClientUserMessageId, LoadError, MaxOutputTokensError, MentionUri,
+    PermissionOptionChoice, PermissionOptions, PermissionPattern, RetryStatus,
+    SelectedPermissionOutcome, ThreadStatus, ToolCall, ToolCallContent, ToolCallStatus,
 };
 use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
@@ -3757,7 +3757,6 @@ pub(crate) mod tests {
 
         fn prompt(
             &self,
-            _id: acp_thread::UserMessageId,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -5204,7 +5203,6 @@ pub(crate) mod tests {
 
         fn prompt(
             &self,
-            _id: acp_thread::UserMessageId,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -5312,7 +5310,6 @@ pub(crate) mod tests {
 
         fn prompt(
             &self,
-            _id: acp_thread::UserMessageId,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -5382,7 +5379,6 @@ pub(crate) mod tests {
 
         fn prompt(
             &self,
-            _id: acp_thread::UserMessageId,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -5498,7 +5494,6 @@ pub(crate) mod tests {
 
         fn prompt(
             &self,
-            _id: acp_thread::UserMessageId,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -5659,7 +5654,7 @@ pub(crate) mod tests {
             let AgentThreadEntry::UserMessage(user_message) = &thread.entries()[2] else {
                 panic!();
             };
-            user_message.id.clone().unwrap()
+            user_message.client_id.clone().unwrap()
         });
 
         conversation_view.read_with(cx, |view, cx| {
@@ -6435,7 +6430,9 @@ pub(crate) mod tests {
                 .find_map(|entry| match entry {
                     AgentThreadEntry::AssistantMessage(message) => {
                         message.chunks.iter().find_map(|chunk| match chunk {
-                            AssistantMessageChunk::Message { block } => block.markdown().cloned(),
+                            AssistantMessageChunk::Message { block, .. } => {
+                                block.markdown().cloned()
+                            }
                             AssistantMessageChunk::Thought { .. } => None,
                         })
                     }
@@ -10078,7 +10075,6 @@ pub(crate) mod tests {
 
         fn prompt(
             &self,
-            _id: acp_thread::UserMessageId,
             _params: acp::PromptRequest,
             _cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
