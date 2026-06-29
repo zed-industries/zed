@@ -277,6 +277,7 @@ impl Conversation {
                         }
                     }
                     AcpThreadEvent::NewEntry
+                    | AcpThreadEvent::StatusChanged
                     | AcpThreadEvent::TitleUpdated
                     | AcpThreadEvent::TokenUsageUpdated
                     | AcpThreadEvent::EntryUpdated(_)
@@ -521,6 +522,7 @@ fn affects_thread_metadata(event: &AcpThreadEvent) -> bool {
         | AcpThreadEvent::WorkingDirectoriesUpdated => true,
         // --
         AcpThreadEvent::EntryUpdated(_)
+        | AcpThreadEvent::StatusChanged
         | AcpThreadEvent::EntriesRemoved(_)
         | AcpThreadEvent::Retry(_)
         | AcpThreadEvent::TokenUsageUpdated
@@ -1486,6 +1488,13 @@ impl ConversationView {
             cx.emit(RootThreadUpdated);
         }
         match event {
+            AcpThreadEvent::StatusChanged => {
+                if let Some(active) = self.thread_view(&session_id) {
+                    active.update(cx, |active, cx| {
+                        active.sync_generating_indicator(cx);
+                    });
+                }
+            }
             AcpThreadEvent::NewEntry => {
                 let len = thread.read(cx).entries().len();
                 let index = len - 1;
