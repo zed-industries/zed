@@ -57,7 +57,6 @@ pub struct ParticipantIndex(pub u32);
 pub struct User {
     pub legacy_id: LegacyUserId,
     pub username: SharedString,
-    pub github_login: SharedString,
     pub avatar_uri: SharedUri,
     pub name: Option<String>,
 }
@@ -239,7 +238,6 @@ impl UserStore {
                                     let user = Arc::new(User {
                                         legacy_id: user_id,
                                         username: response.user.username.clone().into(),
-                                        github_login: response.user.github_login.clone().into(),
                                         avatar_uri: response.user.avatar_url.clone().into(),
                                         name: response.user.name.clone(),
                                     });
@@ -1011,7 +1009,6 @@ impl User {
         Arc::new(User {
             legacy_id: message.id,
             username: message.username.into(),
-            github_login: message.github_login.into(),
             avatar_uri: message.avatar_url.into(),
             name: message.name,
         })
