@@ -1476,6 +1476,13 @@ impl InlineAssistant {
             return Some(InlineAssistTarget::Terminal(terminal_view));
         }
 
+        if let Some(agent_panel) = workspace.panel::<AgentPanel>(cx)
+            && let Some(terminal_view) = agent_panel.read(cx).visible_terminal_view().cloned()
+            && terminal_view.focus_handle(cx).contains_focused(window, cx)
+        {
+            return Some(InlineAssistTarget::Terminal(terminal_view));
+        }
+
         if let Some(workspace_editor) = workspace
             .active_item(cx)
             .and_then(|item| item.act_as::<Editor>(cx))

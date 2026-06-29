@@ -108,7 +108,6 @@ pub enum ContactRequestStatus {
 
 pub struct UserStore {
     users: HashMap<u64, Arc<User>>,
-    by_github_login: HashMap<SharedString, u64>,
     participant_indices: HashMap<u64, ParticipantIndex>,
     update_contacts_tx: mpsc::UnboundedSender<UpdateContacts>,
     edit_prediction_usage: Option<EditPredictionUsage>,
@@ -189,7 +188,6 @@ impl UserStore {
 
         Self {
             users: Default::default(),
-            by_github_login: Default::default(),
             current_user: current_user_rx,
             current_organization: None,
             organizations: Vec::new(),
@@ -260,8 +258,6 @@ impl UserStore {
                                 cx.update(|cx| {
                                     if let Some((user, response)) = current_user_and_response {
                                         this.update(cx, |this, cx| {
-                                            this.by_github_login
-                                                .insert(user.github_login.clone(), user_id);
                                             this.users.insert(user_id, user);
                                             this.update_authenticated_user(response, cx)
                                         })
@@ -317,7 +313,6 @@ impl UserStore {
     #[cfg(feature = "test-support")]
     pub fn clear_cache(&mut self) {
         self.users.clear();
-        self.by_github_login.clear();
     }
 
     async fn handle_show_contacts(
@@ -688,12 +683,6 @@ impl UserStore {
         })
     }
 
-    pub fn cached_user_by_github_login(&self, github_login: &str) -> Option<Arc<User>> {
-        self.by_github_login
-            .get(github_login)
-            .and_then(|id| self.users.get(id).cloned())
-    }
-
     pub fn current_user(&self) -> Option<Arc<User>> {
         self.current_user.borrow().clone()
     }
@@ -968,13 +957,7 @@ impl UserStore {
         let mut ret = Vec::with_capacity(users.len());
         for user in users {
             let user = User::new(user);
-            if let Some(old) = self.users.insert(user.legacy_id, user.clone())
-                && old.github_login != user.github_login
-            {
-                self.by_github_login.remove(&old.github_login);
-            }
-            self.by_github_login
-                .insert(user.github_login.clone(), user.legacy_id);
+            self.users.insert(user.legacy_id, user.clone());
             ret.push(user)
         }
         ret

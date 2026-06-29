@@ -235,7 +235,7 @@ impl EntryViewState {
         match thread_entry {
             AgentThreadEntry::UserMessage(message) => {
                 let can_rewind = thread.read(cx).supports_truncate(cx);
-                let has_id = message.id.is_some();
+                let has_client_id = message.client_id.is_some();
                 let is_subagent = thread.read(cx).parent_session_id().is_some();
                 let chunks = message.chunks.clone();
                 if let Some(Entry::UserMessage(editor)) = self.entries.get_mut(index) {
@@ -262,7 +262,7 @@ impl EntryViewState {
                             window,
                             cx,
                         );
-                        if !can_rewind || !has_id || is_subagent {
+                        if !can_rewind || !has_client_id || is_subagent {
                             editor.set_read_only(true, cx);
                         }
                         editor.set_message(chunks, window, cx);

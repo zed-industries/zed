@@ -1857,7 +1857,6 @@ impl AgentConnection for AcpConnection {
 
     fn prompt(
         &self,
-        _id: acp_thread::UserMessageId,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
@@ -1993,8 +1992,8 @@ pub mod test_support {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use acp_thread::{
-        AgentSessionConfigOptions, AgentSessionModes, AgentSessionRetry, AgentSessionSetTitle,
-        AgentSessionTruncate, AgentTelemetry, UserMessageId,
+        AgentSessionClientUserMessageIds, AgentSessionConfigOptions, AgentSessionModes,
+        AgentSessionRetry, AgentSessionSetTitle, AgentSessionTruncate, AgentTelemetry,
     };
 
     use super::*;
@@ -2207,13 +2206,19 @@ pub mod test_support {
             self.inner.logout(cx)
         }
 
+        fn client_user_message_ids(
+            &self,
+            cx: &App,
+        ) -> Option<Rc<dyn AgentSessionClientUserMessageIds>> {
+            self.inner.client_user_message_ids(cx)
+        }
+
         fn prompt(
             &self,
-            user_message_id: UserMessageId,
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<Result<acp::PromptResponse>> {
-            self.inner.prompt(user_message_id, params, cx)
+            self.inner.prompt(params, cx)
         }
 
         fn retry(

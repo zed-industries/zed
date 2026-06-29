@@ -163,14 +163,14 @@ pub struct SandboxedTerminalToolInput {
     /// set of paths is known. Requesting it triggers a user approval prompt.
     #[serde(default, alias = "allow_fs_write")]
     pub allow_fs_write_all: Option<bool>,
-    /// Set to `true` when the command needs to read or write protected Git
-    /// metadata.
+    /// Set to `true` when the command needs access to protected Git metadata.
     ///
-    /// By default sandboxed commands can't read the file contents of, or write
-    /// to, the `.git` directories of opened worktrees and discovered
-    /// repositories (their metadata stays visible). Set this for Git operations
-    /// that need those paths (commit, fetch, rebase, …). Requesting it triggers
-    /// a user approval prompt.
+    /// By default sandboxed commands can't write to the `.git` directories of
+    /// opened worktrees and discovered repositories. On macOS, `.git` file
+    /// contents are also hidden while metadata stays visible; on Linux and
+    /// Windows/WSL, `.git` contents remain readable but are mounted read-only.
+    /// Set this for Git operations that need to write those paths (commit,
+    /// fetch, rebase, …). Requesting it triggers a user approval prompt.
     #[serde(default)]
     pub allow_git_access: Option<bool>,
     /// Set to `true` only as a last resort, to run the command fully outside

@@ -38,6 +38,7 @@ pub struct GetAuthenticatedUserResponse {
 pub struct AuthenticatedUser {
     pub id: i32,
     pub metrics_id: String,
+    pub username: String,
     pub avatar_url: String,
     pub github_login: String,
     pub name: Option<String>,

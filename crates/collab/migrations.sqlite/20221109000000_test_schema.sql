@@ -432,14 +432,3 @@ CREATE TABLE IF NOT EXISTS "breakpoints" (
 );
 
 CREATE INDEX "index_breakpoints_on_project_id" ON "breakpoints" ("project_id");
-
-CREATE TABLE IF NOT EXISTS "shared_threads" (
-    "id" TEXT PRIMARY KEY NOT NULL,
-    "user_id" INTEGER NOT NULL,
-    "title" VARCHAR(512) NOT NULL,
-    "data" BLOB NOT NULL,
-    "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX "index_shared_threads_user_id" ON "shared_threads" ("user_id");

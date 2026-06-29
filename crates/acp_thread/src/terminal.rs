@@ -24,9 +24,9 @@ use util::get_default_system_shell_preferring_bash;
 /// Request to run a terminal command inside an OS-level sandbox.
 ///
 /// Passed to [`super::AcpThread::create_terminal`]. The actual sandboxing
-/// mechanism is platform-specific (macOS Seatbelt; Linux Bubblewrap; a no-op
-/// on other platforms), so callers describe the *intent* with plain data here
-/// rather than constructing platform-specific types directly.
+/// mechanism is platform-specific (macOS Seatbelt; Linux Bubblewrap; Windows
+/// via Bubblewrap inside WSL), so callers describe the *intent* with plain data
+/// here rather than constructing platform-specific types directly.
 ///
 /// Default is the fully-sandboxed run (no network, project-only writes).
 /// Setting `network` / `allow_fs_write` requests a relaxation; the caller is

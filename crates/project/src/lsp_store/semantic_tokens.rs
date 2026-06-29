@@ -351,6 +351,29 @@ impl LspStore {
         }
     }
 
+    /// `request_id` orders per-server refreshes (a higher id invalidates the cache).
+    /// Client-initiated refreshes (e.g. after dynamic registration) pass `None`.
+    pub(crate) fn refresh_semantic_tokens(
+        &mut self,
+        server_id: LanguageServerId,
+        request_id: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.emit(LspStoreEvent::RefreshSemanticTokens {
+            server_id,
+            request_id,
+        });
+        if let Some((client, project_id)) = self.downstream_client.as_ref() {
+            client
+                .send(proto::RefreshSemanticTokens {
+                    project_id: *project_id,
+                    server_id: server_id.to_proto(),
+                    request_id: request_id.map(|id| id as u64),
+                })
+                .log_err();
+        }
+    }
+
     pub(crate) async fn handle_refresh_semantic_tokens(
         lsp_store: Entity<Self>,
         envelope: TypedEnvelope<proto::RefreshSemanticTokens>,

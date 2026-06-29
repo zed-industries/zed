@@ -422,7 +422,7 @@ impl LspAdapter for RustLspAdapter {
                 };
 
                 static FULL_SIGNATURE_REGEX: LazyLock<Regex> =
-                    LazyLock::new(|| Regex::new(r"fn (.?+)\(").expect("Failed to create REGEX"));
+                    LazyLock::new(|| Regex::new(r"fn (.+?)\(").expect("Failed to create REGEX"));
                 if let Some((function_signature, match_)) = function_signature
                     .filter(|it| it.contains(&label))
                     .and_then(|it| Some((it, FULL_SIGNATURE_REGEX.find(it)?)))
@@ -431,7 +431,7 @@ impl LspAdapter for RustLspAdapter {
                     let runs = language.highlight_text(&source, 0..function_signature.len());
                     mk_label(
                         function_signature.to_owned(),
-                        &|| match_.range().start - 3..match_.range().end - 1,
+                        &|| match_.range().start + 3..match_.range().end - 1,
                         runs,
                     )
                 } else if let Some((prefix, suffix)) = fn_prefixed {
@@ -1707,6 +1707,36 @@ mod tests {
                     (21..24, HighlightId::new(1)),
                     (34..41, HighlightId::new(0)),
                     (46..47, HighlightId::new(0))
+                ],
+            ))
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::METHOD),
+                        label: "sync_all(…)".to_string(),
+                        filter_text: Some("sync_allfsync".to_string()),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some(
+                                "pub fn sync_all(&self) -> io::Result<()>".to_string()
+                            ),
+                        }),
+                        ..Default::default()
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel::new(
+                "pub fn sync_all(&self) -> io::Result<()>".to_string(),
+                7..15,
+                vec![
+                    (0..3, HighlightId::new(1)),
+                    (4..6, HighlightId::new(1)),
+                    (7..15, HighlightId::new(2)),
+                    (30..36, HighlightId::new(0))
                 ],
             ))
         );

@@ -18,7 +18,7 @@ use util::ResultExt as _;
 
 use zed_actions::ExtensionCategoryFilter;
 
-use crate::SettingsWindow;
+use crate::{PROJECT, SettingField, SettingItem, SettingsPageItem, SettingsWindow, USER};
 
 pub(crate) fn render_mcp_servers_page(
     settings_window: &SettingsWindow,
@@ -40,19 +40,20 @@ pub(crate) fn render_mcp_servers_page(
         render_no_project_state(cx)
     };
 
+    let timeout_setting = render_context_server_timeout(settings_window, window, cx);
     let add_server_popover = render_add_server_popover(settings_window, window, cx);
 
     v_flex()
         .id("mcp-servers-page")
         .size_full()
         .pt_2p5()
-        .px_8()
         .pb_16()
         .track_scroll(scroll_handle)
         .overflow_y_scroll()
         .child(
             h_flex()
                 .w_full()
+                .px_8()
                 .justify_between()
                 .items_center()
                 .mb_4()
@@ -67,8 +68,32 @@ pub(crate) fn render_mcp_servers_page(
                 )
                 .child(add_server_popover),
         )
-        .child(server_list)
+        .child(div().px_8().child(server_list))
+        .child(timeout_setting)
         .into_any_element()
+}
+
+fn render_context_server_timeout(
+    settings_window: &SettingsWindow,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) -> AnyElement {
+    let item = SettingsPageItem::SettingItem(SettingItem {
+        title: "MCP Server Timeout",
+        description: "Default timeout in seconds for MCP server tool calls.",
+        field: Box::new(SettingField {
+            organization_override: None,
+            json_path: Some("context_server_timeout"),
+            pick: |settings_content| settings_content.project.context_server_timeout.as_ref(),
+            write: |settings_content, value, _| {
+                settings_content.project.context_server_timeout = value;
+            },
+        }),
+        metadata: None,
+        files: USER | PROJECT,
+    });
+
+    item.render(settings_window, 0, false, false, window, cx)
 }
 
 fn get_context_server_store(

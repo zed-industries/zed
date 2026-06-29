@@ -2,12 +2,13 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use editor::{Editor, HighlightKey, MultiBuffer, RowHighlightOptions};
+use editor::{Editor, EditorSettings, HighlightKey, MultiBuffer, RowHighlightOptions};
 use gpui::{App, Task};
 use gpui::{AppContext, Context, Entity, TaskExt, Window};
 use language::{Buffer, HighlightedText, HighlightedTextBuilder, ToPoint};
 use project::Project;
 use rope::Point;
+use settings::Settings;
 use ui::{ActiveTheme, IntoElement, Pixels, px};
 use util::rel_path::RelPath;
 
@@ -148,6 +149,7 @@ impl EditorPreview {
             let capability = language::Capability::ReadWrite; // Later narrowed per buffer
             let multi_buffer = cx.new(|_| MultiBuffer::without_headers(capability));
             let mut editor = Editor::for_multibuffer(multi_buffer, None, window, cx);
+            let editor_settings = EditorSettings::get_global(cx).clone();
 
             // We want editing to happen in the multibuffer not in the modal. The editor acts
             // as one big <send to multibuffer> button.
@@ -159,8 +161,8 @@ impl EditorPreview {
             editor.disable_diagnostics(cx);
             editor.disable_expand_excerpt_buttons(cx);
             editor.disable_mouse_wheel_zoom();
-            editor.set_show_gutter(true, cx); // needed for line numbers
-            editor.set_show_line_numbers(true, cx);
+            editor.set_show_gutter(editor_settings.gutter.line_numbers, cx); // needed for line numbers
+            editor.set_show_line_numbers(editor_settings.gutter.line_numbers, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_bookmarks(false, cx);
             editor.set_show_code_actions(false, cx);

@@ -68,6 +68,7 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
 
         let user = User {
             id: UserId(response_body.user.id),
+            username: response_body.user.username,
             github_login: response_body.user.github_login,
             avatar_url: response_body.user.avatar_url,
             name: response_body.user.name,

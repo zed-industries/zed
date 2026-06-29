@@ -43,6 +43,7 @@ http_client.workspace = true
 language.workspace = true
 language_model.workspace = true
 language_models_cloud.workspace = true
+llama_cpp = { workspace = true, features = ["schemars"] }
 lmstudio = { workspace = true, features = ["schemars"] }
 log.workspace = true
 menu.workspace = true

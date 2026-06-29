@@ -141,10 +141,12 @@ impl PathMapping {
 /// into a Linux shell invocation (typically `/bin/sh -c ...`) before calling
 /// this function.
 ///
-/// All writable paths and the cwd must be paths that can be mapped into WSL.
-/// WSL UNC paths may specify a distro; native drive-letter paths are
-/// translated with `wslpath` inside either that distro or the default distro
-/// (falling back to `/mnt/<drive>/...` if translation fails).
+/// All writable paths, Git paths, and the cwd must be paths that can be mapped
+/// into WSL. The cwd and ordinary writable paths must exist; Git metadata paths
+/// may be missing because Bubblewrap cannot bind a missing source. WSL UNC paths
+/// may specify a distro; native drive-letter paths are translated with `wslpath`
+/// inside either that distro or the default distro (falling back to
+/// `/mnt/<drive>/...` if translation fails).
 ///
 /// `env` is forwarded into the sandboxed command via `bwrap --setenv` rather
 /// than being set on the `wsl.exe` process. Windows environment variables
@@ -170,6 +172,8 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
     program: String,
     args: Vec<String>,
     writable_paths: Vec<PathBuf>,
+    writable_git_paths: Vec<PathBuf>,
+    protected_git_paths: Vec<PathBuf>,
     permissions: SandboxPermissions,
     cwd: Option<PathBuf>,
     env: HashMap<String, String, S>,
@@ -193,8 +197,36 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
             })
         })
         .collect::<Result<Vec<_>>>()?;
+    let writable_git_mappings = writable_git_paths
+        .iter()
+        .map(|path| {
+            path_to_wsl_allowing_missing(path).with_context(|| {
+                format!(
+                    "failed to map writable Git metadata path `{}` into WSL",
+                    path.display()
+                )
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let protected_git_mappings = protected_git_paths
+        .iter()
+        .map(|path| {
+            path_to_wsl_allowing_missing(path).with_context(|| {
+                format!(
+                    "failed to map protected Git metadata path `{}` into WSL",
+                    path.display()
+                )
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-    let distro = select_distro(cwd_mapping.as_ref(), &writable_mappings)?;
+    let distro = select_distro(
+        cwd_mapping.as_ref(),
+        writable_mappings
+            .iter()
+            .chain(writable_git_mappings.iter())
+            .chain(protected_git_mappings.iter()),
+    )?;
     let wsl_exe = wsl_exe_path();
     if !wsl_exe.is_file() {
         return Err(unavailable(format!(
@@ -205,23 +237,40 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
     let environment = probe_environment(&wsl_exe, distro.as_deref()).await?;
 
     // Resolve all paths (translating native drive-letter paths with `wslpath`
-    // now that the distro is known) and confirm they exist, in a single WSL
-    // round-trip.
+    // now that the distro is known) in a single WSL round-trip. The cwd and
+    // ordinary writable paths must exist; Git paths may be missing because, as
+    // with Linux bwrap, a not-yet-created `.git` placeholder can't be overlaid.
     let has_cwd = cwd_mapping.is_some();
-    let mut mappings = Vec::with_capacity(writable_mappings.len() + 1);
+    let writable_path_count = writable_mappings.len();
+    let writable_git_path_count = writable_git_mappings.len();
+    let mut mappings = Vec::with_capacity(
+        writable_mappings.len() + writable_git_mappings.len() + protected_git_mappings.len() + 1,
+    );
     if let Some(mapping) = cwd_mapping {
-        mappings.push((mapping, "terminal cwd"));
+        mappings.push((mapping, "terminal cwd", true));
     }
     mappings.extend(
         writable_mappings
             .into_iter()
-            .map(|mapping| (mapping, "writable path")),
+            .map(|mapping| (mapping, "writable path", true)),
     );
-    let mut resolved = resolve_paths(&wsl_exe, distro.as_deref(), &mappings)
-        .await?
-        .into_iter();
-    let cwd = if has_cwd { resolved.next() } else { None };
-    let writable_paths: Vec<String> = resolved.collect();
+    mappings.extend(
+        writable_git_mappings
+            .into_iter()
+            .map(|mapping| (mapping, "writable Git metadata path", false)),
+    );
+    mappings.extend(
+        protected_git_mappings
+            .into_iter()
+            .map(|mapping| (mapping, "protected Git metadata path", false)),
+    );
+    let resolved = resolve_paths(&wsl_exe, distro.as_deref(), &mappings).await?;
+    let (cwd, writable_paths, protected_git_paths) = split_resolved_paths(
+        has_cwd,
+        writable_path_count,
+        writable_git_path_count,
+        resolved,
+    )?;
 
     let mut wsl_args = Vec::new();
     if let Some(distro) = distro.as_deref() {
@@ -236,6 +285,7 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
     wsl_args.extend(["--exec".to_string(), environment.bwrap_path.clone()]);
     wsl_args.extend(build_bwrap_args(
         &writable_paths,
+        &protected_git_paths,
         permissions,
         cwd.as_deref(),
         environment.mask_interop_dir,
@@ -248,12 +298,51 @@ pub async fn wrap_invocation<S: std::hash::BuildHasher>(
     Ok((wsl_exe.to_string_lossy().into_owned(), wsl_args))
 }
 
-fn select_distro(
+fn split_resolved_paths(
+    has_cwd: bool,
+    writable_path_count: usize,
+    writable_git_path_count: usize,
+    resolved: Vec<Option<String>>,
+) -> Result<(Option<String>, Vec<String>, Vec<String>)> {
+    let mut resolved = resolved.into_iter();
+    let cwd = if has_cwd {
+        Some(
+            resolved
+                .next()
+                .context("bug: missing resolved terminal cwd")?
+                .context("bug: required terminal cwd resolved as missing")?,
+        )
+    } else {
+        None
+    };
+
+    let mut writable_paths = Vec::with_capacity(writable_path_count + writable_git_path_count);
+    for _ in 0..writable_path_count {
+        writable_paths.push(
+            resolved
+                .next()
+                .context("bug: missing resolved writable path")?
+                .context("bug: required writable path resolved as missing")?,
+        );
+    }
+    for _ in 0..writable_git_path_count {
+        if let Some(path) = resolved
+            .next()
+            .context("bug: missing resolved writable Git metadata path")?
+        {
+            writable_paths.push(path);
+        }
+    }
+
+    Ok((cwd, writable_paths, resolved.flatten().collect()))
+}
+
+fn select_distro<'a>(
     cwd: Option<&PathMapping>,
-    writable_paths: &[PathMapping],
+    paths: impl IntoIterator<Item = &'a PathMapping>,
 ) -> Result<Option<String>> {
     let mut distro = cwd.and_then(|mapping| mapping.distro().map(str::to_string));
-    for mapping in writable_paths {
+    for mapping in paths {
         let Some(path_distro) = mapping.distro() else {
             continue;
         };
@@ -444,7 +533,7 @@ struct ResolvedPath {
     exists: bool,
 }
 
-/// Resolve path mappings into final WSL paths and confirm they exist.
+/// Resolve path mappings into final WSL paths and confirm required paths exist.
 /// Native drive-letter paths are translated with `wslpath -u` inside the
 /// chosen distro so its actual automount configuration is honored, falling
 /// back to the structural `/mnt/<drive>` mapping when translation fails
@@ -457,33 +546,37 @@ struct ResolvedPath {
 /// handles all cache misses ([`resolve_uncached_paths`]). A hit reuses the
 /// translation — which only changes if the distro's automount configuration
 /// is edited and the distro restarted — and also skips the WSL-side
-/// existence re-check. That staleness is acceptable: native and UNC paths
-/// are still stat'ed on the Windows side on every command (see
-/// [`path_to_wsl`] / [`directory_to_wsl`]), and if a cached path disappears
-/// mid-session bwrap fails closed on the missing bind source rather than
-/// running the command unsandboxed. Failures are not cached, so a missing
-/// path can be created and retried.
+/// existence re-check. That staleness is acceptable: if a cached path
+/// disappears mid-session bwrap fails closed on the missing bind source rather
+/// than running the command unsandboxed. Optional missing paths are not cached,
+/// so a protected Git path can be created and then included by a later command.
 ///
-/// Each mapping is paired with a human-readable description used in errors.
-/// The returned paths are in the same order as `mappings`.
+/// Each mapping is paired with a human-readable description used in errors and
+/// a flag for whether the path is required to exist. The returned paths are in
+/// the same order as `mappings`; optional missing paths are returned as `None`.
 async fn resolve_paths(
     wsl_exe: &Path,
     distro: Option<&str>,
-    mappings: &[(PathMapping, &str)],
-) -> Result<Vec<String>> {
+    mappings: &[(PathMapping, &str, bool)],
+) -> Result<Vec<Option<String>>> {
     type ResolutionCache = HashMap<Option<String>, HashMap<PathMapping, String>>;
     static CACHE: OnceLock<Mutex<ResolutionCache>> = OnceLock::new();
     let cache = CACHE.get_or_init(Default::default);
 
     let distro_key = distro.map(str::to_string);
-    let mut resolved: Vec<Option<String>> = {
+    let mut resolved: Vec<Option<Option<String>>> = {
         let cache = cache
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let per_distro = cache.get(&distro_key);
         mappings
             .iter()
-            .map(|(mapping, _)| per_distro.and_then(|cached| cached.get(mapping)).cloned())
+            .map(|(mapping, _, _)| {
+                per_distro
+                    .and_then(|cached| cached.get(mapping))
+                    .cloned()
+                    .map(Some)
+            })
             .collect()
     };
 
@@ -491,7 +584,7 @@ async fn resolve_paths(
         .filter(|&index| resolved[index].is_none())
         .collect();
     if !misses.is_empty() {
-        let miss_mappings: Vec<&(PathMapping, &str)> =
+        let miss_mappings: Vec<&(PathMapping, &str, bool)> =
             misses.iter().map(|&index| &mappings[index]).collect();
         let miss_resolved = resolve_uncached_paths(wsl_exe, distro, &miss_mappings).await?;
         let mut cache = cache
@@ -499,15 +592,18 @@ async fn resolve_paths(
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let per_distro = cache.entry(distro_key).or_default();
         for (&index, path) in misses.iter().zip(miss_resolved) {
-            per_distro.insert(mappings[index].0.clone(), path.clone());
+            if let Some(path) = &path {
+                per_distro.insert(mappings[index].0.clone(), path.clone());
+            }
             resolved[index] = Some(path);
         }
     }
 
-    resolved
-        .into_iter()
-        .collect::<Option<Vec<_>>>()
-        .context("bug: a path mapping was left unresolved")
+    let mut paths = Vec::with_capacity(resolved.len());
+    for path in resolved {
+        paths.push(path.context("bug: a path mapping was left unresolved")?);
+    }
+    Ok(paths)
 }
 
 /// Resolve and existence-check mappings that weren't in the cache, in a
@@ -516,8 +612,8 @@ async fn resolve_paths(
 async fn resolve_uncached_paths(
     wsl_exe: &Path,
     distro: Option<&str>,
-    mappings: &[&(PathMapping, &str)],
-) -> Result<Vec<String>> {
+    mappings: &[&(PathMapping, &str, bool)],
+) -> Result<Vec<Option<String>>> {
     let mut args = vec![
         "--exec".to_string(),
         "sh".to_string(),
@@ -527,7 +623,7 @@ async fn resolve_uncached_paths(
         "zed-resolve-paths".to_string(),
     ];
     args.extend(path_resolution_args(
-        mappings.iter().map(|(mapping, _)| mapping),
+        mappings.iter().map(|mapping| &mapping.0),
     ));
     let output = run_wsl_command(wsl_exe, distro, &args, "resolve sandbox paths").await?;
     if !output.status.success() {
@@ -549,7 +645,7 @@ async fn resolve_uncached_paths(
     mappings
         .iter()
         .zip(resolved)
-        .map(|((mapping, description), resolved)| {
+        .map(|((mapping, description, required), resolved)| {
             if resolved.used_fallback
                 && let PathMapping::NativeDrive { windows_path, .. } = mapping
             {
@@ -560,16 +656,21 @@ async fn resolve_uncached_paths(
                     resolved.path
                 );
             }
-            // A bad request (the path simply isn't there), not an
-            // environment problem — the model can create it or fix the path
-            // and retry, so no `WSL_SANDBOX_UNAVAILABLE_PREFIX`.
-            ensure!(
-                resolved.exists,
-                "mapped {description} `{}` does not exist in {}",
-                resolved.path,
-                wsl_distro_label(distro)
-            );
-            Ok(resolved.path)
+            if !resolved.exists {
+                // A bad request (the path simply isn't there), not an
+                // environment problem — the model can create it or fix the path
+                // and retry, so no `WSL_SANDBOX_UNAVAILABLE_PREFIX`. Protected
+                // Git paths are allowed to be absent, matching Linux bwrap's
+                // behavior: a missing path cannot be overlaid, so it is skipped.
+                ensure!(
+                    !required,
+                    "mapped {description} `{}` does not exist in {}",
+                    resolved.path,
+                    wsl_distro_label(distro)
+                );
+                return Ok(None);
+            }
+            Ok(Some(resolved.path))
         })
         .collect()
 }
@@ -709,6 +810,7 @@ fn wsl_exe_path() -> PathBuf {
 
 fn build_bwrap_args<S: std::hash::BuildHasher>(
     writable_paths: &[String],
+    protected_git_paths: &[String],
     permissions: SandboxPermissions,
     cwd: Option<&str>,
     mask_interop_dir: bool,
@@ -723,6 +825,12 @@ fn build_bwrap_args<S: std::hash::BuildHasher>(
         args.extend(["--tmpfs".to_string(), "/tmp".to_string()]);
         for path in writable_paths {
             push_bind(&mut args, "--bind", path, path);
+        }
+        // Protect Git metadata by re-binding it read-only over the writable
+        // worktree binds above (order matters: later binds win). When Git access
+        // is granted these paths are included in `writable_paths` instead.
+        for path in protected_git_paths {
+            push_bind(&mut args, "--ro-bind", path, path);
         }
     }
 
@@ -893,6 +1001,14 @@ fn path_to_wsl(path: &Path) -> Result<PathMapping> {
     map_path_to_wsl(path)
 }
 
+fn path_to_wsl_allowing_missing(path: &Path) -> Result<PathMapping> {
+    let path_string = path.to_string_lossy();
+    if let Ok(path) = parse_wsl_absolute_path(&path_string) {
+        return Ok(PathMapping::Wsl(path));
+    }
+    map_path_to_wsl(path)
+}
+
 fn map_path_to_wsl(path: &Path) -> Result<PathMapping> {
     let path_string = path.to_string_lossy();
     if let Ok(path) = parse_wsl_unc_path(&path_string) {
@@ -982,6 +1098,8 @@ mod tests {
         fn assert_send<T: Send>(_: T) {}
         assert_send(wrap_invocation(
             String::new(),
+            Vec::new(),
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             SandboxPermissions::default(),
@@ -1124,9 +1242,52 @@ mod tests {
     }
 
     #[test]
+    fn split_resolved_paths_keeps_existing_writable_git_paths_and_skips_missing_ones() {
+        let (cwd, writable_paths, protected_git_paths) = split_resolved_paths(
+            true,
+            1,
+            2,
+            vec![
+                Some("/home/me/project".to_string()),
+                Some("/home/me/project".to_string()),
+                None,
+                Some("/home/me/project/.git".to_string()),
+                None,
+                Some("/mnt/c/external/.git".to_string()),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(cwd.as_deref(), Some("/home/me/project"));
+        assert_eq!(
+            writable_paths,
+            vec![
+                "/home/me/project".to_string(),
+                "/home/me/project/.git".to_string()
+            ]
+        );
+        assert_eq!(
+            protected_git_paths,
+            vec!["/mnt/c/external/.git".to_string()]
+        );
+    }
+
+    #[test]
+    fn split_resolved_paths_rejects_missing_required_writable_paths() {
+        let error = split_resolved_paths(false, 1, 0, vec![None]).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("required writable path resolved as missing"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
     fn bwrap_denies_network_by_default() {
         let args = build_bwrap_args(
             &["/home/me/project".to_string()],
+            &[],
             SandboxPermissions::default(),
             Some("/home/me/project"),
             true,
@@ -1143,6 +1304,7 @@ mod tests {
     fn bwrap_allows_network_when_requested() {
         let args = build_bwrap_args(
             &[],
+            &[],
             SandboxPermissions {
                 allow_network: true,
                 allow_fs_write: false,
@@ -1158,6 +1320,7 @@ mod tests {
     fn bwrap_binds_explicit_writable_file_paths() {
         let args = build_bwrap_args(
             &["/mnt/c/Users/me/AppData/Roaming/Zed/AGENTS.md".to_string()],
+            &[],
             SandboxPermissions::default(),
             None,
             true,
@@ -1172,9 +1335,59 @@ mod tests {
     }
 
     #[test]
+    fn bwrap_protects_git_paths_after_writable_paths() {
+        let args = build_bwrap_args(
+            &["/home/me/project".to_string()],
+            &["/home/me/project/.git".to_string()],
+            SandboxPermissions::default(),
+            Some("/home/me/project"),
+            true,
+            &HashMap::new(),
+        );
+        let writable_index = args
+            .windows(3)
+            .position(|window| window == ["--bind", "/home/me/project", "/home/me/project"])
+            .expect("project should be writable");
+        let protected_index = args
+            .windows(3)
+            .position(|window| {
+                window
+                    == [
+                        "--ro-bind",
+                        "/home/me/project/.git",
+                        "/home/me/project/.git",
+                    ]
+            })
+            .expect("Git metadata should be protected read-only");
+        assert!(protected_index > writable_index);
+    }
+
+    #[test]
+    fn bwrap_skips_git_protection_when_fs_writes_are_unrestricted() {
+        let args = build_bwrap_args(
+            &[],
+            &["/home/me/project/.git".to_string()],
+            SandboxPermissions {
+                allow_network: false,
+                allow_fs_write: true,
+            },
+            None,
+            true,
+            &HashMap::new(),
+        );
+        assert!(!args.windows(3).any(|window| window
+            == [
+                "--ro-bind",
+                "/home/me/project/.git",
+                "/home/me/project/.git"
+            ]));
+    }
+
+    #[test]
     fn bwrap_blocks_wsl_interop_by_default() {
         let args = build_bwrap_args(
             &["/home/me/project".to_string()],
+            &[],
             SandboxPermissions::default(),
             Some("/home/me/project"),
             true,
@@ -1193,6 +1406,7 @@ mod tests {
     #[test]
     fn bwrap_blocks_wsl_interop_even_with_fs_write() {
         let args = build_bwrap_args(
+            &[],
             &[],
             SandboxPermissions {
                 allow_network: true,
@@ -1223,6 +1437,7 @@ mod tests {
         // stays.
         let args = build_bwrap_args(
             &[],
+            &[],
             SandboxPermissions::default(),
             None,
             false,
@@ -1241,7 +1456,7 @@ mod tests {
             ("PAGER".to_string(), String::new()),
             ("CARGO_TERM_COLOR".to_string(), "always".to_string()),
         ]);
-        let args = build_bwrap_args(&[], SandboxPermissions::default(), None, false, &env);
+        let args = build_bwrap_args(&[], &[], SandboxPermissions::default(), None, false, &env);
         assert!(
             args.windows(3)
                 .any(|window| window == ["--setenv", "PAGER", ""])
@@ -1262,7 +1477,7 @@ mod tests {
             ("WsLeNv".to_string(), "WSL_INTEROP/u".to_string()),
             ("PAGER".to_string(), String::new()),
         ]);
-        let args = build_bwrap_args(&[], SandboxPermissions::default(), None, false, &env);
+        let args = build_bwrap_args(&[], &[], SandboxPermissions::default(), None, false, &env);
 
         assert!(
             args.windows(2)
@@ -1333,7 +1548,7 @@ mod tests {
             ("PROCESSOR_ARCHITECTURE".to_string(), "AMD64".to_string()),
             ("NUMBER_OF_PROCESSORS".to_string(), "16".to_string()),
         ]);
-        let args = build_bwrap_args(&[], SandboxPermissions::default(), None, false, &env);
+        let args = build_bwrap_args(&[], &[], SandboxPermissions::default(), None, false, &env);
         assert!(!args.iter().any(|arg| arg == "--setenv"));
     }
 
@@ -1346,7 +1561,7 @@ mod tests {
             ("LANG".to_string(), "en_US.UTF-8".to_string()),
             ("CARGO_TERM_COLOR".to_string(), "always".to_string()),
         ]);
-        let args = build_bwrap_args(&[], SandboxPermissions::default(), None, false, &env);
+        let args = build_bwrap_args(&[], &[], SandboxPermissions::default(), None, false, &env);
         assert!(
             args.windows(3)
                 .any(|window| window == ["--setenv", "LANG", "en_US.UTF-8"])
@@ -1373,7 +1588,7 @@ mod tests {
             (String::new(), "value".to_string()),
             ("OK".to_string(), "value".to_string()),
         ]);
-        let args = build_bwrap_args(&[], SandboxPermissions::default(), None, false, &env);
+        let args = build_bwrap_args(&[], &[], SandboxPermissions::default(), None, false, &env);
         assert!(
             args.windows(3)
                 .any(|window| window == ["--setenv", "OK", "value"])

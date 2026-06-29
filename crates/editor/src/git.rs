@@ -195,6 +195,36 @@ impl Editor {
         self.blame.as_ref()
     }
 
+    pub fn active_git_blame_entry(&self, cx: &mut App) -> Option<BlameEntry> {
+        if !self.show_git_blame_inline
+            || self.newest_selection_head_on_empty_line(cx)
+            || !self.has_blame_entries(cx)
+        {
+            return None;
+        }
+
+        let blame = self.blame.as_ref()?;
+        let snapshot = self.display_snapshot(cx);
+        let cursor = self.selections.newest::<Point>(&snapshot).head();
+        let (buffer, point) = snapshot.buffer_snapshot().point_to_buffer_point(cursor)?;
+
+        blame
+            .update(cx, |blame, cx| {
+                blame
+                    .blame_for_rows(
+                        &[RowInfo {
+                            buffer_id: Some(buffer.remote_id()),
+                            buffer_row: Some(point.row),
+                            ..Default::default()
+                        }],
+                        cx,
+                    )
+                    .next()
+            })
+            .flatten()
+            .map(|(_, entry)| entry)
+    }
+
     pub fn show_git_blame_gutter(&self) -> bool {
         self.show_git_blame_gutter
     }
@@ -1603,7 +1633,9 @@ impl Editor {
     }
 
     pub(super) fn render_git_blame_inline(&self, window: &Window, cx: &App) -> bool {
-        self.show_git_blame_inline
+        ProjectSettings::get_global(cx).git.inline_blame.location
+            == project::project_settings::InlineBlameLocation::Inline
+            && self.show_git_blame_inline
             && (self.focus_handle.is_focused(window) || self.inline_blame_popover.is_some())
             && !self.newest_selection_head_on_empty_line(cx)
             && self.has_blame_entries(cx)

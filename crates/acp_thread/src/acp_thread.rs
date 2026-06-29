@@ -2,6 +2,7 @@ mod connection;
 mod diff;
 mod mention;
 mod terminal;
+pub use ::terminal::HeadlessTerminal;
 use action_log::{ActionLog, ActionLogTelemetry};
 use agent_client_protocol::schema::{MaybeUndefined, v1 as acp};
 use anyhow::{Context as _, Result, anyhow};
@@ -283,7 +284,9 @@ pub fn subagent_session_info_from_meta(meta: &Option<acp::Meta>) -> Option<Subag
 
 #[derive(Debug)]
 pub struct UserMessage {
-    pub id: Option<UserMessageId>,
+    pub protocol_id: Option<acp::MessageId>,
+    pub client_id: Option<ClientUserMessageId>,
+    pub is_optimistic: bool,
     pub content: ContentBlock,
     pub chunks: Vec<acp::ContentBlock>,
     pub checkpoint: Option<Checkpoint>,
@@ -336,8 +339,14 @@ impl AssistantMessage {
 
 #[derive(Debug, PartialEq)]
 pub enum AssistantMessageChunk {
-    Message { block: ContentBlock },
-    Thought { block: ContentBlock },
+    Message {
+        id: Option<acp::MessageId>,
+        block: ContentBlock,
+    },
+    Thought {
+        id: Option<acp::MessageId>,
+        block: ContentBlock,
+    },
 }
 
 impl AssistantMessageChunk {
@@ -348,17 +357,28 @@ impl AssistantMessageChunk {
         cx: &mut App,
     ) -> Self {
         Self::Message {
+            id: None,
             block: ContentBlock::new(chunk.into(), language_registry, path_style, cx),
         }
     }
 
     fn to_markdown(&self, cx: &App) -> String {
         match self {
-            Self::Message { block } => block.to_markdown(cx).to_string(),
-            Self::Thought { block } => {
+            Self::Message { block, .. } => block.to_markdown(cx).to_string(),
+            Self::Thought { block, .. } => {
                 format!("<thinking>\n{}\n</thinking>", block.to_markdown(cx))
             }
         }
+    }
+}
+
+fn can_merge_message_chunks(
+    existing: Option<&acp::MessageId>,
+    incoming: Option<&acp::MessageId>,
+) -> bool {
+    match (existing, incoming) {
+        (Some(existing), Some(incoming)) => existing == incoming,
+        _ => true,
     }
 }
 
@@ -1760,6 +1780,7 @@ impl From<&AcpThread> for ActionLogTelemetry {
 
 #[derive(Debug)]
 pub enum AcpThreadEvent {
+    StatusChanged,
     PromptUpdated,
     NewEntry,
     TitleUpdated,
@@ -2014,8 +2035,8 @@ impl AcpThread {
             };
             for chunk in chunks {
                 let block = match chunk {
-                    AssistantMessageChunk::Message { block } => block,
-                    AssistantMessageChunk::Thought { block } => block,
+                    AssistantMessageChunk::Message { block, .. } => block,
+                    AssistantMessageChunk::Thought { block, .. } => block,
                 };
                 if let Some(markdown) = block.markdown() {
                     markdown.update(cx, |markdown, cx| {
@@ -2142,24 +2163,54 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) -> Result<(), acp::Error> {
         match update {
-            acp::SessionUpdate::UserMessageChunk(acp::ContentChunk { content, .. }) => {
+            acp::SessionUpdate::UserMessageChunk(acp::ContentChunk {
+                content,
+                message_id,
+                ..
+            }) => {
                 // We optimistically add the full user prompt before calling `prompt`.
-                // Some ACP servers echo user chunks back over updates. Skip the chunk if
-                // it's already present in the current user message to avoid duplicating content.
+                // Some ACP servers echo user chunks back over updates. Skip echoed
+                // chunks only when they match the local optimistic message.
                 let already_in_user_message = self
                     .entries
-                    .last()
-                    .and_then(|entry| entry.user_message())
-                    .is_some_and(|message| message.chunks.contains(&content));
+                    .last_mut()
+                    .and_then(|entry| match entry {
+                        AgentThreadEntry::UserMessage(message) => Some(message),
+                        _ => None,
+                    })
+                    .is_some_and(|message| {
+                        let already_in_user_message = message.is_optimistic
+                            && message.chunks.contains(&content)
+                            && can_merge_message_chunks(
+                                message.protocol_id.as_ref(),
+                                message_id.as_ref(),
+                            );
+                        if already_in_user_message && message.protocol_id.is_none() {
+                            message.protocol_id = message_id.clone();
+                        }
+                        already_in_user_message
+                    });
                 if !already_in_user_message {
-                    self.push_user_content_block(None, content, cx);
+                    self.push_user_content_block_from_agent(message_id, content, cx);
                 }
             }
-            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk { content, .. }) => {
-                self.push_assistant_content_block(content, false, cx);
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk {
+                content,
+                message_id,
+                ..
+            }) => {
+                self.push_assistant_content_block_with_message_id(
+                    message_id, content, false, false, cx,
+                );
             }
-            acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk { content, .. }) => {
-                self.push_assistant_content_block(content, true, cx);
+            acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk {
+                content,
+                message_id,
+                ..
+            }) => {
+                self.push_assistant_content_block_with_message_id(
+                    message_id, content, true, false, cx,
+                );
             }
             acp::SessionUpdate::ToolCall(tool_call) => {
                 self.upsert_tool_call(tool_call, cx)?;
@@ -2216,16 +2267,44 @@ impl AcpThread {
 
     pub fn push_user_content_block(
         &mut self,
-        message_id: Option<UserMessageId>,
+        client_id: Option<ClientUserMessageId>,
         chunk: acp::ContentBlock,
         cx: &mut Context<Self>,
     ) {
-        self.push_user_content_block_with_indent(message_id, chunk, false, cx)
+        self.push_user_content_block_with_indent(client_id, chunk, false, cx)
     }
 
     pub fn push_user_content_block_with_indent(
         &mut self,
-        message_id: Option<UserMessageId>,
+        client_id: Option<ClientUserMessageId>,
+        chunk: acp::ContentBlock,
+        indented: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.push_user_content_block_with_protocol_id(
+            client_id.clone(),
+            client_id.is_some(),
+            None,
+            chunk,
+            indented,
+            cx,
+        )
+    }
+
+    fn push_user_content_block_from_agent(
+        &mut self,
+        id: Option<acp::MessageId>,
+        chunk: acp::ContentBlock,
+        cx: &mut Context<Self>,
+    ) {
+        self.push_user_content_block_with_protocol_id(None, false, id, chunk, false, cx)
+    }
+
+    fn push_user_content_block_with_protocol_id(
+        &mut self,
+        incoming_client_id: Option<ClientUserMessageId>,
+        is_optimistic: bool,
+        protocol_id: Option<acp::MessageId>,
         chunk: acp::ContentBlock,
         indented: bool,
         cx: &mut Context<Self>,
@@ -2236,16 +2315,29 @@ impl AcpThread {
 
         if let Some(last_entry) = self.entries.last_mut()
             && let AgentThreadEntry::UserMessage(UserMessage {
-                id,
+                protocol_id: existing_protocol_id,
+                client_id: existing_client_id,
                 content,
                 chunks,
+                is_optimistic: existing_is_optimistic,
                 indented: existing_indented,
                 ..
             }) = last_entry
             && *existing_indented == indented
+            && can_merge_message_chunks(existing_protocol_id.as_ref(), protocol_id.as_ref())
+            && !(*existing_is_optimistic
+                && !is_optimistic
+                && existing_protocol_id.is_none()
+                && protocol_id.is_some())
         {
             Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
-            *id = message_id.or(id.take());
+            if let Some(incoming_client_id) = incoming_client_id {
+                *existing_client_id = Some(incoming_client_id);
+            }
+            *existing_is_optimistic |= is_optimistic;
+            if existing_protocol_id.is_none() {
+                *existing_protocol_id = protocol_id;
+            }
             content.append(chunk.clone(), &language_registry, path_style, cx);
             chunks.push(chunk);
             let idx = entries_len - 1;
@@ -2254,7 +2346,9 @@ impl AcpThread {
             let content = ContentBlock::new(chunk.clone(), &language_registry, path_style, cx);
             self.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
-                    id: message_id,
+                    protocol_id,
+                    client_id: incoming_client_id,
+                    is_optimistic,
                     content,
                     chunks: vec![chunk],
                     checkpoint: None,
@@ -2281,12 +2375,25 @@ impl AcpThread {
         indented: bool,
         cx: &mut Context<Self>,
     ) {
+        self.push_assistant_content_block_with_message_id(None, chunk, is_thought, indented, cx)
+    }
+
+    fn push_assistant_content_block_with_message_id(
+        &mut self,
+        message_id: Option<acp::MessageId>,
+        chunk: acp::ContentBlock,
+        is_thought: bool,
+        indented: bool,
+        cx: &mut Context<Self>,
+    ) {
         let path_style = self.project.read(cx).path_style(cx);
 
         // For text chunks going to an existing Markdown block, buffer for smooth
         // streaming instead of appending all at once which may feel more choppy.
         if let acp::ContentBlock::Text(text_content) = &chunk {
-            if let Some(markdown) = self.streaming_markdown_target(is_thought, indented) {
+            if let Some(markdown) =
+                self.streaming_markdown_target(message_id.as_ref(), is_thought, indented)
+            {
                 let entries_len = self.entries.len();
                 cx.emit(AcpThreadEvent::EntryUpdated(entries_len - 1));
                 self.buffer_streaming_text(&markdown, text_content.text.clone(), cx);
@@ -2308,25 +2415,52 @@ impl AcpThread {
             Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
             cx.emit(AcpThreadEvent::EntryUpdated(idx));
             match (chunks.last_mut(), is_thought) {
-                (Some(AssistantMessageChunk::Message { block }), false)
-                | (Some(AssistantMessageChunk::Thought { block }), true) => {
+                (
+                    Some(AssistantMessageChunk::Message {
+                        id: existing_id,
+                        block,
+                    }),
+                    false,
+                )
+                | (
+                    Some(AssistantMessageChunk::Thought {
+                        id: existing_id,
+                        block,
+                    }),
+                    true,
+                ) if can_merge_message_chunks(existing_id.as_ref(), message_id.as_ref()) => {
+                    if existing_id.is_none() {
+                        *existing_id = message_id;
+                    }
                     block.append(chunk, &language_registry, path_style, cx)
                 }
                 _ => {
                     let block = ContentBlock::new(chunk, &language_registry, path_style, cx);
                     if is_thought {
-                        chunks.push(AssistantMessageChunk::Thought { block })
+                        chunks.push(AssistantMessageChunk::Thought {
+                            id: message_id,
+                            block,
+                        })
                     } else {
-                        chunks.push(AssistantMessageChunk::Message { block })
+                        chunks.push(AssistantMessageChunk::Message {
+                            id: message_id,
+                            block,
+                        })
                     }
                 }
             }
         } else {
             let block = ContentBlock::new(chunk, &language_registry, path_style, cx);
             let chunk = if is_thought {
-                AssistantMessageChunk::Thought { block }
+                AssistantMessageChunk::Thought {
+                    id: message_id,
+                    block,
+                }
             } else {
-                AssistantMessageChunk::Message { block }
+                AssistantMessageChunk::Message {
+                    id: message_id,
+                    block,
+                }
             };
 
             self.push_entry(
@@ -2341,32 +2475,40 @@ impl AcpThread {
     }
 
     fn streaming_markdown_target(
-        &self,
+        &mut self,
+        message_id: Option<&acp::MessageId>,
         is_thought: bool,
         indented: bool,
     ) -> Option<Entity<Markdown>> {
-        let last_entry = self.entries.last()?;
+        let last_entry = self.entries.last_mut()?;
         if let AgentThreadEntry::AssistantMessage(AssistantMessage {
             chunks,
             indented: existing_indented,
             ..
         }) = last_entry
             && *existing_indented == indented
-            && let [.., chunk] = chunks.as_slice()
+            && let [.., chunk] = chunks.as_mut_slice()
         {
             match (chunk, is_thought) {
                 (
                     AssistantMessageChunk::Message {
+                        id: existing_id,
                         block: ContentBlock::Markdown { markdown },
                     },
                     false,
                 )
                 | (
                     AssistantMessageChunk::Thought {
+                        id: existing_id,
                         block: ContentBlock::Markdown { markdown },
                     },
                     true,
-                ) => Some(markdown.clone()),
+                ) if can_merge_message_chunks(existing_id.as_ref(), message_id) => {
+                    if existing_id.is_none() {
+                        *existing_id = message_id.cloned();
+                    }
+                    Some(markdown.clone())
+                }
                 _ => None,
             }
         } else {
@@ -3039,14 +3181,19 @@ impl AcpThread {
         let request = acp::PromptRequest::new(self.session_id.clone(), message.clone());
         let git_store = self.project.read(cx).git_store().clone();
 
-        let message_id = UserMessageId::new();
+        let client_user_message_ids = self.connection.client_user_message_ids(cx);
+        let client_id = client_user_message_ids
+            .as_ref()
+            .map(|client_user_message_ids| client_user_message_ids.new_id());
 
         self.run_turn(cx, async move |this, cx| {
             if push_user_message {
                 this.update(cx, |this, cx| {
                     this.push_entry(
                         AgentThreadEntry::UserMessage(UserMessage {
-                            id: Some(message_id.clone()),
+                            protocol_id: None,
+                            client_id: client_id.clone(),
+                            is_optimistic: true,
                             content: block,
                             chunks: message,
                             checkpoint: None,
@@ -3074,7 +3221,11 @@ impl AcpThread {
             }
 
             this.update(cx, |this, cx| {
-                this.connection.prompt(message_id, request, cx)
+                if let (Some(prompt), Some(client_id)) = (client_user_message_ids, client_id) {
+                    prompt.prompt(client_id, request, cx)
+                } else {
+                    this.connection.prompt(request, cx)
+                }
             })?
             .await
         })
@@ -3119,6 +3270,7 @@ impl AcpThread {
                 tx.send(f(this, cx).await).ok();
             }),
         });
+        cx.emit(AcpThreadEvent::StatusChanged);
 
         cx.spawn(async move |this, cx| {
             let response = rx.await;
@@ -3144,6 +3296,7 @@ impl AcpThread {
                 // state even when the send_task is cancelled before tx.send().
                 if is_same_turn {
                     this.running_turn.take();
+                    cx.emit(AcpThreadEvent::StatusChanged);
                 }
 
                 let Ok(response) = response else {
@@ -3261,6 +3414,7 @@ impl AcpThread {
 
         Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
         self.mark_pending_entries_as_canceled(cx);
+        cx.emit(AcpThreadEvent::StatusChanged);
 
         // Wait for the send task to complete
         cx.background_spawn(turn.send_task)
@@ -3295,10 +3449,10 @@ impl AcpThread {
     /// Restores the git working tree to the state at the given checkpoint (if one exists)
     pub fn restore_checkpoint(
         &mut self,
-        id: UserMessageId,
+        client_id: ClientUserMessageId,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let Some((_, message)) = self.user_message_mut(&id) else {
+        let Some((_, message)) = self.user_message_mut(&client_id) else {
             return Task::ready(Err(anyhow!("message not found")));
         };
 
@@ -3309,7 +3463,7 @@ impl AcpThread {
 
         // Cancel any in-progress generation before restoring
         let cancel_task = self.cancel(cx);
-        let rewind = self.rewind(id.clone(), cx);
+        let rewind = self.rewind(client_id.clone(), cx);
         let git_store = self.project.read(cx).git_store().clone();
 
         cx.spawn(async move |_, cx| {
@@ -3328,7 +3482,11 @@ impl AcpThread {
     /// Rewinds this thread to before the entry at `index`, removing it and all
     /// subsequent entries while rejecting any action_log changes made from that point.
     /// Unlike `restore_checkpoint`, this method does not restore from git.
-    pub fn rewind(&mut self, id: UserMessageId, cx: &mut Context<Self>) -> Task<Result<()>> {
+    pub fn rewind(
+        &mut self,
+        client_id: ClientUserMessageId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<()>> {
         let Some(truncate) = self.connection.truncate(&self.session_id, cx) else {
             return Task::ready(Err(anyhow!("not supported")));
         };
@@ -3336,9 +3494,9 @@ impl AcpThread {
         Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
         let telemetry = ActionLogTelemetry::from(&*self);
         cx.spawn(async move |this, cx| {
-            cx.update(|cx| truncate.run(id.clone(), cx)).await?;
+            cx.update(|cx| truncate.run(client_id.clone(), cx)).await?;
             this.update(cx, |this, cx| {
-                if let Some((ix, _)) = this.user_message_mut(&id) {
+                if let Some((ix, _)) = this.user_message_mut(&client_id) {
                     // Collect all terminals from entries that will be removed
                     let terminals_to_remove: Vec<acp::TerminalId> = this.entries[ix..]
                         .iter()
@@ -3375,13 +3533,11 @@ impl AcpThread {
 
         let git_store = self.project.read(cx).git_store().clone();
 
-        let Some((user_message_id, checkpoint)) =
-            self.last_user_message().and_then(|(_, message)| {
-                let id = message.id.clone()?;
-                let checkpoint = message.checkpoint.as_ref()?;
-                Some((id, checkpoint))
-            })
-        else {
+        let Some((client_id, checkpoint)) = self.last_user_message().and_then(|(_, message)| {
+            let id = message.client_id.clone()?;
+            let checkpoint = message.checkpoint.as_ref()?;
+            Some((id, checkpoint))
+        }) else {
             return Task::ready(Ok(()));
         };
         if checkpoint.show {
@@ -3426,7 +3582,7 @@ impl AcpThread {
                 let Some((ix, message)) = this.last_user_message() else {
                     return;
                 };
-                if message.id.as_ref() != Some(&user_message_id) {
+                if message.client_id.as_ref() != Some(&client_id) {
                     return;
                 }
                 if let Some(checkpoint) = message.checkpoint.as_mut()
@@ -3447,7 +3603,7 @@ impl AcpThread {
         let Some((_, message)) = self.last_user_message() else {
             return Task::ready(Ok(()));
         };
-        let Some(user_message_id) = message.id.clone() else {
+        let Some(client_id) = message.client_id.clone() else {
             return Task::ready(Ok(()));
         };
         let Some(checkpoint) = message.checkpoint.as_ref() else {
@@ -3473,7 +3629,7 @@ impl AcpThread {
                 .unwrap_or(true);
 
             this.update(cx, |this, cx| {
-                if let Some((ix, message)) = this.user_message_mut(&user_message_id) {
+                if let Some((ix, message)) = this.user_message_mut(&client_id) {
                     if let Some(checkpoint) = message.checkpoint.as_mut() {
                         checkpoint.show = !equal;
                         cx.emit(AcpThreadEvent::EntryUpdated(ix));
@@ -3499,10 +3655,13 @@ impl AcpThread {
             })
     }
 
-    fn user_message_mut(&mut self, id: &UserMessageId) -> Option<(usize, &mut UserMessage)> {
+    fn user_message_mut(
+        &mut self,
+        client_id: &ClientUserMessageId,
+    ) -> Option<(usize, &mut UserMessage)> {
         self.entries.iter_mut().enumerate().find_map(|(ix, entry)| {
             if let AgentThreadEntry::UserMessage(message) = entry {
-                if message.id.as_ref() == Some(id) {
+                if message.client_id.as_ref() == Some(client_id) {
                     Some((ix, message))
                 } else {
                     None
@@ -3719,6 +3878,10 @@ impl AcpThread {
         let project = self.project.clone();
         let language_registry = project.read(cx).languages().clone();
         let is_windows = project.read(cx).path_style(cx).is_windows();
+        // Headless hosts (e.g. the eval CLI) have no controlling TTY, so PTY
+        // setup fails with `ENOTTY`. Run the command non-interactively and
+        // without a PTY in that case.
+        let headless = HeadlessTerminal::is_enabled(cx);
 
         let terminal_id = acp::TerminalId::new(Uuid::new_v4().to_string());
         let terminal_task = cx.spawn({
@@ -3770,19 +3933,25 @@ impl AcpThread {
                         // on Windows that deliberately changes the shell: the
                         // sandboxed path runs under WSL's Linux bash, but this
                         // fallback uses the host's `shell` against the native cwd.
-                        let (task_command, task_args) =
-                            ShellBuilder::new(&Shell::Program(shell), is_windows)
-                                .redirect_stdin_to_dev_null()
-                                .build(Some(command.clone()), &args);
+                        let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
+                        if headless {
+                            builder = builder.non_interactive();
+                        }
+                        let (task_command, task_args) = builder
+                            .redirect_stdin_to_dev_null()
+                            .build(Some(command.clone()), &args);
                         (task_command, task_args, env, None, cwd.clone())
                     };
 
                 #[cfg(not(target_os = "windows"))]
                 let (task_command, task_args, task_env, sandbox, spawn_cwd) = {
-                    let (task_command, task_args) =
-                        ShellBuilder::new(&Shell::Program(shell), is_windows)
-                            .redirect_stdin_to_dev_null()
-                            .build(Some(command.clone()), &args);
+                    let mut builder = ShellBuilder::new(&Shell::Program(shell), is_windows);
+                    if headless {
+                        builder = builder.non_interactive();
+                    }
+                    let (task_command, task_args) = builder
+                        .redirect_stdin_to_dev_null()
+                        .build(Some(command.clone()), &args);
                     let (task_command, task_args, task_env, sandbox) = prepare_sandbox_wrap(
                         task_command,
                         task_args,
@@ -4081,6 +4250,23 @@ mod tests {
         let unknown =
             acp::Meta::from_iter([(COMMAND_CATEGORY_META_KEY.into(), "future-category".into())]);
         assert_eq!(command_category_from_meta(&Some(unknown)), None);
+    }
+
+    #[test]
+    fn client_user_message_id_serializes_as_string() {
+        let serialized =
+            serde_json::to_value(ClientUserMessageId::new()).expect("serialize client message id");
+        assert!(
+            serialized.is_string(),
+            "expected string, got {serialized:?}"
+        );
+
+        let deserialized: ClientUserMessageId =
+            serde_json::from_value(json!("client-id")).expect("deserialize client message id");
+        assert_eq!(
+            serde_json::to_value(deserialized).expect("serialize client message id"),
+            json!("client-id")
+        );
     }
 
     fn init_test(cx: &mut TestAppContext) {
@@ -4625,7 +4811,8 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 1);
             if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[0] {
-                assert_eq!(user_msg.id, None);
+                assert_eq!(user_msg.protocol_id, None);
+                assert_eq!(user_msg.client_id, None);
                 assert_eq!(user_msg.content.to_markdown(cx), "Hello, ");
             } else {
                 panic!("Expected UserMessage");
@@ -4633,7 +4820,7 @@ mod tests {
         });
 
         // Test appending to existing user message
-        let message_1_id = UserMessageId::new();
+        let message_1_id = ClientUserMessageId::new();
         thread.update(cx, |thread, cx| {
             thread.push_user_content_block(Some(message_1_id.clone()), "world!".into(), cx);
         });
@@ -4641,7 +4828,8 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 1);
             if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[0] {
-                assert_eq!(user_msg.id, Some(message_1_id));
+                assert_eq!(user_msg.protocol_id, None);
+                assert_eq!(user_msg.client_id, Some(message_1_id));
                 assert_eq!(user_msg.content.to_markdown(cx), "Hello, world!");
             } else {
                 panic!("Expected UserMessage");
@@ -4653,7 +4841,7 @@ mod tests {
             thread.push_assistant_content_block("Assistant response".into(), false, cx);
         });
 
-        let message_2_id = UserMessageId::new();
+        let message_2_id = ClientUserMessageId::new();
         thread.update(cx, |thread, cx| {
             thread.push_user_content_block(
                 Some(message_2_id.clone()),
@@ -4665,11 +4853,291 @@ mod tests {
         thread.update(cx, |thread, cx| {
             assert_eq!(thread.entries.len(), 3);
             if let AgentThreadEntry::UserMessage(user_msg) = &thread.entries[2] {
-                assert_eq!(user_msg.id, Some(message_2_id));
+                assert_eq!(user_msg.protocol_id, None);
+                assert_eq!(user_msg.client_id, Some(message_2_id));
                 assert_eq!(user_msg.content.to_markdown(cx), "New user message");
             } else {
                 panic!("Expected UserMessage at index 2");
             }
+        });
+    }
+
+    #[gpui::test]
+    async fn test_user_message_chunks_use_protocol_message_id_boundaries(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UserMessageChunk(
+                        acp::ContentChunk::new("First ".into()).message_id("msg_user_1"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UserMessageChunk(
+                        acp::ContentChunk::new("message".into()).message_id("msg_user_1"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UserMessageChunk(
+                        acp::ContentChunk::new("Second message".into()).message_id("msg_user_2"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UserMessageChunk(
+                        acp::ContentChunk::new("Echo".into()).message_id("msg_user_3"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UserMessageChunk(
+                        acp::ContentChunk::new("Echo".into()).message_id("msg_user_3"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        thread.update(cx, |thread, cx| {
+            assert_eq!(thread.entries.len(), 3);
+
+            let AgentThreadEntry::UserMessage(first_message) = &thread.entries[0] else {
+                panic!("expected first entry to be a user message")
+            };
+            assert_eq!(first_message.content.to_markdown(cx), "First message");
+            assert_eq!(
+                first_message
+                    .protocol_id
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .as_deref(),
+                Some("msg_user_1")
+            );
+
+            let AgentThreadEntry::UserMessage(second_message) = &thread.entries[1] else {
+                panic!("expected second entry to be a user message")
+            };
+            assert_eq!(second_message.content.to_markdown(cx), "Second message");
+            assert_eq!(
+                second_message
+                    .protocol_id
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .as_deref(),
+                Some("msg_user_2")
+            );
+
+            let AgentThreadEntry::UserMessage(third_message) = &thread.entries[2] else {
+                panic!("expected third entry to be a user message")
+            };
+            assert_eq!(third_message.content.to_markdown(cx), "EchoEcho");
+            assert_eq!(
+                third_message
+                    .protocol_id
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .as_deref(),
+                Some("msg_user_3")
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_protocol_user_chunk_does_not_merge_into_optimistic_prompt(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread.push_user_content_block_with_protocol_id(
+                None,
+                true,
+                None,
+                "Typed prompt".into(),
+                false,
+                cx,
+            );
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::UserMessageChunk(
+                        acp::ContentChunk::new("Agent user chunk".into())
+                            .message_id("agent_user_chunk"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        thread.update(cx, |thread, cx| {
+            assert_eq!(thread.entries.len(), 2);
+
+            let AgentThreadEntry::UserMessage(optimistic_message) = &thread.entries[0] else {
+                panic!("expected first entry to be optimistic user message")
+            };
+            assert!(optimistic_message.is_optimistic);
+            assert_eq!(optimistic_message.content.to_markdown(cx), "Typed prompt");
+            assert!(optimistic_message.protocol_id.is_none());
+            assert!(optimistic_message.client_id.is_none());
+
+            let AgentThreadEntry::UserMessage(agent_message) = &thread.entries[1] else {
+                panic!("expected second entry to be protocol user chunk")
+            };
+            assert!(!agent_message.is_optimistic);
+            assert_eq!(agent_message.content.to_markdown(cx), "Agent user chunk");
+            assert_eq!(
+                agent_message
+                    .protocol_id
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .as_deref(),
+                Some("agent_user_chunk")
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_assistant_chunks_use_protocol_message_id_boundaries(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        thread.update(cx, |thread, cx| {
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::AgentThoughtChunk(
+                        acp::ContentChunk::new("Thinking ".into()).message_id("msg_thought_1"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::AgentThoughtChunk(
+                        acp::ContentChunk::new("hard".into()).message_id("msg_thought_1"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::AgentThoughtChunk(
+                        acp::ContentChunk::new("A separate thought".into())
+                            .message_id("msg_thought_2"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::AgentMessageChunk(
+                        acp::ContentChunk::new("Answer ".into()).message_id("msg_agent_1"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::AgentMessageChunk(
+                        acp::ContentChunk::new("done".into()).message_id("msg_agent_1"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+            thread
+                .handle_session_update(
+                    acp::SessionUpdate::AgentMessageChunk(
+                        acp::ContentChunk::new("Follow-up".into()).message_id("msg_agent_2"),
+                    ),
+                    cx,
+                )
+                .unwrap();
+        });
+
+        thread.update(cx, |thread, cx| {
+            assert_eq!(thread.entries.len(), 1);
+            let AgentThreadEntry::AssistantMessage(message) = &thread.entries[0] else {
+                panic!("expected assistant entry")
+            };
+            assert_eq!(message.chunks.len(), 4);
+
+            let AssistantMessageChunk::Thought { id, block } = &message.chunks[0] else {
+                panic!("expected first chunk to be a thought")
+            };
+            assert_eq!(block.to_markdown(cx), "Thinking hard");
+            assert_eq!(
+                id.as_ref().map(ToString::to_string).as_deref(),
+                Some("msg_thought_1")
+            );
+
+            let AssistantMessageChunk::Thought { id, block } = &message.chunks[1] else {
+                panic!("expected second chunk to be a thought")
+            };
+            assert_eq!(block.to_markdown(cx), "A separate thought");
+            assert_eq!(
+                id.as_ref().map(ToString::to_string).as_deref(),
+                Some("msg_thought_2")
+            );
+
+            let AssistantMessageChunk::Message { id, block } = &message.chunks[2] else {
+                panic!("expected third chunk to be a message")
+            };
+            assert_eq!(block.to_markdown(cx), "Answer done");
+            assert_eq!(
+                id.as_ref().map(ToString::to_string).as_deref(),
+                Some("msg_agent_1")
+            );
+
+            let AssistantMessageChunk::Message { id, block } = &message.chunks[3] else {
+                panic!("expected fourth chunk to be a message")
+            };
+            assert_eq!(block.to_markdown(cx), "Follow-up");
+            assert_eq!(
+                id.as_ref().map(ToString::to_string).as_deref(),
+                Some("msg_agent_2")
+            );
         });
     }
 
@@ -4818,27 +5286,29 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         let project = Project::test(fs, [], cx).await;
-        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
-            |request, thread, mut cx| {
-                async move {
-                    let prompt = request.prompt.first().cloned().unwrap_or_else(|| "".into());
+        let connection = Rc::new(
+            FakeAgentConnection::new()
+                .without_truncate_support()
+                .on_user_message(|request, thread, mut cx| {
+                    async move {
+                        let prompt = request.prompt.first().cloned().unwrap_or_else(|| "".into());
 
-                    thread.update(&mut cx, |thread, cx| {
-                        thread
-                            .handle_session_update(
-                                acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(
-                                    prompt,
-                                )),
-                                cx,
-                            )
-                            .unwrap();
-                    })?;
+                        thread.update(&mut cx, |thread, cx| {
+                            thread
+                                .handle_session_update(
+                                    acp::SessionUpdate::UserMessageChunk(acp::ContentChunk::new(
+                                        prompt,
+                                    )),
+                                    cx,
+                                )
+                                .unwrap();
+                        })?;
 
-                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
-                }
-                .boxed_local()
-            },
-        ));
+                        Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                    }
+                    .boxed_local()
+                }),
+        );
 
         let thread = cx
             .update(|cx| {
@@ -4854,6 +5324,14 @@ mod tests {
 
         let output = thread.read_with(cx, |thread, cx| thread.to_markdown(cx));
         assert_eq!(output.matches("Hello from Zed!").count(), 1);
+        thread.read_with(cx, |thread, _cx| {
+            let Some(AgentThreadEntry::UserMessage(message)) = thread.entries.first() else {
+                panic!("expected optimistic user message");
+            };
+            assert_eq!(message.protocol_id, None);
+            assert_eq!(message.client_id, None);
+            assert!(message.is_optimistic);
+        });
     }
 
     #[gpui::test]
@@ -5900,7 +6378,7 @@ mod tests {
                 let AgentThreadEntry::UserMessage(message) = &thread.entries[2] else {
                     panic!("unexpected entries {:?}", thread.entries)
                 };
-                thread.restore_checkpoint(message.id.clone().unwrap(), cx)
+                thread.restore_checkpoint(message.client_id.clone().unwrap(), cx)
             })
             .await
             .unwrap();
@@ -6419,7 +6897,6 @@ mod tests {
 
         fn prompt(
             &self,
-            _id: UserMessageId,
             params: acp::PromptRequest,
             cx: &mut App,
         ) -> Task<gpui::Result<acp::PromptResponse>> {
@@ -6432,6 +6909,17 @@ mod tests {
             } else {
                 Task::ready(Ok(acp::PromptResponse::new(acp::StopReason::EndTurn)))
             }
+        }
+
+        fn client_user_message_ids(
+            &self,
+            _cx: &App,
+        ) -> Option<Rc<dyn AgentSessionClientUserMessageIds>> {
+            self.supports_truncate.then(|| {
+                Rc::new(FakeAgentSessionClientUserMessageIds {
+                    connection: self.clone(),
+                }) as Rc<dyn AgentSessionClientUserMessageIds>
+            })
         }
 
         fn cancel(&self, _session_id: &acp::SessionId, _cx: &mut App) {}
@@ -6479,8 +6967,27 @@ mod tests {
     }
 
     impl AgentSessionTruncate for FakeAgentSessionEditor {
-        fn run(&self, _message_id: UserMessageId, _cx: &mut App) -> Task<Result<()>> {
+        fn run(
+            &self,
+            _client_user_message_id: ClientUserMessageId,
+            _cx: &mut App,
+        ) -> Task<Result<()>> {
             Task::ready(Ok(()))
+        }
+    }
+
+    struct FakeAgentSessionClientUserMessageIds {
+        connection: FakeAgentConnection,
+    }
+
+    impl AgentSessionClientUserMessageIds for FakeAgentSessionClientUserMessageIds {
+        fn prompt(
+            &self,
+            _client_user_message_id: ClientUserMessageId,
+            params: acp::PromptRequest,
+            cx: &mut App,
+        ) -> Task<Result<acp::PromptResponse>> {
+            self.connection.prompt(params, cx)
         }
     }
 
@@ -6689,7 +7196,7 @@ mod tests {
             let AgentThreadEntry::UserMessage(message) = &thread.entries[1] else {
                 panic!("expected user message at index 1");
             };
-            message.id.clone().unwrap()
+            message.client_id.clone().unwrap()
         });
 
         // Create a terminal AFTER the checkpoint we'll restore to.
@@ -6895,7 +7402,9 @@ mod tests {
         thread.update(cx, |thread, cx| {
             thread.push_entry(
                 AgentThreadEntry::UserMessage(UserMessage {
-                    id: Some(UserMessageId::new()),
+                    protocol_id: None,
+                    client_id: Some(ClientUserMessageId::new()),
+                    is_optimistic: true,
                     content: ContentBlock::Empty,
                     chunks: vec!["Injected message (no checkpoint)".into()],
                     checkpoint: None,
@@ -7097,7 +7606,9 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_send_assigns_message_id_without_truncate_support(cx: &mut TestAppContext) {
+    async fn test_send_omits_message_id_without_client_user_message_id_support(
+        cx: &mut TestAppContext,
+    ) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -7120,10 +7631,9 @@ mod tests {
             let AgentThreadEntry::UserMessage(message) = &thread.entries[0] else {
                 panic!("expected first entry to be a user message")
             };
-            assert!(
-                message.id.is_some(),
-                "user message should always have an id"
-            );
+            assert_eq!(message.protocol_id, None);
+            assert_eq!(message.client_id, None);
+            assert!(message.is_optimistic);
         });
     }
 

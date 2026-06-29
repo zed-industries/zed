@@ -14,8 +14,24 @@ JavaScript support is available natively in Zed.
 
 ## Code formatting
 
-Formatting on save is enabled by default for JavaScript, using TypeScript's built-in code formatting.
-But many JavaScript projects use other command-line code-formatting tools, such as [Prettier](https://prettier.io/).
+Formatting on save is disabled by default for JavaScript.
+
+To turn `format-on-save` on, you can enable the setting globally or for `JavaScript` or `TypeScript` specifically.
+
+```json [settings]
+{
+  "languages": {
+    "JavaScript": {
+      "format_on_save": "on"
+    },
+    "TypeScript": {
+      "format_on_save": "on"
+    }
+  }
+}
+```
+
+Many JavaScript projects use command-line code-formatting tools, such as [Prettier](https://prettier.io/).
 You can use one of these tools by specifying an _external_ code formatter for JavaScript in your settings.
 See [the configuration docs](../reference/all-settings.md) for more information.
 

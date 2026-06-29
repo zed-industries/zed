@@ -10,13 +10,21 @@ use gpui::{
 pub struct RightClickMenu<M: ManagedView> {
     id: ElementId,
     child_builder: Option<Box<dyn FnOnce(bool, &mut Window, &mut App) -> AnyElement + 'static>>,
-    menu_builder: Option<Rc<dyn Fn(&mut Window, &mut App) -> Entity<M> + 'static>>,
+    menu_builder: Option<Rc<dyn Fn(&mut Window, &mut App) -> Option<Entity<M>> + 'static>>,
     anchor: Option<Anchor>,
     attach: Option<Anchor>,
 }
 
 impl<M: ManagedView> RightClickMenu<M> {
     pub fn menu(mut self, f: impl Fn(&mut Window, &mut App) -> Entity<M> + 'static) -> Self {
+        self.menu_builder = Some(Rc::new(move |window, cx| Some(f(window, cx))));
+        self
+    }
+
+    pub fn maybe_menu(
+        mut self,
+        f: impl Fn(&mut Window, &mut App) -> Option<Entity<M>> + 'static,
+    ) -> Self {
         self.menu_builder = Some(Rc::new(f));
         self
     }
@@ -243,7 +251,9 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                         cx.stop_propagation();
                         window.prevent_default();
 
-                        let new_menu = (builder)(window, cx);
+                        let Some(new_menu) = (builder)(window, cx) else {
+                            return;
+                        };
                         let menu2 = menu.clone();
                         let previous_focus_handle = window.focused(cx);
 

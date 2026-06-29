@@ -173,9 +173,10 @@ pub fn setup_node() -> Step<Use> {
     named::uses(
         "actions",
         "setup-node",
-        "49933ea5288caeca8642d1e84afbd3f7d6820020", // v4
+        "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e", // v6.4
     )
-    .add_with(("node-version", "20"))
+    .add_with(("node-version", "24"))
+    .add_with(("check-latest", true))
 }
 
 pub fn setup_sentry() -> Step<Use> {
