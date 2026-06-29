@@ -163,6 +163,7 @@ impl Principal {
         match &self {
             Principal::User(user) => {
                 span.record("user_id", user.id.0);
+                span.record("username", &user.username);
                 span.record("login", &user.github_login);
             }
         }
@@ -290,7 +291,7 @@ impl Debug for Session {
         let mut result = f.debug_struct("Session");
         match &self.principal {
             Principal::User(user) => {
-                result.field("user", &user.github_login);
+                result.field("user", &user.username);
             }
         }
         result.field("connection_id", &self.connection_id).finish()
