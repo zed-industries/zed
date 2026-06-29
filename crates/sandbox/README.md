@@ -181,7 +181,7 @@ The flow for this approach in detail is:
 - open each *writable* path we `--bind` and get an `O_PATH` FD (which pins the
   inode without granting read/write on its contents)
 - create an `SCM_RIGHTS` socket over which we can send the FDs
-- run `bwrap --bind /path1 /path1 ... -- zed --sandbox-bridge <untrusted program args>`
+- run `bwrap --bind /path1 /path1 ... -- zed --zed-linux-sandbox-launcher <untrusted program args>`
   - note: we use (potentially swapped) paths
   - we also mount the socket in the sandbox
 - the sandbox bridge reads the FDs from the socket, does the following for each
@@ -202,7 +202,7 @@ sequenceDiagram
 
     Zed->>Zed: open O_PATH FD per writable path, pinning the inode
     Zed->>Zed: create SCM_RIGHTS socket
-    Zed->>BW: exec bwrap, binding paths, then zed sandbox-bridge
+    Zed->>BW: exec bwrap, binding paths, then zed --zed-linux-sandbox-launcher
     Note over Zed,BW: binds use possibly-swapped paths, socket mounted in sandbox
     Zed->>Bridge: send FDs over the SCM_RIGHTS socket
     loop each writable bind

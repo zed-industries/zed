@@ -1020,6 +1020,10 @@ impl Drop for Sandbox {
 /// Argv flag that marks the WSL-side sandbox-helper re-exec. Shared so the
 /// Windows side (`windows_wsl`, which builds the `wsl.exe` invocation) and the
 /// Linux side (`linux_bubblewrap`, which parses it inside WSL) can't drift.
+///
+/// Only referenced by those two cfg-gated modules, so it's gated to match;
+/// otherwise it's dead code on macOS.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub(crate) const WSL_SANDBOX_HELPER_FLAG: &str = "--wsl-sandbox-helper";
 
 /// Handle a possible re-exec of this binary as a sandbox helper.
