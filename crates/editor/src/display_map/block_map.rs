@@ -2249,7 +2249,7 @@ impl BlockSnapshot {
 
         BlockChunks {
             input_chunks: self.wrap_snapshot.chunks(
-                input_start..input_end,
+                WrapPoint::new(input_start, 0)..WrapPoint::new(input_end, 0),
                 language_aware,
                 highlights,
             ),

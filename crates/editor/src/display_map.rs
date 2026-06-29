@@ -134,7 +134,7 @@ use crate::{
     EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
 };
 use block_map::{BlockPointCursor, BlockRow, BlockSnapshot};
-use fold_map::{FoldPointCursor, FoldSnapshot};
+use fold_map::{Chunk, FoldPointCursor, FoldSnapshot};
 use inlay_map::{BufferOffsetToInlayPointCursor, InlaySnapshot};
 use tab_map::{TabPointCursor, TabSnapshot};
 use wrap_map::{WrapMap, WrapPatch, WrapPointCursor};
@@ -1814,15 +1814,54 @@ impl DisplaySnapshot {
         language_aware: LanguageAwareStyling,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
-        self.chunks(
+        let chunks = self.chunks(
             display_rows,
             language_aware,
             HighlightStyles {
                 inlay_hint: Some(editor_style.inlay_hints_style),
                 edit_prediction: Some(editor_style.edit_prediction_styles),
             },
-        )
-        .flat_map({
+        );
+        self.map_to_highlighted_chunks(chunks, editor_style)
+    }
+
+    /// Like [`Self::highlighted_chunks`], but for an arbitrary display-point
+    /// range, including a column sub-range of a row. Chunks are fetched through
+    /// the wrap layer, whose cursors seek in O(log n) and walk only the
+    /// requested range, so the cost is independent of the full line length.
+    ///
+    /// This returns text content only; block decorations (which occupy whole
+    /// rows and are rendered separately) do not contribute chunks.
+    pub fn highlighted_chunks_in_range<'a>(
+        &'a self,
+        range: Range<DisplayPoint>,
+        language_aware: LanguageAwareStyling,
+        editor_style: &'a EditorStyle,
+    ) -> impl Iterator<Item = HighlightedChunk<'a>> {
+        let start = self.block_snapshot.to_wrap_point(range.start.0, Bias::Left);
+        let end = self.block_snapshot.to_wrap_point(range.end.0, Bias::Right);
+        let chunks = self.wrap_snapshot().chunks(
+            start..end,
+            language_aware,
+            Highlights {
+                text_highlights: Some(&self.text_highlights),
+                inlay_highlights: Some(&self.inlay_highlights),
+                semantic_token_highlights: Some(&self.semantic_token_highlights),
+                styles: HighlightStyles {
+                    inlay_hint: Some(editor_style.inlay_hints_style),
+                    edit_prediction: Some(editor_style.edit_prediction_styles),
+                },
+            },
+        );
+        self.map_to_highlighted_chunks(chunks, editor_style)
+    }
+
+    fn map_to_highlighted_chunks<'a>(
+        &'a self,
+        chunks: impl Iterator<Item = Chunk<'a>> + 'a,
+        editor_style: &'a EditorStyle,
+    ) -> impl Iterator<Item = HighlightedChunk<'a>> + 'a {
+        chunks.flat_map({
             // track the current underline style so that we can apply it to
             // inlay hints within the diagnostic's span
             let mut current_diagnostic_underline: Option<UnderlineStyle> = None;

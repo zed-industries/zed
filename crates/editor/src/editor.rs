@@ -509,7 +509,9 @@ pub enum SoftWrap {
     /// Note: this is currently internal, as actually limited by [`crate::MAX_LINE_LEN`] until it wraps.
     /// The mode is used inside git diff hunks, where it's seems currently more useful to not wrap as much as possible.
     GitDiff,
-    /// Prefer a single line generally, unless an overly long line is encountered.
+    /// Do not soft-wrap; long lines extend horizontally and scroll. Only the
+    /// horizontally visible portion of each row is shaped, so line length does
+    /// not affect rendering cost.
     None,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,

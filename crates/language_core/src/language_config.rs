@@ -12,10 +12,10 @@ use util::serde::default_true;
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
-    /// Prefer a single line generally, unless an overly long line is encountered.
+    /// Do not soft-wrap; long lines extend horizontally and scroll.
     None,
     /// Deprecated: use None instead. Left to avoid breaking existing users' configs.
-    /// Prefer a single line generally, unless an overly long line is encountered.
+    /// Do not soft-wrap; long lines extend horizontally and scroll.
     PreferLine,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,
