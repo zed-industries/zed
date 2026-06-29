@@ -1,12 +1,11 @@
 use anyhow::Result;
 use gpui::Action;
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, EventEmitter, FocusHandle,
     Focusable, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels, ScrollStrategy,
     Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*, uniform_list,
 };
 use head::Head;
-use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
@@ -32,8 +31,10 @@ use crate::shape::RelativeHeight;
 use crate::shape::RelativeWidth;
 pub use footer::PickerAction;
 pub use language::{HighlightedText, HighlightedTextBuilder};
+pub use preview::Layout as PreviewLayout;
 pub use preview::MatchLocation;
 pub use preview::Preview;
+pub use preview::PreviewBackend;
 pub use preview::PreviewSource;
 pub use preview::Update as PreviewUpdate;
 pub use ui_input::ErasedEditor;
@@ -399,7 +400,7 @@ impl<D: PickerDelegate> Picker<D> {
     /// preview window where it shows extra information.
     pub fn uniform_list_with_preview(
         delegate: D,
-        project: Entity<Project>,
+        preview: Arc<dyn PreviewBackend>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -410,7 +411,7 @@ impl<D: PickerDelegate> Picker<D> {
             cx,
         );
 
-        let preview = Preview::new_editor(project, window, cx);
+        let preview = Preview::new(preview);
         Self::new(
             delegate,
             ContainerKind::UniformList,
@@ -427,7 +428,7 @@ impl<D: PickerDelegate> Picker<D> {
     /// (e.g. section headers and separators interleaved with matches).
     pub fn list_with_preview(
         delegate: D,
-        project: Entity<Project>,
+        preview: Arc<dyn PreviewBackend>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -438,7 +439,7 @@ impl<D: PickerDelegate> Picker<D> {
             cx,
         );
 
-        let preview = Preview::new_editor(project, window, cx);
+        let preview = Preview::new(preview);
         Self::new(
             delegate,
             ContainerKind::List,
