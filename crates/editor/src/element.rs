@@ -103,6 +103,40 @@ struct LineHighlightSpec {
     _active_stack_frame: bool,
 }
 
+enum LineNumberStyle {
+    Breakpoint,
+    DiffAdded,
+    DiffDeleted,
+    Active,
+    Inactive,
+}
+
+impl LineNumberStyle {
+    fn new(is_active: bool, is_breakpoint: bool, diff_status: Option<DiffHunkStatus>) -> Self {
+        match (
+            is_active,
+            is_breakpoint,
+            diff_status.map(|status| status.kind),
+        ) {
+            (_, true, _) => Self::Breakpoint,
+            (true, _, _) => Self::Active,
+            (_, _, Some(DiffHunkStatusKind::Added)) => Self::DiffAdded,
+            (_, _, Some(DiffHunkStatusKind::Deleted)) => Self::DiffDeleted,
+            (_, _, _) => Self::Inactive,
+        }
+    }
+
+    fn color(self, colors: &theme::ThemeColors) -> Hsla {
+        match self {
+            Self::Breakpoint => colors.debugger_accent,
+            Self::DiffAdded => colors.version_control_added,
+            Self::DiffDeleted => colors.version_control_deleted,
+            Self::Active => colors.editor_active_line_number,
+            Self::Inactive => colors.editor_line_number,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct SelectionLayout {
     head: DisplayPoint,
@@ -2725,16 +2759,14 @@ impl EditorElement {
                 let number = relative_number.unwrap_or(&non_relative_number);
                 write!(&mut line_number, "{number}").unwrap();
 
-                let color = active_rows
-                    .get(&display_row)
-                    .map(|spec| {
-                        if spec.breakpoint {
-                            cx.theme().colors().debugger_accent
-                        } else {
-                            cx.theme().colors().editor_active_line_number
-                        }
-                    })
-                    .unwrap_or_else(|| cx.theme().colors().editor_line_number);
+                let spec = active_rows.get(&display_row);
+                let color = LineNumberStyle::new(
+                    spec.is_some(),
+                    spec.is_some_and(|spec| spec.breakpoint),
+                    row_info.diff_status,
+                )
+                .color(cx.theme().colors());
+
                 let shaped_line =
                     self.shape_line_number(SharedString::from(&line_number), color, window);
                 let scroll_top =
@@ -2798,6 +2830,7 @@ impl EditorElement {
     ) -> Vec<Option<AnyElement>> {
         let include_fold_statuses = EditorSettings::get_global(cx).gutter.folds
             && snapshot.mode.is_full()
+            && snapshot.display_snapshot.companion_snapshot().is_none()
             && self.editor.read(cx).buffer_kind(cx) == ItemBufferKind::Singleton;
         if include_fold_statuses {
             row_infos

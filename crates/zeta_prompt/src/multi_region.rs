@@ -7,6 +7,8 @@ const V0316_MIN_BLOCK_LINES: usize = 3;
 const V0316_MAX_BLOCK_LINES: usize = 8;
 const V0318_MIN_BLOCK_LINES: usize = 6;
 const V0318_MAX_BLOCK_LINES: usize = 16;
+const V0618_MIN_BLOCK_LINES: usize = 3;
+const V0618_MAX_BLOCK_LINES: usize = 32;
 const MAX_NUDGE_LINES: usize = 5;
 pub const V0316_END_MARKER: &str = "<[end▁of▁sentence]>";
 pub const V0317_END_MARKER: &str = "<[end▁of▁sentence]>";
@@ -53,6 +55,13 @@ fn collect_line_info(text: &str) -> Vec<LineInfo> {
         lines.pop();
     }
     lines
+}
+
+/// Whether a trimmed line is a model-friendly place to start a block: it has
+/// content and isn't a structural tail. Exposed for reuse by context
+/// retrieval when snapping excerpt boundaries to block boundaries.
+pub fn is_good_block_start(trimmed_line: &str) -> bool {
+    !trimmed_line.is_empty() && !is_structural_tail(trimmed_line)
 }
 
 fn is_structural_tail(trimmed_line: &str) -> bool {
@@ -142,6 +151,10 @@ pub fn compute_marker_offsets(editable_text: &str) -> Vec<usize> {
 
 pub fn compute_marker_offsets_v0318(editable_text: &str) -> Vec<usize> {
     compute_marker_offsets_with_limits(editable_text, V0318_MIN_BLOCK_LINES, V0318_MAX_BLOCK_LINES)
+}
+
+pub fn compute_marker_offsets_v0618(editable_text: &str) -> Vec<usize> {
+    compute_marker_offsets_with_limits(editable_text, V0618_MIN_BLOCK_LINES, V0618_MAX_BLOCK_LINES)
 }
 
 fn line_start_at_or_before(text: &str, offset: usize) -> usize {
@@ -290,7 +303,7 @@ pub fn write_editable_with_markers(
 ///
 /// When a marker tag sits on its own line (followed by `\n`), the trailing
 /// newline is also removed so the surrounding lines stay joined naturally.
-fn strip_marker_tags(text: &str) -> String {
+pub(crate) fn strip_marker_tags(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut pos = 0;
     let bytes = text.as_bytes();
