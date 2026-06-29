@@ -41,7 +41,7 @@ use ztracing::instrument;
 
 struct BufferSubscriptions {
     _diff: Entity<BufferDiff>,
-    _display_buffer: Entity<Buffer>,
+    display_buffer: Entity<Buffer>,
     operation_buffer: Entity<Buffer>,
     _diff_subscription: Subscription,
     _conflict_set: Entity<ConflictSet>,
@@ -61,7 +61,7 @@ pub struct DiffMultibuffer {
     multibuffer: Entity<MultiBuffer>,
     branch_diff: Entity<branch_diff::BranchDiff>,
     editor: Entity<SplittableEditor>,
-    buffer_subscriptions: HashMap<Arc<RelPath>, BufferSubscriptions>,
+    buffer_subscriptions: HashMap<RepoPath, BufferSubscriptions>,
     workspace: WeakEntity<Workspace>,
     focus_handle: FocusHandle,
     pending_scroll: Option<PathKey>,
@@ -536,33 +536,41 @@ impl DiffMultibuffer {
             return;
         }
 
-        let Some((project, ranges_by_path)) = editor.update(cx, |editor, cx| {
+        let Some((project, ranges_by_buffer_id)) = editor.update(cx, |editor, cx| {
             let project = editor.project().cloned()?;
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             // In staged mode the display buffer is the index text buffer, so the
             // hunks' buffer ranges are index-coordinate anchors.
-            let mut ranges_by_path: HashMap<Arc<RelPath>, Vec<_>> = HashMap::default();
+            let mut ranges_by_buffer_id: HashMap<BufferId, Vec<_>> = HashMap::default();
 
             for hunk in editor.diff_hunks_in_ranges(&ranges, &snapshot) {
-                let Some(path_key) = snapshot.path_for_buffer(hunk.buffer_id) else {
-                    continue;
-                };
-                ranges_by_path
-                    .entry(path_key.path.clone())
+                ranges_by_buffer_id
+                    .entry(hunk.buffer_id)
                     .or_default()
                     .push(hunk.buffer_range.clone());
             }
 
-            Some((project, ranges_by_path))
+            Some((project, ranges_by_buffer_id))
         }) else {
             return;
         };
 
-        let operations = ranges_by_path
+        let operation_buffers_by_display_id = self
+            .buffer_subscriptions
+            .values()
+            .map(|sub| {
+                (
+                    sub.display_buffer.read(cx).remote_id(),
+                    sub.operation_buffer.clone(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        let operations = ranges_by_buffer_id
             .into_iter()
-            .filter_map(|(path, index_ranges)| {
-                let subscription = self.buffer_subscriptions.get(&path)?;
-                Some((subscription.operation_buffer.clone(), index_ranges))
+            .filter_map(|(display_buffer_id, index_ranges)| {
+                let operation_buffer = operation_buffers_by_display_id.get(&display_buffer_id)?;
+                Some((operation_buffer.clone(), index_ranges))
             })
             .collect::<Vec<_>>();
 
@@ -636,6 +644,7 @@ impl DiffMultibuffer {
     #[instrument(skip_all)]
     fn register_buffer(
         &mut self,
+        repo_path: RepoPath,
         path_key: PathKey,
         file_status: FileStatus,
         display_buffer: Entity<Buffer>,
@@ -646,6 +655,7 @@ impl DiffMultibuffer {
         cx: &mut Context<Self>,
     ) -> Option<BufferId> {
         let diff_subscription = cx.subscribe_in(&diff, window, {
+            let repo_path = repo_path.clone();
             let path_key = path_key.clone();
             let display_buffer = display_buffer.clone();
             let operation_buffer = operation_buffer.clone();
@@ -654,6 +664,7 @@ impl DiffMultibuffer {
             move |this, _, event, window, cx| match event {
                 buffer_diff::BufferDiffEvent::DiffChanged(_) => {
                     this.buffer_ranges_changed(
+                        repo_path.clone(),
                         path_key.clone(),
                         file_status,
                         display_buffer.clone(),
@@ -668,6 +679,7 @@ impl DiffMultibuffer {
             }
         });
         let conflict_set_subscription = cx.subscribe_in(&conflict_set, window, {
+            let repo_path = repo_path.clone();
             let path_key = path_key.clone();
             let display_buffer = display_buffer.clone();
             let operation_buffer = operation_buffer.clone();
@@ -675,6 +687,7 @@ impl DiffMultibuffer {
             let conflict_set = conflict_set.clone();
             move |this, _, _, window, cx| {
                 this.buffer_ranges_changed(
+                    repo_path.clone(),
                     path_key.clone(),
                     file_status,
                     display_buffer.clone(),
@@ -687,10 +700,10 @@ impl DiffMultibuffer {
             }
         });
         self.buffer_subscriptions.insert(
-            path_key.path.clone(),
+            repo_path,
             BufferSubscriptions {
                 _diff: diff.clone(),
-                _display_buffer: display_buffer.clone(),
+                display_buffer: display_buffer.clone(),
                 operation_buffer,
                 _diff_subscription: diff_subscription,
                 _conflict_set: conflict_set.clone(),
@@ -787,6 +800,7 @@ impl DiffMultibuffer {
 
     fn buffer_ranges_changed(
         &mut self,
+        repo_path: RepoPath,
         path_key: PathKey,
         file_status: FileStatus,
         display_buffer: Entity<Buffer>,
@@ -800,6 +814,7 @@ impl DiffMultibuffer {
             return;
         }
         self.register_buffer(
+            repo_path,
             path_key,
             file_status,
             display_buffer,
@@ -836,9 +851,11 @@ impl DiffMultibuffer {
                 .collect::<HashMap<_, _>>();
 
             let mut entries = BTreeMap::new();
+            let mut live_repo_paths = HashSet::default();
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
                 for diff_buffer in buffers_to_load {
+                    live_repo_paths.insert(diff_buffer.repo_path.clone());
                     let path_key = project_diff_path_key(
                         &repo,
                         &diff_buffer.repo_path,
@@ -850,15 +867,19 @@ impl DiffMultibuffer {
                 }
             }
 
-            let live_paths = entries
-                .keys()
-                .map(|path_key| path_key.path.clone())
-                .collect::<HashSet<_>>();
-            this.buffer_subscriptions
-                .retain(|path, _| live_paths.contains(path));
+            let repo_path_by_display_id = this
+                .buffer_subscriptions
+                .iter()
+                .map(|(repo_path, sub)| {
+                    (sub.display_buffer.read(cx).remote_id(), repo_path.clone())
+                })
+                .collect::<HashMap<_, _>>();
 
             this.editor.update(cx, |editor, cx| {
                 for (path, buffer_id) in previous_paths {
+                    if let Some(repo_path) = repo_path_by_display_id.get(&buffer_id) {
+                        this.buffer_subscriptions.remove(repo_path);
+                    }
                     editor.rhs_editor().update(cx, |editor, cx| {
                         conflict_view::buffers_removed(editor, &[buffer_id], cx);
                     });
@@ -867,6 +888,9 @@ impl DiffMultibuffer {
                     editor.remove_excerpts_for_path(path, cx);
                 }
             });
+
+            this.buffer_subscriptions
+                .retain(|repo_path, _| live_repo_paths.contains(repo_path));
 
             entries
         })?;
@@ -881,6 +905,7 @@ impl DiffMultibuffer {
                 cx.update(|window, cx| {
                     this.update(cx, |this, cx| {
                         if let Some(buffer_id) = this.register_buffer(
+                            entry.repo_path,
                             path_key,
                             entry.file_status,
                             loaded_buffer.display_buffer,
