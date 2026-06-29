@@ -44,10 +44,15 @@ pub(crate) const WSL_SANDBOX_UNAVAILABLE_PREFIX: &str = "Windows sandboxing via 
 ///   literal. Seatbelt matches the *resolved* access path against this literal,
 ///   so a post-capture swap of a path component fails closed (denied) rather
 ///   than redirecting the grant.
-/// - **Linux**: an `O_PATH` file descriptor pinned to the target inode, bound via
-///   `bwrap --bind-fd`, so the mount can't be redirected by a post-capture swap.
-/// - **Windows**: nothing — the WSL sandbox does not enforce these grants yet, so
-///   no identity is captured.
+/// - **Linux**: an `O_PATH` file descriptor pinned to the target inode. bwrap is
+///   launched by a PTY that can't inherit extra fds, so we can't use bwrap's own
+///   `--bind-fd`; instead the bind uses an ordinary `--bind <path>` and an
+///   in-sandbox validator compares `fstat` of this descriptor against `lstat` of
+///   the mounted path after the mounts, failing closed on a post-capture swap
+///   (see `linux_bubblewrap::validate_binds` and `README.md`).
+/// - **Windows**: nothing — a Windows process holds no Linux fds, so the real
+///   capture-at-validation happens inside WSL (in the `--wsl-sandbox-helper`),
+///   and the value here carries only the requested path as untrusted intent.
 ///
 /// The type is deliberately **opaque**: it does not `Deref`, and it never hands
 /// back its trusted value. The only thing readable is a *display-only* path via
@@ -123,8 +128,6 @@ impl HostFilesystemLocation {
         }
     }
 
-
-
     /// The requested path, for **display only** (e.g. the permission-request UI).
     ///
     /// This intentionally returns the untrusted, as-requested path — never the
@@ -175,7 +178,10 @@ impl fmt::Debug for HostFilesystemLocation {
         // Only the display path is shown; the trusted identity stays opaque.
         formatter
             .debug_struct("HostFilesystemLocation")
-            .field("untrusted_path_for_display", &self.untrusted_path_for_display)
+            .field(
+                "untrusted_path_for_display",
+                &self.untrusted_path_for_display,
+            )
             .finish_non_exhaustive()
     }
 }
@@ -829,10 +835,11 @@ impl Sandbox {
             }
         }
         let writable: Vec<&Path> = writable_owned.iter().map(PathBuf::as_path).collect();
-        let protected_owned: Vec<PathBuf> =
-            git_protected.iter().filter_map(linux_location_path).collect();
-        let protected_git_dirs: Vec<&Path> =
-            protected_owned.iter().map(PathBuf::as_path).collect();
+        let protected_owned: Vec<PathBuf> = git_protected
+            .iter()
+            .filter_map(linux_location_path)
+            .collect();
+        let protected_git_dirs: Vec<&Path> = protected_owned.iter().map(PathBuf::as_path).collect();
 
         // Stand up the host endpoint that sends the captured fds to the
         // in-sandbox validator, when this run has writable binds to verify. It's

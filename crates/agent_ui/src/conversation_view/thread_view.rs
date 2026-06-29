@@ -20,9 +20,7 @@ use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
-use sandbox::{
-    GitSandboxPolicy, HostFilesystemLocation, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy,
-};
+use sandbox::{GitSandboxPolicy, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
 use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
@@ -4657,8 +4655,8 @@ impl ThreadView {
                 let settings = augment_settings_sandbox_policy(&settings_policy, baseline);
                 let thread = SandboxPolicyDisplay::from_policy(&thread_policy);
                 // Omit the per-thread section when it grants nothing extra.
-                let thread =
-                    (!sandbox_policy_grants_nothing(&thread)).then(|| sandbox_section(&thread, false));
+                let thread = (!sandbox_policy_grants_nothing(&thread))
+                    .then(|| sandbox_section(&thread, false));
                 SandboxStatusTooltip::enabled(sandbox_section(&settings, true), thread)
             }
         };
@@ -5602,7 +5600,7 @@ impl Render for TokenUsageTooltip {
 
 /// A display-ready snapshot of a sandbox policy for the status tooltip.
 ///
-/// The opaque [`HostFilesystemLocation`]s in a policy are stringified up front,
+/// The opaque `HostFilesystemLocation`s in a policy are stringified up front,
 /// when this is built, so the tooltip state (which outlives the build and is
 /// captured by the lazy tooltip closure) never holds the locations' fds open.
 #[derive(Clone)]
@@ -5688,31 +5686,26 @@ fn augment_settings_sandbox_policy(
     let fs = match &policy.fs {
         SandboxFsPolicy::Unrestricted => SandboxFsDisplay::Unrestricted,
         SandboxFsPolicy::Restricted { writable_paths } => {
-            // Dedup while we still hold the locations, so "same directory named
-            // two ways" collapses by inode identity rather than by display text.
-            let mut merged: Vec<HostFilesystemLocation> = Vec::new();
-            for path in baseline {
-                // The baseline roots are real directories, so capturing them is
-                // expected to succeed; on the off chance it fails we simply omit
-                // the row rather than block the (display-only) tooltip.
-                if let Ok(location) = HostFilesystemLocation::new(&path) {
-                    if !merged.contains(&location) {
-                        merged.push(location);
-                    }
-                }
-            }
-            for location in writable_paths {
-                if !merged.contains(location) {
-                    merged.push(location.clone());
-                }
-            }
-            // Stringify now so the tooltip state holds no fds.
-            let mut entries: Vec<WritableEntryDisplay> = merged
+            // Dedup by display string. We deliberately don't open the locations'
+            // fds to dedup by inode here: this is a display-only tooltip and the
+            // string is the location's identity for that purpose. The string can
+            // only diverge from the captured inode while a symlink-swap is
+            // actively in progress, and in that case the bind validator refuses
+            // to run the command at all (see the `sandbox` crate) — so showing the
+            // requested path is always safe, and not worth a blocking syscall on
+            // the render path.
+            let mut merged: Vec<String> = Vec::new();
+            let baseline_paths = baseline.iter().map(|path| path.display().to_string());
+            let granted_paths = writable_paths
                 .iter()
-                .map(|location| {
-                    WritableEntryDisplay::Path(location.untrusted_path_display().to_string())
-                })
-                .collect();
+                .map(|location| location.untrusted_path_display().to_string());
+            for path in baseline_paths.chain(granted_paths) {
+                if !merged.contains(&path) {
+                    merged.push(path);
+                }
+            }
+            let mut entries: Vec<WritableEntryDisplay> =
+                merged.into_iter().map(WritableEntryDisplay::Path).collect();
             // The ephemeral, host-isolated tmpfs at /tmp is Linux-specific (the
             // bwrap `--tmpfs /tmp` overlay). It's a display-only label, not a
             // real host path, so it can't be a captured location.
@@ -8366,24 +8359,23 @@ impl ThreadView {
                         }),
                 )
                 .when(has_host_list && is_open, |this| {
-                    this.child(
-                        v_flex()
-                            .children(hosts.iter().enumerate().map(|(host_ix, host)| {
-                                h_flex()
-                                    .min_w_0()
-                                    .px_2()
-                                    .py_1p5()
-                                    .bg(cx.theme().colors().editor_background)
-                                    .when(host_ix < hosts.len() - 1, |this| {
-                                        this.border_b_1().border_color(cx.theme().colors().border)
-                                    })
-                                    .child(
-                                        Label::new(host.clone())
-                                            .size(LabelSize::XSmall)
-                                            .buffer_font(cx),
-                                    )
-                            })),
-                    )
+                    this.child(v_flex().children(hosts.iter().enumerate().map(
+                        |(host_ix, host)| {
+                            h_flex()
+                                .min_w_0()
+                                .px_2()
+                                .py_1p5()
+                                .bg(cx.theme().colors().editor_background)
+                                .when(host_ix < hosts.len() - 1, |this| {
+                                    this.border_b_1().border_color(cx.theme().colors().border)
+                                })
+                                .child(
+                                    Label::new(host.clone())
+                                        .size(LabelSize::XSmall)
+                                        .buffer_font(cx),
+                                )
+                        },
+                    )))
                 })
         });
 
@@ -8466,18 +8458,17 @@ impl ThreadView {
                         }),
                 )
                 .when(has_path_list && is_open, |this| {
-                    this.child(
-                        v_flex()
-                            .children(paths.iter().enumerate().map(|(path_ix, path)| {
-                                self.render_sandbox_authorization_path_row(
-                                    entry_ix,
-                                    path_ix,
-                                    path,
-                                    path_ix < paths.len() - 1,
-                                    cx,
-                                )
-                            })),
-                    )
+                    this.child(v_flex().children(paths.iter().enumerate().map(
+                        |(path_ix, path)| {
+                            self.render_sandbox_authorization_path_row(
+                                entry_ix,
+                                path_ix,
+                                path,
+                                path_ix < paths.len() - 1,
+                                cx,
+                            )
+                        },
+                    )))
                 })
         });
 

@@ -408,24 +408,26 @@ async fn run_terminal_tool(
     let selection = input.selection;
     let sandbox_input = input.sandbox.clone().unwrap_or_default();
 
-    let (working_dir, authorize, sandboxing, is_local_project, wsl_zed_release) = cx.update(|cx| {
-        let working_dir = working_dir(&input.cd, &project, cx).map_err(|err| err.to_string())?;
-        let context =
-            crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
-        let authorize =
-            event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
-        let sandboxing =
-            input.sandbox.is_some() && sandboxing_enabled_for_project(project.read(cx), cx);
-        let is_local_project = project.read(cx).is_local();
-        let wsl_zed_release = wsl_zed_release(cx);
-        Result::<_, String>::Ok((
-            working_dir,
-            authorize,
-            sandboxing,
-            is_local_project,
-            wsl_zed_release,
-        ))
-    })?;
+    let (working_dir, authorize, sandboxing, is_local_project, wsl_zed_release) =
+        cx.update(|cx| {
+            let working_dir =
+                working_dir(&input.cd, &project, cx).map_err(|err| err.to_string())?;
+            let context =
+                crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
+            let authorize =
+                event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
+            let sandboxing =
+                input.sandbox.is_some() && sandboxing_enabled_for_project(project.read(cx), cx);
+            let is_local_project = project.read(cx).is_local();
+            let wsl_zed_release = wsl_zed_release(cx);
+            Result::<_, String>::Ok((
+                working_dir,
+                authorize,
+                sandboxing,
+                is_local_project,
+                wsl_zed_release,
+            ))
+        })?;
 
     authorize.await.map_err(|e| e.to_string())?;
 

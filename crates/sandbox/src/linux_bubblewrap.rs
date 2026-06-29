@@ -340,7 +340,8 @@ fn build_bwrap_args_with_sandbox_paths(
     // network policy (an `--unshare-net`'d sandbox can't reach an abstract
     // socket, but a bind-mounted one is fine). Bind it after the `/tmp` tmpfs so
     // it isn't shadowed by the overlay.
-    if let Some((source, destination)) = validation_socket_path.zip(validation_socket_sandbox_path) {
+    if let Some((source, destination)) = validation_socket_path.zip(validation_socket_sandbox_path)
+    {
         let source = source.to_string_lossy().into_owned();
         let destination = destination.to_string_lossy().into_owned();
         push_bind(&mut args, "--bind", &source, &destination);
@@ -438,6 +439,13 @@ impl ValidationFdSender {
     /// bind-destination path.
     pub(crate) fn spawn(fds: Vec<OwnedFd>) -> std::io::Result<Self> {
         use std::os::unix::fs::PermissionsExt as _;
+
+        if fds.len() > MAX_VALIDATED_BINDS {
+            return Err(std::io::Error::other(format!(
+                "too many writable binds to validate ({} > {MAX_VALIDATED_BINDS})",
+                fds.len()
+            )));
+        }
         let (host_socket_dir, host_socket_path) = unique_validation_socket_host_path()?;
         let listener = UnixListener::bind(&host_socket_path)?;
         // The enclosing directory is already `0700`, so this is defense in depth:
@@ -1042,13 +1050,18 @@ fn parse_wsl_helper_args(
 
 fn decode_wsl_helper_args(mut args: impl Iterator<Item = OsString>) -> Result<WslHelperInvocation> {
     let bwrap_path = PathBuf::from(args.next().context("missing bwrap path")?);
-    let base_count = parse_count(args.next().context("missing base-arg count")?, "base-arg count")?;
+    let base_count = parse_count(
+        args.next().context("missing base-arg count")?,
+        "base-arg count",
+    )?;
     let mut base_args = Vec::with_capacity(base_count);
     for _ in 0..base_count {
         base_args.push(args.next().context("missing base arg")?);
     }
-    let writable_count =
-        parse_count(args.next().context("missing writable count")?, "writable count")?;
+    let writable_count = parse_count(
+        args.next().context("missing writable count")?,
+        "writable count",
+    )?;
     if writable_count > MAX_VALIDATED_BINDS {
         bail!("writable count {writable_count} exceeds {MAX_VALIDATED_BINDS}");
     }
@@ -1647,11 +1660,8 @@ mod tests {
     fn test_validate_binds_rejects_missing_descriptors() {
         let captured = tempfile::tempdir().unwrap();
         let sender = ValidationFdSender::spawn(Vec::new()).expect("spawn validation fd sender");
-        let error = validate_binds(
-            sender.host_socket_path(),
-            &[captured.path().to_path_buf()],
-        )
-        .expect_err("missing descriptors must be rejected");
+        let error = validate_binds(sender.host_socket_path(), &[captured.path().to_path_buf()])
+            .expect_err("missing descriptors must be rejected");
         assert!(
             error.to_string().contains("descriptor"),
             "unexpected error: {error:#}"

@@ -130,6 +130,10 @@ read/write grant path itself (i.e. `/home/alice/project`). But, in bubblewrap's
 model, doing this requires write access to the *parent* (i.e. `/home/alice`),
 which we have assumed is not present.
 
+`./bind_source_toctou_test.sh` is a small bash script demonstrating this
+behaviour. It tries to replace the current dir with a symlink, and it fails due
+to invalid permissions.
+
 #### The naive (and incorrect) fix
 
 It is tempting to read the previous paragraph and think "that's simple, just

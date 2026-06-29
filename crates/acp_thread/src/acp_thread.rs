@@ -3941,14 +3941,15 @@ impl AcpThread {
                         ShellBuilder::new(&Shell::Program(shell), is_windows)
                             .redirect_stdin_to_dev_null()
                             .build(Some(command.clone()), &args);
-                    let (task_command, task_args, task_env, sandbox) = prepare_sandbox_wrap(
-                        task_command,
-                        task_args,
-                        cwd.clone(),
-                        sandbox_wrap,
-                        env,
-                    )
-                    .await?;
+                    let (task_command, task_args, task_env, sandbox) = cx
+                        .background_spawn(prepare_sandbox_wrap(
+                            task_command,
+                            task_args,
+                            cwd.clone(),
+                            sandbox_wrap,
+                            env,
+                        ))
+                        .await?;
                     (task_command, task_args, task_env, sandbox, cwd.clone())
                 };
                 let terminal = project
