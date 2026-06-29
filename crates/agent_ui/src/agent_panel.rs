@@ -2044,7 +2044,10 @@ impl AgentPanel {
             this.update_in(cx, |this, window, cx| {
                 let terminal_for_init_command = terminal.clone();
                 let terminal_view = cx.new(|cx| {
-                    TerminalView::new(terminal, workspace, workspace_id, project, window, cx)
+                    let mut view =
+                        TerminalView::new(terminal, workspace, workspace_id, project, window, cx);
+                    view.set_show_workspace_actions(false, cx);
+                    view
                 });
                 this.insert_terminal(
                     terminal_id,
@@ -4066,6 +4069,13 @@ impl AgentPanel {
     pub(crate) fn visible_conversation_view(&self) -> Option<&Entity<ConversationView>> {
         match self.visible_surface() {
             VisibleSurface::AgentThread(conversation_view) => Some(conversation_view),
+            _ => None,
+        }
+    }
+
+    pub fn visible_terminal_view(&self) -> Option<&Entity<TerminalView>> {
+        match self.visible_surface() {
+            VisibleSurface::Terminal(terminal_view) => Some(terminal_view),
             _ => None,
         }
     }
@@ -6866,14 +6876,16 @@ impl AgentPanel {
         let terminal = cx.new(|cx| builder.subscribe(cx));
         let terminal_for_init_command = terminal.clone();
         let terminal_view = cx.new(|cx| {
-            TerminalView::new(
+            let mut view = TerminalView::new(
                 terminal,
                 self.workspace.clone(),
                 self.workspace_id,
                 self.project.downgrade(),
                 window,
                 cx,
-            )
+            );
+            view.set_show_workspace_actions(false, cx);
+            view
         });
         self.insert_terminal(
             terminal_id,
