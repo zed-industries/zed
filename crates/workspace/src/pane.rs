@@ -3212,7 +3212,24 @@ impl Pane {
                                     pane.close_all_items(&close_all_items_action, window, cx)
                                         .detach_and_log_err(cx)
                                 }),
-                            );
+                            )
+                            .separator()
+                            .item(ContextMenuItem::Entry(
+                                ContextMenuEntry::new("Compare with Active Tab")
+                                    .action(Box::new(zed_actions::workspace::CompareWithActiveTab {
+                                        item_id: Some(item_id.as_u64()),
+                                    }))
+                                    .disabled(is_active)
+                                    .handler(window.handler_for(&pane, move |_pane, window, cx| {
+                                        window.dispatch_action(
+                                            zed_actions::workspace::CompareWithActiveTab {
+                                                item_id: Some(item_id.as_u64()),
+                                            }
+                                            .boxed_clone(),
+                                            cx,
+                                        );
+                                    })),
+                            ));
 
                         let pin_tab_entries = |menu: ContextMenu| {
                             menu.separator().map(|this| {

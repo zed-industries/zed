@@ -80,6 +80,41 @@ impl FileDiffView {
         })
     }
 
+    pub fn open_buffers(
+        old_buffer: Entity<Buffer>,
+        new_buffer: Entity<Buffer>,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<Result<Entity<Self>>> {
+        window.spawn(cx, async move |cx| {
+            let project = workspace.update(cx, |workspace, _| workspace.project().clone())?;
+            let buffer_diff = build_buffer_diff(&old_buffer, &new_buffer, cx).await?;
+
+            workspace.update_in(cx, |workspace, window, cx| {
+                let workspace_entity = cx.entity();
+                let diff_view = cx.new(|cx| {
+                    FileDiffView::new(
+                        old_buffer,
+                        new_buffer,
+                        buffer_diff,
+                        project.clone(),
+                        workspace_entity,
+                        window,
+                        cx,
+                    )
+                });
+
+                let pane = workspace.active_pane();
+                pane.update(cx, |pane, cx| {
+                    pane.add_item(Box::new(diff_view.clone()), true, true, None, window, cx);
+                });
+
+                diff_view
+            })
+        })
+    }
+
     pub fn new(
         old_buffer: Entity<Buffer>,
         new_buffer: Entity<Buffer>,
