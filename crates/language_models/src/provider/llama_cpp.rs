@@ -36,7 +36,7 @@ use crate::AllLanguageModelSettings;
 const LLAMA_CPP_DOWNLOAD_URL: &str = "https://llama.app";
 const LLAMA_CPP_MODELS_URL: &str = "https://huggingface.co/models?library=gguf&sort=trending";
 
-const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("llama_cpp");
+const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("llama.cpp");
 const PROVIDER_NAME: LanguageModelProviderName = LanguageModelProviderName::new("llama.cpp");
 
 const API_KEY_ENV_VAR_NAME: &str = "LLAMACPP_API_KEY";
@@ -448,7 +448,7 @@ fn display_name_for(id: &str) -> String {
 }
 
 fn telemetry_id_for(id: &str) -> String {
-    format!("llama_cpp/{}", display_name_for(id))
+    format!("{PROVIDER_ID}/{}", display_name_for(id))
 }
 
 impl LlamaCppLanguageModelProvider {
@@ -1656,13 +1656,13 @@ mod tests {
     fn telemetry_id_strips_local_model_paths() {
         assert_eq!(
             telemetry_id_for("/Users/alice/models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"),
-            "llama_cpp/Qwen2.5-Coder-7B-Instruct-Q4_K_M"
+            "llama.cpp/Qwen2.5-Coder-7B-Instruct-Q4_K_M"
         );
         assert_eq!(
             telemetry_id_for(r"C:\Users\alice\models\Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"),
-            "llama_cpp/Qwen2.5-Coder-7B-Instruct-Q4_K_M"
+            "llama.cpp/Qwen2.5-Coder-7B-Instruct-Q4_K_M"
         );
-        assert_eq!(telemetry_id_for("my-alias"), "llama_cpp/my-alias");
+        assert_eq!(telemetry_id_for("my-alias"), "llama.cpp/my-alias");
     }
 
     #[test]
