@@ -212,6 +212,26 @@ impl SelectionsCollection {
         }
     }
 
+    pub fn disjoint_in_row_range<D>(
+        &self,
+        range: Range<Anchor>,
+        snapshot: &DisplaySnapshot,
+    ) -> Vec<Selection<D>>
+    where
+        D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord + std::fmt::Debug,
+    {
+        let buffer = snapshot.buffer_snapshot();
+        let start_row = range.start.to_point(buffer).row;
+        let end_row = range.end.to_point(buffer).row;
+        let start_ix = self
+            .disjoint
+            .partition_point(|probe| probe.end.to_point(buffer).row < start_row);
+        let end_ix = self
+            .disjoint
+            .partition_point(|probe| probe.start.to_point(buffer).row <= end_row);
+        resolve_selections_wrapping_blocks(&self.disjoint[start_ix..end_ix], snapshot).collect()
+    }
+
     pub fn disjoint_in_range<D>(
         &self,
         range: Range<Anchor>,
@@ -221,25 +241,12 @@ impl SelectionsCollection {
         D: MultiBufferDimension + Sub + AddAssign<<D as Sub>::Output> + Ord + std::fmt::Debug,
     {
         let buffer = snapshot.buffer_snapshot();
-        let (start_ix, end_ix) = if self.line_mode {
-            let start_row = range.start.to_point(buffer).row;
-            let end_row = range.end.to_point(buffer).row;
-            let start_ix = self
-                .disjoint
-                .partition_point(|probe| probe.end.to_point(buffer).row < start_row);
-            let end_ix = self
-                .disjoint
-                .partition_point(|probe| probe.start.to_point(buffer).row <= end_row);
-            (start_ix, end_ix)
-        } else {
-            let start_ix = self
-                .disjoint
-                .partition_point(|probe| probe.end.cmp(&range.start, buffer).is_lt());
-            let end_ix = self
-                .disjoint
-                .partition_point(|probe| probe.start.cmp(&range.end, buffer).is_le());
-            (start_ix, end_ix)
-        };
+        let start_ix = self
+            .disjoint
+            .partition_point(|probe| probe.end.cmp(&range.start, buffer).is_lt());
+        let end_ix = self
+            .disjoint
+            .partition_point(|probe| probe.start.cmp(&range.end, buffer).is_le());
         resolve_selections_wrapping_blocks(&self.disjoint[start_ix..end_ix], snapshot).collect()
     }
 
@@ -1358,7 +1365,7 @@ mod tests {
     use settings::SettingsStore;
     use std::sync::Arc;
 
-    fn line_mode_snapshot(cx: &mut gpui::TestAppContext, text: &str) -> DisplaySnapshot {
+    fn row_range_snapshot(cx: &mut gpui::TestAppContext, text: &str) -> DisplaySnapshot {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
@@ -1381,7 +1388,7 @@ mod tests {
         display_map.update(cx, |map, cx| map.snapshot(cx))
     }
 
-    fn line_mode_collection(
+    fn row_range_collection(
         offset_ranges: impl IntoIterator<Item = Range<usize>>,
         buffer_snapshot: &MultiBufferSnapshot,
     ) -> SelectionsCollection {
@@ -1404,75 +1411,74 @@ mod tests {
         let mut collection = SelectionsCollection::new();
         collection.disjoint = Arc::from(selections);
         collection.pending = None;
-        collection.line_mode = true;
         collection
     }
 
-    /// In line mode, `disjoint_in_range` selects by whole rows, so a selection sharing a queried
-    /// row must be returned even when its columns don't overlap the queried range. The non-line-mode
-    /// path compares exact offsets and would miss this case.
+    /// `disjoint_in_row_range` selects by whole rows, so a selection sharing a queried row must be
+    /// returned even when its columns don't overlap the queried range. `disjoint_in_range` compares
+    /// exact offsets and would miss this case.
     #[gpui::test]
-    fn disjoint_in_range_line_mode_matches_whole_row(cx: &mut gpui::TestAppContext) {
-        let snapshot = line_mode_snapshot(cx, "aaaa\nbbbbbbbb\ncccc");
+    fn disjoint_in_row_range_matches_whole_row(cx: &mut gpui::TestAppContext) {
+        let snapshot = row_range_snapshot(cx, "aaaa\nbbbbbbbb\ncccc");
         let buffer_snapshot = snapshot.buffer_snapshot();
 
         // A selection on row 1 spanning columns 3..5 (buffer offsets 8..10).
-        let collection = line_mode_collection([8..10], buffer_snapshot);
+        let collection = row_range_collection([8..10], buffer_snapshot);
 
         // Query row 1 at columns 0..1, entirely before the selection's columns.
         let range = buffer_snapshot.anchor_before(MultiBufferOffset(5))
             ..buffer_snapshot.anchor_before(MultiBufferOffset(6));
-        let result = collection.disjoint_in_range::<Point>(range, &snapshot);
+        let result = collection.disjoint_in_row_range::<Point>(range, &snapshot);
 
         assert_eq!(
             result.len(),
             1,
-            "line mode should include the selection sharing the queried row"
+            "row range should include the selection sharing the queried row"
         );
         assert_eq!(result[0].start, Point::new(1, 3));
         assert_eq!(result[0].end, Point::new(1, 5));
     }
 
-    /// A selection on a row outside the queried row range must not be returned, even in line mode.
-    /// This guards the row-overlap boundary against becoming over-inclusive.
+    /// A selection on a row outside the queried row range must not be returned. This guards the
+    /// row-overlap boundary against becoming over-inclusive.
     #[gpui::test]
-    fn disjoint_in_range_line_mode_excludes_other_rows(cx: &mut gpui::TestAppContext) {
-        let snapshot = line_mode_snapshot(cx, "aaaa\nbbbbbbbb\ncccc");
+    fn disjoint_in_row_range_excludes_other_rows(cx: &mut gpui::TestAppContext) {
+        let snapshot = row_range_snapshot(cx, "aaaa\nbbbbbbbb\ncccc");
         let buffer_snapshot = snapshot.buffer_snapshot();
 
         // A selection on row 2 (buffer offsets 14..16).
-        let collection = line_mode_collection([14..16], buffer_snapshot);
+        let collection = row_range_collection([14..16], buffer_snapshot);
 
         // Query only row 0, two rows away from the selection.
         let range = buffer_snapshot.anchor_before(MultiBufferOffset(0))
             ..buffer_snapshot.anchor_before(MultiBufferOffset(1));
-        let result = collection.disjoint_in_range::<Point>(range, &snapshot);
+        let result = collection.disjoint_in_row_range::<Point>(range, &snapshot);
 
         assert!(
             result.is_empty(),
-            "line mode should exclude a selection on a non-queried row"
+            "row range should exclude a selection on a non-queried row"
         );
     }
 
     /// A selection spanning multiple rows must be returned when the query touches any of those rows,
     /// not just when the query shares the selection's start or end row.
     #[gpui::test]
-    fn disjoint_in_range_line_mode_matches_interior_row(cx: &mut gpui::TestAppContext) {
-        let snapshot = line_mode_snapshot(cx, "aaaa\nbbbb\ncccc\ndddd");
+    fn disjoint_in_row_range_matches_interior_row(cx: &mut gpui::TestAppContext) {
+        let snapshot = row_range_snapshot(cx, "aaaa\nbbbb\ncccc\ndddd");
         let buffer_snapshot = snapshot.buffer_snapshot();
 
         // A selection spanning row 1 column 1 through row 3 column 2 (buffer offsets 6..17).
-        let collection = line_mode_collection([6..17], buffer_snapshot);
+        let collection = row_range_collection([6..17], buffer_snapshot);
 
         // Query only row 2, an interior row of the selection.
         let range = buffer_snapshot.anchor_before(MultiBufferOffset(11))
             ..buffer_snapshot.anchor_before(MultiBufferOffset(12));
-        let result = collection.disjoint_in_range::<Point>(range, &snapshot);
+        let result = collection.disjoint_in_row_range::<Point>(range, &snapshot);
 
         assert_eq!(
             result.len(),
             1,
-            "line mode should include a selection whose interior row is queried"
+            "row range should include a selection whose interior row is queried"
         );
         assert_eq!(result[0].start, Point::new(1, 1));
         assert_eq!(result[0].end, Point::new(3, 2));
