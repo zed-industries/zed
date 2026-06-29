@@ -119,7 +119,7 @@ pub fn app_menus(cx: &mut App) -> Vec<Menu> {
                     } else {
                         "Open…"
                     },
-                    workspace::Open::default(),
+                    zed_actions::OpenLocal::default(),
                 ),
                 MenuItem::action("Open Recent…", zed_actions::OpenRecent::default()),
                 MenuItem::action("Open Remote…", zed_actions::OpenRemote::default()),

@@ -67,6 +67,13 @@ impl FlatpakConnectionOptions {
     pub async fn as_host_path<'a>(&self, path: &'a Path) -> Result<Cow<'a, Path>> {
         Ok(Cow::from(path))
     }
+
+    /// Whether we have the permissions to use the [FlatpakHostConnection].
+    pub fn is_available(&self) -> bool {
+        flatpak::CURRENT_SANDBOX_METADATA
+            .as_ref()
+            .is_some_and(|meta| meta.can_spawn_on_host())
+    }
 }
 
 pub(crate) struct FlatpakHostConnection {

@@ -19,7 +19,7 @@ use workspace::{
     SerializedWorkspaceLocation, Workspace, WorkspaceDb, notifications::DetachAndPromptErr,
 };
 
-use zed_actions::OpenRemote;
+use zed_actions::{OpenLocal, OpenRemote};
 
 use crate::{highlights_for_path, icon_for_remote_connection, open_remote_project};
 
@@ -406,7 +406,7 @@ impl PickerDelegate for SidebarRecentProjectsDelegate {
                 .border_t_1()
                 .border_color(cx.theme().colors().border_variant)
                 .child({
-                    let open_action = workspace::Open {
+                    let open_action = OpenLocal {
                         create_new_window: Some(false),
                     };
 

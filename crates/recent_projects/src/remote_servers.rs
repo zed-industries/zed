@@ -819,6 +819,7 @@ enum RemoteMatch {
     AddServer,
     AddDevContainer,
     AddWsl,
+    OpenFlatpakSandbox,
     Separator,
     ServerHeader {
         server: usize,
@@ -909,6 +910,9 @@ impl RemoteServerPickerDelegate {
             }
             if cfg!(target_os = "windows") {
                 matches.push(RemoteMatch::AddWsl);
+            }
+            if util::flatpak::is_running_in_sandbox() {
+                matches.push(RemoteMatch::OpenFlatpakSandbox);
             }
         }
 
@@ -1174,6 +1178,12 @@ impl PickerDelegate for RemoteServerPickerDelegate {
                     })
                     .ok();
             }
+            RemoteMatch::OpenFlatpakSandbox => {
+                window.dispatch_action(workspace::Open::default().boxed_clone(), cx);
+                remote_server_projects
+                    .update(cx, |_, cx| cx.emit(DismissEvent))
+                    .ok();
+            }
             RemoteMatch::Project {
                 server, project, ..
             } => {
@@ -1276,6 +1286,12 @@ impl PickerDelegate for RemoteServerPickerDelegate {
             RemoteMatch::AddWsl => {
                 Some(self.render_action_item(ix, IconName::Plus, "Add WSL Distro", selected))
             }
+            RemoteMatch::OpenFlatpakSandbox => Some(self.render_action_item(
+                ix,
+                IconName::Linux,
+                "Open in Flatpak Sandbox",
+                selected,
+            )),
             RemoteMatch::OpenFolder { .. } => {
                 Some(self.render_action_item(ix, IconName::Plus, "Open Folder", selected))
             }

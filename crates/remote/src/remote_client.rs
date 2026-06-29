@@ -1391,6 +1391,19 @@ impl RemoteConnectionOptions {
             RemoteConnectionOptions::Mock(_) => Ok(Cow::Borrowed(path)),
         }
     }
+
+    /// Whether this kind of remote Connection should be used for "local" projects.
+    ///
+    /// This mostly applies to the Flatpak connection, where Zed itself is running in a
+    /// sandbox so a "local" project is actually a [FlatpakHostConnection] remote.
+    pub fn should_use_as_local(&self) -> bool {
+        match self {
+            RemoteConnectionOptions::FlatpakHost(opts) => {
+                util::flatpak::is_running_in_sandbox() && opts.is_available()
+            }
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]
