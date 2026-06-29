@@ -295,7 +295,15 @@ impl MantleModel {
                 supports_chat_completions,
                 ..
             } => !*supports_chat_completions,
-            _ => true,
+            // GPT-5.x are Responses-only on Mantle.
+            Self::Gpt5_4 | Self::Gpt5_5 => true,
+            // Gemma and Grok support Chat Completions, which we prefer: the
+            // shared OpenAI Responses event mapper does not understand Gemma's
+            // non-standard `response.reasoning.delta` events and would silently
+            // drop them, making the model appear to hang while it reasons. Chat
+            // Completions streams `reasoning`/`reasoning_content` deltas that our
+            // mapper surfaces as thinking.
+            Self::Gemma4_31B | Self::Gemma4_26B | Self::Gemma4E2b | Self::Grok4_3 => false,
         }
     }
 
