@@ -4646,7 +4646,11 @@ impl ThreadView {
             // settings scope (greyed) for context above the disabled status.
             (ThreadSandbox::Sandboxed(settings_policy), ThreadSandbox::Unsandboxed) => {
                 let settings = augment_settings_sandbox_policy(settings_policy, baseline);
-                SandboxStatusTooltip::disabled_for_thread(sandbox_section(&settings, true))
+                SandboxStatusTooltip::disabled_for_thread(sandbox_section(
+                    "Defined in your settings:",
+                    &settings,
+                    true,
+                ))
             }
             (
                 ThreadSandbox::Sandboxed(settings_policy),
@@ -4655,8 +4659,11 @@ impl ThreadView {
                 let settings = augment_settings_sandbox_policy(settings_policy, baseline);
                 // Omit the per-thread section when it grants nothing extra.
                 let thread = (!sandbox_policy_grants_nothing(&thread_policy))
-                    .then(|| sandbox_section(&thread_policy, false));
-                SandboxStatusTooltip::enabled(sandbox_section(&settings, true), thread)
+                    .then(|| sandbox_section("Allowed for this thread:", &thread_policy, false));
+                SandboxStatusTooltip::enabled(
+                    sandbox_section("Defined in your settings:", &settings, true),
+                    thread,
+                )
             }
         };
 
@@ -5625,25 +5632,28 @@ fn augment_settings_sandbox_policy(
     policy
 }
 
-fn sandbox_section(policy: &SandboxPolicy, show_empty: bool) -> SandboxSection {
+fn sandbox_section(title: &str, policy: &SandboxPolicy, show_empty: bool) -> SandboxSection {
     let write_empty = fs_grants_nothing(&policy.fs);
     let network_empty = network_grants_nothing(&policy.network);
-    // Git access is only surfaced when granted, so it never shows a "None" row.
     let git_empty = git_grants_nothing(&policy.git);
 
-    let mut section = SandboxSection::new();
+    let mut section = SandboxSection::new(title.to_string());
+
     if show_empty || !write_empty {
         section =
             section.group(SandboxGroup::new("Write Access").rows(sandbox_fs_rows(&policy.fs)));
     }
+
     if show_empty || !network_empty {
         section = section
             .group(SandboxGroup::new("Network Access").rows(sandbox_network_rows(&policy.network)));
     }
+
     if !git_empty {
         section = section
             .group(SandboxGroup::new("Git Metadata Access").rows(sandbox_git_rows(&policy.git)));
     }
+
     section
 }
 

@@ -58,21 +58,21 @@ impl SandboxRow {
         };
 
         h_flex()
+            .items_start()
             .min_w_0()
-            .w_full()
-            .gap_1()
+            .gap_1p5()
             .child(icon)
             .child(
-                Label::new(label)
-                    .size(LabelSize::XSmall)
-                    .buffer_font(cx)
-                    .truncate_start(),
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .child(Label::new(label).size(LabelSize::XSmall).buffer_font(cx)),
             )
             .into_any_element()
     }
 }
 
-/// A labelled group of rows (e.g. "Write Access", "Network Access").
 #[derive(Clone)]
 pub struct SandboxGroup {
     heading: SharedString,
@@ -99,7 +99,7 @@ impl SandboxGroup {
 
     fn render(self, cx: &App) -> impl IntoElement {
         v_flex()
-            .gap_1()
+            .gap_1p5()
             .child(
                 Label::new(self.heading)
                     .size(LabelSize::Small)
@@ -109,14 +109,18 @@ impl SandboxGroup {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct SandboxSection {
+    title: SharedString,
     groups: Vec<SandboxGroup>,
 }
 
 impl SandboxSection {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(title: impl Into<SharedString>) -> Self {
+        Self {
+            title: title.into(),
+            groups: Vec::new(),
+        }
     }
 
     pub fn group(mut self, group: SandboxGroup) -> Self {
@@ -125,14 +129,16 @@ impl SandboxSection {
     }
 
     fn render(self, cx: &App) -> AnyElement {
-        let mut section = v_flex().gap_1();
-        for (index, group) in self.groups.into_iter().enumerate() {
-            if index > 0 {
-                section = section.child(Divider::horizontal());
-            }
-            section = section.child(group.render(cx));
-        }
-        section.into_any_element()
+        v_flex()
+            .gap_2()
+            .child(Label::new(self.title).size(LabelSize::Small))
+            .children(self.groups.into_iter().map(|group| {
+                v_flex()
+                    .gap_2()
+                    .child(Divider::horizontal())
+                    .child(group.render(cx))
+            }))
+            .into_any_element()
     }
 }
 
@@ -179,9 +185,11 @@ impl RenderOnce for SandboxStatusTooltip {
                 .child(Label::new("Sandboxing is disabled for this thread").size(LabelSize::Small))
                 .into_any_element(),
             SandboxStatusTooltip::Enabled { settings, thread } => v_flex()
+                .gap_2()
                 .child(settings.render(cx))
                 .children(thread.map(|thread| {
                     v_flex()
+                        .gap_2()
                         .child(Divider::horizontal())
                         .child(thread.render(cx))
                 }))
@@ -189,7 +197,7 @@ impl RenderOnce for SandboxStatusTooltip {
         };
 
         v_flex()
-            .min_w(rems(15.))
+            .w(rems_from_px(280.))
             .gap_1()
             .child(Label::new("Sandboxing"))
             .child(content)
@@ -212,7 +220,7 @@ impl Component for SandboxStatusTooltip {
     }
 
     fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
-        let settings_section = SandboxSection::new()
+        let settings_section = SandboxSection::new("Defined in your settings:")
             .group(SandboxGroup::new("Write Access").rows([
                 SandboxRow::path("/Users/you/project"),
                 SandboxRow::path("/tmp (isolated)"),
@@ -222,7 +230,7 @@ impl Component for SandboxStatusTooltip {
                 SandboxRow::domain("*.npmjs.org"),
             ]));
 
-        let thread_section = SandboxSection::new()
+        let thread_section = SandboxSection::new("Allowed for this thread:")
             .group(
                 SandboxGroup::new("Write Access").row(SandboxRow::path("/Users/you/project/build")),
             )
@@ -232,7 +240,7 @@ impl Component for SandboxStatusTooltip {
                     .row(SandboxRow::git("/Users/you/project/.git")),
             );
 
-        let unrestricted_section = SandboxSection::new()
+        let unrestricted_section = SandboxSection::new("Defined in your settings:")
             .group(
                 SandboxGroup::new("Write Access")
                     .row(SandboxRow::message("All paths (unrestricted)")),
