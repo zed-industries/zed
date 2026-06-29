@@ -2,7 +2,6 @@
 
 use std::{
     cell::{Cell, RefCell},
-    num::NonZeroIsize,
     path::PathBuf,
     rc::{Rc, Weak},
     str::FromStr,
@@ -82,12 +81,12 @@ pub struct WindowsWindowState {
     pub invalidate_devices: Arc<AtomicBool>,
     fullscreen: Cell<Option<StyleAndBounds>>,
     initial_placement: Cell<Option<WindowOpenStatus>>,
-    hwnd: HWND,
+    non_null_hwnd: NonNullHwnd,
     pub(crate) a11y: RefCell<Option<A11yState>>,
 }
 
 pub(crate) struct WindowsWindowInner {
-    hwnd: HWND,
+    non_null_hwnd: NonNullHwnd,
     drop_target_helper: IDropTargetHelper,
     pub(crate) state: WindowsWindowState,
     system_settings: WindowsSystemSettings,
@@ -103,7 +102,7 @@ pub(crate) struct WindowsWindowInner {
 
 impl WindowsWindowState {
     fn new(
-        hwnd: HWND,
+        non_null_hwnd: NonNullHwnd,
         directx_devices: &DirectXDevices,
         window_params: &CREATESTRUCTW,
         current_cursor: Option<HCURSOR>,
@@ -114,6 +113,7 @@ impl WindowsWindowState {
         disable_direct_composition: bool,
         invalidate_devices: Arc<AtomicBool>,
     ) -> Result<Self> {
+        let hwnd = non_null_hwnd.hwnd();
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
             monitor_dpi / USER_DEFAULT_SCREEN_DPI as f32
@@ -132,8 +132,9 @@ impl WindowsWindowState {
         };
         let border_offset = WindowBorderOffset::default();
         let restore_from_minimized = None;
-        let renderer = DirectXRenderer::new(hwnd, directx_devices, disable_direct_composition)
-            .context("Creating DirectX renderer")?;
+        let renderer =
+            DirectXRenderer::new(non_null_hwnd, directx_devices, disable_direct_composition)
+                .context("Creating DirectX renderer")?;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let pending_surrogate = None;
@@ -145,7 +146,7 @@ impl WindowsWindowState {
         let fullscreen = None;
         let initial_placement = None;
 
-        let direct_manipulation = DirectManipulationHandler::new(hwnd, scale_factor)
+        let direct_manipulation = DirectManipulationHandler::new(non_null_hwnd, scale_factor)
             .context("initializing Direct Manipulation")?;
 
         Ok(Self {
@@ -174,11 +175,15 @@ impl WindowsWindowState {
             display: Cell::new(display),
             fullscreen: Cell::new(fullscreen),
             initial_placement: Cell::new(initial_placement),
-            hwnd,
+            non_null_hwnd,
             invalidate_devices,
             direct_manipulation,
             a11y: RefCell::new(None),
         })
+    }
+
+    fn hwnd(&self) -> HWND {
+        self.non_null_hwnd.hwnd()
     }
 
     #[inline]
@@ -187,7 +192,7 @@ impl WindowsWindowState {
     }
 
     pub(crate) fn is_maximized(&self) -> bool {
-        !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd) }.as_bool()
+        !self.is_fullscreen() && unsafe { IsZoomed(self.hwnd()) }.as_bool()
     }
 
     fn bounds(&self) -> Bounds<Pixels> {
@@ -204,7 +209,7 @@ impl WindowsWindowState {
                 length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
                 ..Default::default()
             };
-            GetWindowPlacement(self.hwnd, &mut placement)
+            GetWindowPlacement(self.hwnd(), &mut placement)
                 .context("failed to get window placement")
                 .log_err();
             placement
@@ -241,9 +246,13 @@ impl WindowsWindowState {
 }
 
 impl WindowsWindowInner {
-    fn new(context: &mut WindowCreateContext, hwnd: HWND, cs: &CREATESTRUCTW) -> Result<Rc<Self>> {
+    fn new(
+        context: &mut WindowCreateContext,
+        non_null_hwnd: NonNullHwnd,
+        cs: &CREATESTRUCTW,
+    ) -> Result<Rc<Self>> {
         let state = WindowsWindowState::new(
-            hwnd,
+            non_null_hwnd,
             &context.directx_devices,
             cs,
             context.current_cursor,
@@ -256,7 +265,7 @@ impl WindowsWindowInner {
         )?;
 
         Ok(Rc::new(Self {
-            hwnd,
+            non_null_hwnd,
             drop_target_helper: context.drop_target_helper.clone(),
             state,
             handle: context.handle,
@@ -269,6 +278,10 @@ impl WindowsWindowInner {
             system_settings: WindowsSystemSettings::new(),
             parent_hwnd: context.parent_hwnd,
         }))
+    }
+
+    fn hwnd(&self) -> HWND {
+        self.non_null_hwnd.hwnd()
     }
 
     fn toggle_fullscreen(self: &Rc<Self>) {
@@ -288,9 +301,9 @@ impl WindowsWindowInner {
                         this.state.fullscreen_restore_bounds.set(window_bounds);
 
                         let style =
-                            WINDOW_STYLE(unsafe { get_window_long(this.hwnd, GWL_STYLE) } as _);
+                            WINDOW_STYLE(unsafe { get_window_long(this.hwnd(), GWL_STYLE) } as _);
                         let mut rc = RECT::default();
-                        unsafe { GetWindowRect(this.hwnd, &mut rc) }
+                        unsafe { GetWindowRect(this.hwnd(), &mut rc) }
                             .context("failed to get window rect")
                             .log_err();
                         let _ = this.state.fullscreen.set(Some(StyleAndBounds {
@@ -316,11 +329,11 @@ impl WindowsWindowInner {
                         }
                     }
                 };
-                set_non_rude_hwnd(this.hwnd, !this.state.is_fullscreen());
-                unsafe { set_window_long(this.hwnd, GWL_STYLE, style.0 as isize) };
+                set_non_rude_hwnd(this.hwnd(), !this.state.is_fullscreen());
+                unsafe { set_window_long(this.hwnd(), GWL_STYLE, style.0 as isize) };
                 unsafe {
                     SetWindowPos(
-                        this.hwnd,
+                        this.hwnd(),
                         None,
                         x,
                         y,
@@ -340,19 +353,19 @@ impl WindowsWindowInner {
         };
         match open_status.state {
             WindowOpenState::Maximized => unsafe {
-                SetWindowPlacement(self.hwnd, &open_status.placement)
+                SetWindowPlacement(self.hwnd(), &open_status.placement)
                     .context("failed to set window placement")?;
-                ShowWindowAsync(self.hwnd, SW_MAXIMIZE).ok()?;
+                ShowWindowAsync(self.hwnd(), SW_MAXIMIZE).ok()?;
             },
             WindowOpenState::Fullscreen => {
                 unsafe {
-                    SetWindowPlacement(self.hwnd, &open_status.placement)
+                    SetWindowPlacement(self.hwnd(), &open_status.placement)
                         .context("failed to set window placement")?
                 };
                 self.toggle_fullscreen();
             }
             WindowOpenState::Windowed => unsafe {
-                SetWindowPlacement(self.hwnd, &open_status.placement)
+                SetWindowPlacement(self.hwnd(), &open_status.placement)
                     .context("failed to set window placement")?;
             },
         }
@@ -550,10 +563,7 @@ impl WindowsWindow {
 
 impl rwh::HasWindowHandle for WindowsWindow {
     fn window_handle(&self) -> std::result::Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-        let raw = rwh::Win32WindowHandle::new(unsafe {
-            NonZeroIsize::new_unchecked(self.0.hwnd.0 as isize)
-        })
-        .into();
+        let raw = rwh::Win32WindowHandle::new(self.0.non_null_hwnd.as_non_zero_isize()).into();
         Ok(unsafe { rwh::WindowHandle::borrow_raw(raw) })
     }
 }
@@ -571,7 +581,7 @@ impl Drop for WindowsWindow {
         self.0
             .executor
             .spawn(async move {
-                let handle = this.hwnd;
+                let handle = this.hwnd();
                 unsafe {
                     RevokeDragDrop(handle).log_err();
                     DestroyWindow(handle).log_err();
@@ -603,7 +613,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn resize(&mut self, size: Size<Pixels>) {
-        let hwnd = self.0.hwnd;
+        let hwnd = self.0.hwnd();
         let bounds = gpui::bounds(self.bounds().origin, size).to_device_pixels(self.scale_factor());
         let rect = calculate_window_rect(bounds, &self.state.border_offset);
 
@@ -646,7 +656,7 @@ impl PlatformWindow for WindowsWindow {
             GetCursorPos(&mut point)
                 .context("unable to get cursor position")
                 .log_err();
-            ScreenToClient(self.0.hwnd, &mut point).ok().log_err();
+            ScreenToClient(self.0.hwnd(), &mut point).ok().log_err();
             point
         };
         logical_point(point.x as f32, point.y as f32, scale_factor)
@@ -678,7 +688,7 @@ impl PlatformWindow for WindowsWindow {
         let (done_tx, done_rx) = oneshot::channel();
         let msg = msg.to_string();
         let detail_string = detail.map(|detail| detail.to_string());
-        let handle = self.0.hwnd;
+        let handle = self.0.hwnd();
         let answers = answers.to_vec();
         self.0
             .executor
@@ -753,7 +763,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn activate(&self) {
-        let hwnd = self.0.hwnd;
+        let hwnd = self.0.hwnd();
         let this = self.0.clone();
         self.0
             .executor
@@ -807,7 +817,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn is_active(&self) -> bool {
-        self.0.hwnd == unsafe { GetActiveWindow() }
+        self.0.hwnd() == unsafe { GetActiveWindow() }
     }
 
     fn is_hovered(&self) -> bool {
@@ -823,14 +833,14 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn set_title(&mut self, title: &str) {
-        unsafe { SetWindowTextW(self.0.hwnd, &HSTRING::from(title)) }
+        unsafe { SetWindowTextW(self.0.hwnd(), &HSTRING::from(title)) }
             .inspect_err(|e| log::error!("Set title failed: {e}"))
             .ok();
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
         self.state.background_appearance.set(background_appearance);
-        let hwnd = self.0.hwnd;
+        let hwnd = self.0.hwnd();
 
         // using Dwm APIs for Mica and MicaAlt backdrops.
         // others follow the set_window_composition_attribute approach
@@ -856,13 +866,13 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn minimize(&self) {
-        unsafe { ShowWindowAsync(self.0.hwnd, SW_MINIMIZE).ok().log_err() };
+        unsafe { ShowWindowAsync(self.0.hwnd(), SW_MINIMIZE).ok().log_err() };
     }
 
     fn zoom(&self) {
         unsafe {
-            if IsWindowVisible(self.0.hwnd).as_bool() {
-                ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err();
+            if IsWindowVisible(self.0.hwnd()).as_bool() {
+                ShowWindowAsync(self.0.hwnd(), SW_MAXIMIZE).ok().log_err();
             } else if let Some(mut status) = self.state.initial_placement.take() {
                 status.state = WindowOpenState::Maximized;
                 self.state.initial_placement.set(Some(status));
@@ -871,7 +881,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn toggle_fullscreen(&self) {
-        if unsafe { IsWindowVisible(self.0.hwnd).as_bool() } {
+        if unsafe { IsWindowVisible(self.0.hwnd()).as_bool() } {
             self.0.toggle_fullscreen();
         } else if let Some(mut status) = self.state.initial_placement.take() {
             status.state = WindowOpenState::Fullscreen;
@@ -952,7 +962,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn get_raw_handle(&self) -> HWND {
-        self.0.hwnd
+        self.0.hwnd()
     }
 
     fn gpu_specs(&self) -> Option<GpuSpecs> {
@@ -967,7 +977,7 @@ impl PlatformWindow for WindowsWindow {
                 + ((bounds.size.height.as_f32() * scale_factor) as i32 / 2),
         };
 
-        self.0.update_ime_position(self.0.hwnd, caret_position);
+        self.0.update_ime_position(self.0.hwnd(), caret_position);
     }
 
     fn play_system_bell(&self) {
@@ -977,10 +987,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn a11y_init(&self, callbacks: gpui::A11yCallbacks) {
         let action_handler = A11yActionHandler(callbacks.action);
-        let is_focused = unsafe { GetForegroundWindow() } == self.0.hwnd;
+        let is_focused = unsafe { GetForegroundWindow() } == self.0.hwnd();
 
         let adapter = accesskit_windows::Adapter::new(
-            accesskit_windows::HWND(self.0.hwnd.0),
+            accesskit_windows::HWND(self.0.hwnd().0),
             is_focused,
             action_handler,
         );
@@ -1087,7 +1097,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 });
                 ReleaseStgMedium(&mut idata);
                 let mut cursor_position = cursor_position;
-                ScreenToClient(self.0.hwnd, &mut cursor_position)
+                ScreenToClient(self.0.hwnd(), &mut cursor_position)
                     .ok()
                     .log_err();
                 let scale_factor = self.0.state.scale_factor.get();
@@ -1105,7 +1115,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
             }
             self.0
                 .drop_target_helper
-                .DragEnter(self.0.hwnd, idata_obj, &cursor_position, *pdweffect)
+                .DragEnter(self.0.hwnd(), idata_obj, &cursor_position, *pdweffect)
                 .log_err();
         }
         Ok(())
@@ -1124,7 +1134,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 .drop_target_helper
                 .DragOver(&cursor_position, *pdweffect)
                 .log_err();
-            ScreenToClient(self.0.hwnd, &mut cursor_position)
+            ScreenToClient(self.0.hwnd(), &mut cursor_position)
                 .ok()
                 .log_err();
         }
@@ -1166,7 +1176,7 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 .drop_target_helper
                 .Drop(idata_obj, &cursor_position, *pdweffect)
                 .log_err();
-            ScreenToClient(self.0.hwnd, &mut cursor_position)
+            ScreenToClient(self.0.hwnd(), &mut cursor_position)
                 .ok()
                 .log_err();
         }
@@ -1347,7 +1357,14 @@ unsafe extern "system" fn window_procedure(
         let window_params = unsafe { &*(lparam.0 as *const CREATESTRUCTW) };
         let window_creation_context = window_params.lpCreateParams as *mut WindowCreateContext;
         let window_creation_context = unsafe { &mut *window_creation_context };
-        return match WindowsWindowInner::new(window_creation_context, hwnd, window_params) {
+        let non_null_hwnd = unsafe {
+            // SAFETY: WM_NCCREATE is received through WNDPROC, whose hwnd parameter is
+            // documented as "A handle to the window".
+            // https://learn.microsoft.com/en-us/windows/win32/api/winuser/nc-winuser-wndproc#parameters
+            NonNullHwnd::new_unchecked(hwnd)
+        };
+        return match WindowsWindowInner::new(window_creation_context, non_null_hwnd, window_params)
+        {
             Ok(window_state) => {
                 let weak = Box::new(Rc::downgrade(&window_state));
                 unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
@@ -1409,7 +1426,7 @@ fn get_module_handle() -> HMODULE {
 }
 
 fn register_drag_drop(window: &Rc<WindowsWindowInner>) -> Result<()> {
-    let window_handle = window.hwnd;
+    let window_handle = window.hwnd();
     let handler = WindowsDragDropHandler(window.clone());
     // The lifetime of `IDropTarget` is handled by Windows, it won't release until
     // we call `RevokeDragDrop`.

@@ -23,20 +23,21 @@ pub(crate) struct DirectManipulationHandler {
     update_manager: IDirectManipulationUpdateManager,
     viewport: IDirectManipulationViewport,
     _handler_cookie: u32,
-    window: HWND,
+    window: NonNullHwnd,
     scale_factor: Rc<Cell<f32>>,
     pending_events: Rc<RefCell<Vec<PlatformInput>>>,
 }
 
 impl DirectManipulationHandler {
-    pub fn new(window: HWND, scale_factor: f32) -> Result<Self> {
+    pub fn new(window: NonNullHwnd, scale_factor: f32) -> Result<Self> {
         unsafe {
             let manager: IDirectManipulationManager =
                 CoCreateInstance(&DirectManipulationManager, None, CLSCTX_INPROC_SERVER)?;
 
             let update_manager: IDirectManipulationUpdateManager = manager.GetUpdateManager()?;
 
-            let viewport: IDirectManipulationViewport = manager.CreateViewport(None, window)?;
+            let viewport: IDirectManipulationViewport =
+                manager.CreateViewport(None, window.hwnd())?;
 
             let configuration = DIRECTMANIPULATION_CONFIGURATION_INTERACTION
                 | DIRECTMANIPULATION_CONFIGURATION_TRANSLATION_X
@@ -60,7 +61,7 @@ impl DirectManipulationHandler {
             };
             viewport.SetViewportRect(&mut rect)?;
 
-            manager.Activate(window)?;
+            manager.Activate(window.hwnd())?;
             viewport.Enable()?;
 
             let scale_factor = Rc::new(Cell::new(scale_factor));
@@ -74,7 +75,7 @@ impl DirectManipulationHandler {
                 )
                 .into();
 
-            let handler_cookie = viewport.AddEventHandler(Some(window), &event_handler)?;
+            let handler_cookie = viewport.AddEventHandler(Some(window.hwnd()), &event_handler)?;
 
             update_manager.Update(None)?;
 
@@ -88,6 +89,10 @@ impl DirectManipulationHandler {
                 pending_events,
             })
         }
+    }
+
+    fn hwnd(&self) -> HWND {
+        self.window.hwnd()
     }
 
     pub fn set_scale_factor(&self, scale_factor: f32) {
@@ -121,7 +126,7 @@ impl Drop for DirectManipulationHandler {
         unsafe {
             self.viewport.Stop().log_err();
             self.viewport.Abandon().log_err();
-            self.manager.Deactivate(self.window).log_err();
+            self.manager.Deactivate(self.hwnd()).log_err();
         }
     }
 }
@@ -135,7 +140,7 @@ enum GestureKind {
 
 #[windows_core::implement(IDirectManipulationViewportEventHandler)]
 struct DirectManipulationEventHandler {
-    window: HWND,
+    window: NonNullHwnd,
     scale_factor: Rc<Cell<f32>>,
     gesture_kind: Cell<GestureKind>,
     last_scale: Cell<f32>,
@@ -147,7 +152,7 @@ struct DirectManipulationEventHandler {
 
 impl DirectManipulationEventHandler {
     fn new(
-        window: HWND,
+        window: NonNullHwnd,
         scale_factor: Rc<Cell<f32>>,
         pending_events: Rc<RefCell<Vec<PlatformInput>>>,
     ) -> Self {
@@ -161,6 +166,10 @@ impl DirectManipulationEventHandler {
             scroll_phase: Cell::new(TouchPhase::Started),
             pending_events,
         }
+    }
+
+    fn hwnd(&self) -> HWND {
+        self.window.hwnd()
     }
 
     fn end_gesture(&self) {
@@ -197,7 +206,7 @@ impl DirectManipulationEventHandler {
         unsafe {
             let mut point: POINT = std::mem::zeroed();
             let _ = GetCursorPos(&mut point);
-            let _ = ScreenToClient(self.window, &mut point);
+            let _ = ScreenToClient(self.hwnd(), &mut point);
             logical_point(point.x as f32, point.y as f32, scale_factor)
         }
     }
