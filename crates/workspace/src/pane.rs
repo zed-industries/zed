@@ -3094,6 +3094,15 @@ impl Pane {
                 let pane = pane.clone();
                 let menu_context = menu_context.clone();
                 let extra_actions = item_handle.tab_extra_context_menu_actions(window, cx);
+                let active_item = pane
+                    .upgrade()
+                    .and_then(|pane| pane.read(cx).active_item());
+                let active_item_is_singleton = active_item
+                    .as_ref()
+                    .map_or(false, |item| item.buffer_kind(cx) == ItemBufferKind::Singleton);
+                let current_item_is_singleton =
+                    item_handle.buffer_kind(cx) == ItemBufferKind::Singleton;
+
                 ContextMenu::build(window, cx, move |mut menu, window, cx| {
                     let close_active_item_action = CloseActiveItem {
                         save_intent: None,
@@ -3219,7 +3228,11 @@ impl Pane {
                                     .action(Box::new(zed_actions::workspace::CompareWithActiveTab {
                                         item_id: Some(item_id.as_u64()),
                                     }))
-                                    .disabled(is_active)
+                                    .disabled(
+                                        is_active
+                                            || !active_item_is_singleton
+                                            || !current_item_is_singleton,
+                                    )
                                     .handler(window.handler_for(&pane, move |_pane, window, cx| {
                                         window.dispatch_action(
                                             zed_actions::workspace::CompareWithActiveTab {
