@@ -539,7 +539,8 @@ impl Inner {
         res?.await
     }
 
-    /// Creates an empty directory at `path`, doing nothing if it already exists.
+    /// Creates an empty directory at `path`, doing nothing if it already
+    /// exists.
     async fn create_dir(&self, path: &ProjectPath, cx: &mut AsyncApp) -> Result<()> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Err(anyhow!("Failed to obtain workspace."));
