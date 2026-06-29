@@ -78,8 +78,6 @@ pub struct Delegate {
     pub(crate) last_selection_change_time: Option<std::time::Instant>,
     pub(crate) last_click: Option<(usize, std::time::Instant)>,
     pub(crate) search_options: SearchOptions,
-    /// When set, the search is restricted to currently open buffers.
-    pub(crate) included_opened_only: bool,
     /// Kept around for switching to project search
     pub(crate) active_query: Option<SearchQuery>,
     pub(crate) imported_from_project_search: bool,
@@ -316,7 +314,6 @@ impl Delegate {
                 last_selection_change_time: None,
                 last_click: None,
                 search_options,
-                included_opened_only: false,
                 active_query,
                 imported_from_project_search,
                 in_progress_search,
@@ -627,12 +624,13 @@ impl PickerDelegate for Delegate {
                     IconButton::new("text-finder-opened-only", IconName::FolderSearch)
                         .icon_size(IconSize::Small)
                         .shape(IconButtonShape::Square)
-                        .toggle_state(self.included_opened_only)
+                        .toggle_state(self.project_search_view.read(cx).opened_only_enabled())
                         .tooltip(Tooltip::text("Only Search Open Files"))
                         .on_click(move |_, window, cx| {
                             picker.update(cx, |picker, cx| {
-                                picker.delegate.included_opened_only =
-                                    !picker.delegate.included_opened_only;
+                                let view = picker.delegate.project_search_view.clone();
+                                let enabled = !view.read(cx).opened_only_enabled();
+                                view.update(cx, |view, _| view.set_opened_only(enabled));
                                 picker.refresh(window, cx);
                             });
                         })
@@ -1193,7 +1191,7 @@ impl Delegate {
         // disambiguated. For single worktree projects we use worktree relative
         // paths for convenience.
         let match_full_paths = self.project(cx).read(cx).visible_worktrees(cx).count() > 1;
-        let open_buffers = self.included_opened_only.then(|| self.open_buffers(cx));
+        let open_buffers = self.project_search_view.read(cx).opened_only_buffers(cx);
 
         self.search_options
             .build_query(
@@ -1204,19 +1202,6 @@ impl Delegate {
                 open_buffers,
             )
             .log_err()
-    }
-
-    /// The singleton buffers backing the editors currently open in the
-    /// workspace, used to restrict the search when "Only Search Open Files" is on.
-    fn open_buffers(&self, cx: &App) -> Vec<Entity<Buffer>> {
-        let Some(workspace) = self.project_search_view.read(cx).workspace.upgrade() else {
-            return Vec::new();
-        };
-        workspace
-            .read(cx)
-            .items_of_type::<Editor>(cx)
-            .filter_map(|editor| editor.read(cx).buffer().read(cx).as_singleton())
-            .collect()
     }
 
     fn search_option_button(
