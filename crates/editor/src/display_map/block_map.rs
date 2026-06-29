@@ -30,7 +30,6 @@ use text::{BufferId, Edit};
 use ui::{ElementId, IntoElement};
 
 const NEWLINES: &[u8; rope::Chunk::MASK_BITS] = &[b'\n'; _];
-const BULLETS: &[u8; rope::Chunk::MASK_BITS] = &[b'*'; _];
 
 /// Tracks custom blocks such as diagnostics that should be displayed within buffer.
 ///
@@ -559,7 +558,6 @@ pub struct BlockChunks<'a> {
     output_row: BlockRow,
     max_output_row: BlockRow,
     line_count_overflow: RowDelta,
-    masked: bool,
 }
 
 #[derive(Clone)]
@@ -2218,7 +2216,6 @@ impl BlockSnapshot {
                 tree_sitter: false,
                 diagnostics: false,
             },
-            false,
             Highlights::default(),
         )
         .map(|chunk| chunk.text)
@@ -2230,7 +2227,6 @@ impl BlockSnapshot {
         &'a self,
         rows: Range<BlockRow>,
         language_aware: LanguageAwareStyling,
-        masked: bool,
         highlights: Highlights<'a>,
     ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
@@ -2254,7 +2250,7 @@ impl BlockSnapshot {
 
         BlockChunks {
             input_chunks: self.wrap_snapshot.chunks(
-                input_start..input_end,
+                WrapPoint::new(input_start, 0)..WrapPoint::new(input_end, 0),
                 language_aware,
                 highlights,
             ),
@@ -2263,7 +2259,6 @@ impl BlockSnapshot {
             output_row: rows.start,
             line_count_overflow: RowDelta(0),
             max_output_row,
-            masked,
         }
     }
 
@@ -2660,7 +2655,8 @@ impl BlockChunks<'_> {
                     self.transforms.end().1,
                     start_input_row + (self.max_output_row - start_output_row),
                 );
-                self.input_chunks.seek(start_input_row..end_input_row);
+                self.input_chunks
+                    .seek(WrapPoint::new(start_input_row, 0)..WrapPoint::new(end_input_row, 0));
             }
         }
     }
@@ -2737,31 +2733,20 @@ impl<'a> Iterator for BlockChunks<'a> {
             offset_for_row(self.input_chunk.text, transform_end - self.output_row);
         self.output_row += prefix_rows;
 
-        let (mut prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
+        let (prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
+        let mask = 1u128.unbounded_shl(prefix_bytes as u32).wrapping_sub(1);
+        let chars = self.input_chunk.chars & mask;
+        let tabs = self.input_chunk.tabs & mask;
+        let newlines = self.input_chunk.newlines & mask;
         self.input_chunk.text = suffix;
-        self.input_chunk.tabs >>= prefix_bytes.saturating_sub(1);
-        self.input_chunk.chars >>= prefix_bytes.saturating_sub(1);
-        self.input_chunk.newlines >>= prefix_bytes.saturating_sub(1);
-
-        let mut tabs = self.input_chunk.tabs;
-        let mut chars = self.input_chunk.chars;
-        let mut newlines = self.input_chunk.newlines;
-
-        if self.masked {
-            // Not great for multibyte text because to keep cursor math correct we
-            // need to have the same number of chars in the input as output.
-            let chars_count = prefix.chars().count();
-            let bullet_len = chars_count;
-            prefix = unsafe { std::str::from_utf8_unchecked(&BULLETS[..bullet_len]) };
-            chars = 1u128.unbounded_shl(bullet_len as u32).wrapping_sub(1);
-            tabs = 0;
-            newlines = 0;
-        }
+        self.input_chunk.tabs = self.input_chunk.tabs.unbounded_shr(prefix_bytes as u32);
+        self.input_chunk.chars = self.input_chunk.chars.unbounded_shr(prefix_bytes as u32);
+        self.input_chunk.newlines = self.input_chunk.newlines.unbounded_shr(prefix_bytes as u32);
 
         let chunk = Chunk {
             text: prefix,
-            tabs,
             chars,
+            tabs,
             newlines,
             ..self.input_chunk.clone()
         };
@@ -4494,7 +4479,6 @@ mod tests {
                             tree_sitter: false,
                             diagnostics: false,
                         },
-                        false,
                         Highlights::default(),
                     )
                     .map(|chunk| chunk.text)

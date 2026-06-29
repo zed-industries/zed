@@ -312,7 +312,7 @@ impl Vim {
             let (start, end) = match s.newest_anchor().goal {
                 SelectionGoal::HorizontalRange { start, end } if preserve_goal => (start, end),
                 SelectionGoal::HorizontalPosition(start) if preserve_goal => (start, start),
-                _ => (tail_x.into(), head_x.into()),
+                _ => (tail_x, head_x),
             };
             let mut goal = SelectionGoal::HorizontalRange { start, end };
 
@@ -357,8 +357,8 @@ impl Vim {
 
             if !preserve_goal {
                 goal = SelectionGoal::HorizontalRange {
-                    start: f64::from(positions.start),
-                    end: f64::from(positions.end),
+                    start: positions.start,
+                    end: positions.end,
                 };
             }
 
@@ -383,7 +383,7 @@ impl Vim {
                     }
                 }
 
-                if positions.start <= laid_out_line.width {
+                if positions.start <= laid_out_line.width() {
                     let selection = Selection {
                         id: s.new_selection_id(),
                         start: start.to_point(map),

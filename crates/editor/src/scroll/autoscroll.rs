@@ -346,7 +346,7 @@ impl Editor {
         &mut self,
         start_row: DisplayRow,
         viewport_width: Pixels,
-        scroll_width: Pixels,
+        scroll_width: ScrollOffset,
         em_advance: Pixels,
         layouts: &[LineWithInvisibles],
         autoscroll_request: Option<(Autoscroll, bool)>,
@@ -356,7 +356,6 @@ impl Editor {
         let (_, local) = autoscroll_request?;
         let em_advance = ScrollOffset::from(em_advance);
         let viewport_width = ScrollOffset::from(viewport_width);
-        let scroll_width = ScrollOffset::from(scroll_width);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         // Horizontal autoscroll only needs selections whose head is visible.
@@ -407,11 +406,9 @@ impl Editor {
 
                     let layout = &layouts[head.row().minus(start_row) as usize];
 
-                    let mut candidate_left = ScrollOffset::from(
-                        layout.x_for_index(start_column as usize) + self.gutter_dimensions.margin,
-                    );
-                    let mut candidate_right =
-                        ScrollOffset::from(layout.x_for_index(end_column as usize)) + em_advance;
+                    let mut candidate_left = layout.x_for_index(start_column as usize)
+                        + ScrollOffset::from(self.gutter_dimensions.margin);
+                    let mut candidate_right = layout.x_for_index(end_column as usize) + em_advance;
 
                     // If the full selection span (with the same padding used below) doesn't
                     // fit in the viewport, fall back to just tracking the cursor (head)
@@ -419,13 +416,10 @@ impl Editor {
                     if candidate_right - candidate_left > viewport_width {
                         let head_column = head.column();
                         let head_column_clamped = cmp::min(row_line_len, head_column);
-                        candidate_left = ScrollOffset::from(
-                            layout.x_for_index(head_column as usize)
-                                + self.gutter_dimensions.margin,
-                        );
+                        candidate_left = layout.x_for_index(head_column as usize)
+                            + ScrollOffset::from(self.gutter_dimensions.margin);
                         candidate_right =
-                            ScrollOffset::from(layout.x_for_index(head_column_clamped as usize))
-                                + em_advance;
+                            layout.x_for_index(head_column_clamped as usize) + em_advance;
                     }
 
                     target_left = target_left.min(candidate_left);

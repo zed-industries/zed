@@ -11,7 +11,7 @@ pub enum SelectionGoal {
         start: f64,
         end: f64,
     },
-    WrappedHorizontalPosition((u32, f32)),
+    WrappedHorizontalPosition((u32, f64)),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]

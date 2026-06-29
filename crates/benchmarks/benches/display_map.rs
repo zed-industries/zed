@@ -191,14 +191,14 @@ fn create_highlight_endpoints_benchmark(c: &mut Criterion) {
         &snapshot,
         |bench, snapshot| {
             bench.iter(|| {
-                black_box(snapshot.chunks(
+                drop(black_box(snapshot.chunks(
                     DisplayRow(400)..DisplayRow(400 + LINE_VIEW_PORT_COUNT as u32),
                     language::LanguageAwareStyling {
                         tree_sitter: false,
                         diagnostics: false,
                     },
                     Default::default(),
-                ));
+                )));
             });
         },
     );

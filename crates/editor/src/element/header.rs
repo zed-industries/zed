@@ -27,8 +27,8 @@ use util::ResultExt;
 use workspace::{ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel};
 
 use super::{
-    BlockLayout, EditorElement, EditorLayout, LineWithInvisibles, layout_line,
-    render_breadcrumb_text,
+    BlockLayout, EditorElement, EditorLayout, LineWithInvisibles, byte_columns_to_shape,
+    layout_line, render_breadcrumb_text, visible_columns,
 };
 use crate::{
     BUFFER_HEADER_PADDING, DisplayRow, Editor, EditorSettings, EditorSnapshot, FILE_HEADER_HEIGHT,
@@ -249,6 +249,16 @@ impl EditorElement {
 
         let mut lines = Vec::<StickyHeaderLine>::new();
 
+        let font_id = window.text_system().resolve_font(&self.style.text.font());
+        let font_size = self.style.text.font_size.to_pixels(window.rem_size());
+        let cell_width = window.text_system().em_layout_width(font_id, font_size);
+        let byte_columns = (cell_width > Pixels::ZERO).then(|| {
+            byte_columns_to_shape(
+                scroll_pixel_position.x / f64::from(cell_width),
+                visible_columns(editor_width, cell_width),
+            )
+        });
+
         for StickyHeader {
             sticky_row,
             start_point,
@@ -260,6 +270,7 @@ impl EditorElement {
                 snapshot,
                 &self.style,
                 editor_width,
+                byte_columns.clone(),
                 is_row_soft_wrapped,
                 window,
                 cx,

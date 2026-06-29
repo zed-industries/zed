@@ -6,7 +6,7 @@ use editor::{
         self, FindRange, TextLayoutDetails, find_boundary, find_preceding_boundary_display_point,
     },
 };
-use gpui::{Action, Context, Window, actions, px};
+use gpui::{Action, Context, Window, actions};
 use language::{CharKind, Point, Selection, SelectionGoal, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
@@ -1564,12 +1564,12 @@ fn up_down_buffer_rows(
 
     let (goal_wrap, goal_x) = match goal {
         SelectionGoal::WrappedHorizontalPosition((row, x)) => (row, x),
-        SelectionGoal::HorizontalRange { end, .. } => (select_nth_wrapped_row, end as f32),
-        SelectionGoal::HorizontalPosition(x) => (select_nth_wrapped_row, x as f32),
+        SelectionGoal::HorizontalRange { end, .. } => (select_nth_wrapped_row, end),
+        SelectionGoal::HorizontalPosition(x) => (select_nth_wrapped_row, x),
         _ => {
             let x = map.x_for_display_point(point, text_layout_details);
-            goal = SelectionGoal::WrappedHorizontalPosition((select_nth_wrapped_row, x.into()));
-            (select_nth_wrapped_row, x.into())
+            goal = SelectionGoal::WrappedHorizontalPosition((select_nth_wrapped_row, x));
+            (select_nth_wrapped_row, x)
         }
     };
 
@@ -1597,7 +1597,7 @@ fn up_down_buffer_rows(
     }
 
     let new_col = if i == goal_wrap {
-        map.display_column_for_x(begin_folded_line.row(), px(goal_x), text_layout_details)
+        map.display_column_for_x(begin_folded_line.row(), goal_x, text_layout_details)
     } else {
         map.line_len(begin_folded_line.row())
     };

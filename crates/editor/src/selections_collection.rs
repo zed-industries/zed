@@ -4,7 +4,6 @@ use std::{
     sync::Arc,
 };
 
-use gpui::Pixels;
 use itertools::{Either, Itertools as _};
 use language::{Bias, Point, Selection, SelectionGoal};
 use multi_buffer::{MultiBufferDimension, MultiBufferOffset, MultiBufferRow, ToPoint};
@@ -14,6 +13,7 @@ use crate::{
     Anchor, DisplayPoint, DisplayRow, MultiBufferSnapshot, SelectMode, ToOffset,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
+    scroll::ScrollPixelOffset,
 };
 
 #[derive(Debug, Clone)]
@@ -401,7 +401,7 @@ impl SelectionsCollection {
     }
 
     /// Attempts to build a selection in the provided `DisplayRow` within the
-    /// same range as the provided range of `Pixels`.
+    /// same range as the provided range of pixel positions.
     /// Returns `None` if the range is not empty but it starts past the line's
     /// length, meaning that the line isn't long enough to be contained within
     /// part of the provided range.
@@ -409,7 +409,7 @@ impl SelectionsCollection {
         &mut self,
         display_map: &DisplaySnapshot,
         row: DisplayRow,
-        positions: &Range<Pixels>,
+        positions: &Range<ScrollPixelOffset>,
         reversed: bool,
         text_layout_details: &TextLayoutDetails,
     ) -> Option<Selection<Point>> {
@@ -437,8 +437,8 @@ impl SelectionsCollection {
             end: end.to_point(display_map),
             reversed,
             goal: SelectionGoal::HorizontalRange {
-                start: positions.start.into(),
-                end: positions.end.into(),
+                start: positions.start,
+                end: positions.end,
             },
         })
     }
@@ -485,8 +485,8 @@ impl SelectionsCollection {
             end,
             reversed,
             goal: SelectionGoal::HorizontalRange {
-                start: start_x.min(end_x).into(),
-                end: start_x.max(end_x).into(),
+                start: start_x.min(end_x),
+                end: start_x.max(end_x),
             },
         })
     }
@@ -499,7 +499,7 @@ impl SelectionsCollection {
         start_row: DisplayRow,
         end_row: DisplayRow,
         above: bool,
-        positions: &Range<Pixels>,
+        positions: &Range<ScrollPixelOffset>,
         reversed: bool,
         text_layout_details: &TextLayoutDetails,
     ) -> Option<Selection<Point>> {

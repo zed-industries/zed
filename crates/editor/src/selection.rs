@@ -1851,7 +1851,9 @@ impl Editor {
                     DisplayPoint::new(point.row(), line_len),
                     &text_layout_details,
                 );
-                eol_x + em_layout_width * (point.column() - line_len) as f32
+                eol_x
+                    + ScrollPixelOffset::from(em_layout_width)
+                        * (point.column() - line_len) as ScrollPixelOffset
             } else {
                 display_map.x_for_display_point(point, &text_layout_details)
             }
@@ -1879,7 +1881,7 @@ impl Editor {
 
                 let layout = display_map.layout_row(row, &text_layout_details);
                 if matches!(columnar_state, ColumnarSelectionState::FromSelection { .. })
-                    && start_x > layout.width
+                    && start_x > layout.width()
                 {
                     return None;
                 }
@@ -2039,7 +2041,7 @@ impl Editor {
                     let row = range.start.row();
                     let positions =
                         if let SelectionGoal::HorizontalRange { start, end } = selection.goal {
-                            Pixels::from(start)..Pixels::from(end)
+                            start..end
                         } else {
                             let start_x =
                                 display_map.x_for_display_point(range.start, &text_layout_details);
