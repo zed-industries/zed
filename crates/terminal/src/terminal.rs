@@ -3032,6 +3032,7 @@ fn spawn_task_subprocess(
                     None => executor.timer(Duration::from_millis(20)).await,
                 }
             };
+            child.lock().take();
             let event = match status {
                 Some(status) => TerminalBackendEvent::ChildExit(status),
                 None => TerminalBackendEvent::Exit,
