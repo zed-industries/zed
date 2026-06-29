@@ -1710,7 +1710,7 @@ impl Editor {
         }
     }
 
-    fn stage_or_unstage_diff_hunks(
+    pub fn stage_or_unstage_diff_hunks(
         &mut self,
         stage: bool,
         ranges: Vec<Range<Anchor>>,
