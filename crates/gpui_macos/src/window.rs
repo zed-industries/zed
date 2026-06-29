@@ -2799,10 +2799,13 @@ extern "C" fn attributed_substring_for_proposed_range(
         let mut adjusted: Option<Range<usize>> = None;
 
         let selected_text = input_handler.text_for_range(range.clone(), &mut adjusted)?;
+        // Apple documents `actualRange` as `NSRangePointer?` and says it can be `NULL`.
+        // https://developer.apple.com/documentation/appkit/nstextinputclient/attributedsubstring(forproposedrange:actualrange:)
         if let Some(adjusted) = adjusted
             && adjusted != range
+            && let Some(actual_range) = NonNull::new(actual_range as *mut NSRange)
         {
-            unsafe { (actual_range as *mut NSRange).write(NSRange::from(adjusted)) };
+            unsafe { actual_range.write(NSRange::from(adjusted)) };
         }
         unsafe {
             let string: id = msg_send![class!(NSAttributedString), alloc];
