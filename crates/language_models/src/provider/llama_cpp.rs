@@ -920,6 +920,15 @@ impl LlamaCppEventMapper {
     ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
         let mut events = Vec::new();
 
+        if let Some(usage) = event.usage {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: usage.prompt_tokens,
+                output_tokens: usage.completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
+        }
+
         if let Some(choice) = event.choices.into_iter().next() {
             if let Some(reasoning_content) = choice.delta.reasoning_content {
                 events.push(Ok(LanguageModelCompletionEvent::Thinking {
@@ -1000,15 +1009,6 @@ impl LlamaCppEventMapper {
                     }
                 }
             }
-        }
-
-        if let Some(usage) = event.usage {
-            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
-                input_tokens: usage.prompt_tokens,
-                output_tokens: usage.completion_tokens,
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-            })));
         }
 
         events
@@ -1707,6 +1707,90 @@ mod tests {
         )];
         sync_capability_cells(&cells, &compute_effective_models(&loaded, &settings));
         assert_eq!(cells.read().unwrap().get("m").unwrap().max_tokens, 262_144);
+    }
+
+    #[test]
+    fn usage_event_precedes_stop_event() {
+        let mut mapper = LlamaCppEventMapper::new();
+        let events = mapper.map_event(llama_cpp::ResponseStreamEvent {
+            model: "test-model".to_string(),
+            object: "chat.completion.chunk".to_string(),
+            choices: vec![llama_cpp::ChoiceDelta {
+                index: 0,
+                delta: llama_cpp::ResponseMessageDelta {
+                    content: None,
+                    reasoning_content: None,
+                    tool_calls: None,
+                },
+                finish_reason: Some("stop".to_string()),
+            }],
+            usage: Some(llama_cpp::Usage {
+                prompt_tokens: 11,
+                completion_tokens: 7,
+                total_tokens: 18,
+            }),
+        });
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: 11,
+                    output_tokens: 7,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                })),
+                Ok(LanguageModelCompletionEvent::Stop(StopReason::EndTurn)),
+            ]
+        ));
+    }
+
+    #[test]
+    fn usage_event_precedes_tool_use_stop_event() {
+        let mut mapper = LlamaCppEventMapper::new();
+        let events = mapper.map_event(llama_cpp::ResponseStreamEvent {
+            model: "test-model".to_string(),
+            object: "chat.completion.chunk".to_string(),
+            choices: vec![llama_cpp::ChoiceDelta {
+                index: 0,
+                delta: llama_cpp::ResponseMessageDelta {
+                    content: None,
+                    reasoning_content: None,
+                    tool_calls: Some(vec![llama_cpp::ToolCallChunk {
+                        index: 0,
+                        id: Some("tool-call-id".to_string()),
+                        function: Some(llama_cpp::FunctionChunk {
+                            name: Some("test_tool".to_string()),
+                            arguments: Some(r#"{"value":1}"#.to_string()),
+                        }),
+                    }]),
+                },
+                finish_reason: Some("tool_calls".to_string()),
+            }],
+            usage: Some(llama_cpp::Usage {
+                prompt_tokens: 13,
+                completion_tokens: 5,
+                total_tokens: 18,
+            }),
+        });
+
+        assert!(matches!(
+            events.as_slice(),
+            [
+                Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                    input_tokens: 13,
+                    output_tokens: 5,
+                    cache_creation_input_tokens: 0,
+                    cache_read_input_tokens: 0,
+                })),
+                Ok(LanguageModelCompletionEvent::ToolUse(LanguageModelToolUse {
+                    id,
+                    name,
+                    ..
+                })),
+                Ok(LanguageModelCompletionEvent::Stop(StopReason::ToolUse)),
+            ] if id.to_string() == "tool-call-id" && name.as_ref() == "test_tool"
+        ));
     }
 
     #[gpui::test]
