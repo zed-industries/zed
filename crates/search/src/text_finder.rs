@@ -240,9 +240,7 @@ impl TextFinder {
     /// globs and open-files / filters-shown state so the text finder starts
     /// from the same filter setup (the query and search options seed separately).
     fn filter_seed(workspace: &mut Workspace, cx: &mut Context<Workspace>) -> Option<FilterSeed> {
-        let project_search = workspace
-            .active_item(cx)?
-            .downcast::<ProjectSearchView>()?;
+        let project_search = workspace.active_item(cx)?.downcast::<ProjectSearchView>()?;
         let view = project_search.read(cx);
         let (included, excluded) = view.filter_editors();
         Some(FilterSeed {

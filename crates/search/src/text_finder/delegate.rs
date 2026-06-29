@@ -629,51 +629,50 @@ impl PickerDelegate for Delegate {
         let picker = cx.entity();
         let focus_handle = self.focus_handle.clone();
 
-        let filter_line = self
-            .project_search_view
-            .read(cx)
-            .filters_enabled()
-            .then(|| {
-                let (included, excluded) = self.project_search_view.read(cx).filter_editors();
-                let include = input_base_styles(border_color, |div| div.flex_grow_1())
-                    .child(render_filter_input(&included, cx));
-                let exclude = input_base_styles(border_color, |div| div.flex_grow_1())
-                    .child(render_filter_input(&excluded, cx));
+        let filter_line =
+            self.project_search_view
+                .read(cx)
+                .filters_enabled()
+                .then(|| {
+                    let (included, excluded) = self.project_search_view.read(cx).filter_editors();
+                    let include = input_base_styles(border_color, |div| div.flex_grow_1())
+                        .child(render_filter_input(&included, cx));
+                    let exclude = input_base_styles(border_color, |div| div.flex_grow_1())
+                        .child(render_filter_input(&excluded, cx));
 
-                let opened_only_button = {
-                    let picker = picker.clone();
-                    IconButton::new("text-finder-opened-only", IconName::FolderSearch)
-                        .icon_size(IconSize::Small)
-                        .shape(IconButtonShape::Square)
-                        .toggle_state(self.project_search_view.read(cx).opened_only_enabled())
-                        .tooltip(Tooltip::text("Only Search Open Files"))
-                        .on_click(move |_, window, cx| {
-                            picker.update(cx, |picker, cx| {
-                                let view = picker.delegate.project_search_view.clone();
-                                let enabled = !view.read(cx).opened_only_enabled();
-                                view.update(cx, |view, _| view.set_opened_only(enabled));
-                                picker.refresh(window, cx);
-                            });
-                        })
-                };
-                let mode_column = h_flex()
-                    .gap_1()
-                    .child(opened_only_button)
-                    .child(self.search_option_button(
-                        SearchOption::IncludeIgnored,
-                        picker.clone(),
-                        focus_handle.clone(),
-                    ));
+                    let opened_only_button = {
+                        let picker = picker.clone();
+                        IconButton::new("text-finder-opened-only", IconName::FolderSearch)
+                            .icon_size(IconSize::Small)
+                            .shape(IconButtonShape::Square)
+                            .toggle_state(self.project_search_view.read(cx).opened_only_enabled())
+                            .tooltip(Tooltip::text("Only Search Open Files"))
+                            .on_click(move |_, window, cx| {
+                                picker.update(cx, |picker, cx| {
+                                    let view = picker.delegate.project_search_view.clone();
+                                    let enabled = !view.read(cx).opened_only_enabled();
+                                    view.update(cx, |view, _| view.set_opened_only(enabled));
+                                    picker.refresh(window, cx);
+                                });
+                            })
+                    };
+                    let mode_column = h_flex().gap_1().child(opened_only_button).child(
+                        self.search_option_button(
+                            SearchOption::IncludeIgnored,
+                            picker.clone(),
+                            focus_handle.clone(),
+                        ),
+                    );
 
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .px_2p5()
-                    .pb_1p5()
-                    .child(include)
-                    .child(exclude)
-                    .child(mode_column)
-            });
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .px_2p5()
+                        .pb_1p5()
+                        .child(include)
+                        .child(exclude)
+                        .child(mode_column)
+                });
 
         v_flex()
             .child(
@@ -1252,17 +1251,20 @@ impl Delegate {
         let options = option.as_options();
         let action = option.to_toggle_action();
         let label = option.label();
-        IconButton::new(("text-finder-search-option", option as usize), option.icon())
-            .icon_size(IconSize::Small)
-            .shape(IconButtonShape::Square)
-            .toggle_state(self.search_options.contains(options))
-            .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
-            .on_click(move |_, window, cx| {
-                picker.update(cx, |picker, cx| {
-                    picker.delegate.search_options.toggle(options);
-                    picker.refresh(window, cx);
-                });
-            })
+        IconButton::new(
+            ("text-finder-search-option", option as usize),
+            option.icon(),
+        )
+        .icon_size(IconSize::Small)
+        .shape(IconButtonShape::Square)
+        .toggle_state(self.search_options.contains(options))
+        .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
+        .on_click(move |_, window, cx| {
+            picker.update(cx, |picker, cx| {
+                picker.delegate.search_options.toggle(options);
+                picker.refresh(window, cx);
+            });
+        })
     }
 
     /// Create things from MB
