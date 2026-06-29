@@ -7,7 +7,7 @@ use std::sync::atomic::AtomicBool;
 use crate::DEFAULT_THREAD_TITLE;
 use crate::thread_metadata_store::{ThreadMetadata, ThreadMetadataStore};
 use acp_thread::MentionUri;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use editor::{CompletionProvider, Editor, code_context_menus::COMPLETION_MENU_MAX_WIDTH};
 use futures::FutureExt as _;
@@ -1245,7 +1245,7 @@ impl<T: PromptCompletionProviderDelegate> PromptCompletionProvider<T> {
                             let path_prefix = if include_root_name {
                                 worktree.read(cx).root_name().into()
                             } else {
-                                RelPath::empty().into()
+                                RelPath::empty_arc()
                             };
                             Match::File(FileMatch {
                                 mat: fuzzy::PathMatch {
@@ -2143,9 +2143,9 @@ pub(crate) fn search_files(
                     project
                         .worktree_for_id(project_path.worktree_id, cx)
                         .map(|wt| wt.read(cx).root_name().into())
-                        .unwrap_or_else(|| RelPath::empty().into())
+                        .unwrap_or_else(|| RelPath::empty_arc())
                 } else {
-                    RelPath::empty().into()
+                    RelPath::empty_arc()
                 };
 
                 FileMatch {
@@ -2167,7 +2167,7 @@ pub(crate) fn search_files(
             let path_prefix: Arc<RelPath> = if include_root_name {
                 worktree.root_name().into()
             } else {
-                RelPath::empty().into()
+                RelPath::empty_arc()
             };
             worktree.entries(false, 0).map(move |entry| FileMatch {
                 mat: PathMatch {

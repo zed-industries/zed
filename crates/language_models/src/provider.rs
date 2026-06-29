@@ -3,6 +3,8 @@ use http_client::CustomHeaders;
 use http_client::http::{HeaderName, HeaderValue};
 
 pub mod anthropic;
+pub mod anthropic_compatible;
+pub mod api_compatible;
 pub mod bedrock;
 pub mod cloud;
 pub mod copilot_chat;

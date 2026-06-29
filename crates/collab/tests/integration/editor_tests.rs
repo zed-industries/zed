@@ -10,6 +10,7 @@ use editor::{
         CopyFileName, CopyFileNameWithoutExtension, ExpandMacroRecursively, MoveToEnd, Redo,
         Rename, SelectAll, ToggleCodeActions, Undo,
     },
+    code_context_menus::CodeContextMenu,
     test::{
         editor_test_context::{AssertionContextManager, EditorTestContext},
         expand_macro_recursively,
@@ -1409,6 +1410,142 @@ async fn test_slow_lsp_server(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         "LSP Command 1",
         "Only the final code lens action should be in the data"
     )
+}
+
+#[gpui::test]
+async fn test_collaborating_with_code_lens_resolve(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(cx_a.executor()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    cx_b.update(editor::init);
+    cx_b.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.code_lens = Some(settings::CodeLens::Menu);
+            });
+        });
+    });
+
+    let capabilities = lsp::ServerCapabilities {
+        code_lens_provider: Some(lsp::CodeLensOptions {
+            resolve_provider: Some(true),
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
+    client_a.language_registry().add(rust_lang());
+    client_a.language_registry().register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: capabilities.clone(),
+            initializer: Some(Box::new(|fake_lsp| {
+                fake_lsp.set_request_handler::<lsp::request::CodeLensRequest, _, _>(
+                    |_, _| async move {
+                        Ok(Some(vec![lsp::CodeLens {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 0),
+                                lsp::Position::new(0, 9),
+                            ),
+                            command: None,
+                            data: Some(serde_json::json!({ "id": "lens" })),
+                        }]))
+                    },
+                );
+                fake_lsp.set_request_handler::<lsp::request::CodeLensResolve, _, _>(
+                    |lens, _| async move {
+                        Ok(lsp::CodeLens {
+                            command: Some(lsp::Command {
+                                title: "1 reference".to_string(),
+                                command: "noop".to_string(),
+                                arguments: None,
+                            }),
+                            ..lens
+                        })
+                    },
+                );
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    client_b.language_registry().add(rust_lang());
+    client_b.language_registry().register_fake_lsp_adapter(
+        "Rust",
+        FakeLspAdapter {
+            capabilities,
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    client_a
+        .fs()
+        .insert_tree(
+            path!("/dir"),
+            json!({
+                "one.rs": "const ONE: usize = 1;"
+            }),
+        )
+        .await;
+    let (project_a, worktree_id) = client_a.build_local_project(path!("/dir"), cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+    let editor_b = workspace_b
+        .update_in(cx_b, |workspace, window, cx| {
+            workspace.open_path((worktree_id, rel_path("one.rs")), None, true, window, cx)
+        })
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 0)..Point::new(0, 0)]);
+        });
+    });
+    cx_a.background_executor
+        .advance_clock(editor::CODE_ACTIONS_DEBOUNCE_TIMEOUT * 2);
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    editor_b.update_in(cx_b, |editor, window, cx| {
+        editor.toggle_code_actions(
+            &ToggleCodeActions {
+                deployed_from: None,
+                quick_launch: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    editor_b.update(cx_b, |editor, _| {
+        assert!(editor.context_menu_visible());
+        let menu = editor.context_menu().borrow();
+        let actions_menu = match menu.as_ref() {
+            Some(CodeContextMenu::CodeActions(m)) => m,
+            _ => panic!("Expected code actions menu to be visible"),
+        };
+        let item = actions_menu
+            .actions
+            .get(0)
+            .expect("Expected at least one item in menu");
+        assert_eq!(item.label(), "1 reference");
+    });
 }
 
 #[gpui::test(iterations = 10)]

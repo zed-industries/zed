@@ -1,5 +1,4 @@
 mod api_key;
-mod model;
 mod registry;
 mod request;
 
@@ -17,13 +16,21 @@ use parking_lot::Mutex;
 use std::sync::Arc;
 
 pub use crate::api_key::{ApiKey, ApiKeyState};
-pub use crate::model::*;
 pub use crate::registry::*;
 pub use crate::request::{LanguageModelImageExt, gpui_size_to_image_size, image_size_to_gpui};
 pub use env_var::{EnvVar, env_var};
 
 pub fn init(cx: &mut App) {
     registry::init(cx);
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisabledReason(pub SharedString);
+
+impl DisabledReason {
+    pub fn new(reason: impl Into<SharedString>) -> Self {
+        Self(reason.into())
+    }
 }
 
 pub struct LanguageModelTextStream {
@@ -60,6 +67,11 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// Whether the model is currently disabled and, if so, why this is the case.
+    fn is_disabled(&self) -> Option<DisabledReason> {
+        None
+    }
+
     /// Whether requests to this model require the user to consent to the
     /// upstream provider retaining inference logs (i.e. the model cannot be
     /// offered with Zero Data Retention).
@@ -88,6 +100,13 @@ pub trait LanguageModel: Send + Sync {
         false
     }
 
+    /// Whether thinking can be turned off entirely for this model. Some
+    /// models (e.g. Claude Fable 5) always think and cannot honor an "off"
+    /// request. Only meaningful when `supports_thinking` returns `true`.
+    fn supports_disabling_thinking(&self) -> bool {
+        true
+    }
+
     fn supports_fast_mode(&self) -> bool {
         false
     }
@@ -102,6 +121,12 @@ pub trait LanguageModel: Send + Sync {
         self.supported_effort_levels()
             .into_iter()
             .find(|effort_level| effort_level.is_default)
+    }
+
+    /// Whether this model supports provider-side automatic context
+    /// compaction (requested via `LanguageModelRequest::compact_at_tokens`).
+    fn supports_server_side_compaction(&self) -> bool {
+        false
     }
 
     /// Whether this model supports images
@@ -190,6 +215,7 @@ pub trait LanguageModel: Send + Sync {
                                 Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
                                     ..
                                 }) => None,
+                                Ok(LanguageModelCompletionEvent::Compaction(_)) => None,
                                 Ok(LanguageModelCompletionEvent::UsageUpdate(token_usage)) => {
                                     *last_token_usage.lock() = token_usage;
                                     None
@@ -302,12 +328,65 @@ pub trait LanguageModelProvider: 'static {
     ) -> AnyView;
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
 
+    /// Copy shown when this provider rejects a request as unauthenticated
+    /// (HTTP 401). The default assumes API-key authentication; providers using
+    /// other mechanisms (account or subscription based auth) should override
+    /// this so users aren't told to check an API key they don't have.
+    fn authentication_error_message(&self) -> SharedString {
+        format!(
+            "The API key for {} is invalid or has expired. \
+            Update your key via the Agent Panel settings to continue.",
+            self.name().0
+        )
+        .into()
+    }
+
+    /// Copy shown when a request fails because no credentials are configured
+    /// for this provider. The default assumes API-key authentication;
+    /// providers using other mechanisms (account or subscription based auth)
+    /// should override this.
+    fn missing_credentials_error_message(&self) -> SharedString {
+        format!(
+            "No API key is configured for {}. \
+            Add your key via the Agent Panel settings to continue.",
+            self.name().0
+        )
+        .into()
+    }
+
+    /// Returns the provider's configuration UI together with how it prefers to
+    /// be presented: [`ProviderConfigurationView::Inline`] for a compact control
+    /// that can sit in a list row (e.g. a single API-key field), or
+    /// [`ProviderConfigurationView::SubPage`] for a richer view that needs its
+    /// own surface.
+    ///
+    /// The default reuses [`Self::configuration_view`] as a sub-page, so
+    /// providers only override this when they have a compact inline form.
+    fn configuration_view_v2(
+        &self,
+        target_agent: ConfigurationViewTargetAgent,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> ProviderConfigurationView {
+        ProviderConfigurationView::SubPage(self.configuration_view(target_agent, window, cx))
+    }
+
     /// Copy shown the first time a user enables fast mode for a model from
     /// this provider. Returning `None` skips the confirmation prompt and lets
     /// the toggle apply silently.
     fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
         None
     }
+}
+
+/// How a provider's configuration UI prefers to be presented by the settings UI.
+#[derive(Clone)]
+pub enum ProviderConfigurationView {
+    /// A compact control suitable for rendering inline in a list row, such as a
+    /// single API-key field.
+    Inline(AnyView),
+    /// A richer view that should be shown on its own dedicated sub-page.
+    SubPage(AnyView),
 }
 
 /// Provider-specific copy shown the first time a user enables fast mode.

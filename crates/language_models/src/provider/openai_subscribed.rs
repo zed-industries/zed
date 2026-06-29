@@ -256,6 +256,18 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
         self.sign_out(cx)
     }
 
+    fn authentication_error_message(&self) -> SharedString {
+        "Your ChatGPT subscription session is invalid or has expired. \
+        Sign in again via the Agent Panel settings to continue."
+            .into()
+    }
+
+    fn missing_credentials_error_message(&self) -> SharedString {
+        "You are not signed in to your ChatGPT account. \
+        Sign in via the Agent Panel settings to continue."
+            .into()
+    }
+
     fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
         Some(FastModeConfirmation {
             title: "Enable Fast Mode for OpenAI?".into(),
@@ -310,15 +322,17 @@ impl ChatGptModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        // All Codex-supported models share the backend's 272K input cap, even
-        // when the raw model exposes a larger context window via the public
-        // API (e.g. gpt-5.4 has max_context_window 1M, but the Codex backend
-        // caps it at 272K). Source: openai/codex models-manager/models.json.
+        // All Codex-supported models use a 272K context window in the Codex
+        // backend, even when the raw model exposes a larger context window via the
+        // public API (e.g. gpt-5.4 has max_context_window 1M, but Codex uses
+        // context_window 272K). Source: openai/codex models-manager/models.json.
         272_000
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
-        Some(128_000)
+        // Codex model metadata does not expose a max output token cap for these
+        // models. Source: openai/codex models-manager/models.json.
+        None
     }
 
     fn supports_images(&self) -> bool {
@@ -419,6 +433,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                     ReasoningEffort::Medium => ("Medium", "medium"),
                     ReasoningEffort::High => ("High", "high"),
                     ReasoningEffort::XHigh => ("Extra High", "xhigh"),
+                    ReasoningEffort::Max => return None, // Not supported by any OpenAI models
                 };
 
                 Some(LanguageModelEffortLevel {

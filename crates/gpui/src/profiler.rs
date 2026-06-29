@@ -18,7 +18,7 @@ pub(crate) use actions::{save_action_timing, update_running_action};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{SharedString, TasksIncluded};
+use crate::{SharedString, TasksIncluded, WindowId};
 
 #[cfg(feature = "profiler")]
 #[doc(hidden)]
@@ -694,4 +694,129 @@ pub fn set_trace_enabled(enabled: bool) -> bool {
 /// Returns whether task timing tracing is enabled.
 pub fn trace_enabled() -> bool {
     PROFILER_ENABLED.load(Ordering::Relaxed)
+}
+
+/// Timing for a single drawn window frame.
+#[derive(Debug, Copy, Clone)]
+pub struct FrameTiming {
+    /// The window that was drawn.
+    pub window_id: WindowId,
+    /// When the frame first became dirty (its first invalidation). `None` if
+    /// frame tracing was not yet enabled when the invalidation occurred.
+    pub dirty_at: Option<Instant>,
+    /// Number of invalidations coalesced into this frame.
+    pub invalidations: u64,
+    /// When `Window::draw` started.
+    pub draw_start: Instant,
+    /// When `Window::draw` finished.
+    pub draw_end: Instant,
+}
+
+impl FrameTiming {
+    /// Time spent inside `Window::draw`.
+    pub fn draw_duration(&self) -> Duration {
+        self.draw_end.duration_since(self.draw_start)
+    }
+
+    /// Time from the frame's first invalidation to the end of its draw, if the
+    /// first invalidation was observed.
+    pub fn dirty_to_draw_duration(&self) -> Option<Duration> {
+        self.dirty_at
+            .map(|dirty_at| self.draw_end.duration_since(dirty_at))
+    }
+}
+
+// Allow 16MiB of frame timing entries.
+const MAX_FRAME_TIMINGS: usize = (16 * 1024 * 1024) / core::mem::size_of::<FrameTiming>();
+
+struct FrameTimings {
+    timings: VecDeque<FrameTiming>,
+    total_pushed: u64,
+}
+
+static FRAME_TIMINGS: spin::Mutex<FrameTimings> = spin::Mutex::new(FrameTimings {
+    timings: VecDeque::new(),
+    total_pushed: 0,
+});
+
+static FRAME_TRACE_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Enables or disables frame timing collection at runtime.
+///
+/// When transitioning from enabled to disabled, the buffered frame timings are
+/// cleared so stale data isn't reported after a later re-enable. Returns false
+/// if the value was unchanged.
+pub fn set_frame_trace_enabled(enabled: bool) -> bool {
+    if FRAME_TRACE_ENABLED.swap(enabled, Ordering::AcqRel) == enabled {
+        return false;
+    }
+
+    if !enabled {
+        let mut frames = FRAME_TIMINGS.lock();
+        frames.timings.clear();
+        frames.timings.shrink_to_fit();
+        frames.total_pushed = 0;
+    }
+    true
+}
+
+/// Returns whether frame timing collection is enabled.
+pub fn frame_trace_enabled() -> bool {
+    FRAME_TRACE_ENABLED.load(Ordering::Relaxed)
+}
+
+/// Records the timing of a drawn window frame.
+///
+/// No-op unless frame tracing is enabled via [`set_frame_trace_enabled`].
+pub fn record_frame_timing(timing: FrameTiming) {
+    if !frame_trace_enabled() {
+        return;
+    }
+    std::hint::cold_path(); // optimize for when profiling is off
+
+    let mut frames = FRAME_TIMINGS.lock();
+    if frames.timings.len() >= MAX_FRAME_TIMINGS {
+        frames.timings.pop_front();
+    }
+    frames.timings.push_back(timing);
+    frames.total_pushed += 1;
+}
+
+/// Drains frame timings recorded after this collector was created, tracking a
+/// cursor so each call to [`Self::collect_unseen`] returns only new entries.
+pub struct FrameTimingCollector {
+    cursor: u64,
+}
+
+impl Default for FrameTimingCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FrameTimingCollector {
+    /// Creates a collector that only sees frames recorded from this point on.
+    pub fn new() -> Self {
+        Self {
+            cursor: FRAME_TIMINGS.lock().total_pushed,
+        }
+    }
+
+    /// Returns frame timings recorded since the previous call (or since the
+    /// collector was created). If the ring buffer wrapped around since the
+    /// previous poll, the evicted entries are lost.
+    pub fn collect_unseen(&mut self) -> Vec<FrameTiming> {
+        let frames = FRAME_TIMINGS.lock();
+        let buffer_len = frames.timings.len() as u64;
+        let buffer_start = frames.total_pushed.saturating_sub(buffer_len);
+        let skip = self.cursor.saturating_sub(buffer_start) as usize;
+        let unseen = frames
+            .timings
+            .iter()
+            .skip(skip.min(frames.timings.len()))
+            .copied()
+            .collect();
+        self.cursor = frames.total_pushed;
+        unseen
+    }
 }

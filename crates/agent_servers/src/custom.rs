@@ -1,6 +1,6 @@
 use crate::{AgentServer, AgentServerDelegate, load_proxy_env};
 use acp_thread::AgentConnection;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::{Context as _, Result};
 use collections::HashSet;
 use fs::Fs;
@@ -17,6 +17,7 @@ use ui::IconName;
 pub const GEMINI_ID: &str = "gemini";
 pub const CLAUDE_AGENT_ID: &str = "claude-acp";
 pub const CODEX_ID: &str = "codex-acp";
+pub const CURSOR_ID: &str = "cursor";
 
 /// A generic agent server implementation for custom user-defined agents
 pub struct CustomAgentServer {

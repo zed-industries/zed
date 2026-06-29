@@ -152,6 +152,10 @@ pub struct OpenSettingsAt {
 /// `OpenSettingsAt` path of the agent skills page in the settings UI.
 pub const AGENT_SKILLS_SETTINGS_PATH: &str = "agent.skills";
 
+/// `OpenSettingsAt` path of the agent sandbox permissions page in the settings
+/// UI.
+pub const AGENT_SANDBOX_SETTINGS_PATH: &str = "agent.sandbox_permissions";
+
 #[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenSettingsAtTarget {
@@ -363,6 +367,18 @@ pub mod command_palette {
         command_palette,
         [
             /// Toggles the command palette.
+            Toggle,
+        ]
+    );
+}
+
+pub mod text_finder {
+    use gpui::actions;
+
+    actions!(
+        text_finder,
+        [
+            /// Opens the Project Search Picker.
             Toggle,
         ]
     );
@@ -620,7 +636,7 @@ pub mod assistant {
 #[serde(deny_unknown_fields)]
 pub struct OpenRecent {
     #[serde(default)]
-    pub create_new_window: bool,
+    pub create_new_window: Option<bool>,
 }
 
 /// Creates a project from a selected template.
@@ -631,7 +647,7 @@ pub struct OpenRemote {
     #[serde(default)]
     pub from_existing_connection: bool,
     #[serde(default)]
-    pub create_new_window: bool,
+    pub create_new_window: Option<bool>,
 }
 
 /// Opens the dev container connection modal.
@@ -795,7 +811,7 @@ pub mod wsl_actions {
     #[serde(deny_unknown_fields)]
     pub struct OpenFolderInWsl {
         #[serde(default)]
-        pub create_new_window: bool,
+        pub create_new_window: Option<bool>,
     }
 
     /// Open a wsl distro.
@@ -804,7 +820,7 @@ pub mod wsl_actions {
     #[serde(deny_unknown_fields)]
     pub struct OpenWsl {
         #[serde(default)]
-        pub create_new_window: bool,
+        pub create_new_window: Option<bool>,
     }
 }
 
