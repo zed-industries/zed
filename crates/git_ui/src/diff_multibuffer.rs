@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::Result;
 use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use editor::{
     Addon, Editor, EditorEvent, EditorSettings, RenderDiffHunkControlsFn, SelectionEffects,
     SplittableEditor, actions::GoToHunk, multibuffer_context_lines, render_diff_hunk_controls,
@@ -850,9 +850,15 @@ impl DiffMultibuffer {
                 }
             }
 
+            let live_paths = entries
+                .keys()
+                .map(|path_key| path_key.path.clone())
+                .collect::<HashSet<_>>();
+            this.buffer_subscriptions
+                .retain(|path, _| live_paths.contains(path));
+
             this.editor.update(cx, |editor, cx| {
                 for (path, buffer_id) in previous_paths {
-                    this.buffer_subscriptions.remove(&path.path);
                     editor.rhs_editor().update(cx, |editor, cx| {
                         conflict_view::buffers_removed(editor, &[buffer_id], cx);
                     });
