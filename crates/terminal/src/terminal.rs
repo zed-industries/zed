@@ -2214,6 +2214,7 @@ impl Terminal {
             self.last_content.display_offset,
         );
 
+        // Secondary is Cmd on macOS and Ctrl elsewhere: treat it as link-open intent.
         if e.button == MouseButton::Left && e.modifiers.secondary() {
             self.mouse_down_hyperlink = self.find_hyperlink_at_point(point);
 
@@ -2276,6 +2277,8 @@ impl Terminal {
         let setting = TerminalSettings::get_global(cx);
 
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
+        // Complete a link-open click before mouse reporting so the foreground app never sees
+        // one half of a consumed click.
         if let Some(mouse_down_hyperlink) = self.mouse_down_hyperlink.take() {
             let point = grid_point(
                 position,
