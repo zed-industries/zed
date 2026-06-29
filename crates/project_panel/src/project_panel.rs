@@ -1856,6 +1856,7 @@ impl ProjectPanel {
         let edited_entry;
         let new_project_path: ProjectPath;
         let created_dirs: Vec<ProjectPath>;
+
         if is_new_entry {
             self.selection = Some(SelectedEntry {
                 worktree_id,
@@ -1888,9 +1889,10 @@ impl ProjectPanel {
             edited_entry_id = entry.id;
             edited_entry = Some(entry);
             new_project_path = (worktree_id, new_path).into();
-            // Compute the directories the rename will create *before* it runs,
-            // so that undoing the rename can remove them again (if still empty).
-            created_dirs = crate::undo::created_ancestor_dirs(
+            // Before renaming, we need to keep track of what directories will
+            // need to be created, so we can later remove these directories when
+            // undoing.
+            created_dirs = crate::undo::missing_parent_dirs(
                 worktree.read(cx),
                 worktree_id,
                 new_project_path.path.as_ref(),
@@ -1913,17 +1915,31 @@ impl ProjectPanel {
 
                 // Record the operation if the edit was applied
                 if new_entry.is_ok() {
-                    let operation = if let Some(old_entry) = edited_entry {
-                        Change::Renamed {
-                            from: (worktree_id, old_entry.path).into(),
-                            to: new_project_path,
-                            created_dirs,
-                        }
-                    } else {
-                        Change::Created(new_project_path)
-                    };
+                    if let Some(old_entry) = edited_entry {
+                        // Record any parent directories the rename created in
+                        // the same batch, so undoing removes them too.
+                        // For example, renaming `a.txt` to `files/a.txt` will
+                        // first create the `files/` directory, if it doesn't
+                        // exist. Undoing should remove the directory too, if
+                        // it's empty.
+                        let mut changes: Vec<Change> = created_dirs
+                            .into_iter()
+                            .rev()
+                            .map(Change::DirCreated)
+                            .collect();
 
-                    project_panel.undo_manager.record([operation]).log_err();
+                        changes.push(Change::Renamed(
+                            (worktree_id, old_entry.path).into(),
+                            new_project_path,
+                        ));
+
+                        project_panel.undo_manager.record(changes).log_err();
+                    } else {
+                        project_panel
+                            .undo_manager
+                            .record([Change::Created(new_project_path)])
+                            .log_err();
+                    }
                 }
 
                 cx.notify();
@@ -3293,11 +3309,7 @@ impl ProjectPanel {
                                 .await
                                 .notify_workspace_async_err(workspace.clone(), &mut cx)
                             {
-                                changes.push(Change::Renamed {
-                                    from,
-                                    to,
-                                    created_dirs: Vec::new(),
-                                });
+                                changes.push(Change::Renamed(from, to));
                                 last_succeed = Some(entry);
                             }
                         }
@@ -4747,11 +4759,10 @@ impl ProjectPanel {
                             if let (Some(old_path), Some(worktree_id)) =
                                 (old_paths.get(&entry_id), destination_worktree_id)
                             {
-                                changes.push(Change::Renamed {
-                                    from: old_path.clone(),
-                                    to: (worktree_id, new_entry.path).into(),
-                                    created_dirs: Vec::new(),
-                                });
+                                changes.push(Change::Renamed(
+                                    old_path.clone(),
+                                    (worktree_id, new_entry.path).into(),
+                                ));
                             }
                         }
                     }
@@ -4775,11 +4786,10 @@ impl ProjectPanel {
                             if let (Some(old_path), Some(worktree_id)) =
                                 (old_paths.get(&entry_id), destination_worktree_id)
                             {
-                                operations.push(Change::Renamed {
-                                    from: old_path.clone(),
-                                    to: (worktree_id, new_entry.path.clone()).into(),
-                                    created_dirs: Vec::new(),
-                                });
+                                operations.push(Change::Renamed(
+                                    old_path.clone(),
+                                    (worktree_id, new_entry.path.clone()).into(),
+                                ));
                             }
                             move_results.push((entry_id, new_entry));
                         }

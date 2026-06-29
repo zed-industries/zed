@@ -279,9 +279,10 @@ async fn rename_with_dir_undo_redo(cx: &mut gpui::TestAppContext) {
     cx.redo().await;
     cx.assert_fs_state_is(&["b.txt", "files/", "files/a.txt"]);
 
-    // Lastly, let's insert a different file into the `files` directory (as if it
-    // had been created outside of the project panel) to ensure that undoing the
-    // rename will now leave the directory in place, since it is no longer empty.
+    // Lastly, let's insert a different file into the `files` directory (as if
+    // it had been created outside of the project panel) to ensure that undoing
+    // the rename will now leave the directory in place, since it is no longer
+    // empty.
     let external = path("/workspace/files/external.txt");
     cx.fs
         .write(Path::new(&external), b"external")

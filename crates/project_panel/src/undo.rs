@@ -139,7 +139,7 @@ use project::{ProjectPath, WorktreeId};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::VecDeque, sync::Arc};
 use ui::App;
-use util::{ResultExt, rel_path::RelPath};
+use util::rel_path::RelPath;
 use workspace::{
     Workspace,
     notifications::{NotificationId, simple_message_notification::MessageNotification},
@@ -148,16 +148,16 @@ use worktree::{CreatedEntry, Worktree};
 
 enum Operation {
     Trash(ProjectPath),
-    Rename {
-        from: ProjectPath,
-        to: ProjectPath,
-        /// Directories to remove after performing the rename, but only if they
-        /// end up empty. Used to clean up directories that were created by the
-        /// original rename when that rename is undone.
-        remove_dirs: Vec<ProjectPath>,
-    },
+    Rename(ProjectPath, ProjectPath),
     Restore(WorktreeId, TrashedEntry),
     Batch(Vec<Operation>),
+    /// Creates an empty directory, idempotently.
+    /// Meant to only be used when decomposing a [`Self::Rename`] that has to
+    /// create parent directories.
+    CreateDir(ProjectPath),
+    /// Removes a directory, but only if it is empty.
+    /// Meant to only be used when decomposing a [`Self::Rename`].
+    RemoveDir(ProjectPath),
 }
 
 impl Operation {
@@ -167,24 +167,9 @@ impl Operation {
                 let trash_entry = undo_manager.trash(&project_path, cx).await?;
                 Change::Trashed(project_path.worktree_id, trash_entry)
             }
-            Operation::Rename {
-                from,
-                to,
-                remove_dirs,
-            } => {
-                // Determine which directories this rename will create *before*
-                // it runs, so the resulting `Change` knows what to clean up if
-                // it is later undone.
-                let created_dirs = undo_manager.dirs_created_by_rename(&to, cx)?;
+            Operation::Rename(from, to) => {
                 undo_manager.rename(&from, &to, cx).await?;
-                // Remove any directories that the inverted rename created, but
-                // only when they are now empty.
-                undo_manager.remove_empty_dirs(remove_dirs, cx).await;
-                Change::Renamed {
-                    from,
-                    to,
-                    created_dirs,
-                }
+                Change::Renamed(from, to)
             }
             Operation::Restore(worktree_id, trashed_entry) => {
                 let project_path = undo_manager.restore(worktree_id, trashed_entry, cx).await?;
@@ -197,6 +182,14 @@ impl Operation {
                 }
                 Change::Batched(res)
             }
+            Operation::CreateDir(path) => {
+                undo_manager.create_dir(&path, cx).await?;
+                Change::DirCreated(path)
+            }
+            Operation::RemoveDir(path) => {
+                undo_manager.remove_dir(&path, cx).await?;
+                Change::DirRemoved(path)
+            }
         })
     }
 }
@@ -205,15 +198,11 @@ impl Operation {
 pub(crate) enum Change {
     Created(ProjectPath),
     Trashed(WorktreeId, TrashedEntry),
-    Renamed {
-        from: ProjectPath,
-        to: ProjectPath,
-        /// Directories that were created as a side effect of the rename, so
-        /// that undoing it can remove them again (if they are still empty).
-        created_dirs: Vec<ProjectPath>,
-    },
+    Renamed(ProjectPath, ProjectPath),
     Restored(ProjectPath),
     Batched(Vec<Change>),
+    DirCreated(ProjectPath),
+    DirRemoved(ProjectPath),
 }
 
 impl Change {
@@ -223,16 +212,10 @@ impl Change {
             Change::Trashed(worktree_id, trashed_entry) => {
                 Operation::Restore(worktree_id, trashed_entry)
             }
-            Change::Renamed {
-                from,
-                to,
-                created_dirs,
-            } => Operation::Rename {
-                from: to,
-                to: from,
-                remove_dirs: created_dirs,
-            },
+            Change::Renamed(from, to) => Operation::Rename(to, from),
             Change::Restored(project_path) => Operation::Trash(project_path),
+            Change::DirCreated(path) => Operation::RemoveDir(path),
+            Change::DirRemoved(path) => Operation::CreateDir(path),
             // When inverting a batch of operations, we reverse the order of
             // operations to handle dependencies between them. For example, if a
             // batch contains the following order of operations:
@@ -249,11 +232,10 @@ impl Change {
     }
 }
 
-/// Returns the ancestor directories of `path` that do not yet exist in the
-/// given worktree and would therefore be created when an entry is placed at
-/// `path`. The directories are ordered from the deepest to the shallowest, so
-/// that removing them in order is always safe.
-pub(crate) fn created_ancestor_dirs(
+/// Returns the parent directories of `path` that do not yet exist in the given
+/// worktree and would therefore be created when an entry is placed at `path`,
+/// ordered from the deepest to the shallowest.
+pub(crate) fn missing_parent_dirs(
     worktree: &Worktree,
     worktree_id: WorktreeId,
     path: &RelPath,
@@ -557,50 +539,44 @@ impl Inner {
         res?.await
     }
 
-    /// Computes the directories that renaming an entry to `to` would create,
-    /// i.e. the ancestor directories of `to` that do not exist yet.
-    fn dirs_created_by_rename(
-        &self,
-        to: &ProjectPath,
-        cx: &mut AsyncApp,
-    ) -> Result<Vec<ProjectPath>> {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return Err(anyhow!("Failed to obtain workspace."));
-        };
-
-        Ok(workspace.read_with(cx, |workspace, cx| {
-            let project = workspace.project().read(cx);
-            let Some(worktree) = project.worktree_for_id(to.worktree_id, cx) else {
-                return Vec::new();
-            };
-            created_ancestor_dirs(worktree.read(cx), to.worktree_id, to.path.as_ref())
-        }))
-    }
-
-    /// Removes each of the provided directories, but only if it still exists and
-    /// is empty. Used to clean up directories that were created as a side effect
-    /// of a rename when that rename is undone.
-    async fn remove_empty_dirs(&self, dirs: Vec<ProjectPath>, cx: &mut AsyncApp) {
-        for dir in dirs {
-            self.remove_dir_if_empty(&dir, cx).await.log_err();
-        }
-    }
-
-    async fn remove_dir_if_empty(&self, dir: &ProjectPath, cx: &mut AsyncApp) -> Result<()> {
+    /// Creates an empty directory at `path`, doing nothing if it already exists.
+    async fn create_dir(&self, path: &ProjectPath, cx: &mut AsyncApp) -> Result<()> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Err(anyhow!("Failed to obtain workspace."));
         };
 
         let task = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
-                let worktree = project.worktree_for_id(dir.worktree_id, cx)?;
+                if project.entry_for_path(path, cx).is_some() {
+                    return None;
+                }
+                Some(project.create_entry(path.clone(), true, cx))
+            })
+        });
+
+        if let Some(task) = task {
+            task.await?;
+        }
+
+        Ok(())
+    }
+
+    /// Removes the directory at `path`, but only if it still exists and is
+    /// empty; otherwise it is left in place.
+    async fn remove_dir(&self, path: &ProjectPath, cx: &mut AsyncApp) -> Result<()> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Err(anyhow!("Failed to obtain workspace."));
+        };
+
+        let task = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                let worktree = project.worktree_for_id(path.worktree_id, cx)?;
 
                 let entry_id = {
                     let worktree = worktree.read(cx);
-                    let entry = worktree.entry_for_path(dir.path.as_ref())?;
-                    // Files may have been created in this directory outside of
-                    // the project panel, so only remove it when it is empty.
-                    if !entry.is_dir() || worktree.child_entries(dir.path.as_ref()).next().is_some()
+                    let entry = worktree.entry_for_path(path.path.as_ref())?;
+                    if !entry.is_dir()
+                        || worktree.child_entries(path.path.as_ref()).next().is_some()
                     {
                         return None;
                     }
