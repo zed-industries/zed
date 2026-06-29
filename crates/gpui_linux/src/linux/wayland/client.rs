@@ -108,6 +108,19 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::{
 const MIN_KEYCODE: u32 = 8;
 
 const UNKNOWN_KEYBOARD_LAYOUT_NAME: SharedString = SharedString::new_static("unknown");
+const XDG_ACTIVATION_TOKEN_ENV_VAR: &str = "XDG_ACTIVATION_TOKEN";
+
+fn take_startup_activation_token_from_environment() -> Option<String> {
+    let startup_activation_token = std::env::var(XDG_ACTIVATION_TOKEN_ENV_VAR)
+        .ok()
+        .filter(|token| !token.is_empty());
+    // The token must be removed from the environment so it isn't inherited by child
+    // processes we spawn, per the xdg-activation spec: https://wayland.app/protocols/xdg-activation-v1
+    // SAFETY: This runs during Wayland platform initialization before GPUI starts
+    // concurrent environment access or spawning child processes.
+    unsafe { std::env::remove_var(XDG_ACTIVATION_TOKEN_ENV_VAR) };
+    startup_activation_token
+}
 
 #[derive(Clone)]
 pub struct Globals {
@@ -262,6 +275,7 @@ pub(crate) struct WaylandClientState {
     primary_data_offer: Option<DataOffer<ZwpPrimarySelectionOfferV1>>,
     cursor: Cursor,
     pending_activation: Option<PendingActivation>,
+    startup_activation_token: Option<String>,
     event_loop: Option<EventLoop<'static, WaylandClientStatePtr>>,
     pub common: LinuxCommon,
     ime_enabled: Option<bool>,
@@ -294,6 +308,18 @@ pub(crate) enum PendingActivation {
     Path(PathBuf),
     /// A window from ourselves to raise.
     Window(ObjectId),
+}
+
+impl WaylandClientState {
+    fn consume_startup_activation_token(&mut self, surface: &wl_surface::WlSurface) {
+        let Some(startup_activation_token) = self.startup_activation_token.take() else {
+            return;
+        };
+        let Some(activation) = self.globals.activation.as_ref() else {
+            return;
+        };
+        activation.activate(startup_activation_token, surface);
+    }
 }
 
 /// This struct is required to conform to Rust's orphan rules, so we can dispatch on the state but hand the
@@ -537,6 +563,7 @@ fn wl_output_version(version: u32) -> u32 {
 
 impl WaylandClient {
     pub(crate) fn new() -> Self {
+        let startup_activation_token = take_startup_activation_token_from_environment();
         let conn = Connection::connect_to_env().unwrap();
 
         let (globals, event_queue) = registry_queue_init::<WaylandClientStatePtr>(&conn).unwrap();
@@ -741,6 +768,7 @@ impl WaylandClient {
             primary_data_offer: None,
             cursor,
             pending_activation: None,
+            startup_activation_token,
             event_loop: Some(event_loop),
             ime_enabled: None,
         }));
@@ -842,6 +870,9 @@ impl LinuxClient for WaylandClient {
             parent,
             target_output,
         )?;
+        if window.0.toplevel().is_some() {
+            state.consume_startup_activation_token(&window.0.surface());
+        }
         state.windows.insert(surface_id, window.0.clone());
 
         Ok(Box::new(window))
