@@ -1211,7 +1211,7 @@ impl ThreadView {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
                     && self.thread.read(cx).supports_truncate(cx)
-                    && user_message.id.is_some()
+                    && user_message.client_id.is_some()
                     && !self.is_subagent()
                 {
                     self.editing_message = Some(event.entry_index);
@@ -1222,7 +1222,7 @@ impl ThreadView {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
                     && self.thread.read(cx).supports_truncate(cx)
-                    && user_message.id.is_some()
+                    && user_message.client_id.is_some()
                     && !self.is_subagent()
                 {
                     if editor.read(cx).text(cx).as_str() == user_message.content.to_markdown(cx) {
@@ -1940,8 +1940,13 @@ impl ThreadView {
         }
         let thread = self.thread.clone();
 
-        let Some(user_message_id) = thread.update(cx, |thread, _| {
-            thread.entries().get(entry_ix)?.user_message()?.id.clone()
+        let Some(client_id) = thread.update(cx, |thread, _| {
+            thread
+                .entries()
+                .get(entry_ix)?
+                .user_message()?
+                .client_id
+                .clone()
         }) else {
             return;
         };
@@ -1977,7 +1982,7 @@ impl ThreadView {
             }
 
             thread
-                .update(cx, |thread, cx| thread.rewind(user_message_id, cx))
+                .update(cx, |thread, cx| thread.rewind(client_id, cx))
                 .await?;
             this.update_in(cx, |thread, window, cx| {
                 cx.emit(AcpThreadViewEvent::Interacted);
@@ -2684,10 +2689,10 @@ impl ThreadView {
 
     // thread stuff
 
-    pub fn restore_checkpoint(&mut self, message_id: &UserMessageId, cx: &mut Context<Self>) {
+    pub fn restore_checkpoint(&mut self, client_id: &ClientUserMessageId, cx: &mut Context<Self>) {
         self.thread
             .update(cx, |thread, cx| {
-                thread.restore_checkpoint(message_id.clone(), cx)
+                thread.restore_checkpoint(client_id.clone(), cx)
             })
             .detach_and_log_err(cx);
     }
@@ -5941,7 +5946,7 @@ impl ThreadView {
 
                 let is_subagent = self.is_subagent();
                 let can_rewind = self.thread.read(cx).supports_truncate(cx);
-                let is_editable = can_rewind && message.id.is_some() && !is_subagent;
+                let is_editable = can_rewind && message.client_id.is_some() && !is_subagent;
                 let agent_name = if is_subagent {
                     "subagents".into()
                 } else {
@@ -5962,7 +5967,7 @@ impl ThreadView {
                     .gap_1p5()
                     .w_full()
                     .when(is_editable && has_checkpoint_button, |this| {
-                        this.children(message.id.clone().map(|message_id| {
+                        this.children(message.client_id.clone().map(|client_id| {
                             h_flex()
                                 .px_3()
                                 .gap_2()
@@ -5974,7 +5979,7 @@ impl ThreadView {
                                         .color(Color::Muted)
                                         .tooltip(Tooltip::text("Restores all files in the project to the content they had at this point in the conversation."))
                                         .on_click(cx.listener(move |this, _, _window, cx| {
-                                            this.restore_checkpoint(&message_id, cx);
+                                            this.restore_checkpoint(&client_id, cx);
                                         }))
                                 )
                                 .child(Divider::horizontal())
@@ -6112,7 +6117,7 @@ impl ThreadView {
                     .gap_3()
                     .children(chunks.iter().enumerate().filter_map(
                         |(chunk_ix, chunk)| match chunk {
-                            AssistantMessageChunk::Message { block } => {
+                            AssistantMessageChunk::Message { block, .. } => {
                                 block.markdown().and_then(|md| {
                                     let this_is_blank = md.read(cx).source().trim().is_empty();
                                     is_blank = is_blank && this_is_blank;
@@ -6126,7 +6131,7 @@ impl ThreadView {
                                     )
                                 })
                             }
-                            AssistantMessageChunk::Thought { block } => {
+                            AssistantMessageChunk::Thought { block, .. } => {
                                 block.markdown().and_then(|md| {
                                     let this_is_blank = md.read(cx).source().trim().is_empty();
                                     is_blank = is_blank && this_is_blank;
@@ -7098,8 +7103,12 @@ impl ThreadView {
                         .map(|chunks| {
                             chunks.iter().any(|chunk| {
                                 let md = match chunk {
-                                    AssistantMessageChunk::Message { block } => block.markdown(),
-                                    AssistantMessageChunk::Thought { block } => block.markdown(),
+                                    AssistantMessageChunk::Message { block, .. } => {
+                                        block.markdown()
+                                    }
+                                    AssistantMessageChunk::Thought { block, .. } => {
+                                        block.markdown()
+                                    }
                                 };
                                 md.map_or(false, |m| m.read(cx).selected_text().is_some())
                             })
@@ -7109,8 +7118,8 @@ impl ThreadView {
                     let context_menu_link = chunks.and_then(|chunks| {
                         chunks.iter().find_map(|chunk| {
                             let md = match chunk {
-                                AssistantMessageChunk::Message { block } => block.markdown(),
-                                AssistantMessageChunk::Thought { block } => block.markdown(),
+                                AssistantMessageChunk::Message { block, .. } => block.markdown(),
+                                AssistantMessageChunk::Thought { block, .. } => block.markdown(),
                             };
                             md.and_then(|m| m.read(cx).context_menu_link().cloned())
                         })
@@ -7216,7 +7225,7 @@ impl ThreadView {
                         .chunks
                         .iter()
                         .filter_map(|chunk| match chunk {
-                            AssistantMessageChunk::Message { block } => {
+                            AssistantMessageChunk::Message { block, .. } => {
                                 let markdown = block.to_markdown(cx);
                                 if markdown.trim().is_empty() {
                                     None
