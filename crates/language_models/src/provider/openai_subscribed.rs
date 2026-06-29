@@ -433,6 +433,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                     ReasoningEffort::Medium => ("Medium", "medium"),
                     ReasoningEffort::High => ("High", "high"),
                     ReasoningEffort::XHigh => ("Extra High", "xhigh"),
+                    ReasoningEffort::Max => return None, // Not supported by any OpenAI models
                 };
 
                 Some(LanguageModelEffortLevel {

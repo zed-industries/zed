@@ -478,15 +478,17 @@ pub enum ReasoningEffort {
     Medium,
     High,
     XHigh,
+    Max,
 }
 
 impl ReasoningEffort {
-    pub const OPENAI_COMPATIBLE_SELECTABLE: [Self; 5] = [
+    pub const OPENAI_COMPATIBLE_SELECTABLE: [Self; 6] = [
         Self::Minimal,
         Self::Low,
         Self::Medium,
         Self::High,
         Self::XHigh,
+        Self::Max,
     ];
 
     pub fn label(self) -> &'static str {
@@ -497,6 +499,7 @@ impl ReasoningEffort {
             Self::Medium => "Medium",
             Self::High => "High",
             Self::XHigh => "Extra High",
+            Self::Max => "Max",
         }
     }
 
@@ -508,6 +511,7 @@ impl ReasoningEffort {
             Self::Medium => "medium",
             Self::High => "high",
             Self::XHigh => "xhigh",
+            Self::Max => "max",
         }
     }
 }

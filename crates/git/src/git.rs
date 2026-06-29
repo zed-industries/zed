@@ -115,6 +115,8 @@ actions!(
         Init,
         /// Opens all modified files in the editor.
         OpenModifiedFiles,
+        /// Opens the current file in a solo diff view.
+        OpenFileDiff,
         /// Clones a repository.
         Clone,
         ViewCommit,
