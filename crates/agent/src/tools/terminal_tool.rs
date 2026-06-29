@@ -1274,8 +1274,8 @@ fn resolve_cd_in_worktrees(
             Some(abs_path.clone())
         } else {
             path_style
-                .join(abs_path, &*subpath.display(path_style))
-                .map(PathBuf::from)
+                .join_path(abs_path, &*subpath.display(path_style))
+                .ok()
         }
     })
 }
@@ -1299,7 +1299,7 @@ mod tests {
         assert_eq!(
             resolve_cd_in_worktrees("/b/worktree", Posix, &posix_roots),
             Some(PathBuf::from("/b/worktree")),
-            "a POSIX-absolute path resolves under a POSIX project path style even on a Windows host; #58839"
+            "a POSIX-absolute path resolves under a POSIX project path style even on a Windows host"
         );
         assert_eq!(
             resolve_cd_in_worktrees("/a/worktree/src", Posix, &posix_roots),
