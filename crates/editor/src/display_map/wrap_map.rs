@@ -145,7 +145,7 @@ pub struct WrapChunks<'a> {
     input_chunks: tab_map::TabChunks<'a>,
     input_chunk: Chunk<'a>,
     output_position: WrapPoint,
-    max_output_row: WrapRow,
+    max_output: WrapPoint,
     transforms: Cursor<'a, 'static, Transform, Dimensions<WrapPoint, TabPoint>>,
     snapshot: &'a WrapSnapshot,
 }
@@ -751,12 +751,12 @@ impl WrapSnapshot {
     #[ztracing::instrument(skip_all)]
     pub(crate) fn chunks<'a>(
         &'a self,
-        rows: Range<WrapRow>,
+        range: Range<WrapPoint>,
         language_aware: LanguageAwareStyling,
         highlights: Highlights<'a>,
     ) -> WrapChunks<'a> {
-        let output_start = WrapPoint::new(rows.start, 0);
-        let output_end = WrapPoint::new(rows.end, 0);
+        let output_start = range.start;
+        let output_end = range.end;
         let mut transforms = self
             .transforms
             .cursor::<Dimensions<WrapPoint, TabPoint>>(());
@@ -777,7 +777,7 @@ impl WrapSnapshot {
             ),
             input_chunk: Default::default(),
             output_position: output_start,
-            max_output_row: rows.end,
+            max_output: output_end,
             transforms,
             snapshot: self,
         }
@@ -786,6 +786,10 @@ impl WrapSnapshot {
     #[ztracing::instrument(skip_all)]
     pub fn max_point(&self) -> WrapPoint {
         WrapPoint(self.transforms.summary().output.lines)
+    }
+
+    pub fn has_soft_wraps(&self) -> bool {
+        self.transforms.summary().has_wraps()
     }
 
     #[ztracing::instrument(skip_all)]
@@ -1055,7 +1059,7 @@ impl WrapSnapshot {
     #[cfg(test)]
     pub fn text_chunks(&self, wrap_row: WrapRow) -> impl Iterator<Item = &str> {
         self.chunks(
-            wrap_row..self.max_point().row() + WrapRow(1),
+            WrapPoint::new(wrap_row, 0)..WrapPoint::new(self.max_point().row() + WrapRow(1), 0),
             LanguageAwareStyling {
                 tree_sitter: false,
                 diagnostics: false,
@@ -1138,9 +1142,9 @@ impl WrapPointCursor<'_> {
 
 impl WrapChunks<'_> {
     #[ztracing::instrument(skip_all)]
-    pub(crate) fn seek(&mut self, rows: Range<WrapRow>) {
-        let output_start = WrapPoint::new(rows.start, 0);
-        let output_end = WrapPoint::new(rows.end, 0);
+    pub(crate) fn seek(&mut self, range: Range<WrapPoint>) {
+        let output_start = range.start;
+        let output_end = range.end;
         self.transforms.seek(&output_start, Bias::Right);
         let mut input_start = TabPoint(self.transforms.start().1.0);
         if self.transforms.item().is_some_and(|t| t.is_isomorphic()) {
@@ -1153,7 +1157,7 @@ impl WrapChunks<'_> {
         self.input_chunks.seek(input_start..input_end);
         self.input_chunk = Chunk::default();
         self.output_position = output_start;
-        self.max_output_row = rows.end;
+        self.max_output = output_end;
     }
 }
 
@@ -1162,7 +1166,7 @@ impl<'a> Iterator for WrapChunks<'a> {
 
     #[ztracing::instrument(skip_all)]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.output_position.row() >= self.max_output_row {
+        if self.output_position >= self.max_output {
             return None;
         }
 
@@ -1176,7 +1180,8 @@ impl<'a> Iterator for WrapChunks<'a> {
                 // Exclude newline starting prior to the desired row.
                 start_ix = 1;
                 summary.row = 0;
-            } else if self.output_position.row() + WrapRow(1) >= self.max_output_row {
+            } else if WrapPoint::new(self.output_position.row() + WrapRow(1), 0) >= self.max_output
+            {
                 // Exclude soft indentation ending after the desired row.
                 end_ix = 1;
                 summary.column = 0;
@@ -1197,6 +1202,9 @@ impl<'a> Iterator for WrapChunks<'a> {
         let mut input_len = 0;
         let transform_end = self.transforms.end().0;
         for c in self.input_chunk.text.chars() {
+            if self.output_position >= self.max_output {
+                break;
+            }
             let char_len = c.len_utf8();
             input_len += char_len;
             if c == '\n' {
@@ -1931,7 +1939,7 @@ mod tests {
 
                 let actual_text = self
                     .chunks(
-                        WrapRow(start_row)..WrapRow(end_row),
+                        WrapPoint::new(WrapRow(start_row), 0)..WrapPoint::new(WrapRow(end_row), 0),
                         LanguageAwareStyling {
                             tree_sitter: true,
                             diagnostics: true,
@@ -1947,6 +1955,82 @@ mod tests {
                     start_row..end_row
                 );
             }
+
+            fn random_col(line: &str, rng: &mut impl Rng) -> u32 {
+                if line.is_empty() {
+                    return 0;
+                }
+                let mut col = rng.random_range(0..=line.len());
+                while !line.is_char_boundary(col) {
+                    col -= 1;
+                }
+                col as u32
+            }
+            let text = self.text();
+            let lines = text.split('\n').collect::<Vec<_>>();
+            for _ in 0..10 {
+                let end_row = rng.random_range(0..lines.len());
+                let start_row = rng.random_range(0..=end_row);
+                let start_col = random_col(lines[start_row], rng);
+                let end_col = random_col(lines[end_row], rng);
+                let start = WrapPoint::new(WrapRow(start_row as u32), start_col);
+                let end = WrapPoint::new(WrapRow(end_row as u32), end_col);
+                if start >= end || self.range_intersects_wrap(start..end) {
+                    continue;
+                }
+
+                let mut expected_text = String::new();
+                for row in start_row..=end_row {
+                    let line = lines[row];
+                    let s = if row == start_row {
+                        start_col as usize
+                    } else {
+                        0
+                    };
+                    let e = if row == end_row {
+                        end_col as usize
+                    } else {
+                        line.len()
+                    };
+                    expected_text.push_str(&line[s..e]);
+                    if row != end_row {
+                        expected_text.push('\n');
+                    }
+                }
+
+                let actual_text = self
+                    .chunks(
+                        start..end,
+                        LanguageAwareStyling {
+                            tree_sitter: true,
+                            diagnostics: true,
+                        },
+                        Highlights::default(),
+                    )
+                    .map(|c| c.text)
+                    .collect::<String>();
+                assert_eq!(
+                    expected_text,
+                    actual_text,
+                    "windowed chunks mismatch for range {:?}",
+                    start..end
+                );
+            }
+        }
+
+        fn range_intersects_wrap(&self, range: Range<WrapPoint>) -> bool {
+            let mut cursor = self.transforms.cursor::<WrapPoint>(());
+            cursor.seek(&range.start, Bias::Right);
+            while let Some(transform) = cursor.item() {
+                if *cursor.start() >= range.end {
+                    break;
+                }
+                if !transform.is_isomorphic() {
+                    return true;
+                }
+                cursor.next();
+            }
+            false
         }
     }
 }

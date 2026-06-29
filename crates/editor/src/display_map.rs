@@ -80,9 +80,9 @@ mod wrap_map;
 
 pub use crate::display_map::{fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap};
 pub use block_map::{
-    Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
-    BlockPoint, BlockProperties, BlockRows, BlockStyle, CompanionView, CompanionViewMut,
-    CustomBlockId, EditorMargins, RenderBlock, StickyHeaderExcerpt,
+    Block, BlockContext, BlockId, BlockMap, BlockPlacement, BlockPoint, BlockProperties, BlockRows,
+    BlockStyle, CompanionView, CompanionViewMut, CustomBlockId, EditorMargins, RenderBlock,
+    StickyHeaderExcerpt,
 };
 pub use crease_map::*;
 pub use fold_map::{
@@ -132,13 +132,20 @@ use std::{
 };
 
 use crate::{
-    EditorStyle, RowExt, hover_links::InlayHighlight, inlays::Inlay, movement::TextLayoutDetails,
+    EditorStyle, MAX_LINE_LEN, RowExt, hover_links::InlayHighlight, inlays::Inlay,
+    movement::TextLayoutDetails, scroll::ScrollPixelOffset,
 };
 use block_map::{BlockPointCursor, BlockRow, BlockSnapshot};
-use fold_map::{FoldPointCursor, FoldSnapshot};
+use fold_map::{Chunk, FoldPointCursor, FoldSnapshot};
 use inlay_map::{BufferOffsetToInlayPointCursor, InlaySnapshot};
+use itertools::Either;
 use tab_map::{TabPoint, TabPointCursor, TabSnapshot};
 use wrap_map::{WrapMap, WrapPatch, WrapPointCursor};
+
+const BULLETS: &str = match std::str::from_utf8(&[b'*'; rope::Chunk::MASK_BITS]) {
+    Ok(bullets) => bullets,
+    Err(_) => panic!("BULLETS must be ASCII"),
+};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum FoldStatus {
@@ -1491,6 +1498,109 @@ impl<'a> HighlightedChunk<'a> {
     }
 }
 
+fn mask_chunks<'a>(chunks: impl Iterator<Item = Chunk<'a>>) -> impl Iterator<Item = Chunk<'a>> {
+    chunks.flat_map(|chunk| {
+        let text = chunk.text;
+        text.split_inclusive('\n').flat_map(move |segment| {
+            let (content, has_newline) = match segment.strip_suffix('\n') {
+                Some(content) => (content, true),
+                None => (segment, false),
+            };
+            let content_chunks = std::iter::from_fn({
+                let chunk = chunk.clone();
+                let mut content = content;
+                move || {
+                    if content.is_empty() {
+                        return None;
+                    }
+                    let (piece_len, bullet_count) = match content.char_indices().nth(BULLETS.len())
+                    {
+                        Some((ix, _)) => (ix, BULLETS.len()),
+                        None => (content.len(), content.chars().count()),
+                    };
+                    content = &content[piece_len..];
+                    Some(Chunk {
+                        text: &BULLETS[..bullet_count],
+                        tabs: 0,
+                        chars: 1u128.unbounded_shl(bullet_count as u32).wrapping_sub(1),
+                        newlines: 0,
+                        ..chunk.clone()
+                    })
+                }
+            });
+            let newline_chunk = has_newline.then(|| Chunk {
+                text: "\n",
+                tabs: 0,
+                chars: 1,
+                newlines: 1,
+                ..chunk.clone()
+            });
+            content_chunks.chain(newline_chunk)
+        })
+    })
+}
+
+pub enum RowLayout<'a> {
+    Shaped(Arc<LineLayout>),
+    Grid {
+        snapshot: &'a DisplaySnapshot,
+        row: DisplayRow,
+        cell_width: Pixels,
+        len: u32,
+    },
+}
+
+impl RowLayout<'_> {
+    pub fn width(&self) -> ScrollPixelOffset {
+        match self {
+            Self::Shaped(layout) => ScrollPixelOffset::from(layout.width),
+            Self::Grid {
+                cell_width, len, ..
+            } => ScrollPixelOffset::from(*cell_width) * *len as ScrollPixelOffset,
+        }
+    }
+
+    pub fn x_for_index(&self, index: usize) -> ScrollPixelOffset {
+        match self {
+            Self::Shaped(layout) => ScrollPixelOffset::from(layout.x_for_index(index)),
+            Self::Grid {
+                cell_width, len, ..
+            } => {
+                ScrollPixelOffset::from(*cell_width) * index.min(*len as usize) as ScrollPixelOffset
+            }
+        }
+    }
+
+    pub fn closest_index_for_x(&self, x: ScrollPixelOffset) -> usize {
+        match self {
+            Self::Shaped(layout) => layout.closest_index_for_x(Pixels::from(x)),
+            Self::Grid {
+                snapshot,
+                row,
+                cell_width,
+                len,
+            } => {
+                if *cell_width <= Pixels::ZERO {
+                    return 0;
+                }
+                let cells = (x / ScrollPixelOffset::from(*cell_width)).max(0.);
+                let column = (cells.round() as u32).min(*len);
+                let point = DisplayPoint::new(*row, column);
+                let left = snapshot.clip_point(point, Bias::Left).column();
+                let right = snapshot.clip_point(point, Bias::Right).column();
+                let column = if cells - ScrollPixelOffset::from(left)
+                    <= ScrollPixelOffset::from(right) - cells
+                {
+                    left
+                } else {
+                    right
+                };
+                column as usize
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct DisplaySnapshot {
     pub display_map_id: EntityId,
@@ -1517,6 +1627,11 @@ impl DisplaySnapshot {
     pub fn wrap_snapshot(&self) -> &WrapSnapshot {
         &self.block_snapshot.wrap_snapshot
     }
+
+    pub fn has_soft_wraps(&self) -> bool {
+        self.wrap_snapshot().has_soft_wraps()
+    }
+
     pub fn tab_snapshot(&self) -> &TabSnapshot {
         &self.block_snapshot.wrap_snapshot.tab_snapshot
     }
@@ -1788,33 +1903,30 @@ impl DisplaySnapshot {
     /// Returns text chunks starting at the given display row until the end of the file
     #[instrument(skip_all)]
     pub fn text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
-        self.block_snapshot
-            .chunks(
-                BlockRow(display_row.0)..BlockRow(self.max_point().row().next_row().0),
-                LanguageAwareStyling {
-                    tree_sitter: false,
-                    diagnostics: false,
-                },
-                self.masked,
-                Highlights::default(),
-            )
-            .map(|h| h.text)
+        let chunks = self.block_snapshot.chunks(
+            BlockRow(display_row.0)..BlockRow(self.max_point().row().next_row().0),
+            LanguageAwareStyling {
+                tree_sitter: false,
+                diagnostics: false,
+            },
+            Highlights::default(),
+        );
+        self.mask_chunks_if_needed(chunks).map(|h| h.text)
     }
 
     /// Returns text chunks starting at the end of the given display row in reverse until the start of the file
     #[instrument(skip_all)]
     pub fn reverse_text_chunks(&self, display_row: DisplayRow) -> impl Iterator<Item = &str> {
         (0..=display_row.0).rev().flat_map(move |row| {
-            self.block_snapshot
-                .chunks(
-                    BlockRow(row)..BlockRow(row + 1),
-                    LanguageAwareStyling {
-                        tree_sitter: false,
-                        diagnostics: false,
-                    },
-                    self.masked,
-                    Highlights::default(),
-                )
+            let chunks = self.block_snapshot.chunks(
+                BlockRow(row)..BlockRow(row + 1),
+                LanguageAwareStyling {
+                    tree_sitter: false,
+                    diagnostics: false,
+                },
+                Highlights::default(),
+            );
+            self.mask_chunks_if_needed(chunks)
                 .map(|h| h.text)
                 .collect::<Vec<_>>()
                 .into_iter()
@@ -1828,18 +1940,29 @@ impl DisplaySnapshot {
         display_rows: Range<DisplayRow>,
         language_aware: LanguageAwareStyling,
         highlight_styles: HighlightStyles,
-    ) -> DisplayChunks<'_> {
-        self.block_snapshot.chunks(
+    ) -> impl Iterator<Item = Chunk<'_>> {
+        let chunks = self.block_snapshot.chunks(
             BlockRow(display_rows.start.0)..BlockRow(display_rows.end.0),
             language_aware,
-            self.masked,
             Highlights {
                 text_highlights: Some(&self.text_highlights),
                 inlay_highlights: Some(&self.inlay_highlights),
                 semantic_token_highlights: Some(&self.semantic_token_highlights),
                 styles: highlight_styles,
             },
-        )
+        );
+        self.mask_chunks_if_needed(chunks)
+    }
+
+    fn mask_chunks_if_needed<'a>(
+        &self,
+        chunks: impl Iterator<Item = Chunk<'a>>,
+    ) -> impl Iterator<Item = Chunk<'a>> {
+        if self.masked {
+            Either::Left(mask_chunks(chunks))
+        } else {
+            Either::Right(chunks)
+        }
     }
 
     #[instrument(skip_all)]
@@ -1849,15 +1972,60 @@ impl DisplaySnapshot {
         language_aware: LanguageAwareStyling,
         editor_style: &'a EditorStyle,
     ) -> impl Iterator<Item = HighlightedChunk<'a>> {
-        self.chunks(
+        let chunks = self.chunks(
             display_rows,
             language_aware,
             HighlightStyles {
                 inlay_hint: Some(editor_style.inlay_hints_style),
                 edit_prediction: Some(editor_style.edit_prediction_styles),
             },
-        )
-        .flat_map({
+        );
+        self.map_to_highlighted_chunks(chunks, editor_style)
+    }
+
+    pub(crate) fn highlighted_chunks_in_range<'a>(
+        &'a self,
+        range: Range<DisplayPoint>,
+        language_aware: LanguageAwareStyling,
+        editor_style: &'a EditorStyle,
+    ) -> impl Iterator<Item = HighlightedChunk<'a>> {
+        let range =
+            self.clip_point(range.start, Bias::Left)..self.clip_point(range.end, Bias::Right);
+        debug_assert!(
+            !self.has_soft_wraps() || (range.start.column() == 0 && range.end.column() == 0),
+            "column sub-ranges are unsupported with soft wraps: wrap chunks emit synthetic \
+             soft-wrap indentation whole, never clipped by column"
+        );
+        debug_assert!(
+            (range.start.row().0..=range.end.row().0)
+                .all(|row| !self.is_block_line(DisplayRow(row))),
+            "block rows are unsupported: this path reads the wrap snapshot, bypassing the block map"
+        );
+        let start = self.block_snapshot.to_wrap_point(range.start.0, Bias::Left);
+        let end = self.block_snapshot.to_wrap_point(range.end.0, Bias::Right);
+        let chunks = self.wrap_snapshot().chunks(
+            start..end,
+            language_aware,
+            Highlights {
+                text_highlights: Some(&self.text_highlights),
+                inlay_highlights: Some(&self.inlay_highlights),
+                semantic_token_highlights: Some(&self.semantic_token_highlights),
+                styles: HighlightStyles {
+                    inlay_hint: Some(editor_style.inlay_hints_style),
+                    edit_prediction: Some(editor_style.edit_prediction_styles),
+                },
+            },
+        );
+        let chunks = self.mask_chunks_if_needed(chunks);
+        self.map_to_highlighted_chunks(chunks, editor_style)
+    }
+
+    fn map_to_highlighted_chunks<'a>(
+        &'a self,
+        chunks: impl Iterator<Item = Chunk<'a>> + 'a,
+        editor_style: &'a EditorStyle,
+    ) -> impl Iterator<Item = HighlightedChunk<'a>> + 'a {
+        chunks.flat_map({
             // track the current underline style so that we can apply it to
             // inlay hints within the diagnostic's span
             let mut current_diagnostic_underline: Option<UnderlineStyle> = None;
@@ -1996,15 +2164,21 @@ impl DisplaySnapshot {
     pub fn layout_row(
         &self,
         display_row: DisplayRow,
-        TextLayoutDetails {
-            text_system,
-            editor_style,
-            rem_size,
-            scroll_anchor: _,
-            visible_rows: _,
-            vertical_scroll_margin: _,
-        }: &TextLayoutDetails,
-    ) -> Arc<LineLayout> {
+        details: &TextLayoutDetails,
+    ) -> RowLayout<'_> {
+        if display_row <= self.max_point().row() && !self.has_soft_wraps() {
+            let line_len = self.line_len(display_row);
+            if line_len as usize > MAX_LINE_LEN {
+                return RowLayout::Grid {
+                    snapshot: self,
+                    row: display_row,
+                    cell_width: self.grid_cell_width(details),
+                    len: line_len,
+                };
+            }
+        }
+
+        let editor_style = &details.editor_style;
         let mut runs = Vec::new();
         let mut line = String::new();
 
@@ -2038,15 +2212,19 @@ impl DisplaySnapshot {
             }
         }
 
-        let font_size = editor_style.text.font_size.to_pixels(*rem_size);
-        text_system.layout_line(&line, font_size, &runs, None)
+        let font_size = editor_style.text.font_size.to_pixels(details.rem_size);
+        RowLayout::Shaped(
+            details
+                .text_system
+                .layout_line(&line, font_size, &runs, None),
+        )
     }
 
     pub fn x_for_display_point(
         &self,
         display_point: DisplayPoint,
         text_layout_details: &TextLayoutDetails,
-    ) -> Pixels {
+    ) -> ScrollPixelOffset {
         let line = self.layout_row(display_point.row(), text_layout_details);
         line.x_for_index(display_point.column() as usize)
     }
@@ -2054,11 +2232,23 @@ impl DisplaySnapshot {
     pub fn display_column_for_x(
         &self,
         display_row: DisplayRow,
-        x: Pixels,
+        x: ScrollPixelOffset,
         details: &TextLayoutDetails,
     ) -> u32 {
         let layout_line = self.layout_row(display_row, details);
         layout_line.closest_index_for_x(x) as u32
+    }
+
+    pub(crate) fn grid_cell_width(&self, details: &TextLayoutDetails) -> Pixels {
+        let font_id = details
+            .text_system
+            .resolve_font(&details.editor_style.text.font());
+        let font_size = details
+            .editor_style
+            .text
+            .font_size
+            .to_pixels(details.rem_size);
+        details.text_system.em_layout_width(font_id, font_size)
     }
 
     #[instrument(skip_all)]
@@ -2902,6 +3092,56 @@ pub mod tests {
             log::info!("block text: {:?}", snapshot.block_snapshot.text());
             log::info!("display text: {:?}", snapshot.text());
 
+            let mut masked_snapshot = snapshot.clone();
+            masked_snapshot.masked = true;
+            let text = snapshot.text();
+            let masked_text = masked_snapshot.text();
+            assert_eq!(
+                masked_text.split('\n').count(),
+                text.split('\n').count(),
+                "masking must preserve display row structure"
+            );
+            for (masked_line, line) in masked_text.split('\n').zip(text.split('\n')) {
+                assert_eq!(
+                    masked_line,
+                    "*".repeat(line.chars().count()),
+                    "masking must emit one bullet per char of {line:?}"
+                );
+            }
+            let masked_chunks = masked_snapshot.chunks(
+                DisplayRow(0)..masked_snapshot.max_point().row().next_row(),
+                LanguageAwareStyling {
+                    tree_sitter: false,
+                    diagnostics: false,
+                },
+                HighlightStyles::default(),
+            );
+            for chunk in masked_chunks {
+                let mut expected_chars = 0u128;
+                let mut expected_newlines = 0u128;
+                for (ix, c) in chunk.text.char_indices() {
+                    expected_chars |= 1 << ix;
+                    if c == '\n' {
+                        expected_newlines |= 1 << ix;
+                    }
+                }
+                assert_eq!(
+                    chunk.tabs, 0,
+                    "masked chunk {:?} must have no tabs",
+                    chunk.text
+                );
+                assert_eq!(
+                    chunk.chars, expected_chars,
+                    "masked chunk {:?} has an inconsistent chars bitmask",
+                    chunk.text
+                );
+                assert_eq!(
+                    chunk.newlines, expected_newlines,
+                    "masked chunk {:?} has an inconsistent newlines bitmask",
+                    chunk.text
+                );
+            }
+
             // Line boundaries
             let buffer = snapshot.buffer_snapshot();
             for _ in 0..5 {
@@ -3057,33 +3297,33 @@ pub mod tests {
                 ),
                 (
                     DisplayPoint::new(DisplayRow(0), 7),
-                    language::SelectionGoal::HorizontalPosition(f64::from(x))
+                    language::SelectionGoal::HorizontalPosition(x)
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(0), 7),
-                    language::SelectionGoal::HorizontalPosition(f64::from(x)),
+                    language::SelectionGoal::HorizontalPosition(x),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(1), 10),
-                    language::SelectionGoal::HorizontalPosition(f64::from(x))
+                    language::SelectionGoal::HorizontalPosition(x)
                 )
             );
             assert_eq!(
                 movement::down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(1), 10),
-                    language::SelectionGoal::HorizontalPosition(f64::from(x)),
+                    language::SelectionGoal::HorizontalPosition(x),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(2), 4),
-                    language::SelectionGoal::HorizontalPosition(f64::from(x))
+                    language::SelectionGoal::HorizontalPosition(x)
                 )
             );
 
@@ -3336,6 +3576,352 @@ pub mod tests {
                 ("() {}\n}".to_string(), Some(Hsla::red())),
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_highlighted_chunks_in_range_clips_to_char_boundaries(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        let buffer = cx.new(|cx| Buffer::local(format!("{}\nplain", "α".repeat(16)), cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                font("Helvetica"),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = cx.update(|cx| map.update(cx, |map, cx| map.snapshot(cx)));
+        let style = EditorStyle::default();
+        let language_aware = LanguageAwareStyling {
+            tree_sitter: false,
+            diagnostics: false,
+        };
+        let chunks_text = |range: Range<DisplayPoint>| {
+            snapshot
+                .highlighted_chunks_in_range(range, language_aware, &style)
+                .map(|chunk| chunk.text)
+                .collect::<String>()
+        };
+
+        assert_eq!(
+            chunks_text(DisplayPoint::new(DisplayRow(0), 2)..DisplayPoint::new(DisplayRow(0), 8)),
+            "ααα"
+        );
+        assert_eq!(
+            chunks_text(DisplayPoint::new(DisplayRow(0), 3)..DisplayPoint::new(DisplayRow(0), 9)),
+            "αααα"
+        );
+        assert_eq!(
+            chunks_text(DisplayPoint::new(DisplayRow(0), 31)..DisplayPoint::new(DisplayRow(1), 3)),
+            "α\npla"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_highlighted_chunks_in_range_masks_redacted_text(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        let long_len = MAX_LINE_LEN * 2;
+        let buffer = cx.new(|cx| Buffer::local(format!("{}\nsecret", "x".repeat(long_len)), cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                font("Helvetica"),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = cx.update(|cx| {
+            map.update(cx, |map, cx| {
+                map.masked = true;
+                map.snapshot(cx)
+            })
+        });
+        let style = EditorStyle::default();
+        let language_aware = LanguageAwareStyling {
+            tree_sitter: false,
+            diagnostics: false,
+        };
+        let chunks_text = |range: Range<DisplayPoint>| {
+            snapshot
+                .highlighted_chunks_in_range(range, language_aware, &style)
+                .map(|chunk| chunk.text)
+                .collect::<String>()
+        };
+
+        let window_start = long_len as u32 - 200;
+        assert_eq!(
+            chunks_text(
+                DisplayPoint::new(DisplayRow(0), window_start)
+                    ..DisplayPoint::new(DisplayRow(0), window_start + 10)
+            ),
+            "*".repeat(10)
+        );
+        assert_eq!(
+            chunks_text(
+                DisplayPoint::new(DisplayRow(0), long_len as u32 - 2)
+                    ..DisplayPoint::new(DisplayRow(1), 3)
+            ),
+            "**\n***"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_masked_text_chunks_preserve_newlines(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        let buffer = cx.new(|cx| Buffer::local("secret\nwörds\nhere", cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                font("Helvetica"),
+                px(14.0),
+                None,
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = cx.update(|cx| {
+            map.update(cx, |map, cx| {
+                map.masked = true;
+                map.snapshot(cx)
+            })
+        });
+
+        assert_eq!(
+            snapshot.text_chunks(DisplayRow(0)).collect::<String>(),
+            "******\n*****\n****"
+        );
+        assert_eq!(
+            snapshot
+                .reverse_text_chunks(DisplayRow(2))
+                .collect::<String>(),
+            "****\n*****\n******"
+        );
+        assert_eq!(
+            snapshot
+                .chunks(
+                    DisplayRow(0)..DisplayRow(3),
+                    LanguageAwareStyling {
+                        tree_sitter: false,
+                        diagnostics: false,
+                    },
+                    HighlightStyles::default(),
+                )
+                .map(|chunk| chunk.text)
+                .collect::<String>(),
+            "******\n*****\n****"
+        );
+    }
+
+    #[test]
+    fn test_mask_chunks_splits_chunks_longer_than_bullets() {
+        let first_len = BULLETS.len() + 22;
+        let second_len = BULLETS.len() * 2 + 44;
+        let text = format!("{}\n{}", "α".repeat(first_len), "x".repeat(second_len));
+        let chunk = Chunk {
+            text: &text,
+            ..Chunk::default()
+        };
+
+        let masked = mask_chunks(std::iter::once(chunk)).collect::<Vec<_>>();
+
+        for chunk in &masked {
+            assert!(chunk.text.len() <= BULLETS.len());
+            assert_eq!(
+                chunk.chars,
+                1u128.unbounded_shl(chunk.text.len() as u32).wrapping_sub(1)
+            );
+        }
+        assert_eq!(
+            masked.iter().map(|chunk| chunk.text).collect::<String>(),
+            format!("{}\n{}", "*".repeat(first_len), "*".repeat(second_len))
+        );
+    }
+
+    #[gpui::test]
+    async fn test_columnar_selection_on_huge_unwrapped_line_uses_monospace_grid(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        let mut cx = crate::test::editor_test_context::EditorTestContext::new(cx).await;
+        let long_len = MAX_LINE_LEN * 2;
+        cx.set_state(&format!(
+            "ˇ{}\n{}",
+            "x".repeat(long_len),
+            "α".repeat(long_len)
+        ));
+
+        cx.update_editor(|editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window, cx);
+            let snapshot = editor.snapshot(window, cx);
+            let cell_width = snapshot
+                .x_for_display_point(DisplayPoint::new(DisplayRow(0), 1), &text_layout_details);
+            assert!(cell_width > 0.);
+
+            let positions = cell_width * 100.0..cell_width * 200.0;
+            let selection = editor
+                .selections
+                .build_columnar_selection(
+                    &snapshot,
+                    DisplayRow(0),
+                    &positions,
+                    false,
+                    &text_layout_details,
+                )
+                .unwrap();
+            assert_eq!(selection.start, Point::new(0, 100));
+            assert_eq!(selection.end, Point::new(0, 200));
+
+            let positions = cell_width * 101.0..cell_width * 200.0;
+            let selection = editor
+                .selections
+                .build_columnar_selection(
+                    &snapshot,
+                    DisplayRow(1),
+                    &positions,
+                    false,
+                    &text_layout_details,
+                )
+                .unwrap();
+            assert_eq!(selection.start, Point::new(1, 100));
+            assert_eq!(selection.end, Point::new(1, 200));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_navigation_on_huge_unwrapped_lines_uses_monospace_grid(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        let mut cx = crate::test::editor_test_context::EditorTestContext::new(cx).await;
+        let long_len = MAX_LINE_LEN * 2;
+        cx.set_state(&format!(
+            "ˇ{}\n{}\nshort",
+            "x".repeat(long_len),
+            "α".repeat(long_len)
+        ));
+
+        cx.update_editor(|editor, window, cx| {
+            let text_layout_details = editor.text_layout_details(window, cx);
+            let snapshot = editor.snapshot(window, cx);
+
+            let column = (long_len - 10) as u32;
+            let x = snapshot.x_for_display_point(
+                DisplayPoint::new(DisplayRow(0), column),
+                &text_layout_details,
+            );
+            assert!(x > 0.);
+            assert_eq!(
+                snapshot.display_column_for_x(DisplayRow(0), x, &text_layout_details),
+                column
+            );
+
+            let odd_x = snapshot.x_for_display_point(
+                DisplayPoint::new(DisplayRow(0), (long_len - 9) as u32),
+                &text_layout_details,
+            );
+            assert_eq!(
+                snapshot.display_column_for_x(DisplayRow(1), odd_x, &text_layout_details),
+                (long_len - 10) as u32
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_layout_row_shapes_long_rows_when_soft_wrapped(cx: &mut gpui::TestAppContext) {
+        cx.background_executor
+            .set_block_on_ticks(usize::MAX..=usize::MAX);
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        let mut cx = crate::test::editor_test_context::EditorTestContext::new(cx).await;
+        let editor = cx.editor.clone();
+        let window = cx.window;
+
+        cx.update_window(window, |_, window, cx| {
+            let text_layout_details =
+                editor.update(cx, |editor, cx| editor.text_layout_details(window, cx));
+
+            let buffer = MultiBuffer::build_simple(&"x".repeat(MAX_LINE_LEN * 3), cx);
+            let map = cx.new(|cx| {
+                DisplayMap::new(
+                    buffer,
+                    font("Helvetica"),
+                    px(14.0),
+                    Some(px(12_000.0)),
+                    1,
+                    1,
+                    FoldPlaceholder::test(),
+                    DiagnosticSeverity::Warning,
+                    cx,
+                )
+            });
+            let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+            assert!(snapshot.has_soft_wraps());
+            assert!(snapshot.line_len(DisplayRow(0)) as usize > MAX_LINE_LEN);
+
+            assert!(matches!(
+                snapshot.layout_row(DisplayRow(0), &text_layout_details),
+                RowLayout::Shaped(_)
+            ));
+        })
+        .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_masked_soft_wrapped_line_with_deep_indent(cx: &mut gpui::TestAppContext) {
+        cx.background_executor
+            .set_block_on_ticks(usize::MAX..=usize::MAX);
+        cx.update(|cx| init_test(cx, &|_| {}));
+
+        let text = format!("{}{}", " ".repeat(200), "x".repeat(2000));
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+        let map = cx.new(|cx| {
+            DisplayMap::new(
+                buffer,
+                font("Helvetica"),
+                px(14.0),
+                Some(px(3000.0)),
+                1,
+                1,
+                FoldPlaceholder::test(),
+                DiagnosticSeverity::Warning,
+                cx,
+            )
+        });
+        let snapshot = cx.update(|cx| {
+            map.update(cx, |map, cx| {
+                map.masked = true;
+                map.snapshot(cx)
+            })
+        });
+        assert!(snapshot.max_point().row().0 > 0);
+
+        let masked_text = snapshot.text_chunks(DisplayRow(0)).collect::<String>();
+        let unmasked_line_count = snapshot.max_point().row().0 as usize + 1;
+        assert_eq!(masked_text.split('\n').count(), unmasked_line_count);
     }
 
     #[gpui::test]
