@@ -76,6 +76,8 @@ pub enum ChatMessage {
     Assistant {
         #[serde(default)]
         content: Option<MessageContent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning_content: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
@@ -350,6 +352,12 @@ impl Props {
             .as_ref()
             .is_some_and(|caps| caps.supports_tool_calls || caps.supports_tools)
     }
+
+    pub fn supports_thinking(&self) -> bool {
+        self.chat_template_caps
+            .as_ref()
+            .is_some_and(|caps| caps.supports_preserve_reasoning)
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -374,6 +382,8 @@ pub struct ChatTemplateCaps {
     pub supports_tool_calls: bool,
     #[serde(default)]
     pub supports_tools: bool,
+    #[serde(default)]
+    pub supports_preserve_reasoning: bool,
 }
 
 /// An event from the router's `/models/sse` feed, which the provider subscribes
@@ -744,6 +754,7 @@ mod tests {
             "chat_template_caps": {
                 "supports_tools": true,
                 "supports_tool_calls": true,
+                "supports_preserve_reasoning": true,
                 "supports_system_role": true
             }
         });
@@ -751,6 +762,7 @@ mod tests {
         assert_eq!(props.context_length(), Some(8192));
         assert!(props.supports_images());
         assert!(props.supports_tools());
+        assert!(props.supports_thinking());
     }
 
     fn model_event(value: serde_json::Value) -> ModelEvent {

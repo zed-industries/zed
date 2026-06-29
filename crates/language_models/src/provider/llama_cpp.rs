@@ -339,15 +339,16 @@ impl State {
     }
 }
 
-/// Capabilities that only become known once a router model loads (its real
-/// context length and tool support). `LanguageModel`'s methods take no `cx`, yet
-/// the agent reads them live each turn, so we share them through a map that
-/// re-discovery updates — an already-selected model picks up real values without
-/// re-selection. (Image/thinking support is fixed at load, so it stays a field.)
+/// Capabilities that only become known once a router model loads. `LanguageModel`'s
+/// methods take no `cx`, yet the agent reads them live each turn, so we share
+/// them through a map that re-discovery updates — an already-selected model
+/// picks up real values without re-selection. Image support is available from
+/// `/v1/models` hints, so it stays a field.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct LiveCapabilities {
     max_tokens: u64,
     supports_tools: bool,
+    supports_thinking: bool,
 }
 
 impl LiveCapabilities {
@@ -355,6 +356,7 @@ impl LiveCapabilities {
         Self {
             max_tokens: model.max_tokens,
             supports_tools: model.supports_tools,
+            supports_thinking: model.supports_thinking,
         }
     }
 }
@@ -427,6 +429,7 @@ fn model_from_entry(entry: &ModelEntry, props: Option<&Props>) -> llama_cpp::Mod
         None => !entry.is_loaded(),
     };
     let supports_images = props.is_some_and(Props::supports_images) || entry.supports_images_hint();
+    let supports_thinking = props.is_some_and(Props::supports_thinking);
 
     llama_cpp::Model::new(
         &entry.id,
@@ -434,7 +437,7 @@ fn model_from_entry(entry: &ModelEntry, props: Option<&Props>) -> llama_cpp::Mod
         Some(max_tokens),
         supports_tools,
         supports_images,
-        false,
+        supports_thinking,
     )
 }
 
@@ -570,7 +573,6 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
                     display_name: model.display_name().to_string(),
                     fallback_capabilities: LiveCapabilities::of(&model),
                     supports_images: model.supports_images,
-                    supports_thinking: model.supports_thinking,
                     capability_cells: self.capability_cells.clone(),
                     loading_progress: self.loading_progress.clone(),
                     http_client: self.http_client.clone(),
@@ -618,9 +620,8 @@ pub struct LlamaCppLanguageModel {
     capability_cells: CapabilityCells,
     /// Used when `capability_cells` has no entry (e.g. model removed mid-conversation).
     fallback_capabilities: LiveCapabilities,
-    /// Fixed once a model loads (unlike context/tools), so captured at build time.
+    /// Available from `/v1/models` hints, so captured at build time.
     supports_images: bool,
-    supports_thinking: bool,
     /// Shared with the provider; this model's load progress, read by `name` so the
     /// selector can show a loading indicator.
     loading_progress: LoadingProgress,
@@ -649,139 +650,12 @@ impl LlamaCppLanguageModel {
         &self,
         request: LanguageModelRequest,
     ) -> llama_cpp::ChatCompletionRequest {
-        let supports_images = self.supports_images;
-        let supports_tools = self.capabilities().supports_tools;
-        let mut messages = Vec::new();
-
-        for message in request.messages {
-            for content in message.content {
-                match content {
-                    MessageContent::Text(text) => add_message_content_part(
-                        llama_cpp::MessagePart::Text { text },
-                        message.role,
-                        &mut messages,
-                    ),
-                    MessageContent::Thinking { .. } => {}
-                    MessageContent::RedactedThinking(_) => {}
-                    MessageContent::Compaction(_) => {}
-                    MessageContent::Image(image) => {
-                        if supports_images {
-                            add_message_content_part(
-                                llama_cpp::MessagePart::Image {
-                                    image_url: llama_cpp::ImageUrl {
-                                        url: image.to_base64_url(),
-                                        detail: None,
-                                    },
-                                },
-                                message.role,
-                                &mut messages,
-                            );
-                        }
-                    }
-                    MessageContent::ToolUse(tool_use) => {
-                        let tool_call = llama_cpp::ToolCall {
-                            id: tool_use.id.to_string(),
-                            content: llama_cpp::ToolCallContent::Function {
-                                function: llama_cpp::FunctionContent {
-                                    name: tool_use.name.to_string(),
-                                    arguments: serde_json::to_string(&tool_use.input)
-                                        .unwrap_or_default(),
-                                },
-                            },
-                        };
-
-                        if let Some(llama_cpp::ChatMessage::Assistant { tool_calls, .. }) =
-                            messages.last_mut()
-                        {
-                            tool_calls.push(tool_call);
-                        } else {
-                            messages.push(llama_cpp::ChatMessage::Assistant {
-                                content: None,
-                                tool_calls: vec![tool_call],
-                            });
-                        }
-                    }
-                    MessageContent::ToolResult(tool_result) => {
-                        let content: Vec<llama_cpp::MessagePart> = tool_result
-                            .content
-                            .iter()
-                            .filter_map(|part| match part {
-                                LanguageModelToolResultContent::Text(text) => {
-                                    Some(llama_cpp::MessagePart::Text {
-                                        text: text.to_string(),
-                                    })
-                                }
-                                LanguageModelToolResultContent::Image(image) => {
-                                    if supports_images {
-                                        Some(llama_cpp::MessagePart::Image {
-                                            image_url: llama_cpp::ImageUrl {
-                                                url: image.to_base64_url(),
-                                                detail: None,
-                                            },
-                                        })
-                                    } else {
-                                        None
-                                    }
-                                }
-                            })
-                            .collect();
-
-                        messages.push(llama_cpp::ChatMessage::Tool {
-                            content: content.into(),
-                            tool_call_id: tool_result.tool_use_id.to_string(),
-                        });
-                    }
-                }
-            }
-        }
-
-        let tools: Vec<llama_cpp::ToolDefinition> = if supports_tools {
-            request
-                .tools
-                .into_iter()
-                .map(|tool| llama_cpp::ToolDefinition::Function {
-                    function: llama_cpp::FunctionDefinition {
-                        name: tool.name,
-                        description: Some(tool.description),
-                        parameters: Some(tool.input_schema),
-                    },
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-        // Only send `tool_choice` with actual tools; some OpenAI-compatible servers
-        // reject it otherwise.
-        let tool_choice = if tools.is_empty() {
-            None
-        } else {
-            request.tool_choice.map(|choice| match choice {
-                LanguageModelToolChoice::Auto => llama_cpp::ToolChoice::Auto,
-                LanguageModelToolChoice::Any => llama_cpp::ToolChoice::Required,
-                LanguageModelToolChoice::None => llama_cpp::ToolChoice::None,
-            })
-        };
-
-        llama_cpp::ChatCompletionRequest {
-            model: self.name.clone(),
-            messages,
-            stream: true,
-            // Let the server decide the output length (its `n_predict` default).
-            max_tokens: None,
-            stop: if request.stop.is_empty() {
-                None
-            } else {
-                Some(request.stop)
-            },
-            // llama.cpp models often ship recommended sampler settings, so override
-            // temperature only when the request sets one.
-            temperature: request.temperature,
-            tools,
-            tool_choice,
-            stream_options: Some(llama_cpp::StreamOptions {
-                include_usage: true,
-            }),
-        }
+        build_llama_cpp_request(
+            &self.name,
+            self.supports_images,
+            self.capabilities(),
+            request,
+        )
     }
 
     fn stream_completion(
@@ -814,6 +688,170 @@ impl LlamaCppLanguageModel {
         });
 
         async move { Ok(future.await?.boxed()) }.boxed()
+    }
+}
+
+fn build_llama_cpp_request(
+    model_name: &str,
+    supports_images: bool,
+    capabilities: LiveCapabilities,
+    request: LanguageModelRequest,
+) -> llama_cpp::ChatCompletionRequest {
+    let supports_tools = capabilities.supports_tools;
+    let supports_thinking = capabilities.supports_thinking;
+    let mut messages = Vec::new();
+
+    for message in request.messages {
+        let mut reasoning_content: Option<String> = None;
+        for content in message.content {
+            match content {
+                MessageContent::Text(text) => add_message_content_part(
+                    llama_cpp::MessagePart::Text { text },
+                    message.role,
+                    &mut messages,
+                    if supports_thinking && message.role == Role::Assistant {
+                        reasoning_content.take()
+                    } else {
+                        None
+                    },
+                ),
+                MessageContent::Thinking { text, .. } => {
+                    if supports_thinking && message.role == Role::Assistant && !text.is_empty() {
+                        reasoning_content.get_or_insert_default().push_str(&text);
+                    }
+                }
+                MessageContent::RedactedThinking(_) => {}
+                MessageContent::Compaction(_) => {}
+                MessageContent::Image(image) => {
+                    if supports_images {
+                        add_message_content_part(
+                            llama_cpp::MessagePart::Image {
+                                image_url: llama_cpp::ImageUrl {
+                                    url: image.to_base64_url(),
+                                    detail: None,
+                                },
+                            },
+                            message.role,
+                            &mut messages,
+                            if supports_thinking && message.role == Role::Assistant {
+                                reasoning_content.take()
+                            } else {
+                                None
+                            },
+                        );
+                    }
+                }
+                MessageContent::ToolUse(tool_use) => {
+                    let tool_call = llama_cpp::ToolCall {
+                        id: tool_use.id.to_string(),
+                        content: llama_cpp::ToolCallContent::Function {
+                            function: llama_cpp::FunctionContent {
+                                name: tool_use.name.to_string(),
+                                arguments: serde_json::to_string(&tool_use.input)
+                                    .unwrap_or_default(),
+                            },
+                        },
+                    };
+
+                    if let Some(llama_cpp::ChatMessage::Assistant {
+                        tool_calls,
+                        reasoning_content: message_reasoning_content,
+                        ..
+                    }) = messages.last_mut()
+                    {
+                        append_reasoning_content(
+                            message_reasoning_content,
+                            reasoning_content.take(),
+                        );
+                        tool_calls.push(tool_call);
+                    } else {
+                        messages.push(llama_cpp::ChatMessage::Assistant {
+                            content: None,
+                            reasoning_content: reasoning_content.take(),
+                            tool_calls: vec![tool_call],
+                        });
+                    }
+                }
+                MessageContent::ToolResult(tool_result) => {
+                    let content: Vec<llama_cpp::MessagePart> = tool_result
+                        .content
+                        .iter()
+                        .filter_map(|part| match part {
+                            LanguageModelToolResultContent::Text(text) => {
+                                Some(llama_cpp::MessagePart::Text {
+                                    text: text.to_string(),
+                                })
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                if supports_images {
+                                    Some(llama_cpp::MessagePart::Image {
+                                        image_url: llama_cpp::ImageUrl {
+                                            url: image.to_base64_url(),
+                                            detail: None,
+                                        },
+                                    })
+                                } else {
+                                    None
+                                }
+                            }
+                        })
+                        .collect();
+
+                    messages.push(llama_cpp::ChatMessage::Tool {
+                        content: content.into(),
+                        tool_call_id: tool_result.tool_use_id.to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    let tools: Vec<llama_cpp::ToolDefinition> = if supports_tools {
+        request
+            .tools
+            .into_iter()
+            .map(|tool| llama_cpp::ToolDefinition::Function {
+                function: llama_cpp::FunctionDefinition {
+                    name: tool.name,
+                    description: Some(tool.description),
+                    parameters: Some(tool.input_schema),
+                },
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    // Only send `tool_choice` with actual tools; some OpenAI-compatible servers
+    // reject it otherwise.
+    let tool_choice = if tools.is_empty() {
+        None
+    } else {
+        request.tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => llama_cpp::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => llama_cpp::ToolChoice::Required,
+            LanguageModelToolChoice::None => llama_cpp::ToolChoice::None,
+        })
+    };
+
+    llama_cpp::ChatCompletionRequest {
+        model: model_name.to_string(),
+        messages,
+        stream: true,
+        // Let the server decide the output length (its `n_predict` default).
+        max_tokens: None,
+        stop: if request.stop.is_empty() {
+            None
+        } else {
+            Some(request.stop)
+        },
+        // llama.cpp models often ship recommended sampler settings, so override
+        // temperature only when the request sets one.
+        temperature: request.temperature,
+        tools,
+        tool_choice,
+        stream_options: Some(llama_cpp::StreamOptions {
+            include_usage: true,
+        }),
     }
 }
 
@@ -858,7 +896,7 @@ impl LanguageModel for LlamaCppLanguageModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        self.supports_thinking
+        self.capabilities().supports_thinking
     }
 
     fn telemetry_id(&self) -> String {
@@ -1026,17 +1064,22 @@ fn add_message_content_part(
     new_part: llama_cpp::MessagePart,
     role: Role,
     messages: &mut Vec<llama_cpp::ChatMessage>,
+    reasoning_content: Option<String>,
 ) {
     match (role, messages.last_mut()) {
         (Role::User, Some(llama_cpp::ChatMessage::User { content }))
-        | (
+        | (Role::System, Some(llama_cpp::ChatMessage::System { content })) => {
+            content.push_part(new_part);
+        }
+        (
             Role::Assistant,
             Some(llama_cpp::ChatMessage::Assistant {
                 content: Some(content),
+                reasoning_content: message_reasoning_content,
                 ..
             }),
-        )
-        | (Role::System, Some(llama_cpp::ChatMessage::System { content })) => {
+        ) => {
+            append_reasoning_content(message_reasoning_content, reasoning_content);
             content.push_part(new_part);
         }
         _ => {
@@ -1046,6 +1089,7 @@ fn add_message_content_part(
                 },
                 Role::Assistant => llama_cpp::ChatMessage::Assistant {
                     content: Some(llama_cpp::MessageContent::from(vec![new_part])),
+                    reasoning_content,
                     tool_calls: Vec::new(),
                 },
                 Role::System => llama_cpp::ChatMessage::System {
@@ -1054,6 +1098,16 @@ fn add_message_content_part(
             });
         }
     }
+}
+
+fn append_reasoning_content(target: &mut Option<String>, content: Option<String>) {
+    let Some(content) = content else {
+        return;
+    };
+    if content.is_empty() {
+        return;
+    }
+    target.get_or_insert_default().push_str(&content);
 }
 
 fn merge_settings_into_models(
@@ -1601,6 +1655,7 @@ mod tests {
             modalities: Some(llama_cpp::Modalities { vision: true }),
             chat_template_caps: Some(llama_cpp::ChatTemplateCaps {
                 supports_tool_calls: true,
+                supports_preserve_reasoning: true,
                 ..Default::default()
             }),
         };
@@ -1609,12 +1664,14 @@ mod tests {
         assert_eq!(model.max_tokens, 8192);
         assert!(model.supports_tools);
         assert!(model.supports_images);
+        assert!(model.supports_thinking);
 
         // Unprobed: falls back to the listing's runtime context, then trained
         // context. Tools are assumed supported until the model loads.
         let model = model_from_entry(&entry("m", Some(4096), Some(131072)), None);
         assert_eq!(model.max_tokens, 4096);
         assert!(model.supports_tools);
+        assert!(!model.supports_thinking);
 
         let model = model_from_entry(&entry("m", None, Some(131072)), None);
         assert_eq!(model.max_tokens, 131072);
@@ -1703,10 +1760,144 @@ mod tests {
             Some(262_144),
             true,
             false,
-            false,
+            true,
         )];
         sync_capability_cells(&cells, &compute_effective_models(&loaded, &settings));
         assert_eq!(cells.read().unwrap().get("m").unwrap().max_tokens, 262_144);
+        assert!(cells.read().unwrap().get("m").unwrap().supports_thinking);
+    }
+
+    #[test]
+    fn request_preserves_assistant_thinking_when_supported() {
+        let request = build_llama_cpp_request(
+            "test-model",
+            false,
+            LiveCapabilities {
+                max_tokens: 8192,
+                supports_tools: false,
+                supports_thinking: true,
+            },
+            LanguageModelRequest {
+                messages: vec![language_model::LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![
+                        MessageContent::Thinking {
+                            text: "reasoning".to_string(),
+                            signature: None,
+                        },
+                        MessageContent::Text("answer".to_string()),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(request.messages.len(), 1);
+        match &request.messages[0] {
+            llama_cpp::ChatMessage::Assistant {
+                content: Some(llama_cpp::MessageContent::Plain(content)),
+                reasoning_content: Some(reasoning_content),
+                tool_calls,
+            } => {
+                assert_eq!(content, "answer");
+                assert_eq!(reasoning_content, "reasoning");
+                assert!(tool_calls.is_empty());
+            }
+            message => panic!("unexpected message: {message:?}"),
+        }
+    }
+
+    #[test]
+    fn request_skips_assistant_thinking_when_unsupported() {
+        let request = build_llama_cpp_request(
+            "test-model",
+            false,
+            LiveCapabilities {
+                max_tokens: 8192,
+                supports_tools: false,
+                supports_thinking: false,
+            },
+            LanguageModelRequest {
+                messages: vec![language_model::LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![
+                        MessageContent::Thinking {
+                            text: "reasoning".to_string(),
+                            signature: None,
+                        },
+                        MessageContent::RedactedThinking("encrypted".to_string()),
+                        MessageContent::Text("answer".to_string()),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(request.messages.len(), 1);
+        match &request.messages[0] {
+            llama_cpp::ChatMessage::Assistant {
+                content: Some(llama_cpp::MessageContent::Plain(content)),
+                reasoning_content,
+                tool_calls,
+            } => {
+                assert_eq!(content, "answer");
+                assert_eq!(reasoning_content, &None);
+                assert!(tool_calls.is_empty());
+            }
+            message => panic!("unexpected message: {message:?}"),
+        }
+    }
+
+    #[test]
+    fn request_preserves_thinking_for_assistant_tool_calls_when_supported() {
+        let request = build_llama_cpp_request(
+            "test-model",
+            false,
+            LiveCapabilities {
+                max_tokens: 8192,
+                supports_tools: true,
+                supports_thinking: true,
+            },
+            LanguageModelRequest {
+                messages: vec![language_model::LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![
+                        MessageContent::Thinking {
+                            text: "reasoning".to_string(),
+                            signature: None,
+                        },
+                        MessageContent::ToolUse(LanguageModelToolUse {
+                            id: "call_1".into(),
+                            name: "weather".into(),
+                            raw_input: r#"{"city":"Oslo"}"#.to_string(),
+                            input: serde_json::json!({ "city": "Oslo" }),
+                            is_input_complete: true,
+                            thought_signature: None,
+                        }),
+                    ],
+                    cache: false,
+                    reasoning_details: None,
+                }],
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(request.messages.len(), 1);
+        match &request.messages[0] {
+            llama_cpp::ChatMessage::Assistant {
+                content: None,
+                reasoning_content: Some(reasoning_content),
+                tool_calls,
+            } => {
+                assert_eq!(reasoning_content, "reasoning");
+                assert_eq!(tool_calls.len(), 1);
+            }
+            message => panic!("unexpected message: {message:?}"),
+        }
     }
 
     #[test]
