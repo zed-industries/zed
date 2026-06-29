@@ -78,6 +78,8 @@ pub struct Delegate {
     pub(crate) last_selection_change_time: Option<std::time::Instant>,
     pub(crate) last_click: Option<(usize, std::time::Instant)>,
     pub(crate) search_options: SearchOptions,
+    /// When set, the search is restricted to currently open buffers.
+    pub(crate) included_opened_only: bool,
     /// Kept around for switching to project search
     pub(crate) active_query: Option<SearchQuery>,
     pub(crate) imported_from_project_search: bool,
@@ -314,6 +316,7 @@ impl Delegate {
                 last_selection_change_time: None,
                 last_click: None,
                 search_options,
+                included_opened_only: false,
                 active_query,
                 imported_from_project_search,
                 in_progress_search,
@@ -551,7 +554,6 @@ impl PickerDelegate for Delegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
-        let active = self.search_options;
         let focus_handle = self.focus_handle.clone();
         let picker = cx.entity();
 
@@ -581,36 +583,15 @@ impl PickerDelegate for Delegate {
             SearchOption::CaseSensitive,
             SearchOption::WholeWord,
             SearchOption::Regex,
-            SearchOption::IncludeIgnored,
         ]
         .into_iter()
-        .map(|option| {
-            let options = option.as_options();
-            let action = option.to_toggle_action();
-            let label = option.label();
-            let focus_handle = focus_handle.clone();
-            let picker = picker.clone();
-            IconButton::new(
-                ("text-finder-search-option", option as usize),
-                option.icon(),
-            )
-            .icon_size(IconSize::Small)
-            .shape(IconButtonShape::Square)
-            .toggle_state(active.contains(options))
-            .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
-            .on_click(move |_, window, cx| {
-                picker.update(cx, |picker, cx| {
-                    picker.delegate.search_options.toggle(options);
-                    picker.refresh(window, cx);
-                });
-            })
-        });
+        .map(|option| self.search_option_button(option, picker.clone(), focus_handle.clone()));
 
         Some(
             h_flex()
                 .gap_1()
-                .child(filter_toggle)
                 .children(filter_buttons)
+                .child(filter_toggle)
                 .children(picker::parts::project_scan_indicator(
                     self.active_query.is_some(),
                     self.project(cx),
@@ -626,17 +607,45 @@ impl PickerDelegate for Delegate {
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Div {
+        let border_color = cx.theme().colors().border;
+        let picker = cx.entity();
+        let focus_handle = self.focus_handle.clone();
+
         let filter_line = self
             .project_search_view
             .read(cx)
             .filters_enabled()
             .then(|| {
                 let (included, excluded) = self.project_search_view.read(cx).filter_editors();
-                let border_color = cx.theme().colors().border;
                 let include = input_base_styles(border_color, |div| div.flex_grow_1())
                     .child(render_filter_input(&included, cx));
                 let exclude = input_base_styles(border_color, |div| div.flex_grow_1())
                     .child(render_filter_input(&excluded, cx));
+
+                let opened_only_button = {
+                    let picker = picker.clone();
+                    IconButton::new("text-finder-opened-only", IconName::FolderSearch)
+                        .icon_size(IconSize::Small)
+                        .shape(IconButtonShape::Square)
+                        .toggle_state(self.included_opened_only)
+                        .tooltip(Tooltip::text("Only Search Open Files"))
+                        .on_click(move |_, window, cx| {
+                            picker.update(cx, |picker, cx| {
+                                picker.delegate.included_opened_only =
+                                    !picker.delegate.included_opened_only;
+                                picker.refresh(window, cx);
+                            });
+                        })
+                };
+                let mode_column = h_flex()
+                    .gap_1()
+                    .child(opened_only_button)
+                    .child(self.search_option_button(
+                        SearchOption::IncludeIgnored,
+                        picker.clone(),
+                        focus_handle.clone(),
+                    ));
+
                 h_flex()
                     .w_full()
                     .gap_2()
@@ -644,6 +653,7 @@ impl PickerDelegate for Delegate {
                     .pb_1p5()
                     .child(include)
                     .child(exclude)
+                    .child(mode_column)
             });
 
         v_flex()
@@ -651,9 +661,13 @@ impl PickerDelegate for Delegate {
                 h_flex()
                     .overflow_hidden()
                     .flex_none()
-                    .h_9()
                     .px_2p5()
-                    .child(div().flex_1().child(editor.render(window, cx)))
+                    .py_1p5()
+                    .gap_2()
+                    .child(
+                        input_base_styles(border_color, |div| div.flex_1())
+                            .child(div().flex_1().py_1().child(editor.render(window, cx))),
+                    )
                     .children(self.searchbar_trailer(window, cx)),
             )
             .children(filter_line)
@@ -1179,7 +1193,7 @@ impl Delegate {
         // disambiguated. For single worktree projects we use worktree relative
         // paths for convenience.
         let match_full_paths = self.project(cx).read(cx).visible_worktrees(cx).count() > 1;
-        let open_buffers = None;
+        let open_buffers = self.included_opened_only.then(|| self.open_buffers(cx));
 
         self.search_options
             .build_query(
@@ -1190,6 +1204,41 @@ impl Delegate {
                 open_buffers,
             )
             .log_err()
+    }
+
+    /// The singleton buffers backing the editors currently open in the
+    /// workspace, used to restrict the search when "Only Search Open Files" is on.
+    fn open_buffers(&self, cx: &App) -> Vec<Entity<Buffer>> {
+        let Some(workspace) = self.project_search_view.read(cx).workspace.upgrade() else {
+            return Vec::new();
+        };
+        workspace
+            .read(cx)
+            .items_of_type::<Editor>(cx)
+            .filter_map(|editor| editor.read(cx).buffer().read(cx).as_singleton())
+            .collect()
+    }
+
+    fn search_option_button(
+        &self,
+        option: SearchOption,
+        picker: Entity<Picker<Self>>,
+        focus_handle: FocusHandle,
+    ) -> IconButton {
+        let options = option.as_options();
+        let action = option.to_toggle_action();
+        let label = option.label();
+        IconButton::new(("text-finder-search-option", option as usize), option.icon())
+            .icon_size(IconSize::Small)
+            .shape(IconButtonShape::Square)
+            .toggle_state(self.search_options.contains(options))
+            .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
+            .on_click(move |_, window, cx| {
+                picker.update(cx, |picker, cx| {
+                    picker.delegate.search_options.toggle(options);
+                    picker.refresh(window, cx);
+                });
+            })
     }
 
     /// Create things from MB
