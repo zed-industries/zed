@@ -7311,6 +7311,7 @@ dependencies = [
  "http_client",
  "itertools 0.14.0",
  "log",
+ "net",
  "parking_lot",
  "pretty_assertions",
  "rand 0.9.4",
