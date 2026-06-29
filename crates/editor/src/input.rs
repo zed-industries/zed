@@ -1688,8 +1688,7 @@ impl Editor {
                         let display_point = point.to_display_point(display_snapshot);
                         let goal = SelectionGoal::HorizontalPosition(
                             display_snapshot
-                                .x_for_display_point(display_point, text_layout_details)
-                                .into(),
+                                .x_for_display_point(display_point, text_layout_details),
                         );
                         (display_point, goal)
                     })
@@ -3050,10 +3049,9 @@ impl EntityInputHandler for Editor {
         let start =
             MultiBufferOffsetUtf16(OffsetUtf16(range_utf16.start)).to_display_point(&snapshot);
         let x = Pixels::from(
-            ScrollOffset::from(
-                snapshot.x_for_display_point(start, &text_layout_details)
-                    + self.gutter_dimensions.full_width(),
-            ) - scroll_left,
+            snapshot.x_for_display_point(start, &text_layout_details)
+                + ScrollOffset::from(self.gutter_dimensions.full_width())
+                - scroll_left,
         );
         let y = line_height * (start.row().as_f64() - scroll_position.y) as f32;
 

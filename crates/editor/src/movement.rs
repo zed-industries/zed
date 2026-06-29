@@ -125,9 +125,9 @@ pub(crate) fn up_by_rows(
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     let goal_x = match goal {
-        SelectionGoal::HorizontalPosition(x) => x.into(),
-        SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
-        SelectionGoal::HorizontalRange { end, .. } => end.into(),
+        SelectionGoal::HorizontalPosition(x) => x,
+        SelectionGoal::WrappedHorizontalPosition((_, x)) => x,
+        SelectionGoal::HorizontalRange { end, .. } => end,
         _ => map.x_for_display_point(start, text_layout_details),
     };
 
@@ -148,10 +148,7 @@ pub(crate) fn up_by_rows(
     if clipped_point.row() < point.row() {
         clipped_point = map.clip_point(point, Bias::Right);
     }
-    (
-        clipped_point,
-        SelectionGoal::HorizontalPosition(goal_x.into()),
-    )
+    (clipped_point, SelectionGoal::HorizontalPosition(goal_x))
 }
 
 pub(crate) fn down_by_rows(
@@ -163,9 +160,9 @@ pub(crate) fn down_by_rows(
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
     let goal_x = match goal {
-        SelectionGoal::HorizontalPosition(x) => x.into(),
-        SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
-        SelectionGoal::HorizontalRange { end, .. } => end.into(),
+        SelectionGoal::HorizontalPosition(x) => x,
+        SelectionGoal::WrappedHorizontalPosition((_, x)) => x,
+        SelectionGoal::HorizontalRange { end, .. } => end,
         _ => map.x_for_display_point(start, text_layout_details),
     };
 
@@ -183,10 +180,7 @@ pub(crate) fn down_by_rows(
     if clipped_point.row() > point.row() {
         clipped_point = map.clip_point(point, Bias::Left);
     }
-    (
-        clipped_point,
-        SelectionGoal::HorizontalPosition(goal_x.into()),
-    )
+    (clipped_point, SelectionGoal::HorizontalPosition(goal_x))
 }
 
 /// Returns a position of the start of line.
@@ -1441,13 +1435,13 @@ mod tests {
                 up(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(0), 2),
-                    SelectionGoal::HorizontalPosition(f64::from(col_2_x)),
+                    SelectionGoal::HorizontalPosition(col_2_x),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(0), 0),
-                    SelectionGoal::HorizontalPosition(f64::from(col_2_x)),
+                    SelectionGoal::HorizontalPosition(col_2_x),
                 ),
             );
             assert_eq!(
@@ -1472,26 +1466,26 @@ mod tests {
                 up(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(1), 4),
-                    SelectionGoal::HorizontalPosition(col_4_x.into()),
+                    SelectionGoal::HorizontalPosition(col_4_x),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(0), 3),
-                    SelectionGoal::HorizontalPosition(col_4_x.into())
+                    SelectionGoal::HorizontalPosition(col_4_x)
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(0), 3),
-                    SelectionGoal::HorizontalPosition(col_4_x.into()),
+                    SelectionGoal::HorizontalPosition(col_4_x),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(1), 4),
-                    SelectionGoal::HorizontalPosition(col_4_x.into())
+                    SelectionGoal::HorizontalPosition(col_4_x)
                 ),
             );
 
@@ -1503,26 +1497,26 @@ mod tests {
                 up(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(3), 5),
-                    SelectionGoal::HorizontalPosition(col_5_x.into()),
+                    SelectionGoal::HorizontalPosition(col_5_x),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(1), 4),
-                    SelectionGoal::HorizontalPosition(col_5_x.into())
+                    SelectionGoal::HorizontalPosition(col_5_x)
                 ),
             );
             assert_eq!(
                 down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(1), 4),
-                    SelectionGoal::HorizontalPosition(col_5_x.into()),
+                    SelectionGoal::HorizontalPosition(col_5_x),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(3), 5),
-                    SelectionGoal::HorizontalPosition(col_5_x.into())
+                    SelectionGoal::HorizontalPosition(col_5_x)
                 ),
             );
 
@@ -1547,13 +1541,13 @@ mod tests {
                 down(
                     &snapshot,
                     DisplayPoint::new(DisplayRow(4), 2),
-                    SelectionGoal::HorizontalPosition(max_point_x.into()),
+                    SelectionGoal::HorizontalPosition(max_point_x),
                     false,
                     &text_layout_details
                 ),
                 (
                     DisplayPoint::new(DisplayRow(4), 2),
-                    SelectionGoal::HorizontalPosition(max_point_x.into())
+                    SelectionGoal::HorizontalPosition(max_point_x)
                 ),
             );
         });

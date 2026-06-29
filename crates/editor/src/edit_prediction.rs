@@ -1125,7 +1125,6 @@ impl Editor {
                         scroll_top,
                         scroll_bottom,
                         line_height,
-                        scroll_pixel_position,
                         target_display_point,
                         editor_width,
                         window,
@@ -1151,7 +1150,6 @@ impl Editor {
                     visible_row_range,
                     target_display_point,
                     line_height,
-                    scroll_pixel_position,
                     content_origin,
                     editor_width,
                     window,
@@ -1696,9 +1694,6 @@ impl Editor {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
-        let scrolled_content_origin =
-            content_origin - gpui::Point::new(scroll_pixel_position.x.into(), Pixels::ZERO);
-
         const SCROLL_PADDING_Y: Pixels = px(12.);
 
         if target_display_point.row() < visible_row_range.start {
@@ -1708,7 +1703,8 @@ impl Editor {
                 visible_row_range,
                 line_layouts,
                 newest_selection_head,
-                scrolled_content_origin,
+                content_origin,
+                scroll_pixel_position,
                 window,
                 cx,
             );
@@ -1719,7 +1715,8 @@ impl Editor {
                 visible_row_range,
                 line_layouts,
                 newest_selection_head,
-                scrolled_content_origin,
+                content_origin,
+                scroll_pixel_position,
                 window,
                 cx,
             );
@@ -1731,7 +1728,8 @@ impl Editor {
             line_layouts.get(target_display_point.row().minus(visible_row_range.start) as usize)?;
         let target_column = target_display_point.column() as usize;
 
-        let target_x = line_layout.x_for_index(target_column);
+        let target_x =
+            Pixels::from(line_layout.x_for_index(target_column) - scroll_pixel_position.x);
         let target_y = (target_display_point.row().as_f64() * f64::from(line_height))
             - scroll_pixel_position.y;
 
@@ -1761,7 +1759,7 @@ impl Editor {
 
         let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
 
-        let mut origin = scrolled_content_origin + point(target_x, target_y.into())
+        let mut origin = content_origin + point(target_x, target_y.into())
             - point(
                 if flag_on_right {
                     POLE_WIDTH
@@ -1785,7 +1783,8 @@ impl Editor {
         visible_row_range: Range<DisplayRow>,
         line_layouts: &[LineWithInvisibles],
         newest_selection_head: Option<DisplayPoint>,
-        scrolled_content_origin: gpui::Point<Pixels>,
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         window: &mut Window,
         cx: &mut App,
     ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
@@ -1800,9 +1799,10 @@ impl Editor {
             line_layouts.get(cursor.row().minus(visible_row_range.start) as usize)?;
         let cursor_column = cursor.column() as usize;
 
-        let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
+        let cursor_character_x =
+            Pixels::from(cursor_row_layout.x_for_index(cursor_column) - scroll_pixel_position.x);
 
-        let origin = scrolled_content_origin + point(cursor_character_x, to_y(size));
+        let origin = content_origin + point(cursor_character_x, to_y(size));
 
         element.prepaint_at(origin, window, cx);
         Some((element, origin))
@@ -1817,7 +1817,6 @@ impl Editor {
         scroll_top: ScrollOffset,
         scroll_bottom: ScrollOffset,
         line_height: Pixels,
-        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         target_display_point: DisplayPoint,
         editor_width: Pixels,
         window: &mut Window,
@@ -1868,7 +1867,6 @@ impl Editor {
                 visible_row_range,
                 target_display_point,
                 line_height,
-                scroll_pixel_position,
                 content_origin,
                 editor_width,
                 window,
@@ -1884,7 +1882,6 @@ impl Editor {
         visible_row_range: Range<DisplayRow>,
         target_display_point: DisplayPoint,
         line_height: Pixels,
-        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
         content_origin: gpui::Point<Pixels>,
         editor_width: Pixels,
         window: &mut Window,
@@ -1904,8 +1901,7 @@ impl Editor {
         let line_origin =
             self.display_to_pixel_point(target_line_end, editor_snapshot, window, cx)?;
 
-        let start_point = content_origin - point(scroll_pixel_position.x.into(), Pixels::ZERO);
-        let mut origin = start_point
+        let mut origin = content_origin
             + line_origin
             + point(Self::EDIT_PREDICTION_POPOVER_PADDING_X, Pixels::ZERO);
         origin.x = origin.x.max(content_origin.x);
@@ -2049,6 +2045,7 @@ impl Editor {
                 editor_snapshot,
                 style,
                 editor_width,
+                None,
                 |_| false,
                 window,
                 cx,
@@ -2064,9 +2061,9 @@ impl Editor {
         let popover_right_bound = cmp::min(text_bounds.right(), viewport_bounds.right());
 
         let x_after_longest = Pixels::from(
-            ScrollPixelOffset::from(
-                text_bounds.origin.x + longest_line_width + Self::EDIT_PREDICTION_POPOVER_PADDING_X,
-            ) - scroll_pixel_position.x,
+            ScrollPixelOffset::from(text_bounds.origin.x + Self::EDIT_PREDICTION_POPOVER_PADDING_X)
+                + longest_line_width
+                - scroll_pixel_position.x,
         );
 
         let element_bounds = element.layout_as_root(AvailableSpace::min_size(), window, cx);

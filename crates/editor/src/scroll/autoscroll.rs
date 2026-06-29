@@ -346,7 +346,7 @@ impl Editor {
         &mut self,
         start_row: DisplayRow,
         viewport_width: Pixels,
-        scroll_width: Pixels,
+        scroll_width: ScrollOffset,
         em_advance: Pixels,
         layouts: &[LineWithInvisibles],
         autoscroll_request: Option<(Autoscroll, bool)>,
@@ -356,7 +356,6 @@ impl Editor {
         let (_, local) = autoscroll_request?;
         let em_advance = ScrollOffset::from(em_advance);
         let viewport_width = ScrollOffset::from(viewport_width);
-        let scroll_width = ScrollOffset::from(scroll_width);
 
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         // Horizontal autoscroll only needs selections whose head is visible.
@@ -405,16 +404,15 @@ impl Editor {
                         },
                     );
 
-                    target_left = target_left.min(ScrollOffset::from(
+                    target_left = target_left.min(
                         layouts[head.row().minus(start_row) as usize]
                             .x_for_index(start_column as usize)
-                            + self.gutter_dimensions.margin,
-                    ));
+                            + ScrollOffset::from(self.gutter_dimensions.margin),
+                    );
                     target_right = target_right.max(
-                        ScrollOffset::from(
-                            layouts[head.row().minus(start_row) as usize]
-                                .x_for_index(end_column as usize),
-                        ) + em_advance,
+                        layouts[head.row().minus(start_row) as usize]
+                            .x_for_index(end_column as usize)
+                            + em_advance,
                     );
                 }
             }
