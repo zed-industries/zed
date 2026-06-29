@@ -282,6 +282,7 @@ mod fake_user_service {
                 user_id,
                 User {
                     id: user_id,
+                    // For the purposes of the tests we treat these as interchangeable.
                     username: params.github_login.clone(),
                     avatar_url: format!("https://github.com/{}.png?size=128", params.github_login),
                     github_login: params.github_login,
