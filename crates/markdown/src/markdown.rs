@@ -4359,6 +4359,283 @@ mod tests {
         });
     }
 
+    /// A doc of `blocks` blank-line-separated top-level blocks (headings, prose,
+    /// code, lists, quotes), like a long agent response.
+    fn perf_doc(blocks: usize) -> String {
+        let mut out = String::new();
+        for i in 0..blocks {
+            match i % 6 {
+                0 => out.push_str(&format!("## Heading {i}")),
+                1 | 2 => out.push_str(&format!(
+                    "Paragraph {i} with **bold**, `code`, and a [link](https://example.com) plus \
+                     filler words to make it wrap across the viewport at least once or twice over."
+                )),
+                3 => out.push_str(&format!("- bullet {i} a\n- bullet {i} b")),
+                4 => out.push_str(&format!("```rust\nfn f_{i}() {{ let x = {i}; x + 1 }}\n```")),
+                _ => out.push_str(&format!("> quote {i} with a little extra text so it wraps")),
+            }
+            out.push_str("\n\n");
+        }
+        out
+    }
+
+    /// Whatever is scrolled into view is laid out and hit-testable; content never
+    /// scrolled to has no geometry yet.
+    #[gpui::test]
+    fn scrolling_into_a_message_keeps_visible_text_hit_testable(cx: &mut TestAppContext) {
+        struct TestWindow;
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+
+        ensure_theme_initialized(cx);
+        let source = perf_doc(2000);
+        let source_len = source.len();
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.simulate_resize(size(px(800.), px(600.)));
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        // Hit-test the viewport center after scrolling down by `scroll` px, and
+        // check whether content near the message end has geometry.
+        let mut sample = |scroll: f32| -> (usize, bool) {
+            let (_, rendered) =
+                cx.draw(point(px(0.), px(-scroll)), size(px(800.), px(600.)), |_, _| {
+                    MarkdownElement::new(markdown.clone(), MarkdownStyle::default())
+                        .code_block_renderer(CodeBlockRenderer::Default {
+                            copy_button_visibility: CopyButtonVisibility::Hidden,
+                            wrap_button_visibility: WrapButtonVisibility::Hidden,
+                            border: false,
+                        })
+                });
+            let hit = rendered
+                .text
+                .source_index_for_position(point(px(400.), px(300.)))
+                .unwrap_or_else(|fallback| fallback);
+            let end_has_geometry = rendered
+                .text
+                .position_for_source_index(source_len.saturating_sub(50))
+                .is_some();
+            (hit, end_has_geometry)
+        };
+
+        let (top, top_sees_end) = sample(0.0);
+        let (mid, _) = sample(20_000.0);
+        let (deep, _) = sample(60_000.0);
+        println!("hit source idx — top:{top} mid:{mid} deep:{deep}; top_sees_end:{top_sees_end}");
+
+        // Interaction follows the viewport: scrolling reveals progressively
+        // later hit-testable content.
+        assert!(
+            top < mid && mid < deep,
+            "scrolling should reveal and locate later content: {top} < {mid} < {deep}"
+        );
+        // From the top, content near the end isn't laid out yet — no geometry.
+        assert!(
+            !top_sees_end,
+            "off-screen content should have no geometry until scrolled into view"
+        );
+    }
+
+    // Copy/selection must work off the source model, not off-screen geometry, so
+    // culling can't silently drop off-screen content.
+
+    /// Copying a range spanning the whole (tall) message must include far
+    /// off-screen blocks.
+    #[gpui::test]
+    fn guard_copy_spans_offscreen_blocks(cx: &mut TestAppContext) {
+        let src = format!("para one\n\npara two\n\n{}", "filler block\n\n".repeat(500));
+        let text = render_markdown(&src, cx);
+        let full = text.text_for_range(0..src.len());
+        assert!(
+            full.contains("para one") && full.contains("para two"),
+            "copy lost early blocks"
+        );
+        assert!(
+            full.lines().count() >= 100,
+            "copy lost off-screen blocks (got {} lines)",
+            full.lines().count()
+        );
+    }
+
+    /// O(visible) build must hold at every scroll position: sweeping a tall doc
+    /// top-to-bottom never builds more than a viewport's worth of blocks.
+    #[gpui::test]
+    fn build_stays_viewport_bounded_while_scrolling(cx: &mut TestAppContext) {
+        struct TestWindow;
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+        ensure_theme_initialized(cx);
+        let source = perf_doc(2000);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.simulate_resize(size(px(800.), px(600.)));
+        let markdown = cx.new(|cx| Markdown::new(source.into(), None, None, cx));
+        cx.run_until_parked();
+
+        let viewport = size(px(800.), px(600.));
+        let steps = 40usize;
+        let step_px = 2000.0;
+        let mut max_built = 0;
+        let mut total = std::time::Duration::ZERO;
+        // Negative origin scrolls the content up by `scroll` px.
+        for step in 0..steps {
+            let scroll = step as f32 * step_px;
+            BLOCKS_BUILT.with(|count| count.set(0));
+            let start = std::time::Instant::now();
+            cx.draw(point(px(0.), px(-scroll)), viewport, |_, _| {
+                MarkdownElement::new(markdown.clone(), MarkdownStyle::default()).code_block_renderer(
+                    CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    },
+                )
+            });
+            total += start.elapsed();
+            max_built = max_built.max(BLOCKS_BUILT.with(|count| count.get()));
+        }
+        println!(
+            "scroll sweep ({steps} positions over {:.0}px): max {max_built} blocks built/frame, avg {:?}/frame",
+            steps as f32 * step_px,
+            total / steps as u32
+        );
+        assert!(
+            max_built < 100,
+            "build not viewport-bounded while scrolling: peaked at {max_built} blocks/frame"
+        );
+    }
+
+    #[test]
+    fn unresolved_reference_flags_block_as_reparsable() {
+        let unresolved =
+            parse_markdown_with_options("Text with [a link][ref] inside.", true, false, false);
+        assert!(
+            !unresolved.reparsable_blocks.is_empty(),
+            "an unresolved reference should flag its block"
+        );
+
+        let resolved = parse_markdown_with_options(
+            "Text with [a link][ref] inside.\n\n[ref]: https://example.com",
+            true,
+            false,
+            false,
+        );
+        assert!(
+            resolved.reparsable_blocks.is_empty(),
+            "a resolved reference should not flag its block"
+        );
+    }
+
+    /// A block measured before an append-only reparse keeps its cached height
+    /// afterward, even while off-screen.
+    #[gpui::test]
+    fn height_cache_survives_append_reparse(cx: &mut TestAppContext) {
+        struct TestWindow;
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| Markdown::new(perf_doc(30).into(), None, None, cx));
+        let (_, mut cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.simulate_resize(size(px(800.), px(600.)));
+        cx.run_until_parked();
+
+        let viewport = size(px(800.), px(600.));
+        let draw = |cx: &mut gpui::VisualTestContext, markdown: &Entity<Markdown>, scroll: f32| {
+            let markdown = markdown.clone();
+            cx.draw(point(px(0.), px(-scroll)), viewport, move |_, _| {
+                MarkdownElement::new(markdown.clone(), MarkdownStyle::default()).code_block_renderer(
+                    CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    },
+                )
+            });
+        };
+
+        draw(&mut cx, &markdown, 0.0);
+        let top_block = cx.update(|_, cx| {
+            markdown
+                .read(cx)
+                .block_heights
+                .iter()
+                .min_by_key(|(range, _)| range.start)
+                .map(|(range, height)| (range.clone(), *height))
+                .expect("top blocks should have been measured")
+        });
+
+        // Append, then redraw scrolled far down so the top block is off-screen
+        // and not re-measured.
+        cx.update(|_, cx| {
+            markdown.update(cx, |markdown, cx| {
+                markdown.append("\n\n## a freshly appended heading\n\n", cx)
+            })
+        });
+        cx.run_until_parked();
+        draw(&mut cx, &markdown, 5000.0);
+
+        let (range, height) = top_block;
+        let survived = cx.update(|_, cx| markdown.read(cx).block_heights.get(&range).copied());
+        assert_eq!(
+            survived,
+            Some(height),
+            "the top block's measured height was lost across the reparse"
+        );
+    }
+
+    /// Scrolling to a target in never-rendered content lays out the intervening
+    /// blocks on demand, so the jump is exact rather than landing short.
+    #[gpui::test]
+    fn autoscroll_measures_never_rendered_blocks(cx: &mut TestAppContext) {
+        struct TestWindow;
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+        ensure_theme_initialized(cx);
+        // Tall doc: at scroll 0 only the first ~30 blocks fall in viewport +
+        // overscan, so deep blocks are never measured.
+        let markdown = cx.new(|cx| Markdown::new(perf_doc(100).into(), None, None, cx));
+        let (_, mut cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.simulate_resize(size(px(800.), px(600.)));
+        cx.run_until_parked();
+
+        let target = cx.update(|_, cx| markdown.read(cx).parsed_markdown.root_block_starts[90]);
+        cx.update(|_, cx| {
+            markdown.update(cx, |markdown, cx| {
+                markdown.request_autoscroll_to_source_index(target, cx)
+            })
+        });
+
+        // One draw at the top: autoscroll measures the off-screen blocks above
+        // the target on demand.
+        let markdown_for_draw = markdown.clone();
+        cx.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), move |_, _| {
+            MarkdownElement::new(markdown_for_draw.clone(), MarkdownStyle::default())
+                .code_block_renderer(CodeBlockRenderer::Default {
+                    copy_button_visibility: CopyButtonVisibility::Hidden,
+                    wrap_button_visibility: WrapButtonVisibility::Hidden,
+                    border: false,
+                })
+        });
+
+        let measured = cx.update(|_, cx| markdown.read(cx).block_heights.len());
+        assert!(
+            measured >= 60,
+            "expected B1 to measure the off-screen blocks above the target on demand, \
+             only {measured} blocks measured"
+        );
+    }
+
     #[gpui::test]
     fn test_mappings(cx: &mut TestAppContext) {
         // Formatting.
@@ -4505,7 +4782,7 @@ mod tests {
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let markdown = cx.new(|cx| Markdown::new(markdown.to_string().into(), None, None, cx));
         cx.run_until_parked();
-        let (rendered, _) = cx.draw(
+        let (_, rendered) = cx.draw(
             Default::default(),
             size(px(600.0), px(600.0)),
             |_window, _cx| {
@@ -4556,7 +4833,7 @@ mod tests {
             )
         });
         cx.run_until_parked();
-        let (rendered, _) = cx.draw(
+        let (_, rendered) = cx.draw(
             Default::default(),
             size(px(600.0), px(600.0)),
             |_window, _cx| {

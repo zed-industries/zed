@@ -572,7 +572,7 @@ mod tests {
             Markdown::new_with_options(markdown.to_string().into(), None, None, options, cx)
         });
         cx.run_until_parked();
-        let (rendered, _) = cx.draw(
+        let (_, rendered) = cx.draw(
             Default::default(),
             size(px(600.0), px(600.0)),
             |_window, _cx| {
@@ -892,7 +892,7 @@ mod tests {
             markdown.mermaid_state.order = vec![contents];
         });
 
-        let (rendered, _) = cx.draw(
+        let (_, rendered) = cx.draw(
             Default::default(),
             size(px(600.0), px(600.0)),
             |_window, _cx| {
