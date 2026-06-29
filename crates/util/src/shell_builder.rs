@@ -337,4 +337,38 @@ mod test {
         assert_eq!(program, "fish");
         assert_eq!(args, vec!["-i", "-c", "echo oo"]);
     }
+
+    #[test]
+    fn windows_powershell_preserves_spaced_arg_as_single_shell_argument() {
+        let worktree_root = r"C:\worktrees\Godot Projects\sample-game";
+        let shell = Shell::Program("powershell".to_owned());
+
+        let (program, args) = ShellBuilder::new(&shell, true)
+            .build(Some("echo".into()), &[worktree_root.to_string()]);
+
+        assert_eq!(program, "powershell");
+        assert_eq!(
+            args,
+            vec!["-C".to_string(), format!("echo '{worktree_root}'")]
+        );
+    }
+
+    #[test]
+    fn windows_cmd_preserves_spaced_arg_as_single_shell_argument() {
+        let worktree_root = r"C:\worktrees\Godot Projects\sample-game";
+        let shell = Shell::Program("cmd".to_owned());
+
+        let (program, args) = ShellBuilder::new(&shell, true)
+            .build(Some("echo".into()), &[worktree_root.to_string()]);
+
+        assert_eq!(program, "cmd");
+        assert_eq!(
+            args,
+            vec![
+                "/S".to_string(),
+                "/C".to_string(),
+                format!("\"echo ^\"{worktree_root}^\"\""),
+            ]
+        );
+    }
 }
