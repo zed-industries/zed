@@ -2162,7 +2162,6 @@ dependencies = [
  "http_client",
  "language_model_core",
  "log",
- "open_ai",
  "schemars 1.0.4",
  "serde",
  "serde_json",
