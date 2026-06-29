@@ -11,6 +11,7 @@ use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
 };
 use agent_settings::{AgentSettings, UserAgentsMd};
+use agent_skills;
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -63,8 +64,8 @@ use prompt_store::RULES_FILE_NAMES;
 use proto::RpcError;
 use serde::{Deserialize, Serialize};
 use settings::{
-    GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, Settings, SettingsStore, StatusStyle,
-    update_settings_file,
+    GitPanelClickBehavior, GitPanelGroupBy, GitPanelSortBy, Settings, SettingsFile, SettingsStore,
+    StatusStyle, update_settings_file,
 };
 use smallvec::SmallVec;
 use std::cell::Cell;
@@ -2971,10 +2972,153 @@ impl GitPanel {
         }
     }
 
+    fn git_commit_message_skill_setting(
+        project: &Entity<Project>,
+        repo_work_dir: &Path,
+        cx: &App,
+    ) -> Option<(SettingsFile, String)> {
+        if let Some(project_settings_file) = project
+            .read(cx)
+            .find_project_path(repo_work_dir, cx)
+            .map(|project_path| {
+                SettingsFile::Project((project_path.worktree_id, project_path.path))
+            })
+        {
+            if let Some(content) = cx
+                .global::<SettingsStore>()
+                .get_content_for_file(project_settings_file.clone())
+            {
+                if let Some(skill_name) = &content.project.git_commit_message_skill_name {
+                    return Some((project_settings_file, skill_name.clone()));
+                }
+            }
+        }
+
+        let (user_settings_file, skill_name) = cx
+            .global::<SettingsStore>()
+            .get_value_from_file(SettingsFile::User, |settings| {
+                settings.project.git_commit_message_skill_name.clone()
+            });
+
+        skill_name.map(|name| (user_settings_file, name))
+    }
+
+    async fn load_commit_message_skill(
+        project: &Entity<Project>,
+        fs: Arc<dyn Fs>,
+        repo_work_dir: &Arc<Path>,
+        cx: &mut AsyncApp,
+    ) -> anyhow::Result<Option<agent_skills::Skill>> {
+        let skill_setting =
+            cx.update(|cx| Self::git_commit_message_skill_setting(project, repo_work_dir, cx));
+
+        let Some((settings_file, skill_name)) = skill_setting else {
+            return Ok(None);
+        };
+
+        if skill_name.trim().is_empty() {
+            return Ok(None);
+        }
+
+        match settings_file {
+            SettingsFile::Project(_) => {
+                let project_path = cx
+                    .update(|cx| project.read(cx).find_project_path(repo_work_dir, cx))
+                    .with_context(|| "could not find project path for repo work dir")?;
+
+                let relative_skill_path_string = format!(
+                    "{}/{skill_name}/{}",
+                    agent_skills::project_skills_relative_path(),
+                    agent_skills::SKILL_FILE_NAME
+                );
+                let relative_skill_path = RelPath::unix(&relative_skill_path_string)?;
+
+                let (worktree_id, root_name, skill_file_path) = cx.update(|cx| {
+                    let worktree = project
+                        .read(cx)
+                        .worktree_for_id(project_path.worktree_id, cx)
+                        .with_context(|| {
+                            format!(
+                                "worktree for commit message skill '{skill_name}' no longer exists"
+                            )
+                        })?;
+                    let worktree_snapshot = worktree.read(cx);
+                    let root_name = worktree_snapshot.root_name_str().to_string();
+                    let skill_file_path = worktree_snapshot
+                        .abs_path()
+                        .join(relative_skill_path.as_std_path());
+                    anyhow::Ok((worktree_snapshot.id(), root_name, skill_file_path))
+                })?;
+
+                if !fs.is_file(&skill_file_path).await {
+                    anyhow::bail!(
+                        "project-local commit message skill '{skill_name}' is not found at '{}'",
+                        skill_file_path.display()
+                    );
+                }
+
+                let skill = agent_skills::load_skill_frontmatter(
+                    fs.clone(),
+                    skill_file_path,
+                    agent_skills::SkillSource::ProjectLocal {
+                        worktree_id: agent_skills::SkillScopeId(worktree_id.to_usize()),
+                        worktree_root_name: root_name.into(),
+                    },
+                )
+                .await
+                .map_err(anyhow::Error::new)?;
+                Ok(Some(skill))
+            }
+            SettingsFile::User => {
+                let global_skill_path = agent_skills::global_skills_dir()
+                    .join(&skill_name)
+                    .join(agent_skills::SKILL_FILE_NAME);
+
+                if !fs.is_file(&global_skill_path).await {
+                    anyhow::bail!(
+                        "global commit message skill '{skill_name}' is not found at '{}'",
+                        global_skill_path.display()
+                    );
+                }
+
+                let skill = agent_skills::load_skill_frontmatter(
+                    fs.clone(),
+                    global_skill_path,
+                    agent_skills::SkillSource::Global,
+                )
+                .await
+                .map_err(anyhow::Error::new)?;
+                Ok(Some(skill))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    async fn render_commit_message_skill_envelope(
+        fs: Arc<dyn Fs>,
+        skill: Option<agent_skills::Skill>,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(skill) = skill else {
+            return Ok(None);
+        };
+
+        let body = match &skill.source {
+            agent_skills::SkillSource::Global | agent_skills::SkillSource::ProjectLocal { .. } => {
+                agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
+                    .await
+                    .map_err(anyhow::Error::new)?
+            }
+            agent_skills::SkillSource::BuiltIn => unreachable!(),
+        };
+
+        Ok(Some(agent_skills::render_skill_envelope(&skill, &body)))
+    }
+
     fn build_commit_message_prompt(
         prompt: &str,
         user_agents_md: Option<&str>,
         rules_content: Option<&str>,
+        skill_envelope: Option<&str>,
         instructions: Option<&str>,
         subject: &str,
         diff_text: &str,
@@ -2995,6 +3139,14 @@ impl GitPanel {
             None => String::new(),
         };
 
+        let commit_message_skill_section = match skill_envelope {
+            Some(skill_envelope) if !skill_envelope.trim().is_empty() => format!(
+                "\n\nThe user has selected the following skill for writing commit messages that you should follow:\n\
+                {skill_envelope}"
+            ),
+            _ => String::new(),
+        };
+
         let instructions_section = match instructions {
             Some(instructions) if !instructions.trim().is_empty() => format!(
                 "\n\nThe user has provided the following instructions for writing commit messages that you should follow:\n\
@@ -3010,7 +3162,7 @@ impl GitPanel {
         };
 
         format!(
-            "{prompt}{user_agents_md_section}{rules_section}{instructions_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
+            "{prompt}{user_agents_md_section}{rules_section}{commit_message_skill_section}{instructions_section}{subject_section}\nHere are the changes in this commit:\n{diff_text}"
         )
     }
 
@@ -3045,6 +3197,7 @@ impl GitPanel {
             .commit_message_instructions
             .clone();
         let project = self.project.clone();
+        let fs = self.fs.clone();
         let repo_work_dir = repo.read(cx).work_directory_abs_path.clone();
 
         self.generate_commit_message_task = Some(cx.spawn(async move |this, mut cx| {
@@ -3082,6 +3235,28 @@ impl GitPanel {
 
                 let rules_content =
                     Self::load_project_rules(&project, &repo_work_dir, &mut cx).await;
+                let skill = match Self::load_commit_message_skill(
+                    &project,
+                    fs.clone(),
+                    &repo_work_dir,
+                    &mut cx,
+                )
+                .await
+                {
+                    Ok(skill) => skill,
+                    Err(error) => {
+                        Self::show_commit_message_error(&this, &error, cx);
+                        return anyhow::Ok(());
+                    }
+                };
+                let skill_envelope =
+                    match Self::render_commit_message_skill_envelope(fs, skill).await {
+                        Ok(content) => content,
+                        Err(error) => {
+                            Self::show_commit_message_error(&this, &error, cx);
+                            return anyhow::Ok(());
+                        }
+                    };
                 let user_agents_md = cx.update(|cx| {
                     UserAgentsMd::global(cx)
                         .and_then(|user_agents_md| user_agents_md.content().cloned())
@@ -3105,6 +3280,7 @@ impl GitPanel {
                     &prompt,
                     user_agents_md.as_deref(),
                     rules_content.as_deref(),
+                    skill_envelope.as_deref(),
                     instructions.as_deref(),
                     &subject,
                     &diff_text,
@@ -8013,7 +8189,7 @@ mod tests {
     use indoc::indoc;
     use project::FakeFs;
     use serde_json::json;
-    use settings::SettingsStore;
+    use settings::{LocalSettingsKind, LocalSettingsPath, SettingsFile, SettingsStore};
     use theme::LoadThemes;
     use util::path;
     use util::rel_path::rel_path;
@@ -9966,12 +10142,298 @@ mod tests {
         assert_eq!(result, expected);
     }
 
+    #[gpui::test]
+    async fn test_commit_message_skill_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let worktree_id = cx.read(|cx| {
+            let worktree = project.read(cx).worktrees(cx).next().unwrap();
+            worktree.read(cx).id()
+        });
+
+        // 1. Initially, no skill is configured.
+        cx.update(|cx| {
+            let setting = GitPanel::git_commit_message_skill_setting(
+                &project,
+                Path::new(path!("/project")),
+                cx,
+            );
+
+            assert!(setting.is_none());
+        });
+
+        // 2. Configured in User settings (global).
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.git_commit_message_skill_name = Some("user-skill".to_string());
+                });
+            });
+
+            let (settings_file, skill_name) = GitPanel::git_commit_message_skill_setting(
+                &project,
+                Path::new(path!("/project")),
+                cx,
+            )
+            .unwrap();
+
+            assert_eq!(settings_file, SettingsFile::User);
+            assert_eq!(skill_name, "user-skill");
+        });
+
+        // 3. Configure in Project settings (project-local).
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.set_local_settings(
+                    worktree_id,
+                    LocalSettingsPath::InWorktree(RelPath::empty().into()),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{"git_commit_message_skill_name": "project-skill"}"#),
+                    cx,
+                );
+            });
+
+            let (settings_file, skill_name) = GitPanel::git_commit_message_skill_setting(
+                &project,
+                Path::new(path!("/project")),
+                cx,
+            )
+            .unwrap();
+
+            assert_eq!(
+                settings_file,
+                SettingsFile::Project((worktree_id, RelPath::empty().into()))
+            );
+            assert_eq!(skill_name, "project-skill");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_load_commit_message_skill(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+
+        let global_skills_dir = agent_skills::global_skills_dir();
+        let global_skill_path = global_skills_dir.join("global-skill").join("SKILL.md");
+
+        fs.insert_tree(
+                path!("/project"),
+                json!({
+                    ".git": {},
+                    ".agents": {
+                        "skills": {
+                            "project-skill": {
+                                "SKILL.md": "---\nname: project-skill\ndescription: A project-local skill.\n---\nBody.\n",
+                            }
+                        }
+                    },
+                }),
+            )
+            .await;
+
+        fs.insert_tree(
+            global_skills_dir.join("global-skill"),
+            json!({
+                "SKILL.md": "---\nname: global-skill\ndescription: A global skill.\n---\nBody.\n"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let worktree_id = cx.read(|cx| {
+            let worktree = project.read(cx).worktrees(cx).next().unwrap();
+            worktree.read(cx).id()
+        });
+
+        // 1. Load global skill.
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.project.git_commit_message_skill_name =
+                        Some("global-skill".to_string());
+                });
+            });
+        });
+
+        let skill = GitPanel::load_commit_message_skill(
+            &project,
+            fs.clone(),
+            &Arc::from(Path::new(path!("/project"))),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(skill.name, "global-skill");
+        assert_eq!(skill.source, agent_skills::SkillSource::Global);
+
+        // 2. Load project-local skill.
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.set_local_settings(
+                    worktree_id,
+                    LocalSettingsPath::InWorktree(RelPath::empty().into()),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{"git_commit_message_skill_name": "project-skill"}"#),
+                    cx,
+                );
+            });
+        });
+
+        let skill = GitPanel::load_commit_message_skill(
+            &project,
+            fs.clone(),
+            &Arc::from(Path::new(path!("/project"))),
+            &mut cx.to_async(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(skill.name, "project-skill");
+        assert!(matches!(
+            skill.source,
+            agent_skills::SkillSource::ProjectLocal { .. }
+        ));
+
+        // 3. Load missing project-local skill (should bail).
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.set_local_settings(
+                    worktree_id,
+                    LocalSettingsPath::InWorktree(RelPath::empty().into()),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{"git_commit_message_skill_name": "missing-project-skill"}"#),
+                    cx,
+                );
+            });
+        });
+
+        let result = GitPanel::load_commit_message_skill(
+            &project,
+            fs.clone(),
+            &Arc::from(Path::new(path!("/project"))),
+            &mut cx.to_async(),
+        )
+        .await;
+
+        assert!(result.is_err());
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("missing-project-skill"));
+
+        let relative_skill_path_string = format!(
+            "{}/missing-project-skill/{}",
+            agent_skills::project_skills_relative_path(),
+            agent_skills::SKILL_FILE_NAME
+        );
+        let relative_skill_path = RelPath::unix(&relative_skill_path_string).unwrap();
+        let expected_path = Path::new(path!("/project"))
+            .join(relative_skill_path.as_std_path());
+        assert!(err_msg.contains(&expected_path.display().to_string()));
+
+        // 4. Load missing global skill (should bail).
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.set_local_settings(
+                    worktree_id,
+                    LocalSettingsPath::InWorktree(RelPath::empty().into()),
+                    LocalSettingsKind::Settings,
+                    Some(r#"{}"#),
+                    cx,
+                );
+                store.update_user_settings(cx, |settings| {
+                    settings.project.git_commit_message_skill_name =
+                        Some("missing-global-skill".to_string());
+                });
+            });
+        });
+
+        let result = GitPanel::load_commit_message_skill(
+            &project,
+            fs.clone(),
+            &Arc::from(Path::new(path!("/project"))),
+            &mut cx.to_async(),
+        )
+        .await;
+
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("missing-global-skill"));
+        let expected_path = agent_skills::global_skills_dir()
+            .join("missing-global-skill")
+            .join("SKILL.md");
+        assert!(err_msg.contains(&expected_path.display().to_string()));
+    }
+
+    #[gpui::test]
+    async fn test_render_commit_message_skill_envelope(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+
+        let skill = agent_skills::Skill {
+            name: "test-skill".to_string(),
+            description: "A test skill".to_string(),
+            source: agent_skills::SkillSource::Global,
+            directory_path: std::path::PathBuf::from("/path/to/skill"),
+            skill_file_path: std::path::PathBuf::from("/path/to/skill/SKILL.md"),
+            load_warnings: Vec::new(),
+            disable_model_invocation: false,
+            embedded_body: None,
+        };
+
+        fs.insert_tree(
+            std::path::PathBuf::from("/path/to/skill"),
+            json!({
+                "SKILL.md": "---\nname: test-skill\ndescription: A test skill.\n---\nBody content.\n"
+            }),
+        )
+        .await;
+
+        let result = GitPanel::render_commit_message_skill_envelope(fs.clone(), None)
+            .await
+            .unwrap();
+        assert!(result.is_none());
+
+        let result = GitPanel::render_commit_message_skill_envelope(fs.clone(), Some(skill))
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert!(result.contains("<skill_content name=\"test-skill\">"));
+        assert!(result.contains("Body content."));
+    }
+
     #[test]
-    fn test_commit_message_prompt_includes_user_agents_md_before_project_rules() {
+    fn test_build_commit_message_prompt_content_and_ordering() {
+        let skill = agent_skills::Skill {
+            name: "write-commit-message".to_string(),
+            description: "Follow the configured commit message format.".to_string(),
+            source: agent_skills::SkillSource::Global,
+            directory_path: std::path::PathBuf::from("/path/to/skill"),
+            skill_file_path: std::path::PathBuf::from("/path/to/skill/SKILL.md"),
+            load_warnings: Vec::new(),
+            disable_model_invocation: false,
+            embedded_body: None,
+        };
+        let skill_content =
+            agent_skills::render_skill_envelope(&skill, "End the commit message with `...`.");
+
         let prompt = GitPanel::build_commit_message_prompt(
             "Write a commit message.",
             Some("Use terse commit messages."),
             Some("Use the git_ui prefix."),
+            Some(&skill_content),
             Some("Follow the configured commit message format."),
             "Update generated message",
             "diff --git a/file b/file",
@@ -9979,15 +10441,20 @@ mod tests {
 
         assert!(prompt.contains("Use terse commit messages."));
         assert!(prompt.contains("Use the git_ui prefix."));
+        assert!(prompt.contains("End the commit message with `...`."));
         assert!(prompt.contains("Follow the configured commit message format."));
         assert!(prompt.contains("Update generated message"));
         assert!(prompt.contains("diff --git a/file b/file"));
 
         let user_agents_md_index = prompt.find("<rules>").unwrap();
         let project_rules_index = prompt.find("<project_rules>").unwrap();
+        let skill_index = prompt
+            .find("<skill_content name=\"write-commit-message\">")
+            .unwrap();
         let instructions_index = prompt.find("<commit_message_instructions>").unwrap();
         assert!(user_agents_md_index < project_rules_index);
-        assert!(project_rules_index < instructions_index);
+        assert!(project_rules_index < skill_index);
+        assert!(skill_index < instructions_index);
     }
 
     #[test]
@@ -9997,6 +10464,7 @@ mod tests {
             None,
             None,
             Some("   \n  "),
+            None,
             "",
             "diff --git a/file b/file",
         );

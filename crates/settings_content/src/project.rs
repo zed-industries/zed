@@ -81,6 +81,9 @@ pub struct ProjectSettingsContent {
     /// The list of custom Git hosting providers.
     pub git_hosting_providers: Option<ExtendingVec<GitHostingProviderConfig>>,
 
+    /// The skill name used for generating commit message.
+    pub git_commit_message_skill_name: Option<String>,
+
     /// Whether to disable all AI features in Zed.
     ///
     /// Default: false

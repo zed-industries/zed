@@ -2009,7 +2009,7 @@ impl NativeAgent {
                     )
                 })?
             };
-            let envelope = crate::tools::render_skill_envelope(&skill, &body);
+            let envelope = agent_skills::render_skill_envelope(&skill, &body);
             let envelope_block = acp::ContentBlock::Text(acp::TextContent::new(envelope));
 
             let mut user_blocks = original_content;
@@ -4920,7 +4920,7 @@ mod internal_tests {
         let body = agent_skills::read_skill_body(fs.as_ref(), &skill_for_render.skill_file_path)
             .await
             .expect("skill body should load");
-        let rendered = render_skill_envelope(&skill_for_render, &body);
+        let rendered = agent_skills::render_skill_envelope(&skill_for_render, &body);
         assert!(
             rendered.contains("<skill_content name=\"my-skill\">"),
             "rendered envelope missing skill_content tag: {rendered}"

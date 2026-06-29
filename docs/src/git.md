@@ -305,6 +305,16 @@ To add custom instructions that apply only to commit message generation, use the
 }
 ```
 
+You can also configure a reusable [Skill](./ai/skills.md) to use when generating commit messages. This is useful for sharing commit conventions across a team or standardizing commit formats per-project.
+
+```json [settings]
+{
+  "git_commit_message_skill": "write-conventional-commit-message"
+}
+```
+
+The `git_commit_message_skill` setting can be configured in your user settings or in a project-local `.zed/settings.json` file. Project-local settings will override user settings, allowing you to use a specific skill for a specific project.
+
 These instructions are sent to the model in addition to any instruction files, such as `.rules` or `AGENTS.md`. To add instructions that apply to both commit messages and the agent more broadly, use the global `AGENTS.md` file located `~/.config/zed/AGENTS.md` on macOS and Linux, `%APPDATA%\Zed\AGENTS.md` on Windows.
 
 > Before Zed v1.4.0, this was done through the Rules Library, which has been removed.

@@ -521,6 +521,7 @@ impl VsCodeSettings {
             context_server_timeout: None,
             load_direnv: None,
             git_hosting_providers: None,
+            git_commit_message_skill_name: None,
             disable_ai: None,
         }
     }
