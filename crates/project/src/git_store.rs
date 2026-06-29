@@ -1003,6 +1003,16 @@ impl GitStore {
                 .as_ref()
                 .and_then(|weak| weak.upgrade())
         {
+            // If this unstaged diff was first opened as the uncommitted diff's
+            // secondary, its index text wasn't highlighted. Enable it now and
+            // recalc so the language gets applied to the deleted (base) side.
+            diff_state.update(cx, |diff_state, cx| {
+                if !diff_state.index_text_buffer_language_enabled {
+                    diff_state.index_text_buffer_language_enabled = true;
+                    let buffer_snapshot = buffer.read(cx).text_snapshot();
+                    diff_state.recalculate_diffs(buffer_snapshot, cx);
+                }
+            });
             if let Some(task) =
                 diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
             {
@@ -1739,6 +1749,10 @@ impl GitStore {
                 match kind {
                     DiffKind::Unstaged => {
                         diff_state.unstaged_diff = Some(diff.downgrade());
+                        // The deleted (base) side of a standalone unstaged diff
+                        // is the index, so highlight it. The recalc kicked off by
+                        // `diff_bases_changed` below applies the language.
+                        diff_state.index_text_buffer_language_enabled = true;
                     }
                     DiffKind::Staged => {
                         diff_state.index_text_buffer_language_enabled = true;

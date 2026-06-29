@@ -9526,7 +9526,10 @@ async fn test_staged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         .unwrap();
     cx.run_until_parked();
     unstaged_diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text(cx).language().cloned(), None);
+        assert_eq!(
+            diff.base_text(cx).language().cloned(),
+            Some(language.clone())
+        );
     });
 
     let staged_diff = project
