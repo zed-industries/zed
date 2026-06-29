@@ -1086,6 +1086,17 @@ impl LanguageModel for BedrockMantleModel {
                         // unnecessary here.
                         object.remove("context_management");
                         object.remove("include");
+
+                        // Gemma/Grok stream full plaintext reasoning and stall
+                        // for minutes (returning nothing) when a reasoning
+                        // summary is requested. Only keep `reasoning.summary` for
+                        // models that actually emit summaries.
+                        if !model.emits_reasoning_summary()
+                            && let Some(reasoning) =
+                                object.get_mut("reasoning").and_then(|r| r.as_object_mut())
+                        {
+                            reasoning.remove("summary");
+                        }
                     }
                     value
                 }
@@ -1094,10 +1105,12 @@ impl LanguageModel for BedrockMantleModel {
                 }
             };
 
+            let responses_url = model.responses_url(&region);
             let future = self.request_limiter.stream(async move {
                 let stream = bedrock::mantle::stream_responses(
                     http_client.as_ref(),
                     &region,
+                    &responses_url,
                     &auth,
                     request_value,
                     &extra_headers,
@@ -1111,12 +1124,14 @@ impl LanguageModel for BedrockMantleModel {
             return async move { Ok(future.await?.boxed()) }.boxed();
         }
 
+        let chat_completions_url = model.chat_completions_url(&region);
         let mantle_request = into_mantle(request, &model);
 
         let future = self.request_limiter.stream(async move {
             let stream = bedrock::mantle::stream_completion(
                 http_client.as_ref(),
                 &region,
+                &chat_completions_url,
                 &auth,
                 mantle_request,
                 &extra_headers,
@@ -1264,11 +1279,9 @@ fn into_mantle(
         messages,
         stream: true,
         stream_options: Some(mantle::StreamOptions::default()),
-        // The Mantle endpoint caps `max_completion_tokens` at the full context
-        // window, so sending our (context-sized) max_output_tokens would risk
-        // exceeding the remaining budget once the prompt is counted. Leave it
-        // unset and let the server apply its per-model default.
-        max_completion_tokens: None,
+        // `max_output_tokens()` is a practical cap kept below the context window,
+        // so it is safe to send as the chat-completions output budget.
+        max_completion_tokens: model.max_output_tokens(),
         max_tokens: None,
         stop: request.stop,
         temperature: request.temperature,
@@ -1584,14 +1597,35 @@ impl MantleResponseEventMapper {
                 events.push(Ok(LanguageModelCompletionEvent::Stop(stop)));
                 events
             }
-            Event::Incomplete { .. } => {
+            Event::Incomplete { response } => {
+                log::warn!(
+                    "Mantle Responses API returned incomplete response: {:?}",
+                    response.incomplete_details
+                );
                 vec![Ok(LanguageModelCompletionEvent::Stop(
                     language_model::StopReason::MaxTokens,
                 ))]
             }
-            Event::Failed { .. } | Event::Error { .. } => {
+            Event::Failed { response } => {
+                let detail = response
+                    .error
+                    .as_ref()
+                    .map(|error| error.to_string())
+                    .unwrap_or_else(|| "no error detail".to_string());
+                log::error!("Mantle Responses API failed: {detail}");
                 vec![Err(LanguageModelCompletionError::Other(anyhow!(
-                    "Mantle Responses API reported an error"
+                    "Mantle Responses API failed: {detail}"
+                )))]
+            }
+            Event::Error { error } => {
+                log::error!("Mantle Responses API error event: {error}");
+                let message = error
+                    .get("message")
+                    .and_then(|message| message.as_str())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| error.to_string());
+                vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                    "Mantle Responses API error: {message}"
                 )))]
             }
             _ => Vec::new(),

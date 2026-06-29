@@ -211,22 +211,21 @@ impl MantleModel {
     }
 
     pub fn max_output_tokens(&self) -> Option<u64> {
+        // These are practical per-request output caps, deliberately kept below
+        // each model's context window. The Mantle endpoint accepts a
+        // `max_output_tokens` up to the full context window, but sending that as
+        // the output budget leaves no room for the prompt and the request is
+        // rejected once the input is non-trivial.
         match self {
             Self::Custom {
                 max_output_tokens, ..
             } => *max_output_tokens,
-            // GPT-5.4 / GPT-5.5 don't document a max output token count, and the
-            // responses endpoint silently clamps oversized values rather than
-            // rejecting them, so we use OpenAI's documented 128K output cap.
-            Self::Gpt5_4 => Some(128_000),
-            Self::Gpt5_5 => Some(128_000),
-            // Empirically probed against `bedrock-mantle`: the endpoint accepts
-            // `max_completion_tokens` up to the full context window and rejects
-            // anything larger ("exceeds model maximum (N)"). Grok's documented
-            // 131072 is only the *default*, not the ceiling.
-            Self::Grok4_3 => Some(1_048_576),
-            Self::Gemma4_31B | Self::Gemma4_26B => Some(262_144),
-            Self::Gemma4E2b => Some(131_072),
+            Self::Gpt5_4 | Self::Gpt5_5 => Some(128_000),
+            Self::Grok4_3 => Some(128_000),
+            Self::Gemma4_31B | Self::Gemma4_26B => Some(128_000),
+            // Gemma 4 E2B's context window is itself only 128K, so its output
+            // cap must stay well under that to leave room for the prompt.
+            Self::Gemma4E2b => Some(32_768),
         }
     }
 
@@ -303,6 +302,22 @@ impl MantleModel {
         }
     }
 
+    /// Whether this model emits OpenAI-style reasoning *summaries* via the
+    /// `response.reasoning_summary_text.delta` event, which is gated on the
+    /// `reasoning.summary` request field.
+    ///
+    /// Gemma and Grok instead stream full plaintext reasoning via
+    /// `response.reasoning.delta` and stall for minutes (returning no output)
+    /// when a reasoning summary is requested, so `reasoning.summary` must not be
+    /// sent for them.
+    pub fn emits_reasoning_summary(&self) -> bool {
+        match self {
+            Self::Gpt5_4 | Self::Gpt5_5 => true,
+            Self::Gemma4_31B | Self::Gemma4_26B | Self::Gemma4E2b | Self::Grok4_3 => false,
+            Self::Custom { .. } => false,
+        }
+    }
+
     /// Returns whether the given model supports the `parallel_tool_calls` parameter.
     ///
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.
@@ -350,6 +365,35 @@ impl MantleModel {
             Self::Gemma4_31B | Self::Gemma4_26B | Self::Gemma4E2b | Self::Grok4_3 => true,
             Self::Custom { .. } => false,
         }
+    }
+
+    /// Base URL of this model's OpenAI-compatible Mantle endpoint in `region`.
+    ///
+    /// All first-party Mantle models (GPT-5.x, Gemma, Grok) are served under
+    /// `/openai/v1`. The older gpt-oss models use a bare `/v1` base, but those
+    /// are reached through the Converse API rather than this module.
+    fn endpoint_base_url(&self, region: &str) -> String {
+        match self {
+            Self::Gpt5_4
+            | Self::Gpt5_5
+            | Self::Gemma4_31B
+            | Self::Gemma4_26B
+            | Self::Gemma4E2b
+            | Self::Grok4_3
+            | Self::Custom { .. } => {
+                format!("https://bedrock-mantle.{region}.api.aws/openai/v1")
+            }
+        }
+    }
+
+    /// Chat Completions endpoint URL for this model in `region`.
+    pub fn chat_completions_url(&self, region: &str) -> String {
+        format!("{}/chat/completions", self.endpoint_base_url(region))
+    }
+
+    /// Responses endpoint URL for this model in `region`.
+    pub fn responses_url(&self, region: &str) -> String {
+        format!("{}/responses", self.endpoint_base_url(region))
     }
 }
 
@@ -692,6 +736,12 @@ pub enum ResponsesStreamEvent {
 pub struct ResponsesSummary {
     #[serde(default)]
     pub usage: Option<ResponsesUsage>,
+    /// Populated on `response.failed`; opaque error object from the service.
+    #[serde(default)]
+    pub error: Option<Value>,
+    /// Populated on `response.incomplete` (e.g. `{ "reason": "max_output_tokens" }`).
+    #[serde(default)]
+    pub incomplete_details: Option<Value>,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -702,33 +752,19 @@ pub struct ResponsesUsage {
     pub output_tokens: Option<u64>,
 }
 
-/// Builds the chat-completions URL for a Mantle model.
-///
-/// Bedrock-hosted third-party models (Gemma, Grok — whose IDs are namespaced
-/// like `google.gemma-4-31b` or `xai.grok-4.3`) are served on the OpenAI-shaped
-/// `/openai/v1` path, whereas the first-party GPT ids use the bare `/v1` path.
-/// See the per-model "Programmatic Access" sections of the Bedrock model cards.
-fn chat_completions_uri(region: &str, model: &str) -> String {
-    let region_url = format!("https://bedrock-mantle.{region}.api.aws");
-    if model.contains('.') {
-        format!("{region_url}/openai/v1/chat/completions")
-    } else {
-        format!("{region_url}/v1/chat/completions")
-    }
-}
-
+/// Streams a chat completion from a Mantle model.
 pub async fn non_streaming_completion(
     client: &dyn HttpClient,
     region: &str,
+    url: &str,
     auth: &MantleAuth,
     request: Request,
 ) -> Result<Response, RequestError> {
-    let uri = chat_completions_uri(region, &request.model);
     let body = serde_json::to_vec(&request).map_err(|e| RequestError::Other(e.into()))?;
 
     let mut http_request = HttpRequest::builder()
         .method(Method::POST)
-        .uri(uri)
+        .uri(url)
         .header("Content-Type", "application/json")
         .body(AsyncBody::from(body.clone()))
         .map_err(|e| RequestError::Other(e.into()))?;
@@ -765,16 +801,16 @@ pub async fn non_streaming_completion(
 pub async fn stream_completion(
     client: &dyn HttpClient,
     region: &str,
+    url: &str,
     auth: &MantleAuth,
     request: Request,
     extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ResponseStreamEvent>>, RequestError> {
-    let uri = chat_completions_uri(region, &request.model);
     let body = serde_json::to_vec(&request).map_err(|e| RequestError::Other(e.into()))?;
 
     let mut http_request = HttpRequest::builder()
         .method(Method::POST)
-        .uri(uri)
+        .uri(url)
         .header("Content-Type", "application/json")
         .extra_headers(extra_headers)
         .body(AsyncBody::from(body.clone()))
@@ -842,17 +878,16 @@ pub async fn stream_completion(
 pub async fn stream_responses(
     client: &dyn HttpClient,
     region: &str,
+    url: &str,
     auth: &MantleAuth,
     request: Value,
     extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<ResponsesStreamEvent>>, RequestError> {
-    let region_url = format!("https://bedrock-mantle.{region}.api.aws");
-    let uri = format!("{region_url}/openai/v1/responses");
     let body = serde_json::to_vec(&request).map_err(|e| RequestError::Other(e.into()))?;
 
     let mut http_request = HttpRequest::builder()
         .method(Method::POST)
-        .uri(uri)
+        .uri(url)
         .header("Content-Type", "application/json")
         .extra_headers(extra_headers)
         .body(AsyncBody::from(body.clone()))
