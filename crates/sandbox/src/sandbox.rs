@@ -226,15 +226,8 @@ impl Eq for HostFilesystemLocation {}
 #[cfg(target_os = "linux")]
 fn linux_fd_identity(fd: &std::os::fd::OwnedFd) -> Option<(u64, u64)> {
     use std::os::fd::AsRawFd as _;
-    // SAFETY: an all-zero `libc::stat` is a valid output buffer for `fstat`.
-    let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
-    // SAFETY: `fd` is a live, owned descriptor for the duration of the call.
-    let result = unsafe { libc::fstat(fd.as_raw_fd(), &mut stat) };
-    if result == 0 {
-        Some((stat.st_dev as u64, stat.st_ino as u64))
-    } else {
-        None
-    }
+    let stat = nix::sys::stat::fstat(fd.as_raw_fd()).ok()?;
+    Some((stat.st_dev as u64, stat.st_ino as u64))
 }
 
 /// A path *inside the sandbox* — i.e. where a host location is exposed in the
@@ -844,12 +837,11 @@ impl Sandbox {
         // Stand up the host endpoint that sends the captured fds to the
         // in-sandbox validator, when this run has writable binds to verify. It's
         // an in-process background thread owned by this (per-command) `Sandbox`,
-        // so it lives only for the command's duration. Created on the wrap that
-        // first needs it; a `Sandbox` normally wraps a single command.
-        if !self.fs.allow_fs_write
-            && !writable_fds.is_empty()
-            && self.validation_fd_sender.is_none()
-        {
+        // so it lives only for the command's duration. The sender serves its
+        // descriptors to exactly one client and then tears itself down, so each
+        // wrap creates a fresh one (replacing any from a prior wrap); a
+        // `Sandbox` normally wraps a single command.
+        if !self.fs.allow_fs_write && !writable_fds.is_empty() {
             let sender =
                 linux_bubblewrap::ValidationFdSender::spawn(writable_fds).map_err(|error| {
                     SandboxError::Io(format!("failed to start sandbox bind validator: {error}"))

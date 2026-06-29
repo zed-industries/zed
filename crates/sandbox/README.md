@@ -16,9 +16,22 @@ by that policy.
 
 ## Security model
 
-All untrusted code is assumed to be maximally hostile. We do _not_ assume that
-the untrusted code is written by a well-meaning-but-perhaps-marginally-unaligned
-AI agent.
+The sandbox itself assumes all untrusted code is maximally hostile. It does
+*not* assume that the untrusted code is written by a
+well-meaning-but-perhaps-marginally-unaligned AI agent.
+
+However, practical limitations make the default profile in Zed not secure
+against attacks. An attacker with read/write access to the current directory can:
+- create a new Rust project in the current dir
+- create a proc macro library containing malicious code
+- use that macro in the project somewhere
+- rust-analyzer will run that proc macro outside the sandbox
+
+This can be mitigated by:
+- disabling any language servers with the capability to run untrusted code
+- not granting git access (since write access to `.git` can similarly be
+  escalated to unsandboxed code execution via `$EDITOR` and various other
+  methods)
 
 ## Implementation
 
@@ -89,9 +102,40 @@ Consider the following case:
   to `/home/alice`, and so the second command to inject the malicious
   credential-stealing sudo succeeds.
 
+<<<<<<< HEAD
 Note that this attack requires _two nested directories_, each with read/write
 grants. A single grant is insufficient, because you must mutate _a path which is
 used as a `--bind` argument_. If you cannot mutate a parent (because we are
+=======
+
+```mermaid
+sequenceDiagram
+    participant Agent as Zed Agent
+    participant S1 as Subagent 1 swapper
+    participant S2 as Subagent 2 writer
+    participant Zed as Zed path validation
+    participant BW as bubblewrap
+
+    Note over Agent: Evil AGENTS.md picked up, git access granted
+    Note over Agent: Grants rw project, rw project/.git, rw /tmp, ro /
+    Agent->>S1: spawn swap project/.git for a symlink to /home/alice
+    Agent->>S2: spawn append PATH hijack to project/.git/.bashrc
+    Zed->>Zed: check project/.git is not an out-of-bounds symlink
+    Note over Zed: at check time it is a real subdirectory, so OK
+    Note over Zed,BW: time delay, time-of-check to time-of-use
+    S1->>S1: renameat2 RENAME_EXCHANGE wins the race
+    Note over S1: project/.git is now a symlink to /home/alice
+    Zed->>BW: bind project/.git into the sandbox
+    BW->>BW: re-resolve project/.git, following symlink to /home/alice
+    S2->>BW: write project/.git/.bashrc
+    BW-->>S2: write lands in /home/alice/.bashrc
+    Note over S2: escalation, project-scoped grant becomes arbitrary write
+```
+
+Note that this attack requires *two nested directories*, each with read/write
+grants. A single grant is insufficient, because you must mutate *a path which is
+used as a `--bind` argument*. If you cannot mutate a parent (because we are
+>>>>>>> abbe0a9270ce58b4ea24d50567f97a9f39cd2d5c
 assuming no nested directories), then the only part you can mutate is the the
 read/write grant path itself (i.e. `/home/alice/project`). But, in bubblewrap's
 model, doing this requires write access to the _parent_ (i.e. `/home/alice`),
@@ -160,6 +204,30 @@ The flow for this approach in detail is:
 
 - if all binds match, run the untrusted command, otherwise refuse to execute
 
+```mermaid
+sequenceDiagram
+    participant Zed as Zed host
+    participant BW as bubblewrap
+    participant Bridge as sandbox-bridge in sandbox
+    participant Prog as untrusted program
+
+    Zed->>Zed: open O_PATH FD per writable path, pinning the inode
+    Zed->>Zed: create SCM_RIGHTS socket
+    Zed->>BW: exec bwrap, binding paths, then zed sandbox-bridge
+    Note over Zed,BW: binds use possibly-swapped paths, socket mounted in sandbox
+    Zed->>Bridge: send FDs over the SCM_RIGHTS socket
+    loop each writable bind
+        Bridge->>Bridge: fstat the FD to get device and inode
+        Bridge->>Bridge: lstat the mount path to get device and inode
+        Bridge->>Bridge: compare the two pairs
+    end
+    alt all binds match
+        Bridge->>Prog: exec the untrusted command
+    else any mismatch, a path was swapped
+        Bridge-->>Zed: refuse to execute
+    end
+```
+
 If the attacker managed to change a path to point to a different inode to when
 the FD was captured, the check will fail, and we don't run the untrusted
 command.
@@ -173,6 +241,7 @@ The Linux approach works perfectly on WSL in theory (WSL uses a "regular linux
 kernel"), but there is one practical thorn: the zed host code that creates the
 FD is now running on Windows, but we need Linux file descriptors.
 
+<<<<<<< HEAD
 To do this, we run `zed --wsl-sandbox-helper` in WSL (this is distinct from the `zed
 --sandbox-bridge` program, which runs *inside* the sandbox). This helper's job
 is just to be a place where we can run the FD-capture-and-socket-creation code,
@@ -432,6 +501,32 @@ string and carries the same bind-source TOCTOU as un-hardened Linux. When releas
 info _is_ present but provisioning fails (no `curl`/`wget`, a download error),
 that is surfaced to the user as a sandbox-creation failure — like a missing
 `bwrap` — rather than silently downgraded.
+=======
+To work around this, we launch `zed --wsl-sandbox-helper` in WSL, which is a
+shim that captures the FDs and sets up the socket. We download this to
+`~/.local/libexec/zed`, so that it does not conflict with the Windows `zed.exe`
+binary that WSL will inject into the Linux `$PATH` (yes the `.exe` is stripped).
+## Code design
+
+### `HostFilesystemLocation`
+
+As mentioned above, TOCTOUs are a real issue. MacOS is not vulnerable to the
+TOCTOU that affected Linux, but there is still a risk if we canonicalize paths
+twice with a time delay between. 
+
+To mitigate this, sensitive APIs take a `HostFilesystemLocation`. This is:
+- an `Arc<OwnedFd>` on Linux
+- a `PathBuf` on MacOS
+
+This type does not expose its inner value, and so this encourages the developer
+to capture and validate the path once, before passing it into this type.
+
+### `SandboxFilesystemLocation`
+
+A thin wrapper around a `PathBuf` representing a location *inside* the sandbox.
+No hardening is required - the worst a tampered in-sandbox path can do is expose
+already-granted host files at a different in-sandbox path.
+>>>>>>> abbe0a9270ce58b4ea24d50567f97a9f39cd2d5c
 
 [bubblewrap]: https://github.com/containers/bubblewrap
 [namespaces]: https://en.wikipedia.org/wiki/Linux_namespaces

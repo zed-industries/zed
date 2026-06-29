@@ -11425,6 +11425,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases 0.2.1",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -15939,6 +15940,7 @@ dependencies = [
  "http_proxy",
  "libc",
  "log",
+ "nix 0.29.0",
  "serde",
  "serde_json",
  "smol",

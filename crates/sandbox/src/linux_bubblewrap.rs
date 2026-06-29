@@ -23,11 +23,10 @@
 //! eliminates a race condition involving BPF user notifications.
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use std::ffi::{CString, OsStr, OsString};
+use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Shutdown, TcpListener, TcpStream};
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd, RawFd};
-use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
@@ -382,30 +381,52 @@ fn unique_validation_socket_sandbox_path() -> PathBuf {
     ))
 }
 
-/// Host pathname for the validation listener socket. It lives outside the
-/// sandbox's `/tmp` tmpfs (it's a host path) and is bind-mounted in at
+/// Create a private, owner-only directory for the validation listener socket and
+/// return `(directory, socket path)`. The socket is a host path (it lives
+/// outside the sandbox's `/tmp` tmpfs) and is bind-mounted in at
 /// [`unique_validation_socket_sandbox_path`].
-fn unique_validation_socket_host_path() -> PathBuf {
+///
+/// The socket carries the captured `O_PATH` descriptors over `SCM_RIGHTS`, so
+/// connect access must be confined to us. Rather than bind in shared `/tmp` and
+/// `chmod` after (which leaves a window where another user could connect before
+/// the `chmod` lands), we create a `0700` directory up front: `create` is atomic
+/// and fails if the path already exists, and `mode(0o700)` makes it
+/// owner-only from creation, so no other user can even traverse to the socket.
+fn unique_validation_socket_host_path() -> std::io::Result<(PathBuf, PathBuf)> {
+    use std::os::unix::fs::DirBuilderExt as _;
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!(
-        "zed-sandbox-validate-host-{}-{counter}.sock",
+    let dir = std::env::temp_dir().join(format!(
+        "zed-sandbox-validate-{}-{counter}",
         std::process::id()
-    ))
+    ));
+    // Clear a stale directory left by a previous run that reused this pid; this
+    // only succeeds for a directory we own, so it can't be used to displace
+    // another user's squatted path (in which case `create` below fails closed).
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
+    let socket_path = dir.join("validate.sock");
+    Ok((dir, socket_path))
 }
 
 /// Host endpoint that hands the in-sandbox validator the captured `O_PATH`
 /// descriptors for the writable binds.
 ///
 /// Runs in-process: `spawn` starts a short-lived background **thread** (never a
-/// separate process) that listens on a private `AF_UNIX` socket and, on each
-/// connection, sends the descriptors via `SCM_RIGHTS`. It is owned by the
-/// per-command [`Sandbox`](crate::Sandbox), so it is created and destroyed per
-/// command — `Drop` stops the thread and removes the socket. Holding the
-/// descriptors also keeps their inodes pinned (so they can't be recycled) until
-/// then. The socket is bind-mounted into the sandbox at
-/// [`Self::sandbox_socket_path`].
+/// separate process) that listens on an owner-only `AF_UNIX` socket and serves
+/// the descriptors to **exactly one** client (the in-sandbox validator) via
+/// `SCM_RIGHTS`, then closes and removes the socket. The validator connects
+/// once, after bwrap has mounted the binds; `SCM_RIGHTS` keeps the descriptors
+/// alive in flight, so once the single send completes there is nothing left to
+/// serve. Holding the descriptors until that send keeps the captured inodes
+/// pinned (so they can't be recycled) up to the moment they're handed off.
+///
+/// It is owned by the per-command [`Sandbox`](crate::Sandbox); `Drop` wakes a
+/// still-blocked accept and removes the socket and its private directory (a
+/// no-op if the thread already tore them down). The socket is bind-mounted into
+/// the sandbox at [`Self::sandbox_socket_path`].
 pub(crate) struct ValidationFdSender {
+    host_socket_dir: PathBuf,
     host_socket_path: PathBuf,
     sandbox_socket_path: PathBuf,
     shutdown: Arc<AtomicBool>,
@@ -416,40 +437,55 @@ impl ValidationFdSender {
     /// must pass the same order to the launcher so each fd lines up with its
     /// bind-destination path.
     pub(crate) fn spawn(fds: Vec<OwnedFd>) -> std::io::Result<Self> {
-        let host_socket_path = unique_validation_socket_host_path();
-        let _ = std::fs::remove_file(&host_socket_path);
+        use std::os::unix::fs::PermissionsExt as _;
+        let (host_socket_dir, host_socket_path) = unique_validation_socket_host_path()?;
         let listener = UnixListener::bind(&host_socket_path)?;
+        // The enclosing directory is already `0700`, so this is defense in depth:
+        // connect permission on an `AF_UNIX` socket is governed by write
+        // permission on the socket file, so keep it owner-only too.
+        std::fs::set_permissions(&host_socket_path, std::fs::Permissions::from_mode(0o600))?;
         let sandbox_socket_path = unique_validation_socket_sandbox_path();
         let shutdown = Arc::new(AtomicBool::new(false));
 
+        // We use std threading APIs here because this code is run from both the
+        // Linux zed binary and also the WSL helper, which does not have a GPUI
+        // runtime.
         thread::Builder::new()
             .name("zed-sandbox-validation".to_string())
             .spawn({
                 let shutdown = shutdown.clone();
+                let host_socket_path = host_socket_path.clone();
                 move || {
-                    // `fds` is moved in and held for the thread's life, keeping
-                    // the pinned inodes alive while any sandboxed command runs.
+                    // `fds` is held until the single send below, keeping the
+                    // pinned inodes alive until they're handed to the validator.
                     let raw_fds: Vec<RawFd> = fds.iter().map(|fd| fd.as_raw_fd()).collect();
-                    for stream in listener.incoming() {
-                        if shutdown.load(Ordering::SeqCst) {
-                            break;
-                        }
-                        match stream {
-                            Ok(stream) => {
+                    // Serve exactly one client: the in-sandbox validator connects
+                    // once. A second connection (e.g. the wake from `Drop`) is
+                    // distinguished by the `shutdown` flag and never served.
+                    match listener.accept() {
+                        Ok((stream, _)) => {
+                            if !shutdown.load(Ordering::SeqCst) {
                                 if let Err(error) = send_fds(&stream, &raw_fds) {
-                                    log::warn!(
-                                        "[sandbox] failed to send validation fds: {error}"
-                                    );
+                                    log::warn!("[sandbox] failed to send validation fds: {error}");
                                 }
                             }
-                            Err(_) => break,
+                        }
+                        Err(error) => {
+                            if !shutdown.load(Ordering::SeqCst) {
+                                log::warn!("[sandbox] sandbox validation accept failed: {error}");
+                            }
                         }
                     }
                     drop(fds);
+                    // Close the listener and remove the socket so it can't be
+                    // connected to again. The directory is removed by `Drop`.
+                    drop(listener);
+                    let _ = std::fs::remove_file(&host_socket_path);
                 }
             })?;
 
         Ok(Self {
+            host_socket_dir,
             host_socket_path,
             sandbox_socket_path,
             shutdown,
@@ -467,11 +503,16 @@ impl ValidationFdSender {
 
 impl Drop for ValidationFdSender {
     fn drop(&mut self) {
-        // Wake the accept loop so the thread can observe the shutdown flag and
-        // exit instead of blocking forever, then remove the socket file.
+        // If the validator never connected (e.g. bwrap failed before the
+        // launcher ran), the thread is still blocked in `accept`. Flag shutdown
+        // and poke the socket so the accept returns and the thread exits without
+        // serving the descriptors, then remove the socket and its private
+        // directory (a no-op if the thread already removed the socket after its
+        // single send).
         self.shutdown.store(true, Ordering::SeqCst);
         let _ = UnixStream::connect(&self.host_socket_path);
         let _ = std::fs::remove_file(&self.host_socket_path);
+        let _ = std::fs::remove_dir_all(&self.host_socket_dir);
     }
 }
 
@@ -790,7 +831,7 @@ fn run_launcher(invocation: LauncherInvocation) -> ! {
 fn validate_binds(socket_path: &Path, paths: &[PathBuf]) -> Result<()> {
     let stream = UnixStream::connect(socket_path)
         .with_context(|| format!("connecting to validation socket {}", socket_path.display()))?;
-    let fds = recv_fds(&stream, paths.len()).context("receiving validation descriptors")?;
+    let fds = recv_fds(&stream).context("receiving validation descriptors")?;
     if fds.len() != paths.len() {
         bail!(
             "expected {} validation descriptor(s), received {}",
@@ -871,93 +912,59 @@ fn run_bridge(socket_path: PathBuf, port: u16, program: &OsStr, program_args: &[
 /// Send `fds` over `stream` in a single message carrying one byte of payload and
 /// the descriptors as `SCM_RIGHTS` ancillary data.
 fn send_fds(stream: &UnixStream, fds: &[RawFd]) -> std::io::Result<()> {
+    use nix::sys::socket::{ControlMessage, MsgFlags, sendmsg};
     let payload = [0u8; 1];
-    let mut iov = libc::iovec {
-        iov_base: payload.as_ptr() as *mut libc::c_void,
-        iov_len: payload.len(),
-    };
-    let fd_bytes = std::mem::size_of_val(fds);
-    let mut control = vec![0u8; unsafe { libc::CMSG_SPACE(fd_bytes as u32) } as usize];
-
-    // SAFETY: an all-zero `msghdr` is valid; pointers below reference live local
-    // buffers for the duration of the `sendmsg` call.
-    let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
-    message.msg_iov = &mut iov;
-    message.msg_iovlen = 1;
-    message.msg_control = control.as_mut_ptr() as *mut libc::c_void;
-    message.msg_controllen = control.len() as _;
-
-    // SAFETY: `control` is sized for exactly these fds via `CMSG_SPACE`, so the
-    // header and its data region are in bounds.
-    unsafe {
-        let header = libc::CMSG_FIRSTHDR(&message);
-        if header.is_null() {
-            return Err(std::io::Error::other("no control message header"));
-        }
-        (*header).cmsg_level = libc::SOL_SOCKET;
-        (*header).cmsg_type = libc::SCM_RIGHTS;
-        (*header).cmsg_len = libc::CMSG_LEN(fd_bytes as u32) as _;
-        let data = libc::CMSG_DATA(header) as *mut RawFd;
-        for (index, fd) in fds.iter().enumerate() {
-            std::ptr::write_unaligned(data.add(index), *fd);
-        }
-    }
-
-    // SAFETY: `message` is fully initialized and points at live buffers.
-    let sent = unsafe { libc::sendmsg(stream.as_raw_fd(), &message, libc::MSG_NOSIGNAL) };
-    if sent < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
+    let iov = [std::io::IoSlice::new(&payload)];
+    let control = [ControlMessage::ScmRights(fds)];
+    sendmsg::<()>(
+        stream.as_raw_fd(),
+        &iov,
+        &control,
+        MsgFlags::MSG_NOSIGNAL,
+        None,
+    )
+    .map_err(std::io::Error::from)?;
     Ok(())
 }
 
-/// Receive up to `max_fds` descriptors sent via `SCM_RIGHTS` on `stream`. The
-/// descriptors are received with `O_CLOEXEC` so they don't leak into the command
-/// that's `exec`'d after validation.
-fn recv_fds(stream: &UnixStream, max_fds: usize) -> std::io::Result<Vec<OwnedFd>> {
+/// Receive the descriptors sent via `SCM_RIGHTS` on `stream`. They arrive with
+/// `O_CLOEXEC` (via `MSG_CMSG_CLOEXEC`) so they don't leak into the command
+/// that's `exec`'d after validation. The ancillary buffer is sized for the
+/// protocol maximum ([`MAX_VALIDATED_BINDS`]); a sender exceeding it trips
+/// `MSG_CTRUNC` and a mismatched count is rejected by the caller.
+fn recv_fds(stream: &UnixStream) -> std::io::Result<Vec<OwnedFd>> {
+    use nix::sys::socket::{ControlMessageOwned, MsgFlags, recvmsg};
     let mut payload = [0u8; 1];
-    let mut iov = libc::iovec {
-        iov_base: payload.as_mut_ptr() as *mut libc::c_void,
-        iov_len: payload.len(),
-    };
-    let fd_bytes = max_fds * std::mem::size_of::<RawFd>();
-    let mut control = vec![0u8; unsafe { libc::CMSG_SPACE(fd_bytes as u32) } as usize];
-
-    // SAFETY: an all-zero `msghdr` is valid; pointers reference live buffers for
-    // the `recvmsg` call.
-    let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
-    message.msg_iov = &mut iov;
-    message.msg_iovlen = 1;
-    message.msg_control = control.as_mut_ptr() as *mut libc::c_void;
-    message.msg_controllen = control.len() as _;
-
-    // SAFETY: `message` is initialized and points at live buffers.
-    let received = unsafe { libc::recvmsg(stream.as_raw_fd(), &mut message, libc::MSG_CMSG_CLOEXEC) };
-    if received < 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    if message.msg_flags & libc::MSG_CTRUNC != 0 {
+    let mut iov = [std::io::IoSliceMut::new(&mut payload)];
+    let mut control = nix::cmsg_space!([RawFd; MAX_VALIDATED_BINDS]);
+    let message = recvmsg::<()>(
+        stream.as_raw_fd(),
+        &mut iov,
+        Some(&mut control),
+        MsgFlags::MSG_CMSG_CLOEXEC,
+    )
+    .map_err(std::io::Error::from)?;
+    if message.flags.contains(MsgFlags::MSG_CTRUNC) {
         return Err(std::io::Error::other(
             "validation descriptors were truncated in transit",
         ));
     }
 
     let mut fds = Vec::new();
-    // SAFETY: we only walk the control buffer the kernel populated, reading fds
-    // from `SCM_RIGHTS` headers it produced.
-    unsafe {
-        let mut header = libc::CMSG_FIRSTHDR(&message);
-        while !header.is_null() {
-            if (*header).cmsg_level == libc::SOL_SOCKET && (*header).cmsg_type == libc::SCM_RIGHTS {
-                let data = libc::CMSG_DATA(header) as *const RawFd;
-                let payload_len = (*header).cmsg_len as usize - libc::CMSG_LEN(0) as usize;
-                let count = payload_len / std::mem::size_of::<RawFd>();
-                for index in 0..count {
-                    let raw = std::ptr::read_unaligned(data.add(index));
-                    fds.push(OwnedFd::from_raw_fd(raw));
-                }
+    for control_message in message.cmsgs().map_err(std::io::Error::from)? {
+        if let ControlMessageOwned::ScmRights(raw_fds) = control_message {
+            for raw in raw_fds {
+                // SAFETY: the kernel installs each `SCM_RIGHTS` descriptor as a
+                // freshly-allocated, open fd in *our* table for this message
+                // (with `O_CLOEXEC` via `MSG_CMSG_CLOEXEC`), so it's valid and
+                // can't alias an fd we already hold. `nix`'s `ScmRights` does not
+                // take ownership of received fds (closing them is the caller's
+                // responsibility), so wrapping each exactly once here makes us
+                // their sole owner. Both hold for any peer, which is why this
+                // (and `recv_fds`) is sound as a safe fn rather than needing an
+                // `unsafe fn` precondition on the caller.
+                fds.push(unsafe { OwnedFd::from_raw_fd(raw) });
             }
-            header = libc::CMSG_NXTHDR(&message, header);
         }
     }
     Ok(fds)
@@ -965,27 +972,15 @@ fn recv_fds(stream: &UnixStream, max_fds: usize) -> std::io::Result<Vec<OwnedFd>
 
 /// `(device, inode)` of the object an already-open descriptor refers to.
 fn fd_dev_ino(fd: RawFd) -> std::io::Result<(u64, u64)> {
-    // SAFETY: a zeroed `stat` is a valid output buffer; `fd` is live for the call.
-    let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
-    let result = unsafe { libc::fstat(fd, &mut stat) };
-    if result != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
+    let stat = nix::sys::stat::fstat(fd).map_err(std::io::Error::from)?;
     Ok((stat.st_dev as u64, stat.st_ino as u64))
 }
 
 /// `(device, inode)` of `path` without following a final symlink.
 fn lstat_dev_ino(path: &Path) -> std::io::Result<(u64, u64)> {
-    let c_path = CString::new(path.as_os_str().as_bytes())
-        .map_err(|_| std::io::Error::other("path contains an interior NUL"))?;
-    // SAFETY: a zeroed `stat` is a valid output buffer; `c_path` is a valid,
-    // NUL-terminated C string live for the call.
-    let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
-    let result = unsafe { libc::lstat(c_path.as_ptr(), &mut stat) };
-    if result != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-    Ok((stat.st_dev as u64, stat.st_ino as u64))
+    // `symlink_metadata` is `lstat(2)` (it does not follow a final symlink).
+    let metadata = std::fs::symlink_metadata(path)?;
+    Ok((metadata.dev(), metadata.ino()))
 }
 
 /// Open an `O_PATH` descriptor pinning `path`'s inode (read/write on contents is
@@ -1620,22 +1615,24 @@ mod tests {
     // compares it against the path it's told was mounted. A matching path passes;
     // a *different* directory (as a redirected bind would produce) is rejected,
     // proving the validator fails closed rather than no-ops.
+    //
+    // Each `ValidationFdSender` serves a single client and then tears down, so
+    // the two cases use separate senders.
     #[test]
     fn test_validate_binds_accepts_match_and_rejects_redirect() {
         let captured = tempfile::tempdir().unwrap();
         let other = tempfile::tempdir().unwrap();
 
+        // The mounted path is the captured inode -> validation passes.
         let sender = ValidationFdSender::spawn(vec![open_o_path(captured.path())])
             .expect("spawn validation fd sender");
-
-        // The mounted path is the captured inode -> validation passes.
-        validate_binds(
-            sender.host_socket_path(),
-            &[captured.path().to_path_buf()],
-        )
-        .expect("matching bind must validate");
+        validate_binds(sender.host_socket_path(), &[captured.path().to_path_buf()])
+            .expect("matching bind must validate");
+        drop(sender);
 
         // The mounted path is a *different* inode (a redirected bind) -> rejected.
+        let sender = ValidationFdSender::spawn(vec![open_o_path(captured.path())])
+            .expect("spawn validation fd sender");
         let error = validate_binds(sender.host_socket_path(), &[other.path().to_path_buf()])
             .expect_err("a redirected bind must be rejected");
         assert!(
