@@ -950,6 +950,7 @@ impl TerminalBuilder {
                 ..Default::default()
             },
             last_mouse: None,
+            mouse_down_position: None,
             matches: Vec::new(),
 
             selection_head: None,
@@ -1172,6 +1173,7 @@ impl TerminalBuilder {
                 events: VecDeque::with_capacity(10), //Should never get this high.
                 last_content: Default::default(),
                 last_mouse: None,
+                mouse_down_position: None,
                 matches: Vec::new(),
 
                 selection_head: None,
@@ -1342,6 +1344,9 @@ pub struct Terminal {
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
     last_mouse: Option<(Point, SelectionSide)>,
+    /// Window-relative position of the most recent left mouse-down. Used to
+    /// apply a drag threshold before starting a selection (see #58970).
+    mouse_down_position: Option<GpuiPoint<Pixels>>,
     pub matches: Vec<Range>,
     pub last_content: Content,
     pub selection_head: Option<Point>,
@@ -1418,6 +1423,12 @@ impl TaskStatus {
 }
 
 const FIND_HYPERLINK_THROTTLE_PX: Pixels = px(5.0);
+
+/// Minimum pointer movement before a left click begins a selection. This keeps
+/// a click that jitters by a pixel or two (such as the window-focusing click)
+/// from starting a selection and, with `copy_on_select` enabled, clobbering the
+/// clipboard. Mirrors the drag threshold used by gpui's `div` element.
+const SELECTION_DRAG_THRESHOLD: f64 = 2.0;
 
 impl Terminal {
     fn process_pty_event(&mut self, event: PtyEvent, cx: &mut Context<Self>) {
@@ -2330,6 +2341,16 @@ impl Terminal {
                 }
             }
 
+            // Ignore tiny pointer movements so that a click that jitters by a
+            // pixel or two (e.g. the window-focusing click) does not begin a
+            // selection. Mirrors the drag threshold used by gpui's `div`.
+            if self.selection_phase != SelectionPhase::Selecting
+                && let Some(mouse_down_position) = self.mouse_down_position
+                && (e.position - mouse_down_position).magnitude() <= SELECTION_DRAG_THRESHOLD
+            {
+                return;
+            }
+
             self.selection_phase = SelectionPhase::Selecting;
             // Alacritty has the same ordering, of first updating the selection
             // then scrolling 15ms later
@@ -2397,6 +2418,7 @@ impl Terminal {
         } else {
             match e.button {
                 MouseButton::Left => {
+                    self.mouse_down_position = Some(e.position);
                     let (point, side) = grid_point_and_side(
                         position,
                         self.last_content.terminal_bounds,
@@ -2497,6 +2519,7 @@ impl Terminal {
 
         self.selection_phase = SelectionPhase::Ended;
         self.last_mouse = None;
+        self.mouse_down_position = None;
     }
 
     ///Scroll the terminal
@@ -3310,6 +3333,83 @@ mod tests {
             click_count: 1,
         };
         terminal.mouse_up(&mouse_up, cx);
+    }
+
+    fn left_mouse_down_at(
+        terminal: &mut Terminal,
+        position: GpuiPoint<Pixels>,
+        cx: &mut Context<Terminal>,
+    ) {
+        let mouse_down = MouseDownEvent {
+            button: MouseButton::Left,
+            position,
+            modifiers: Modifiers::none(),
+            click_count: 1,
+            first_mouse: true,
+        };
+        terminal.mouse_down(&mouse_down, cx);
+    }
+
+    fn left_mouse_drag_to(
+        terminal: &mut Terminal,
+        position: GpuiPoint<Pixels>,
+        cx: &mut Context<Terminal>,
+    ) {
+        let region = terminal.last_content.terminal_bounds.bounds;
+        let drag_event = MouseMoveEvent {
+            position,
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::none(),
+        };
+        terminal.mouse_drag(&drag_event, region, cx);
+    }
+
+    /// A left click that jitters by a pixel or two (e.g. the window-focusing
+    /// click) must not begin a selection, otherwise `copy_on_select` would
+    /// overwrite the clipboard. Regression test for #58970.
+    #[gpui::test]
+    async fn test_terminal_click_jitter_does_not_start_selection(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"hello world\r\n");
+
+        terminal.update(cx, |terminal, cx| {
+            left_mouse_down_at(terminal, point(px(50.0), px(10.0)), cx);
+            terminal.events.clear();
+
+            // One pixel of movement is below the drag threshold.
+            left_mouse_drag_to(terminal, point(px(51.0), px(10.0)), cx);
+
+            assert!(
+                !terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::UpdateSelection(_))),
+                "a sub-threshold click jitter should not start a selection"
+            );
+            assert!(terminal.selection_phase == SelectionPhase::Ended);
+        });
+    }
+
+    /// A deliberate drag past the threshold must still start a selection.
+    #[gpui::test]
+    async fn test_terminal_deliberate_drag_starts_selection(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"hello world\r\n");
+
+        terminal.update(cx, |terminal, cx| {
+            left_mouse_down_at(terminal, point(px(50.0), px(10.0)), cx);
+            terminal.events.clear();
+
+            // Well beyond the drag threshold.
+            left_mouse_drag_to(terminal, point(px(90.0), px(10.0)), cx);
+
+            assert!(
+                terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::UpdateSelection(_))),
+                "a deliberate drag should start a selection"
+            );
+            assert!(terminal.selection_phase == SelectionPhase::Selecting);
+        });
     }
 
     #[gpui::test]

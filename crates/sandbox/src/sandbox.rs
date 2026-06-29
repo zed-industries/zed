@@ -69,8 +69,9 @@ pub enum SandboxNetPolicy {
 /// treated.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum GitSandboxPolicy {
-    /// `.git` contents are protected: read-only on Linux; content reads and
-    /// writes denied on macOS (metadata stays visible either way).
+    /// `.git` contents are protected: read-only on Linux and Windows/WSL;
+    /// content reads and writes denied on macOS (metadata stays visible either
+    /// way).
     Denied { git_dirs: Vec<PathBuf> },
     /// `.git` contents are writable (these dirs are made writable).
     Allowed { git_dirs: Vec<PathBuf> },
@@ -311,8 +312,7 @@ enum NetSetup {
 pub struct Sandbox {
     fs: FsSetup,
     network: NetSetup,
-    /// The project's `.git` directories and whether they're writable. Enforced
-    /// on macOS/Linux; ignored by the WSL sandbox for now.
+    /// The project's `.git` directories and whether they're writable.
     git: GitSandboxPolicy,
     /// In-process network proxy for the restricted-network case, spawned on the
     /// first `wrap`. Dropped on a background thread (the join blocks).
@@ -490,7 +490,7 @@ impl Sandbox {
     /// the enforcement layers. When the whole filesystem is writable the split
     /// is empty (Git protection is moot); otherwise `Allowed` git dirs are
     /// writable and `Denied` git dirs are protected.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     fn git_path_split(&self) -> (Vec<PathBuf>, Vec<PathBuf>) {
         if self.fs.allow_fs_write {
             return (Vec::new(), Vec::new());
@@ -610,17 +610,17 @@ impl Sandbox {
         command: &CommandAndArgs,
     ) -> Result<WrappedCommand, SandboxError> {
         // Restricted host network access is rejected at `new` time on Windows.
-        // Git-dir protection isn't enforced for the WSL sandbox yet, so the
-        // policy's Git directories are intentionally ignored here.
-        let _ = self.git.git_dirs();
         let permissions = windows_wsl::SandboxPermissions {
             allow_network: matches!(self.network, NetSetup::Unrestricted),
             allow_fs_write: self.fs.allow_fs_write,
         };
+        let (writable_git_paths, protected_git_paths) = self.git_path_split();
         let (program, args) = windows_wsl::wrap_invocation(
             command.program.clone(),
             command.args.clone(),
             self.fs.writable_paths.clone(),
+            writable_git_paths,
+            protected_git_paths,
             permissions,
             command.cwd.clone(),
             command.env.clone(),

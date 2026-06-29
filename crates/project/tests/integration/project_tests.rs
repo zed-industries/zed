@@ -284,6 +284,15 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             "#,
             "d.rs": "fn d() {\n    D\n}",
         },
+        "e": {
+            ".editorconfig": r#"
+            [*.rs]
+                indent_size = 5
+                indent_style = space
+                max_line_length =
+            "#,
+            "e.rs": "fn e() {\n    E\n}",
+        },
         "README.json": "tabs are better\n",
     }));
 
@@ -315,6 +324,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     let settings_b = settings_for("b/b.rs", cx).await;
     let settings_c = settings_for("c.js", cx).await;
     let settings_d = settings_for("d/d.rs", cx).await;
+    let settings_e = settings_for("e/e.rs", cx).await;
     let settings_readme = settings_for("README.json", cx).await;
     // .editorconfig overrides .zed/settings
     assert_eq!(Some(settings_a.tab_size), NonZeroU32::new(3));
@@ -329,6 +339,13 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
     // .editorconfig in subdirectory overrides .editorconfig in root
     assert_eq!(Some(settings_d.tab_size), NonZeroU32::new(1));
+
+    // Non-empty values in e/ are parsed and applied as usual.
+    assert_eq!(Some(settings_e.tab_size), NonZeroU32::new(5));
+    assert_eq!(settings_e.hard_tabs, false);
+    // An empty value opts out of the inherited `max_line_length = 120`,
+    // falling back to .zed/settings.json instead of rejecting the whole file.
+    assert_eq!(settings_e.preferred_line_length, 64);
 
     // "indent_size" is not set, so "tab_width" is used
     assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
@@ -11294,6 +11311,96 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                     added: 0,
                     deleted: 1,
                 }),
+            }]
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_git_repository_status_removes_directory_descendants(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "project": {
+                ".git": {},
+                "ci2": {
+                    "Dockerfile.namespace": "untracked",
+                },
+            },
+        }),
+    )
+    .await;
+    fs.set_status_for_repo(
+        path!("/root/project/.git").as_ref(),
+        &[("ci2/Dockerfile.namespace", FileStatus::Untracked)],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    repository.read_with(cx, |repository, _| {
+        assert_eq!(
+            repository.cached_status().collect::<Vec<_>>(),
+            [StatusEntry {
+                repo_path: repo_path("ci2/Dockerfile.namespace"),
+                status: FileStatus::Untracked,
+                diff_stat: None,
+            }]
+        );
+    });
+
+    fs.pause_events();
+    fs.create_dir(path!("/root/project/ci3").as_ref())
+        .await
+        .unwrap();
+    fs.copy_file(
+        path!("/root/project/ci2/Dockerfile.namespace").as_ref(),
+        path!("/root/project/ci3/Dockerfile.namespace").as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fs.remove_dir(
+        path!("/root/project/ci2").as_ref(),
+        RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    fs.clear_buffered_events();
+    fs.unpause_events_and_flush();
+    fs.emit_fs_event(path!("/root/project/ci2"), Some(PathEventKind::Removed));
+    fs.emit_fs_event(path!("/root/project/ci3"), Some(PathEventKind::Created));
+
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    repository.read_with(cx, |repository, _| {
+        assert_eq!(
+            repository.cached_status().collect::<Vec<_>>(),
+            [StatusEntry {
+                repo_path: repo_path("ci3/Dockerfile.namespace"),
+                status: FileStatus::Untracked,
+                diff_stat: None,
             }]
         );
     });
