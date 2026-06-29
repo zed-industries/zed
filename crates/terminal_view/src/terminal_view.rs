@@ -549,11 +549,11 @@ impl TerminalView {
                     |menu| menu.action("Clear", Box::new(Clear)),
                 )
                 .when(
-                    assistant_enabled && self.shows_workspace_actions(),
+                    assistant_enabled && !matches!(self.mode, TerminalMode::Embedded { .. }),
                     |menu| {
                         menu.separator()
                             .action("Inline Assist", Box::new(InlineAssist::default()))
-                            .when(has_selection, |menu| {
+                            .when(has_selection && self.shows_workspace_actions(), |menu| {
                                 menu.action("Add to Agent Thread", Box::new(AddSelectionToThread))
                             })
                     },

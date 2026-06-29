@@ -4047,6 +4047,13 @@ impl AgentPanel {
         }
     }
 
+    pub fn visible_terminal_view(&self) -> Option<&Entity<TerminalView>> {
+        match self.visible_surface() {
+            VisibleSurface::Terminal(terminal_view) => Some(terminal_view),
+            _ => None,
+        }
+    }
+
     pub fn conversation_view_for_id(
         &self,
         thread_id: &ThreadId,
