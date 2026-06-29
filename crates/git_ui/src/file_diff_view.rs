@@ -37,6 +37,14 @@ pub struct FileDiffView {
 const RECALCULATE_DIFF_DEBOUNCE: Duration = Duration::from_millis(250);
 
 impl FileDiffView {
+    pub fn old_buffer(&self) -> &Entity<Buffer> {
+        &self.old_buffer
+    }
+
+    pub fn new_buffer(&self) -> &Entity<Buffer> {
+        &self.new_buffer
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn open(
         old_path: PathBuf,

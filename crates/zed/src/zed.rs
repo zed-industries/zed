@@ -1178,6 +1178,39 @@ fn register_actions(
                         if let (Some(active_buffer), Some(item_buffer)) =
                             (active_buffer, item_buffer)
                         {
+                            let mut existing_diff_view = None;
+                            for pane in workspace.panes() {
+                                for existing_item in pane.read(cx).items() {
+                                    if let Some(diff_view) = existing_item
+                                        .to_any_view()
+                                        .downcast::<FileDiffView>()
+                                        .ok()
+                                    {
+                                        let diff_view = diff_view.read(cx);
+                                        if diff_view.old_buffer() == &item_buffer
+                                            && diff_view.new_buffer() == &active_buffer
+                                        {
+                                            existing_diff_view = Some(existing_item.boxed_clone());
+                                            break;
+                                        }
+                                    }
+                                }
+                                if existing_diff_view.is_some() {
+                                    break;
+                                }
+                            }
+
+                            if let Some(existing_item) = existing_diff_view {
+                                workspace.activate_item(
+                                    existing_item.as_ref(),
+                                    true,
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                                return;
+                            }
+
                             FileDiffView::open_buffers(
                                 item_buffer,
                                 active_buffer,
