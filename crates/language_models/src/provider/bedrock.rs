@@ -1057,6 +1057,11 @@ impl LanguageModel for BedrockMantleModel {
         if !model.supports_priority() {
             request.speed = None;
         }
+        // Mantle rejects the `context_management` parameter for every model, so
+        // never let the request emit compaction settings.
+        if !model.supports_compaction() {
+            request.compact_at_tokens = None;
+        }
 
         if model.uses_responses_api() {
             let responses_request = open_ai::completion::into_open_ai_response(
@@ -1071,20 +1076,36 @@ impl LanguageModel for BedrockMantleModel {
                     .contains(&bedrock::mantle::ReasoningEffort::None),
             );
 
+            let request_value = match serde_json::to_value(&responses_request) {
+                Ok(mut value) => {
+                    if let Some(object) = value.as_object_mut() {
+                        // Mantle does not accept `context_management`, and its
+                        // models stream plaintext reasoning rather than encrypted
+                        // content — requesting encrypted reasoning (which is also
+                        // not portable across models) is both unsupported and
+                        // unnecessary here.
+                        object.remove("context_management");
+                        object.remove("include");
+                    }
+                    value
+                }
+                Err(error) => {
+                    return futures::future::ready(Err(anyhow!(error).into())).boxed();
+                }
+            };
+
             let future = self.request_limiter.stream(async move {
                 let stream = bedrock::mantle::stream_responses(
                     http_client.as_ref(),
                     &region,
                     &auth,
-                    responses_request,
+                    request_value,
                     &extra_headers,
                 )
                 .await
                 .map_err(LanguageModelCompletionError::from)?;
 
-                Ok(open_ai::completion::OpenAiResponseEventMapper::new()
-                    .map_stream(stream)
-                    .boxed())
+                Ok(MantleResponseEventMapper::new().map_stream(stream))
             });
 
             return async move { Ok(future.await?.boxed()) }.boxed();
@@ -1453,6 +1474,128 @@ impl MantleEventMapper {
         }
 
         events
+    }
+}
+
+/// Accumulates streamed Mantle Responses API events into
+/// [`LanguageModelCompletionEvent`]s. Owns the mapping (rather than reusing the
+/// OpenAI responses mapper) so that Gemma's plaintext `response.reasoning.delta`
+/// events surface as thinking instead of being dropped.
+struct MantleResponseEventMapper {
+    emitted_tool_use: bool,
+}
+
+impl MantleResponseEventMapper {
+    fn new() -> Self {
+        Self {
+            emitted_tool_use: false,
+        }
+    }
+
+    fn map_stream(
+        mut self,
+        events: BoxStream<'static, Result<bedrock::mantle::ResponsesStreamEvent>>,
+    ) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        events
+            .flat_map(move |event| {
+                futures::stream::iter(match event {
+                    Ok(event) => self.map_event(event),
+                    Err(error) => vec![Err(LanguageModelCompletionError::from(error))],
+                })
+            })
+            .boxed()
+    }
+
+    fn map_event(
+        &mut self,
+        event: bedrock::mantle::ResponsesStreamEvent,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        use bedrock::mantle::ResponsesStreamEvent as Event;
+        match event {
+            Event::OutputTextDelta { delta } if !delta.is_empty() => {
+                vec![Ok(LanguageModelCompletionEvent::Text(delta))]
+            }
+            Event::ReasoningDelta { delta } | Event::ReasoningSummaryTextDelta { delta }
+                if !delta.is_empty() =>
+            {
+                vec![Ok(LanguageModelCompletionEvent::Thinking {
+                    text: delta,
+                    signature: None,
+                })]
+            }
+            Event::OutputItemDone { item } => {
+                if item.get("type").and_then(|t| t.as_str()) != Some("function_call") {
+                    return Vec::new();
+                }
+                let id = item
+                    .get("call_id")
+                    .and_then(|v| v.as_str())
+                    .or_else(|| item.get("id").and_then(|v| v.as_str()))
+                    .unwrap_or_default()
+                    .to_string();
+                let name = item
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let arguments = item
+                    .get("arguments")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                self.emitted_tool_use = true;
+                match parse_tool_arguments(&arguments) {
+                    Ok(input) => vec![Ok(LanguageModelCompletionEvent::ToolUse(
+                        LanguageModelToolUse {
+                            id: id.into(),
+                            name: name.as_str().into(),
+                            is_input_complete: true,
+                            input,
+                            raw_input: arguments,
+                            thought_signature: None,
+                        },
+                    ))],
+                    Err(error) => vec![Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                        id: id.into(),
+                        tool_name: name.into(),
+                        raw_input: arguments.into(),
+                        json_parse_error: error.to_string(),
+                    })],
+                }
+            }
+            Event::Completed { response } => {
+                let mut events = Vec::new();
+                if let Some(usage) = response.usage
+                    && let (Some(input_tokens), Some(output_tokens)) =
+                        (usage.input_tokens, usage.output_tokens)
+                {
+                    events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                        input_tokens,
+                        output_tokens,
+                        cache_creation_input_tokens: 0,
+                        cache_read_input_tokens: 0,
+                    })));
+                }
+                let stop = if self.emitted_tool_use {
+                    language_model::StopReason::ToolUse
+                } else {
+                    language_model::StopReason::EndTurn
+                };
+                events.push(Ok(LanguageModelCompletionEvent::Stop(stop)));
+                events
+            }
+            Event::Incomplete { .. } => {
+                vec![Ok(LanguageModelCompletionEvent::Stop(
+                    language_model::StopReason::MaxTokens,
+                ))]
+            }
+            Event::Failed { .. } | Event::Error { .. } => {
+                vec![Err(LanguageModelCompletionError::Other(anyhow!(
+                    "Mantle Responses API reported an error"
+                )))]
+            }
+            _ => Vec::new(),
+        }
     }
 }
 

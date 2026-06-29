@@ -7,7 +7,6 @@ use http_client::{
     http::{HeaderMap, HeaderValue, header::AUTHORIZATION},
 };
 pub use language_model_core::ReasoningEffort;
-use open_ai::responses as MantleResponses;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::TryFrom;
@@ -295,15 +294,12 @@ impl MantleModel {
                 supports_chat_completions,
                 ..
             } => !*supports_chat_completions,
-            // GPT-5.x are Responses-only on Mantle.
+            // GPT-5.x are Responses-only on Mantle. Gemma and Grok also run on
+            // the Responses path so their plaintext reasoning (streamed as
+            // `response.reasoning.delta`) is surfaced; the chat-completions path
+            // hides reasoning server-side.
             Self::Gpt5_4 | Self::Gpt5_5 => true,
-            // Gemma and Grok support Chat Completions, which we prefer: the
-            // shared OpenAI Responses event mapper does not understand Gemma's
-            // non-standard `response.reasoning.delta` events and would silently
-            // drop them, making the model appear to hang while it reasons. Chat
-            // Completions streams `reasoning`/`reasoning_content` deltas that our
-            // mapper surfaces as thinking.
-            Self::Gemma4_31B | Self::Gemma4_26B | Self::Gemma4E2b | Self::Grok4_3 => false,
+            Self::Gemma4_31B | Self::Gemma4_26B | Self::Gemma4E2b | Self::Grok4_3 => true,
         }
     }
 
@@ -336,11 +332,11 @@ impl MantleModel {
     ///
     /// <https://developers.openai.com/api/docs/guides/compaction>
     pub fn supports_compaction(&self) -> bool {
-        match self {
-            Self::Gpt5_4 | Self::Gpt5_5 => true,
-            Self::Gemma4_31B | Self::Gemma4_26B | Self::Gemma4E2b | Self::Grok4_3 => false,
-            Self::Custom { .. } => false,
-        }
+        // The Mantle endpoint rejects the `context_management` request parameter
+        // ("Unknown parameter: 'context_management'") for every model, so no
+        // Mantle model supports server-side compaction regardless of what the
+        // underlying model offers elsewhere.
+        false
     }
 
     /// Whether OpenAI's Priority processing tier is available for this model.
@@ -659,6 +655,53 @@ pub struct ResponseStreamEvent {
     pub usage: Option<Usage>,
 }
 
+// -- Responses API streaming --
+//
+// GPT-5.x are Responses-only on Mantle, and Gemma/Grok surface their reasoning
+// only on this path. We own a minimal copy of the Responses SSE event shape
+// here rather than depending on `open_ai::responses`, so that we also recognize
+// the Bedrock-hosted models' non-standard `response.reasoning.delta` events.
+// (The OpenAI types fold those into an opaque catch-all and silently drop them,
+// which makes the model appear to hang while it reasons.)
+#[derive(Deserialize, Debug)]
+#[serde(tag = "type")]
+pub enum ResponsesStreamEvent {
+    #[serde(rename = "response.output_text.delta")]
+    OutputTextDelta { delta: String },
+    /// Bedrock-hosted reasoning models (e.g. Gemma) stream plaintext reasoning here.
+    #[serde(rename = "response.reasoning.delta")]
+    ReasoningDelta { delta: String },
+    /// OpenAI-style models stream reasoning summaries here.
+    #[serde(rename = "response.reasoning_summary_text.delta")]
+    ReasoningSummaryTextDelta { delta: String },
+    #[serde(rename = "response.output_item.done")]
+    OutputItemDone { item: Value },
+    #[serde(rename = "response.completed")]
+    Completed { response: ResponsesSummary },
+    #[serde(rename = "response.incomplete")]
+    Incomplete { response: ResponsesSummary },
+    #[serde(rename = "response.failed")]
+    Failed { response: ResponsesSummary },
+    #[serde(rename = "response.error")]
+    Error { error: Value },
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Deserialize, Debug, Default)]
+pub struct ResponsesSummary {
+    #[serde(default)]
+    pub usage: Option<ResponsesUsage>,
+}
+
+#[derive(Deserialize, Debug, Default)]
+pub struct ResponsesUsage {
+    #[serde(default, alias = "prompt_tokens")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, alias = "completion_tokens")]
+    pub output_tokens: Option<u64>,
+}
+
 /// Builds the chat-completions URL for a Mantle model.
 ///
 /// Bedrock-hosted third-party models (Gemma, Grok — whose IDs are namespaced
@@ -800,9 +843,9 @@ pub async fn stream_responses(
     client: &dyn HttpClient,
     region: &str,
     auth: &MantleAuth,
-    request: MantleResponses::Request,
+    request: Value,
     extra_headers: &CustomHeaders,
-) -> Result<BoxStream<'static, Result<MantleResponses::StreamEvent>>, RequestError> {
+) -> Result<BoxStream<'static, Result<ResponsesStreamEvent>>, RequestError> {
     let region_url = format!("https://bedrock-mantle.{region}.api.aws");
     let uri = format!("{region_url}/openai/v1/responses");
     let body = serde_json::to_vec(&request).map_err(|e| RequestError::Other(e.into()))?;
@@ -831,7 +874,7 @@ pub async fn stream_responses(
                         if line == "[DONE]" || line.is_empty() {
                             None
                         } else {
-                            match serde_json::from_str::<MantleResponses::StreamEvent>(line) {
+                            match serde_json::from_str::<ResponsesStreamEvent>(line) {
                                 Ok(event) => Some(Ok(event)),
                                 Err(error) => {
                                     log::error!(
