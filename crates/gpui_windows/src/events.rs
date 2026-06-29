@@ -642,9 +642,11 @@ impl WindowsWindowInner {
                     .log_err();
             } else {
                 if let Some(ctx) = ImeContext::get(handle) {
-                    ImmNotifyIME(*ctx, NI_COMPOSITIONSTR, CPS_COMPLETE, 0)
-                        .ok()
-                        .log_err();
+                    if let Err(e) = ImmNotifyIME(*ctx, NI_COMPOSITIONSTR, CPS_COMPLETE, 0).ok() {
+                        if e.code().0 != 0 {
+                            log::error!("ImmNotifyIME failed: {e}");
+                        }
+                    }
                 }
                 ImmAssociateContextEx(handle, HIMC::default(), 0)
                     .ok()
@@ -900,7 +902,7 @@ impl WindowsWindowInner {
                 .hit_test_window_control
                 .set(Some(callback));
             area.and_then(|area| match area {
-                WindowControlArea::Drag if self.is_movable => Some(HTCAPTION as _),
+                WindowControlArea::Drag if self.is_movable || self.hide_title_bar => Some(HTCAPTION as _),
                 WindowControlArea::Drag => None,
                 WindowControlArea::Close => Some(HTCLOSE as _),
                 WindowControlArea::Max => Some(HTMAXBUTTON as _),
