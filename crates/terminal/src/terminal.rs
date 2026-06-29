@@ -3683,6 +3683,27 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_hyperlink_ctrl_click_same_position_in_mouse_mode(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"Visit https://zed.dev/ for more\r\n");
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.last_content.mode = Modes::MOUSE_MODE;
+
+            let click_position = point(px(80.0), px(10.0));
+            ctrl_mouse_down_at(terminal, click_position, cx);
+            ctrl_mouse_up_at(terminal, click_position, cx);
+
+            assert!(
+                terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, true))),
+                "Should have ProcessHyperlink event when ctrl+clicking on same hyperlink position in mouse mode"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_hyperlink_ctrl_click_drag_outside_bounds(cx: &mut TestAppContext) {
         let terminal = init_ctrl_click_hyperlink_test(
             cx,
