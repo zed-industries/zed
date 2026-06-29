@@ -96,6 +96,17 @@ pub(crate) enum Entry {
     Separator,
 }
 
+/// Filter state copied from an active project search when opening the text
+/// finder, so the modal starts out with the same include/exclude globs and
+/// open-files / filters-shown configuration.
+#[derive(Default)]
+pub struct FilterSeed {
+    pub include: String,
+    pub exclude: String,
+    pub opened_only: bool,
+    pub filters_enabled: bool,
+}
+
 async fn get_ongoing_search(
     project_search_view: &Entity<ProjectSearchView>,
     cx: &mut AsyncApp,
@@ -327,6 +338,7 @@ impl Delegate {
 
     pub fn new(
         workspace: &mut Workspace,
+        filter_seed: Option<FilterSeed>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Self> {
@@ -341,6 +353,15 @@ impl Delegate {
         let search = cx.new(|cx| ProjectSearch::new(project, cx));
         let project_search =
             cx.new(|cx| ProjectSearchView::new(weak_workspace, search, window, cx, settings));
+        if let Some(seed) = filter_seed {
+            project_search.update(cx, |view, cx| {
+                let (included, excluded) = view.filter_editors();
+                included.update(cx, |editor, cx| editor.set_text(seed.include, window, cx));
+                excluded.update(cx, |editor, cx| editor.set_text(seed.exclude, window, cx));
+                view.set_opened_only(seed.opened_only);
+                view.set_filters_enabled(seed.filters_enabled);
+            });
+        }
         cx.spawn(async move |_, cx| Self::new_from_project_search(project_search, cx).await)
     }
 

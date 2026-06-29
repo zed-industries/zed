@@ -15,7 +15,7 @@ use workspace::{DismissDecision, ModalView, Workspace, searchable::SearchableIte
 
 mod delegate;
 mod render;
-use delegate::{Delegate, matches_to_multibuffer};
+use delegate::{Delegate, FilterSeed, matches_to_multibuffer};
 use util::ResultExt as _;
 
 use crate::{ProjectSearchView, text_finder::delegate::PopulateProjectSearch};
@@ -42,7 +42,8 @@ impl TextFinder {
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
             let Some(text_picker) = workspace.active_modal::<Self>(cx) else {
                 let seed_query = Self::seed_query(workspace, window, cx);
-                Self::open(seed_query, window, cx).detach();
+                let filter_seed = Self::filter_seed(workspace, cx);
+                Self::open(seed_query, filter_seed, window, cx).detach();
                 return;
             };
 
@@ -235,14 +236,32 @@ impl TextFinder {
         (!query.is_empty()).then_some(query)
     }
 
+    /// When opening over an active project search, copy its include/exclude
+    /// globs and open-files / filters-shown state so the text finder starts
+    /// from the same filter setup (the query and search options seed separately).
+    fn filter_seed(workspace: &mut Workspace, cx: &mut Context<Workspace>) -> Option<FilterSeed> {
+        let project_search = workspace
+            .active_item(cx)?
+            .downcast::<ProjectSearchView>()?;
+        let view = project_search.read(cx);
+        let (included, excluded) = view.filter_editors();
+        Some(FilterSeed {
+            include: included.read(cx).text(cx),
+            exclude: excluded.read(cx).text(cx),
+            opened_only: view.opened_only_enabled(),
+            filters_enabled: view.filters_enabled(),
+        })
+    }
+
     pub fn open(
         seed_query: Option<String>,
+        filter_seed: Option<FilterSeed>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
         cx.spawn_in(window, async move |workspace, cx| {
             let Ok(delegate_task) = workspace.update_in(cx, |workspace, window, cx| {
-                Delegate::new(workspace, window, cx)
+                Delegate::new(workspace, filter_seed, window, cx)
             }) else {
                 return;
             };
