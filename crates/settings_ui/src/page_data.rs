@@ -42,23 +42,7 @@ macro_rules! concat_sections {
     }};
 
     ($($arr:expr),+ $(,)?) => {{
-        let total_len = 0_usize $(+ $arr.len())+;
-
-        let mut out: Box<[std::mem::MaybeUninit<_>]> = Box::new_uninit_slice(total_len);
-
-        let mut index = 0usize;
-        $(
-            let array = $arr;
-            for item in array {
-                out[index].write(item);
-                index += 1;
-            }
-        )+
-
-        debug_assert_eq!(index, total_len);
-
-        // SAFETY: we wrote exactly `total_len` elements.
-        unsafe { out.assume_init() }
+        concat_sections!(@vec, $($arr),+).into_boxed_slice()
     }};
 }
 

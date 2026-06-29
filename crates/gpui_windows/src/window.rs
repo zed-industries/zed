@@ -550,10 +550,9 @@ impl WindowsWindow {
 
 impl rwh::HasWindowHandle for WindowsWindow {
     fn window_handle(&self) -> std::result::Result<rwh::WindowHandle<'_>, rwh::HandleError> {
-        let raw = rwh::Win32WindowHandle::new(unsafe {
-            NonZeroIsize::new_unchecked(self.0.hwnd.0 as isize)
-        })
-        .into();
+        let hwnd =
+            NonZeroIsize::new(self.0.hwnd.0 as isize).ok_or(rwh::HandleError::Unavailable)?;
+        let raw = rwh::Win32WindowHandle::new(hwnd).into();
         Ok(unsafe { rwh::WindowHandle::borrow_raw(raw) })
     }
 }
@@ -1531,8 +1530,12 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
             .log_err()
         {
             let func_name = PCSTR::from_raw(c"SetWindowCompositionAttribute".as_ptr() as *const u8);
+            let Some(raw_set_window_composition_attribute) = GetProcAddress(user32, func_name)
+            else {
+                return;
+            };
             let set_window_composition_attribute: SetWindowCompositionAttributeType =
-                std::mem::transmute(GetProcAddress(user32, func_name));
+                std::mem::transmute(raw_set_window_composition_attribute);
             let mut color = color.unwrap_or_default();
             let is_acrylic = state == 4;
             if is_acrylic && color.3 == 0 {

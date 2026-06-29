@@ -1,4 +1,3 @@
-use core::slice;
 use std::ffi::{CStr, c_void};
 use std::path::PathBuf;
 
@@ -96,7 +95,6 @@ impl Pasteboard {
             let types: id = self.inner.types();
             if msg_send![types, containsObject: ut_type.inner()] {
                 self.data_for_type(ut_type.inner_mut()).map(|bytes| {
-                    let bytes = bytes.to_vec();
                     let id = hash(&bytes);
 
                     ClipboardItem {
@@ -119,17 +117,12 @@ impl Pasteboard {
             }
 
             let data = self.inner.dataForType(string_type);
-            let text_bytes: &[u8] = if data == nil {
+            if data == nil {
                 return None;
-            } else if data.bytes().is_null() {
-                // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
-                // "If the length of the NSData object is 0, this property returns nil."
-                &[]
-            } else {
-                slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize)
-            };
+            }
+            let text_bytes = nsdata_to_vec(data);
 
-            let text = String::from_utf8_lossy(text_bytes).to_string();
+            let text = String::from_utf8_lossy(&text_bytes).to_string();
             let metadata = self
                 .data_for_type(self.text_hash_type)
                 .and_then(|hash_bytes| {
@@ -138,7 +131,7 @@ impl Pasteboard {
                     let metadata = self.data_for_type(self.metadata_type)?;
 
                     if hash == ClipboardString::text_hash(&text) {
-                        String::from_utf8(metadata.to_vec()).ok()
+                        String::from_utf8(metadata).ok()
                     } else {
                         None
                     }
@@ -148,16 +141,13 @@ impl Pasteboard {
         }
     }
 
-    unsafe fn data_for_type(&self, kind: id) -> Option<&[u8]> {
+    unsafe fn data_for_type(&self, kind: id) -> Option<Vec<u8>> {
         unsafe {
             let data = self.inner.dataForType(kind);
             if data == nil {
                 None
             } else {
-                Some(slice::from_raw_parts(
-                    data.bytes() as *mut u8,
-                    data.length() as usize,
-                ))
+                Some(nsdata_to_vec(data))
             }
         }
     }
@@ -251,6 +241,17 @@ impl Pasteboard {
 
             self.inner
                 .setData_forType(bytes, Into::<UTType>::into(image.format).inner_mut());
+        }
+    }
+}
+
+unsafe fn nsdata_to_vec(data: id) -> Vec<u8> {
+    unsafe {
+        let bytes = data.bytes();
+        if bytes.is_null() {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(bytes as *const u8, data.length() as usize).to_vec()
         }
     }
 }

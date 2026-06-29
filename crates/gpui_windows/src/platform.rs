@@ -800,13 +800,15 @@ impl Platform for WindowsPlatform {
                 Ok(None)
             } else {
                 let username: String = unsafe { (*credentials).UserName.to_string()? };
-                let credential_blob = unsafe {
-                    std::slice::from_raw_parts(
-                        (*credentials).CredentialBlob,
-                        (*credentials).CredentialBlobSize as usize,
-                    )
+                let password = unsafe {
+                    let size = (*credentials).CredentialBlobSize as usize;
+                    match std::ptr::NonNull::new((*credentials).CredentialBlob) {
+                        Some(credential_blob) => {
+                            std::slice::from_raw_parts(credential_blob.as_ptr(), size).to_vec()
+                        }
+                        None => Vec::new(),
+                    }
                 };
-                let password = credential_blob.to_vec();
                 unsafe { CredFree(credentials as *const _ as _) };
                 Ok(Some((username, password)))
             }
