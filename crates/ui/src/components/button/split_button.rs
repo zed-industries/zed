@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, App, BoxShadow, IntoElement, ParentElement, RenderOnce, Styled, Window, div, hsla,
-    point, prelude::FluentBuilder, px, relative,
+    prelude::FluentBuilder, px, relative,
 };
 use theme::ActiveTheme;
 
@@ -76,7 +76,7 @@ impl RenderOnce for SplitButton {
             .when(self.style == SplitButtonStyle::Transparent, |this| {
                 this.gap_px()
             })
-            .child(div().flex_grow().child(match self.left {
+            .child(div().flex_grow_1().child(match self.left {
                 SplitButtonKind::ButtonLike(button) => button.into_any_element(),
                 SplitButtonKind::IconButton(icon) => icon.into_any_element(),
             }))
@@ -89,12 +89,11 @@ impl RenderOnce for SplitButton {
             .child(self.right)
             .when(self.style == SplitButtonStyle::Filled, |this| {
                 this.bg(ElevationIndex::Surface.on_elevation_bg(cx))
-                    .shadow(vec![BoxShadow {
-                        color: hsla(0.0, 0.0, 0.0, 0.16),
-                        offset: point(px(0.), px(1.)),
-                        blur_radius: px(0.),
-                        spread_radius: px(0.),
-                    }])
+                    .shadow(vec![BoxShadow::new(
+                        px(0.),
+                        px(1.),
+                        hsla(0.0, 0.0, 0.0, 0.16),
+                    )])
             })
     }
 }

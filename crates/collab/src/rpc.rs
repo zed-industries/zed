@@ -7,8 +7,7 @@ use crate::{
     db::{
         self, BufferId, Capability, Channel, ChannelId, ChannelRole, ChannelsForUser, Database,
         InviteMemberResult, MembershipUpdated, NotificationId, ProjectId, RejoinedProject,
-        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, SharedThreadId,
-        UserId,
+        RemoveChannelMemberResult, RespondToChannelInvite, RoomId, ServerId, UserId,
     },
     executor::Executor,
 };
@@ -30,7 +29,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
-use collections::{HashMap, HashSet};
+use collections::{HashSet, TypeIdHashMap};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
 use futures::TryFutureExt as _;
@@ -313,7 +312,7 @@ pub struct Server {
     peer: Arc<Peer>,
     pub connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
-    handlers: HashMap<TypeId, MessageHandler>,
+    handlers: TypeIdHashMap<MessageHandler>,
     teardown: watch::Sender<bool>,
 }
 
@@ -364,6 +363,8 @@ impl Server {
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferById>)
             .add_request_handler(forward_read_only_project_request::<proto::SynchronizeBuffers>)
             .add_request_handler(forward_read_only_project_request::<proto::ResolveInlayHint>)
+            .add_request_handler(forward_read_only_project_request::<proto::ResolveCodeAction>)
+            .add_request_handler(forward_read_only_project_request::<proto::ResolveDocumentLink>)
             .add_request_handler(forward_read_only_project_request::<proto::GetColorPresentation>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenBufferByPath>)
             .add_request_handler(forward_read_only_project_request::<proto::OpenImageByPath>)
@@ -492,6 +493,7 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateRemote>)
             .add_request_handler(forward_mutating_project_request::<proto::GitRemoveRemote>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetWorktrees>)
+            .add_request_handler(forward_read_only_project_request::<proto::GitWorktreeCreatedAt>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetHeadSha>)
             .add_request_handler(forward_read_only_project_request::<proto::GetCommitData>)
             .add_request_stream_handler(
@@ -510,8 +512,6 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::CheckForPushedCommits>)
             .add_request_handler(forward_mutating_project_request::<proto::ToggleLspLogs>)
             .add_message_handler(broadcast_project_message_from_host::<proto::LanguageServerLog>)
-            .add_request_handler(share_agent_thread)
-            .add_request_handler(get_shared_agent_thread)
             .add_request_handler(forward_project_search_chunk);
 
         Arc::new(server)
@@ -2684,7 +2684,7 @@ async fn get_users(
         .into_iter()
         .map(|user| proto::User {
             id: user.id.to_proto(),
-            avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
+            avatar_url: user.avatar_url,
             github_login: user.github_login,
             name: user.name,
         })
@@ -2722,7 +2722,7 @@ async fn fuzzy_search_users(
         .filter(|user| user.id != session.user_id())
         .map(|user| proto::User {
             id: user.id.to_proto(),
-            avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
+            avatar_url: user.avatar_url,
             github_login: user.github_login,
             name: user.name,
         })
@@ -4150,54 +4150,6 @@ fn project_left(project: &db::LeftProject, session: &Session) {
     }
 }
 
-async fn share_agent_thread(
-    request: proto::ShareAgentThread,
-    response: Response<proto::ShareAgentThread>,
-    session: MessageContext,
-) -> Result<()> {
-    let user_id = session.user_id();
-
-    let share_id = SharedThreadId::from_proto(request.session_id.clone())
-        .ok_or_else(|| anyhow!("Invalid session ID format"))?;
-
-    session
-        .db()
-        .await
-        .upsert_shared_thread(share_id, user_id, &request.title, request.thread_data)
-        .await?;
-
-    response.send(proto::Ack {})?;
-
-    Ok(())
-}
-
-async fn get_shared_agent_thread(
-    request: proto::GetSharedAgentThread,
-    response: Response<proto::GetSharedAgentThread>,
-    session: MessageContext,
-) -> Result<()> {
-    let share_id = SharedThreadId::from_proto(request.session_id)
-        .ok_or_else(|| anyhow!("Invalid session ID format"))?;
-
-    let result = session.db().await.get_shared_thread(share_id).await?;
-
-    match result {
-        Some((thread, username)) => {
-            response.send(proto::GetSharedAgentThreadResponse {
-                title: thread.title,
-                thread_data: thread.data,
-                sharer_username: username,
-                created_at: thread.created_at.and_utc().to_rfc3339(),
-            })?;
-        }
-        None => {
-            return Err(anyhow!("Shared thread not found").into());
-        }
-    }
-
-    Ok(())
-}
-
 pub trait ResultExt {
     type Ok;
 
@@ -4226,10 +4178,7 @@ impl From<User> for proto::User {
     fn from(user: User) -> Self {
         Self {
             id: user.id.to_proto(),
-            avatar_url: format!(
-                "https://avatars.githubusercontent.com/u/{}?s=128&v=4",
-                user.github_user_id
-            ),
+            avatar_url: user.avatar_url,
             github_login: user.github_login,
             name: user.name,
         }
