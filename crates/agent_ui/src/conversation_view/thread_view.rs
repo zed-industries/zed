@@ -5630,6 +5630,9 @@ enum SandboxFsDisplay {
 #[derive(Clone)]
 enum WritableEntryDisplay {
     Path(String),
+    // Only ever constructed on Linux (the bwrap `--tmpfs /tmp` overlay), so the
+    // variant is gated to match and avoid dead-code warnings elsewhere.
+    #[cfg(target_os = "linux")]
     IsolatedTmp,
 }
 
@@ -5711,6 +5714,9 @@ fn augment_settings_sandbox_policy(
                     merged.push(path);
                 }
             }
+            // `mut` is only needed on Linux, where the isolated `/tmp` entry is
+            // pushed below.
+            #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
             let mut entries: Vec<WritableEntryDisplay> =
                 merged.into_iter().map(WritableEntryDisplay::Path).collect();
             // The ephemeral, host-isolated tmpfs at /tmp is Linux-specific (the
@@ -5806,6 +5812,7 @@ fn sandbox_fs_rows(fs: &SandboxFsDisplay) -> Vec<SandboxRow> {
             .map(|entry| match entry {
                 // The display string was captured up front; see `sandbox_git_rows`.
                 WritableEntryDisplay::Path(path) => SandboxRow::path(PathBuf::from(path)),
+                #[cfg(target_os = "linux")]
                 WritableEntryDisplay::IsolatedTmp => {
                     SandboxRow::path(PathBuf::from("/tmp (isolated)"))
                 }
