@@ -2684,6 +2684,7 @@ async fn get_users(
         .into_iter()
         .map(|user| proto::User {
             id: user.id.to_proto(),
+            username: user.username,
             avatar_url: user.avatar_url,
             github_login: user.github_login,
             name: user.name,
@@ -2722,6 +2723,7 @@ async fn fuzzy_search_users(
         .filter(|user| user.id != session.user_id())
         .map(|user| proto::User {
             id: user.id.to_proto(),
+            username: user.username,
             avatar_url: user.avatar_url,
             github_login: user.github_login,
             name: user.name,
@@ -4178,6 +4180,7 @@ impl From<User> for proto::User {
     fn from(user: User) -> Self {
         Self {
             id: user.id.to_proto(),
+            username: user.username,
             avatar_url: user.avatar_url,
             github_login: user.github_login,
             name: user.name,
