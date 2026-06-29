@@ -1524,8 +1524,17 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             unsafe { std::slice::from_raw_parts(glyphrun.glyphAdvances, glyph_count) };
         let glyph_offsets =
             unsafe { std::slice::from_raw_parts(glyphrun.glyphOffsets, glyph_count) };
-        let cluster_map =
-            unsafe { std::slice::from_raw_parts(desc.clusterMap, desc.stringLength as usize) };
+        let cluster_map = if desc.clusterMap.is_null() {
+            if desc.stringLength != 0 {
+                return Err(Error::new(
+                    E_INVALIDARG,
+                    "DirectWrite returned a null cluster map",
+                ));
+            }
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(desc.clusterMap, desc.stringLength as usize) }
+        };
 
         let cluster_analyzer = ClusterAnalyzer::new(cluster_map, glyph_count);
         let mut utf16_idx = desc.textPosition as usize;
