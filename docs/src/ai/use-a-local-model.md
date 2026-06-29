@@ -10,8 +10,8 @@ Use local models when you run the model on your machine or on infrastructure you
 | Local path                        | Zed AI features      | External Agents | Terminal Threads | Notes                                              |
 | --------------------------------- | -------------------- | --------------- | ---------------- | -------------------------------------------------- |
 | llama.cpp                         | Yes                  | Separate config | Separate config  | Configure a llama.cpp server for Zed AI features   |
-| Ollama                            | Yes                  | Separate config | Separate config  | Configure Ollama for Zed AI features               |
 | LM Studio                         | Yes                  | Separate config | Separate config  | Configure LM Studio for Zed AI features            |
+| Ollama                            | Yes                  | Separate config | Separate config  | Configure Ollama for Zed AI features               |
 | Local OpenAI-compatible server    | Yes                  | Separate config | Separate config  | Configure base URL, model, and key if needed       |
 | Local/self-hosted edit prediction | Edit Prediction only | No              | No               | Uses [Edit Prediction](./edit-prediction.md) setup |
 
