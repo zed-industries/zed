@@ -2668,7 +2668,8 @@ impl ConversationView {
         }
     }
 
-    fn dismiss_notifications(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn dismiss_notifications(&mut self, cx: &mut Context<Self>) -> bool {
+        let had_notifications = !self.notifications.is_empty();
         for window in self.notifications.drain(..) {
             window
                 .update(cx, |_, window, _| {
@@ -2678,6 +2679,7 @@ impl ConversationView {
 
             self.notification_subscriptions.remove(&window);
         }
+        had_notifications
     }
 
     fn agent_ui_font_size_changed(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
