@@ -507,12 +507,20 @@ impl EditorMode {
 
 #[derive(Copy, Clone, Debug)]
 pub enum SoftWrap {
-    /// Prefer not to wrap at all.
+    /// Do not soft-wrap; long lines extend horizontally and scroll, same as [`SoftWrap::None`].
     ///
-    /// Note: this is currently internal, as actually limited by [`crate::MAX_LINE_LEN`] until it wraps.
+    /// Note: this is currently internal.
     /// The mode is used inside git diff hunks, where it's seems currently more useful to not wrap as much as possible.
     GitDiff,
-    /// Prefer a single line generally, unless an overly long line is encountered.
+    /// Do not soft-wrap; long lines extend horizontally and scroll. Only the
+    /// horizontally visible portion of each row is shaped, so line length does
+    /// not affect rendering cost.
+    ///
+    /// Deliberate v1 tradeoff: rows longer than [`MAX_LINE_LEN`] are positioned
+    /// on a monospace grid indexed by *byte* column, not by character or cell,
+    /// so on such rows pointer/keyboard x-positions and scroll widths drift
+    /// from the painted glyphs for multi-byte text (e.g. CJK), by up to the
+    /// bytes-per-char factor.
     None,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,

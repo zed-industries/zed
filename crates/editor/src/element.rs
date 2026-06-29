@@ -3061,6 +3061,10 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
         editor_width: Pixels,
+        cell_width: Pixels,
+        // When `Some`, the absolute byte-column range to shape for each row
+        // (soft wrap disabled); when `None`, shape whole rows.
+        horizontal_window: Option<Range<usize>>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         bg_segments_per_row: &[Vec<(Range<DisplayPoint>, Hsla)>],
         window: &mut Window,
@@ -3106,9 +3110,92 @@ impl EditorElement {
                         fragments: smallvec![LineFragment::Text(line)],
                         invisibles: Vec::new(),
                         font_size,
+                        start_index: 0,
+                        start_x: Pixels::ZERO,
+                        cell_width,
                     }
                 })
                 .collect()
+        } else if let Some(window_columns) = horizontal_window {
+            // Soft wrap is disabled: shape each row independently, fetching only
+            // the visible column window so cost is independent of line length.
+            let mut layouts = Vec::with_capacity(rows.len());
+            for row in rows.start.0..rows.end.0 {
+                let display_row = DisplayRow(row);
+                let row_bg = bg_segments_per_row
+                    .get((row - rows.start.0) as usize)
+                    .map(std::slice::from_ref)
+                    .unwrap_or(&[]);
+                let use_tree_sitter = !snapshot.semantic_tokens_enabled
+                    || snapshot.use_tree_sitter_for_syntax(display_row, cx);
+                let language_aware = LanguageAwareStyling {
+                    tree_sitter: use_tree_sitter,
+                    diagnostics: true,
+                };
+                if snapshot.is_block_line(display_row) {
+                    let chunks = snapshot.highlighted_chunks(
+                        display_row..display_row + DisplayRow(1),
+                        language_aware,
+                        style,
+                    );
+                    layouts.extend(LineWithInvisibles::from_chunks(
+                        chunks,
+                        style,
+                        MAX_LINE_LEN,
+                        1,
+                        &snapshot.mode,
+                        editor_width,
+                        cell_width,
+                        None,
+                        |_| false,
+                        row_bg,
+                        window,
+                        cx,
+                    ));
+                } else {
+                    let full_len = snapshot.line_len(display_row) as usize;
+                    // The window is in cell units and may split a multi-byte character.
+                    let start_col = snapshot
+                        .clip_point(
+                            DisplayPoint::new(
+                                display_row,
+                                window_columns.start.min(full_len) as u32,
+                            ),
+                            Bias::Left,
+                        )
+                        .column() as usize;
+                    let end_col = snapshot
+                        .clip_point(
+                            DisplayPoint::new(display_row, window_columns.end.min(full_len) as u32),
+                            Bias::Right,
+                        )
+                        .column() as usize;
+                    let chunks = snapshot.highlighted_chunks_in_range(
+                        DisplayPoint::new(display_row, start_col as u32)
+                            ..DisplayPoint::new(display_row, end_col as u32),
+                        language_aware,
+                        style,
+                    );
+                    layouts.extend(LineWithInvisibles::from_chunks(
+                        chunks,
+                        style,
+                        MAX_LINE_LEN,
+                        1,
+                        &snapshot.mode,
+                        editor_width,
+                        cell_width,
+                        Some(RowWindow {
+                            start_col,
+                            full_len,
+                        }),
+                        |_| false,
+                        row_bg,
+                        window,
+                        cx,
+                    ));
+                }
+            }
+            layouts
         } else {
             let use_tree_sitter = !snapshot.semantic_tokens_enabled
                 || snapshot.use_tree_sitter_for_syntax(rows.start, cx);
@@ -3124,6 +3211,8 @@ impl EditorElement {
                 rows.len(),
                 &snapshot.mode,
                 editor_width,
+                cell_width,
+                None,
                 is_row_soft_wrapped,
                 bg_segments_per_row,
                 window,
@@ -7030,9 +7119,20 @@ fn render_blame_entry(
 pub(crate) struct LineWithInvisibles {
     fragments: SmallVec<[LineFragment; 1]>,
     invisibles: Vec<Invisible>,
+    /// Full display-row length in bytes, including any portion outside the
+    /// horizontally shaped window.
     len: usize,
     pub(crate) width: Pixels,
     font_size: Pixels,
+    /// Absolute byte offset within the display row where `fragments` begin.
+    /// Non-zero only for horizontally windowed rows (soft wrap disabled and the
+    /// row extends beyond the visible region).
+    start_index: usize,
+    /// Pixel x of the first shaped fragment, measured from the row start.
+    start_x: Pixels,
+    /// Width of a single monospace cell, used to position columns that fall
+    /// outside the shaped window.
+    cell_width: Pixels,
 }
 
 enum LineFragment {
@@ -7043,6 +7143,16 @@ enum LineFragment {
         size: Size<Pixels>,
         len: usize,
     },
+}
+
+/// Describes a single display row whose chunks have been pre-limited to a
+/// horizontally visible column window (used when soft wrap is disabled).
+#[derive(Copy, Clone)]
+struct RowWindow {
+    /// Absolute byte column where the windowed chunks begin.
+    start_col: usize,
+    /// Full byte length of the display row.
+    full_len: usize,
 }
 
 impl fmt::Debug for LineFragment {
@@ -7066,19 +7176,26 @@ impl LineWithInvisibles {
         max_line_count: usize,
         editor_mode: &EditorMode,
         text_width: Pixels,
+        cell_width: Pixels,
+        // When `Some`, the provided `chunks` are already limited to the visible
+        // column window of a single row (soft wrap disabled), starting at
+        // `start_col`. The resulting line reports the row's `full_len` so that
+        // columns outside the shaped window are still addressable.
+        row_window: Option<RowWindow>,
         is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         bg_segments_per_row: &[Vec<(Range<DisplayPoint>, Hsla)>],
         window: &mut Window,
         cx: &mut App,
     ) -> Vec<Self> {
         let text_style = &editor_style.text;
+        // Absolute byte column at which the (pre-windowed) chunks begin.
+        let col_base = row_window.as_ref().map_or(0, |w| w.start_col);
         let mut layouts = Vec::with_capacity(max_line_count);
         let mut fragments: SmallVec<[LineFragment; 1]> = SmallVec::new();
         let mut line = String::new();
-        // Byte offset into the logical line used to position invisible markers.
-        // Unlike `line`, this is not cleared when we flush `shape_line` for
-        // mid-line inlays/replacements, so marker offsets stay correct in that case.
-        let mut line_byte_offset: usize = 0;
+        // Absolute byte offset into the display row, used to position invisible
+        // markers. Starts at `col_base` for windowed rows.
+        let mut line_byte_offset: usize = col_base;
         let mut invisibles = Vec::new();
         let mut width = Pixels::ZERO;
         let mut len = 0;
@@ -7103,7 +7220,9 @@ impl LineWithInvisibles {
                     continue;
                 }
 
-                if len + line.len() + highlighted_chunk.text.len() > max_line_len {
+                if row_window.is_none()
+                    && len + line.len() + highlighted_chunk.text.len() > max_line_len
+                {
                     line_exceeded_max_len = true;
                     continue;
                 }
@@ -7113,7 +7232,12 @@ impl LineWithInvisibles {
                     let text_runs: &[TextRun] = if segments.is_empty() {
                         &styles
                     } else {
-                        &Self::split_runs_by_bg_segments(&styles, segments, min_contrast, len)
+                        &Self::split_runs_by_bg_segments(
+                            &styles,
+                            segments,
+                            min_contrast,
+                            col_base + len,
+                        )
                     };
                     let shaped_line = window.text_system().shape_line(
                         line.as_str().into(),
@@ -7202,7 +7326,12 @@ impl LineWithInvisibles {
                         let text_runs = if segments.is_empty() {
                             &styles
                         } else {
-                            &Self::split_runs_by_bg_segments(&styles, segments, min_contrast, len)
+                            &Self::split_runs_by_bg_segments(
+                                &styles,
+                                segments,
+                                min_contrast,
+                                col_base + len,
+                            )
                         };
                         let shaped_line = window.text_system().shape_line(
                             line.clone().into(),
@@ -7214,15 +7343,23 @@ impl LineWithInvisibles {
                         len += shaped_line.len;
                         fragments.push(LineFragment::Text(shaped_line));
                         layouts.push(Self {
-                            width: mem::take(&mut width),
-                            len: mem::take(&mut len),
+                            width: row_window.as_ref().map_or_else(
+                                || mem::take(&mut width),
+                                |w| cell_width * w.full_len as f32,
+                            ),
+                            len: row_window.as_ref().map_or(len, |w| w.full_len),
                             fragments: mem::take(&mut fragments),
-                            invisibles: std::mem::take(&mut invisibles),
+                            invisibles: mem::take(&mut invisibles),
                             font_size,
+                            start_index: col_base,
+                            start_x: cell_width * col_base as f32,
+                            cell_width,
                         });
 
                         line.clear();
-                        line_byte_offset = 0;
+                        line_byte_offset = col_base;
+                        width = Pixels::ZERO;
+                        len = 0;
                         styles.clear();
                         row += 1;
                         line_exceeded_max_len = false;
@@ -7239,18 +7376,20 @@ impl LineWithInvisibles {
                             Cow::Borrowed(text_style)
                         };
 
-                        let current_line_len = len + line.len();
-                        if current_line_len + line_chunk.len() > max_line_len {
-                            let mut chunk_len = max_line_len - current_line_len;
-                            while !line_chunk.is_char_boundary(chunk_len) {
-                                chunk_len -= 1;
+                        if row_window.is_none() {
+                            let current_line_len = len + line.len();
+                            if current_line_len + line_chunk.len() > max_line_len {
+                                let mut chunk_len = max_line_len - current_line_len;
+                                while !line_chunk.is_char_boundary(chunk_len) {
+                                    chunk_len -= 1;
+                                }
+                                line_chunk = &line_chunk[..chunk_len];
+                                line_exceeded_max_len = true;
                             }
-                            line_chunk = &line_chunk[..chunk_len];
-                            line_exceeded_max_len = true;
-                        }
 
-                        if line_chunk.is_empty() {
-                            continue;
+                            if line_chunk.is_empty() {
+                                continue;
+                            }
                         }
 
                         styles.push(TextRun {
@@ -7414,8 +7553,11 @@ impl LineWithInvisibles {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let mut fragment_origin =
-            content_origin + gpui::point(Pixels::from(-scroll_pixel_position.x), line_y);
+        let mut fragment_origin = content_origin
+            + gpui::point(
+                Pixels::from(-scroll_pixel_position.x) + self.start_x,
+                line_y,
+            );
         for fragment in &mut self.fragments {
             match fragment {
                 LineFragment::Text(line) => {
@@ -7475,7 +7617,7 @@ impl LineWithInvisibles {
         let line_height = layout.position_map.line_height;
         let mut fragment_origin = content_origin
             + gpui::point(
-                Pixels::from(-layout.position_map.scroll_pixel_position.x),
+                Pixels::from(-layout.position_map.scroll_pixel_position.x) + self.start_x,
                 line_y,
             );
 
@@ -7525,7 +7667,7 @@ impl LineWithInvisibles {
 
         let mut fragment_origin = content_origin
             + gpui::point(
-                Pixels::from(-layout.position_map.scroll_pixel_position.x),
+                Pixels::from(-layout.position_map.scroll_pixel_position.x) + self.start_x,
                 line_y,
             );
 
@@ -7676,8 +7818,12 @@ impl LineWithInvisibles {
     }
 
     pub fn x_for_index(&self, index: usize) -> Pixels {
-        let mut fragment_start_x = Pixels::ZERO;
-        let mut fragment_start_index = 0;
+        // Columns before the shaped window are positioned on the monospace grid.
+        if index < self.start_index {
+            return self.start_x - self.cell_width * (self.start_index - index) as f32;
+        }
+        let mut fragment_start_x = self.start_x;
+        let mut fragment_start_index = self.start_index;
 
         for fragment in &self.fragments {
             match fragment {
@@ -7701,12 +7847,23 @@ impl LineWithInvisibles {
             }
         }
 
-        fragment_start_x
+        // Columns past the shaped window are positioned on the monospace grid.
+        if fragment_start_index < self.len {
+            fragment_start_x + self.cell_width * (index.min(self.len) - fragment_start_index) as f32
+        } else {
+            fragment_start_x
+        }
     }
 
     pub fn index_for_x(&self, x: Pixels) -> Option<usize> {
-        let mut fragment_start_x = Pixels::ZERO;
-        let mut fragment_start_index = 0;
+        // Columns before the shaped window sit on the monospace grid; round to
+        // the nearest cell to match `display_column_for_x`.
+        if self.start_index > 0 && x < self.start_x {
+            let column = ((x / self.cell_width).round() as usize).min(self.start_index);
+            return Some(column);
+        }
+        let mut fragment_start_x = self.start_x;
+        let mut fragment_start_index = self.start_index;
 
         for fragment in &self.fragments {
             match fragment {
@@ -7731,11 +7888,24 @@ impl LineWithInvisibles {
             }
         }
 
-        None
+        // For windowed rows there is more content to the right of the shaped
+        // region; map past-window positions onto the monospace grid. Past the
+        // end of the row, return `None` so `point_for_position` computes the
+        // column overshoot, as it does for fully shaped rows.
+        if fragment_start_index < self.len {
+            let column =
+                fragment_start_index + ((x - fragment_start_x) / self.cell_width).round() as usize;
+            (column <= self.len).then_some(column)
+        } else {
+            None
+        }
     }
 
     pub fn font_id_for_index(&self, index: usize) -> Option<FontId> {
-        let mut fragment_start_index = 0;
+        if index < self.start_index {
+            return None;
+        }
+        let mut fragment_start_index = self.start_index;
 
         for fragment in &self.fragments {
             match fragment {
@@ -8554,11 +8724,43 @@ impl Element for EditorElement {
                         self.style.background,
                     );
 
+                    // When soft wrap is disabled, a logical line becomes a single
+                    // display row that can be arbitrarily long. Shape only the
+                    // horizontally visible byte-column range (plus overscan) so
+                    // rendering cost is independent of line length. This applies
+                    // to the minimap too, which never wraps and is only a few
+                    // columns wide.
+                    let non_wrapping = (snapshot.mode.is_full()
+                        || matches!(snapshot.mode, EditorMode::Minimap { .. }))
+                        && matches!(
+                            self.editor.read(cx).soft_wrap_mode(cx),
+                            SoftWrap::None | SoftWrap::GitDiff
+                        );
+                    let visible_cols =
+                        ((f64::from(editor_width / em_layout_width)).ceil() as usize).max(1);
+                    // Only engage per-row windowing when a visible row exceeds the
+                    // batched path's per-row cap (`MAX_LINE_LEN`). Below that, the
+                    // batched path both renders the row fully and is cheap, so
+                    // normal files (and the minimap on them) are unaffected and
+                    // avoid the per-row fetch overhead.
+                    let has_overflowing_row = non_wrapping
+                        && (start_row.0..end_row.0)
+                            .any(|row| snapshot.line_len(DisplayRow(row)) as usize > MAX_LINE_LEN);
+                    let horizontal_window = has_overflowing_row.then(|| {
+                        // Quantized so the shaped strings stay identical across
+                        // frames, keeping the shape cache warm while scrolling.
+                        let block = (scroll_position.x.floor() as usize) / visible_cols;
+                        let start = block.saturating_sub(1) * visible_cols;
+                        start..start + 3 * visible_cols
+                    });
+
                     let mut line_layouts = Self::layout_lines(
                         start_row..end_row,
                         &snapshot,
                         &self.style,
                         editor_width,
+                        em_layout_width,
+                        horizontal_window,
                         is_row_soft_wrapped,
                         &bg_segments_per_row,
                         window,
@@ -8628,6 +8830,10 @@ impl Element for EditorElement {
                         })
                         .unwrap_or(Pixels::ZERO);
 
+                    // `layout_line` positions rows longer than `MAX_LINE_LEN` on
+                    // the monospace grid instead of shaping them, so this stays
+                    // cheap for arbitrarily long rows while shorter rows keep
+                    // their shaped (proportional-font-accurate) width.
                     let longest_line_width = layout_line(
                         snapshot.longest_row(),
                         &snapshot,
@@ -10286,6 +10492,25 @@ pub fn layout_line(
         tree_sitter: use_tree_sitter,
         diagnostics: true,
     };
+    let font_id = window.text_system().resolve_font(&style.text.font());
+    let font_size = style.text.font_size.to_pixels(window.rem_size());
+    let cell_width = window.text_system().em_layout_width(font_id, font_size);
+    // A non-wrapping row can be arbitrarily long; shaping it whole is O(line
+    // length). Callers only need monospace-grid positioning (`x_for_index` and
+    // `width`), so skip shaping entirely and rely on the monospace fallback.
+    let full_len = snapshot.line_len(row) as usize;
+    if full_len > MAX_LINE_LEN {
+        return LineWithInvisibles {
+            fragments: SmallVec::new(),
+            invisibles: Vec::new(),
+            len: full_len,
+            width: cell_width * full_len as f32,
+            font_size,
+            start_index: 0,
+            start_x: Pixels::ZERO,
+            cell_width,
+        };
+    }
     let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), language_aware, style);
     LineWithInvisibles::from_chunks(
         chunks,
@@ -10294,6 +10519,8 @@ pub fn layout_line(
         1,
         &snapshot.mode,
         text_width,
+        cell_width,
+        None,
         is_row_soft_wrapped,
         &[],
         window,
@@ -10654,8 +10881,7 @@ fn calculate_wrap_width(
     let wrap_width_for = |column: u32| (column as f32 * em_width).ceil();
 
     match soft_wrap {
-        SoftWrap::GitDiff => None,
-        SoftWrap::None => Some(wrap_width_for(MAX_LINE_LEN as u32 / 2)),
+        SoftWrap::GitDiff | SoftWrap::None => None,
         SoftWrap::EditorWidth => Some(editor_width),
         SoftWrap::Bounded(column) => Some(editor_width.min(wrap_width_for(column))),
     }
@@ -11946,6 +12172,8 @@ mod tests {
                     1,
                     &editor_mode,
                     px(500.),
+                    px(10.),
+                    None,
                     |_| false,
                     &[],
                     window,
@@ -11955,6 +12183,87 @@ mod tests {
                 assert_eq!(layouts.len(), 1);
                 assert_eq!(layouts[0].len, max_line_len);
                 assert!(layouts[0].fragments.len() <= max_line_len);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    fn test_horizontal_window_shapes_only_visible_columns(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("", cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+        let cx = &mut VisualTestContext::from_window(*window, cx);
+        let editor = window.root(cx).unwrap();
+        let style = cx.update(|_, cx| editor.update(cx, |editor, cx| editor.style(cx).clone()));
+        let editor_mode = EditorMode::full();
+        let cell_width = px(10.);
+        // The window-clipped chunks the caller would fetch for columns 100..200.
+        let windowed = "a".repeat(100);
+
+        window
+            .update(cx, |_, window, cx| {
+                let chunks = std::iter::once(HighlightedChunk {
+                    text: &windowed,
+                    style: None,
+                    is_tab: false,
+                    is_inlay: false,
+                    replacement: None,
+                });
+
+                let layouts = LineWithInvisibles::from_chunks(
+                    chunks,
+                    &style,
+                    usize::MAX,
+                    1,
+                    &editor_mode,
+                    px(10_000.),
+                    cell_width,
+                    Some(RowWindow {
+                        start_col: 100,
+                        full_len: 300,
+                    }),
+                    |_| false,
+                    &[],
+                    window,
+                    cx,
+                );
+
+                assert_eq!(layouts.len(), 1);
+                let layout = &layouts[0];
+
+                // The full row length is tracked even though only the window is shaped.
+                assert_eq!(layout.len, 300);
+                assert_eq!(layout.start_index, 100);
+                assert_eq!(layout.start_x, cell_width * 100.);
+
+                // Only the windowed columns are shaped.
+                let shaped_len = layout
+                    .fragments
+                    .iter()
+                    .map(|fragment| match fragment {
+                        LineFragment::Text(shaped) => shaped.len,
+                        LineFragment::Element { len, .. } => *len,
+                    })
+                    .sum::<usize>();
+                assert_eq!(shaped_len, 100);
+
+                // Columns outside the shaped window land on the monospace grid.
+                assert_eq!(layout.x_for_index(0), px(0.));
+                assert_eq!(layout.index_for_x(px(0.)), Some(0));
+
+                // A position inside the window maps back to (approximately) the
+                // same column (exact round-tripping depends on font glyph metrics).
+                let inside = layout.x_for_index(150);
+                let inside_index = layout.index_for_x(inside).unwrap();
+                assert!((inside_index as isize - 150).abs() <= 1);
+
+                // To the right of the shaped window, positions round-trip exactly
+                // on the monospace grid.
+                let right_of_window = layout.x_for_index(250);
+                assert_eq!(layout.index_for_x(right_of_window), Some(250));
             })
             .unwrap();
     }
@@ -12490,7 +12799,7 @@ mod tests {
 
         assert_eq!(
             calculate_wrap_width(SoftWrap::None, editor_width, em_width),
-            Some(px((MAX_LINE_LEN as f32 / 2.0 * 8.0).ceil())),
+            None,
         );
 
         assert_eq!(
