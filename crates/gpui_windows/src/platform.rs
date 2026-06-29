@@ -799,16 +799,21 @@ impl Platform for WindowsPlatform {
             if credentials.is_null() {
                 Ok(None)
             } else {
-                let username: String = unsafe { (*credentials).UserName.to_string()? };
-                let credential_blob = unsafe {
-                    std::slice::from_raw_parts(
-                        (*credentials).CredentialBlob,
-                        (*credentials).CredentialBlobSize as usize,
-                    )
+                let username = unsafe { (*credentials).UserName.to_string() };
+                let password: Result<Vec<u8>> = unsafe {
+                    let size = (*credentials).CredentialBlobSize as usize;
+                    match std::ptr::NonNull::new((*credentials).CredentialBlob) {
+                        Some(credential_blob) => {
+                            Ok(std::slice::from_raw_parts(credential_blob.as_ptr(), size).to_vec())
+                        }
+                        None if size == 0 => Ok(Vec::new()),
+                        None => Err(anyhow!(
+                            "Windows credential blob was null with nonzero size"
+                        )),
+                    }
                 };
-                let password = credential_blob.to_vec();
                 unsafe { CredFree(credentials as *const _ as _) };
-                Ok(Some((username, password)))
+                Ok(Some((username?, password?)))
             }
         })
     }
