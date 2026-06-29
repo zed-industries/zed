@@ -1779,6 +1779,7 @@ impl From<&AcpThread> for ActionLogTelemetry {
 
 #[derive(Debug)]
 pub enum AcpThreadEvent {
+    StatusChanged,
     PromptUpdated,
     NewEntry,
     TitleUpdated,
@@ -3268,6 +3269,7 @@ impl AcpThread {
                 tx.send(f(this, cx).await).ok();
             }),
         });
+        cx.emit(AcpThreadEvent::StatusChanged);
 
         cx.spawn(async move |this, cx| {
             let response = rx.await;
@@ -3293,6 +3295,7 @@ impl AcpThread {
                 // state even when the send_task is cancelled before tx.send().
                 if is_same_turn {
                     this.running_turn.take();
+                    cx.emit(AcpThreadEvent::StatusChanged);
                 }
 
                 let Ok(response) = response else {
@@ -3410,6 +3413,7 @@ impl AcpThread {
 
         Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
         self.mark_pending_entries_as_canceled(cx);
+        cx.emit(AcpThreadEvent::StatusChanged);
 
         // Wait for the send task to complete
         cx.background_spawn(turn.send_task)
