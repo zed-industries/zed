@@ -447,6 +447,10 @@ fn display_name_for(id: &str) -> String {
     base.strip_suffix(".gguf").unwrap_or(base).to_string()
 }
 
+fn telemetry_id_for(id: &str) -> String {
+    format!("llama_cpp/{}", display_name_for(id))
+}
+
 impl LlamaCppLanguageModelProvider {
     pub fn new(
         http_client: Arc<dyn HttpClient>,
@@ -612,7 +616,7 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
 
 pub struct LlamaCppLanguageModel {
     id: LanguageModelId,
-    /// The model id sent to the server (and used for telemetry).
+    /// The model id sent to the server.
     name: String,
     display_name: String,
     /// Live capabilities shared with the provider, read fresh on each access so an
@@ -900,7 +904,7 @@ impl LanguageModel for LlamaCppLanguageModel {
     }
 
     fn telemetry_id(&self) -> String {
-        format!("llama_cpp/{}", self.name)
+        telemetry_id_for(&self.name)
     }
 
     fn max_token_count(&self) -> u64 {
@@ -1646,6 +1650,19 @@ mod tests {
             "Qwen2.5-Coder-7B-Instruct-Q4_K_M"
         );
         assert_eq!(display_name_for("my-alias"), "my-alias");
+    }
+
+    #[test]
+    fn telemetry_id_strips_local_model_paths() {
+        assert_eq!(
+            telemetry_id_for("/Users/alice/models/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"),
+            "llama_cpp/Qwen2.5-Coder-7B-Instruct-Q4_K_M"
+        );
+        assert_eq!(
+            telemetry_id_for(r"C:\Users\alice\models\Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"),
+            "llama_cpp/Qwen2.5-Coder-7B-Instruct-Q4_K_M"
+        );
+        assert_eq!(telemetry_id_for("my-alias"), "llama_cpp/my-alias");
     }
 
     #[test]
