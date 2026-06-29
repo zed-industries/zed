@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use gpui::{
-    actions, div, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    IntoElement, ParentElement, Render, SharedString, Styled, Task, Window,
+    actions, div, AnyElement, App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle,
+    Focusable, Hsla, IntoElement, ParentElement, Render, SharedString, Styled, Task, Window,
 };
 use project::Project;
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
@@ -11,6 +11,13 @@ use workspace::{Item, SplitDirection, Workspace, WorkspaceId};
 
 use crate::get_or_create_tool;
 
+/// Major UI improvements:
+/// - Summary header with process/CPU/memory totals + action buttons
+/// - Section grouping ("Zed" highlighted first, then "Language Servers")
+/// - Main table implemented with GPUI `.grid().grid_cols(5)` + col_span for perfect column alignment
+/// - Improved padding, hovers (`ghost_element_hover`), header separators
+/// - Color coding: CPU (Muted / Warning / Error), high memory red tint on row
+/// - Clean, professional Zed-style appearance, better empty state
 const POLL_INTERVAL: Duration = Duration::from_secs(3);
 
 actions!(
@@ -333,6 +340,20 @@ fn format_memory(bytes: u64) -> String {
     }
 }
 
+/// Returns semantic color for CPU usage display.
+fn cpu_color(percent: f32) -> Color {
+    if percent > 50.0 {
+        Color::Error
+    } else if percent >= 20.0 {
+        Color::Warning
+    } else {
+        Color::Muted
+    }
+}
+
+/// Threshold for visually highlighting high memory usage per process.
+const HIGH_MEMORY_THRESHOLD: u64 = 800 * 1024 * 1024; // ~800 MB
+
 impl EventEmitter<()> for ResourceMonitor {}
 
 impl Focusable for ResourceMonitor {
@@ -346,27 +367,60 @@ impl Render for ResourceMonitor {
         let snapshots = self.snapshots.clone();
         let has_cpu_data = self.has_sampled_twice;
 
+        // Compute summary aggregates
+        let num_processes = snapshots.len();
+        let total_cpu: f32 = if has_cpu_data {
+            snapshots.iter().map(|s| s.cpu_percent).sum()
+        } else {
+            0.0
+        };
+        let total_memory: u64 = snapshots.iter().map(|s| s.memory_bytes).sum();
+
+        let cpu_summary = if has_cpu_data {
+            format!("{:.1}%", total_cpu)
+        } else {
+            "—".to_string()
+        };
+        let summary = format!(
+            "Resource Monitor — {} process{}  {} CPU  {}",
+            num_processes,
+            if num_processes == 1 { "" } else { "es" },
+            cpu_summary,
+            format_memory(total_memory)
+        );
+
+        // Partition for grouped sections (Zed first)
+        let (zed_snapshots, ls_snapshots): (Vec<ProcessSnapshot>, Vec<ProcessSnapshot>) =
+            snapshots
+                .into_iter()
+                .partition(|s| s.kind == ProcessKind::ZedMain);
+
+        let has_data = !zed_snapshots.is_empty() || !ls_snapshots.is_empty();
+
         v_flex()
             .id("resource-monitor")
             .key_context("ResourceMonitor")
             .track_focus(&self.focus_handle)
             .size_full()
             .overflow_y_scroll()
-            .p_4()
-            .gap_1()
-            // Header row
+            .pb_4()
+            // === Top Summary Header ===
             .child(
                 h_flex()
+                    .px_3()
+                    .py_2()
                     .justify_between()
                     .items_center()
-                    .pb_2()
-                    .child(Label::new("Resource Monitor").size(LabelSize::Large))
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(Label::new(summary).size(LabelSize::Default))
                     .child(
                         h_flex()
-                            .gap_2()
+                            .gap_1()
                             .child(
                                 Button::new("copy-report", "Copy Report")
                                     .style(ButtonStyle::Filled)
+                                    .label_size(LabelSize::Small)
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.copy_report(cx);
                                     })),
@@ -374,90 +428,216 @@ impl Render for ResourceMonitor {
                             .child(
                                 Button::new("refresh", "Refresh")
                                     .style(ButtonStyle::Filled)
+                                    .label_size(LabelSize::Small)
                                     .on_click(cx.listener(|this, _, _window, cx| {
                                         this.force_refresh(cx);
                                     })),
                             ),
                     ),
             )
-            // Table header
-            .child(
-                h_flex()
-                    .px_2()
-                    .py_1()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(120.))
-                            .child(Label::new("Name").size(LabelSize::Small).color(Color::Muted)),
-                    )
-                    .child(
-                        div()
-                            .w(px(80.))
-                            .child(Label::new("PID").size(LabelSize::Small).color(Color::Muted)),
-                    )
-                    .child(
-                        div()
-                            .w(px(80.))
-                            .child(Label::new("CPU %").size(LabelSize::Small).color(Color::Muted)),
-                    )
-                    .child(
-                        div().w(px(100.)).child(
-                            Label::new("Memory").size(LabelSize::Small).color(Color::Muted),
+            // === Zed Section ===
+            .when(!zed_snapshots.is_empty(), |this| {
+                this.child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .mt_2()
+                        .rounded_sm()
+                        .bg(cx.theme().colors().ghost_element_selected.opacity(0.1))
+                        .child(
+                            Label::new("Zed")
+                                .size(LabelSize::Small)
+                                .color(Color::Accent),
                         ),
-                    ),
-            )
-            // Separator
-            .child(div().h(px(1.)).bg(cx.theme().colors().border))
-            // Process rows
-            .children(snapshots.into_iter().enumerate().map(|(i, snap)| {
-                let cpu_text = if has_cpu_data {
-                    format!("{:.1}%", snap.cpu_percent)
-                } else {
-                    "—".to_string()
-                };
-                let mem_text = format_memory(snap.memory_bytes);
+                )
+                .child(self.render_grid(&zed_snapshots, has_cpu_data, true, cx))
+            })
+            // === Language Servers Section ===
+            .when(!ls_snapshots.is_empty(), |this| {
+                this.child(
+                    div()
+                        .px_2()
+                        .py_1()
+                        .mt_2()
+                        .child(
+                            Label::new("Language Servers")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+                .child(self.render_grid(&ls_snapshots, has_cpu_data, false, cx))
+            })
+            // === Empty State ===
+            .when(!has_data, |this| {
+                this.child(
+                    v_flex()
+                        .py_8()
+                        .items_center()
+                        .justify_center()
+                        .size_full()
+                        .child(
+                            Label::new("No processes found")
+                                .size(LabelSize::Default)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Label::new("Waiting for Zed and language servers…")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+            })
+    }
+}
 
-                h_flex()
-                    .id(ElementId::NamedInteger("proc-row".into(), i as u64))
+impl ResourceMonitor {
+    /// Renders a table using GPUI Grid (.grid().grid_cols(5)) for perfect alignment.
+    /// Name column spans 2 tracks so it has more room; numeric columns are right-aligned.
+    fn render_grid(
+        &self,
+        snaps: &[ProcessSnapshot],
+        has_cpu_data: bool,
+        is_zed_section: bool,
+        cx: &App,
+    ) -> impl IntoElement {
+        let mut children: Vec<AnyElement> = Vec::new();
+
+        // Header row via Grid (name header spans like the data cells)
+        children.push(
+            self.grid_header_cell("Name", false, cx)
+                .col_span(2)
+                .into_any_element(),
+        );
+        children.push(self.grid_header_cell("PID", true, cx).into_any_element());
+        children.push(self.grid_header_cell("CPU %", true, cx).into_any_element());
+        children.push(self.grid_header_cell("Memory", true, cx).into_any_element());
+
+        // Data rows (flat grid children = perfect columns)
+        for (i, snap) in snaps.iter().enumerate() {
+            let cpu_text = if has_cpu_data {
+                format!("{:.1}%", snap.cpu_percent)
+            } else {
+                "—".to_string()
+            };
+            let mem_text = format_memory(snap.memory_bytes);
+
+            let cpu_col = if has_cpu_data {
+                cpu_color(snap.cpu_percent)
+            } else {
+                Color::Muted
+            };
+
+            let high_mem = snap.memory_bytes > HIGH_MEMORY_THRESHOLD;
+            let zed_row = is_zed_section;
+
+            let base_bg = if zed_row {
+                cx.theme().colors().ghost_element_selected.opacity(0.035)
+            } else if high_mem {
+                cx.theme().status().warning_background.opacity(0.06)
+            } else {
+                Hsla::default()
+            };
+
+            let hover_bg = if high_mem {
+                cx.theme().status().warning_background.opacity(0.13)
+            } else {
+                cx.theme().colors().ghost_element_hover
+            };
+
+            let row_base = (if zed_row { 0u64 } else { 1000 }) + (i as u64 * 4);
+
+            // Name (spans two tracks for better proportion)
+            children.push(
+                div()
+                    .id(ElementId::NamedInteger("grid-cell".into(), row_base))
+                    .col_span(2)
                     .px_2()
                     .py_1()
-                    .gap_2()
-                    .rounded_md()
-                    .hover(|s| s.bg(cx.theme().colors().ghost_element_hover))
+                    .rounded_sm()
+                    .bg(base_bg)
+                    .hover(|s| s.bg(hover_bg))
                     .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(120.))
-                            .child(Label::new(snap.name).size(LabelSize::Small)),
+                        Label::new(snap.name.clone())
+                            .size(LabelSize::Small)
+                            .color(Color::Default),
                     )
-                    .child(div().w(px(80.)).child(
+                    .into_any_element(),
+            );
+
+            // PID
+            children.push(
+                div()
+                    .id(ElementId::NamedInteger("grid-cell".into(), row_base + 1))
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .bg(base_bg)
+                    .hover(|s| s.bg(hover_bg))
+                    .text_right()
+                    .child(
                         Label::new(snap.pid.to_string())
                             .size(LabelSize::Small)
                             .color(Color::Muted),
-                    ))
-                    .child(
-                        div()
-                            .w(px(80.))
-                            .child(Label::new(cpu_text).size(LabelSize::Small)),
                     )
+                    .into_any_element(),
+            );
+
+            // CPU %
+            children.push(
+                div()
+                    .id(ElementId::NamedInteger("grid-cell".into(), row_base + 2))
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .bg(base_bg)
+                    .hover(|s| s.bg(hover_bg))
+                    .text_right()
                     .child(
-                        div()
-                            .w(px(100.))
-                            .child(Label::new(mem_text).size(LabelSize::Small)),
-                    )
-            }))
-            // Empty state
-            .when(self.snapshots.is_empty(), |el| {
-                el.child(
-                    div().py_4().child(
-                        Label::new("No processes found. Waiting for data…")
+                        Label::new(cpu_text)
                             .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-                )
-            })
+                            .color(cpu_col),
+                    )
+                    .into_any_element(),
+            );
+
+            // Memory
+            children.push(
+                div()
+                    .id(ElementId::NamedInteger("grid-cell".into(), row_base + 3))
+                    .px_2()
+                    .py_1()
+                    .rounded_sm()
+                    .bg(base_bg)
+                    .hover(|s| s.bg(hover_bg))
+                    .text_right()
+                    .child(
+                        Label::new(mem_text)
+                            .size(LabelSize::Small)
+                            .color(if high_mem { Color::Warning } else { Color::Muted }),
+                    )
+                    .into_any_element(),
+            );
+        }
+
+        div()
+            .grid()
+            .grid_cols(5)
+            .w_full()
+            .children(children)
+    }
+
+    fn grid_header_cell(&self, label: &str, right: bool, cx: &App) -> Div {
+        let cell = div()
+            .px_2()
+            .py_1()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                Label::new(label)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            );
+        if right { cell.text_right() } else { cell }
     }
 }
 
