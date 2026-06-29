@@ -7518,32 +7518,75 @@ fn version_control_page() -> SettingsPage {
     fn inline_git_blame_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Inline Git Blame"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Enabled",
-                description: "Whether or not to show Git blame data inline in the currently focused line.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("git.inline_blame.enabled"),
-                    pick: |settings_content| {
-                        settings_content
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    title: "Enabled",
+                    description: "Whether or not to show Git blame data for the currently focused line.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("git.inline_blame.enabled"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .inline_blame
+                                .as_ref()?
+                                .enabled
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .enabled = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(
+                        *settings_content
                             .git
                             .as_ref()?
                             .inline_blame
                             .as_ref()?
                             .enabled
-                            .as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .git
-                            .get_or_insert_default()
-                            .inline_blame
-                            .get_or_insert_default()
-                            .enabled = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
+                            .as_ref()? as usize,
+                    )
+                },
+                fields: vec![
+                    vec![],
+                    vec![SettingItem {
+                        title: "Location",
+                        description: "Where to render Git blame when it is enabled.",
+                        field: Box::new(SettingField {
+                            organization_override: None,
+                            json_path: Some("git.inline_blame.location"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .git
+                                    .as_ref()?
+                                    .inline_blame
+                                    .as_ref()?
+                                    .location
+                                    .as_ref()
+                            },
+                            write: |settings_content, value, _| {
+                                settings_content
+                                    .git
+                                    .get_or_insert_default()
+                                    .inline_blame
+                                    .get_or_insert_default()
+                                    .location = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }],
+                ],
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Delay",
