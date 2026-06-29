@@ -204,7 +204,8 @@ impl SoloDiffView {
         diff.read(cx)
             .snapshot(cx)
             .hunks_intersecting_range(
-                Anchor::min_for_buffer(buffer.remote_id())..Anchor::max_for_buffer(buffer.remote_id()),
+                Anchor::min_for_buffer(buffer.remote_id())
+                    ..Anchor::max_for_buffer(buffer.remote_id()),
                 buffer,
             )
             .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
@@ -488,7 +489,11 @@ impl Item for SoloDiffView {
                     .into(),
                 highlights: Vec::new(),
             }],
-            Some(theme_settings::ThemeSettings::get_global(cx).buffer_font.clone()),
+            Some(
+                theme_settings::ThemeSettings::get_global(cx)
+                    .buffer_font
+                    .clone(),
+            ),
         ))
     }
 
