@@ -942,7 +942,6 @@ impl BufferDiffSnapshot {
         stage: bool,
         hunks_with_rows: &[(DiffHunk, Vec<u32>, Vec<u32>)],
         buffer: &text::BufferSnapshot,
-        cx: &mut Context<BufferDiff>,
     ) -> Option<Rope> {
         let head_text = self
             .base_text_exists
@@ -953,33 +952,8 @@ impl BufferDiffSnapshot {
 
         // If the file doesn't exist in either HEAD or the index, then the
         // entire file must be either created or deleted in the index.
-        let (index_text, head_text) = match (index_text, head_text) {
-            (Some(index_text), Some(head_text)) => (index_text, head_text),
-            (index_text, head_text) => {
-                let (new_index_text, new_status) = if stage {
-                    (
-                        Some(buffer.as_rope().clone()),
-                        DiffHunkSecondaryStatus::HasSecondaryHunk,
-                    )
-                } else {
-                    (head_text, DiffHunkSecondaryStatus::HasSecondaryHunk)
-                };
-
-                assert!(hunks_with_rows.len() == 1);
-                let (hunk, _, _) = hunks_with_rows.iter().next().unwrap();
-
-                let hunk = PendingHunk {
-                    buffer_range: Anchor::min_max_range_for_buffer(buffer.remote_id()),
-                    diff_base_byte_range: 0..index_text.map_or(0, |rope| rope.len()),
-                    buffer_version: buffer.version().clone(),
-                    new_status,
-                    staged_addition_lines: hunk.staged_addition_lines.clone(),
-                    staged_deletion_lines: hunk.staged_deletion_lines.clone(),
-                };
-                self.pending_hunks = SumTree::from_item(hunk, buffer);
-                return new_index_text;
-            }
-        };
+        // Partial staging is disallowed for entire file addition/deletion
+        let (index_text, head_text) = index_text.zip(head_text)?;
 
         let mut pending_hunks = SumTree::new(buffer);
         let mut old_pending_hunks = self.pending_hunks.cursor::<DiffHunkSummary>(buffer);
@@ -1011,8 +985,6 @@ impl BufferDiffSnapshot {
                 old_pending_hunks.next();
             }
 
-            // Treat pending states like their settled counterparts so a repeated
-            // stage/unstage is a no-op rather than wiping the hunk's region.
             let already_staged = stage
                 && matches!(
                     secondary_status,
@@ -1066,26 +1038,22 @@ impl BufferDiffSnapshot {
                 }
             }
 
-            debug_assert!(staged_addition_lines.is_some() == staged_deletion_lines.is_some());
-            let show_stage = match staged_addition_lines
-                .as_ref()
-                .zip(staged_deletion_lines.as_ref())
-            {
-                Some((a, d)) => {
-                    if a.iter().all(|l| *l) && d.iter().all(|l| *l) {
-                        DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
-                    } else if a.iter().all(|l| !*l) && d.iter().all(|l| !*l) {
-                        DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
-                    } else {
-                        DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
-                    }
-                }
-                None => {
-                    if stage {
-                        DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
-                    } else {
-                        DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
-                    }
+            debug_assert!(staged_addition_lines.is_some() && staged_deletion_lines.is_some());
+            let show_stage = {
+                let (additions, deletions) = staged_addition_lines
+                    .as_ref()
+                    .zip(staged_deletion_lines.as_ref())?;
+
+                if additions.iter().all(|l| *l) && deletions.iter().all(|l| *l) {
+                    staged_addition_lines = None;
+                    staged_deletion_lines = None;
+                    DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
+                } else if additions.iter().all(|l| !*l) && deletions.iter().all(|l| !*l) {
+                    staged_addition_lines = None;
+                    staged_deletion_lines = None;
+                    DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
+                } else {
+                    DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk
                 }
             };
 
@@ -1208,14 +1176,14 @@ impl BufferDiffSnapshot {
             let old_text = head_text
                 .chunks_in_range(diff_base_byte_range.clone())
                 .collect::<String>();
-            // `split_inclusive` keeps each line's own trailing newline, preserving
-            // whether the final line had one.
             let deletion_part = if let Some(staged_lines) = staged_deletion_lines.as_ref() {
                 old_text
                     .split_inclusive('\n')
                     .zip(staged_lines)
                     .filter_map(|(line, staged)| (!staged).then_some(line))
                     .collect::<String>()
+            } else if stage {
+                "".into()
             } else {
                 old_text
             };
@@ -1228,11 +1196,11 @@ impl BufferDiffSnapshot {
                     .zip(staged_lines)
                     .filter_map(|(line, staged)| staged.then_some(line))
                     .collect::<String>()
-            } else {
+            } else if stage {
                 new_text
+            } else {
+                "".into()
             };
-            // Reinsert the separator if a final kept deletion line lost its newline
-            // but additions follow it.
             let mut replacement_text = deletion_part;
             if !replacement_text.is_empty()
                 && !replacement_text.ends_with('\n')
@@ -2118,7 +2086,6 @@ impl BufferDiff {
                     stage,
                     hunks_with_rows,
                     buffer,
-                    cx,
                 )
             });
 

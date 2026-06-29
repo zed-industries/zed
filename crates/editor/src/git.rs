@@ -1413,7 +1413,23 @@ impl Editor {
         for hunk in self.diff_hunks_in_ranges(ranges, snapshot) {
             match hunk.status().secondary {
                 DiffHunkSecondaryStatus::HasSecondaryHunk
-                | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => return true,
+                | DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
+                    let hunk_start = hunk.row_range.start.0;
+                    let hunk_end = hunk.row_range.end.0;
+                    let intersects = ranges.iter().any(|range| {
+                        let range_point = range.to_point(snapshot);
+                        let sel_start = range_point.start.row;
+                        let sel_end = range_point.end.row + 1;
+                        if hunk_start < hunk_end {
+                            sel_start < hunk_end && sel_end > hunk_start
+                        } else {
+                            sel_start <= hunk_start && hunk_start < sel_end
+                        }
+                    });
+                    if intersects {
+                        return true;
+                    }
+                }
                 DiffHunkSecondaryStatus::NoSecondaryHunk
                 | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => continue,
                 DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk => {
@@ -1432,8 +1448,21 @@ impl Editor {
                             (staged_deletion_lines, staged_addition_lines)
                         };
                     let hunk_start = hunk.row_range.start.0;
+                    let added_row_count = {
+                        let this = &hunk;
+                        let span = this
+                            .buffer_range_point
+                            .end
+                            .row
+                            .saturating_sub(this.buffer_range_point.start.row);
+                        if this.buffer_range_point.end.column > 0 {
+                            span + 1
+                        } else {
+                            span
+                        }
+                    };
                     let visible_deletion_lines = (hunk.row_range.end.0 - hunk.row_range.start.0)
-                        .saturating_sub(hunk.added_row_count());
+                        .saturating_sub(added_row_count);
                     for range in ranges {
                         let range_point = range.to_point(snapshot);
                         let sel_start = range_point.start.row;
@@ -1482,8 +1511,21 @@ impl Editor {
                 let hunk_start = hunk.row_range.start.0;
                 let hunk_end = hunk.row_range.end.0;
 
-                let visible_deletion_lines = (hunk.row_range.end.0 - hunk.row_range.start.0)
-                    .saturating_sub(hunk.added_row_count());
+                let added_row_count = {
+                    let this = &hunk;
+                    let span = this
+                        .buffer_range_point
+                        .end
+                        .row
+                        .saturating_sub(this.buffer_range_point.start.row);
+                    if this.buffer_range_point.end.column > 0 {
+                        span + 1
+                    } else {
+                        span
+                    }
+                };
+                let visible_deletion_lines =
+                    (hunk.row_range.end.0 - hunk.row_range.start.0).saturating_sub(added_row_count);
 
                 let intersect_start = sel_start.max(hunk_start);
                 let intersect_end = sel_end.min(hunk_start + visible_deletion_lines);
@@ -2974,38 +3016,36 @@ pub(super) fn render_diff_hunk_controls(
                                 )
                                 .menu(move |window, cx| {
                                     let focus_handle = menu_focus_handle.clone();
-                                    let action_label = editor
-                                        .read_with(cx, |editor, cx| {
-                                            let snapshot = editor.buffer.read(cx).snapshot(cx);
-                                            let ranges: Vec<_> = editor
-                                                .selections
-                                                .disjoint_anchors()
-                                                .iter()
-                                                .map(|s| s.range())
-                                                .collect();
-                                            let mut rows = HashSet::default();
-                                            for range in &ranges {
-                                                let start = range.start.to_point(&snapshot);
-                                                let end = range.end.to_point(&snapshot);
-                                                let last_row =
-                                                    if end.column == 0 && end.row > start.row {
-                                                        end.row - 1
-                                                    } else {
-                                                        end.row
-                                                    };
-                                                for row in start.row..=last_row {
-                                                    rows.insert(row);
-                                                }
-                                            }
-                                            let noun = if rows.len() == 1 { "Line" } else { "Lines" };
-                                            if editor
-                                                .has_stageable_lines_in_ranges(&ranges, &snapshot)
+                                    let action_label = editor.read_with(cx, |editor, cx| {
+                                        let snapshot = editor.buffer.read(cx).snapshot(cx);
+                                        let ranges: Vec<_> = editor
+                                            .selections
+                                            .disjoint_anchors()
+                                            .iter()
+                                            .map(|s| s.range())
+                                            .collect();
+                                        let mut rows = HashSet::default();
+                                        for range in &ranges {
+                                            let start = range.start.to_point(&snapshot);
+                                            let end = range.end.to_point(&snapshot);
+                                            let last_row = if end.column == 0 && end.row > start.row
                                             {
-                                                format!("Stage Selected {noun}")
+                                                end.row - 1
                                             } else {
-                                                format!("Unstage Selected {noun}")
+                                                end.row
+                                            };
+                                            for row in start.row..=last_row {
+                                                rows.insert(row);
                                             }
-                                        });
+                                        }
+                                        let noun = if rows.len() == 1 { "Line" } else { "Lines" };
+                                        if editor.has_stageable_lines_in_ranges(&ranges, &snapshot)
+                                        {
+                                            format!("Stage Selected {noun}")
+                                        } else {
+                                            format!("Unstage Selected {noun}")
+                                        }
+                                    });
                                     Some(ContextMenu::build(window, cx, |menu, _, _| {
                                         menu.context(focus_handle).action(
                                             action_label,

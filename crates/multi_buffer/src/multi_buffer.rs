@@ -161,21 +161,6 @@ impl MultiBufferDiffHunk {
             && self.buffer_range.start.is_min()
             && self.buffer_range.end.is_max()
     }
-
-    /// Number of buffer rows occupied by this hunk's added lines, including a
-    /// final added line that lacks a trailing newline.
-    pub fn added_row_count(&self) -> u32 {
-        let span = self
-            .buffer_range_point
-            .end
-            .row
-            .saturating_sub(self.buffer_range_point.start.row);
-        if self.buffer_range_point.end.column > 0 {
-            span + 1
-        } else {
-            span
-        }
-    }
 }
 
 pub type MultiBufferPoint = Point;
