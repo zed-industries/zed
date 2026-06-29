@@ -190,11 +190,102 @@ pub fn word_diff_ranges(
     let mut input: InternedInput<&str> = InternedInput::default();
     input.update_before(tokenize(old_text, options.language_scope.clone()));
     input.update_after(tokenize(new_text, options.language_scope));
+    collect_change_ranges(&input)
+}
 
+/// Maximum byte gap between change spans that will be merged into one highlight.
+/// Keeps highlights from looking choppy around single punctuation or spaces
+/// without swallowing unchanged words between larger edits.
+const INTRA_LINE_MERGE_GAP: usize = 2;
+
+/// Computes word/token-level intra-line diff ranges between two versions of a line.
+///
+/// Diffs by words and punctuation tokens (not individual characters) so highlights
+/// align with whole tokens, but still returns **byte** ranges on character
+/// boundaries. For `"let x = 1"` vs `"let x = 42"` only the `1` / `42` spans
+/// are returned.
+///
+/// Whitespace-only edits (for example a shifted indent) produce ranges covering
+/// just that whitespace, not the whole line. Adjacent change spans separated by
+/// a tiny gap (≤ [`INTRA_LINE_MERGE_GAP`] bytes) are merged so highlights stay
+/// continuous. Identical lines produce empty range lists; when no tokens match,
+/// both sides are marked in full.
+pub fn intra_line_diff(old_line: &str, new_line: &str) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
+    if old_line == new_line {
+        return (Vec::new(), Vec::new());
+    }
+
+    let mut input: InternedInput<&str> = InternedInput::default();
+    input.update_before(tokenize(old_line, None));
+    input.update_after(tokenize(new_line, None));
+    let (old_ranges, new_ranges) = collect_change_ranges(&input);
+
+    let old_ranges = merge_nearby_ranges(old_ranges, INTRA_LINE_MERGE_GAP);
+    let new_ranges = merge_nearby_ranges(new_ranges, INTRA_LINE_MERGE_GAP);
+
+    // No shared tokens at all — treat as a full-line replacement so we don't
+    // leave unhighlighted islands from accidental single-token matches on
+    // wholly different lines. Skip this when the only changes are whitespace
+    // so an indent shift stays tightly highlighted.
+    if !old_line.is_empty()
+        && !new_line.is_empty()
+        && !is_whitespace_only_change(old_line, &old_ranges)
+        && !is_whitespace_only_change(new_line, &new_ranges)
+        && covers_all_non_whitespace(old_line, &old_ranges)
+        && covers_all_non_whitespace(new_line, &new_ranges)
+    {
+        return (vec![0..old_line.len()], vec![0..new_line.len()]);
+    }
+
+    (old_ranges, new_ranges)
+}
+
+fn merge_nearby_ranges(ranges: Vec<Range<usize>>, max_gap: usize) -> Vec<Range<usize>> {
+    let mut merged: Vec<Range<usize>> = Vec::new();
+    for range in ranges {
+        if range.is_empty() {
+            continue;
+        }
+        if let Some(last) = merged.last_mut()
+            && range.start <= last.end + max_gap
+        {
+            last.end = last.end.max(range.end);
+        } else {
+            merged.push(range);
+        }
+    }
+    merged
+}
+
+fn is_whitespace_only_change(text: &str, ranges: &[Range<usize>]) -> bool {
+    !ranges.is_empty()
+        && ranges
+            .iter()
+            .all(|range| text[range.clone()].chars().all(|c| c.is_whitespace()))
+}
+
+fn covers_all_non_whitespace(text: &str, ranges: &[Range<usize>]) -> bool {
+    if ranges.is_empty() {
+        return text.chars().all(|c| c.is_whitespace());
+    }
+    let mut covered = vec![false; text.len()];
+    for range in ranges {
+        for byte in &mut covered[range.clone()] {
+            *byte = true;
+        }
+    }
+    text.char_indices().all(|(ix, c)| {
+        c.is_whitespace() || covered[ix..ix + c.len_utf8()].iter().all(|&b| b)
+    })
+}
+
+fn collect_change_ranges(
+    input: &InternedInput<&str>,
+) -> (Vec<Range<usize>>, Vec<Range<usize>>) {
     let mut old_ranges: Vec<Range<usize>> = Vec::new();
     let mut new_ranges: Vec<Range<usize>> = Vec::new();
 
-    diff_internal(&input, &mut |old_byte_range, new_byte_range, _, _| {
+    diff_internal(input, &mut |old_byte_range, new_byte_range, _, _| {
         if !old_byte_range.is_empty() {
             if let Some(last) = old_ranges.last_mut()
                 && last.end >= old_byte_range.start
@@ -428,6 +519,7 @@ fn token_len(input: &InternedInput<&str>, tokens: &[Token]) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_tokenize() {
@@ -521,6 +613,270 @@ mod tests {
             char_diff("test日本", "test日本語です"),
             vec![(10..10, "語です")]
         );
+    }
+
+    fn assert_ranges_valid(text: &str, ranges: &[Range<usize>]) {
+        let mut prev_end = 0;
+        for range in ranges {
+            assert!(
+                range.start <= range.end,
+                "range start > end for {text:?}: {range:?}"
+            );
+            assert!(
+                range.end <= text.len(),
+                "range out of bounds for {text:?}: {range:?}"
+            );
+            assert!(
+                text.is_char_boundary(range.start),
+                "range start not on char boundary for {text:?}: {range:?}"
+            );
+            assert!(
+                text.is_char_boundary(range.end),
+                "range end not on char boundary for {text:?}: {range:?}"
+            );
+            assert!(
+                range.start >= prev_end,
+                "ranges not ordered / overlapping for {text:?}: {ranges:?}"
+            );
+            // Non-overlapping: next range must start at or after previous end.
+            // Adjacent (touching) ranges are allowed.
+            prev_end = range.end;
+            // Slicing must not panic.
+            let _ = &text[range.clone()];
+        }
+    }
+
+    fn assert_intra_line_invariants(old_line: &str, new_line: &str) {
+        let (old_ranges, new_ranges) = intra_line_diff(old_line, new_line);
+        assert_ranges_valid(old_line, &old_ranges);
+        assert_ranges_valid(new_line, &new_ranges);
+        if old_line == new_line {
+            assert!(old_ranges.is_empty());
+            assert!(new_ranges.is_empty());
+        }
+    }
+
+    fn highlighted<'a>(text: &'a str, ranges: &[Range<usize>]) -> Vec<&'a str> {
+        ranges.iter().map(|r| &text[r.clone()]).collect()
+    }
+
+    #[test]
+    fn test_intra_line_diff_identical() {
+        assert_eq!(intra_line_diff("", ""), (vec![], vec![]));
+        assert_eq!(intra_line_diff("let x = 1", "let x = 1"), (vec![], vec![]));
+        assert_eq!(
+            intra_line_diff("hello 日本語 🎉", "hello 日本語 🎉"),
+            (vec![], vec![])
+        );
+        assert_intra_line_invariants("unchanged line", "unchanged line");
+    }
+
+    #[test]
+    fn test_intra_line_diff_word_change_mid_line() {
+        let old = "let x = 1";
+        let new = "let x = 42";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert_eq!(highlighted(old, &old_ranges), vec!["1"]);
+        assert_eq!(highlighted(new, &new_ranges), vec!["42"]);
+        assert_intra_line_invariants(old, new);
+
+        // Whole identifier tokens (underscores stay inside a word token).
+        let old = "fn compute_total(items: &[Item])";
+        let new = "fn compute_sum(items: &[Item])";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert_eq!(highlighted(old, &old_ranges), vec!["compute_total"]);
+        assert_eq!(highlighted(new, &new_ranges), vec!["compute_sum"]);
+        assert_intra_line_invariants(old, new);
+
+        let old = "hello world foo bar";
+        let new = "hello WORLD foo BAR";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert_eq!(highlighted(old, &old_ranges), vec!["world", "bar"]);
+        assert_eq!(highlighted(new, &new_ranges), vec!["WORLD", "BAR"]);
+        assert_intra_line_invariants(old, new);
+    }
+
+    #[test]
+    fn test_intra_line_diff_prefix_and_suffix_changes() {
+        // Prefix change only (leading word token).
+        let old = "old = value";
+        let new = "new = value";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert_eq!(highlighted(old, &old_ranges), vec!["old"]);
+        assert_eq!(highlighted(new, &new_ranges), vec!["new"]);
+        assert_intra_line_invariants(old, new);
+
+        // Suffix change only (trailing word token).
+        let old = "prefix alpha";
+        let new = "prefix beta";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert_eq!(highlighted(old, &old_ranges), vec!["alpha"]);
+        assert_eq!(highlighted(new, &new_ranges), vec!["beta"]);
+        assert_intra_line_invariants(old, new);
+
+        // Pure insertion in the middle.
+        let old = "hello world";
+        let new = "hello there world";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert!(old_ranges.is_empty());
+        assert_eq!(highlighted(new, &new_ranges), vec!["there "]);
+        assert_intra_line_invariants(old, new);
+
+        // Pure deletion in the middle.
+        let (old_ranges, new_ranges) = intra_line_diff(new, old);
+        assert_eq!(highlighted(new, &old_ranges), vec!["there "]);
+        assert!(new_ranges.is_empty());
+        assert_intra_line_invariants(new, old);
+    }
+
+    #[test]
+    fn test_intra_line_diff_totally_different() {
+        let (old_ranges, new_ranges) = intra_line_diff("hello", "world");
+        assert_eq!(old_ranges, vec![0.."hello".len()]);
+        assert_eq!(new_ranges, vec![0.."world".len()]);
+
+        let (old_ranges, new_ranges) = intra_line_diff("abc", "xyz");
+        assert_eq!(old_ranges, vec![0..3]);
+        assert_eq!(new_ranges, vec![0..3]);
+
+        let (old_ranges, new_ranges) = intra_line_diff("one two three", "alpha beta gamma");
+        assert_eq!(old_ranges, vec![0.."one two three".len()]);
+        assert_eq!(new_ranges, vec![0.."alpha beta gamma".len()]);
+
+        assert_eq!(intra_line_diff("", "abc"), (vec![], vec![0..3]));
+        assert_eq!(intra_line_diff("abc", ""), (vec![0..3], vec![]));
+        assert_intra_line_invariants("completely", "different");
+    }
+
+    #[test]
+    fn test_intra_line_diff_whitespace_only() {
+        // Leading indent insertion — do not light up the whole line.
+        let old = "foo bar";
+        let new = "    foo bar";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert!(old_ranges.is_empty());
+        assert_eq!(highlighted(new, &new_ranges), vec!["    "]);
+        assert_intra_line_invariants(old, new);
+
+        // Indent width change.
+        let old = "  foo";
+        let new = "    foo";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert_eq!(highlighted(old, &old_ranges), vec!["  "]);
+        assert_eq!(highlighted(new, &new_ranges), vec!["    "]);
+        assert_intra_line_invariants(old, new);
+
+        // Trailing whitespace change.
+        let old = "foo  ";
+        let new = "foo    ";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert_eq!(highlighted(old, &old_ranges), vec!["  "]);
+        assert_eq!(highlighted(new, &new_ranges), vec!["    "]);
+        assert_intra_line_invariants(old, new);
+
+        // Tabs vs spaces as indent.
+        let old = "\tfoo";
+        let new = "    foo";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert!(old_ranges
+            .iter()
+            .all(|r| old[r.clone()].chars().all(|c| c.is_whitespace())));
+        assert!(new_ranges
+            .iter()
+            .all(|r| new[r.clone()].chars().all(|c| c.is_whitespace())));
+        assert_intra_line_invariants(old, new);
+    }
+
+    #[test]
+    fn test_intra_line_diff_gap_merging() {
+        // Tiny gap (single punctuation) between changes is merged.
+        let old = "a,b";
+        let new = "x,y";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert_eq!(old_ranges, vec![0..3]);
+        assert_eq!(new_ranges, vec![0..3]);
+        assert_intra_line_invariants(old, new);
+
+        // Larger gap between word edits must not merge.
+        let old = "hello world foo bar";
+        let new = "hello WORLD foo BAR";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert_eq!(old_ranges.len(), 2);
+        assert_eq!(new_ranges.len(), 2);
+        assert!(old_ranges[0].end + INTRA_LINE_MERGE_GAP < old_ranges[1].start);
+        assert_intra_line_invariants(old, new);
+
+        // Adjacent punctuation-separated tokens within the merge gap.
+        let old = "a.b";
+        let new = "x.y";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert_eq!(old_ranges.len(), 1);
+        assert_eq!(new_ranges.len(), 1);
+        assert_eq!(&old[old_ranges[0].clone()], "a.b");
+        assert_eq!(&new[new_ranges[0].clone()], "x.y");
+        assert_intra_line_invariants(old, new);
+    }
+
+    #[test]
+    fn test_intra_line_diff_unicode() {
+        let old = "greet 日";
+        let new = "greet 日本語";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert_ranges_valid(old, &old_ranges);
+        assert_ranges_valid(new, &new_ranges);
+        assert_eq!(highlighted(old, &old_ranges), vec!["日"]);
+        assert_eq!(highlighted(new, &new_ranges), vec!["日本語"]);
+
+        let old = "🎉 party";
+        let new = "🎉🎊 party";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert_ranges_valid(old, &old_ranges);
+        assert_ranges_valid(new, &new_ranges);
+        assert!(old_ranges.is_empty());
+        assert_eq!(highlighted(new, &new_ranges), vec!["🎊"]);
+
+        let old = "café résumé";
+        let new = "cafe resume";
+        let (old_ranges, new_ranges) = intra_line_diff(old, new);
+        assert_ranges_valid(old, &old_ranges);
+        assert_ranges_valid(new, &new_ranges);
+        // Whole differing word tokens.
+        assert!(!old_ranges.is_empty() || !new_ranges.is_empty());
+        assert_intra_line_invariants(old, new);
+
+        let old = "emoji 👨👩";
+        let new = "emoji 👨👩👧";
+        assert_intra_line_invariants(old, new);
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+
+        #[test]
+        fn prop_intra_line_diff_ranges_valid_ordered_non_overlapping(
+            old_line in "\\PC{0,64}",
+            new_line in "\\PC{0,64}",
+        ) {
+            let (old_ranges, new_ranges) = intra_line_diff(&old_line, &new_line);
+            assert_ranges_valid(&old_line, &old_ranges);
+            assert_ranges_valid(&new_line, &new_ranges);
+
+            if old_line == new_line {
+                prop_assert!(old_ranges.is_empty());
+                prop_assert!(new_ranges.is_empty());
+            }
+
+            // Ranges on each side must be strictly non-overlapping (end of one
+            // <= start of next) and sorted by start.
+            for window in old_ranges.windows(2) {
+                prop_assert!(window[0].start <= window[1].start);
+                prop_assert!(window[0].end <= window[1].start);
+            }
+            for window in new_ranges.windows(2) {
+                prop_assert!(window[0].start <= window[1].start);
+                prop_assert!(window[0].end <= window[1].start);
+            }
+        }
     }
 
     #[test]

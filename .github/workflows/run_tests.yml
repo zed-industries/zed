@@ -499,6 +499,36 @@ jobs:
       run: |
         rm -rf ./../.cargo
     timeout-minutes: 60
+  intra_line_diff_tests:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::setup_cargo_config
+      run: |
+        mkdir -p ./../.cargo
+        cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: run_tests::intra_line_diff_tests::run_intra_line_diff_tests
+      run: cargo test -p language intra_line -- --nocapture
+    - name: steps::cleanup_cargo_config
+      if: always()
+      run: |
+        rm -rf ./../.cargo
+    timeout-minutes: 60
   doctests:
     needs:
     - orchestrate
@@ -889,6 +919,7 @@ jobs:
     - run_tests_linux
     - run_tests_mac
     - miri_scheduler
+    - intra_line_diff_tests
     - doctests
     - check_workspace_binaries
     - build_visual_tests_binary
@@ -921,6 +952,7 @@ jobs:
         check_result "run_tests_linux" "$RESULT_RUN_TESTS_LINUX"
         check_result "run_tests_mac" "$RESULT_RUN_TESTS_MAC"
         check_result "miri_scheduler" "$RESULT_MIRI_SCHEDULER"
+        check_result "intra_line_diff_tests" "$RESULT_INTRA_LINE_DIFF_TESTS"
         check_result "doctests" "$RESULT_DOCTESTS"
         check_result "check_workspace_binaries" "$RESULT_CHECK_WORKSPACE_BINARIES"
         check_result "build_visual_tests_binary" "$RESULT_BUILD_VISUAL_TESTS_BINARY"
@@ -943,6 +975,7 @@ jobs:
         RESULT_RUN_TESTS_LINUX: ${{ needs.run_tests_linux.result }}
         RESULT_RUN_TESTS_MAC: ${{ needs.run_tests_mac.result }}
         RESULT_MIRI_SCHEDULER: ${{ needs.miri_scheduler.result }}
+        RESULT_INTRA_LINE_DIFF_TESTS: ${{ needs.intra_line_diff_tests.result }}
         RESULT_DOCTESTS: ${{ needs.doctests.result }}
         RESULT_CHECK_WORKSPACE_BINARIES: ${{ needs.check_workspace_binaries.result }}
         RESULT_BUILD_VISUAL_TESTS_BINARY: ${{ needs.build_visual_tests_binary.result }}

@@ -75,6 +75,9 @@ pub(crate) fn run_tests() -> Workflow {
         should_run_tests
             .and_not_in_merge_queue()
             .then(miri_scheduler()),
+        should_run_tests
+            .and_not_in_merge_queue()
+            .then(intra_line_diff_tests()),
         should_run_tests.and_not_in_merge_queue().then(doctests()),
         should_run_tests
             .and_not_in_merge_queue()
@@ -738,6 +741,24 @@ fn miri_scheduler() -> NamedJob {
             .add_step(steps::cache_rust_dependencies_namespace())
             .add_step(install_miri())
             .add_step(run_scheduler_tests_under_miri())
+            .add_step(steps::cleanup_cargo_config(Platform::Linux)),
+    )
+}
+
+/// Fast, focused job for intra-line diff unit + property tests in `language`.
+fn intra_line_diff_tests() -> NamedJob {
+    fn run_intra_line_diff_tests() -> Step<Run> {
+        named::bash("cargo test -p language intra_line -- --nocapture")
+    }
+
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_DEFAULT)
+            .add_step(steps::harden_runner())
+            .add_step(steps::checkout_repo())
+            .add_step(steps::setup_cargo_config(Platform::Linux))
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(run_intra_line_diff_tests())
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     )
 }

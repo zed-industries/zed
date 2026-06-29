@@ -83,6 +83,7 @@ gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 lsp = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
+proptest.workspace = true
 rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
@@ -107,6 +108,10 @@ theme_settings.workspace = true
 
 [[bench]]
 name = "highlight_map"
+harness = false
+
+[[bench]]
+name = "intra_line_diff"
 harness = false
 
 [package.metadata.cargo-machete]
