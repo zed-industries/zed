@@ -51,7 +51,6 @@ use ui::{
     prelude::*,
 };
 use util::ResultExt;
-use util::paths::{PathMatcher, PathStyle};
 use workspace::SplitDirection;
 use workspace::Workspace;
 use workspace::item::ItemSettings;
@@ -79,11 +78,6 @@ pub struct Delegate {
     pub(crate) last_selection_change_time: Option<std::time::Instant>,
     pub(crate) last_click: Option<(usize, std::time::Instant)>,
     pub(crate) search_options: SearchOptions,
-    /// Whether the include/exclude filter row is shown. The editors below are
-    /// only created once the modal has a `Window` (see [`super::TextFinder::new`]).
-    pub(crate) filters_enabled: bool,
-    pub(crate) included_files_editor: Option<Entity<Editor>>,
-    pub(crate) excluded_files_editor: Option<Entity<Editor>>,
     /// Kept around for switching to project search
     pub(crate) active_query: Option<SearchQuery>,
     pub(crate) imported_from_project_search: bool,
@@ -320,9 +314,6 @@ impl Delegate {
                 last_selection_change_time: None,
                 last_click: None,
                 search_options,
-                filters_enabled: false,
-                included_files_editor: None,
-                excluded_files_editor: None,
                 active_query,
                 imported_from_project_search,
                 in_progress_search,
@@ -564,23 +555,22 @@ impl PickerDelegate for Delegate {
         let focus_handle = self.focus_handle.clone();
         let picker = cx.entity();
 
+        let filters_enabled = self.project_search_view.read(cx).filters_enabled();
         let filter_toggle = {
             let picker = picker.clone();
             IconButton::new("text-finder-filter-button", IconName::Filter)
                 .icon_size(IconSize::Small)
                 .shape(IconButtonShape::Square)
-                .toggle_state(self.filters_enabled)
+                .toggle_state(filters_enabled)
                 .tooltip(Tooltip::text("Toggle Filters"))
                 .on_click(move |_, window, cx| {
                     picker.update(cx, |picker, cx| {
-                        picker.delegate.filters_enabled = !picker.delegate.filters_enabled;
-                        if let Some(editor) = picker
-                            .delegate
-                            .filters_enabled
-                            .then(|| picker.delegate.included_files_editor.clone())
-                            .flatten()
-                        {
-                            editor.focus_handle(cx).focus(window, cx);
+                        let view = picker.delegate.project_search_view.clone();
+                        let now_enabled = !view.read(cx).filters_enabled();
+                        view.update(cx, |view, _| view.set_filters_enabled(now_enabled));
+                        if now_enabled {
+                            let (included, _) = view.read(cx).filter_editors();
+                            included.focus_handle(cx).focus(window, cx);
                         }
                         picker.refresh(window, cx);
                     });
@@ -637,26 +627,24 @@ impl PickerDelegate for Delegate {
         cx: &mut Context<Picker<Self>>,
     ) -> Div {
         let filter_line = self
-            .filters_enabled
+            .project_search_view
+            .read(cx)
+            .filters_enabled()
             .then(|| {
-                let included = self.included_files_editor.as_ref()?;
-                let excluded = self.excluded_files_editor.as_ref()?;
+                let (included, excluded) = self.project_search_view.read(cx).filter_editors();
                 let border_color = cx.theme().colors().border;
                 let include = input_base_styles(border_color, |div| div.flex_grow_1())
-                    .child(render_filter_input(included, cx));
+                    .child(render_filter_input(&included, cx));
                 let exclude = input_base_styles(border_color, |div| div.flex_grow_1())
-                    .child(render_filter_input(excluded, cx));
-                Some(
-                    h_flex()
-                        .w_full()
-                        .gap_2()
-                        .px_2p5()
-                        .pb_1p5()
-                        .child(include)
-                        .child(exclude),
-                )
-            })
-            .flatten();
+                    .child(render_filter_input(&excluded, cx));
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .px_2p5()
+                    .pb_1p5()
+                    .child(include)
+                    .child(exclude)
+            });
 
         v_flex()
             .child(
@@ -707,10 +695,8 @@ impl PickerDelegate for Delegate {
     // focus handles. Without this, focusing one would blur the query editor and
     // dismiss the modal.
     fn has_another_open_menu(&self, window: &Window, cx: &App) -> bool {
-        [&self.included_files_editor, &self.excluded_files_editor]
-            .into_iter()
-            .flatten()
-            .any(|editor| editor.focus_handle(cx).is_focused(window))
+        let (included, excluded) = self.project_search_view.read(cx).filter_editors();
+        included.focus_handle(cx).is_focused(window) || excluded.focus_handle(cx).is_focused(window)
     }
 
     fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
@@ -1102,44 +1088,6 @@ fn render_filter_input(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
     EditorElement::new(editor, editor_style)
 }
 
-fn parse_path_matches(text: &str, path_style: PathStyle) -> PathMatcher {
-    let queries = split_glob_patterns(text)
-        .into_iter()
-        .map(str::trim)
-        .filter(|glob| !glob.is_empty())
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    PathMatcher::new(&queries, path_style).unwrap_or_default()
-}
-
-/// Splits comma-separated glob patterns, keeping commas inside `{…}` brace
-/// groups and after a backslash escape intact.
-fn split_glob_patterns(text: &str) -> Vec<&str> {
-    let mut patterns = Vec::new();
-    let mut pattern_start = 0;
-    let mut brace_depth: usize = 0;
-    let mut escaped = false;
-
-    for (index, character) in text.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match character {
-            '\\' => escaped = true,
-            '{' => brace_depth += 1,
-            '}' => brace_depth = brace_depth.saturating_sub(1),
-            ',' if brace_depth == 0 => {
-                patterns.push(&text[pattern_start..index]);
-                pattern_start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    patterns.push(&text[pattern_start..]);
-    patterns
-}
-
 /// Renders the matched source line with syntax highlighting, overlaying the
 /// search match with a highlighted background and bold weight.
 fn render_matched_line(search_match: &SearchMatch, cx: &App) -> StyledText {
@@ -1221,23 +1169,10 @@ impl Delegate {
             return None;
         }
 
-        // Apply the include/exclude filters from this modal's own filter inputs,
-        // when the filter row is shown.
-        let (files_to_include, files_to_exclude) = if self.filters_enabled {
-            let path_style = self.project(cx).read(cx).path_style(cx);
-            let parse = |editor: &Option<Entity<Editor>>| {
-                editor
-                    .as_ref()
-                    .map(|editor| parse_path_matches(&editor.read(cx).text(cx), path_style))
-                    .unwrap_or_default()
-            };
-            (
-                parse(&self.included_files_editor),
-                parse(&self.excluded_files_editor),
-            )
-        } else {
-            (PathMatcher::default(), PathMatcher::default())
-        };
+        // Reuse the include/exclude filters configured on the shared project
+        // search view so the text finder respects them too.
+        let (files_to_include, files_to_exclude) =
+            self.project_search_view.read(cx).file_path_filters(cx);
 
         // If the project contains multiple visible worktrees, we match the
         // include/exclude patterns against full paths to allow them to be

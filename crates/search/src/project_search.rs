@@ -1578,6 +1578,39 @@ impl ProjectSearchView {
         buffers
     }
 
+    pub(crate) fn filters_enabled(&self) -> bool {
+        self.filters_enabled
+    }
+
+    pub(crate) fn set_filters_enabled(&mut self, enabled: bool) {
+        self.filters_enabled = enabled;
+    }
+
+    pub(crate) fn filter_editors(&self) -> (Entity<Editor>, Entity<Editor>) {
+        (
+            self.included_files_editor.clone(),
+            self.excluded_files_editor.clone(),
+        )
+    }
+
+    /// The include/exclude path matchers currently configured on this view,
+    /// honoring `filters_enabled`. Read-only (unlike `build_search_query` it does
+    /// not record parse errors in `panels_with_errors`); invalid globs fall back
+    /// to a default (match-all) matcher. Shared with the text finder, which is
+    /// backed by the same view.
+    pub(crate) fn file_path_filters(&self, cx: &App) -> (PathMatcher, PathMatcher) {
+        if !self.filters_enabled {
+            return (PathMatcher::default(), PathMatcher::default());
+        }
+        let included = self
+            .parse_path_matches(self.included_files_editor.read(cx).text(cx), cx)
+            .unwrap_or_default();
+        let excluded = self
+            .parse_path_matches(self.excluded_files_editor.read(cx).text(cx), cx)
+            .unwrap_or_default();
+        (included, excluded)
+    }
+
     fn parse_path_matches(&self, text: String, cx: &App) -> anyhow::Result<PathMatcher> {
         let path_style = self.entity.read(cx).project.read(cx).path_style(cx);
         let queries = split_glob_patterns(&text)

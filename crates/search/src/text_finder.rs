@@ -268,24 +268,8 @@ impl TextFinder {
         let picker = cx.new(|cx| Picker::list_with_preview(delegate, project, window, cx));
         let picker_weak = picker.downgrade();
         let picker_focus_handle = picker.focus_handle(cx);
-
-        // The filter inputs are built here, where a `Window` is available, and
-        // handed to the delegate which only renders them when filters are shown.
-        let included_files_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Include: e.g. src/**/*.rs", window, cx);
-            editor
-        });
-        let excluded_files_editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Exclude: e.g. vendor/*, *.lock", window, cx);
-            editor
-        });
-
         picker.update(cx, |picker, cx| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
-            picker.delegate.included_files_editor = Some(included_files_editor.clone());
-            picker.delegate.excluded_files_editor = Some(excluded_files_editor.clone());
             picker.delegate.hook_up_any_ongoing_search(picker_weak, cx);
             if let Some(seed_query) = seed_query.as_deref() {
                 picker.set_query(seed_query, window, cx);
@@ -298,7 +282,13 @@ impl TextFinder {
 
         // Re-run the search whenever the include/exclude filters change, matching
         // the live-search behavior of typing in the query editor.
-        for editor in [included_files_editor, excluded_files_editor] {
+        let (included_editor, excluded_editor) = picker
+            .read(cx)
+            .delegate
+            .project_search_view
+            .read(cx)
+            .filter_editors();
+        for editor in [included_editor, excluded_editor] {
             subscriptions.push(cx.subscribe_in(&editor, window, {
                 let picker = picker.clone();
                 move |_, _, event: &EditorEvent, window, cx| {
