@@ -291,6 +291,11 @@ impl CursorPosition {
     }
 
     #[cfg(test)]
+    pub(crate) fn document_words(&self) -> usize {
+        self.document_words
+    }
+
+    #[cfg(test)]
     pub(crate) fn position(&self) -> Option<UserCaretPosition> {
         self.position
     }
