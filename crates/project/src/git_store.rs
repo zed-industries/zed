@@ -8650,12 +8650,13 @@ impl Repository {
                             .boxed()
                         };
 
-                        let (statuses, diff_stats, untracked_diff_stats) = futures::future::try_join3(
-                            status_task,
-                            diff_stat_future,
-                            backend.diff_stat_untracked(&changed_paths_vec),
-                        )
-                        .await?;
+                        let (statuses, diff_stats, untracked_diff_stats) =
+                            futures::future::try_join3(
+                                status_task,
+                                diff_stat_future,
+                                backend.diff_stat_untracked(&changed_paths_vec),
+                            )
+                            .await?;
 
                         let diff_stats: HashMap<RepoPath, DiffStat> =
                             HashMap::from_iter(diff_stats.entries.into_iter().cloned());

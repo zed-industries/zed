@@ -5557,12 +5557,9 @@ mod tests {
         smol::fs::write(repo_dir.path().join("tracked.txt"), "line1\n")
             .await
             .unwrap();
-        repo.stage_paths(
-            vec![repo_path("tracked.txt")],
-            Arc::new(HashMap::default()),
-        )
-        .await
-        .unwrap();
+        repo.stage_paths(vec![repo_path("tracked.txt")], Arc::new(HashMap::default()))
+            .await
+            .unwrap();
         repo.commit(
             "Initial commit".into(),
             None,

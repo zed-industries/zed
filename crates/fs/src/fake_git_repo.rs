@@ -1299,8 +1299,7 @@ impl GitRepository for FakeGitRepository {
         self.with_state_async(false, move |state| {
             let mut entries = Vec::new();
             for (path, content) in &worktree_files {
-                if state.head_contents.contains_key(path)
-                    || state.index_contents.contains_key(path)
+                if state.head_contents.contains_key(path) || state.index_contents.contains_key(path)
                 {
                     continue;
                 }

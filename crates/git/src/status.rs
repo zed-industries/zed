@@ -666,7 +666,8 @@ pub async fn count_text_file_lines(path: &Path) -> Result<Option<u32>> {
         if pending_binary_check.len() < BINARY_CHECK_LEN {
             let take = chunk_size.min(BINARY_CHECK_LEN - pending_binary_check.len());
             pending_binary_check.extend_from_slice(&buffer[..take]);
-            if pending_binary_check.len() == BINARY_CHECK_LEN && is_binary_content(&pending_binary_check)
+            if pending_binary_check.len() == BINARY_CHECK_LEN
+                && is_binary_content(&pending_binary_check)
             {
                 return Ok(None);
             }
@@ -824,7 +825,9 @@ mod tests {
         );
 
         let binary_path = temp_dir.path().join("binary.bin");
-        smol::fs::write(&binary_path, b"hello\0world").await.unwrap();
+        smol::fs::write(&binary_path, b"hello\0world")
+            .await
+            .unwrap();
         assert_eq!(count_text_file_lines(&binary_path).await.unwrap(), None);
     }
 
