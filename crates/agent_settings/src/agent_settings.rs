@@ -311,7 +311,6 @@ pub fn language_model_to_selection(
                         .map(|effort| effort.value.to_string())
                 }),
             speed: current.speed.filter(|_| model.supports_fast_mode()),
-            include_project_rules: None,
         },
         None => LanguageModelSelection {
             provider,
@@ -321,7 +320,6 @@ pub fn language_model_to_selection(
                 .default_effort_level()
                 .map(|effort| effort.value.to_string()),
             speed: None,
-            include_project_rules: None,
         },
     }
 }
@@ -751,10 +749,8 @@ impl Settings for AgentSettings {
                 .inline_assistant_use_streaming_tools
                 .unwrap_or(true),
             commit_message_include_project_rules: agent
-                .commit_message_model
-                .as_ref()
-                .and_then(|model| model.include_project_rules)
-                .unwrap_or(true),
+                .commit_message_include_project_rules
+                .unwrap(),
             commit_message_model: agent.commit_message_model,
             commit_message_instructions: agent.commit_message_instructions,
             thread_summary_model: agent.thread_summary_model,
