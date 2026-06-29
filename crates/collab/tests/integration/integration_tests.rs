@@ -1873,6 +1873,7 @@ async fn test_active_call_events(
         vec![room::Event::RemoteProjectShared {
             owner: Arc::new(User {
                 legacy_id: client_a.user_id().unwrap(),
+                username: "user_a".into(),
                 github_login: "user_a".into(),
                 avatar_uri: "avatar_a".into(),
                 name: None,
@@ -1892,6 +1893,7 @@ async fn test_active_call_events(
         vec![room::Event::RemoteProjectShared {
             owner: Arc::new(User {
                 legacy_id: client_b.user_id().unwrap(),
+                username: "user_b".into(),
                 github_login: "user_b".into(),
                 avatar_uri: "avatar_b".into(),
                 name: None,
