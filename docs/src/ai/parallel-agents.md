@@ -75,7 +75,7 @@ A single project can contain multiple folders (a multi-root folder project). Age
 
 ## Worktree Isolation {#worktree-isolation}
 
-If two threads might edit the same files, start one in a new [Git worktree](../git.md#git-worktrees) to give it an isolated checkout.
+If two threads might edit the same files, start one in a new [Git worktree](../git/worktrees.md) to give it an isolated checkout.
 
 Worktrees are managed from the title bar. Click the worktree picker (to the right of the project picker) to switch between existing worktrees or create a new one. New worktrees are created in a detached HEAD state, so you won't accidentally share a branch between worktrees.
 
@@ -83,7 +83,7 @@ Once you're in a new worktree, use the branch picker next to the worktree picker
 
 To automate setup steps whenever a new worktree is created use a [Task hook](../tasks.md#hooks). The `create_worktree` hook runs automatically after Zed creates a linked worktree, with `ZED_WORKTREE_ROOT` pointing at the new worktree and `ZED_MAIN_GIT_WORKTREE` pointing at the original repository.
 
-After the agent finishes, review the diff and merge the changes through your normal Git workflow. If the thread was running in a linked worktree and no other active threads use it, moving the thread to Thread History saves the worktree's Git state and removes it from disk. Restoring the thread from history restores the worktree.
+After the agent finishes, review the diff and merge the changes through your normal Git workflow. See [Agents and Git](../git/agents-and-git.md) for the Git-specific review handoff. If the thread was running in a linked worktree and no other active threads use it, moving the thread to Thread History saves the worktree's Git state and removes it from disk. Restoring the thread from history restores the worktree.
 
 ## See Also {#see-also}
 
