@@ -125,10 +125,14 @@ impl State {
             return Task::ready(Ok(()));
         }
 
-        let fetch_models_task = self.fetch_models(cx);
-        cx.spawn(async move |_this, _cx| {
-            // The API key is optional for a local server, so a load failure is fine.
-            load_key_task.await.ok();
+        cx.spawn(async move |this, cx| {
+            match load_key_task.await {
+                Ok(()) | Err(AuthenticateError::CredentialsNotFound) => {}
+                Err(error) => {
+                    log::warn!("failed to load llama.cpp API key: {error}");
+                }
+            }
+            let fetch_models_task = this.update(cx, |this, cx| this.fetch_models(cx))?;
             match fetch_models_task.await {
                 Ok(()) => Ok(()),
                 Err(err) => {
@@ -1532,6 +1536,45 @@ impl Render for ConfigurationView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::TestAppContext;
+    use http_client::FakeHttpClient;
+    use parking_lot::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct FakeCredentialsProvider {
+        api_key: Vec<u8>,
+    }
+
+    impl CredentialsProvider for FakeCredentialsProvider {
+        fn read_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Option<(String, Vec<u8>)>>> + 'a>,
+        > {
+            let api_key = self.api_key.clone();
+            Box::pin(async move { Ok(Some(("Bearer".to_string(), api_key))) })
+        }
+
+        fn write_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _username: &'a str,
+            _password: &'a [u8],
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn delete_credentials<'a>(
+            &'a self,
+            _url: &'a str,
+            _cx: &'a AsyncApp,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+            Box::pin(async { Ok(()) })
+        }
+    }
 
     fn entry(id: &str, n_ctx: Option<u64>, n_ctx_train: Option<u64>) -> ModelEntry {
         ModelEntry {
@@ -1664,5 +1707,75 @@ mod tests {
         )];
         sync_capability_cells(&cells, &compute_effective_models(&loaded, &settings));
         assert_eq!(cells.read().unwrap().get("m").unwrap().max_tokens, 262_144);
+    }
+
+    #[gpui::test]
+    async fn authenticate_fetches_models_after_loading_api_key(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        });
+
+        let model_request_authorizations = Arc::new(Mutex::new(Vec::new()));
+        let model_request_count = Arc::new(AtomicUsize::new(0));
+        let http_client = FakeHttpClient::create({
+            let model_request_authorizations = model_request_authorizations.clone();
+            let model_request_count = model_request_count.clone();
+            move |request| {
+                let model_request_authorizations = model_request_authorizations.clone();
+                let model_request_count = model_request_count.clone();
+                async move {
+                    let path = request.uri().path();
+                    let authorization = request
+                        .headers()
+                        .get("Authorization")
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_string);
+
+                    if path == "/v1/models" {
+                        model_request_authorizations.lock().push(authorization);
+                        let request_index = model_request_count.fetch_add(1, Ordering::SeqCst);
+                        if request_index == 0 {
+                            return Ok(http_client::Response::builder()
+                                .status(503)
+                                .body(http_client::AsyncBody::from("not ready"))?);
+                        }
+
+                        return Ok(http_client::Response::builder().status(200).body(
+                            http_client::AsyncBody::from(
+                                r#"{"data":[{"id":"test-model","meta":{"n_ctx":4096}}]}"#,
+                            ),
+                        )?);
+                    }
+
+                    if path == "/props" {
+                        return Ok(http_client::Response::builder()
+                            .status(200)
+                            .body(http_client::AsyncBody::from("{}"))?);
+                    }
+
+                    Ok(http_client::Response::builder()
+                        .status(404)
+                        .body(http_client::AsyncBody::default())?)
+                }
+            }
+        });
+        let credentials_provider = Arc::new(FakeCredentialsProvider {
+            api_key: b"loaded-key".to_vec(),
+        });
+        let provider = cx
+            .update(|cx| LlamaCppLanguageModelProvider::new(http_client, credentials_provider, cx));
+
+        cx.run_until_parked();
+
+        let result = cx.update(|cx| provider.authenticate(cx)).await;
+        assert!(
+            result.is_ok(),
+            "authenticate should discover models after loading credentials"
+        );
+        assert_eq!(
+            &*model_request_authorizations.lock(),
+            &[None, Some("Bearer loaded-key".to_string())]
+        );
     }
 }
