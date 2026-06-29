@@ -246,7 +246,7 @@ pub struct AgentSettingsContent {
     ///
     /// Default: true
     pub inline_assistant_use_streaming_tools: Option<bool>,
-    /// Model and options to use for generating git commit messages. Defaults to default_model when not specified.
+    /// Model to use for generating git commit messages. Defaults to default_model when not specified.
     pub commit_message_model: Option<LanguageModelSelection>,
     /// Whether to include project rules files (AGENTS.md, CLAUDE.md, .rules, etc.)
     /// in the prompt when generating git commit messages.
