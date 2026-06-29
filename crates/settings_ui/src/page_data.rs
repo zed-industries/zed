@@ -8420,15 +8420,30 @@ fn ai_page(cx: &App) -> SettingsPage {
         })]
     }
 
+    use feature_flags::FeatureFlagAppExt as _;
+
+    // When the agent settings UI is enabled, the context server timeout is shown
+    // inside the MCP Servers sub-page. Otherwise it remains a standalone section
+    // here so it stays reachable.
+    let agent_settings_ui_enabled = cx.has_flag::<feature_flags::AgentSettingsUiFeatureFlag>();
+
+    let mut items = concat_sections!(
+        @vec,
+        general_section(),
+        agent_configuration_section(cx),
+    );
+    if !agent_settings_ui_enabled {
+        items.extend(context_servers_section());
+    }
+    items.extend(concat_sections!(
+        @vec,
+        edit_prediction_language_settings_section(),
+        edit_prediction_display_sub_section(),
+    ));
+
     SettingsPage {
         title: "AI",
-        items: concat_sections![
-            general_section(),
-            agent_configuration_section(cx),
-            context_servers_section(),
-            edit_prediction_language_settings_section(),
-            edit_prediction_display_sub_section()
-        ],
+        items: items.into(),
     }
 }
 
