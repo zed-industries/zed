@@ -8,15 +8,11 @@ use std::sync::Arc;
 
 use crate::{Editor, HighlightKey};
 use collections::{HashMap, HashSet};
-use gpui::{AppContext as _, Context, HighlightStyle, Hsla, Rgba};
+use gpui::{AppContext as _, Context, HighlightStyle, Hsla};
 use language::{BufferRow, BufferSnapshot, language_settings::LanguageSettings};
 use multi_buffer::{Anchor, BufferOffset, ExcerptRange, MultiBufferSnapshot};
-use palette::{
-    FromColor, Oklab, Oklch,
-    rgb::{LinSrgba, Srgba},
-};
 use text::OffsetRangeExt as _;
-use theme::{ActiveTheme, Appearance};
+use theme::{Appearance, Oklab, Oklch, hsla_to_oklab, hsla_to_oklch, oklch_to_hsla};
 use ui::utils::apca_contrast;
 
 impl Editor {
@@ -29,18 +25,10 @@ impl Editor {
             self.bracket_fetched_tree_sitter_chunks.clear();
         }
 
-        let accents = self
-            .accent_data
-            .as_ref()
-            .map(|accent_data| accent_data.colors.0.clone())
-            .unwrap_or_else(|| {
-                let theme = cx.theme();
-                bracket_colorization_accents(
-                    &theme.accents().0,
-                    theme.appearance,
-                    theme.colors().editor_background,
-                )
-            });
+        let Some(accent_data) = self.accent_data.as_ref() else {
+            return;
+        };
+        let accents = accent_data.colors.0.clone();
         let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
 
         let visible_excerpts = self.visible_buffer_ranges(cx);
@@ -135,7 +123,9 @@ impl Editor {
                         .bracket_fetched_tree_sitter_chunks
                         .extend(updated_chunks);
                     for (accent_number, bracket_highlights) in bracket_matches_by_accent {
-                        let bracket_color = accents[accent_number];
+                        let Some(&bracket_color) = accents.get(accent_number) else {
+                            continue;
+                        };
                         let style = HighlightStyle {
                             color: Some(bracket_color),
                             ..HighlightStyle::default()
@@ -157,10 +147,10 @@ impl Editor {
 
 const BACKGROUND_APCA_LIGHT: f32 = 35.0;
 const BACKGROUND_APCA_DARK: f32 = 30.0;
-#[cfg(test)]
 const ADJACENT_OKLAB_LIGHT: f32 = 0.10;
 const ADJACENT_OKLAB_DARK: f32 = 0.08;
 const ADJACENT_OKLAB_LIGHT_INTERVENTION: f32 = 0.095;
+const ADJACENT_OKLAB_DARK_INTERVENTION: f32 = 0.08;
 const LIGHTNESS_CLAMP_MIN: f32 = 0.18;
 const LIGHTNESS_CLAMP_MAX: f32 = 0.92;
 
@@ -169,9 +159,17 @@ pub(crate) fn bracket_colorization_accents(
     appearance: Appearance,
     background: Hsla,
 ) -> Arc<[Hsla]> {
-    let (intervention_distance, min_background_contrast) = match appearance {
-        Appearance::Light => (ADJACENT_OKLAB_LIGHT_INTERVENTION, BACKGROUND_APCA_LIGHT),
-        Appearance::Dark => (ADJACENT_OKLAB_DARK, BACKGROUND_APCA_DARK),
+    let (intervention_distance, comfortable_distance, min_background_contrast) = match appearance {
+        Appearance::Light => (
+            ADJACENT_OKLAB_LIGHT_INTERVENTION,
+            ADJACENT_OKLAB_LIGHT,
+            BACKGROUND_APCA_LIGHT,
+        ),
+        Appearance::Dark => (
+            ADJACENT_OKLAB_DARK_INTERVENTION,
+            ADJACENT_OKLAB_DARK,
+            BACKGROUND_APCA_DARK,
+        ),
     };
     let background_adjusted = accents
         .iter()
@@ -185,7 +183,7 @@ pub(crate) fn bracket_colorization_accents(
     }
 
     let reordered = maximize_adjacent_separation(&background_adjusted, background);
-    if min_adjacent_oklab_distance(&reordered, background) >= intervention_distance {
+    if min_adjacent_oklab_distance(&reordered, background) >= comfortable_distance {
         Arc::from(reordered)
     } else {
         Arc::from(background_adjusted)
@@ -193,49 +191,46 @@ pub(crate) fn bracket_colorization_accents(
 }
 
 fn maximize_adjacent_separation(accents: &[Hsla], background: Hsla) -> Vec<Hsla> {
-    let mut used = vec![false; accents.len()];
+    let Some((&first, rest)) = accents.split_first() else {
+        return Vec::new();
+    };
+    let mut remaining = rest.to_vec();
     let mut order = Vec::with_capacity(accents.len());
-    order.push(0);
-    used[0] = true;
+    order.push(first);
+    let mut last = first;
 
-    while order.len() < accents.len() {
-        let last = *order
-            .last()
-            .expect("adjacent-separation order is initialized with a starting accent");
-        let first = order[0];
-        let next = (0..accents.len())
-            .filter(|&index| !used[index])
-            .max_by(|&left, &right| {
-                compare_candidates(accents, background, last, first, left, right)
-            })
-            .expect(
-                "adjacent-separation selection must find an unused accent while building the order",
-            );
-        used[next] = true;
+    while !remaining.is_empty() {
+        let Some((position, &next)) =
+            remaining
+                .iter()
+                .enumerate()
+                .max_by(|&(_, &left), &(_, &right)| {
+                    compare_candidates(background, last, first, left, right)
+                })
+        else {
+            break;
+        };
+        remaining.swap_remove(position);
         order.push(next);
+        last = next;
     }
 
-    order.into_iter().map(|index| accents[index]).collect()
+    order
 }
 
 fn compare_candidates(
-    accents: &[Hsla],
     background: Hsla,
-    last: usize,
-    first: usize,
-    left: usize,
-    right: usize,
+    last: Hsla,
+    first: Hsla,
+    left: Hsla,
+    right: Hsla,
 ) -> Ordering {
-    let left_last = adjacent_distance(accents[last], accents[left], background);
-    let right_last = adjacent_distance(accents[last], accents[right], background);
-    left_last
-        .partial_cmp(&right_last)
+    adjacent_distance(last, left, background)
+        .partial_cmp(&adjacent_distance(last, right, background))
         .unwrap_or(Ordering::Equal)
         .then_with(|| {
-            let left_first = adjacent_distance(accents[first], accents[left], background);
-            let right_first = adjacent_distance(accents[first], accents[right], background);
-            left_first
-                .partial_cmp(&right_first)
+            adjacent_distance(first, left, background)
+                .partial_cmp(&adjacent_distance(first, right, background))
                 .unwrap_or(Ordering::Equal)
         })
 }
@@ -262,8 +257,8 @@ fn oklab_distance(left: Oklab, right: Oklab) -> f32 {
 
 fn adjacent_distance(left: Hsla, right: Hsla, background: Hsla) -> f32 {
     oklab_distance(
-        color_to_oklab(background.blend(left)),
-        color_to_oklab(background.blend(right)),
+        hsla_to_oklab(background.blend(left)),
+        hsla_to_oklab(background.blend(right)),
     )
 }
 
@@ -276,7 +271,7 @@ fn adjust_color_for_background(
         return color;
     }
 
-    let original = color_to_oklab(color);
+    let original = hsla_to_oklab(color);
     let darker_candidate = adjusted_lightness_candidate(
         color,
         background,
@@ -292,8 +287,8 @@ fn adjust_color_for_background(
 
     match (darker_candidate, lighter_candidate) {
         (Some(darker_candidate), Some(lighter_candidate)) => {
-            let darker_distance = oklab_distance(original, color_to_oklab(darker_candidate));
-            let lighter_distance = oklab_distance(original, color_to_oklab(lighter_candidate));
+            let darker_distance = oklab_distance(original, hsla_to_oklab(darker_candidate));
+            let lighter_distance = oklab_distance(original, hsla_to_oklab(lighter_candidate));
             if darker_distance <= lighter_distance {
                 darker_candidate
             } else {
@@ -312,7 +307,7 @@ fn adjusted_lightness_candidate(
     minimum_background_contrast: f32,
     target_lightness: f32,
 ) -> Option<Hsla> {
-    let original = color_to_oklch(color);
+    let original = hsla_to_oklch(color);
     let lightness_delta = target_lightness - original.l;
 
     if lightness_delta.abs() <= f32::EPSILON {
@@ -336,31 +331,6 @@ fn adjusted_lightness_candidate(
 
 fn background_contrast(foreground: Hsla, background: Hsla) -> f32 {
     apca_contrast(background.blend(foreground), background).abs()
-}
-
-fn color_to_oklab(color: Hsla) -> Oklab {
-    Oklab::from_color(color_to_linear_rgba(color))
-}
-
-fn color_to_oklch(color: Hsla) -> Oklch {
-    Oklch::from_color(color_to_linear_rgba(color))
-}
-
-fn oklch_to_hsla(color: Oklch, alpha: f32) -> Hsla {
-    let linear_rgba = LinSrgba::from_color(color);
-    let rgba: Srgba = Srgba::from_linear(linear_rgba);
-    let (red, green, blue, _): (f32, f32, f32, f32) = rgba.into_components();
-    Hsla::from(Rgba {
-        r: red.clamp(0.0, 1.0),
-        g: green.clamp(0.0, 1.0),
-        b: blue.clamp(0.0, 1.0),
-        a: alpha,
-    })
-}
-
-fn color_to_linear_rgba(color: Hsla) -> LinSrgba {
-    let rgba = Rgba::from(color);
-    Srgba::new(rgba.r, rgba.g, rgba.b, rgba.a).into_linear()
 }
 
 fn compute_bracket_ranges(
@@ -427,7 +397,7 @@ mod tests {
     };
     use collections::HashSet;
     use fs::FakeFs;
-    use gpui::{UpdateGlobal as _, hsla};
+    use gpui::{Rgba, UpdateGlobal as _, hsla};
     use indoc::indoc;
     use itertools::Itertools;
     use language::{Capability, markdown_lang};
@@ -495,8 +465,8 @@ mod tests {
 
         let palette =
             bracket_colorization_accents(&accents, Appearance::Light, light_editor_background());
-        let original = color_to_oklch(accents[2]);
-        let adjusted = color_to_oklch(palette[2]);
+        let original = hsla_to_oklch(accents[2]);
+        let adjusted = hsla_to_oklch(palette[2]);
 
         assert_ne!(palette.as_ref(), accents.as_slice());
         assert_eq!(palette.len(), accents.len());
@@ -504,10 +474,7 @@ mod tests {
         assert_eq!(palette[1], accents[1]);
         assert_ne!(palette[2], accents[2]);
         assert!((original.chroma - adjusted.chroma).abs() < 0.0001);
-        assert!(
-            (original.hue.into_positive_degrees() - adjusted.hue.into_positive_degrees()).abs()
-                < 0.001
-        );
+        assert!((original.hue - adjusted.hue).abs() < 0.001);
         assert_ne!(original.l, adjusted.l);
         assert!(
             background_contrast(palette[2], light_editor_background()) >= BACKGROUND_APCA_LIGHT
@@ -549,25 +516,25 @@ mod tests {
             background_contrast(color, background)
         );
 
-        let original = color_to_oklab(color);
+        let original = hsla_to_oklab(color);
         let darker =
-            adjusted_lightness_candidate(color, background, min_contrast, LIGHTNESS_CLAMP_MIN);
+            adjusted_lightness_candidate(color, background, min_contrast, LIGHTNESS_CLAMP_MIN)
+                .expect("fixture must produce a darker passing candidate");
         let lighter =
-            adjusted_lightness_candidate(color, background, min_contrast, LIGHTNESS_CLAMP_MAX);
+            adjusted_lightness_candidate(color, background, min_contrast, LIGHTNESS_CLAMP_MAX)
+                .expect("fixture must produce a lighter passing candidate");
 
-        if let (Some(darker), Some(lighter)) = (darker, lighter) {
-            let darker_dist = oklab_distance(original, color_to_oklab(darker));
-            let lighter_dist = oklab_distance(original, color_to_oklab(lighter));
-            let expected = if darker_dist <= lighter_dist {
-                darker
-            } else {
-                lighter
-            };
-            assert_eq!(
-                adjust_color_for_background(color, background, min_contrast),
-                expected
-            );
-        }
+        let darker_dist = oklab_distance(original, hsla_to_oklab(darker));
+        let lighter_dist = oklab_distance(original, hsla_to_oklab(lighter));
+        let expected = if darker_dist <= lighter_dist {
+            darker
+        } else {
+            lighter
+        };
+        assert_eq!(
+            adjust_color_for_background(color, background, min_contrast),
+            expected
+        );
     }
 
     #[test]
