@@ -1276,6 +1276,7 @@ impl LocalWorktree {
 
         new_snapshot.root_repo_common_dir = new_snapshot
             .local_repo_for_work_directory_path(RelPath::empty())
+            .filter(|entry| matches!(entry.work_directory, WorkDirectory::InProject { .. }))
             .map(|repo| SanitizedPath::from_arc(repo.common_dir_abs_path.clone()));
 
         let old_root_repo_common_dir = (self.snapshot.root_repo_common_dir
