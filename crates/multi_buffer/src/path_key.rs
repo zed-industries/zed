@@ -614,6 +614,17 @@ impl MultiBuffer {
         added_new_excerpt
     }
 
+    pub fn existing_excerpt_paths(&self) -> Vec<PathKey> {
+        let snapshot = self.snapshot.borrow();
+        let mut paths = Vec::new();
+        for excerpt in snapshot.excerpts.iter() {
+            if paths.last() != Some(&excerpt.path_key) {
+                paths.push(excerpt.path_key.clone());
+            }
+        }
+        paths
+    }
+
     pub fn remove_excerpts_for_buffer(&mut self, buffer: BufferId, cx: &mut Context<Self>) {
         let snapshot = self.sync_mut(cx);
         let Some(path) = snapshot.path_for_buffer(buffer).cloned() else {
