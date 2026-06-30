@@ -1,12 +1,11 @@
 use anyhow::Result;
 use gpui::Action;
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, EventEmitter, FocusHandle,
     Focusable, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels, ScrollStrategy,
     Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*, uniform_list,
 };
 use head::Head;
-use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
@@ -32,8 +31,10 @@ use crate::shape::RelativeHeight;
 use crate::shape::RelativeWidth;
 pub use footer::PickerAction;
 pub use language::{HighlightedText, HighlightedTextBuilder};
+pub use preview::Layout as PreviewLayout;
 pub use preview::MatchLocation;
 pub use preview::Preview;
+pub use preview::PreviewBackend;
 pub use preview::PreviewSource;
 pub use preview::Update as PreviewUpdate;
 pub use ui_input::ErasedEditor;
@@ -399,7 +400,7 @@ impl<D: PickerDelegate> Picker<D> {
     /// preview window where it shows extra information.
     pub fn uniform_list_with_preview(
         delegate: D,
-        project: Entity<Project>,
+        preview: Arc<dyn PreviewBackend>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -410,7 +411,7 @@ impl<D: PickerDelegate> Picker<D> {
             cx,
         );
 
-        let preview = Preview::new_editor(project, window, cx);
+        let preview = Preview::new(preview);
         Self::new(
             delegate,
             ContainerKind::UniformList,
@@ -427,7 +428,7 @@ impl<D: PickerDelegate> Picker<D> {
     /// (e.g. section headers and separators interleaved with matches).
     pub fn list_with_preview(
         delegate: D,
-        project: Entity<Project>,
+        preview: Arc<dyn PreviewBackend>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -438,7 +439,7 @@ impl<D: PickerDelegate> Picker<D> {
             cx,
         );
 
-        let preview = Preview::new_editor(project, window, cx);
+        let preview = Preview::new(preview);
         Self::new(
             delegate,
             ContainerKind::List,
@@ -571,7 +572,7 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn initial_width(mut self, width: impl Into<RelativeWidth>) -> Self {
         let width = width.into();
         self.default_shape.width = width;
-        if !self.shape_loaded_from_persistence {
+        if self.live_shape_is_hidden_default() {
             self.shape.set_initial_width(width);
         }
         // A plain picker's whole-picker minimum tracks its opening width. Preview
@@ -591,10 +592,21 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn max_height(mut self, height: impl Into<RelativeHeight>) -> Self {
         let height = height.into();
         self.default_shape.height = height;
-        if !self.shape_loaded_from_persistence {
+        if self.live_shape_is_hidden_default() {
             self.shape.set_initial_height(height);
         }
         self
+    }
+
+    /// Whether the live shape still reflects the hidden-layout default, i.e. it
+    /// was not restored from a persisted size and currently opens with no
+    /// preview. Only then may `initial_width`/`max_height` push their
+    /// hidden/no-preview defaults onto it; a picker reopened in a preview layout
+    /// keeps the larger telescope default, which those (smaller) no-preview
+    /// values must not shrink.
+    fn live_shape_is_hidden_default(&self) -> bool {
+        !self.shape_loaded_from_persistence
+            && self.preview_layout().unwrap_or(preview::Layout::Hidden) == preview::Layout::Hidden
     }
 
     /// Whether the picker fills its full height (preview visible) or shrinks to
@@ -1240,6 +1252,15 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn preview_layout(&self) -> Option<preview::Layout> {
         self.preview.as_ref().map(|p| p.layout)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn results_width(&self, window: &Window) -> gpui::Pixels {
+        let layout = self.preview_layout().unwrap_or(preview::Layout::Hidden);
+        let pos = self
+            .shape
+            .results_position_and_size(layout, &self.size_bounds, window);
+        pos.right - pos.left
     }
 
     fn toggle_preview(&mut self, _: &TogglePreview, window: &mut Window, cx: &mut Context<Self>) {
