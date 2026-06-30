@@ -5738,31 +5738,11 @@ impl EditorElement {
 
         for (scrollbar_layout, axis) in scrollbars_layout.iter_scrollbars() {
             let hitbox = &scrollbar_layout.hitbox;
-            if scrollbars_layout.visible {
-                let scrollbar_edges = match axis {
-                    ScrollbarAxis::Horizontal => Edges {
-                        top: Pixels::ZERO,
-                        right: Pixels::ZERO,
-                        bottom: Pixels::ZERO,
-                        left: Pixels::ZERO,
-                    },
-                    ScrollbarAxis::Vertical => Edges {
-                        top: Pixels::ZERO,
-                        right: Pixels::ZERO,
-                        bottom: Pixels::ZERO,
-                        left: ScrollbarLayout::BORDER_WIDTH,
-                    },
-                };
+            let suppressed = axis == ScrollbarAxis::Horizontal && self.split_side.is_some();
 
+            if scrollbars_layout.visible && !suppressed {
                 window.paint_layer(hitbox.bounds, |window| {
-                    window.paint_quad(quad(
-                        hitbox.bounds,
-                        Corners::default(),
-                        cx.theme().colors().scrollbar_track_background,
-                        scrollbar_edges,
-                        cx.theme().colors().scrollbar_track_border,
-                        BorderStyle::Solid,
-                    ));
+                    scrollbar_layout.paint_track(axis, window, cx);
 
                     if axis == ScrollbarAxis::Vertical {
                         let fast_markers =
@@ -5779,33 +5759,7 @@ impl EditorElement {
                         }
                     }
 
-                    if let Some(thumb_bounds) = scrollbar_layout.thumb_bounds {
-                        let scrollbar_thumb_color = match scrollbar_layout.thumb_state {
-                            ScrollbarThumbState::Dragging => {
-                                cx.theme().colors().scrollbar_thumb_active_background
-                            }
-                            ScrollbarThumbState::Hovered => {
-                                cx.theme().colors().scrollbar_thumb_hover_background
-                            }
-                            ScrollbarThumbState::Idle => {
-                                cx.theme().colors().scrollbar_thumb_background
-                            }
-                        };
-                        window.paint_quad(quad(
-                            thumb_bounds,
-                            Corners::default(),
-                            scrollbar_thumb_color,
-                            scrollbar_edges,
-                            cx.theme().colors().scrollbar_thumb_border,
-                            BorderStyle::Solid,
-                        ));
-
-                        if any_scrollbar_dragged {
-                            window.set_window_cursor_style(CursorStyle::Arrow);
-                        } else {
-                            window.set_cursor_style(CursorStyle::Arrow, hitbox);
-                        }
-                    }
+                    scrollbar_layout.paint_thumb(axis, any_scrollbar_dragged, window, cx);
                 })
             }
         }
@@ -9341,10 +9295,15 @@ impl Element for EditorElement {
                             scrollbars_layout.visible && scrollbars_layout.horizontal.is_some()
                         });
 
+                    let horizontal_scrollbar_layout = scrollbars_layout
+                        .as_ref()
+                        .and_then(|scrollbars_layout| scrollbars_layout.horizontal.clone());
+
                     self.editor.update(cx, |editor, _| {
                         editor.last_position_map = Some(position_map.clone());
                         editor.last_right_margin = right_margin;
                         editor.last_horizontal_scrollbar_visible = visible_horizontal_scrollbar;
+                        editor.last_horizontal_scrollbar_layout = horizontal_scrollbar_layout;
                     });
 
                     EditorLayout {
@@ -9755,7 +9714,7 @@ impl EditorScrollbars {
 }
 
 #[derive(Clone)]
-struct ScrollbarLayout {
+pub(crate) struct ScrollbarLayout {
     hitbox: Hitbox,
     visible_range: Range<ScrollOffset>,
     text_unit_size: Pixels,
@@ -10003,6 +9962,75 @@ impl ScrollbarLayout {
         }
 
         quads
+    }
+
+    fn scrollbar_edges(axis: ScrollbarAxis) -> Edges<Pixels> {
+        match axis {
+            ScrollbarAxis::Horizontal => Edges::default(),
+            ScrollbarAxis::Vertical => Edges {
+                left: Self::BORDER_WIDTH,
+                ..Default::default()
+            },
+        }
+    }
+
+    pub(crate) fn paint_track(&self, axis: ScrollbarAxis, window: &mut Window, cx: &App) {
+        let colors = cx.theme().colors();
+
+        window.paint_quad(quad(
+            self.hitbox.bounds,
+            Corners::default(),
+            colors.scrollbar_track_background,
+            Self::scrollbar_edges(axis),
+            colors.scrollbar_track_border,
+            BorderStyle::Solid,
+        ));
+    }
+
+    pub(crate) fn paint_thumb(
+        &self,
+        axis: ScrollbarAxis,
+        any_scrollbar_dragged: bool,
+        window: &mut Window,
+        cx: &App,
+    ) {
+        let colors = cx.theme().colors();
+
+        if let Some(thumb_bounds) = self.thumb_bounds {
+            let thumb_color = match self.thumb_state {
+                ScrollbarThumbState::Dragging => colors.scrollbar_thumb_active_background,
+                ScrollbarThumbState::Hovered => colors.scrollbar_thumb_hover_background,
+                ScrollbarThumbState::Idle => colors.scrollbar_thumb_background,
+            };
+
+            window.paint_quad(quad(
+                thumb_bounds,
+                Corners::default(),
+                thumb_color,
+                Self::scrollbar_edges(axis),
+                colors.scrollbar_thumb_border,
+                BorderStyle::Solid,
+            ));
+
+            if any_scrollbar_dragged {
+                window.set_window_cursor_style(CursorStyle::Arrow);
+            } else {
+                window.set_cursor_style(CursorStyle::Arrow, &self.hitbox);
+            }
+        }
+    }
+
+    pub(crate) fn paint_track_and_thumb(
+        &self,
+        axis: ScrollbarAxis,
+        any_scrollbar_dragged: bool,
+        window: &mut Window,
+        cx: &App,
+    ) {
+        window.paint_layer(self.hitbox.bounds, |window| {
+            self.paint_track(axis, window, cx);
+            self.paint_thumb(axis, any_scrollbar_dragged, window, cx);
+        })
     }
 }
 
