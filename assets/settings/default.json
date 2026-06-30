@@ -1263,6 +1263,14 @@
     //
     // Default: true
     "show_merge_conflict_indicator": true,
+    // Maximum number of lines a tool output, file diff, or terminal block in
+    // the agent thread shows before it is collapsed behind an expand control.
+    // Both the collapsed and expanded states are height-capped, so a very
+    // large buffer never renders at full height. Set to 0 to disable the cap
+    // and render blocks at full height.
+    //
+    // Default: 10
+    "tool_output_max_lines": 10,
   },
   // Whether the screen sharing icon is shown in the os status bar.
   "show_call_status_icon": true,
