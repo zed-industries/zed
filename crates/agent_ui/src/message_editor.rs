@@ -3019,14 +3019,16 @@ mod tests {
             })
         });
 
-        cx.simulate_input("/helpful");
+        // `/helpful` would fuzzy-match both commands ("helpful" is a
+        // subsequence of "not-helpful"), so drive the unambiguous keyword.
+        cx.simulate_input("/not-helpful");
         cx.run_until_parked();
 
         editor.read_with(&cx, |editor, _| {
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 current_completion_labels(editor),
-                &[PromptLocalCommand::ThumbsUp.label().to_string()],
+                &[PromptLocalCommand::ThumbsDown.label().to_string()],
             );
         });
 
@@ -3042,7 +3044,10 @@ mod tests {
             assert!(!editor.has_visible_completions_menu());
         });
 
-        assert_eq!(invoked.borrow().as_slice(), &[PromptLocalCommand::ThumbsUp],);
+        assert_eq!(
+            invoked.borrow().as_slice(),
+            &[PromptLocalCommand::ThumbsDown],
+        );
     }
 
     /// Opening slash-command autocomplete must emit
