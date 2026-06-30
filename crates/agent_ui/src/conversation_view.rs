@@ -1160,7 +1160,6 @@ impl ConversationView {
 
         // Check for config options first
         // Config options take precedence over legacy mode/model selectors
-        // (feature flag gating happens at the data layer)
         let config_options_provider = connection.session_config_options(&session_id, cx);
 
         let config_options_view;

@@ -3670,9 +3670,7 @@ impl Thread {
             ..Default::default()
         };
 
-        for message in &self.messages {
-            request.messages.extend(message.to_request());
-        }
+        self.extend_request_history_until(&mut request.messages, self.messages.len());
 
         request.messages.push(LanguageModelRequestMessage {
             role: Role::User,
@@ -4134,32 +4132,10 @@ impl Thread {
 
     fn extend_request_history_until(
         &self,
-        messages: &mut Vec<LanguageModelRequestMessage>,
+        request_messages: &mut Vec<LanguageModelRequestMessage>,
         end_ix: usize,
     ) {
-        let Some(compaction_ix) = self.latest_compaction_message_ix_before(end_ix) else {
-            for message in &self.messages[..end_ix] {
-                messages.extend(message.to_request());
-            }
-            return;
-        };
-
-        if matches!(
-            &*self.messages[compaction_ix],
-            Message::Compaction(CompactionInfo::Summary(_))
-        ) {
-            messages.extend(self.retained_user_request_messages_before(compaction_ix));
-        }
-
-        for message in &self.messages[compaction_ix..end_ix] {
-            messages.extend(message.to_request());
-        }
-    }
-
-    fn latest_compaction_message_ix_before(&self, end_ix: usize) -> Option<usize> {
-        self.messages[..end_ix]
-            .iter()
-            .rposition(|message| matches!(&**message, Message::Compaction(_)))
+        extend_request_history_until(&self.messages, request_messages, end_ix);
     }
 
     /// Captures the data for an `"Agent Compaction Completed"` telemetry event
@@ -4236,8 +4212,7 @@ impl Thread {
                         .map(|usage| (ix, usage))
                 })
         }?;
-        if self
-            .latest_compaction_message_ix_before(self.messages.len())
+        if latest_compaction_message_ix_before(&self.messages, self.messages.len())
             .is_some_and(|compaction_ix| compaction_ix > usage_ix)
         {
             return None;
@@ -4299,41 +4274,6 @@ impl Thread {
         });
 
         request
-    }
-
-    fn retained_user_request_messages_before(
-        &self,
-        compaction_ix: usize,
-    ) -> Vec<LanguageModelRequestMessage> {
-        let mut remaining_bytes = COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET;
-        let mut retained_messages = Vec::new();
-
-        for message in self.messages[..compaction_ix].iter().rev() {
-            let Message::User(user_message) = &**message else {
-                continue;
-            };
-            if user_message.content.is_empty() {
-                continue;
-            }
-
-            let request_message = user_message.to_request();
-            let byte_count = user_message_byte_len(&request_message);
-            if let Some(bytes) = remaining_bytes.checked_sub(byte_count) {
-                remaining_bytes = bytes;
-                retained_messages.push(request_message);
-            } else {
-                if remaining_bytes > 0
-                    && let Some(request_message) =
-                        truncate_user_message_to_byte_budget(request_message, remaining_bytes)
-                {
-                    retained_messages.push(request_message);
-                }
-                break;
-            }
-        }
-
-        retained_messages.reverse();
-        retained_messages
     }
 
     pub fn to_markdown(&self) -> String {
@@ -4673,6 +4613,75 @@ pub(crate) fn messages_to_markdown(messages: &[Arc<Message>]) -> String {
     markdown
 }
 
+fn extend_request_history_until(
+    messages: &[Arc<Message>],
+    request_messages: &mut Vec<LanguageModelRequestMessage>,
+    end_ix: usize,
+) {
+    let end_ix = end_ix.min(messages.len());
+    let Some(compaction_ix) = latest_compaction_message_ix_before(messages, end_ix) else {
+        for message in &messages[..end_ix] {
+            request_messages.extend(message.to_request());
+        }
+        return;
+    };
+
+    if matches!(
+        &*messages[compaction_ix],
+        Message::Compaction(CompactionInfo::Summary(_))
+    ) {
+        request_messages.extend(retained_user_request_messages_before(
+            messages,
+            compaction_ix,
+        ));
+    }
+
+    for message in &messages[compaction_ix..end_ix] {
+        request_messages.extend(message.to_request());
+    }
+}
+
+fn latest_compaction_message_ix_before(messages: &[Arc<Message>], end_ix: usize) -> Option<usize> {
+    messages[..end_ix]
+        .iter()
+        .rposition(|message| matches!(&**message, Message::Compaction(_)))
+}
+
+fn retained_user_request_messages_before(
+    messages: &[Arc<Message>],
+    compaction_ix: usize,
+) -> Vec<LanguageModelRequestMessage> {
+    let mut remaining_bytes = COMPACTION_RETAINED_USER_MESSAGES_BYTE_BUDGET;
+    let mut retained_messages = Vec::new();
+
+    for message in messages[..compaction_ix].iter().rev() {
+        let Message::User(user_message) = &**message else {
+            continue;
+        };
+        if user_message.content.is_empty() {
+            continue;
+        }
+
+        let request_message = user_message.to_request();
+        let byte_count = user_message_byte_len(&request_message);
+        if let Some(bytes) = remaining_bytes.checked_sub(byte_count) {
+            remaining_bytes = bytes;
+            retained_messages.push(request_message);
+        } else {
+            if remaining_bytes > 0
+                && let Some(request_message) =
+                    truncate_user_message_to_byte_budget(request_message, remaining_bytes)
+            {
+                retained_messages.push(request_message);
+            }
+            break;
+        }
+    }
+
+    retained_messages.reverse();
+    retained_messages
+}
+
 pub fn build_thread_title_request(
     messages: &[Arc<Message>],
     temperature: Option<f32>,
@@ -4682,9 +4691,7 @@ pub fn build_thread_title_request(
         temperature,
         ..Default::default()
     };
-    for message in messages {
-        request.messages.extend(message.to_request());
-    }
+    extend_request_history_until(messages, &mut request.messages, messages.len());
     request.messages.push(LanguageModelRequestMessage {
         role: Role::User,
         content: vec![SUMMARIZE_THREAD_PROMPT.into()],
@@ -6518,6 +6525,96 @@ mod tests {
             .skip(1)
             .map(LanguageModelRequestMessage::string_contents)
             .collect()
+    }
+
+    fn request_texts(messages: &[LanguageModelRequestMessage]) -> Vec<String> {
+        messages
+            .iter()
+            .map(LanguageModelRequestMessage::string_contents)
+            .collect()
+    }
+
+    #[gpui::test]
+    async fn test_thread_summary_request_uses_compacted_history(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let summary_model = Arc::new(FakeLanguageModel::default());
+
+        let summary_task = cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_summarization_model(Some(summary_model.clone()), cx);
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+                thread.messages.push(summary_compaction("first summary"));
+                thread.messages.push(user_text_message(
+                    ClientUserMessageId::new(),
+                    "between user",
+                ));
+                thread
+                    .messages
+                    .push(agent_text_message("between assistant"));
+                thread.messages.push(summary_compaction("latest summary"));
+                thread
+                    .messages
+                    .push(user_text_message(ClientUserMessageId::new(), "after user"));
+                thread.messages.push(agent_text_message("after assistant"));
+
+                thread.summary(cx)
+            })
+        });
+        cx.run_until_parked();
+
+        let summary_request = summary_model.pending_completions().pop().unwrap();
+        assert_eq!(
+            summary_request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        assert_eq!(
+            request_texts(&summary_request.messages),
+            vec![
+                "old user".to_string(),
+                "between user".to_string(),
+                summary_request_text("latest summary"),
+                "after user".to_string(),
+                "after assistant".to_string(),
+                SUMMARIZE_THREAD_DETAILED_PROMPT.to_string(),
+            ]
+        );
+
+        summary_model.send_completion_stream_text_chunk(&summary_request, "thread summary");
+        summary_model.end_completion_stream(&summary_request);
+        assert_eq!(summary_task.await.as_deref(), Some("thread summary"));
+    }
+
+    #[test]
+    fn test_thread_title_request_uses_compacted_history() {
+        let messages = vec![
+            user_text_message(ClientUserMessageId::new(), "old user"),
+            agent_text_message("old assistant"),
+            summary_compaction("first summary"),
+            user_text_message(ClientUserMessageId::new(), "between user"),
+            agent_text_message("between assistant"),
+            summary_compaction("latest summary"),
+            user_text_message(ClientUserMessageId::new(), "after user"),
+            agent_text_message("after assistant"),
+        ];
+
+        let request = build_thread_title_request(&messages, Some(0.2));
+
+        assert_eq!(request.intent, Some(CompletionIntent::ThreadSummarization));
+        assert_eq!(request.temperature, Some(0.2));
+        assert_eq!(
+            request_texts(&request.messages),
+            vec![
+                "old user".to_string(),
+                "between user".to_string(),
+                summary_request_text("latest summary"),
+                "after user".to_string(),
+                "after assistant".to_string(),
+                SUMMARIZE_THREAD_PROMPT.to_string(),
+            ]
+        );
     }
 
     #[gpui::test]
