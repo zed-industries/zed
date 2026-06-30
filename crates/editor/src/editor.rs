@@ -3038,30 +3038,33 @@ impl Editor {
     pub fn set_cursor_offset_on_selection(&mut self, set_cursor_offset_on_selection: bool) {
         self.cursor_offset_on_selection = set_cursor_offset_on_selection;
     }
-
-    fn selection_head_for_point_action(
-        &self,
-        selection: &Selection<Anchor>,
-        cx: &mut App,
-    ) -> Anchor {
+    /// Returns the anchor to use as the rename target for a selection.
+    ///
+    /// In selection-based modes, like vim's visual mode and helix, the rendered
+    /// block cursor sits one position to the left of the selection's head,
+    /// since the head is the exclusive end of a forward selection. Using the
+    /// head
+    /// directly would place the rename one character past the symbol, for
+    /// example, trailing whitespace, so for a non-empty forward selection we
+    /// shift one point left to land back on the symbol under the cursor.
+    fn rename_target_anchor(&self, selection: &Selection<Anchor>, cx: &mut App) -> Anchor {
         let head = selection.head();
+
         if self.cursor_offset_on_selection
             && !selection.reversed
             && selection.start != selection.end
         {
             let display_map = self.display_snapshot(cx);
             let display_head = head.to_display_point(&display_map);
-            let should_offset = display_head.column() > 0
-                || (display_head.row().0 > 0 && display_head != display_map.max_point());
-            if should_offset {
-                display_map
-                    .display_point_to_anchor(movement::left(&display_map, display_head), Bias::Left)
-            } else {
-                head
+
+            if display_head.column() > 0 {
+                return display_map.display_point_to_anchor(
+                    movement::left(&display_map, display_head),
+                    Bias::Left,
+                );
             }
-        } else {
-            head
         }
+        head
     }
 
     pub fn set_current_line_highlight(
@@ -7657,7 +7660,7 @@ impl Editor {
         }
         let provider = self.semantics_provider.clone()?;
         let selection = self.selections.newest_anchor().clone();
-        let cursor = self.selection_head_for_point_action(&selection, cx);
+        let cursor = self.rename_target_anchor(&selection, cx);
         let (cursor_buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         let (tail_buffer, cursor_buffer_position_end) = self
