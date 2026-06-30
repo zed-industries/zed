@@ -177,7 +177,12 @@ impl Replayer {
                 };
                 editor.update(cx, |editor, cx| {
                     editor.replay_insert_event(&text, utf16_range_to_replace.clone(), window, cx)
-                })
+                });
+                // `replay_insert_event` doesn't emit `InputHandled`, so feed
+                // the text into dot-recording explicitly.
+                cx.defer(move |cx| {
+                    Vim::globals(cx).observe_replayed_insertion(text, utf16_range_to_replace);
+                });
             }
         }
         window.defer(cx, move |window, cx| self.next(window, cx));
@@ -1116,6 +1121,25 @@ mod test {
         cx.shared_state().await.assert_eq("aaaaaaabˇrld");
         cx.simulate_shared_keystrokes("@ b").await;
         cx.shared_state().await.assert_eq("aaaaaaabbbˇd");
+    }
+
+    #[gpui::test]
+    async fn test_record_replay_then_dot(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        // `.` repeats the macro's single change.
+        cx.set_shared_state("ˇhello world").await;
+        cx.simulate_shared_keystrokes("q a i X escape q").await;
+        cx.simulate_shared_keystrokes("@ a").await;
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq("ˇXXXhello world");
+
+        // For a multi-change macro, `.` repeats only the last change.
+        cx.set_shared_state("ˇhello world").await;
+        cx.simulate_shared_keystrokes("q b r a l r b q").await;
+        cx.simulate_shared_keystrokes("@ b").await;
+        cx.simulate_shared_keystrokes(".").await;
+        cx.shared_state().await.assert_eq("aaˇblo world");
     }
 
     #[gpui::test]
