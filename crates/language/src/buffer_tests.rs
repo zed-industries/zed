@@ -3916,6 +3916,31 @@ async fn test_final_newline_in_range_only_inserts(cx: &mut gpui::TestAppContext)
 }
 
 #[gpui::test]
+async fn test_final_newline_whole_buffer(cx: &mut gpui::TestAppContext) {
+    // (input, expected) pairs for the whole-buffer (`None`) case.
+    let cases = [
+        // Content without a trailing newline gets exactly one appended.
+        ("line0\nline1", "line0\nline1\n"),
+        // A buffer already ending in a single newline is left untouched.
+        ("line0\nline1\n", "line0\nline1\n"),
+        // Trailing blank lines and whitespace at the end of the file collapse to one newline.
+        ("line0\nline1\n\n\n", "line0\nline1\n"),
+        ("line0\nline1  \n  ", "line0\nline1\n"),
+        // An empty buffer stays empty.
+        ("", ""),
+    ];
+
+    for (input, expected) in cases {
+        let buffer = cx.new(|cx| Buffer::local(input, cx));
+        buffer.update(cx, |buffer, cx| {
+            let diff = buffer.ensure_final_newline(None);
+            buffer.apply_diff(diff, cx);
+            assert_eq!(buffer.text(), expected, "wrong result for input {input:?}");
+        });
+    }
+}
+
+#[gpui::test]
 async fn test_trailing_whitespace_in_ranges_crlf(cx: &mut gpui::TestAppContext) {
     let text = "zero\r\none  \r\ntwo\r\nthree   \r\nfour\r\nfive    ";
     let buffer = cx.new(|cx| {
