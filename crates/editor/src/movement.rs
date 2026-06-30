@@ -266,14 +266,20 @@ pub fn line_end(
 pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
+    let cursor_offset = raw_point.to_offset(map.buffer_snapshot());
+    let cursor_char = map.buffer_snapshot().chars_at(cursor_offset).next();
 
     let mut is_first_iteration = true;
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, &mut |left, right| {
         // Make alt-left skip punctuation to respect VSCode behaviour. For example: hello.| goes to |hello.
+        // Don't skip when the punctuation is isolated by whitespace on both sides,
+        // e.g. foo |. bar should stop at foo |.
         if is_first_iteration
             && classifier.is_punctuation(right)
             && !classifier.is_punctuation(left)
             && left != '\n'
+            && (!classifier.is_whitespace(left)
+                || cursor_char.is_some_and(|c| !classifier.is_whitespace(c) && c != '\n'))
         {
             is_first_iteration = false;
             return false;
@@ -441,13 +447,19 @@ pub fn is_subword_start(left: char, right: char, classifier: &CharClassifier) ->
 pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
     let classifier = map.buffer_snapshot().char_classifier_at(raw_point);
+    let cursor_offset = raw_point.to_offset(map.buffer_snapshot());
+    let prev_cursor_char = map.buffer_snapshot().reversed_chars_at(cursor_offset).next();
     let mut is_first_iteration = true;
     find_boundary(map, point, FindRange::MultiLine, &mut |left, right| {
         // Make alt-right skip punctuation to respect VSCode behaviour. For example: |.hello goes to .hello|
+        // Don't skip when the punctuation is isolated by whitespace on both sides,
+        // e.g. foo |. bar should stop at foo .|
         if is_first_iteration
             && classifier.is_punctuation(left)
             && !classifier.is_punctuation(right)
             && right != '\n'
+            && (!classifier.is_whitespace(right)
+                || prev_cursor_char.is_some_and(|c| !classifier.is_whitespace(c) && c != '\n'))
         {
             is_first_iteration = false;
             return false;
@@ -980,6 +992,7 @@ mod tests {
         assert("helloˇ.---..ˇtest", cx);
         assert("test  ˇ.--ˇtest", cx);
         assert("oneˇ,;:!?ˇtwo", cx);
+        assert("foo ˇ.ˇ bar", cx);
     }
 
     #[gpui::test]
@@ -1163,6 +1176,7 @@ mod tests {
         assert("helloˇ.---..ˇtest", cx);
         assert("testˇ.--ˇ test", cx);
         assert("oneˇ,;:!?ˇtwo", cx);
+        assert("foo ˇ.ˇ bar", cx);
     }
 
     #[gpui::test]
