@@ -970,7 +970,7 @@ fn log_acp_thread_event(
             let entries = acp_thread.read(cx).entries();
             if let Some(acp_thread::AgentThreadEntry::AssistantMessage(message)) = entries.last() {
                 for chunk in &message.chunks {
-                    if let acp_thread::AssistantMessageChunk::Message { block } = chunk {
+                    if let acp_thread::AssistantMessageChunk::Message { id: _, block } = chunk {
                         if let acp_thread::ContentBlock::Markdown { markdown } = block {
                             let text = markdown.read(cx).source().to_string();
                             if !text.is_empty() {
