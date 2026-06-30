@@ -516,22 +516,12 @@ impl Inner {
             return Err(anyhow!("Failed to obtain workspace."));
         };
 
-        // TODO!: We can probably simplify this a bit still.
         let task = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
-                let Some(entry_id) = project
-                    .entry_for_path(&project_path, cx)
-                    .map(|entry| entry.id)
-                else {
-                    return Ok(None);
-                };
-
-                project
-                    .delete_entry(entry_id, true, cx)
-                    .context("Worktree entry should exist")
-                    .map(Some)
+                let entry_id = project.entry_for_path(&project_path, cx)?.id;
+                project.delete_entry(entry_id, true, cx)
             })
-        })?;
+        });
 
         // No file or directory found at the provided `project_path`, assume
         // that it was already deleted.
