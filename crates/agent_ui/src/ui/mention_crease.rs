@@ -14,6 +14,8 @@ use theme_settings::ThemeSettings;
 use ui::{ButtonLike, TintColor, Tooltip, prelude::*};
 use workspace::{OpenOptions, Workspace};
 
+type OnClickImage = Box<dyn Fn(&mut Window, &mut App) + 'static>;
+
 use crate::open_abs_path_at_point;
 
 #[derive(IntoElement)]
@@ -27,6 +29,7 @@ pub struct MentionCrease {
     is_loading: bool,
     tooltip: Option<SharedString>,
     image_preview: Option<Box<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>>,
+    on_click_image: Option<OnClickImage>,
 }
 
 impl MentionCrease {
@@ -45,6 +48,7 @@ impl MentionCrease {
             is_loading: false,
             tooltip: None,
             image_preview: None,
+            on_click_image: None,
         }
     }
 
@@ -80,10 +84,17 @@ impl MentionCrease {
         self.image_preview = Some(Box::new(builder));
         self
     }
+
+    /// Overrides the default click behavior (opening the mention URI) with a
+    /// custom handler. Used by pasted-image creases to open the image itself.
+    pub fn on_click_image(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_click_image = Some(Box::new(handler));
+        self
+    }
 }
 
 impl RenderOnce for MentionCrease {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let font_size = settings.agent_buffer_font_size(cx);
         let buffer_font = settings.buffer_font.clone();
@@ -95,20 +106,33 @@ impl RenderOnce for MentionCrease {
             px(window.line_height().into()) - px(1.),
         ));
 
+        // Image creases provide a custom click handler (`on_click_image`);
+        // everything else opens its mention URI in the workspace. Either way we
+        // end up with at most one click handler.
+        let click_handler: Option<OnClickImage> = if let Some(handler) = self.on_click_image.take()
+        {
+            Some(handler)
+        } else if let Some((mention_uri, workspace)) =
+            self.mention_uri.clone().zip(self.workspace.clone())
+        {
+            Some(Box::new(move |window: &mut Window, cx: &mut App| {
+                open_mention_uri(mention_uri.clone(), &workspace, window, cx);
+            }))
+        } else {
+            None
+        };
+
         ButtonLike::new(self.id)
             .style(ButtonStyle::Outlined)
             .size(ButtonSize::Compact)
             .height(button_height)
             .selected_style(ButtonStyle::Tinted(TintColor::Accent))
             .toggle_state(self.is_toggled)
-            .when_some(
-                self.mention_uri.clone().zip(self.workspace.clone()),
-                |this, (mention_uri, workspace)| {
-                    this.on_click(move |_event, window, cx| {
-                        open_mention_uri(mention_uri.clone(), &workspace, window, cx);
-                    })
-                },
-            )
+            .when_some(click_handler, |this, handler| {
+                this.on_click(move |_event, window, cx| {
+                    handler(window, cx);
+                })
+            })
             .child(
                 h_flex()
                     .pb_px()
