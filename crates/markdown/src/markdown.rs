@@ -1932,91 +1932,79 @@ impl MarkdownElement {
         });
     }
 
-    /// Position of a source index in a culled block, from the cached heights and
-    /// the same stacking prepaint uses. Returns the block's top.
-    fn estimated_position_for_source_index(
-        &self,
-        layout: &MarkdownLayout,
-        bounds: Bounds<Pixels>,
-        source_index: usize,
-        window: &Window,
-        cx: &App,
-    ) -> Option<(Point<Pixels>, Pixels)> {
-        let line_height = self
-            .style
-            .base_text_style
-            .line_height_in_pixels(window.rem_size());
-        let heights = root_block_heights(
-            &self.markdown.read(cx).block_heights,
-            &layout.parsed_markdown.events,
-            &layout.root_blocks,
-        );
-        let mut y = bounds.top();
-        for (range, height) in heights {
-            if range.contains(&source_index) {
-                return Some((point(bounds.left(), y), line_height));
-            }
-            y += height;
-        }
-        None
-    }
-
-    /// Lay out (off-screen, no paint) and cache any not-yet-measured blocks
-    /// before `source_index`, so a scroll to it is exact even when the
-    /// intervening content streamed in without ever being rendered. Only
-    /// unmeasured blocks are touched, and the results persist.
-    fn measure_blocks_above(
+    /// Locate `source_index` for autoscroll when its block is off-screen. Sum
+    /// the heights of the blocks above it — measuring any not yet measured, so
+    /// the top is exact even across never-rendered or volatile content — then
+    /// build the target block at that top and read the precise line position
+    /// within it. Volatile blocks are measured for the sum but not cached.
+    fn measure_and_position(
         &self,
         layout: &MarkdownLayout,
         bounds: Bounds<Pixels>,
         source_index: usize,
         window: &mut Window,
         cx: &mut App,
-    ) {
-        let mut to_measure = Vec::new();
-        {
-            let block_heights = &self.markdown.read(cx).block_heights;
-            for root_block in &layout.root_blocks {
-                let range = root_block_source_range(&layout.parsed_markdown.events, root_block);
-                if range.contains(&source_index) {
-                    break;
-                }
-                if !block_heights.contains_key(&range)
-                    && !layout.parsed_markdown.volatile_blocks.contains(&range.start)
-                {
-                    to_measure.push((root_block.clone(), range));
-                }
-            }
-        }
-        if to_measure.is_empty() {
-            return;
-        }
-
+    ) -> Option<(Point<Pixels>, Pixels)> {
         let available = gpui::size(
             gpui::AvailableSpace::Definite(bounds.size.width),
             gpui::AvailableSpace::MinContent,
         );
-        let mut measured = Vec::new();
-        for (root_block, range) in to_measure {
-            let (_, height) = self.build_root_block(
-                &layout.parsed_markdown,
-                root_block,
-                &layout.images,
-                layout.active_root_block,
-                layout.markdown_end,
-                layout.render_mermaid_diagrams,
-                &layout.mermaid_state,
-                available,
-                window,
-                cx,
-            );
-            measured.push((range, height));
-        }
-        self.markdown.update(cx, |markdown, _| {
-            for (range, height) in measured {
-                markdown.block_heights.insert(range, height);
+        let mut y = bounds.top();
+        let mut to_cache = Vec::new();
+        let mut target = None;
+        for root_block in &layout.root_blocks {
+            let range = root_block_source_range(&layout.parsed_markdown.events, root_block);
+            if range.contains(&source_index) {
+                target = Some(root_block.clone());
+                break;
             }
-        });
+            let height = match self.markdown.read(cx).block_heights.get(&range).copied() {
+                Some(height) => height,
+                None => {
+                    let (_, height) = self.build_root_block(
+                        &layout.parsed_markdown,
+                        root_block.clone(),
+                        &layout.images,
+                        layout.active_root_block,
+                        layout.markdown_end,
+                        layout.render_mermaid_diagrams,
+                        &layout.mermaid_state,
+                        available,
+                        window,
+                        cx,
+                    );
+                    if !layout.parsed_markdown.volatile_blocks.contains(&range.start) {
+                        to_cache.push((range, height));
+                    }
+                    height
+                }
+            };
+            y += height;
+        }
+        if !to_cache.is_empty() {
+            self.markdown.update(cx, |markdown, _| {
+                for (range, height) in to_cache {
+                    markdown.block_heights.insert(range, height);
+                }
+            });
+        }
+
+        let (mut rendered, _) = self.build_root_block(
+            &layout.parsed_markdown,
+            target?,
+            &layout.images,
+            layout.active_root_block,
+            layout.markdown_end,
+            layout.render_mermaid_diagrams,
+            &layout.mermaid_state,
+            available,
+            window,
+            cx,
+        );
+        rendered
+            .element
+            .prepaint_at(point(bounds.left(), y), window, cx);
+        rendered.text.position_for_source_index(source_index)
     }
 
     fn autoscroll(
@@ -2030,21 +2018,12 @@ impl MarkdownElement {
         let autoscroll_index = self
             .markdown
             .update(cx, |markdown, _| markdown.autoscroll_request.take())?;
-        // Make the target's position exact even if the blocks above it were
-        // never rendered (so never measured).
-        self.measure_blocks_above(layout, bounds, autoscroll_index, window, cx);
-        // On screen: exact. Off screen: from the now-measured block heights.
+        // On screen: read the exact line position. Off screen: measure the
+        // blocks above the target for an exact top, then build the target block
+        // to locate the precise line within it.
         let (position, line_height) = rendered_text
             .position_for_source_index(autoscroll_index)
-            .or_else(|| {
-                self.estimated_position_for_source_index(
-                    layout,
-                    bounds,
-                    autoscroll_index,
-                    window,
-                    cx,
-                )
-            })?;
+            .or_else(|| self.measure_and_position(layout, bounds, autoscroll_index, window, cx))?;
 
         match &self.autoscroll {
             AutoscrollBehavior::Controlled(scroll_handle) => {
@@ -4575,6 +4554,71 @@ mod tests {
 
     /// Scrolling to a target in never-rendered content lays out the intervening
     /// blocks on demand, so the jump is exact rather than landing short.
+    // Autoscroll must land on the target LINE, not just the target block's top.
+    // Both targets here sit inside one tall (off-screen) code block; with line
+    // granularity the last line scrolls much further than the first, whereas
+    // block-granularity would put both at the block top (equal offsets).
+    #[gpui::test]
+    fn autoscroll_targets_line_within_tall_block(cx: &mut TestAppContext) {
+        struct TestView {
+            markdown: Entity<Markdown>,
+            scroll: ScrollHandle,
+        }
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+                    .id("scroll")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
+                    .child(
+                        MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                            .scroll_handle(self.scroll.clone()),
+                    )
+            }
+        }
+        ensure_theme_initialized(cx);
+        // Push a tall code block well past the viewport + overscan.
+        let before: String = (0..40)
+            .map(|i| format!("Filler paragraph number {i} goes here.\n\n"))
+            .collect();
+        let code = (0..80)
+            .map(|i| format!("    let value_{i} = compute({i});"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let source = format!("{before}```rust\n{code}\n```\n\ndone");
+        let first = source.find("value_0").unwrap();
+        let last = source.find("value_79").unwrap();
+
+        let scroll = ScrollHandle::new();
+        let markdown = cx.new(|cx| Markdown::new(source.clone().into(), None, None, cx));
+        let (_view, cx) = cx.add_window_view({
+            let markdown = markdown.clone();
+            let scroll = scroll.clone();
+            |_, _| TestView { markdown, scroll }
+        });
+        cx.simulate_resize(size(px(800.), px(600.)));
+        cx.run_until_parked();
+
+        cx.update(|_, cx| {
+            markdown.update(cx, |m, cx| m.request_autoscroll_to_source_index(first, cx))
+        });
+        cx.run_until_parked();
+        let to_first = scroll.offset().y;
+
+        cx.update(|_, cx| {
+            markdown.update(cx, |m, cx| m.request_autoscroll_to_source_index(last, cx))
+        });
+        cx.run_until_parked();
+        let to_last = scroll.offset().y;
+
+        assert!(
+            to_last < to_first - px(500.),
+            "autoscroll landed at block granularity, not line: \
+             first={to_first:?} last={to_last:?}"
+        );
+    }
+
     #[gpui::test]
     fn autoscroll_measures_never_rendered_blocks(cx: &mut TestAppContext) {
         struct TestWindow;
