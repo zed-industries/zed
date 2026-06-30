@@ -583,6 +583,35 @@ impl ElicitationStore {
         }
     }
 
+    fn respond_to_elicitation_by_id(
+        &mut self,
+        id: &ElicitationEntryId,
+        response: acp::CreateElicitationResponse,
+    ) -> bool {
+        let Some((_, elicitation)) = self.elicitation_mut(id) else {
+            return false;
+        };
+        Self::respond_to_elicitation_entry(elicitation, response)
+    }
+
+    fn complete_url_elicitation_by_id(&mut self, id: &ElicitationEntryId) -> bool {
+        let Some((_, elicitation)) = self.elicitation_mut(id) else {
+            return false;
+        };
+        Self::complete_url_elicitation_entry(elicitation)
+    }
+
+    fn cancel_elicitation_by_id(
+        &mut self,
+        id: &ElicitationEntryId,
+        cancel_accepted_url_elicitations: bool,
+    ) -> bool {
+        let Some((_, elicitation)) = self.elicitation_mut(id) else {
+            return false;
+        };
+        Self::cancel_elicitation_entry(elicitation, cancel_accepted_url_elicitations)
+    }
+
     pub fn request_elicitation(
         &mut self,
         request: acp::CreateElicitationRequest,
@@ -610,11 +639,7 @@ impl ElicitationStore {
         response: acp::CreateElicitationResponse,
         cx: &mut Context<Self>,
     ) {
-        let Some((_, elicitation)) = self.elicitation_mut(id) else {
-            return;
-        };
-
-        if !Self::respond_to_elicitation_entry(elicitation, response) {
+        if !self.respond_to_elicitation_by_id(id, response) {
             return;
         }
 
@@ -630,10 +655,7 @@ impl ElicitationStore {
         let Some(entry_id) = self.entry_id_for_url_elicitation(elicitation_id) else {
             return;
         };
-        let Some((_, elicitation)) = self.elicitation_mut(&entry_id) else {
-            return;
-        };
-        if !Self::complete_url_elicitation_entry(elicitation) {
+        if !self.complete_url_elicitation_by_id(&entry_id) {
             return;
         }
 
@@ -3502,11 +3524,7 @@ impl AcpThread {
         let Some(ix) = self.elicitation_entry_ix(id) else {
             return;
         };
-        let Some((_, elicitation)) = self.elicitations.elicitation_mut(id) else {
-            return;
-        };
-
-        if !ElicitationStore::respond_to_elicitation_entry(elicitation, response) {
+        if !self.elicitations.respond_to_elicitation_by_id(id, response) {
             return;
         }
 
@@ -3527,11 +3545,7 @@ impl AcpThread {
         let Some(ix) = self.elicitation_entry_ix(&entry_id) else {
             return;
         };
-        let Some((_, elicitation)) = self.elicitations.elicitation_mut(&entry_id) else {
-            return;
-        };
-
-        if !ElicitationStore::complete_url_elicitation_entry(elicitation) {
+        if !self.elicitations.complete_url_elicitation_by_id(&entry_id) {
             return;
         }
 
@@ -3945,14 +3959,10 @@ impl AcpThread {
             let Some(AgentThreadEntry::Elicitation(elicitation_id)) = self.entries.get(ix) else {
                 continue;
             };
-            let Some((_, elicitation)) = self.elicitations.elicitation_mut(elicitation_id) else {
-                continue;
-            };
-
-            if ElicitationStore::cancel_elicitation_entry(
-                elicitation,
-                cancel_accepted_url_elicitations,
-            ) {
+            if self
+                .elicitations
+                .cancel_elicitation_by_id(elicitation_id, cancel_accepted_url_elicitations)
+            {
                 cx.emit(AcpThreadEvent::EntryUpdated(ix));
             }
         }
