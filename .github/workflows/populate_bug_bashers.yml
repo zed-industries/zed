@@ -1,0 +1,151 @@
+name: Populate Bug Bashers Board
+
+on:
+  schedule:
+    # Runs every 6 hours
+    - cron: "0 */6 * * *"
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  populate-board:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find and add issues to project board
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.PROJECT_TOKEN }}
+          script: |
+            const projectNumber = 74;
+            const targetColumnName = 'Bug Bashers';
+
+            // Calculate date 30 days ago
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            const dateFilter = thirtyDaysAgo.toISOString().split('T')[0];
+
+            // Search for open issues with state:reproducible created in last 30 days
+            const searchQuery = `repo:${context.repo.owner}/${context.repo.repo} is:issue is:open label:state:reproducible created:>=${dateFilter}`;
+
+            console.log(`Searching with query: ${searchQuery}`);
+
+            const issues = await github.paginate(github.rest.search.issuesAndPullRequests, {
+              q: searchQuery,
+              per_page: 100
+            });
+
+            console.log(`Found ${issues.length} issues with state:reproducible`);
+
+            // Filter issues based on additional criteria
+            const filteredIssues = issues.filter(issue => {
+              const labels = issue.labels.map(l => l.name.toLowerCase());
+
+              // Exclude if has priority:p0 or priority:p1
+              if (labels.includes('priority:p0') || labels.includes('priority:p1')) {
+                console.log(`Excluding ${issue.number}: has p0/p1 priority`);
+                return false;
+              }
+
+              // Exclude if has any label containing "ai"
+              if (labels.some(label => label.includes('ai'))) {
+                console.log(`Excluding ${issue.number}: has AI-related label`);
+                return false;
+              }
+
+              // Must have frequency:always, frequency:common, or a label containing ".contrib"
+              const hasRequiredFrequency = labels.includes('frequency:always') ||
+                                           labels.includes('frequency:common') ||
+                                           labels.some(label => label.includes('.contrib'));
+
+              if (!hasRequiredFrequency) {
+                console.log(`Excluding ${issue.number}: missing required frequency/contrib label`);
+                return false;
+              }
+
+              return true;
+            });
+
+            console.log(`${filteredIssues.length} issues match all criteria`);
+
+            // Get the project ID using GraphQL
+            const projectQuery = `
+              query($owner: String!, $number: Int!) {
+                organization(login: $owner) {
+                  projectV2(number: $number) {
+                    id
+                    field(name: "Status") {
+                      ... on ProjectV2SingleSelectField {
+                        id
+                        options {
+                          id
+                          name
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            const projectData = await github.graphql(projectQuery, {
+              owner: context.repo.owner,
+              number: projectNumber
+            });
+
+            const projectId = projectData.organization.projectV2.id;
+            const statusField = projectData.organization.projectV2.field;
+            const targetOption = statusField.options.find(opt => opt.name === targetColumnName);
+
+            if (!targetOption) {
+              throw new Error(`Column "${targetColumnName}" not found in project`);
+            }
+
+            console.log(`Project ID: ${projectId}, Target column: ${targetOption.id}`);
+
+            // Add each issue to the project
+            for (const issue of filteredIssues) {
+              try {
+                // Add item to project
+                const addMutation = `
+                  mutation($projectId: ID!, $contentId: ID!) {
+                    addProjectV2ItemById(input: {projectId: $projectId, contentId: $contentId}) {
+                      item { id }
+                    }
+                  }
+                `;
+
+                const addResult = await github.graphql(addMutation, {
+                  projectId: projectId,
+                  contentId: issue.node_id
+                });
+
+                const itemId = addResult.addProjectV2ItemById.item.id;
+
+                // Set the status column
+                const updateMutation = `
+                  mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                    updateProjectV2ItemFieldValue(input: {
+                      projectId: $projectId
+                      itemId: $itemId
+                      fieldId: $fieldId
+                      value: { singleSelectOptionId: $optionId }
+                    }) {
+                      projectV2Item { id }
+                    }
+                  }
+                `;
+
+                await github.graphql(updateMutation, {
+                  projectId: projectId,
+                  itemId: itemId,
+                  fieldId: statusField.id,
+                  optionId: targetOption.id
+                });
+
+                console.log(`Added issue #${issue.number} to project board`);
+              } catch (error) {
+                // Item might already exist in project, which is fine
+                console.log(`Note for issue #${issue.number}: ${error.message}`);
+              }
+            }
+
+            console.log('Done!');
