@@ -347,15 +347,6 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
         );
     });
 
-    Vim::action(editor, cx, |vim, _: &ShellCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window, cx) else {
-            return;
-        };
-        workspace.update(cx, |workspace, cx| {
-            command_palette::CommandPalette::toggle(workspace, "'<,'>!", window, cx);
-        })
-    });
-
     Vim::action(editor, cx, |vim, action: &VimSave, window, cx| {
         if let Some(range) = &action.range {
             vim.update_editor(cx, |vim, editor, cx| {
@@ -2549,7 +2540,7 @@ impl ShellExec {
             }
             editor.highlight_rows::<ShellExec>(
                 input_range.clone().unwrap(),
-                cx.theme().status().unreachable_background,
+                |cx| cx.theme().status().unreachable_background,
                 Default::default(),
                 cx,
             );

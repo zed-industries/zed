@@ -4,9 +4,9 @@ use std::{
     mem::ManuallyDrop,
 };
 
-use ::util::{ResultExt, maybe};
 use anyhow::{Context, Result};
 use collections::HashMap;
+use gpui_util::{ResultExt, maybe};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use windows::{
     Win32::{
