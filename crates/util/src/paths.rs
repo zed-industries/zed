@@ -256,6 +256,10 @@ impl SanitizedPath {
 
         #[cfg(target_os = "windows")]
         {
+            let path = match path.to_str().and_then(|s| s.strip_prefix(r"\\?\UNC\")) {
+                Some(rest) => PathBuf::from(format!(r"\\{rest}")).into(),
+                None => path,
+            };
             let simplified = dunce::simplified(path.as_ref());
             if simplified == path.as_ref() {
                 // safe because `Path` and `SanitizedPath` have the same repr and Drop impl
@@ -2860,6 +2864,17 @@ mod tests {
         assert_eq!(
             sanitized_path.to_string(),
             "C:\\Users\\someone\\test_file.rs"
+        );
+    }
+
+    #[perf]
+    #[cfg(target_os = "windows")]
+    fn test_sanitized_path_verbatim_unc() {
+        let path: Arc<Path> = PathBuf::from("\\\\?\\UNC\\server\\share\\file.txt").into();
+        let sanitized_path = SanitizedPath::from_arc(path);
+        assert_eq!(
+            sanitized_path.to_string(),
+            "\\\\server\\share\\file.txt"
         );
     }
 
