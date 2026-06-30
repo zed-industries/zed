@@ -134,14 +134,17 @@ use crate::ProjectPanel;
 use anyhow::{Context, Result, anyhow};
 use fs::{TrashRestoreError, TrashedEntry};
 use futures::channel::mpsc;
-use gpui::{AppContext, AsyncApp, SharedString, Task, WeakEntity};
+use gpui::{AppContext, AsyncApp, IntoElement, SharedString, Styled, Task, WeakEntity};
+use markdown::{Markdown, MarkdownElement};
 use project::{ProjectPath, WorktreeId};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::VecDeque, sync::Arc};
-use ui::App;
+use ui::{App, TextSize};
 use workspace::{
     Workspace,
-    notifications::{NotificationId, simple_message_notification::MessageNotification},
+    notifications::{
+        NotificationId, markdown_style, simple_message_notification::MessageNotification,
+    },
 };
 use worktree::CreatedEntry;
 
@@ -296,8 +299,8 @@ impl UndoMessage {
             UndoMessage::Changed(_) => {
                 "this is a bug in the manage_undo_and_redo task please report"
             }
-            UndoMessage::Undo => "Undo failed",
-            UndoMessage::Redo => "Redo failed",
+            UndoMessage::Undo => "Undo Failed",
+            UndoMessage::Redo => "Redo Failed",
         }
     }
 }
@@ -490,13 +493,22 @@ impl Inner {
 
         let from_name = from.path.file_name().unwrap_or("file").to_string();
         let to_name = to.path.file_name().unwrap_or("file").to_string();
+        // A rename that keeps the same parent directory reads as a "rename",
+        // otherwise it's a "move". Used purely for the user-facing message.
+        let verb = if from.path.parent() == to.path.parent() {
+            "rename"
+        } else {
+            "move"
+        };
 
         let res: Result<Task<Result<CreatedEntry>>> = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 let entry_id = project
                     .entry_for_path(from, cx)
                     .map(|entry| entry.id)
-                    .with_context(|| format!("\"{from_name}\" no longer exists"))?;
+                    .with_context(|| {
+                        format!("Failed to {verb} `{from_name}`. It no longer exists.")
+                    })?;
 
                 Ok(project.rename_entry(entry_id, to.clone(), cx))
             })
@@ -515,7 +527,9 @@ impl Inner {
             }) || format!("{err:#}").contains("already exists");
 
             if already_exists {
-                anyhow!("\"{to_name}\" already exists")
+                anyhow!(
+                    "Failed to {verb} `{to_name}`. A file or folder with that name already exists."
+                )
             } else {
                 err
             }
@@ -527,23 +541,28 @@ impl Inner {
             return Err(anyhow!("Failed to obtain workspace."));
         };
 
-        workspace
-            .update(cx, |workspace, cx| {
-                workspace.project().update(cx, |project, cx| {
-                    let entry_id = project
-                        .entry_for_path(&project_path, cx)
-                        .map(|entry| entry.id)
-                        .ok_or_else(|| anyhow!("No entry for path."))?;
+        let name = project_path.path.file_name().unwrap_or("file").to_string();
 
-                    project
-                        .delete_entry(entry_id, true, cx)
-                        .ok_or_else(|| anyhow!("Worktree entry should exist"))
-                })
-            })?
-            .await
-            .and_then(|entry| {
-                entry.ok_or_else(|| anyhow!("When trashing we should always get a trashentry"))
+        let task = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                let entry_id = project
+                    .entry_for_path(project_path, cx)
+                    .map(|entry| entry.id)
+                    .with_context(|| {
+                        format!("Failed to move `{name}` to the Trash. It no longer exists.")
+                    })?;
+
+                project
+                    .delete_entry(entry_id, true, cx)
+                    .with_context(|| format!("Failed to move `{name}` to the Trash."))
             })
+        })?;
+
+        match task.await {
+            Ok(Some(entry)) => Ok(entry),
+            Ok(None) => Err(anyhow!("Failed to move `{name}` to the Trash.")),
+            Err(err) => Err(err).context(format!("Failed to move `{name}` to the Trash.")),
+        }
     }
 
     async fn restore(
@@ -567,28 +586,37 @@ impl Inner {
             .await
             .map_err(|err| match err.downcast_ref::<TrashRestoreError>() {
                 Some(TrashRestoreError::Collision { .. }) => anyhow!(
-                    "Couldn't restore \"{name}\" because something already exists at its original location"
+                    "Failed to restore `{name}`. Something already exists at its original location."
                 ),
-                _ => anyhow!(
-                    "Couldn't restore \"{name}\" from the Trash. It may have been permanently deleted."
-                ),
+                _ => anyhow!("Failed to restore `{name}`. It may have been permanently deleted."),
             })
     }
 
-    /// Displays a notification with the provided `title` and `error`.
+    /// Displays a notification with the provided `title` and `error`. The
+    /// `error` is rendered as markdown, so file names wrapped in backticks show
+    /// up as inline code.
     fn show_error(
         title: impl Into<SharedString>,
         workspace: WeakEntity<Workspace>,
         error: String,
         cx: &mut AsyncApp,
     ) {
+        let title = title.into();
         workspace
             .update(cx, move |workspace, cx| {
                 let notification_id =
                     NotificationId::Named(SharedString::new_static("project_panel_undo"));
 
                 workspace.show_notification(notification_id, cx, move |cx| {
-                    cx.new(|cx| MessageNotification::new(error, cx).with_title(title))
+                    cx.new(move |cx| {
+                        let markdown = cx.new(|cx| Markdown::new(error.into(), None, None, cx));
+                        MessageNotification::new_from_builder(cx, move |window, cx| {
+                            MarkdownElement::new(markdown.clone(), markdown_style(window, cx))
+                                .text_size(TextSize::Default.rems(cx))
+                                .into_any_element()
+                        })
+                        .with_title(title)
+                    })
                 })
             })
             .ok();
