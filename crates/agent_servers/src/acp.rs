@@ -10,7 +10,7 @@ use agent_client_protocol::schema::{
 use agent_client_protocol::{Agent, Client, ConnectionTo, JsonRpcResponse, Lines, Responder};
 use anyhow::anyhow;
 use async_channel;
-use collections::{HashMap, HashSet};
+use collections::{HashMap, HashSet, IndexMap};
 use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
 use futures::channel::mpsc;
 use futures::future::Shared;
@@ -265,10 +265,17 @@ impl<T> FlattenAcpResult<T> for Result<Result<T, acp::Error>, anyhow::Error> {
     }
 }
 
+const MAX_PENDING_NOTIFICATIONS_PER_SESSION: usize = 256;
+const MAX_PENDING_NOTIFICATION_SESSION_IDS: usize = 64;
+
+type PendingNotifications =
+    Rc<RefCell<IndexMap<acp::SessionId, VecDeque<acp::SessionNotification>>>>;
+
 /// Holds state needed by foreground work dispatched from background handler closures.
 struct ClientContext {
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>>,
+    pending_notifications: PendingNotifications,
 }
 
 fn dispatch_queue_closed_error() -> acp::Error {
@@ -391,6 +398,7 @@ pub struct AcpConnection {
     connection: ConnectionTo<Agent>,
     sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
     pending_sessions: Rc<RefCell<HashMap<acp::SessionId, PendingAcpSession>>>,
+    pending_notifications: PendingNotifications,
     auth_methods: Vec<acp::AuthMethod>,
     agent_server_store: WeakEntity<AgentServerStore>,
     agent_capabilities: acp::AgentCapabilities,
@@ -828,6 +836,7 @@ impl AcpConnection {
         log::trace!("Spawned (pid: {})", child.id());
 
         let sessions = Rc::new(RefCell::new(HashMap::default()));
+        let pending_notifications: PendingNotifications = Rc::new(RefCell::new(IndexMap::default()));
         let debug_log = AcpDebugLog::default();
 
         let (release_channel, version): (Option<&str>, String) = cx.update(|cx| {
@@ -929,6 +938,7 @@ impl AcpConnection {
         let dispatch_context = ClientContext {
             sessions: sessions.clone(),
             session_list: client_session_list.clone(),
+            pending_notifications: pending_notifications.clone(),
         };
         let dispatch_task = cx.spawn({
             let mut dispatch_rx = dispatch_rx;
@@ -1050,6 +1060,7 @@ impl AcpConnection {
             agent_version,
             sessions,
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
+            pending_notifications,
             agent_capabilities: response.agent_capabilities,
             defaults,
             session_list,
@@ -1071,6 +1082,7 @@ impl AcpConnection {
     fn new_for_test(
         connection: ConnectionTo<Agent>,
         sessions: Rc<RefCell<HashMap<acp::SessionId, AcpSession>>>,
+        pending_notifications: PendingNotifications,
         agent_capabilities: acp::AgentCapabilities,
         agent_server_store: WeakEntity<AgentServerStore>,
         io_task: Task<()>,
@@ -1088,6 +1100,7 @@ impl AcpConnection {
             connection,
             sessions,
             pending_sessions: Rc::new(RefCell::new(HashMap::default())),
+            pending_notifications,
             auth_methods: vec![],
             agent_server_store,
             agent_capabilities,
@@ -1178,16 +1191,7 @@ impl AcpConnection {
                     // `session/update` notifications that arrive during the call
                     // (e.g. history replay during `session/load`) can find the thread.
                     // Modes/config are filled in once the response arrives.
-                    this.sessions.borrow_mut().insert(
-                        session_id.clone(),
-                        AcpSession {
-                            thread: thread.downgrade(),
-                            suppress_abort_err: false,
-                            session_modes: None,
-                            config_options: None,
-                            ref_count: 1,
-                        },
-                    );
+                    this.pre_register_session(&session_id, &thread);
 
                     let response =
                         match rpc_call(this.connection.clone(), session_id.clone(), directories)
@@ -1195,8 +1199,7 @@ impl AcpConnection {
                         {
                             Ok(response) => response,
                             Err(err) => {
-                                this.sessions.borrow_mut().remove(&session_id);
-                                this.pending_sessions.borrow_mut().remove(&session_id);
+                                this.forget_session(&session_id);
                                 return Err(Arc::new(err));
                             }
                         };
@@ -1230,6 +1233,8 @@ impl AcpConnection {
                         session.config_options = config_options.map(ConfigOptions::new);
                         session.ref_count = ref_count;
                     }
+
+                    this.drain_pending_notifications(&session_id, cx);
 
                     Ok(thread)
                 }
@@ -1339,6 +1344,39 @@ impl AcpConnection {
                 }
             }
         }
+    }
+
+    fn drain_pending_notifications(&self, session_id: &acp::SessionId, cx: &mut AsyncApp) {
+        let Some(buffered) = self.pending_notifications.borrow_mut().shift_remove(session_id) else {
+            return;
+        };
+        let ctx = ClientContext {
+            sessions: self.sessions.clone(),
+            session_list: Rc::new(RefCell::new(self.session_list.clone())),
+            pending_notifications: self.pending_notifications.clone(),
+        };
+        for notification in buffered {
+            handle_session_notification(notification, cx, &ctx);
+        }
+    }
+
+    fn pre_register_session(&self, session_id: &acp::SessionId, thread: &Entity<AcpThread>) {
+        self.sessions.borrow_mut().insert(
+            session_id.clone(),
+            AcpSession {
+                thread: thread.downgrade(),
+                suppress_abort_err: false,
+                session_modes: None,
+                config_options: None,
+                ref_count: 1,
+            },
+        );
+    }
+
+    fn forget_session(&self, session_id: &acp::SessionId) {
+        self.sessions.borrow_mut().remove(session_id);
+        self.pending_sessions.borrow_mut().remove(session_id);
+        self.pending_notifications.borrow_mut().shift_remove(session_id);
     }
 }
 
@@ -1525,6 +1563,32 @@ impl AgentConnection for AcpConnection {
             .await
             .map_err(map_acp_error)?;
 
+            // Register the session before any further async work so that any
+            // `session/update` notifications streamed before/right after
+            // `NewSessionResponse` can find the thread. Modes/config are
+            // backfilled below.
+            let session_id = response.session_id.clone();
+
+            let action_log = cx.new(|_| ActionLog::new(project.clone()));
+            let thread: Entity<AcpThread> = cx.new(|cx| {
+                AcpThread::new(
+                    None,
+                    None,
+                    Some(work_dirs),
+                    self.clone(),
+                    project,
+                    action_log,
+                    session_id.clone(),
+                    // ACP doesn't currently support per-session prompt capabilities or changing capabilities dynamically.
+                    watch::Receiver::constant(
+                        self.agent_capabilities.prompt_capabilities.clone(),
+                    ),
+                    cx,
+                )
+            });
+
+            self.pre_register_session(&session_id, &thread);
+
             let (modes, config_options) = config_state(response.modes, response.config_options);
 
             let default_mode = self.defaults.mode();
@@ -1541,7 +1605,7 @@ impl AgentConnection for AcpConnection {
 
                         cx.spawn({
                             let default_mode = default_mode.clone();
-                            let session_id = response.session_id.clone();
+                            let session_id = session_id.clone();
                             let modes = modes.clone();
                             let conn = self.connection.clone();
                             async move |_| {
@@ -1578,37 +1642,20 @@ impl AgentConnection for AcpConnection {
             }
 
             if let Some(config_opts) = config_options.as_ref() {
-                self.apply_default_config_options(&response.session_id, config_opts, cx);
+                self.apply_default_config_options(&session_id, config_opts, cx);
             }
 
-            let action_log = cx.new(|_| ActionLog::new(project.clone()));
-            let thread: Entity<AcpThread> = cx.new(|cx| {
-                AcpThread::new(
-                    None,
-                    None,
-                    Some(work_dirs),
-                    self.clone(),
-                    project,
-                    action_log,
-                    response.session_id.clone(),
-                    // ACP doesn't currently support per-session prompt capabilities or changing capabilities dynamically.
-                    watch::Receiver::constant(
-                        self.agent_capabilities.prompt_capabilities.clone(),
-                    ),
-                    cx,
-                )
-            });
+            // `get_mut` rather than `insert` so we don't resurrect an entry
+            // a racing `close_session` removed.
+            {
+                let mut sessions = self.sessions.borrow_mut();
+                if let Some(session) = sessions.get_mut(&session_id) {
+                    session.session_modes = modes;
+                    session.config_options = config_options.map(ConfigOptions::new);
+                }
+            }
 
-            self.sessions.borrow_mut().insert(
-                response.session_id,
-                AcpSession {
-                    thread: thread.downgrade(),
-                    suppress_abort_err: false,
-                    session_modes: modes,
-                    config_options: config_options.map(ConfigOptions::new),
-                    ref_count: 1,
-                },
-            );
+            self.drain_pending_notifications(&session_id, cx);
 
             Ok(thread)
         })
@@ -1747,8 +1794,7 @@ impl AgentConnection for AcpConnection {
         };
         match pending_ref_count {
             Some(0) => {
-                self.pending_sessions.borrow_mut().remove(session_id);
-                self.sessions.borrow_mut().remove(session_id);
+                self.forget_session(session_id);
 
                 let conn = self.connection.clone();
                 let session_id = session_id.clone();
@@ -1773,8 +1819,8 @@ impl AgentConnection for AcpConnection {
             return Task::ready(Ok(()));
         }
 
-        sessions.remove(session_id);
         drop(sessions);
+        self.forget_session(session_id);
 
         let conn = self.connection.clone();
         let session_id = session_id.clone();
@@ -2292,6 +2338,7 @@ pub mod test_support {
             Rc::new(RefCell::new(HashMap::default()));
         let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
             Rc::new(RefCell::new(None));
+        let pending_notifications: PendingNotifications = Rc::new(RefCell::new(IndexMap::default()));
 
         let agent_future = Agent
             .builder()
@@ -2404,6 +2451,7 @@ pub mod test_support {
         let dispatch_context = ClientContext {
             sessions: sessions.clone(),
             session_list: client_session_list.clone(),
+            pending_notifications: pending_notifications.clone(),
         };
         let dispatch_task = cx.spawn({
             let mut dispatch_rx = dispatch_rx;
@@ -2421,6 +2469,7 @@ pub mod test_support {
             AcpConnection::new_for_test(
                 client_conn,
                 sessions,
+                pending_notifications,
                 agent_capabilities,
                 agent_server_store,
                 client_io_task,
@@ -3089,6 +3138,7 @@ mod tests {
         Arc<AtomicUsize>,
         Arc<std::sync::Mutex<Vec<acp::SessionUpdate>>>,
         Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>>,
+        Arc<std::sync::Mutex<Vec<acp::SessionUpdate>>>,
         Task<anyhow::Result<()>>,
     ) {
         cx.update(|cx| {
@@ -3106,6 +3156,8 @@ mod tests {
             Arc::new(std::sync::Mutex::new(Vec::new()));
         let load_session_gate: Arc<std::sync::Mutex<Option<async_channel::Receiver<()>>>> =
             Arc::new(std::sync::Mutex::new(None));
+        let new_session_updates: Arc<std::sync::Mutex<Vec<acp::SessionUpdate>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
 
         let (client_transport, agent_transport) = agent_client_protocol::Channel::duplex();
 
@@ -3113,6 +3165,7 @@ mod tests {
             Rc::new(RefCell::new(HashMap::default()));
         let client_session_list: Rc<RefCell<Option<Rc<AcpSessionList>>>> =
             Rc::new(RefCell::new(None));
+        let pending_notifications: PendingNotifications = Rc::new(RefCell::new(IndexMap::default()));
 
         // Build the fake agent side. It handles the requests issued by
         // `AcpConnection` during the test and tracks load/close counts.
@@ -3141,8 +3194,23 @@ mod tests {
                 agent_client_protocol::on_receive_request!(),
             )
             .on_receive_request(
-                async move |_req: acp::NewSessionRequest, responder, _cx| {
-                    responder.respond(acp::NewSessionResponse::new(acp::SessionId::new("unused")))
+                {
+                    let new_session_updates = new_session_updates.clone();
+                    async move |_req: acp::NewSessionRequest, responder, cx| {
+                        let session_id = acp::SessionId::new("new-session-1");
+                        let updates = std::mem::take(
+                            &mut *new_session_updates
+                                .lock()
+                                .expect("new_session_updates mutex poisoned"),
+                        );
+                        for update in updates {
+                            cx.send_notification(acp::SessionNotification::new(
+                                session_id.clone(),
+                                update,
+                            ))?;
+                        }
+                        responder.respond(acp::NewSessionResponse::new(session_id))
+                    }
                 },
                 agent_client_protocol::on_receive_request!(),
             )
@@ -3240,6 +3308,7 @@ mod tests {
         let dispatch_context = ClientContext {
             sessions: sessions.clone(),
             session_list: client_session_list.clone(),
+            pending_notifications: pending_notifications.clone(),
         };
         // `TestAppContext::spawn` hands out an `AsyncApp` by value, whereas the
         // production path uses `Context::spawn` which hands out `&mut AsyncApp`.
@@ -3262,6 +3331,7 @@ mod tests {
             AcpConnection::new_for_test(
                 client_conn,
                 sessions,
+                pending_notifications,
                 agent_capabilities,
                 agent_server_store,
                 client_io_task,
@@ -3282,6 +3352,7 @@ mod tests {
             close_count,
             load_session_updates,
             load_session_gate,
+            new_session_updates,
             keep_agent_alive,
         )
     }
@@ -3295,6 +3366,7 @@ mod tests {
             close_count,
             _load_session_updates,
             _load_session_gate,
+            _new_session_updates,
             _keep_agent_alive,
         ) = connect_fake_agent(cx).await;
 
@@ -3386,6 +3458,7 @@ mod tests {
             _close_count,
             load_session_updates,
             _load_session_gate,
+            _new_session_updates,
             _keep_agent_alive,
         ) = connect_fake_agent(cx).await;
 
@@ -3440,6 +3513,57 @@ mod tests {
         );
     }
 
+    // Regression test for #55447: notifications streamed before `session/new`
+    // responds must reach the new thread.
+    #[gpui::test]
+    async fn test_new_session_applies_notifications_sent_before_response(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (
+            connection,
+            project,
+            _load_count,
+            _close_count,
+            _load_session_updates,
+            _load_session_gate,
+            new_session_updates,
+            _keep_agent_alive,
+        ) = connect_fake_agent(cx).await;
+
+        *new_session_updates
+            .lock()
+            .expect("new_session_updates mutex poisoned") =
+            vec![acp::SessionUpdate::AvailableCommandsUpdate(
+                acp::AvailableCommandsUpdate::new(vec![
+                    acp::AvailableCommand::new("init", "Initialize project"),
+                    acp::AvailableCommand::new("review", "Review code"),
+                ]),
+            )];
+
+        let work_dirs = util::path_list::PathList::new(&[std::path::Path::new("/a")]);
+
+        let thread = cx
+            .update(|cx| connection.clone().new_session(project.clone(), work_dirs, cx))
+            .await
+            .expect("new_session failed");
+        cx.run_until_parked();
+
+        let observed = thread.read_with(cx, |thread, _| {
+            thread
+                .available_commands()
+                .iter()
+                .map(|c| c.name.clone())
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(
+            observed,
+            vec!["init".to_string(), "review".to_string()],
+            "session/update notifications fired before NewSessionResponse \
+             must reach the new AcpThread"
+        );
+    }
+
     // Regression test: if `close_session` is issued while a `load_session`
     // RPC is still in flight, the close must take effect cleanly — the load
     // must fail with a recognizable error (not return an orphaned thread),
@@ -3454,6 +3578,7 @@ mod tests {
             close_count,
             _load_session_updates,
             load_session_gate,
+            _new_session_updates,
             _keep_agent_alive,
         ) = connect_fake_agent(cx).await;
 
@@ -3552,6 +3677,7 @@ mod tests {
             close_count,
             _load_session_updates,
             load_session_gate,
+            _new_session_updates,
             _keep_agent_alive,
         ) = connect_fake_agent(cx).await;
 
@@ -3946,6 +4072,33 @@ fn handle_read_text_file(
     .detach();
 }
 
+fn buffer_pending_notification(notification: acp::SessionNotification, pending: &PendingNotifications) {
+    let session_id = notification.session_id.clone();
+    let mut pending = pending.borrow_mut();
+
+    if pending.len() >= MAX_PENDING_NOTIFICATION_SESSION_IDS && !pending.contains_key(&session_id)
+    {
+        if let Some(evicted) = pending.keys().next().cloned() {
+            log::warn!(
+                "Dropping buffered notifications for oldest unknown session {evicted:?} \
+                 (capacity of {MAX_PENDING_NOTIFICATION_SESSION_IDS} unknown sessions reached)",
+            );
+            pending.shift_remove(&evicted);
+        }
+    }
+
+    let queue = pending.entry(session_id).or_default();
+    if queue.len() >= MAX_PENDING_NOTIFICATIONS_PER_SESSION {
+        queue.pop_front();
+        log::warn!(
+            "Dropping oldest buffered notification for unknown session {:?} \
+             (per-session capacity of {MAX_PENDING_NOTIFICATIONS_PER_SESSION} reached)",
+            notification.session_id,
+        );
+    }
+    queue.push_back(notification);
+}
+
 fn handle_session_notification(
     notification: acp::SessionNotification,
     cx: &mut AsyncApp,
@@ -3955,10 +4108,12 @@ fn handle_session_notification(
     let (thread, session_modes, config_opts_data) = {
         let sessions = ctx.sessions.borrow();
         let Some(session) = sessions.get(&notification.session_id) else {
+            drop(sessions);
             log::warn!(
-                "Received session notification for unknown session: {:?}",
-                notification.session_id
+                "Buffering session/update for unregistered session: {:?} (#55447)",
+                notification.session_id,
             );
+            buffer_pending_notification(notification, &ctx.pending_notifications);
             return;
         };
         (
