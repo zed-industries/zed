@@ -16240,6 +16240,7 @@ dependencies = [
  "picker",
  "pretty_assertions",
  "project",
+ "regex",
  "serde",
  "serde_json",
  "settings",
