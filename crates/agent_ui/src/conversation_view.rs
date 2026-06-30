@@ -79,7 +79,7 @@ use crate::agent_connection_store::{
     AgentConnectedState, AgentConnectionEntryEvent, AgentConnectionStore,
 };
 use crate::agent_diff::AgentDiff;
-use crate::completion_provider::{AgentContextSelection, AvailableSkill};
+use crate::completion_provider::{AgentContextSelections, AvailableSkill};
 use crate::entry_view_state::{EntryViewEvent, ViewEvent};
 use crate::message_editor::{InputAttempt, MessageEditor, MessageEditorEvent};
 use crate::profile_selector::{ProfileProvider, ProfileSelector};
@@ -2744,16 +2744,16 @@ impl ConversationView {
 
     /// Inserts the selected text into the message editor or the message being
     /// edited, if any.
-    pub(crate) fn insert_selection(
+    pub(crate) fn insert_selections(
         &self,
-        selection: AgentContextSelection,
+        selections: AgentContextSelections,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if let Some(active_thread) = self.active_thread() {
             active_thread.update(cx, |thread, cx| {
                 thread.active_editor(cx).update(cx, |editor, cx| {
-                    editor.insert_selections(selection, window, cx);
+                    editor.insert_selections(selections, window, cx);
                 })
             });
         }
@@ -7701,7 +7701,7 @@ pub(crate) mod tests {
                         .read_selection(workspace, false, cx)
                 })
                 .unwrap();
-            view.insert_selection(selection, window, cx);
+            view.insert_selections(selection.into(), window, cx);
         });
 
         user_message_editor.read_with(cx, |editor, cx| {
@@ -7771,7 +7771,7 @@ pub(crate) mod tests {
                         .read_selection(workspace, false, cx)
                 })
                 .unwrap();
-            view.insert_selection(selection, window, cx);
+            view.insert_selections(selection.into(), window, cx);
         });
 
         message_editor.read_with(cx, |editor, cx| {
