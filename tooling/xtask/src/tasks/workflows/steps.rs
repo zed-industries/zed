@@ -512,6 +512,7 @@ pub mod named {
                     .collect::<Vec<_>>()
                     .join("::"),
             )
+            .permissions(Permissions::default())
             .defaults(Defaults::default().run(RunDefaults::default().shell(BASH_SHELL)))
     }
 

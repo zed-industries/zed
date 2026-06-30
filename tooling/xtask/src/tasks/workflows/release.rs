@@ -8,8 +8,8 @@ use crate::tasks::workflows::{
     run_tests,
     runners::{self, Arch, Platform},
     steps::{
-        self, DownloadArtifactStep, FluentBuilder, NamedJob, TokenPermissions, dependant_job,
-        named, release_job,
+        self, CommonPermissionSets, DownloadArtifactStep, FluentBuilder, NamedJob,
+        TokenPermissions, dependant_job, named, release_job,
     },
     vars::{self, JobOutput, StepOutput, assets},
 };
@@ -103,10 +103,7 @@ pub(crate) fn release() -> Workflow {
     named::workflow()
         .on(Event::default().push(Push::default().tags(vec!["v*".to_string()])))
         .concurrency(vars::one_workflow_per_non_main_branch())
-        // `upload_release_assets` uploads GitHub release assets using the workflow
-        // `GITHUB_TOKEN`, which requires `contents: write`. All other jobs either only
-        // read the repo or authenticate with a separate GitHub App token.
-        .permissions(Permissions::default().contents(Level::Write))
+        .with_minimal_permissions()
         .add_env(("CARGO_TERM_COLOR", "always"))
         .add_env(("RUST_BACKTRACE", "1"))
         .add_job(macos_tests.name, macos_tests.job)
@@ -472,6 +469,7 @@ fn upload_release_assets(deps: &[&NamedJob], bundle: &ReleaseBundleJobs) -> Name
     named::job(
         dependant_job(&deps)
             .runs_on(runners::LINUX_MEDIUM)
+            .permissions(Permissions::default().contents(Level::Write))
             .add_step(download_workflow_artifacts())
             .add_step(steps::script("ls -lR ./artifacts"))
             .add_step(prep_release_artifacts())

@@ -15,10 +15,12 @@ on:
         default: 'true'
 permissions:
   contents: read
-  pull-requests: read
 jobs:
   run_autofix:
     runs-on: namespace-profile-16x32-ubuntu-2204
+    permissions:
+      contents: read
+      pull-requests: read
     env:
       CC: clang
       CXX: clang++

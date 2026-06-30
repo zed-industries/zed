@@ -15,7 +15,7 @@ use strum::IntoEnumIterator;
 
 use crate::tasks::workflows::WorkflowType;
 
-use check_permissions::MissingPermissionsError;
+use check_permissions::PermissionsError;
 use check_run_patterns::RunValidationError;
 
 pub use check_run_patterns::validate_run_command;
@@ -81,16 +81,14 @@ impl WorkflowFile {
 /// A single kind of validation failure found within a workflow file.
 enum ValidationError {
     RunInjection(RunValidationError),
-    MissingPermissions(MissingPermissionsError),
+    Permissions(PermissionsError),
 }
 
 impl ValidationError {
     fn annotation_group<'a>(&self, file_path: &Path, raw_content: &'a str) -> Group<'a> {
         match self {
             ValidationError::RunInjection(error) => error.annotation_group(file_path, raw_content),
-            ValidationError::MissingPermissions(error) => {
-                error.annotation_group(file_path, raw_content)
-            }
+            ValidationError::Permissions(error) => error.annotation_group(file_path, raw_content),
         }
     }
 }
@@ -138,7 +136,7 @@ fn check_workflow(workflow_file_path: PathBuf) -> Result<(), WorkflowError> {
     let mut errors = Vec::new();
 
     if let Err(error) = check_permissions::validate_permissions(&file_content.parsed_content) {
-        errors.push(ValidationError::MissingPermissions(error));
+        errors.push(ValidationError::Permissions(error));
     }
 
     errors.extend(

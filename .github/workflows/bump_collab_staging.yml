@@ -6,12 +6,14 @@ on:
     - cron: "0 16 * * *"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   update-collab-staging-tag:
     if: github.repository_owner == 'zed-industries'
     runs-on: namespace-profile-2x4-ubuntu-2404
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
