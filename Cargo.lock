@@ -6597,6 +6597,7 @@ dependencies = [
  "menu",
  "open_path_prompt",
  "picker",
+ "picker_preview",
  "pretty_assertions",
  "project",
  "project_panel",
@@ -13455,9 +13456,7 @@ dependencies = [
  "gpui",
  "language",
  "menu",
- "multi_buffer",
  "project",
- "rope",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -13469,6 +13468,23 @@ dependencies = [
  "util",
  "workspace",
  "zed_actions",
+]
+
+[[package]]
+name = "picker_preview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "gpui",
+ "language",
+ "multi_buffer",
+ "picker",
+ "project",
+ "rope",
+ "settings",
+ "ui",
+ "util",
 ]
 
 [[package]]
@@ -16238,6 +16254,7 @@ dependencies = [
  "menu",
  "multi_buffer",
  "picker",
+ "picker_preview",
  "pretty_assertions",
  "project",
  "serde",
