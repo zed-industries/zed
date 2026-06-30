@@ -33,13 +33,9 @@ impl DiffBase {
     pub fn is_merge_base(&self) -> bool {
         matches!(self, DiffBase::Merge { .. })
     }
-
-    pub fn is_project_diff(&self) -> bool {
-        matches!(self, DiffBase::Head | DiffBase::Index)
-    }
 }
 
-pub struct BranchDiff {
+pub struct DiffBufferList {
     diff_base: DiffBase,
     repo: Option<Entity<Repository>>,
     project: Entity<Project>,
@@ -58,9 +54,9 @@ pub enum BranchDiffEvent {
     DiffBaseChanged,
 }
 
-impl EventEmitter<BranchDiffEvent> for BranchDiff {}
+impl EventEmitter<BranchDiffEvent> for DiffBufferList {}
 
-impl BranchDiff {
+impl DiffBufferList {
     pub fn new(
         source: DiffBase,
         project: Entity<Project>,
@@ -433,7 +429,8 @@ impl BranchDiff {
                 .update(cx, |project, cx| project.open_buffer(project_path, cx))?
                 .await?;
 
-            let operation_buffer = buffer.clone();
+            let main_buffer = buffer.clone();
+            let load_conflict_set = diff_base != DiffBase::Staged;
             let (display_buffer, changes) = match diff_base {
                 DiffBase::Head => {
                     let diff = project
@@ -488,16 +485,22 @@ impl BranchDiff {
                     (buffer, diff)
                 }
             };
-            let conflict_set = project
-                .update(cx, |project, cx| {
-                    project.git_store().update(cx, |git_store, cx| {
-                        git_store.open_conflict_set(operation_buffer.clone(), cx)
-                    })
-                })?
-                .await;
+            let conflict_set = if load_conflict_set {
+                Some(
+                    project
+                        .update(cx, |project, cx| {
+                            project.git_store().update(cx, |git_store, cx| {
+                                git_store.open_conflict_set(main_buffer.clone(), cx)
+                            })
+                        })?
+                        .await,
+                )
+            } else {
+                None
+            };
             Ok(LoadedDiffBuffer {
                 display_buffer,
-                operation_buffer,
+                main_buffer,
                 diff: changes,
                 conflict_set,
             })
@@ -527,9 +530,9 @@ fn diff_status_to_file_status(branch_diff: &git::status::TreeDiffStatus) -> File
 #[derive(Debug)]
 pub struct LoadedDiffBuffer {
     pub display_buffer: Entity<Buffer>,
-    pub operation_buffer: Entity<Buffer>,
+    pub main_buffer: Entity<Buffer>,
     pub diff: Entity<BufferDiff>,
-    pub conflict_set: Entity<ConflictSet>,
+    pub conflict_set: Option<Entity<ConflictSet>>,
 }
 
 #[derive(Debug)]

@@ -1,5 +1,5 @@
-pub mod branch_diff;
 mod conflict_set;
+pub mod diff_buffer_list;
 pub mod git_traversal;
 pub mod job_debug_queue;
 pub mod pending_op;
@@ -1367,11 +1367,16 @@ impl GitStore {
         if index_ranges.is_empty() {
             return Task::ready(Ok(()));
         }
-        let staged_diff = self.open_staged_diff(buffer.clone(), cx);
+        let buffer_id = buffer.read(cx).remote_id();
+        let Some(diff_state) = self.diffs.get(&buffer_id).cloned() else {
+            return Task::ready(Err(anyhow!("failed to find git state for buffer")));
+        };
+        let Some(staged_diff) = diff_state.read(cx).staged_diff() else {
+            return Task::ready(Err(anyhow!("staged diff is not open")));
+        };
         cx.spawn(async move |this, cx| {
-            let staged_diff = staged_diff.await?;
             this.update(cx, |this, cx| {
-                this.unstage_staged_hunks_optimistically(buffer, staged_diff, index_ranges, cx);
+                this.unstage_staged_hunks_optimistically(buffer_id, staged_diff, index_ranges, cx);
             })?;
             Ok(())
         })
@@ -1379,12 +1384,11 @@ impl GitStore {
 
     fn unstage_staged_hunks_optimistically(
         &mut self,
-        buffer: Entity<Buffer>,
+        buffer_id: BufferId,
         staged_diff: Entity<BufferDiff>,
         index_ranges: Vec<Range<Anchor>>,
         cx: &mut Context<Self>,
     ) {
-        let buffer_id = buffer.read(cx).remote_id();
         let Some(diff_state) = self.diffs.get(&buffer_id).cloned() else {
             return;
         };

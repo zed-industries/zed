@@ -4,7 +4,7 @@ use crate::{
     git_panel_settings::GitPanelSettings,
 };
 use anyhow::Result;
-use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
+use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus};
 use collections::{HashMap, HashSet};
 use editor::{
     Addon, Editor, EditorEvent, EditorSettings, RenderDiffHunkControlsFn, SelectionEffects,
@@ -19,19 +19,18 @@ use gpui::{
 };
 use language::{Anchor, Buffer, BufferId, Capability, OffsetRangeExt};
 use multi_buffer::{MultiBuffer, PathKey};
-use project::project_settings::ProjectSettings;
 use project::{
     ConflictSet, Project, ProjectPath,
     git_store::{
         Repository,
-        branch_diff::{self, BranchDiffEvent, DiffBase},
+        diff_buffer_list::{self, BranchDiffEvent, DiffBase},
     },
 };
 use settings::{GitPanelGroupBy, GitPanelSortBy, Settings, SettingsStore};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use theme::ActiveTheme;
-use ui::{CommonAnimationExt as _, KeyBinding, Tooltip, prelude::*};
+use ui::{CommonAnimationExt as _, KeyBinding, prelude::*};
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
     CloseActiveItem, ItemNavHistory, Workspace,
@@ -42,24 +41,15 @@ use ztracing::instrument;
 struct BufferSubscriptions {
     _diff: Entity<BufferDiff>,
     display_buffer: Entity<Buffer>,
-    operation_buffer: Entity<Buffer>,
+    main_buffer: Entity<Buffer>,
     _diff_subscription: Subscription,
-    _conflict_set: Entity<ConflictSet>,
-    _conflict_set_subscription: Subscription,
+    _conflict_set: Option<Entity<ConflictSet>>,
+    _conflict_set_subscription: Option<Subscription>,
 }
 
-/// A single diff view over one immutable [`DiffBase`] kind (Uncommitted,
-/// Unstaged, Staged, or a merge base). It owns the multibuffer, the splittable
-/// editor, and the [`branch_diff::BranchDiff`] that feeds it, and configures the
-/// editor's styling once at construction.
-///
-/// [`crate::project_diff::ProjectDiff`] holds one or two of these and swaps
-/// between them when toggling between uncommitted and unstaged views, so each
-/// view keeps its own excerpts, scroll position, and hunk styling rather than
-/// reconfiguring a shared editor on every toggle.
 pub struct DiffMultibuffer {
     multibuffer: Entity<MultiBuffer>,
-    branch_diff: Entity<branch_diff::BranchDiff>,
+    branch_diff: Entity<diff_buffer_list::DiffBufferList>,
     editor: Entity<SplittableEditor>,
     buffer_subscriptions: HashMap<RepoPath, BufferSubscriptions>,
     workspace: WeakEntity<Workspace>,
@@ -78,13 +68,14 @@ impl DiffMultibuffer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let branch_diff =
-            cx.new(|cx| branch_diff::BranchDiff::new(diff_base, project.clone(), window, cx));
+        let branch_diff = cx.new(|cx| {
+            diff_buffer_list::DiffBufferList::new(diff_base, project.clone(), window, cx)
+        });
         Self::new_impl(branch_diff, project, workspace, window, cx)
     }
 
     pub(crate) fn new_impl(
-        branch_diff: Entity<branch_diff::BranchDiff>,
+        branch_diff: Entity<diff_buffer_list::DiffBufferList>,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
         window: &mut Window,
@@ -100,8 +91,6 @@ impl DiffMultibuffer {
             multibuffer.set_all_diff_hunks_expanded(cx);
             multibuffer
         });
-        let diff_multibuffer = cx.weak_entity();
-
         let editor = cx.new(|cx| {
             let mut diff_display_editor = SplittableEditor::new(
                 EditorSettings::get_global(cx).diff_view_style,
@@ -117,7 +106,6 @@ impl DiffMultibuffer {
                 &mut diff_display_editor,
                 workspace.downgrade(),
                 branch_diff.clone(),
-                diff_multibuffer.clone(),
                 cx,
             );
             diff_display_editor.rhs_editor().update(cx, |editor, cx| {
@@ -212,8 +200,7 @@ impl DiffMultibuffer {
         diff_base: &DiffBase,
         editor: &mut SplittableEditor,
         workspace: WeakEntity<Workspace>,
-        branch_diff: Entity<branch_diff::BranchDiff>,
-        diff_multibuffer: WeakEntity<DiffMultibuffer>,
+        branch_diff: Entity<diff_buffer_list::DiffBufferList>,
         cx: &mut Context<SplittableEditor>,
     ) {
         editor.set_render_diff_hunks_as_unstaged(*diff_base == DiffBase::Index, cx);
@@ -221,8 +208,7 @@ impl DiffMultibuffer {
             DiffBase::Head | DiffBase::Index | DiffBase::Staged => {
                 let render_diff_hunk_controls = match diff_base {
                     DiffBase::Head => render_default_project_diff_hunk_controls(),
-                    DiffBase::Index => render_stage_unstaged_hunk_controls(),
-                    DiffBase::Staged => render_unstage_staged_hunk_controls(diff_multibuffer),
+                    DiffBase::Index | DiffBase::Staged => Arc::new(render_empty_diff_hunk_controls),
                     DiffBase::Merge { .. } => unreachable!(),
                 };
                 editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx);
@@ -259,7 +245,7 @@ impl DiffMultibuffer {
         self.branch_diff.read(cx).diff_base()
     }
 
-    pub(crate) fn branch_diff(&self) -> &Entity<branch_diff::BranchDiff> {
+    pub(crate) fn branch_diff(&self) -> &Entity<diff_buffer_list::DiffBufferList> {
         &self.branch_diff
     }
 
@@ -390,6 +376,16 @@ impl DiffMultibuffer {
     /// Returns a reference to the splittable editor.
     pub(crate) fn editor(&self) -> &Entity<SplittableEditor> {
         &self.editor
+    }
+
+    pub(crate) fn set_render_diff_hunk_controls(
+        &mut self,
+        render_diff_hunk_controls: RenderDiffHunkControlsFn,
+        cx: &mut Context<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx)
+        });
     }
 
     fn selected_ranges(&self, cx: &App) -> (bool, Vec<std::ops::Range<multi_buffer::Anchor>>) {
@@ -536,7 +532,7 @@ impl DiffMultibuffer {
             return;
         }
 
-        let Some((project, ranges_by_buffer_id)) = editor.update(cx, |editor, cx| {
+        let Some((project, mut ranges_by_buffer_id)) = editor.update(cx, |editor, cx| {
             let project = editor.project().cloned()?;
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             // In staged mode the display buffer is the index text buffer, so the
@@ -555,34 +551,25 @@ impl DiffMultibuffer {
             return;
         };
 
-        let operation_buffers_by_display_id = self
+        let ranges_to_unstage = self
             .buffer_subscriptions
             .values()
-            .map(|sub| {
-                (
-                    sub.display_buffer.read(cx).remote_id(),
-                    sub.operation_buffer.clone(),
-                )
-            })
-            .collect::<HashMap<_, _>>();
-
-        let operations = ranges_by_buffer_id
-            .into_iter()
-            .filter_map(|(display_buffer_id, index_ranges)| {
-                let operation_buffer = operation_buffers_by_display_id.get(&display_buffer_id)?;
-                Some((operation_buffer.clone(), index_ranges))
+            .filter_map(|sub| {
+                let index_ranges =
+                    ranges_by_buffer_id.remove(&sub.display_buffer.read(cx).remote_id())?;
+                Some((sub.main_buffer.clone(), index_ranges))
             })
             .collect::<Vec<_>>();
 
-        if operations.is_empty() {
+        if ranges_to_unstage.is_empty() {
             return;
         }
 
         cx.spawn_in(window, async move |_, cx| {
-            for (operation_buffer, index_ranges) in operations {
+            for (main_buffer, index_ranges) in ranges_to_unstage {
                 project
                     .update(cx, |project, cx| {
-                        project.unstage_staged_hunks(operation_buffer, index_ranges, cx)
+                        project.unstage_staged_hunks(main_buffer, index_ranges, cx)
                     })
                     .await?;
             }
@@ -648,9 +635,9 @@ impl DiffMultibuffer {
         path_key: PathKey,
         file_status: FileStatus,
         display_buffer: Entity<Buffer>,
-        operation_buffer: Entity<Buffer>,
+        main_buffer: Entity<Buffer>,
         diff: Entity<BufferDiff>,
-        conflict_set: Entity<ConflictSet>,
+        conflict_set: Option<Entity<ConflictSet>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<BufferId> {
@@ -658,7 +645,7 @@ impl DiffMultibuffer {
             let repo_path = repo_path.clone();
             let path_key = path_key.clone();
             let display_buffer = display_buffer.clone();
-            let operation_buffer = operation_buffer.clone();
+            let main_buffer = main_buffer.clone();
             let diff = diff.clone();
             let conflict_set = conflict_set.clone();
             move |this, _, event, window, cx| match event {
@@ -668,7 +655,7 @@ impl DiffMultibuffer {
                         path_key.clone(),
                         file_status,
                         display_buffer.clone(),
-                        operation_buffer.clone(),
+                        main_buffer.clone(),
                         diff.clone(),
                         conflict_set.clone(),
                         window,
@@ -678,33 +665,35 @@ impl DiffMultibuffer {
                 buffer_diff::BufferDiffEvent::BaseTextChanged => {}
             }
         });
-        let conflict_set_subscription = cx.subscribe_in(&conflict_set, window, {
-            let repo_path = repo_path.clone();
-            let path_key = path_key.clone();
-            let display_buffer = display_buffer.clone();
-            let operation_buffer = operation_buffer.clone();
-            let diff = diff.clone();
-            let conflict_set = conflict_set.clone();
-            move |this, _, _, window, cx| {
-                this.buffer_ranges_changed(
-                    repo_path.clone(),
-                    path_key.clone(),
-                    file_status,
-                    display_buffer.clone(),
-                    operation_buffer.clone(),
-                    diff.clone(),
-                    conflict_set.clone(),
-                    window,
-                    cx,
-                )
-            }
+        let conflict_set_subscription = conflict_set.as_ref().map(|conflict_set| {
+            cx.subscribe_in(conflict_set, window, {
+                let repo_path = repo_path.clone();
+                let path_key = path_key.clone();
+                let display_buffer = display_buffer.clone();
+                let main_buffer = main_buffer.clone();
+                let diff = diff.clone();
+                let conflict_set = Some(conflict_set.clone());
+                move |this, _, _, window, cx| {
+                    this.buffer_ranges_changed(
+                        repo_path.clone(),
+                        path_key.clone(),
+                        file_status,
+                        display_buffer.clone(),
+                        main_buffer.clone(),
+                        diff.clone(),
+                        conflict_set.clone(),
+                        window,
+                        cx,
+                    )
+                }
+            })
         });
         self.buffer_subscriptions.insert(
             repo_path,
             BufferSubscriptions {
                 _diff: diff.clone(),
                 display_buffer: display_buffer.clone(),
-                operation_buffer,
+                main_buffer,
                 _diff_subscription: diff_subscription,
                 _conflict_set: conflict_set.clone(),
                 _conflict_set_subscription: conflict_set_subscription,
@@ -721,18 +710,17 @@ impl DiffMultibuffer {
                     &snapshot,
                 )
                 .map(|diff_hunk| diff_hunk.buffer_range.to_point(&snapshot));
-            let conflicts = conflict_set.read(cx).snapshot();
-            let mut conflicts = conflicts
-                .conflicts
-                .iter()
-                .map(|conflict| conflict.range.to_point(&snapshot))
-                .peekable();
+            let conflict_ranges = conflict_set.as_ref().and_then(|conflict_set| {
+                let conflicts = conflict_set.read(cx).snapshot();
+                let conflicts = conflicts
+                    .conflicts
+                    .iter()
+                    .map(|conflict| conflict.range.to_point(&snapshot))
+                    .collect::<Vec<_>>();
+                (!conflicts.is_empty()).then_some(conflicts)
+            });
 
-            if conflicts.peek().is_some() {
-                conflicts.collect::<Vec<_>>()
-            } else {
-                diff_hunk_ranges.collect()
-            }
+            conflict_ranges.unwrap_or_else(|| diff_hunk_ranges.collect())
         };
 
         let buffer_id = snapshot.text.remote_id();
@@ -748,9 +736,11 @@ impl DiffMultibuffer {
                 diff,
                 cx,
             );
-            editor.rhs_editor().update(cx, |editor, cx| {
-                conflict_view::buffer_ranges_updated(editor, conflict_set, cx);
-            });
+            if let Some(conflict_set) = conflict_set {
+                editor.rhs_editor().update(cx, |editor, cx| {
+                    conflict_view::buffer_ranges_updated(editor, conflict_set, cx);
+                });
+            }
             (was_empty, is_newly_added)
         });
 
@@ -804,9 +794,9 @@ impl DiffMultibuffer {
         path_key: PathKey,
         file_status: FileStatus,
         display_buffer: Entity<Buffer>,
-        operation_buffer: Entity<Buffer>,
+        main_buffer: Entity<Buffer>,
         diff: Entity<BufferDiff>,
-        conflict_set: Entity<ConflictSet>,
+        conflict_set: Option<Entity<ConflictSet>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -818,21 +808,12 @@ impl DiffMultibuffer {
             path_key,
             file_status,
             display_buffer,
-            operation_buffer,
+            main_buffer,
             diff,
             conflict_set,
             window,
             cx,
         );
-    }
-
-    /// Schedules a refresh, replacing any in-flight one. Used when this view
-    /// becomes the active project-diff view so it is brought current on show.
-    pub(crate) fn request_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self._task = window.spawn(cx, {
-            let this = cx.weak_entity();
-            async |cx| Self::refresh(this, cx).await
-        });
     }
 
     #[instrument(skip(this, cx))]
@@ -909,7 +890,7 @@ impl DiffMultibuffer {
                             path_key,
                             entry.file_status,
                             loaded_buffer.display_buffer,
-                            loaded_buffer.operation_buffer,
+                            loaded_buffer.main_buffer,
                             loaded_buffer.diff,
                             loaded_buffer.conflict_set,
                             window,
@@ -1194,105 +1175,21 @@ impl Render for DiffMultibuffer {
     }
 }
 
-fn render_stage_unstaged_hunk_controls() -> RenderDiffHunkControlsFn {
-    Arc::new(
-        move |row, status, hunk_range, _is_created_file, line_height, editor, _window, cx| {
-            if !ProjectSettings::get_global(cx)
-                .git
-                .show_stage_restore_buttons
-            {
-                return gpui::Empty.into_any_element();
-            }
-            let hunk_range = hunk_range.start..hunk_range.start;
-            h_flex()
-                .h(line_height)
-                .mr_1()
-                .gap_1()
-                .px_0p5()
-                .pb_1()
-                .border_x_1()
-                .border_b_1()
-                .border_color(cx.theme().colors().border_variant)
-                .rounded_b_lg()
-                .bg(cx.theme().colors().editor_background)
-                .block_mouse_except_scroll()
-                .shadow_md()
-                .child(
-                    Button::new(("stage", row as u64), "Stage")
-                        .alpha(if status.is_pending() { 0.66 } else { 1.0 })
-                        .tooltip(Tooltip::text("Stage Hunk"))
-                        .on_click({
-                            let editor = editor.clone();
-                            move |_event, _window, cx| {
-                                editor.update(cx, |editor, cx| {
-                                    editor.stage_or_unstage_diff_hunks(
-                                        true,
-                                        vec![hunk_range.clone()],
-                                        cx,
-                                    );
-                                });
-                            }
-                        }),
-                )
-                .into_any_element()
-        },
-    )
-}
-
-fn render_unstage_staged_hunk_controls(
-    diff_multibuffer: WeakEntity<DiffMultibuffer>,
-) -> RenderDiffHunkControlsFn {
-    Arc::new(
-        move |row, status, hunk_range, _is_created_file, line_height, editor, _window, cx| {
-            if !ProjectSettings::get_global(cx)
-                .git
-                .show_stage_restore_buttons
-            {
-                return gpui::Empty.into_any_element();
-            }
-            let Some(diff_multibuffer) = diff_multibuffer.upgrade() else {
-                return gpui::Empty.into_any_element();
-            };
-            let hunk_range = hunk_range.start..hunk_range.start;
-            h_flex()
-                .h(line_height)
-                .mr_1()
-                .gap_1()
-                .px_0p5()
-                .pb_1()
-                .border_x_1()
-                .border_b_1()
-                .border_color(cx.theme().colors().border_variant)
-                .rounded_b_lg()
-                .bg(cx.theme().colors().editor_background)
-                .block_mouse_except_scroll()
-                .shadow_md()
-                .child(
-                    Button::new(("unstage", row as u64), "Unstage")
-                        .alpha(if status.is_pending() { 0.66 } else { 1.0 })
-                        .tooltip(Tooltip::text("Unstage Hunk"))
-                        .on_click({
-                            let editor = editor.clone();
-                            move |_event, window, cx| {
-                                diff_multibuffer.update(cx, |diff_multibuffer, cx| {
-                                    diff_multibuffer.unstage_staged_hunks(
-                                        editor.clone(),
-                                        vec![hunk_range.clone()],
-                                        false,
-                                        window,
-                                        cx,
-                                    );
-                                });
-                            }
-                        }),
-                )
-                .into_any_element()
-        },
-    )
-}
-
 fn render_default_project_diff_hunk_controls() -> RenderDiffHunkControlsFn {
     Arc::new(render_diff_hunk_controls)
+}
+
+fn render_empty_diff_hunk_controls(
+    _: u32,
+    _: &DiffHunkStatus,
+    _: std::ops::Range<editor::Anchor>,
+    _: bool,
+    _: gpui::Pixels,
+    _: &Entity<Editor>,
+    _: &mut Window,
+    _: &mut App,
+) -> AnyElement {
+    gpui::Empty.into_any_element()
 }
 
 const CONFLICT_SORT_PREFIX: u64 = 1;
@@ -1385,7 +1282,7 @@ fn tree_sort_path(repo_path: &RelPath) -> Arc<RelPath> {
 }
 
 struct BranchDiffAddon {
-    branch_diff: Entity<branch_diff::BranchDiff>,
+    branch_diff: Entity<diff_buffer_list::DiffBufferList>,
 }
 
 impl Addon for BranchDiffAddon {

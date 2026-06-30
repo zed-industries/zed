@@ -2,7 +2,7 @@ use crate::{
     branch_picker,
     diff_multibuffer::DiffMultibuffer,
     project_diff::{
-        self, BranchDiff, CompareWithBranch, ReviewDiff, render_send_review_to_agent_button,
+        self, CompareWithBranch, DeployBranchDiff, ReviewDiff, render_send_review_to_agent_button,
     },
 };
 use agent_settings::AgentSettings;
@@ -17,7 +17,7 @@ use project::{
     Project, ProjectPath,
     git_store::{
         Repository,
-        branch_diff::{self, DiffBase},
+        diff_buffer_list::{self, DiffBase},
     },
 };
 use settings::Settings;
@@ -40,14 +40,14 @@ use zed_actions::agent::ReviewBranchDiff;
 /// the [`Item`] surface to it. The merge base can be changed in place via the
 /// [`BranchDiffToolbar`]'s branch picker, which reloads without reconfiguring
 /// the editor (the merge styling is identical for every base ref).
-pub struct BranchDiffView {
+pub struct BranchDiff {
     diff: Entity<DiffMultibuffer>,
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     _diff_event_subscription: Subscription,
 }
 
-impl BranchDiffView {
+impl BranchDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy_branch_diff);
         workspace.register_action(Self::compare_with_branch);
@@ -56,7 +56,7 @@ impl BranchDiffView {
 
     fn deploy_branch_diff(
         workspace: &mut Workspace,
-        _: &BranchDiff,
+        _: &DeployBranchDiff,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
@@ -177,8 +177,8 @@ impl BranchDiffView {
             });
 
             if needs_switch {
-                existing.update(cx, |branch_diff_view, cx| {
-                    branch_diff_view.set_repo(Some(intended_repo), cx);
+                existing.update(cx, |branch_diff, cx| {
+                    branch_diff.set_repo(Some(intended_repo), cx);
                 });
             }
 
@@ -260,7 +260,7 @@ impl BranchDiffView {
         cx: &mut Context<Self>,
     ) -> Self {
         let branch_diff = cx.new(|cx| {
-            let mut branch_diff = branch_diff::BranchDiff::new(
+            let mut branch_diff = diff_buffer_list::DiffBufferList::new(
                 DiffBase::Merge { base_ref },
                 project.clone(),
                 window,
@@ -363,15 +363,15 @@ impl BranchDiffView {
     }
 }
 
-impl EventEmitter<EditorEvent> for BranchDiffView {}
+impl EventEmitter<EditorEvent> for BranchDiff {}
 
-impl Focusable for BranchDiffView {
+impl Focusable for BranchDiff {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.diff.read(cx).focus_handle(cx)
     }
 }
 
-impl Item for BranchDiffView {
+impl Item for BranchDiff {
     type Event = EditorEvent;
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
@@ -536,7 +536,7 @@ impl Item for BranchDiffView {
             )
         } else if type_id == TypeId::of::<SplittableEditor>() {
             Some(self.diff.read(cx).editor().clone().into())
-        } else if type_id == TypeId::of::<branch_diff::BranchDiff>() {
+        } else if type_id == TypeId::of::<diff_buffer_list::DiffBufferList>() {
             Some(self.diff.read(cx).branch_diff().clone().into())
         } else {
             None
@@ -555,7 +555,7 @@ impl Item for BranchDiffView {
     }
 }
 
-impl Render for BranchDiffView {
+impl Render for BranchDiff {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
@@ -564,9 +564,9 @@ impl Render for BranchDiffView {
     }
 }
 
-impl SerializableItem for BranchDiffView {
+impl SerializableItem for BranchDiff {
     fn serialized_item_kind() -> &'static str {
-        "BranchDiffView"
+        "BranchDiff"
     }
 
     fn cleanup(
@@ -590,7 +590,7 @@ impl SerializableItem for BranchDiffView {
         window.spawn(cx, async move |cx| {
             let diff_base = db.get_project_diff_base(item_id, workspace_id)?;
             let DiffBase::Merge { base_ref } = diff_base else {
-                anyhow::bail!("expected a merge base for a branch diff view");
+                anyhow::bail!("expected a merge base for a branch diff");
             };
             let workspace = workspace.upgrade().context("workspace gone")?;
             cx.update(|window, cx| {
@@ -625,23 +625,21 @@ impl SerializableItem for BranchDiffView {
 }
 
 pub struct BranchDiffToolbar {
-    branch_diff_view: Option<WeakEntity<BranchDiffView>>,
+    branch_diff: Option<WeakEntity<BranchDiff>>,
 }
 
 impl BranchDiffToolbar {
     pub fn new(_cx: &mut Context<Self>) -> Self {
-        Self {
-            branch_diff_view: None,
-        }
+        Self { branch_diff: None }
     }
 
-    fn branch_diff_view(&self, _: &App) -> Option<Entity<BranchDiffView>> {
-        self.branch_diff_view.as_ref()?.upgrade()
+    fn branch_diff(&self, _: &App) -> Option<Entity<BranchDiff>> {
+        self.branch_diff.as_ref()?.upgrade()
     }
 
     fn dispatch_action(&self, action: &dyn Action, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(branch_diff_view) = self.branch_diff_view(cx) {
-            branch_diff_view.focus_handle(cx).focus(window, cx);
+        if let Some(branch_diff) = self.branch_diff(cx) {
+            branch_diff.focus_handle(cx).focus(window, cx);
         }
         let action = action.boxed_clone();
         cx.defer(move |cx| {
@@ -659,10 +657,10 @@ impl ToolbarItemView for BranchDiffToolbar {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
-        self.branch_diff_view = active_pane_item
-            .and_then(|item| item.act_as::<BranchDiffView>(cx))
+        self.branch_diff = active_pane_item
+            .and_then(|item| item.act_as::<BranchDiff>(cx))
             .map(|entity| entity.downgrade());
-        if self.branch_diff_view.is_some() {
+        if self.branch_diff.is_some() {
             ToolbarItemLocation::PrimaryRight
         } else {
             ToolbarItemLocation::Hidden
@@ -680,31 +678,31 @@ impl ToolbarItemView for BranchDiffToolbar {
 
 impl Render for BranchDiffToolbar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(branch_diff_view) = self.branch_diff_view(cx) else {
+        let Some(branch_diff) = self.branch_diff(cx) else {
             return div();
         };
-        let focus_handle = branch_diff_view.focus_handle(cx);
-        let review_count = branch_diff_view
+        let focus_handle = branch_diff.focus_handle(cx);
+        let review_count = branch_diff
             .read(cx)
             .diff
             .read(cx)
             .total_review_comment_count();
-        let (additions, deletions) = branch_diff_view
+        let (additions, deletions) = branch_diff
             .read(cx)
             .diff
             .read(cx)
             .calculate_changed_lines(cx);
-        let diff_base = branch_diff_view.read(cx).diff_base(cx).clone();
+        let diff_base = branch_diff.read(cx).diff_base(cx).clone();
         let DiffBase::Merge { base_ref } = diff_base else {
             return div();
         };
         let selected_base_ref = base_ref.clone();
         let base_ref_label = format!("Base: {base_ref}");
-        let repository = branch_diff_view.read(cx).repo(cx);
-        let workspace = branch_diff_view.read(cx).workspace.clone();
-        let view_for_picker = branch_diff_view.downgrade();
+        let repository = branch_diff.read(cx).repo(cx);
+        let workspace = branch_diff.read(cx).workspace.clone();
+        let view_for_picker = branch_diff.downgrade();
 
-        let is_multibuffer_empty = branch_diff_view
+        let is_multibuffer_empty = branch_diff
             .read(cx)
             .diff
             .read(cx)
@@ -732,8 +730,8 @@ impl Render for BranchDiffToolbar {
                                   cx: &mut App| {
                                 let base_ref: SharedString = branch.name().to_owned().into();
                                 view_for_picker
-                                    .update(cx, |branch_diff_view, cx| {
-                                        branch_diff_view.set_merge_base(base_ref, cx);
+                                    .update(cx, |branch_diff, cx| {
+                                        branch_diff.set_merge_base(base_ref, cx);
                                         cx.notify();
                                     })
                                     .ok();
@@ -900,9 +898,9 @@ mod tests {
         let (multi_workspace, cx) =
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        let _branch_diff_view = cx
+        let _branch_diff = cx
             .update(|window, cx| {
-                BranchDiffView::new_with_default_branch(project.clone(), workspace, window, cx)
+                BranchDiff::new_with_default_branch(project.clone(), workspace, window, cx)
             })
             .await
             .unwrap();
@@ -1015,7 +1013,7 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let diff = cx
             .update(|window, cx| {
-                BranchDiffView::new_with_default_branch(project.clone(), workspace, window, cx)
+                BranchDiff::new_with_default_branch(project.clone(), workspace, window, cx)
             })
             .await
             .unwrap();
@@ -1109,7 +1107,7 @@ mod tests {
                 let Some(repository) = project.read(cx).active_repository(cx) else {
                     return Task::ready(Err(anyhow!("No active repository")));
                 };
-                BranchDiffView::new_with_branch_base(
+                BranchDiff::new_with_branch_base(
                     project.clone(),
                     workspace.clone(),
                     "topic".into(),
@@ -1133,12 +1131,12 @@ mod tests {
 
         cx.focus(&workspace);
         cx.update(|window, cx| {
-            window.dispatch_action(BranchDiff.boxed_clone(), cx);
+            window.dispatch_action(DeployBranchDiff.boxed_clone(), cx);
         });
         cx.run_until_parked();
 
         let (active_base_ref, mut base_refs) = workspace.update(cx, |workspace, cx| {
-            let active_item = workspace.active_item_as::<BranchDiffView>(cx).unwrap();
+            let active_item = workspace.active_item_as::<BranchDiff>(cx).unwrap();
             let active_base_ref = match active_item.read(cx).diff_base(cx) {
                 DiffBase::Merge { base_ref } => base_ref.to_string(),
                 DiffBase::Head | DiffBase::Index | DiffBase::Staged => {
@@ -1146,7 +1144,7 @@ mod tests {
                 }
             };
             let base_refs = workspace
-                .items_of_type::<BranchDiffView>(cx)
+                .items_of_type::<BranchDiff>(cx)
                 .filter_map(|item| match item.read(cx).diff_base(cx) {
                     DiffBase::Merge { base_ref } => Some(base_ref.to_string()),
                     DiffBase::Head | DiffBase::Index | DiffBase::Staged => None,

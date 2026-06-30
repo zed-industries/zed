@@ -1,8 +1,9 @@
 use crate::{
-    branch_diff_view::BranchDiffView,
+    branch_diff::BranchDiff,
     diff_multibuffer::{ButtonStates, DiffMultibuffer},
     git_panel::{GitPanel, GitStatusEntry},
     staged_diff::StagedDiff,
+    unstaged_diff::UnstagedDiff,
 };
 use anyhow::{Context as _, Result};
 use editor::{
@@ -19,9 +20,11 @@ use project::{
     Project, ProjectPath,
     git_store::{
         Repository,
-        branch_diff::{self, DiffBase},
+        diff_buffer_list::{self, DiffBase},
     },
 };
+use schemars::JsonSchema;
+use serde::Deserialize;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 use ui::{Tooltip, prelude::*, vertical_divider};
@@ -40,9 +43,6 @@ actions!(
         Diff,
         /// Adds files to the git staging area.
         Add,
-        /// Shows the diff between the working directory and your default
-        /// branch (typically main or master).
-        BranchDiff,
         /// Opens a new agent thread with the branch diff for review.
         ReviewDiff,
         LeaderAndFollower,
@@ -51,30 +51,25 @@ actions!(
     ]
 );
 
-/// The workspace item for git diff views. It owns one or two
-/// [`DiffMultibuffer`]s and decides which is shown.
-///
-/// For the project-diff case it toggles between an uncommitted
-/// ([`DiffBase::Head`]) and an unstaged ([`DiffBase::Index`]) view, keeping the
-/// other one warm in [`Self::inactive`] so switching is instant and preserves
-/// each view's scroll position and hunk styling. Staged and merge-base views
-/// only ever use a single [`DiffMultibuffer`].
+/// Shows the diff between the working directory and your default
+/// branch (typically main or master).
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = git, name = "BranchDiff")]
+pub(crate) struct DeployBranchDiff;
+
 pub struct ProjectDiff {
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     active: Entity<DiffMultibuffer>,
-    inactive: Option<Entity<DiffMultibuffer>>,
-    /// Set when deserializing a legacy persisted `ProjectDiff` whose base is no
-    /// longer owned by `ProjectDiff` (staged or merge). On
-    /// [`Item::added_to_workspace`] the item replaces itself in the pane with
-    /// the appropriate dedicated item.
+
     pending_item_swap: Option<PendingItemSwap>,
     _active_observation: Subscription,
 }
 
 enum PendingItemSwap {
+    UnstagedDiff,
     StagedDiff,
-    BranchDiffView { base_ref: SharedString },
+    BranchDiff { base_ref: SharedString },
 }
 
 impl ProjectDiff {
@@ -82,12 +77,12 @@ impl ProjectDiff {
         workspace.register_action(Self::deploy);
         workspace.register_action(
             |workspace, _: &git_actions::ViewUncommittedChanges, window, cx| {
-                Self::deploy_head_diff_at(workspace, DiffBase::Head, None, window, cx);
+                Self::deploy_head_diff_at(workspace, None, window, cx);
             },
         );
         workspace.register_action(
             |workspace, _: &git_actions::ViewUnstagedChanges, window, cx| {
-                Self::deploy_head_diff_at(workspace, DiffBase::Index, None, window, cx);
+                UnstagedDiff::deploy_at(workspace, None, window, cx);
             },
         );
         workspace.register_action(|workspace, _: &Add, window, cx| {
@@ -102,7 +97,7 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        Self::deploy_head_diff_at(workspace, DiffBase::Head, None, window, cx)
+        Self::deploy_head_diff_at(workspace, None, window, cx)
     }
 
     pub fn deploy_at(
@@ -111,21 +106,11 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        Self::deploy_head_diff_at(workspace, DiffBase::Head, entry, window, cx)
-    }
-
-    pub fn deploy_unstaged_at(
-        workspace: &mut Workspace,
-        entry: Option<GitStatusEntry>,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        Self::deploy_head_diff_at(workspace, DiffBase::Index, entry, window, cx)
+        Self::deploy_head_diff_at(workspace, entry, window, cx)
     }
 
     fn deploy_head_diff_at(
         workspace: &mut Workspace,
-        diff_base: DiffBase,
         entry: Option<GitStatusEntry>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
@@ -140,13 +125,8 @@ impl ProjectDiff {
         );
         let intended_repo = workspace.project().read(cx).active_repository(cx);
 
-        let existing = workspace
-            .items_of_type::<Self>(cx)
-            .find(|item| item.read(cx).diff_base(cx).is_project_diff());
+        let existing = workspace.items_of_type::<Self>(cx).next();
         let project_diff = if let Some(existing) = existing {
-            existing.update(cx, |project_diff, cx| {
-                project_diff.set_diff_base(diff_base.clone(), window, cx);
-            });
             existing.update(cx, |project_diff, cx| {
                 project_diff.move_to_beginning(window, cx);
             });
@@ -155,15 +135,8 @@ impl ProjectDiff {
             existing
         } else {
             let workspace_handle = cx.entity();
-            let project_diff = cx.new(|cx| {
-                Self::new_with_diff_base(
-                    diff_base.clone(),
-                    workspace.project().clone(),
-                    workspace_handle,
-                    window,
-                    cx,
-                )
-            });
+            let project_diff =
+                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
             workspace.add_item_to_active_pane(
                 Box::new(project_diff.clone()),
                 None,
@@ -200,26 +173,14 @@ impl ProjectDiff {
         cx: &mut Context<Workspace>,
     ) {
         telemetry::event!("Git Diff Opened", source = "Agent Panel");
-        let existing = workspace
-            .items_of_type::<Self>(cx)
-            .find(|item| item.read(cx).diff_base(cx).is_project_diff());
+        let existing = workspace.items_of_type::<Self>(cx).next();
         let project_diff = if let Some(existing) = existing {
-            existing.update(cx, |project_diff, cx| {
-                project_diff.set_diff_base(DiffBase::Head, window, cx);
-            });
             workspace.activate_item(&existing, true, true, window, cx);
             existing
         } else {
             let workspace_handle = cx.entity();
-            let project_diff = cx.new(|cx| {
-                Self::new_with_diff_base(
-                    DiffBase::Head,
-                    workspace.project().clone(),
-                    workspace_handle,
-                    window,
-                    cx,
-                )
-            });
+            let project_diff =
+                cx.new(|cx| Self::new(workspace.project().clone(), workspace_handle, window, cx));
             workspace.add_item_to_active_pane(
                 Box::new(project_diff.clone()),
                 None,
@@ -238,8 +199,7 @@ impl ProjectDiff {
         self.active.update(cx, |diff, cx| diff.autoscroll(cx));
     }
 
-    pub(crate) fn new_with_diff_base(
-        diff_base: DiffBase,
+    pub(crate) fn new(
         project: Entity<Project>,
         workspace: Entity<Workspace>,
         window: &mut Window,
@@ -247,7 +207,7 @@ impl ProjectDiff {
     ) -> Self {
         let active = cx.new(|cx| {
             DiffMultibuffer::new_with_diff_base(
-                diff_base,
+                DiffBase::Head,
                 project.clone(),
                 workspace.clone(),
                 window,
@@ -258,7 +218,7 @@ impl ProjectDiff {
     }
 
     fn new_impl(
-        branch_diff: Entity<branch_diff::BranchDiff>,
+        branch_diff: Entity<diff_buffer_list::DiffBufferList>,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
         window: &mut Window,
@@ -281,76 +241,9 @@ impl ProjectDiff {
             project,
             workspace: workspace.downgrade(),
             active,
-            inactive: None,
             pending_item_swap: None,
             _active_observation: observation,
         }
-    }
-
-    /// Switches which [`DiffBase`] is shown. Used to toggle between the
-    /// uncommitted and unstaged project-diff views. The previously-active view
-    /// is kept warm so toggling back is instant and preserves its scroll
-    /// position; the now-active view is refreshed on show.
-    fn set_diff_base(&mut self, diff_base: DiffBase, window: &mut Window, cx: &mut Context<Self>) {
-        if self.active.read(cx).diff_base(cx) == &diff_base {
-            return;
-        }
-
-        let was_focused = self.active.focus_handle(cx).contains_focused(window, cx);
-        let cached_matches = self
-            .inactive
-            .as_ref()
-            .is_some_and(|diff| diff.read(cx).diff_base(cx) == &diff_base);
-        if cached_matches {
-            if let Some(inactive) = self.inactive.take() {
-                let previously_active = std::mem::replace(&mut self.active, inactive);
-                self.inactive = Some(previously_active);
-            }
-        } else {
-            self.build_active(diff_base, window, cx);
-        }
-
-        self._active_observation = cx.observe(&self.active, |_, _, cx| cx.notify());
-        if was_focused {
-            let focus_handle = self.active.focus_handle(cx);
-            window.focus(&focus_handle, cx);
-        }
-        self.active
-            .update(cx, |diff, cx| diff.request_refresh(window, cx));
-        cx.notify();
-    }
-
-    fn build_active(&mut self, diff_base: DiffBase, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-        let previously_active = self.active.clone();
-        let repo = previously_active.read(cx).repo(cx);
-        let new_active = cx.new(|cx| {
-            DiffMultibuffer::new_with_diff_base(
-                diff_base,
-                self.project.clone(),
-                workspace,
-                window,
-                cx,
-            )
-        });
-        new_active.update(cx, |diff, cx| diff.set_repo(repo, cx));
-        self.inactive = Some(previously_active);
-        self.active = new_active.clone();
-        // Register the new view's editor with the workspace once the current
-        // update unwinds, since `set_diff_base` may be called while the
-        // workspace is already being updated (e.g. from a deploy action).
-        cx.defer_in(window, move |this, window, cx| {
-            let Some(workspace) = this.workspace.upgrade() else {
-                return;
-            };
-            workspace.update(cx, |workspace, cx| {
-                new_active.update(cx, |diff, cx| {
-                    diff.added_to_workspace(workspace, window, cx)
-                });
-            });
-        });
     }
 
     pub fn diff_base<'a>(&'a self, cx: &'a App) -> &'a DiffBase {
@@ -364,13 +257,6 @@ impl ProjectDiff {
     pub(crate) fn set_repo(&mut self, repo: Option<Entity<Repository>>, cx: &mut Context<Self>) {
         self.active
             .update(cx, |diff, cx| diff.set_repo(repo.clone(), cx));
-        if let Some(inactive) = self.inactive.clone() {
-            inactive.update(cx, |diff, cx| diff.set_repo(repo, cx));
-        }
-    }
-
-    fn is_unstaged_mode(&self, cx: &App) -> bool {
-        self.active.read(cx).is_unstaged_mode(cx)
     }
 
     pub fn move_to_entry(
@@ -420,17 +306,6 @@ impl ProjectDiff {
 
     fn button_states(&self, cx: &App) -> ButtonStates {
         self.active.read(cx).button_states(cx)
-    }
-
-    fn stage_selected_unstaged_hunks(
-        &mut self,
-        move_to_next: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.active.update(cx, |diff, cx| {
-            diff.stage_selected_unstaged_hunks(move_to_next, window, cx)
-        });
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -542,9 +417,8 @@ impl Item for ProjectDiff {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(None);
         };
-        let diff_base = self.diff_base(cx).clone();
         Task::ready(Some(cx.new(|cx| {
-            ProjectDiff::new_with_diff_base(diff_base, self.project.clone(), workspace, window, cx)
+            ProjectDiff::new(self.project.clone(), workspace, window, cx)
         })))
     }
 
@@ -611,7 +485,7 @@ impl Item for ProjectDiff {
             )
         } else if type_id == TypeId::of::<SplittableEditor>() {
             Some(self.active.read(cx).editor().clone().into())
-        } else if type_id == TypeId::of::<branch_diff::BranchDiff>() {
+        } else if type_id == TypeId::of::<diff_buffer_list::DiffBufferList>() {
             Some(self.active.read(cx).branch_diff().clone().into())
         } else {
             None
@@ -649,6 +523,25 @@ impl Item for ProjectDiff {
                             return;
                         };
                         match &swap {
+                            PendingItemSwap::UnstagedDiff => {
+                                let item = cx.new(|cx| {
+                                    UnstagedDiff::new(
+                                        project.clone(),
+                                        workspace_handle.clone(),
+                                        window,
+                                        cx,
+                                    )
+                                });
+                                workspace.add_item(
+                                    pane.clone(),
+                                    Box::new(item),
+                                    Some(index),
+                                    true,
+                                    true,
+                                    window,
+                                    cx,
+                                );
+                            }
                             PendingItemSwap::StagedDiff => {
                                 let item = cx.new(|cx| {
                                     StagedDiff::new(
@@ -668,9 +561,9 @@ impl Item for ProjectDiff {
                                     cx,
                                 );
                             }
-                            PendingItemSwap::BranchDiffView { base_ref } => {
+                            PendingItemSwap::BranchDiff { base_ref } => {
                                 let item = cx.new(|cx| {
-                                    BranchDiffView::new_with_base_ref(
+                                    BranchDiff::new_with_base_ref(
                                         project.clone(),
                                         workspace_handle.clone(),
                                         base_ref.clone(),
@@ -736,14 +629,16 @@ impl SerializableItem for ProjectDiff {
 
             let diff = cx.update(|window, cx| {
                 let pending_item_swap = match &diff_base {
-                    DiffBase::Head | DiffBase::Index => None,
+                    DiffBase::Head => None,
+                    DiffBase::Index => Some(PendingItemSwap::UnstagedDiff),
                     DiffBase::Staged => Some(PendingItemSwap::StagedDiff),
-                    DiffBase::Merge { base_ref } => Some(PendingItemSwap::BranchDiffView {
+                    DiffBase::Merge { base_ref } => Some(PendingItemSwap::BranchDiff {
                         base_ref: base_ref.clone(),
                     }),
                 };
-                let branch_diff = cx
-                    .new(|cx| branch_diff::BranchDiff::new(diff_base, project.clone(), window, cx));
+                let branch_diff = cx.new(|cx| {
+                    diff_buffer_list::DiffBufferList::new(diff_base, project.clone(), window, cx)
+                });
                 let workspace = workspace.upgrade().context("workspace gone")?;
                 let project_diff =
                     cx.new(|cx| ProjectDiff::new_impl(branch_diff, project, workspace, window, cx));
@@ -799,7 +694,7 @@ pub(crate) mod persistence {
         sqlez_macros::sql,
     };
     use gpui::SharedString;
-    use project::git_store::branch_diff::DiffBase;
+    use project::git_store::diff_buffer_list::DiffBase;
     use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
     pub struct ProjectDiffDb(ThreadSafeConnection);
@@ -955,20 +850,6 @@ impl ProjectDiffToolbar {
             })
             .ok();
     }
-
-    fn stage_selected_unstaged_hunks(
-        &mut self,
-        move_to_next: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(project_diff) = self.project_diff(cx) else {
-            return;
-        };
-        project_diff.update(cx, |project_diff, cx| {
-            project_diff.stage_selected_unstaged_hunks(move_to_next, window, cx);
-        });
-    }
 }
 
 impl EventEmitter<ToolbarItemEvent> for ProjectDiffToolbar {}
@@ -982,7 +863,6 @@ impl ToolbarItemView for ProjectDiffToolbar {
     ) -> ToolbarItemLocation {
         self.project_diff = active_pane_item
             .and_then(|item| item.act_as::<ProjectDiff>(cx))
-            .filter(|item| item.read(cx).diff_base(cx).is_project_diff())
             .map(|entity| entity.downgrade());
         if self.project_diff.is_some() {
             ToolbarItemLocation::PrimaryRight
@@ -1008,7 +888,6 @@ impl Render for ProjectDiffToolbar {
         let focus_handle = project_diff.focus_handle(cx);
         let button_states = project_diff.read(cx).button_states(cx);
         let review_count = project_diff.read(cx).total_review_comment_count(cx);
-        let is_unstaged_mode = project_diff.read(cx).is_unstaged_mode(cx);
 
         h_group_xl()
             .my_neg_1()
@@ -1018,31 +897,7 @@ impl Render for ProjectDiffToolbar {
             .justify_between()
             .child(
                 h_group_sm()
-                    .when(is_unstaged_mode && button_states.selection, |el| {
-                        el.child(
-                            Button::new("stage", "Stage")
-                                .disabled(!button_states.stage)
-                                .tooltip(Tooltip::text("Stage selected hunks"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.stage_selected_unstaged_hunks(false, window, cx)
-                                })),
-                        )
-                    })
-                    .when(is_unstaged_mode && !button_states.selection, |el| {
-                        el.child(
-                            Button::new("stage", "Stage")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Stage and go to next hunk",
-                                    &StageAndNext,
-                                    &focus_handle,
-                                ))
-                                .disabled(!button_states.prev_next && !button_states.stage_all)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.stage_selected_unstaged_hunks(true, window, cx)
-                                })),
-                        )
-                    })
-                    .when(!is_unstaged_mode && button_states.selection, |el| {
+                    .when(button_states.selection, |el| {
                         el.child(
                             Button::new("stage", "Toggle Staged")
                                 .tooltip(Tooltip::for_action_title_in(
@@ -1056,7 +911,7 @@ impl Render for ProjectDiffToolbar {
                                 })),
                         )
                     })
-                    .when(!is_unstaged_mode && !button_states.selection, |el| {
+                    .when(!button_states.selection, |el| {
                         el.child(
                             Button::new("stage", "Stage")
                                 .tooltip(Tooltip::for_action_title_in(
@@ -1404,7 +1259,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_project_diff_mode_actions_filter_mixed_staged_and_unstaged_hunks(
+    async fn test_project_diff_actions_filter_mixed_staged_and_unstaged_hunks(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -1489,17 +1344,21 @@ mod tests {
         cx.run_until_parked();
 
         let unstaged_item = workspace.update(cx, |workspace, cx| {
-            workspace.active_item_as::<ProjectDiff>(cx).unwrap()
+            workspace.active_item_as::<UnstagedDiff>(cx).unwrap()
         });
-        assert_eq!(diff_item.entity_id(), unstaged_item.entity_id());
-        assert_eq!(
-            unstaged_item.read_with(cx, |diff, cx| diff.tab_content_text(0, cx)),
-            "Unstaged Changes"
-        );
-        // Toggling shows a separate, freshly-loaded unstaged view, so the hunk
-        // is shown with its correct unstaged appearance immediately.
-        let unstaged_editor =
-            unstaged_item.read_with(cx, |diff, cx| diff.editor(cx).read(cx).rhs_editor().clone());
+        assert_ne!(diff_item.entity_id(), unstaged_item.entity_id());
+        let unstaged_editor = workspace.update(cx, |workspace, cx| {
+            let active_item = workspace.active_item(cx).unwrap();
+            assert_eq!(active_item.tab_content_text(0, cx), "Unstaged Changes");
+            active_item
+                .act_as::<DiffMultibuffer>(cx)
+                .unwrap()
+                .read(cx)
+                .editor()
+                .read(cx)
+                .rhs_editor()
+                .clone()
+        });
         assert_eq!(
             unstaged_editor.read_with(cx, |editor, cx| {
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
