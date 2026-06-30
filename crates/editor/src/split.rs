@@ -601,9 +601,9 @@ impl SplittableEditor {
             return;
         }
 
-        let is_rhs_singleton = self.rhs_multibuffer.read(cx).is_singleton();
+        let rhs_has_headers = self.rhs_multibuffer.read(cx).snapshot(cx).show_headers();
         let lhs_multibuffer = cx.new(|cx| {
-            let mut multibuffer = if is_rhs_singleton {
+            let mut multibuffer = if !rhs_has_headers {
                 MultiBuffer::without_headers(Capability::ReadOnly)
             } else {
                 MultiBuffer::new(Capability::ReadOnly)

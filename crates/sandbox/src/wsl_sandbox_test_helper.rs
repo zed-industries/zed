@@ -48,8 +48,8 @@ mod imp {
 
     use anyhow::{Context as _, Result, bail, ensure};
     use sandbox::{
-        CommandAndArgs, GitSandboxPolicy, Sandbox, SandboxError, SandboxFsPolicy, SandboxNetPolicy,
-        SandboxPolicy,
+        CommandAndArgs, GitSandboxPolicy, HostFilesystemLocation, Sandbox, SandboxError,
+        SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy,
     };
 
     /// Network access for a helper run, translated into a `SandboxNetPolicy` in
@@ -513,7 +513,12 @@ mod imp {
                 SandboxFsPolicy::Unrestricted
             } else {
                 SandboxFsPolicy::Restricted {
-                    writable_paths: writable_paths.to_vec(),
+                    // On Windows the location only records the requested path;
+                    // the real capture happens WSL-side in the helper.
+                    writable_paths: writable_paths
+                        .iter()
+                        .filter_map(|path| HostFilesystemLocation::new(path).ok())
+                        .collect(),
                 }
             },
             network: match permissions.network {
