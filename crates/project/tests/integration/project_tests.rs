@@ -11316,6 +11316,96 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_git_repository_status_removes_directory_descendants(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "project": {
+                ".git": {},
+                "ci2": {
+                    "Dockerfile.namespace": "untracked",
+                },
+            },
+        }),
+    )
+    .await;
+    fs.set_status_for_repo(
+        path!("/root/project/.git").as_ref(),
+        &[("ci2/Dockerfile.namespace", FileStatus::Untracked)],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    repository.read_with(cx, |repository, _| {
+        assert_eq!(
+            repository.cached_status().collect::<Vec<_>>(),
+            [StatusEntry {
+                repo_path: repo_path("ci2/Dockerfile.namespace"),
+                status: FileStatus::Untracked,
+                diff_stat: None,
+            }]
+        );
+    });
+
+    fs.pause_events();
+    fs.create_dir(path!("/root/project/ci3").as_ref())
+        .await
+        .unwrap();
+    fs.copy_file(
+        path!("/root/project/ci2/Dockerfile.namespace").as_ref(),
+        path!("/root/project/ci3/Dockerfile.namespace").as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fs.remove_dir(
+        path!("/root/project/ci2").as_ref(),
+        RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    fs.clear_buffered_events();
+    fs.unpause_events_and_flush();
+    fs.emit_fs_event(path!("/root/project/ci2"), Some(PathEventKind::Removed));
+    fs.emit_fs_event(path!("/root/project/ci3"), Some(PathEventKind::Created));
+
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    repository.read_with(cx, |repository, _| {
+        assert_eq!(
+            repository.cached_status().collect::<Vec<_>>(),
+            [StatusEntry {
+                repo_path: repo_path("ci3/Dockerfile.namespace"),
+                status: FileStatus::Untracked,
+                diff_stat: None,
+            }]
+        );
+    });
+}
+
 #[cfg(target_os = "linux")]
 #[gpui::test(retries = 5)]
 async fn test_git_events_after_project_excludes_dot_git(cx: &mut gpui::TestAppContext) {
