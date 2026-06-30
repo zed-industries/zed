@@ -395,10 +395,21 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
     let settings_validator = jsonschema::validator_for(&settings_schema)
         .expect("failed to compile settings JSON schema");
 
-    let keymap_schema =
-        keymap_schema_for_actions(&ALL_ACTIONS.actions, &ALL_ACTIONS.schema_definitions);
-    let keymap_validator =
-        jsonschema::validator_for(&keymap_schema).expect("failed to compile keymap JSON schema");
+    // The keymap schema is built from the action manifest. When `actions.json`
+    // is unavailable (e.g. when running outside of CI without first generating
+    // it) there are no actions, which produces an invalid schema (an empty
+    // `anyOf`). In that case we skip keymap snippet validation rather than
+    // panicking, consistent with the action validation skipped above.
+    let keymap_validator = if actions_available() {
+        let keymap_schema =
+            keymap_schema_for_actions(&ALL_ACTIONS.actions, &ALL_ACTIONS.schema_definitions);
+        Some(
+            jsonschema::validator_for(&keymap_schema)
+                .expect("failed to compile keymap JSON schema"),
+        )
+    } else {
+        None
+    };
 
     fn for_each_labeled_code_block_mut(
         book: &mut Book,
@@ -499,19 +510,22 @@ fn template_and_validate_json_snippets(book: &mut Book, errors: &mut HashSet<Pre
                 }
             }
             "keymap" => {
-                if !snippet_json_fixed.starts_with('[') || !snippet_json_fixed.ends_with(']') {
-                    snippet_json_fixed.insert(0, '[');
-                    snippet_json_fixed.push_str("\n]");
-                }
+                if let Some(keymap_validator) = &keymap_validator {
+                    if !snippet_json_fixed.starts_with('[') || !snippet_json_fixed.ends_with(']') {
+                        snippet_json_fixed.insert(0, '[');
+                        snippet_json_fixed.push_str("\n]");
+                    }
 
-                let value =
-                    settings::parse_json_with_comments::<serde_json::Value>(&snippet_json_fixed)?;
-                let validation_errors: Vec<String> = keymap_validator
-                    .iter_errors(&value)
-                    .map(|err| err.to_string())
-                    .collect();
-                if !validation_errors.is_empty() {
-                    anyhow::bail!("{}", validation_errors.join("\n"));
+                    let value = settings::parse_json_with_comments::<serde_json::Value>(
+                        &snippet_json_fixed,
+                    )?;
+                    let validation_errors: Vec<String> = keymap_validator
+                        .iter_errors(&value)
+                        .map(|err| err.to_string())
+                        .collect();
+                    if !validation_errors.is_empty() {
+                        anyhow::bail!("{}", validation_errors.join("\n"));
+                    }
                 }
             }
             "debug" => {

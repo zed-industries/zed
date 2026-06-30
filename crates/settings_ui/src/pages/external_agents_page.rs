@@ -9,7 +9,9 @@ use gpui::{
 };
 use itertools::Itertools as _;
 use project::agent_server_store::{AgentId, AgentServerStore, ExternalAgentSource};
-use settings::{CustomAgentServerSettings, SettingsStore, update_settings_file};
+use settings::{
+    AgentConfigOptionValue, CustomAgentServerSettings, SettingsStore, update_settings_file,
+};
 use ui::{
     AiSettingItem, AiSettingItemSource, AiSettingItemStatus, ContextMenu, ContextMenuEntry,
     Divider, DividerColor, PopoverMenu, Tooltip, prelude::*,
@@ -366,7 +368,7 @@ pub(crate) struct CustomAgentForm {
     /// Advanced fields not surfaced by the form. They're preserved verbatim so
     /// editing the basic settings doesn't drop a user's hand-written config.
     default_mode: Option<String>,
-    default_config_options: HashMap<String, String>,
+    default_config_options: HashMap<String, AgentConfigOptionValue>,
     favorite_config_option_values: HashMap<String, Vec<String>>,
     /// Stable handles for the Cancel/Save buttons so they can render a focus
     /// ring. `Filled`/`Subtle` buttons only get a subtle `focus_visible`
@@ -812,7 +814,7 @@ struct CustomAgentFormValues {
     args: String,
     env: Vec<(String, String)>,
     default_mode: Option<String>,
-    default_config_options: HashMap<String, String>,
+    default_config_options: HashMap<String, AgentConfigOptionValue>,
     favorite_config_option_values: HashMap<String, Vec<String>>,
 }
 
@@ -1157,7 +1159,7 @@ mod tests {
         let mut values = values();
         values.default_mode = Some("ask".into());
         values.default_config_options =
-            HashMap::from_iter([("opt".to_string(), "val".to_string())]);
+            HashMap::from_iter([("opt".to_string(), AgentConfigOptionValue::from("val"))]);
 
         let (_, _, content) = build_settings_from_values(values).unwrap();
         match content {
@@ -1168,8 +1170,10 @@ mod tests {
             } => {
                 assert_eq!(default_mode.as_deref(), Some("ask"));
                 assert_eq!(
-                    default_config_options.get("opt").map(String::as_str),
-                    Some("val")
+                    default_config_options
+                        .get("opt")
+                        .and_then(AgentConfigOptionValue::as_value_id),
+                    Some("val"),
                 );
             }
             _ => panic!("expected a custom agent"),

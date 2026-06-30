@@ -545,6 +545,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::GitGutterSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitHunkStyleSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitPathStyle>(render_dropdown)
+        .add_basic_renderer::<settings::InlineBlameLocation>(render_dropdown)
         .add_basic_renderer::<settings::DiagnosticSeverityContent>(render_dropdown)
         .add_basic_renderer::<settings::SeedQuerySetting>(render_dropdown)
         .add_basic_renderer::<settings::DoubleClickInMultibuffer>(render_dropdown)
@@ -561,7 +562,6 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::LineEndingSetting>(render_dropdown)
         .add_basic_renderer::<settings::IndentGuideColoring>(render_dropdown)
         .add_basic_renderer::<settings::IndentGuideBackgroundColoring>(render_dropdown)
-        .add_basic_renderer::<settings::FileFinderWidthContent>(render_dropdown)
         .add_basic_renderer::<settings::ShowDiagnostics>(render_dropdown)
         .add_basic_renderer::<settings::WordsCompletionMode>(render_dropdown)
         .add_basic_renderer::<settings::LspInsertMode>(render_dropdown)
@@ -601,6 +601,9 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::ThinkingBlockDisplay>(render_dropdown)
         .add_basic_renderer::<settings::ImageFileSizeUnit>(render_dropdown)
         .add_basic_renderer::<settings::StatusStyle>(render_dropdown)
+        .add_basic_renderer::<settings::GitPanelClickBehavior>(render_dropdown)
+        .add_basic_renderer::<settings::GitPanelSortBy>(render_dropdown)
+        .add_basic_renderer::<settings::GitPanelGroupBy>(render_dropdown)
         .add_basic_renderer::<settings::EncodingDisplayOptions>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionHorizontal>(render_dropdown)
         .add_basic_renderer::<settings::PaneSplitDirectionVertical>(render_dropdown)
@@ -1582,6 +1585,7 @@ struct SubPageLink {
     title: SharedString,
     r#type: SubPageType,
     description: Option<SharedString>,
+    search_aliases: &'static [&'static str],
     /// See [`SettingField.json_path`]
     json_path: Option<&'static str>,
     /// Whether or not the settings in this sub page are configurable in settings.json
@@ -2348,19 +2352,20 @@ impl SettingsWindow {
                     }
                     SettingsPageItem::SubPageLink(sub_page_link) => {
                         json_path = sub_page_link.json_path;
+                        let mut parts = vec![page.title, header_str, sub_page_link.title.as_ref()];
+                        parts.extend(sub_page_link.search_aliases);
                         documents.push(SearchDocument {
                             id: key_index,
-                            words: split_into_words(&[
-                                page.title,
-                                header_str,
-                                sub_page_link.title.as_ref(),
-                            ]),
+                            words: split_into_words(&parts),
                         });
                         push_candidates(
                             &mut fuzzy_match_candidates,
                             key_index,
                             sub_page_link.title.as_ref(),
                         );
+                        for alias in sub_page_link.search_aliases {
+                            push_candidates(&mut fuzzy_match_candidates, key_index, alias);
+                        }
                     }
                     SettingsPageItem::ActionLink(action_link) => {
                         documents.push(SearchDocument {
@@ -4125,6 +4130,7 @@ impl SettingsWindow {
             title: title.into(),
             r#type: SubPageType::default(),
             description: None,
+            search_aliases: &[],
             json_path,
             in_json,
             files: USER,
@@ -4182,6 +4188,7 @@ impl SettingsWindow {
             title: "Create Skill".into(),
             r#type: SubPageType::SkillCreator,
             description: None,
+            search_aliases: &[],
             json_path: None,
             in_json: false,
             files: USER | PROJECT,
