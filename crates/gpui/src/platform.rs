@@ -703,6 +703,7 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn start_window_move(&self) {}
     fn start_window_resize(&self, _edge: ResizeEdge) {}
     fn set_exclusive_zone(&self, _zone: Pixels) {}
+    fn set_exclusive_edge(&self, _edge: layer_shell::Anchor) {}
     fn window_decorations(&self) -> Decorations {
         Decorations::Server
     }

@@ -34,8 +34,9 @@ use gpui::{
     PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
     PromptButton, PromptLevel, RequestFrameOptions, ResizeEdge, Scene, Size, Tiling,
     WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowControls,
-    WindowDecorations, WindowKind, WindowParams, layer_shell::LayerShellNotSupportedError, px,
-    size,
+    WindowDecorations, WindowKind, WindowParams,
+    layer_shell::{Anchor, LayerShellNotSupportedError},
+    px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, WgpuRenderer, WgpuSurfaceConfig, wgpu};
 
@@ -177,12 +178,12 @@ impl WaylandSurfaceState {
             }
 
             if let Some(exclusive_edge) = options.exclusive_edge {
-                layer_surface
-                    .set_exclusive_edge(super::layer_shell::wayland_anchor(exclusive_edge));
+                Self::apply_exclusive_edge(&layer_surface, options.anchor, exclusive_edge);
             }
 
             return Ok(WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState {
                 layer_surface,
+                anchor: options.anchor,
             }));
         }
 
@@ -244,6 +245,7 @@ pub struct WaylandXdgSurfaceState {
 
 pub struct WaylandLayerSurfaceState {
     layer_surface: zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+    anchor: Anchor,
 }
 
 impl WaylandSurfaceState {
@@ -297,6 +299,38 @@ impl WaylandSurfaceState {
         }
     }
 
+    /// An exclusive edge must be a single edge that the surface is anchored to,
+    /// otherwise the compositor raises a fatal `invalid_exclusive_edge` protocol
+    /// error. An invalid edge is logged and ignored. Returns whether it applied.
+    fn apply_exclusive_edge(
+        layer_surface: &zwlr_layer_surface_v1::ZwlrLayerSurfaceV1,
+        anchor: Anchor,
+        edge: Anchor,
+    ) -> bool {
+        if edge.bits().count_ones() == 1 && anchor.contains(edge) {
+            layer_surface.set_exclusive_edge(super::layer_shell::wayland_anchor(edge));
+            true
+        } else {
+            log::warn!(
+                "ignoring exclusive edge {edge:?}: must be a single edge of the surface anchor {anchor:?}"
+            );
+            false
+        }
+    }
+
+    fn set_exclusive_edge(&self, edge: Anchor) -> bool {
+        if let WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState {
+            layer_surface,
+            anchor,
+            ..
+        }) = self
+        {
+            Self::apply_exclusive_edge(layer_surface, *anchor, edge)
+        } else {
+            false
+        }
+    }
+
     fn destroy(&mut self) {
         match self {
             WaylandSurfaceState::Xdg(WaylandXdgSurfaceState {
@@ -315,7 +349,7 @@ impl WaylandSurfaceState {
                 toplevel.destroy();
                 xdg_surface.destroy();
             }
-            WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface }) => {
+            WaylandSurfaceState::LayerShell(WaylandLayerSurfaceState { layer_surface, .. }) => {
                 layer_surface.destroy();
             }
         }
@@ -1506,6 +1540,15 @@ impl PlatformWindow for WaylandWindow {
             .surface_state
             .set_exclusive_zone(f32::from(zone) as i32)
         {
+            // Commit to apply it immediately, otherwise it only takes effect
+            // on the next frame.
+            state.surface.commit();
+        }
+    }
+
+    fn set_exclusive_edge(&self, edge: Anchor) {
+        let state = self.borrow();
+        if state.surface_state.set_exclusive_edge(edge) {
             // Commit to apply it immediately, otherwise it only takes effect
             // on the next frame.
             state.surface.commit();
