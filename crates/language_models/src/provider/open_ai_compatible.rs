@@ -482,6 +482,23 @@ mod tests {
         }
     }
 
+    fn response_request_json(
+        model: &AvailableModel,
+        request: LanguageModelRequest,
+    ) -> serde_json::Value {
+        let request = into_open_ai_response(
+            request,
+            &model.name,
+            model.capabilities.parallel_tool_calls,
+            model.capabilities.prompt_cache_key,
+            model.max_output_tokens,
+            default_thinking_reasoning_effort(model),
+            supports_none_reasoning_effort(model),
+        );
+
+        serde_json::to_value(request).unwrap()
+    }
+
     #[test]
     fn configured_reasoning_effort_supports_thinking() {
         assert_eq!(
@@ -624,16 +641,7 @@ mod tests {
             ..Default::default()
         };
 
-        let request = into_open_ai_response(
-            request,
-            &model.name,
-            model.capabilities.parallel_tool_calls,
-            model.capabilities.prompt_cache_key,
-            model.max_output_tokens,
-            default_thinking_reasoning_effort(&model),
-            supports_none_reasoning_effort(&model),
-        );
-        let serialized = serde_json::to_value(request).unwrap();
+        let serialized = response_request_json(&model, request);
 
         assert_eq!(
             serialized["reasoning"],
@@ -653,16 +661,7 @@ mod tests {
             ..Default::default()
         };
 
-        let request = into_open_ai_response(
-            request,
-            &model.name,
-            model.capabilities.parallel_tool_calls,
-            model.capabilities.prompt_cache_key,
-            model.max_output_tokens,
-            default_thinking_reasoning_effort(&model),
-            supports_none_reasoning_effort(&model),
-        );
-        let serialized = serde_json::to_value(request).unwrap();
+        let serialized = response_request_json(&model, request);
 
         assert_eq!(serialized.get("reasoning"), None);
         assert_eq!(serialized.get("include"), None);
