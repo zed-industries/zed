@@ -225,6 +225,15 @@ pub struct ThemeColors {
     pub editor_active_wrap_guide: Hsla,
     pub editor_indent_guide: Hsla,
     pub editor_indent_guide_active: Hsla,
+    /// Colors cycled for indent guide lines in IndentAware mode.
+    /// Each color should have its intended alpha already applied.
+    pub editor_indent_guide_cycle: Vec<Hsla>,
+    /// Colors cycled for active indent guide lines in IndentAware mode.
+    pub editor_indent_guide_cycle_active: Vec<Hsla>,
+    /// Colors cycled for indent guide backgrounds in IndentAware mode.
+    pub editor_indent_guide_background_cycle: Vec<Hsla>,
+    /// Colors cycled for active indent guide backgrounds in IndentAware mode.
+    pub editor_indent_guide_background_cycle_active: Vec<Hsla>,
     /// Read-access of a symbol, like reading a variable.
     ///
     /// A document highlight is a range inside a text document which deserves
@@ -602,6 +611,15 @@ pub fn all_theme_colors(cx: &mut App) -> Vec<(Hsla, SharedString)> {
             (color, SharedString::from(name))
         })
         .collect()
+}
+
+/// Returns the color at the given index, cycling through the array.
+/// If the array is empty, returns transparent black.
+pub fn cycle_hsla(colors: &[Hsla], index: u32) -> Hsla {
+    if colors.is_empty() {
+        return gpui::transparent_black();
+    }
+    colors[index as usize % colors.len()]
 }
 
 #[derive(Refineable, Clone, Debug, PartialEq)]
