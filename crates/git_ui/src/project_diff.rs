@@ -60,10 +60,10 @@ pub(crate) struct DeployBranchDiff;
 pub struct ProjectDiff {
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
-    active: Entity<DiffMultibuffer>,
+    diff: Entity<DiffMultibuffer>,
 
     pending_item_swap: Option<PendingItemSwap>,
-    _active_observation: Subscription,
+    _diff_observation: Subscription,
 }
 
 enum PendingItemSwap {
@@ -196,7 +196,7 @@ impl ProjectDiff {
     }
 
     pub fn autoscroll(&self, cx: &mut Context<Self>) {
-        self.active.update(cx, |diff, cx| diff.autoscroll(cx));
+        self.diff.update(cx, |diff, cx| diff.autoscroll(cx));
     }
 
     pub(crate) fn new(
@@ -205,7 +205,7 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let active = cx.new(|cx| {
+        let diff = cx.new(|cx| {
             DiffMultibuffer::new_with_diff_base(
                 DiffBase::Head,
                 project.clone(),
@@ -214,7 +214,7 @@ impl ProjectDiff {
                 cx,
             )
         });
-        Self::from_active(active, project, workspace, cx)
+        Self::from_diff(diff, project, workspace, cx)
     }
 
     fn new_impl(
@@ -224,38 +224,38 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let active = cx.new(|cx| {
+        let diff = cx.new(|cx| {
             DiffMultibuffer::new_impl(branch_diff, project.clone(), workspace.clone(), window, cx)
         });
-        Self::from_active(active, project, workspace, cx)
+        Self::from_diff(diff, project, workspace, cx)
     }
 
-    fn from_active(
-        active: Entity<DiffMultibuffer>,
+    fn from_diff(
+        diff: Entity<DiffMultibuffer>,
         project: Entity<Project>,
         workspace: Entity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let observation = cx.observe(&active, |_, _, cx| cx.notify());
+        let observation = cx.observe(&diff, |_, _, cx| cx.notify());
         Self {
             project,
             workspace: workspace.downgrade(),
-            active,
+            diff,
             pending_item_swap: None,
-            _active_observation: observation,
+            _diff_observation: observation,
         }
     }
 
     pub fn diff_base<'a>(&'a self, cx: &'a App) -> &'a DiffBase {
-        self.active.read(cx).diff_base(cx)
+        self.diff.read(cx).diff_base(cx)
     }
 
     pub(crate) fn repo(&self, cx: &App) -> Option<Entity<Repository>> {
-        self.active.read(cx).repo(cx)
+        self.diff.read(cx).repo(cx)
     }
 
     pub(crate) fn set_repo(&mut self, repo: Option<Entity<Repository>>, cx: &mut Context<Self>) {
-        self.active
+        self.diff
             .update(cx, |diff, cx| diff.set_repo(repo.clone(), cx));
     }
 
@@ -265,7 +265,7 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.active
+        self.diff
             .update(cx, |diff, cx| diff.move_to_entry(entry, window, cx));
     }
 
@@ -275,47 +275,47 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.active.update(cx, |diff, cx| {
+        self.diff.update(cx, |diff, cx| {
             diff.move_to_project_path(project_path, window, cx)
         });
     }
 
     fn move_to_beginning(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.active
+        self.diff
             .update(cx, |diff, cx| diff.move_to_beginning(window, cx));
     }
 
     pub fn calculate_changed_lines(&self, cx: &App) -> (u32, u32) {
-        self.active.read(cx).calculate_changed_lines(cx)
+        self.diff.read(cx).calculate_changed_lines(cx)
     }
 
     /// Returns the total count of review comments across all hunks/files.
     pub fn total_review_comment_count(&self, cx: &App) -> usize {
-        self.active.read(cx).total_review_comment_count()
+        self.diff.read(cx).total_review_comment_count()
     }
 
     /// Returns the splittable editor of the currently-shown diff view.
     pub fn editor(&self, cx: &App) -> Entity<SplittableEditor> {
-        self.active.read(cx).editor().clone()
+        self.diff.read(cx).editor().clone()
     }
 
     /// Returns the multibuffer of the currently-shown diff view.
     pub fn multibuffer(&self, cx: &App) -> Entity<MultiBuffer> {
-        self.active.read(cx).multibuffer().clone()
+        self.diff.read(cx).multibuffer().clone()
     }
 
     fn button_states(&self, cx: &App) -> ButtonStates {
-        self.active.read(cx).button_states(cx)
+        self.diff.read(cx).button_states(cx)
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn excerpt_paths(&self, cx: &App) -> Vec<std::sync::Arc<util::rel_path::RelPath>> {
-        self.active.read(cx).excerpt_paths(cx)
+        self.diff.read(cx).excerpt_paths(cx)
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn excerpt_file_paths(&self, cx: &App) -> Vec<String> {
-        self.active.read(cx).excerpt_file_paths(cx)
+        self.diff.read(cx).excerpt_file_paths(cx)
     }
 }
 
@@ -323,7 +323,7 @@ impl EventEmitter<EditorEvent> for ProjectDiff {}
 
 impl Focusable for ProjectDiff {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.active.read(cx).focus_handle(cx)
+        self.diff.read(cx).focus_handle(cx)
     }
 }
 
@@ -339,7 +339,7 @@ impl Item for ProjectDiff {
     }
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.active
+        self.diff
             .update(cx, |diff, cx| diff.deactivated(window, cx));
     }
 
@@ -349,7 +349,7 @@ impl Item for ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        self.active
+        self.diff
             .update(cx, |diff, cx| diff.navigate(data, window, cx))
     }
 
@@ -368,7 +368,7 @@ impl Item for ProjectDiff {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        self.active.read(cx).tab_content_text(cx)
+        self.diff.read(cx).tab_content_text(cx)
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -376,7 +376,7 @@ impl Item for ProjectDiff {
     }
 
     fn as_searchable(&self, _: &Entity<Self>, cx: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        Some(Box::new(self.active.read(cx).editor().clone()))
+        Some(Box::new(self.diff.read(cx).editor().clone()))
     }
 
     fn for_each_project_item(
@@ -384,11 +384,11 @@ impl Item for ProjectDiff {
         cx: &App,
         f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
-        self.active.read(cx).for_each_project_item(cx, f)
+        self.diff.read(cx).for_each_project_item(cx, f)
     }
 
     fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
-        self.active.read(cx).active_project_path(cx)
+        self.diff.read(cx).active_project_path(cx)
     }
 
     fn set_nav_history(
@@ -397,7 +397,7 @@ impl Item for ProjectDiff {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.active
+        self.diff
             .update(cx, |diff, cx| diff.set_nav_history(nav_history, cx));
     }
 
@@ -423,15 +423,15 @@ impl Item for ProjectDiff {
     }
 
     fn is_dirty(&self, cx: &App) -> bool {
-        self.active.read(cx).is_dirty(cx)
+        self.diff.read(cx).is_dirty(cx)
     }
 
     fn has_conflict(&self, cx: &App) -> bool {
-        self.active.read(cx).has_conflict(cx)
+        self.diff.read(cx).has_conflict(cx)
     }
 
     fn can_save(&self, cx: &App) -> bool {
-        self.active.read(cx).can_save(cx)
+        self.diff.read(cx).can_save(cx)
     }
 
     fn save(
@@ -441,7 +441,7 @@ impl Item for ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.active
+        self.diff
             .update(cx, |diff, cx| diff.save(options, project, window, cx))
     }
 
@@ -461,7 +461,7 @@ impl Item for ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        self.active
+        self.diff
             .update(cx, |diff, cx| diff.reload(project, window, cx))
     }
 
@@ -475,7 +475,7 @@ impl Item for ProjectDiff {
             Some(self_handle.clone().into())
         } else if type_id == TypeId::of::<Editor>() {
             Some(
-                self.active
+                self.diff
                     .read(cx)
                     .editor()
                     .read(cx)
@@ -484,9 +484,9 @@ impl Item for ProjectDiff {
                     .into(),
             )
         } else if type_id == TypeId::of::<SplittableEditor>() {
-            Some(self.active.read(cx).editor().clone().into())
+            Some(self.diff.read(cx).editor().clone().into())
         } else if type_id == TypeId::of::<diff_buffer_list::DiffBufferList>() {
-            Some(self.active.read(cx).branch_diff().clone().into())
+            Some(self.diff.read(cx).branch_diff().clone().into())
         } else {
             None
         }
@@ -498,7 +498,7 @@ impl Item for ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.active.update(cx, |diff, cx| {
+        self.diff.update(cx, |diff, cx| {
             diff.added_to_workspace(workspace, window, cx)
         });
 
@@ -508,7 +508,7 @@ impl Item for ProjectDiff {
         let project_diff = cx.entity();
         let project = self.project.clone();
         let workspace = self.workspace.clone();
-        let repo = self.active.read(cx).repo(cx);
+        let repo = self.diff.read(cx).repo(cx);
         window
             .spawn(cx, async move |cx| {
                 cx.update(|window, cx| {
@@ -597,7 +597,7 @@ impl Item for ProjectDiff {
 
 impl Render for ProjectDiff {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().child(self.active.clone())
+        div().size_full().child(self.diff.clone())
     }
 }
 
