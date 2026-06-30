@@ -404,30 +404,36 @@ impl RenderOnce for ListItem {
                             .children(self.children),
                     )
                     .when(self.end_slot.is_some(), |this| this.justify_between())
-                    .when_some(self.end_slot, |this, end_slot| {
-                        this.child(match self.end_slot_visibility {
-                            EndSlotVisibility::Always => {
-                                h_flex().flex_shrink_1().overflow_hidden().child(end_slot)
-                            }
-                            EndSlotVisibility::OnHover => h_flex()
-                                .flex_shrink_1()
-                                .overflow_hidden()
-                                .visible_on_hover("list_item")
-                                .child(end_slot),
-                            EndSlotVisibility::SwapOnHover(hover_slot) => h_flex()
+                    .map(|this| match self.end_slot_visibility {
+                        EndSlotVisibility::Always if let Some(end_slot) = self.end_slot => {
+                            this.child(h_flex().flex_shrink_1().overflow_hidden().child(end_slot))
+                        }
+                        EndSlotVisibility::OnHover if let Some(end_slot) = self.end_slot => this
+                            .child(
+                                h_flex()
+                                    .flex_shrink_1()
+                                    .overflow_hidden()
+                                    .visible_on_hover("list_item")
+                                    .child(end_slot),
+                            ),
+                        EndSlotVisibility::SwapOnHover(hover_slot) => this.child(
+                            h_flex()
                                 .relative()
                                 .flex_shrink_1()
                                 .child(h_flex().visible_on_hover("list_item").child(hover_slot))
-                                .child(
-                                    h_flex()
-                                        .absolute()
-                                        .inset_0()
-                                        .justify_end()
-                                        .overflow_hidden()
-                                        .group_hover("list_item", |this| this.invisible())
-                                        .child(end_slot),
-                                ),
-                        })
+                                .when_some(self.end_slot, |this, end_slot| {
+                                    this.child(
+                                        h_flex()
+                                            .absolute()
+                                            .inset_0()
+                                            .justify_end()
+                                            .overflow_hidden()
+                                            .group_hover("list_item", |this| this.invisible())
+                                            .child(end_slot),
+                                    )
+                                }),
+                        ),
+                        _ => this,
                     }),
             )
     }

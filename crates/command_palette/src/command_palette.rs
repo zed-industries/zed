@@ -125,11 +125,8 @@ impl CommandPalette {
         );
 
         let picker = cx.new(|cx| {
-            let picker = Picker::uniform_list(delegate, window, cx)
-                .initial_width(rems(34.))
-                .minimum_results_width(rems(30.))
-                .height(rems(24.))
-                .no_vertical_padding();
+            // One-shot action; there's nothing to reopen.
+            let picker = Picker::uniform_list(delegate, window, cx).reopenable(false, cx);
             picker.set_query(query, window, cx);
             picker
         });

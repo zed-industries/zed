@@ -454,6 +454,8 @@
       "shift-t": ["vim::PushFindBackward", { "after": true, "multiline": true }],
       "shift-f": ["vim::PushFindBackward", { "after": false, "multiline": true }],
       "alt-.": "vim::RepeatFind",
+      "alt-b": "editor::MoveToStartOfLargerSyntaxNode",
+      "alt-e": "editor::MoveToEndOfLargerSyntaxNode",
 
       // Changes
       "shift-r": "editor::Paste",
@@ -483,6 +485,7 @@
       "alt-shift-c": "vim::HelixDuplicateAbove",
       "%": "editor::SelectAll",
       "x": "vim::HelixSelectLine",
+      "*": "buffer_search::UseSelectionForFind",
       "shift-x": "editor::SelectLine",
       "ctrl-c": "editor::ToggleComments",
       "alt-o": "editor::SelectLargerSyntaxNode",
@@ -546,6 +549,18 @@
       "space p": "editor::Paste",
       "space y": "editor::Copy",
       "space /": "pane::DeploySearch",
+
+      // Debug mode (Helix space G)
+      "space shift-g l": "debugger::Start",
+      "space shift-g r": "debugger::Restart",
+      "space shift-g b": "editor::ToggleBreakpoint",
+      "space shift-g c": "debugger::Continue",
+      "space shift-g h": "debugger::Pause",
+      "space shift-g i": "debugger::StepInto",
+      "space shift-g o": "debugger::StepOut",
+      "space shift-g n": "debugger::StepOver",
+      "space shift-g t": "debugger::Stop",
+      "space shift-g ctrl-l": "editor::EditLogBreakpoint",
 
       // Other
       ":": "command_palette::Toggle",
@@ -676,7 +691,8 @@
       "shift-b": "pane::ActivateLastItem",
       "x": "editor::SelectSmallerSyntaxNode",
       "d": "editor::GoToDiagnostic",
-      "c": "editor::GoToHunk",
+      "c": "vim::NextComment",
+      "g": "editor::GoToHunk",
       "space": "vim::InsertEmptyLineBelow",
     },
   },
@@ -694,7 +710,8 @@
       "shift-b": ["pane::ActivateItem", 0],
       "x": "editor::SelectLargerSyntaxNode",
       "d": "editor::GoToPreviousDiagnostic",
-      "c": "editor::GoToPreviousHunk",
+      "c": "vim::PreviousComment",
+      "g": "editor::GoToPreviousHunk",
       "space": "vim::InsertEmptyLineAbove",
     },
   },
