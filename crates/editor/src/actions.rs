@@ -378,6 +378,16 @@ pub struct InsertSnippet {
     pub snippet: Option<String>,
 }
 
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct ScrollLineDownAndMoveDown;
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
+#[action(namespace = editor)]
+#[serde(deny_unknown_fields)]
+pub struct ScrollLineUpAndMoveUp;
+
 actions!(
     debugger,
     [
