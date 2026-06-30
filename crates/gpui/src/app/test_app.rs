@@ -28,8 +28,9 @@ use crate::{
     AnyWindowHandle, App, AppCell, AppContext, AsyncApp, BackgroundExecutor, BorrowAppContext,
     Bounds, ClipboardItem, Context, Entity, ForegroundExecutor, Global, InputEvent, Keystroke,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Platform,
-    PlatformTextSystem, Point, Render, Size, Task, TestDispatcher, TestPlatform, TextSystem,
-    Window, WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
+    PlatformTextSystem, Point, Render, Size, SystemNotification, SystemNotificationId,
+    SystemNotificationPermission, Task, TestDispatcher, TestPlatform, TextSystem, Window,
+    WindowBounds, WindowHandle, WindowOptions, app::GpuiMode,
 };
 use std::{future::Future, rc::Rc, sync::Arc, time::Duration};
 
@@ -279,6 +280,21 @@ impl TestApp {
     /// Get URLs that have been opened via `cx.open_url()`.
     pub fn opened_url(&self) -> Option<String> {
         self.platform.opened_url.borrow().clone()
+    }
+
+    /// Sets the notification permission state reported by the test platform.
+    pub fn set_system_notification_permission(&self, permission: SystemNotificationPermission) {
+        self.platform.set_system_notification_permission(permission);
+    }
+
+    /// Returns the notifications shown through the test platform.
+    pub fn shown_system_notifications(&self) -> Vec<SystemNotification> {
+        self.platform.shown_system_notifications()
+    }
+
+    /// Returns the notification IDs removed through the test platform.
+    pub fn removed_system_notifications(&self) -> Vec<SystemNotificationId> {
+        self.platform.removed_system_notifications()
     }
 
     /// Check if a file path prompt is pending.
