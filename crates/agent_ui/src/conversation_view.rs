@@ -43,8 +43,7 @@ use parking_lot::{Mutex, RwLock};
 use project::{AgentId, AgentServerStore, Project, ProjectEntryId, ProjectPath};
 
 use crate::conversation_view::elicitation::{
-    ElicitationCard, ElicitationCardHandlers, ElicitationCardStyle, ElicitationFormState,
-    should_render_elicitation,
+    ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
 };
 use crate::message_editor::SessionCapabilities;
 use crate::{AgentThreadSource, DEFAULT_THREAD_TITLE, resolve_agent_image};
@@ -2440,15 +2439,6 @@ impl ConversationView {
             return Vec::new();
         };
 
-        let style = ElicitationCardStyle::new(
-            cx.theme().colors().border.opacity(0.8),
-            cx.theme()
-                .colors()
-                .element_background
-                .blend(cx.theme().colors().editor_foreground.opacity(0.025)),
-            cx.theme().colors().editor_background,
-            rems_from_px(13.),
-        );
         let handlers = self.request_elicitation_card_handlers(cx);
 
         store
@@ -2462,7 +2452,6 @@ impl ConversationView {
                     ix,
                     elicitation,
                     self.request_elicitation_form_states.get(&elicitation.id),
-                    style,
                     handlers.clone(),
                 )
                 .render(cx)

@@ -44,8 +44,7 @@ use ui::{
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
 use super::elicitation::{
-    ElicitationCard, ElicitationCardHandlers, ElicitationCardStyle, ElicitationFormState,
-    should_render_elicitation,
+    ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
 };
 use super::*;
 
@@ -6384,12 +6383,6 @@ impl ThreadView {
             entry_ix,
             elicitation,
             self.elicitation_form_states.get(&elicitation.id),
-            ElicitationCardStyle::new(
-                self.tool_card_border_color(cx),
-                self.tool_card_header_bg(cx),
-                cx.theme().colors().editor_background,
-                self.tool_name_font_size(),
-            ),
             self.elicitation_card_handlers(cx),
         )
         .render(cx)

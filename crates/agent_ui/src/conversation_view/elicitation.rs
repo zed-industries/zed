@@ -4,7 +4,7 @@ use collections::{HashMap, HashSet};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use editor::Editor;
 use futures::channel::oneshot;
-use gpui::{AnyElement, App, Div, Empty, Entity, Hsla, Rems, SharedString, Window, div};
+use gpui::{AnyElement, App, Div, Empty, Entity, SharedString, Window, div};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use ui::{
@@ -632,24 +632,11 @@ fn render_preview_card(
                 entry_ix,
                 &elicitation,
                 form_state,
-                preview_style(cx),
                 ElicitationCardHandlers::noop(),
             )
             .render(cx),
         )
         .into_any_element()
-}
-
-fn preview_style(cx: &App) -> ElicitationCardStyle {
-    ElicitationCardStyle::new(
-        cx.theme().colors().border.opacity(0.8),
-        cx.theme()
-            .colors()
-            .element_background
-            .blend(cx.theme().colors().editor_foreground.opacity(0.025)),
-        cx.theme().colors().editor_background,
-        rems_from_px(13.),
-    )
 }
 
 fn pending_status() -> ElicitationStatus {
@@ -975,30 +962,6 @@ impl ElicitationCardHandlers {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct ElicitationCardStyle {
-    border_color: Hsla,
-    header_background: Hsla,
-    editor_background: Hsla,
-    tool_name_font_size: Rems,
-}
-
-impl ElicitationCardStyle {
-    pub(crate) fn new(
-        border_color: Hsla,
-        header_background: Hsla,
-        editor_background: Hsla,
-        tool_name_font_size: Rems,
-    ) -> Self {
-        Self {
-            border_color,
-            header_background,
-            editor_background,
-            tool_name_font_size,
-        }
-    }
-}
-
 pub(crate) fn should_render_elicitation(elicitation: &Elicitation) -> bool {
     matches!(elicitation.status, ElicitationStatus::Pending { .. })
 }
@@ -1007,7 +970,6 @@ pub(crate) struct ElicitationCard<'a> {
     entry_ix: usize,
     elicitation: &'a Elicitation,
     form_state: Option<&'a ElicitationFormState>,
-    style: ElicitationCardStyle,
     handlers: ElicitationCardHandlers,
 }
 
@@ -1016,19 +978,24 @@ impl<'a> ElicitationCard<'a> {
         entry_ix: usize,
         elicitation: &'a Elicitation,
         form_state: Option<&'a ElicitationFormState>,
-        style: ElicitationCardStyle,
         handlers: ElicitationCardHandlers,
     ) -> Self {
         Self {
             entry_ix,
             elicitation,
             form_state,
-            style,
             handlers,
         }
     }
 
     pub(crate) fn render(self, cx: &App) -> Div {
+        let border_color = cx.theme().colors().border.opacity(0.8);
+        let header_background = cx
+            .theme()
+            .colors()
+            .element_background
+            .blend(cx.theme().colors().editor_foreground.opacity(0.025));
+        let tool_name_font_size = rems_from_px(13.);
         let is_pending = matches!(&self.elicitation.status, ElicitationStatus::Pending { .. });
         let (status_label, status_icon, status_color) = match &self.elicitation.status {
             ElicitationStatus::Pending { .. } => ("Waiting for input", IconName::Info, Color::Info),
@@ -1057,7 +1024,7 @@ impl<'a> ElicitationCard<'a> {
             .my_1p5()
             .rounded_md()
             .border_1()
-            .border_color(self.style.border_color)
+            .border_color(border_color)
             .overflow_hidden()
             .child(
                 h_flex()
@@ -1065,7 +1032,7 @@ impl<'a> ElicitationCard<'a> {
                     .p_1()
                     .w_full()
                     .justify_between()
-                    .bg(self.style.header_background)
+                    .bg(header_background)
                     .child(
                         h_flex()
                             .min_w_0()
@@ -1078,7 +1045,7 @@ impl<'a> ElicitationCard<'a> {
                             )
                             .child(
                                 Label::new("Input Requested")
-                                    .size(LabelSize::Custom(self.style.tool_name_font_size))
+                                    .size(LabelSize::Custom(tool_name_font_size))
                                     .truncate(),
                             ),
                     )
@@ -1089,7 +1056,7 @@ impl<'a> ElicitationCard<'a> {
                     ),
             )
             .child(body)
-            .when(is_pending, |this| this.child(self.render_actions()))
+            .when(is_pending, |this| this.child(self.render_actions(cx)))
     }
 
     fn render_form(&self, mode: &acp::ElicitationFormMode, cx: &App) -> AnyElement {
@@ -1120,6 +1087,8 @@ impl<'a> ElicitationCard<'a> {
     ) -> AnyElement {
         let label = property_title(field_name, property);
         let description = property_description(property);
+        let border_color = cx.theme().colors().border.opacity(0.8);
+        let editor_background = cx.theme().colors().editor_background;
 
         v_flex()
             .gap_1()
@@ -1135,8 +1104,8 @@ impl<'a> ElicitationCard<'a> {
                 ElicitationFieldState::Text(editor) => div()
                     .rounded_sm()
                     .border_1()
-                    .border_color(self.style.border_color)
-                    .bg(self.style.editor_background)
+                    .border_color(border_color)
+                    .bg(editor_background)
                     .px_1()
                     .py_0p5()
                     .text_xs()
@@ -1234,7 +1203,14 @@ impl<'a> ElicitationCard<'a> {
         cx: &App,
     ) -> AnyElement {
         let entry_ix = self.entry_ix;
-        let style = self.style;
+        let border_color = cx.theme().colors().border.opacity(0.8);
+        let editor_background = cx.theme().colors().editor_background;
+        let header_background = cx
+            .theme()
+            .colors()
+            .element_background
+            .blend(cx.theme().colors().editor_foreground.opacity(0.025));
+        let accent_color = Color::Accent.color(cx);
         let elicitation_id = self.elicitation.id.clone();
         let field_name = field_name.to_string();
         let on_single_select_change = self.handlers.on_single_select_change.clone();
@@ -1259,23 +1235,19 @@ impl<'a> ElicitationCard<'a> {
                     .gap_2()
                     .rounded_sm()
                     .border_1()
-                    .border_color(style.border_color.opacity(0.5))
+                    .border_color(border_color.opacity(0.5))
                     .bg(if is_selected {
-                        style
-                            .editor_background
-                            .blend(Color::Accent.color(cx).opacity(0.08))
+                        editor_background.blend(accent_color.opacity(0.08))
                     } else {
-                        style.editor_background
+                        editor_background
                     })
                     .px_2()
                     .py_1()
                     .hover({
                         let hover_background = if is_selected {
-                            style
-                                .editor_background
-                                .blend(Color::Accent.color(cx).opacity(0.1))
+                            editor_background.blend(accent_color.opacity(0.1))
                         } else {
-                            style.header_background
+                            header_background
                         };
                         move |this| this.bg(hover_background).cursor_pointer()
                     })
@@ -1295,7 +1267,7 @@ impl<'a> ElicitationCard<'a> {
                             .justify_center()
                             .rounded_full()
                             .border_1()
-                            .border_color(style.border_color)
+                            .border_color(border_color)
                             .when(is_selected, |this| {
                                 this.child(Indicator::dot().color(Color::Accent))
                             }),
@@ -1346,11 +1318,12 @@ impl<'a> ElicitationCard<'a> {
             .into_any_element()
     }
 
-    fn render_actions(&self) -> AnyElement {
+    fn render_actions(&self, cx: &App) -> AnyElement {
         let accept_label = match &self.elicitation.request.mode {
             acp::ElicitationMode::Url(_) => "Done",
             _ => "Submit",
         };
+        let border_color = cx.theme().colors().border.opacity(0.8);
         let on_submit = self.handlers.on_submit.clone();
         let on_decline = self.handlers.on_decline.clone();
         let on_cancel = self.handlers.on_cancel.clone();
@@ -1364,7 +1337,7 @@ impl<'a> ElicitationCard<'a> {
             .gap_1()
             .justify_end()
             .border_t_1()
-            .border_color(self.style.border_color)
+            .border_color(border_color)
             .child(
                 Button::new(("elicitation-accept", self.entry_ix), accept_label)
                     .start_icon(
