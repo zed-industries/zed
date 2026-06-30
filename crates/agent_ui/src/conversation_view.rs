@@ -4906,6 +4906,66 @@ pub(crate) mod tests {
         setup_conversation_view_with_initial_content_opt(agent, None, cx).await
     }
 
+    #[gpui::test]
+    async fn test_completed_plan_snapshot_keeps_list_state_in_sync(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let connection = StubAgentConnection::new();
+        let (conversation_view, cx) =
+            setup_conversation_view(StubAgentServer::new(connection.clone()), cx).await;
+
+        message_editor(&conversation_view, cx).update_in(cx, |editor, window, cx| {
+            editor.set_text("Hello", window, cx);
+        });
+        active_thread(&conversation_view, cx).update_in(cx, |view, window, cx| {
+            view.send(window, cx);
+        });
+        cx.run_until_parked();
+
+        let session_id = active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+            assert_thread_list_item_count_matches_entries(view, cx);
+            view.thread.read(cx).session_id().clone()
+        });
+
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::Plan(acp::Plan::new(vec![acp::PlanEntry::new(
+                    "Do the thing",
+                    acp::PlanEntryPriority::Medium,
+                    acp::PlanEntryStatus::InProgress,
+                )])),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+            assert_thread_list_item_count_matches_entries(view, cx);
+        });
+
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id.clone(),
+                acp::SessionUpdate::Plan(acp::Plan::new(vec![acp::PlanEntry::new(
+                    "Do the thing",
+                    acp::PlanEntryPriority::Medium,
+                    acp::PlanEntryStatus::Completed,
+                )])),
+                cx,
+            );
+        });
+        cx.run_until_parked();
+        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+            assert_thread_list_item_count_matches_entries(view, cx);
+        });
+
+        connection.end_turn(session_id, acp::StopReason::EndTurn);
+        cx.run_until_parked();
+        active_thread(&conversation_view, cx).read_with(cx, |view, cx| {
+            assert_thread_list_item_count_matches_entries(view, cx);
+        });
+    }
+
     async fn setup_conversation_view_with_initial_content(
         agent: impl AgentServer + 'static,
         initial_content: AgentInitialContent,
@@ -5555,6 +5615,13 @@ pub(crate) mod tests {
                 .expect("No active thread")
                 .clone()
         })
+    }
+
+    fn assert_thread_list_item_count_matches_entries(view: &ThreadView, cx: &App) {
+        assert_eq!(
+            view.list_state.item_count(),
+            view.thread.read(cx).entries().len() + usize::from(view.generating_indicator_in_list)
+        );
     }
 
     fn message_editor(
