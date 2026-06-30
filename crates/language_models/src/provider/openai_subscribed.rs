@@ -744,10 +744,7 @@ async fn do_oauth_flow(
         .query_pairs_mut()
         .append_pair("client_id", CLIENT_ID)
         .append_pair("redirect_uri", &redirect_uri)
-        .append_pair(
-            "scope",
-            "openid profile email offline_access api.connectors.read api.connectors.invoke",
-        )
+        .append_pair("scope", "openid profile email offline_access")
         .append_pair("response_type", "code")
         .append_pair("code_challenge", &challenge)
         .append_pair("code_challenge_method", "S256")
