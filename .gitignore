@@ -59,8 +59,7 @@ crates/docs_preprocessor/actions.json
 # NixOS integration test state
 .nixos-test-history
 
-# Agent, editor, and tooling config that must not be committed.
-# Enforced in script/danger/dangerfile.ts; only already-tracked paths may change.
+# Tooling configurations that should not be tracked in this repository
 .aider.conf.yml
 .claude.json
 .claude/
