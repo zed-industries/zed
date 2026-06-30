@@ -3038,6 +3038,7 @@ impl Editor {
     pub fn set_cursor_offset_on_selection(&mut self, set_cursor_offset_on_selection: bool) {
         self.cursor_offset_on_selection = set_cursor_offset_on_selection;
     }
+
     /// Returns the anchor to use as the rename target for a selection.
     ///
     /// In selection-based modes, like vim's visual mode and helix, the rendered
