@@ -702,6 +702,7 @@ impl AgentConfiguration {
                 AiSettingItemStatus::ClientSecretRequired
             }
             ContextServerStatus::Authenticating => AiSettingItemStatus::Authenticating,
+            ContextServerStatus::InsufficientScope => AiSettingItemStatus::InsufficientScope,
         };
 
         let is_remote = server_configuration
