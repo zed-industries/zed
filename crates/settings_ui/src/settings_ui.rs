@@ -51,7 +51,7 @@ use workspace::{
 };
 use zed_actions::{
     AGENT_SKILLS_SETTINGS_PATH, OpenProjectSettings, OpenSettings, OpenSettingsAt,
-    OpenSettingsAtTarget,
+    OpenSettingsAtTarget, OpenSettingsPage,
 };
 
 use crate::components::{
@@ -450,6 +450,15 @@ pub fn init(cx: &mut App) {
                     cx,
                 );
             })
+            .register_action(|_, action: &OpenSettingsPage, window, cx| {
+                let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+                open_settings_editor_to_page(
+                    &action.page,
+                    action.target.as_ref().map(SettingsFileTarget::from),
+                    window_handle,
+                    cx,
+                );
+            })
             .register_action(|_, _: &OpenSettings, window, cx| {
                 let window_handle = window.window_handle().downcast::<MultiWorkspace>();
                 open_settings_editor(None, None, window_handle, cx);
@@ -669,30 +678,71 @@ pub fn open_settings_editor(
     );
 }
 
+fn select_settings_file_target(
+    target_file: SettingsFileTarget,
+    settings_window: &mut SettingsWindow,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) {
+    let file_index = settings_window
+        .files
+        .iter()
+        .position(|(file, _)| match target_file {
+            SettingsFileTarget::User => matches!(file, SettingsUiFile::User),
+            SettingsFileTarget::Project(worktree_id) => file.worktree_id() == Some(worktree_id),
+        });
+    if let Some(file_index) = file_index {
+        settings_window.change_file(file_index, window, cx);
+    }
+}
+
+fn open_settings_editor_to_page(
+    page: &str,
+    target_file: Option<SettingsFileTarget>,
+    workspace_handle: Option<WindowHandle<MultiWorkspace>>,
+    cx: &mut App,
+) {
+    let page = page.to_string();
+    open_settings_editor_with(workspace_handle, cx, move |settings_window, window, cx| {
+        if let Some(target_file) = target_file {
+            select_settings_file_target(target_file, settings_window, window, cx);
+        }
+
+        settings_window.opening_link = false;
+        settings_window.search_bar.update(cx, |editor, cx| {
+            editor.set_text(String::new(), window, cx);
+        });
+        for page_filter in &mut settings_window.filter_table {
+            page_filter.fill(true);
+        }
+        settings_window.has_query = false;
+        settings_window.filter_matches_to_file();
+
+        let Some(navbar_entry_index) = settings_window
+            .navbar_entries
+            .iter()
+            .position(|entry| entry.is_root && entry.title.eq_ignore_ascii_case(&page))
+        else {
+            log::error!("settings page not found: {page}");
+            return;
+        };
+
+        settings_window.open_and_scroll_to_navbar_entry(
+            navbar_entry_index,
+            None,
+            false,
+            window,
+            cx,
+        );
+    });
+}
+
 fn open_settings_editor_at_target(
     path: Option<&str>,
     target_file: Option<SettingsFileTarget>,
     workspace_handle: Option<WindowHandle<MultiWorkspace>>,
     cx: &mut App,
 ) {
-    fn select_target_file(
-        target_file: SettingsFileTarget,
-        settings_window: &mut SettingsWindow,
-        window: &mut Window,
-        cx: &mut Context<SettingsWindow>,
-    ) {
-        let file_index = settings_window
-            .files
-            .iter()
-            .position(|(file, _)| match target_file {
-                SettingsFileTarget::User => matches!(file, SettingsUiFile::User),
-                SettingsFileTarget::Project(worktree_id) => file.worktree_id() == Some(worktree_id),
-            });
-        if let Some(file_index) = file_index {
-            settings_window.change_file(file_index, window, cx);
-        }
-    }
-
     /// Assumes a settings GUI window is already open
     fn open_path(
         path: &str,
@@ -740,7 +790,7 @@ fn open_settings_editor_at_target(
     let path = path.map(ToOwned::to_owned);
     open_settings_editor_with(workspace_handle, cx, move |settings_window, window, cx| {
         if let Some(target_file) = target_file {
-            select_target_file(target_file, settings_window, window, cx);
+            select_settings_file_target(target_file, settings_window, window, cx);
         }
         if let Some(path) = path {
             open_path(&path, settings_window, window, cx);
