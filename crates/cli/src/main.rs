@@ -870,6 +870,28 @@ fn prompt_open_behavior() -> Option<cli::CliBehaviorSetting> {
     })
 }
 
+/// Try to send a URL to a running Zed instance via its Unix socket.
+/// Returns `true` if successful, `false` if no instance is listening or on any error.
+#[cfg(unix)]
+fn try_connect_to_running_instance(url: &str, user_data_dir: Option<&str>) -> bool {
+    use std::os::unix::net::UnixDatagram;
+
+    let data_dir = user_data_dir
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| paths::data_dir().clone());
+    let sock_path = data_dir.join(format!(
+        "zed-{}.sock",
+        *release_channel::RELEASE_CHANNEL_NAME
+    ));
+    let Ok(sock) = UnixDatagram::unbound() else {
+        return false;
+    };
+    if sock.connect(&sock_path).is_err() {
+        return false;
+    }
+    sock.send(url.as_bytes()).is_ok()
+}
+
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod linux {
     use std::{
@@ -934,19 +956,8 @@ mod linux {
         }
 
         fn launch(&self, ipc_url: String, user_data_dir: Option<&str>) -> anyhow::Result<()> {
-            let data_dir = user_data_dir
-                .map(PathBuf::from)
-                .unwrap_or_else(|| paths::data_dir().clone());
-
-            let sock_path = data_dir.join(format!(
-                "zed-{}.sock",
-                *release_channel::RELEASE_CHANNEL_NAME
-            ));
-            let sock = UnixDatagram::unbound()?;
-            if sock.connect(&sock_path).is_err() {
+            if !crate::try_connect_to_running_instance(&ipc_url, user_data_dir) {
                 self.boot_background(ipc_url, user_data_dir)?;
-            } else {
-                sock.send(ipc_url.as_bytes())?;
             }
             Ok(())
         }
@@ -1379,6 +1390,11 @@ mod mac_os {
                 }
 
                 Self::LocalPath { executable, .. } => {
+                    // Check if a running instance is listening on the socket (like Linux does).
+                    if crate::try_connect_to_running_instance(&url, user_data_dir) {
+                        return Ok(());
+                    }
+
                     let executable_parent = executable
                         .parent()
                         .with_context(|| format!("Executable {executable:?} path has no parent"))?;
