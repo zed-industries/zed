@@ -55,7 +55,6 @@
 /crates/open_ai/ @zed-industries/ai-team
 /crates/open_router/ @zed-industries/ai-team
 /crates/prompt_store/ @zed-industries/ai-team
-/crates/rules_library/ @zed-industries/ai-team
 # SUGGESTED: Review needed - based on Richard Feldman (2 commits)
 /crates/shell_command_parser/ @zed-industries/ai-team
 /crates/vercel/ @zed-industries/ai-team
@@ -181,7 +180,6 @@
 /crates/fs_benchmarks/ @zed-industries/infrastructure-team
 /crates/http_client/ @zed-industries/infrastructure-team
 /crates/http_client_tls/ @zed-industries/infrastructure-team
-/crates/nc/ @zed-industries/infrastructure-team
 /crates/net/ @zed-industries/infrastructure-team
 /crates/paths/ @zed-industries/infrastructure-team
 /crates/release_channel/ @zed-industries/infrastructure-team

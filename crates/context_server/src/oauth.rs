@@ -146,6 +146,7 @@ pub struct AuthServerMetadata {
     pub token_endpoint: Url,
     pub registration_endpoint: Option<Url>,
     pub scopes_supported: Option<Vec<String>>,
+    pub grant_types_supported: Option<Vec<String>>,
     pub code_challenge_methods_supported: Option<Vec<String>>,
     pub client_id_metadata_document_supported: bool,
 }
@@ -632,6 +633,26 @@ impl TokenResponse {
     }
 }
 
+/// An OAuth token error response (RFC 6749 Section 5.2).
+#[derive(Debug, Deserialize, PartialEq)]
+pub struct OAuthTokenError {
+    pub error: String,
+    #[serde(default)]
+    pub error_description: Option<String>,
+}
+
+impl std::fmt::Display for OAuthTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "OAuth token error: {}", self.error)?;
+        if let Some(description) = &self.error_description {
+            write!(f, " ({description})")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for OAuthTokenError {}
+
 /// Build the form-encoded body for an authorization code token exchange.
 pub fn token_exchange_params(
     code: &str,
@@ -639,15 +660,20 @@ pub fn token_exchange_params(
     redirect_uri: &str,
     code_verifier: &str,
     resource: &str,
+    client_secret: Option<&str>,
 ) -> Vec<(&'static str, String)> {
-    vec![
+    let mut params = vec![
         ("grant_type", "authorization_code".to_string()),
         ("code", code.to_string()),
         ("redirect_uri", redirect_uri.to_string()),
         ("client_id", client_id.to_string()),
         ("code_verifier", code_verifier.to_string()),
         ("resource", resource.to_string()),
-    ]
+    ];
+    if let Some(secret) = client_secret {
+        params.push(("client_secret", secret.to_string()));
+    }
+    params
 }
 
 /// Build the form-encoded body for a token refresh request.
@@ -655,13 +681,18 @@ pub fn token_refresh_params(
     refresh_token: &str,
     client_id: &str,
     resource: &str,
+    client_secret: Option<&str>,
 ) -> Vec<(&'static str, String)> {
-    vec![
+    let mut params = vec![
         ("grant_type", "refresh_token".to_string()),
         ("refresh_token", refresh_token.to_string()),
         ("client_id", client_id.to_string()),
         ("resource", resource.to_string()),
-    ]
+    ];
+    if let Some(secret) = client_secret {
+        params.push(("client_secret", secret.to_string()));
+    }
+    params
 }
 
 // -- DCR request body (RFC 7591) ---------------------------------------------
@@ -672,11 +703,30 @@ pub fn token_refresh_params(
 /// port (e.g. `http://127.0.0.1:12345/callback`). Some auth servers do strict
 /// redirect URI matching even for loopback addresses, so we register the
 /// exact URI we intend to use.
-pub fn dcr_registration_body(redirect_uri: &str) -> serde_json::Value {
+/// The grant types Zed can use. Intersected with the server's
+/// `grant_types_supported` to build the DCR request.
+const SUPPORTED_GRANT_TYPES: &[&str] = &["authorization_code", "refresh_token"];
+
+pub fn dcr_registration_body(
+    redirect_uri: &str,
+    server_grant_types: Option<&[String]>,
+) -> serde_json::Value {
+    // Use the intersection of what we support and what the server advertises.
+    // When the server doesn't advertise grant_types_supported, send all of
+    // ours — the server will reject what it doesn't like.
+    let grant_types: Vec<&str> = match server_grant_types {
+        Some(server) => SUPPORTED_GRANT_TYPES
+            .iter()
+            .copied()
+            .filter(|gt| server.iter().any(|s| s == *gt))
+            .collect(),
+        None => SUPPORTED_GRANT_TYPES.to_vec(),
+    };
+
     serde_json::json!({
         "client_name": "Zed",
         "redirect_uris": [redirect_uri],
-        "grant_types": ["authorization_code"],
+        "grant_types": grant_types,
         "response_types": ["code"],
         "token_endpoint_auth_method": "none"
     })
@@ -694,7 +744,19 @@ pub async fn fetch_protected_resource_metadata(
     www_authenticate: &WwwAuthenticate,
 ) -> Result<ProtectedResourceMetadata> {
     let candidate_urls = match &www_authenticate.resource_metadata {
-        Some(url) if url.origin() == server_url.origin() => vec![url.clone()],
+        Some(url) if url.origin() == server_url.origin() => {
+            // Try the header-provided URL first (per MCP spec: "use the resource
+            // metadata URL from the parsed WWW-Authenticate headers when present"),
+            // then fall back to RFC 9728 well-known URIs in case the header URL is
+            // wrong (e.g. a buggy server that doubles the path component).
+            let mut urls = vec![url.clone()];
+            for fallback in protected_resource_metadata_urls(server_url) {
+                if !urls.contains(&fallback) {
+                    urls.push(fallback);
+                }
+            }
+            urls
+        }
         Some(url) => {
             log::warn!(
                 "Ignoring cross-origin resource_metadata URL {} \
@@ -750,6 +812,7 @@ pub async fn fetch_auth_server_metadata(
         match fetch_json::<AuthServerMetadataResponse>(http_client, url).await {
             Ok(response) => {
                 let reported_issuer = response.issuer.unwrap_or_else(|| issuer.clone());
+
                 if reported_issuer != *issuer {
                     bail!(
                         "Auth server metadata issuer mismatch: expected {}, got {}",
@@ -760,6 +823,7 @@ pub async fn fetch_auth_server_metadata(
 
                 return Ok(AuthServerMetadata {
                     issuer: reported_issuer,
+                    grant_types_supported: response.grant_types_supported,
                     authorization_endpoint: response
                         .authorization_endpoint
                         .ok_or_else(|| anyhow!("missing authorization_endpoint"))?,
@@ -811,15 +875,6 @@ pub async fn discover(
         None => bail!("authorization server does not advertise code_challenge_methods_supported"),
     }
 
-    // Verify there is at least one supported registration strategy before we
-    // present the server as ready to authenticate.
-    match determine_registration_strategy(&auth_server_metadata) {
-        ClientRegistrationStrategy::Cimd { .. } | ClientRegistrationStrategy::Dcr { .. } => {}
-        ClientRegistrationStrategy::Unavailable => {
-            bail!("authorization server supports neither CIMD nor DCR")
-        }
-    }
-
     let scopes = select_scopes(www_authenticate, &resource_metadata);
 
     Ok(OAuthDiscovery {
@@ -846,7 +901,18 @@ pub async fn resolve_client_registration(
         }),
         ClientRegistrationStrategy::Dcr {
             registration_endpoint,
-        } => perform_dcr(http_client, &registration_endpoint, redirect_uri).await,
+        } => {
+            perform_dcr(
+                http_client,
+                &registration_endpoint,
+                redirect_uri,
+                discovery
+                    .auth_server_metadata
+                    .grant_types_supported
+                    .as_deref(),
+            )
+            .await
+        }
         ClientRegistrationStrategy::Unavailable => {
             bail!("authorization server supports neither CIMD nor DCR")
         }
@@ -860,10 +926,11 @@ pub async fn perform_dcr(
     http_client: &Arc<dyn HttpClient>,
     registration_endpoint: &Url,
     redirect_uri: &str,
+    server_grant_types: Option<&[String]>,
 ) -> Result<OAuthClientRegistration> {
     validate_oauth_url(registration_endpoint)?;
 
-    let body = dcr_registration_body(redirect_uri);
+    let body = dcr_registration_body(redirect_uri, server_grant_types);
     let body_bytes = serde_json::to_vec(&body)?;
 
     let request = Request::builder()
@@ -911,8 +978,16 @@ pub async fn exchange_code(
     redirect_uri: &str,
     code_verifier: &str,
     resource: &str,
+    client_secret: Option<&str>,
 ) -> Result<OAuthTokens> {
-    let params = token_exchange_params(code, client_id, redirect_uri, code_verifier, resource);
+    let params = token_exchange_params(
+        code,
+        client_id,
+        redirect_uri,
+        code_verifier,
+        resource,
+        client_secret,
+    );
     post_token_request(http_client, &auth_server_metadata.token_endpoint, &params).await
 }
 
@@ -923,8 +998,9 @@ pub async fn refresh_tokens(
     refresh_token: &str,
     client_id: &str,
     resource: &str,
+    client_secret: Option<&str>,
 ) -> Result<OAuthTokens> {
-    let params = token_refresh_params(refresh_token, client_id, resource);
+    let params = token_refresh_params(refresh_token, client_id, resource, client_secret);
     post_token_request(http_client, token_endpoint, &params).await
 }
 
@@ -952,11 +1028,12 @@ async fn post_token_request(
     if !response.status().is_success() {
         let mut error_body = String::new();
         response.body_mut().read_to_string(&mut error_body).await?;
-        bail!(
-            "token request failed with status {}: {}",
-            response.status(),
-            error_body
-        );
+        let status = response.status();
+        // Try to parse as an OAuth error response (RFC 6749 Section 5.2).
+        if let Ok(token_error) = serde_json::from_str::<OAuthTokenError>(&error_body) {
+            return Err(token_error.into());
+        }
+        bail!("token request failed with status {status}: {error_body}");
     }
 
     let mut response_body = String::new();
@@ -1082,6 +1159,8 @@ struct AuthServerMetadataResponse {
     #[serde(default)]
     scopes_supported: Option<Vec<String>>,
     #[serde(default)]
+    grant_types_supported: Option<Vec<String>>,
+    #[serde(default)]
     code_challenge_methods_supported: Option<Vec<String>>,
     #[serde(default)]
     client_id_metadata_document_supported: Option<bool>,
@@ -1151,7 +1230,7 @@ impl OAuthTokenProvider for McpOAuthTokenProvider {
     }
 
     async fn try_refresh(&self) -> Result<bool> {
-        let (refresh_token, token_endpoint, resource, client_id) = {
+        let (refresh_token, token_endpoint, resource, client_id, client_secret) = {
             let session = self.session.lock();
             match session.tokens.refresh_token.clone() {
                 Some(refresh_token) => (
@@ -1159,6 +1238,7 @@ impl OAuthTokenProvider for McpOAuthTokenProvider {
                     session.token_endpoint.clone(),
                     session.resource.clone(),
                     session.client_registration.client_id.clone(),
+                    session.client_registration.client_secret.clone(),
                 ),
                 None => return Ok(false),
             }
@@ -1172,6 +1252,7 @@ impl OAuthTokenProvider for McpOAuthTokenProvider {
             &refresh_token,
             &client_id,
             &resource_str,
+            client_secret.as_deref(),
         )
         .await
         {
@@ -1583,6 +1664,7 @@ mod tests {
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
             client_id_metadata_document_supported: true,
+            grant_types_supported: None,
         };
         assert_eq!(
             determine_registration_strategy(&metadata),
@@ -1603,6 +1685,7 @@ mod tests {
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
             client_id_metadata_document_supported: false,
+            grant_types_supported: None,
         };
         assert_eq!(
             determine_registration_strategy(&metadata),
@@ -1622,6 +1705,7 @@ mod tests {
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
             client_id_metadata_document_supported: false,
+            grant_types_supported: None,
         };
         assert_eq!(
             determine_registration_strategy(&metadata),
@@ -1678,6 +1762,7 @@ mod tests {
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
             client_id_metadata_document_supported: true,
+            grant_types_supported: None,
         };
         let pkce = PkceChallenge {
             verifier: "test_verifier".into(),
@@ -1720,6 +1805,7 @@ mod tests {
             scopes_supported: None,
             code_challenge_methods_supported: Some(vec!["S256".into()]),
             client_id_metadata_document_supported: false,
+            grant_types_supported: None,
         };
         let pkce = PkceChallenge {
             verifier: "v".into(),
@@ -1749,6 +1835,7 @@ mod tests {
             "http://127.0.0.1:5555/callback",
             "verifier_123",
             "https://mcp.example.com",
+            None,
         );
         let map: std::collections::HashMap<&str, &str> =
             params.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -1763,8 +1850,12 @@ mod tests {
 
     #[test]
     fn test_token_refresh_params() {
-        let params =
-            token_refresh_params("refresh_token_abc", "client_xyz", "https://mcp.example.com");
+        let params = token_refresh_params(
+            "refresh_token_abc",
+            "client_xyz",
+            "https://mcp.example.com",
+            None,
+        );
         let map: std::collections::HashMap<&str, &str> =
             params.iter().map(|(k, v)| (*k, v.as_str())).collect();
 
@@ -1803,13 +1894,33 @@ mod tests {
     // -- DCR body test -------------------------------------------------------
 
     #[test]
-    fn test_dcr_registration_body_shape() {
-        let body = dcr_registration_body("http://127.0.0.1:12345/callback");
+    fn test_dcr_registration_body_without_server_metadata() {
+        // When server metadata is unavailable, include all supported grant types.
+        let body = dcr_registration_body("http://127.0.0.1:12345/callback", None);
         assert_eq!(body["client_name"], "Zed");
         assert_eq!(body["redirect_uris"][0], "http://127.0.0.1:12345/callback");
         assert_eq!(body["grant_types"][0], "authorization_code");
+        assert_eq!(body["grant_types"][1], "refresh_token");
         assert_eq!(body["response_types"][0], "code");
         assert_eq!(body["token_endpoint_auth_method"], "none");
+    }
+
+    #[test]
+    fn test_dcr_registration_body_mirrors_server_grant_types() {
+        // When the server only supports authorization_code, omit refresh_token.
+        let server_types = vec!["authorization_code".to_string()];
+        let body = dcr_registration_body("http://127.0.0.1:12345/callback", Some(&server_types));
+        assert_eq!(body["grant_types"][0], "authorization_code");
+        assert!(body["grant_types"].as_array().unwrap().len() == 1);
+
+        // When the server supports both, include both.
+        let server_types = vec![
+            "authorization_code".to_string(),
+            "refresh_token".to_string(),
+        ];
+        let body = dcr_registration_body("http://127.0.0.1:12345/callback", Some(&server_types));
+        assert_eq!(body["grant_types"][0], "authorization_code");
+        assert_eq!(body["grant_types"][1], "refresh_token");
     }
 
     // -- Test helpers for async/HTTP tests -----------------------------------
@@ -1917,6 +2028,71 @@ mod tests {
                 .unwrap();
 
             assert_eq!(metadata.authorization_servers.len(), 1);
+        });
+    }
+
+    #[test]
+    fn test_fetch_protected_resource_metadata_falls_back_when_header_url_fails() {
+        // Reproduces the Pydantic Logfire case: the server's WWW-Authenticate
+        // header contains a resource_metadata URL with a doubled path (e.g.
+        // /mcp/mcp), which returns HTML instead of JSON. The client should
+        // fall back to the RFC 9728 well-known URL, which works correctly.
+        gpui::block_on(async {
+            let client = make_fake_http_client(|req| {
+                Box::pin(async move {
+                    let uri = req.uri().to_string();
+                    if uri
+                        == "https://mcp.example.com/.well-known/oauth-protected-resource/api/mcp/mcp"
+                    {
+                        // Buggy header URL returns HTML (like a SPA catch-all).
+                        Ok(Response::builder()
+                            .status(200)
+                            .header("Content-Type", "text/html")
+                            .body(AsyncBody::from(b"<!doctype html><html></html>".to_vec()))
+                            .unwrap())
+                    } else if uri
+                        == "https://mcp.example.com/.well-known/oauth-protected-resource/api/mcp"
+                    {
+                        // Correct well-known URL returns valid metadata.
+                        json_response(
+                            200,
+                            r#"{
+                                "resource": "https://mcp.example.com/api/mcp",
+                                "authorization_servers": ["https://auth.example.com"]
+                            }"#,
+                        )
+                    } else {
+                        json_response(404, "{}")
+                    }
+                })
+            });
+
+            let server_url = Url::parse("https://mcp.example.com/api/mcp").unwrap();
+            let www_auth = WwwAuthenticate {
+                resource_metadata: Some(
+                    // Buggy URL with doubled path component.
+                    Url::parse(
+                        "https://mcp.example.com/.well-known/oauth-protected-resource/api/mcp/mcp",
+                    )
+                    .unwrap(),
+                ),
+                scope: None,
+                error: None,
+                error_description: None,
+            };
+
+            let metadata = fetch_protected_resource_metadata(&client, &server_url, &www_auth)
+                .await
+                .unwrap();
+
+            assert_eq!(
+                metadata.resource.as_str(),
+                "https://mcp.example.com/api/mcp"
+            );
+            assert_eq!(
+                metadata.authorization_servers[0].as_str(),
+                "https://auth.example.com/"
+            );
         });
     }
 
@@ -2274,6 +2450,7 @@ mod tests {
                 scopes_supported: None,
                 code_challenge_methods_supported: Some(vec!["S256".into()]),
                 client_id_metadata_document_supported: true,
+                grant_types_supported: None,
             };
 
             let tokens = exchange_code(
@@ -2284,6 +2461,7 @@ mod tests {
                 "http://127.0.0.1:9999/callback",
                 "verifier_abc",
                 "https://mcp.example.com",
+                None,
             )
             .await
             .unwrap();
@@ -2323,6 +2501,7 @@ mod tests {
                 "old_refresh_token",
                 CIMD_URL,
                 "https://mcp.example.com",
+                None,
             )
             .await
             .unwrap();
@@ -2348,6 +2527,7 @@ mod tests {
                 scopes_supported: None,
                 code_challenge_methods_supported: Some(vec!["S256".into()]),
                 client_id_metadata_document_supported: true,
+                grant_types_supported: None,
             };
 
             let result = exchange_code(
@@ -2358,11 +2538,21 @@ mod tests {
                 "http://127.0.0.1:1/callback",
                 "verifier",
                 "https://mcp.example.com",
+                None,
             )
             .await;
 
-            assert!(result.is_err());
-            assert!(result.unwrap_err().to_string().contains("400"));
+            let err = result.unwrap_err();
+            let token_error = err
+                .downcast_ref::<OAuthTokenError>()
+                .expect("expected OAuthTokenError");
+            assert_eq!(
+                *token_error,
+                OAuthTokenError {
+                    error: "invalid_grant".into(),
+                    error_description: None,
+                }
+            );
         });
     }
 
@@ -2384,9 +2574,10 @@ mod tests {
             });
 
             let endpoint = Url::parse("https://auth.example.com/register").unwrap();
-            let registration = perform_dcr(&client, &endpoint, "http://127.0.0.1:9999/callback")
-                .await
-                .unwrap();
+            let registration =
+                perform_dcr(&client, &endpoint, "http://127.0.0.1:9999/callback", None)
+                    .await
+                    .unwrap();
 
             assert_eq!(registration.client_id, "dynamic-client-001");
             assert_eq!(
@@ -2406,7 +2597,8 @@ mod tests {
             });
 
             let endpoint = Url::parse("https://auth.example.com/register").unwrap();
-            let result = perform_dcr(&client, &endpoint, "http://127.0.0.1:9999/callback").await;
+            let result =
+                perform_dcr(&client, &endpoint, "http://127.0.0.1:9999/callback", None).await;
 
             assert!(result.is_err());
             assert!(result.unwrap_err().to_string().contains("403"));
