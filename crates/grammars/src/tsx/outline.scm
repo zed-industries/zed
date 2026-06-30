@@ -194,7 +194,7 @@
       (identifier) @name
     ]))) @item
 
-; Add support for parameterized tests
+; Add support for parameterized and conditional tests
 ((call_expression
   function: (call_expression
     function: (member_expression
@@ -205,7 +205,7 @@
       ]
       property: (property_identifier) @_property)
     (#any-of? @_name "it" "test" "describe" "context" "suite")
-    (#any-of? @_property "each"))
+    (#any-of? @_property "each" "skipIf" "runIf"))
   arguments: (arguments
     .
     [

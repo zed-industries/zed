@@ -1434,6 +1434,94 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_conditional_test_wrappers(cx: &mut TestAppContext) {
+        for language in [
+            crate::language(
+                "typescript",
+                tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            ),
+            crate::language("tsx", tree_sitter_typescript::LANGUAGE_TSX.into()),
+            crate::language("javascript", tree_sitter_typescript::LANGUAGE_TSX.into()),
+        ] {
+            let text = r#"
+                it.runIf(true)("runIf test", () => {
+                    true;
+                });
+
+                it.skipIf(false)("skipIf test", () => {
+                    true;
+                });
+
+                test.runIf(true)("runIf test 2", () => {
+                    true;
+                });
+
+                test.skipIf(false)("skipIf test 2", () => {
+                    true;
+                });
+
+                describe.runIf(true)("runIf describe", () => {
+                    it("inner test", () => {
+                        true;
+                    });
+                });
+
+                describe.skipIf(false)("skipIf describe", () => {
+                    it("inner test 2", () => {
+                        true;
+                    });
+                });
+            "#
+            .unindent();
+
+            let text_len = text.len();
+            let buffer = cx.new(|cx| {
+                language::Buffer::local(text, cx).with_language(language, cx)
+            });
+            cx.executor().run_until_parked();
+
+            let outline = buffer.update(cx, |buffer, _cx| buffer.snapshot().outline(None));
+            let outline_names: Vec<_> = outline
+                .items
+                .iter()
+                .map(|item| item.text.as_str())
+                .collect();
+            for expected in [
+                "runIf test",
+                "skipIf test",
+                "runIf test 2",
+                "skipIf test 2",
+                "runIf describe",
+                "skipIf describe",
+            ] {
+                assert!(
+                    outline_names.contains(&expected),
+                    "Should find '{}' in outline, found: {:?}",
+                    expected,
+                    outline_names
+                );
+            }
+
+            let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
+                let snapshot = buffer.snapshot();
+                snapshot.runnable_ranges(0..text_len).collect()
+            });
+            let tag_strings: Vec<String> = runnables
+                .iter()
+                .flat_map(|r| &r.runnable.tags)
+                .map(|tag| tag.0.to_string())
+                .collect();
+            let js_test_count = tag_strings.iter().filter(|t| t.as_str() == "js-test").count();
+            assert!(
+                js_test_count >= 6,
+                "Should find at least 6 js-test runnables for conditional wrappers, found {}: {:?}",
+                js_test_count,
+                tag_strings
+            );
+        }
+    }
+
+    #[gpui::test]
     async fn test_package_json_discovery(executor: BackgroundExecutor, cx: &mut TestAppContext) {
         cx.update(|cx| {
             settings::init(cx);
