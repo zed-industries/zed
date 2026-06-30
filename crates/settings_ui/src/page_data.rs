@@ -94,6 +94,7 @@ fn developer_page(cx: &App) -> SettingsPage {
             title: "Feature Flags".into(),
             r#type: Default::default(),
             description: None,
+            search_aliases: &[],
             json_path: Some("feature_flags"),
             in_json: true,
             files: USER,
@@ -3376,6 +3377,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                     title: language_name,
                     r#type: crate::SubPageType::Language,
                     description: None,
+                    search_aliases: &[],
                     json_path: Some(link.leak()),
                     in_json: true,
                     files: USER | PROJECT,
@@ -7518,32 +7520,75 @@ fn version_control_page() -> SettingsPage {
     fn inline_git_blame_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Inline Git Blame"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Enabled",
-                description: "Whether or not to show Git blame data inline in the currently focused line.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("git.inline_blame.enabled"),
-                    pick: |settings_content| {
-                        settings_content
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    title: "Enabled",
+                    description: "Whether or not to show Git blame data for the currently focused line.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("git.inline_blame.enabled"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .inline_blame
+                                .as_ref()?
+                                .enabled
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .enabled = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(
+                        *settings_content
                             .git
                             .as_ref()?
                             .inline_blame
                             .as_ref()?
                             .enabled
-                            .as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .git
-                            .get_or_insert_default()
-                            .inline_blame
-                            .get_or_insert_default()
-                            .enabled = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
+                            .as_ref()? as usize,
+                    )
+                },
+                fields: vec![
+                    vec![],
+                    vec![SettingItem {
+                        title: "Location",
+                        description: "Where to render Git blame when it is enabled.",
+                        field: Box::new(SettingField {
+                            organization_override: None,
+                            json_path: Some("git.inline_blame.location"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .git
+                                    .as_ref()?
+                                    .inline_blame
+                                    .as_ref()?
+                                    .location
+                                    .as_ref()
+                            },
+                            write: |settings_content, value, _| {
+                                settings_content
+                                    .git
+                                    .get_or_insert_default()
+                                    .inline_blame
+                                    .get_or_insert_default()
+                                    .location = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }],
+                ],
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Delay",
@@ -7947,6 +7992,32 @@ fn ai_page(cx: &App) -> SettingsPage {
                 r#type: Default::default(),
                 json_path: Some("llm_providers"),
                 description: Some("Configure API keys and settings for LLM providers.".into()),
+                search_aliases: &[
+                    "ai",
+                    "amazon",
+                    "anthropic",
+                    "api key",
+                    "azure",
+                    "bedrock",
+                    "chat",
+                    "claude",
+                    "copilot",
+                    "gemini",
+                    "github",
+                    "google",
+                    "gpt",
+                    "grok",
+                    "llama",
+                    "llm",
+                    "lm studio",
+                    "mistral",
+                    "ollama",
+                    "openai",
+                    "opencode",
+                    "provider",
+                    "vercel",
+                    "xai",
+                ],
                 in_json: false,
                 files: USER,
                 render: render_llm_providers_page,
@@ -7959,6 +8030,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                 r#type: Default::default(),
                 json_path: Some(zed_actions::AGENT_SKILLS_SETTINGS_PATH),
                 description: Some("View and manage agent skills installed globally or in project worktrees.".into()),
+                search_aliases: &["agent skill", "agent skills", "custom instructions", "skill", "skills"],
                 in_json: false,
                 files: USER | PROJECT,
                 render: render_skills_setup_page,
@@ -7971,6 +8043,15 @@ fn ai_page(cx: &App) -> SettingsPage {
                     "Review and change the elevated terminal sandbox permissions that are always allowed without prompting."
                         .into(),
                 ),
+                search_aliases: &[
+                    "allow",
+                    "domain",
+                    "filesystem",
+                    "network",
+                    "sandbox",
+                    "unsandboxed",
+                    "permissions",
+                ],
                 in_json: true,
                 files: USER,
                 render: render_sandbox_settings_page,
@@ -7980,6 +8061,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                 r#type: Default::default(),
                 json_path: Some("agent.tool_permissions"),
                 description: Some("Set up regex patterns to auto-allow, auto-deny, or always request confirmation, for specific tool inputs.".into()),
+                search_aliases: &[],
                 in_json: true,
                 files: USER,
                 render: render_tool_permissions_setup_page,
@@ -7994,6 +8076,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                 description: Some(
                     "View, add, configure, and remove Model Context Protocol servers.".into(),
                 ),
+                search_aliases: &["context server", "mcp", "model context protocol"],
                 in_json: false,
                 files: USER,
                 render: render_mcp_servers_page,
@@ -8006,6 +8089,22 @@ fn ai_page(cx: &App) -> SettingsPage {
                     "View, add, and remove agents connected through the Agent Client Protocol."
                         .into(),
                 ),
+                search_aliases: &[
+                    "acp",
+                    "agent client protocol",
+                    "amp",
+                    "claude agent",
+                    "claude code",
+                    "codex",
+                    "copilot cli",
+                    "cursor",
+                    "external agent",
+                    "factory droid",
+                    "github copilot",
+                    "grok build",
+                    "junie",
+                    "opencode",
+                ],
                 in_json: false,
                 files: USER,
                 render: render_external_agents_page,
@@ -8420,15 +8519,30 @@ fn ai_page(cx: &App) -> SettingsPage {
         })]
     }
 
+    use feature_flags::FeatureFlagAppExt as _;
+
+    // When the agent settings UI is enabled, the context server timeout is shown
+    // inside the MCP Servers sub-page. Otherwise it remains a standalone section
+    // here so it stays reachable.
+    let agent_settings_ui_enabled = cx.has_flag::<feature_flags::AgentSettingsUiFeatureFlag>();
+
+    let mut items = concat_sections!(
+        @vec,
+        general_section(),
+        agent_configuration_section(cx),
+    );
+    if !agent_settings_ui_enabled {
+        items.extend(context_servers_section());
+    }
+    items.extend(concat_sections!(
+        @vec,
+        edit_prediction_language_settings_section(),
+        edit_prediction_display_sub_section(),
+    ));
+
     SettingsPage {
         title: "AI",
-        items: concat_sections![
-            general_section(),
-            agent_configuration_section(cx),
-            context_servers_section(),
-            edit_prediction_language_settings_section(),
-            edit_prediction_display_sub_section()
-        ],
+        items: items.into(),
     }
 }
 
@@ -10316,6 +10430,7 @@ fn edit_prediction_language_settings_section() -> [SettingsPageItem; 5] {
             r#type: Default::default(),
             json_path: Some("edit_predictions.providers"),
             description: Some("Set up different edit prediction providers in complement to Zed's built-in Zeta model.".into()),
+            search_aliases: &[],
             in_json: false,
             files: USER,
             render: render_edit_prediction_setup_page

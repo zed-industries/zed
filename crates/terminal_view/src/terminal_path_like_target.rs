@@ -9,7 +9,7 @@ use util::{ResultExt, debug_panic};
 use workspace::path_link::possible_open_target;
 #[cfg(test)]
 use workspace::path_link::{
-    BackgroundFsChecks, OpenTargetFoundBy, possible_open_target_with_fs_checks,
+    BackgroundPathChecks, OpenTargetFoundBy, possible_open_target_with_fs_checks,
 };
 use workspace::{OpenOptions, OpenVisible, Workspace, path_link::OpenTarget};
 
@@ -30,7 +30,7 @@ pub(super) fn hover_path_like_target(
             hovered_word,
             path_like_target,
             cx,
-            BackgroundFsChecks::Enabled,
+            BackgroundPathChecks::LocalFileSystem,
         )
     }
 }
@@ -40,7 +40,7 @@ fn possible_hover_target(
     hovered_word: HoveredWord,
     path_like_target: &PathLikeTarget,
     cx: &mut Context<TerminalView>,
-    #[cfg(test)] background_fs_checks: BackgroundFsChecks,
+    #[cfg(test)] background_path_checks: BackgroundPathChecks,
 ) -> Task<()> {
     #[cfg(not(test))]
     let file_to_open_task = possible_open_target(
@@ -55,14 +55,14 @@ fn possible_hover_target(
         &path_like_target.maybe_path,
         path_like_target.terminal_dir.as_deref(),
         cx,
-        background_fs_checks,
+        background_path_checks,
     );
     cx.spawn(async move |terminal_view, cx| {
         let file_to_open = file_to_open_task.await;
         terminal_view
             .update(cx, |terminal_view, cx| {
                 match file_to_open {
-                    Some(OpenTarget::File(path, _) | OpenTarget::Worktree(path, ..)) => {
+                    Some(OpenTarget::Path(path, ..) | OpenTarget::Worktree(path, ..)) => {
                         terminal_view.hover = Some(HoverTarget {
                             tooltip: path
                                 .to_string(&|path: &PathBuf| path.to_string_lossy().into_owned()),
@@ -99,7 +99,7 @@ pub(super) fn open_path_like_target(
             path_like_target,
             window,
             cx,
-            BackgroundFsChecks::Enabled,
+            BackgroundPathChecks::LocalFileSystem,
         )
         .detach_and_log_err(cx)
     }
@@ -111,7 +111,7 @@ fn possibly_open_target(
     path_like_target: &PathLikeTarget,
     window: &mut Window,
     cx: &mut Context<TerminalView>,
-    #[cfg(test)] background_fs_checks: BackgroundFsChecks,
+    #[cfg(test)] background_path_checks: BackgroundPathChecks,
 ) -> Task<Result<Option<OpenTarget>>> {
     if terminal_view.hover.is_none() {
         return Task::ready(Ok(None));
@@ -137,7 +137,7 @@ fn possibly_open_target(
                         &path_like_target.maybe_path,
                         path_like_target.terminal_dir.as_deref(),
                         cx,
-                        background_fs_checks,
+                        background_path_checks,
                     )
                 }
             })?
@@ -227,7 +227,7 @@ mod tests {
     ) -> impl AsyncFnMut(
         HoveredWord,
         PathLikeTarget,
-        BackgroundFsChecks,
+        BackgroundPathChecks,
     ) -> (Option<HoverTarget>, Option<OpenTarget>) {
         let fs = app_cx.update(AppState::test).fs.as_fake().clone();
 
@@ -277,7 +277,7 @@ mod tests {
 
         async move |hovered_word: HoveredWord,
                     path_like_target: PathLikeTarget,
-                    background_fs_checks: BackgroundFsChecks|
+                    background_path_checks: BackgroundPathChecks|
                     -> (Option<HoverTarget>, Option<OpenTarget>) {
             let workspace_a = workspace.clone();
             terminal_view
@@ -287,7 +287,7 @@ mod tests {
                         hovered_word,
                         &path_like_target,
                         cx,
-                        background_fs_checks,
+                        background_path_checks,
                     )
                 })
                 .await;
@@ -303,7 +303,7 @@ mod tests {
                         &path_like_target,
                         window,
                         cx,
-                        background_fs_checks,
+                        background_path_checks,
                     )
                 })
                 .await
@@ -317,13 +317,13 @@ mod tests {
         test_path_like: &mut impl AsyncFnMut(
             HoveredWord,
             PathLikeTarget,
-            BackgroundFsChecks,
+            BackgroundPathChecks,
         ) -> (Option<HoverTarget>, Option<OpenTarget>),
         maybe_path: &str,
         tooltip: &str,
         terminal_dir: Option<PathBuf>,
-        background_fs_checks: BackgroundFsChecks,
-        mut open_target_found_by: OpenTargetFoundBy,
+        background_path_checks: BackgroundPathChecks,
+        open_target_found_by: OpenTargetFoundBy,
         file: &str,
         line: u32,
     ) {
@@ -337,7 +337,7 @@ mod tests {
                 maybe_path: maybe_path.to_string(),
                 terminal_dir,
             },
-            background_fs_checks,
+            background_path_checks,
         )
         .await;
 
@@ -372,12 +372,6 @@ mod tests {
             "Open target path mismatch at {file}:{line}:"
         );
 
-        if background_fs_checks == BackgroundFsChecks::Disabled
-            && open_target_found_by == OpenTargetFoundBy::FileSystemBackground
-        {
-            open_target_found_by = OpenTargetFoundBy::WorktreeScan;
-        }
-
         assert_eq!(
             open_target.found_by(),
             open_target_found_by,
@@ -407,7 +401,7 @@ mod tests {
                 $maybe_path,
                 $tooltip,
                 $cwd,
-                BackgroundFsChecks::Enabled,
+                BackgroundPathChecks::LocalFileSystem,
                 $found_by
             );
             test_path_like!(
@@ -415,7 +409,7 @@ mod tests {
                 $maybe_path,
                 $tooltip,
                 $cwd,
-                BackgroundFsChecks::Disabled,
+                BackgroundPathChecks::ProjectPathResolution,
                 $found_by
             );
         }};
@@ -482,7 +476,7 @@ mod tests {
                         $maybe_path,
                         $tooltip,
                         $cwd,
-                        BackgroundFsChecks::Enabled,
+                        BackgroundPathChecks::LocalFileSystem,
                         OpenTargetFoundBy::WorktreeExact
                     )
                 };
@@ -492,7 +486,7 @@ mod tests {
                         $maybe_path,
                         $tooltip,
                         $cwd,
-                        BackgroundFsChecks::Enabled,
+                        BackgroundPathChecks::LocalFileSystem,
                         OpenTargetFoundBy::$found_by
                     )
                 }
@@ -507,7 +501,7 @@ mod tests {
                         $maybe_path,
                         $tooltip,
                         $cwd,
-                        BackgroundFsChecks::Disabled,
+                        BackgroundPathChecks::ProjectPathResolution,
                         OpenTargetFoundBy::WorktreeExact
                     )
                 };
@@ -517,7 +511,7 @@ mod tests {
                         $maybe_path,
                         $tooltip,
                         $cwd,
-                        BackgroundFsChecks::Disabled,
+                        BackgroundPathChecks::ProjectPathResolution,
                         OpenTargetFoundBy::$found_by
                     )
                 }
@@ -942,7 +936,7 @@ mod tests {
                 vec![path!("/test")],
                 {
                     // Note: Opening a non-worktree file adds that file as a single file worktree.
-                    test_local!("file.txt", "/file.txt", "/", FileSystemBackground);
+                    test_local!("file.txt", "/file.txt", "/", BackgroundPathResolution);
                 }
             )
         }
@@ -969,8 +963,41 @@ mod tests {
                 vec![path!("/test")],
                 {
                     // Note: Opening a non-worktree file adds that file as a single file worktree.
-                    test_remote!("file.txt", "/test/file.txt", "/");
+                    test_remote!("file.txt", "/file.txt", "/", BackgroundPathResolution);
                     test_remote!("/test/file.txt", "/test/file.txt", "/");
+                }
+            )
+        }
+
+        // https://github.com/zed-industries/zed/issues/39159
+        #[gpui::test]
+        async fn issue_39159_remote_absolute_path_outside_worktree(cx: &mut TestAppContext) {
+            test_path_likes!(
+                cx,
+                vec![
+                    (
+                        path!("/tmp"),
+                        json!({
+                            "a.txt": "",
+                        }),
+                    ),
+                    (
+                        path!("/code/project"),
+                        json!({
+                            "src": {
+                                "lib.rs": "",
+                            },
+                        }),
+                    ),
+                ],
+                vec![path!("/code/project")],
+                {
+                    test_remote!(
+                        "/tmp/a.txt",
+                        "/tmp/a.txt",
+                        "/code/project",
+                        BackgroundPathResolution
+                    );
                 }
             )
         }
