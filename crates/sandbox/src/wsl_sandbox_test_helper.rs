@@ -510,7 +510,9 @@ mod imp {
     ) -> Result<Outcome> {
         let policy = SandboxPolicy {
             fs: if permissions.allow_fs_write {
-                SandboxFsPolicy::Unrestricted
+                SandboxFsPolicy::Unrestricted {
+                    protected_paths: Vec::new(),
+                }
             } else {
                 SandboxFsPolicy::Restricted {
                     // On Windows the location only records the requested path;

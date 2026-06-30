@@ -80,9 +80,9 @@ pub fn sandbox_git_dirs(project: &Project, cx: &App) -> Vec<PathBuf> {
 /// UI renders and enforcement builds from. "No sandbox" is its own variant
 /// rather than a maximally-permissive [`SandboxPolicy`] so that a wide-open but
 /// real sandbox (e.g. `allow_fs_write_all` + `allow_all_hosts`) stays
-/// distinguishable from running with no sandbox at all — the two grant the same
-/// filesystem/network reach but only the latter means the command runs with
-/// ambient permissions.
+/// distinguishable from running with no sandbox at all. The sandbox still
+/// enforces invariants such as read-only Git metadata, while unsandboxed commands
+/// run with ambient permissions.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ThreadSandbox {
     /// No OS sandbox is applied; commands run with ambient permissions.
@@ -151,7 +151,9 @@ pub fn settings_thread_sandbox(persistent: &SandboxPermissions) -> ThreadSandbox
 /// from [`ThreadSandboxGrants::to_policy`].
 pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy {
     let fs = if persistent.allow_fs_write_all {
-        SandboxFsPolicy::Unrestricted
+        SandboxFsPolicy::Unrestricted {
+            protected_paths: Vec::new(),
+        }
     } else {
         SandboxFsPolicy::Restricted {
             writable_paths: persistent
@@ -337,7 +339,8 @@ impl ThreadSandboxGrants {
         {
             return false;
         }
-        // A full-access write grant covers any concrete write request.
+        // A full-access write grant covers any concrete write request at the
+        // authorization layer; protected paths are enforced by the sandbox.
         if self.allow_fs_write_all || persistent.allow_fs_write_all {
             return true;
         }
@@ -418,7 +421,9 @@ impl ThreadSandboxGrants {
     /// from [`settings_sandbox_policy`].
     pub fn to_policy(&self) -> SandboxPolicy {
         let fs = if self.allow_fs_write_all {
-            SandboxFsPolicy::Unrestricted
+            SandboxFsPolicy::Unrestricted {
+                protected_paths: Vec::new(),
+            }
         } else {
             SandboxFsPolicy::Restricted {
                 writable_paths: self
@@ -767,7 +772,12 @@ mod tests {
         let mut broad = ThreadSandboxGrants::default();
         broad.record(&request(NetworkRequest::AnyHost, true, &[]));
         let policy = broad.to_policy();
-        assert_eq!(policy.fs, SandboxFsPolicy::Unrestricted);
+        assert_eq!(
+            policy.fs,
+            SandboxFsPolicy::Unrestricted {
+                protected_paths: Vec::new(),
+            }
+        );
         assert_eq!(policy.network, SandboxNetPolicy::Unrestricted);
     }
 
@@ -805,7 +815,12 @@ mod tests {
             ..Default::default()
         };
         let policy = settings_sandbox_policy(&unrestricted);
-        assert_eq!(policy.fs, SandboxFsPolicy::Unrestricted);
+        assert_eq!(
+            policy.fs,
+            SandboxFsPolicy::Unrestricted {
+                protected_paths: Vec::new(),
+            }
+        );
         assert_eq!(policy.network, SandboxNetPolicy::Unrestricted);
     }
 

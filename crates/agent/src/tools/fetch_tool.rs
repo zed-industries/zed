@@ -23,6 +23,9 @@ enum ContentType {
 }
 
 /// Fetches a URL and returns the content as Markdown.
+///
+/// This tool is not run inside the terminal OS sandbox; `allow_hosts` and
+/// `allow_all_hosts` on `terminal` calls do not apply to it.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct FetchToolInput {
     /// The URL to fetch.

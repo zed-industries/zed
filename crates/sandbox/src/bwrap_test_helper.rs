@@ -175,7 +175,9 @@ mod imp {
 
     fn policy_of(check: &Check) -> Result<SandboxPolicy> {
         let fs = match check.fs {
-            FsMode::Unrestricted => SandboxFsPolicy::Unrestricted,
+            FsMode::Unrestricted => SandboxFsPolicy::Unrestricted {
+                protected_paths: capture_protected_paths(&check.protected_paths),
+            },
             FsMode::Restricted => {
                 let mut writable_paths = Vec::new();
                 for path in &check.writable_paths {

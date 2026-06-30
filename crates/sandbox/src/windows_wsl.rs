@@ -1006,11 +1006,12 @@ fn build_bwrap_args<S: std::hash::BuildHasher>(
         for path in writable_paths {
             push_bind(&mut args, "--bind", path, path);
         }
-        // Protect requested paths by re-binding them read-only over the writable
-        // binds above (order matters: later binds win).
-        for path in protected_paths {
-            push_bind(&mut args, "--ro-bind", path, path);
-        }
+    }
+
+    // Protect requested paths by re-binding them read-only over any writable
+    // binds above (order matters: later binds win).
+    for path in protected_paths {
+        push_bind(&mut args, "--ro-bind", path, path);
     }
 
     // Block WSL's Windows interop, regardless of the requested permissions.
@@ -1531,7 +1532,7 @@ mod tests {
     }
 
     #[test]
-    fn bwrap_skips_protected_paths_when_fs_writes_are_unrestricted() {
+    fn bwrap_protects_paths_when_fs_writes_are_unrestricted() {
         let args = build_bwrap_args(
             &[],
             &["/home/me/project/.git".to_string()],
@@ -1543,12 +1544,22 @@ mod tests {
             true,
             &HashMap::new(),
         );
-        assert!(!args.windows(3).any(|window| window
-            == [
-                "--ro-bind",
-                "/home/me/project/.git",
-                "/home/me/project/.git"
-            ]));
+        let unrestricted_write_index = args
+            .windows(3)
+            .position(|window| window == ["--bind", "/", "/"])
+            .expect("root should be writable");
+        let protected_index = args
+            .windows(3)
+            .position(|window| {
+                window
+                    == [
+                        "--ro-bind",
+                        "/home/me/project/.git",
+                        "/home/me/project/.git",
+                    ]
+            })
+            .expect("protected path should be bound read-only");
+        assert!(protected_index > unrestricted_write_index);
     }
 
     #[test]

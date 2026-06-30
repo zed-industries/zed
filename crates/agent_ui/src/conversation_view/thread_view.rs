@@ -5641,7 +5641,7 @@ impl SandboxPolicyDisplay {
     /// its locations immediately, so no fd is retained past this call.
     fn from_policy(policy: &SandboxPolicy) -> Self {
         let fs = match &policy.fs {
-            SandboxFsPolicy::Unrestricted => SandboxFsDisplay::Unrestricted,
+            SandboxFsPolicy::Unrestricted { .. } => SandboxFsDisplay::Unrestricted,
             SandboxFsPolicy::Restricted { writable_paths, .. } => SandboxFsDisplay::Restricted(
                 writable_paths
                     .iter()
@@ -5670,7 +5670,7 @@ fn augment_settings_sandbox_policy(
     baseline: Vec<PathBuf>,
 ) -> SandboxPolicyDisplay {
     let fs = match &policy.fs {
-        SandboxFsPolicy::Unrestricted => SandboxFsDisplay::Unrestricted,
+        SandboxFsPolicy::Unrestricted { .. } => SandboxFsDisplay::Unrestricted,
         SandboxFsPolicy::Restricted { writable_paths, .. } => {
             // Dedup by display string. We deliberately don't open the locations'
             // fds to dedup by inode here: this is a display-only tooltip and the
@@ -5749,7 +5749,9 @@ fn network_grants_nothing(network: &SandboxNetPolicy) -> bool {
 /// row per granted path.
 fn sandbox_fs_rows(fs: &SandboxFsDisplay) -> Vec<SandboxRow> {
     match fs {
-        SandboxFsDisplay::Unrestricted => vec![SandboxRow::message("All paths (unrestricted)")],
+        SandboxFsDisplay::Unrestricted => vec![SandboxRow::message(
+            "All paths except protected Git metadata",
+        )],
         SandboxFsDisplay::Restricted(entries) if entries.is_empty() => {
             vec![SandboxRow::message("None")]
         }
@@ -8339,7 +8341,7 @@ impl ThreadView {
 
         let write_section = has_write.then(|| {
             let summary = if details.allow_fs_write_all {
-                "unrestricted".to_string()
+                "unrestricted except Git metadata".to_string()
             } else {
                 format!(
                     "{} {}",

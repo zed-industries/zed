@@ -14,8 +14,7 @@ const SANDBOX_DISCLAIMER: &str = "Customize how the sandbox for the agents tool 
 
 const DOMAINS_DESCRIPTION: &str = "Each entry is an exact domain (github.com) or a leading-*. subdomain wildcard (*.npmjs.org). IP addresses and local domains are not allowed.";
 
-const WRITE_PATHS_DESCRIPTION: &str =
-    "Each entry must be an absolute path and grants write access to the whole subtree.";
+const WRITE_PATHS_DESCRIPTION: &str = "Each entry must be an absolute path and grants write access to the whole subtree, except protected Git metadata.";
 
 pub(crate) fn render_sandbox_settings_page(
     settings_window: &SettingsWindow,
@@ -138,7 +137,7 @@ pub(crate) fn render_sandbox_settings_page(
                         "sandbox-allow-fs-write-all",
                         Some("Allow All Filesystem Writes"),
                         Some(
-                            "Let sandboxed commands write anywhere on the filesystem without prompting."
+                            "Let sandboxed commands write anywhere except protected Git metadata without prompting."
                                 .into(),
                         ),
                         permissions.allow_fs_write_all,

@@ -46,10 +46,11 @@ pub struct SandboxWrap {
     pub extra_write_paths: Vec<PathBuf>,
     /// Outbound network access explicitly approved for this command.
     pub network: SandboxNetworkAccess,
-    /// Additional paths whose contents should be protected even when they fall
-    /// under writable paths.
+    /// Additional paths that should remain readable but not writable, even when
+    /// they fall under writable paths.
     pub protected_paths: Vec<PathBuf>,
-    /// Allow unrestricted filesystem writes (ignores all writable paths).
+    /// Allow unrestricted filesystem writes except for protected paths (ignores
+    /// ordinary writable paths).
     pub allow_fs_write: bool,
     /// Whether the project (and therefore this terminal) is local. The
     /// enforcing proxy binds a loopback port on this host, so it can only
@@ -151,8 +152,13 @@ impl SandboxWrap {
     /// path) rather than passing a re-resolvable path. A location that can't be
     /// captured (e.g. it doesn't exist) is dropped from the grant — fail-closed.
     fn to_policy(&self) -> sandbox::SandboxPolicy {
+        let protected_paths = self
+            .protected_paths
+            .iter()
+            .filter_map(|path| sandbox::HostFilesystemLocation::new(path).ok())
+            .collect();
         let fs = if self.allow_fs_write {
-            sandbox::SandboxFsPolicy::Unrestricted
+            sandbox::SandboxFsPolicy::Unrestricted { protected_paths }
         } else {
             let writable_paths = self
                 .writable_paths
@@ -164,11 +170,6 @@ impl SandboxWrap {
                     let _ = std::fs::create_dir_all(path);
                     sandbox::HostFilesystemLocation::new(path).ok()
                 })
-                .collect();
-            let protected_paths = self
-                .protected_paths
-                .iter()
-                .filter_map(|path| sandbox::HostFilesystemLocation::new(path).ok())
                 .collect();
             sandbox::SandboxFsPolicy::Restricted {
                 writable_paths,

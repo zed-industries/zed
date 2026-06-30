@@ -31,8 +31,8 @@
 #   writablePaths = [ ];        # writable subtrees when fs = "restricted"
 #   networkAccess = "blocked";  # or "unrestricted" / "restricted"
 #   allowedDomains = [ ];       # allowed hosts when networkAccess = "restricted"
-#   protectedPaths = [ ];       # paths whose contents are protected even if
-#                               # they fall under a writable subtree.
+#   protectedPaths = [ ];       # paths that remain readable but not writable,
+#                               # even if they fall under a writable subtree.
 #
 # Two echo servers (`echo1`, `echo2`) on separate nodes give the network checks
 # real peers, so a restricted-network policy that allowlists `echo1` can be
@@ -269,14 +269,14 @@ in
         succeeds = true;
       }
 
-      # The fs escape hatch supersedes protected paths: when filesystem writes are
-      # unrestricted there is no read-only bind, so the write succeeds.
+      # Protected paths stay read-only even when ordinary filesystem writes are
+      # otherwise unrestricted.
       {
         fs = "unrestricted";
         protectedPaths = [ "/sandbox-test/repo/protected" ];
         networkAccess = "blocked";
         write = "/sandbox-test/repo/protected/test";
-        succeeds = true;
+        succeeds = false;
       }
 
       # Blocked network: the echo server is unreachable.

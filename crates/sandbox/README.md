@@ -44,6 +44,13 @@ The implementations are highly platform-specific:
 Note that WSL shells can be used on all Windows projects, regardless of whether
 the files are stored in the Linux filesystem or not.
 
+Though not defined in this crate, the default grants provided by the Zed agent is:
+- read-only access to all files
+- read/write access to current project directories
+  - read-only access to any Git metadata, including those in project directories
+- read/write access to an isolated tempdir, cleared between terminals
+  - on MacOS, this is set via the `$TMPDIR` variable and is not at `/tmp`
+
 ## Architecture
 
 Filesystem restrictions are different on all platforms. Network restrictions

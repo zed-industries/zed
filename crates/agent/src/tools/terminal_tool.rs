@@ -44,13 +44,14 @@ const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 /// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
 ///
 /// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
+/// - Prefer Git flags that avoid optional metadata writes when possible, such as `git --no-optional-locks status` instead of `git status`.
 /// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
 /// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct TerminalToolInput {
     /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
     ///
-    /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
+    /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Prefer `git --no-optional-locks status` over `git status` to avoid optional metadata writes. Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
     /// Working directory for the command. This must be one of the root directories of the project.
     pub cd: String,
@@ -85,13 +86,14 @@ pub struct TerminalToolInput {
 /// The terminal is an interactive pty, so any command that blocks waiting for input will hang the tool until it times out. To avoid this:
 ///
 /// - Always insert `--no-pager` immediately after `git` for any read-only git command, including `git log`, `git diff`, `git show`, `git blame`, and `git stash show`. Example: `git --no-pager log -n 5` (NOT `git log -n 5`).
+/// - Prefer Git flags that avoid optional metadata writes when possible, such as `git --no-optional-locks status` instead of `git status`.
 /// - Always prepend `GIT_EDITOR=true ` to any git command that may invoke an editor, including `git rebase`, `git commit`, `git merge`, and `git tag`. Example: `GIT_EDITOR=true git rebase origin/main` (NOT `git rebase origin/main`).
 /// - For other commands that may open a pager or editor, set `PAGER=cat` and/or `EDITOR=true` similarly.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SandboxedTerminalToolInput {
     /// The one-liner command to execute. Do not include shell substitutions or interpolations such as `$VAR`, `${VAR}`, `$(...)`, backticks, `$((...))`, `<(...)`, or `>(...)`; resolve those values first or ask the user for the literal value to use.
     ///
-    /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
+    /// REMINDER: read-only git commands (`git log`, `git diff`, `git show`, `git blame`) MUST include `--no-pager` (e.g. `git --no-pager log`). Prefer `git --no-optional-locks status` over `git status` to avoid optional metadata writes. Git commands that may open an editor (`git rebase`, `git commit`, `git merge`, `git tag`) MUST be prefixed with `GIT_EDITOR=true ` (e.g. `GIT_EDITOR=true git rebase origin/main`). Otherwise the terminal will hang.
     pub command: String,
     /// Working directory for the command. This must be one of the root directories of the project.
     pub cd: String,
@@ -129,9 +131,10 @@ pub struct SandboxedTerminalToolInput {
     /// Set to `true` only if the command needs outbound network access to
     /// hosts you can't enumerate up front.
     ///
-    /// This grants unrestricted outbound network access. Prefer `allow_hosts`
-    /// with specific hostnames whenever possible, so the user knows what's
-    /// being approved. Requesting it triggers a user approval prompt.
+    /// This grants unrestricted outbound network access. On platforms that
+    /// support host-specific grants, prefer `allow_hosts` with specific
+    /// hostnames whenever possible, so the user knows what's being approved.
+    /// Requesting it triggers a user approval prompt.
     #[serde(default)]
     pub allow_all_hosts: Option<bool>,
     /// Paths the command needs to write to outside the default-writable
@@ -146,7 +149,8 @@ pub struct SandboxedTerminalToolInput {
     /// Provide absolute or worktree-relative paths; each
     /// directory grants write access to its whole subtree. Prefer this over
     /// `allow_fs_write_all` whenever you can enumerate the paths. Requesting
-    /// paths triggers a user approval prompt.
+    /// paths triggers a user approval prompt. Git metadata paths cannot be
+    /// requested and will never be made writable while sandboxed.
     #[cfg_attr(
         target_os = "linux",
         doc = "\nOn Linux, every path here must be a directory that already exists. \
@@ -160,7 +164,8 @@ pub struct SandboxedTerminalToolInput {
     /// enumerated up front.
     ///
     /// This is a broad escape hatch — prefer `fs_write_paths` whenever the
-    /// set of paths is known. Requesting it triggers a user approval prompt.
+    /// set of paths is known. Protected Git metadata remains read-only.
+    /// Requesting it triggers a user approval prompt.
     #[serde(default, alias = "allow_fs_write")]
     pub allow_fs_write_all: Option<bool>,
 
@@ -169,7 +174,8 @@ pub struct SandboxedTerminalToolInput {
     ///
     /// First try the narrower options (`allow_hosts`, `fs_write_paths`, or
     /// `allow_fs_write_all`); use this only when the command
-    /// needs behavior the sandbox can't grant on a per-permission basis.
+    /// needs behavior the sandbox can't grant on a per-permission basis,
+    /// including commands that must write Git metadata.
     /// Requesting it triggers a user approval prompt.
     #[cfg_attr(
         target_os = "windows",
@@ -486,8 +492,8 @@ async fn run_terminal_tool(
             {
                 return Err(
                     "Unrestricted filesystem writes are enabled for this thread, so every command \
-                     can already write anywhere; `fs_write_paths` cannot narrow that. Remove \
-                     `fs_write_paths`."
+                     can already write anywhere except protected Git metadata; `fs_write_paths` \
+                     cannot narrow that. Remove `fs_write_paths`."
                         .to_string(),
                 );
             }

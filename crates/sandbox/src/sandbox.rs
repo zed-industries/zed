@@ -16,6 +16,8 @@ use std::{
 use http_proxy::ProxyHandle;
 #[cfg(not(target_os = "windows"))]
 use http_proxy::{Allowlist, HostPattern, ProxyConfig, ProxyEvent, UpstreamProxy};
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd as _;
 
 #[cfg(target_os = "linux")]
 mod linux_bubblewrap;
@@ -196,7 +198,10 @@ impl PartialEq for HostFilesystemLocation {
     fn eq(&self, other: &Self) -> bool {
         #[cfg(target_os = "linux")]
         {
-            match (linux_fd_identity(&self.fd), linux_fd_identity(&other.fd)) {
+            match (
+                linux_fd_identity(self.fd.as_raw_fd()),
+                linux_fd_identity(other.fd.as_raw_fd()),
+            ) {
                 (Some(a), Some(b)) => a == b,
                 // An `fstat` on an `O_PATH` fd we own should never fail; if it
                 // somehow does we can't prove identity, so report "not equal"
@@ -230,9 +235,8 @@ impl Eq for HostFilesystemLocation {}
 /// The `(device, inode)` pair behind an `O_PATH` descriptor, used to decide
 /// whether two [`HostFilesystemLocation`]s refer to the same filesystem object.
 #[cfg(target_os = "linux")]
-fn linux_fd_identity(fd: &std::os::fd::OwnedFd) -> Option<(u64, u64)> {
-    use std::os::fd::AsRawFd as _;
-    let stat = nix::sys::stat::fstat(fd.as_raw_fd()).ok()?;
+fn linux_fd_identity(fd: std::os::fd::RawFd) -> Option<(u64, u64)> {
+    let stat = nix::sys::stat::fstat(fd).ok()?;
     Some((stat.st_dev as u64, stat.st_ino as u64))
 }
 
@@ -284,8 +288,11 @@ pub struct SandboxPolicy {
 /// Filesystem policy for a sandboxed command.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SandboxFsPolicy {
-    /// Allow unrestricted filesystem writes.
-    Unrestricted,
+    /// Allow unrestricted filesystem writes except for protected paths, which
+    /// remain readable but not writable.
+    Unrestricted {
+        protected_paths: Vec<HostFilesystemLocation>,
+    },
     /// Reads are allowed everywhere; writes are confined to these locations
     /// (and the standard ephemeral locations the platform provides). Each is a
     /// [`HostFilesystemLocation`] captured at validation time, never a bare path
@@ -308,9 +315,8 @@ pub enum SandboxNetPolicy {
     Restricted { allowed_domains: Vec<String> },
 }
 
-/// Host paths whose contents should be protected even when they fall under a
-/// writable subtree. On platforms that support only read-only overlays, contents
-/// may remain readable but writes are blocked.
+/// Host paths that should remain readable but not writable, even when they fall
+/// under a writable subtree.
 ///
 /// The caller computes this list because the sandbox layer does not know which
 /// application-specific paths need stronger protection.
@@ -328,16 +334,17 @@ impl SandboxPolicy {
         }
     }
 
-    /// Replace the protected paths in a restricted filesystem policy, keeping the
-    /// writable paths and network policy unchanged. This is a no-op for an
-    /// unrestricted filesystem policy.
+    /// Replace the protected paths in the filesystem policy, keeping writable
+    /// paths and network policy unchanged.
     pub fn with_protected_paths(mut self, protected_paths: Vec<HostFilesystemLocation>) -> Self {
-        if let SandboxFsPolicy::Restricted {
-            protected_paths: existing,
-            ..
-        } = &mut self.fs
-        {
-            *existing = protected_paths;
+        match &mut self.fs {
+            SandboxFsPolicy::Unrestricted {
+                protected_paths: existing,
+            }
+            | SandboxFsPolicy::Restricted {
+                protected_paths: existing,
+                ..
+            } => *existing = protected_paths,
         }
         self
     }
@@ -355,13 +362,138 @@ fn merge_locations(
     locations
 }
 
+fn validate_writable_paths_do_not_overlap_protected_paths(
+    writable_paths: &[HostFilesystemLocation],
+    protected_paths: &[HostFilesystemLocation],
+) -> Result<(), SandboxError> {
+    for writable_path in writable_paths {
+        for protected_path in protected_paths {
+            if writable_path_overlaps_protected_path(writable_path, protected_path) {
+                return Err(SandboxError::InvalidRequest(format!(
+                    "writable sandbox path `{}` overlaps protected path `{}`",
+                    writable_path.untrusted_path_display(),
+                    protected_path.untrusted_path_display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn writable_path_overlaps_protected_path(
+    writable_path: &HostFilesystemLocation,
+    protected_path: &HostFilesystemLocation,
+) -> bool {
+    linux_location_is_equal_or_descendant(writable_path, protected_path)
+}
+
+#[cfg(target_os = "macos")]
+fn writable_path_overlaps_protected_path(
+    writable_path: &HostFilesystemLocation,
+    protected_path: &HostFilesystemLocation,
+) -> bool {
+    writable_path
+        .macos_canonical_path()
+        .starts_with(protected_path.macos_canonical_path())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn writable_path_overlaps_protected_path(
+    writable_path: &HostFilesystemLocation,
+    protected_path: &HostFilesystemLocation,
+) -> bool {
+    writable_path
+        .untrusted_path_for_display
+        .starts_with(&protected_path.untrusted_path_for_display)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_location_is_equal_or_descendant(
+    location: &HostFilesystemLocation,
+    ancestor: &HostFilesystemLocation,
+) -> bool {
+    use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
+
+    if location == ancestor {
+        return true;
+    }
+
+    let Ok(mut current) = location.linux_dup_fd() else {
+        log::warn!("failed to duplicate sandbox location fd while checking protected path overlap");
+        return false;
+    };
+
+    loop {
+        let parent = unsafe {
+            let fd = libc::openat(
+                current.as_raw_fd(),
+                c"..".as_ptr(),
+                libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
+            );
+            if fd < 0 {
+                return false;
+            }
+            OwnedFd::from_raw_fd(fd)
+        };
+
+        let Some(parent_identity) = linux_fd_identity(parent.as_raw_fd()) else {
+            log::warn!("failed to fstat parent fd while checking protected path overlap");
+            return false;
+        };
+        let Some(current_identity) = linux_fd_identity(current.as_raw_fd()) else {
+            log::warn!("failed to fstat current fd while checking protected path overlap");
+            return false;
+        };
+        let Some(ancestor_identity) = linux_fd_identity(ancestor.linux_fd().as_raw_fd()) else {
+            log::warn!("failed to fstat protected fd while checking protected path overlap");
+            return false;
+        };
+
+        if parent_identity == ancestor_identity {
+            return true;
+        }
+        if parent_identity == current_identity {
+            return false;
+        }
+        current = parent;
+    }
+}
+
 impl SandboxFsPolicy {
     /// Unrestricted access dominates; otherwise the writable subtrees union.
     pub fn merge(self, other: SandboxFsPolicy) -> SandboxFsPolicy {
         match (self, other) {
-            (SandboxFsPolicy::Unrestricted, _) | (_, SandboxFsPolicy::Unrestricted) => {
-                SandboxFsPolicy::Unrestricted
-            }
+            (
+                SandboxFsPolicy::Unrestricted {
+                    protected_paths: protected_a,
+                },
+                SandboxFsPolicy::Unrestricted {
+                    protected_paths: protected_b,
+                },
+            ) => SandboxFsPolicy::Unrestricted {
+                protected_paths: merge_locations(protected_a, protected_b),
+            },
+            (
+                SandboxFsPolicy::Unrestricted {
+                    protected_paths: protected_a,
+                },
+                SandboxFsPolicy::Restricted {
+                    protected_paths: protected_b,
+                    ..
+                },
+            )
+            | (
+                SandboxFsPolicy::Restricted {
+                    protected_paths: protected_a,
+                    ..
+                },
+                SandboxFsPolicy::Unrestricted {
+                    protected_paths: protected_b,
+                },
+            ) => SandboxFsPolicy::Unrestricted {
+                protected_paths: merge_locations(protected_a, protected_b),
+            },
             (
                 SandboxFsPolicy::Restricted {
                     writable_paths: writable_a,
@@ -553,19 +685,25 @@ impl Sandbox {
     /// availability is checked separately via [`Sandbox::can_create`].
     pub fn new(policy: SandboxPolicy) -> Result<Self, SandboxError> {
         let fs = match policy.fs {
-            SandboxFsPolicy::Unrestricted => FsSetup {
+            SandboxFsPolicy::Unrestricted { protected_paths } => FsSetup {
                 allow_fs_write: true,
                 writable_paths: Vec::new(),
-                protected_paths: Vec::new(),
+                protected_paths,
             },
             SandboxFsPolicy::Restricted {
                 writable_paths,
                 protected_paths,
-            } => FsSetup {
-                allow_fs_write: false,
-                writable_paths,
-                protected_paths,
-            },
+            } => {
+                validate_writable_paths_do_not_overlap_protected_paths(
+                    &writable_paths,
+                    &protected_paths,
+                )?;
+                FsSetup {
+                    allow_fs_write: false,
+                    writable_paths,
+                    protected_paths,
+                }
+            }
         };
 
         let network = match policy.network {
@@ -616,7 +754,7 @@ impl Sandbox {
         {
             let permissions = linux_bubblewrap::SandboxPermissions {
                 network: linux_probe_network(&policy.network),
-                allow_fs_write: matches!(policy.fs, SandboxFsPolicy::Unrestricted),
+                allow_fs_write: matches!(policy.fs, SandboxFsPolicy::Unrestricted { .. }),
             };
             linux_bubblewrap::check_can_create_sandbox(permissions).map_err(map_linux_status)
         }
@@ -732,15 +870,11 @@ impl Sandbox {
         Ok(Some((port, proxy.socket_path().map(PathBuf::from))))
     }
 
-    /// Return the protected paths for the enforcement layer. When the whole
-    /// filesystem is writable, path protection is moot.
+    /// Return the protected paths for the enforcement layer. Even with broad
+    /// filesystem writes, protected paths remain readable but not writable.
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     fn protected_paths(&self) -> Vec<HostFilesystemLocation> {
-        if self.fs.allow_fs_write {
-            Vec::new()
-        } else {
-            self.fs.protected_paths.clone()
-        }
+        self.fs.protected_paths.clone()
     }
 
     #[cfg(target_os = "linux")]
@@ -1177,6 +1311,61 @@ mod tests {
     use super::*;
 
     #[test]
+    fn restricted_fs_rejects_writable_paths_inside_protected_paths() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let repo_dir = temp_dir.path().join("repo");
+        let git_dir = repo_dir.join(".git");
+        let hooks_dir = git_dir.join("hooks");
+        std::fs::create_dir_all(&hooks_dir).expect("create git hooks dir");
+
+        let protected_git = HostFilesystemLocation::new(&git_dir).expect("capture git dir");
+        let writable_git = HostFilesystemLocation::new(&git_dir).expect("capture git dir");
+        let writable_hooks = HostFilesystemLocation::new(&hooks_dir).expect("capture hooks dir");
+
+        for writable_path in [writable_git, writable_hooks] {
+            let result = Sandbox::new(SandboxPolicy {
+                fs: SandboxFsPolicy::Restricted {
+                    writable_paths: vec![writable_path],
+                    protected_paths: vec![protected_git.clone()],
+                },
+                network: SandboxNetPolicy::Blocked,
+            });
+
+            assert!(matches!(result, Err(SandboxError::InvalidRequest(_))));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn restricted_fs_protected_overlap_check_uses_captured_fds_not_path_text() {
+        use std::os::unix::fs as unix_fs;
+
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let repo_dir = temp_dir.path().join("repo");
+        let git_dir = repo_dir.join(".git");
+        let real_git_dir = repo_dir.join("real-git");
+        let outside_dir = temp_dir.path().join("outside");
+        let outside_hooks_dir = outside_dir.join("hooks");
+        std::fs::create_dir_all(&git_dir).expect("create git dir");
+        std::fs::create_dir_all(&outside_hooks_dir).expect("create outside hooks dir");
+
+        let protected_git = HostFilesystemLocation::new(&git_dir).expect("capture git dir");
+        std::fs::rename(&git_dir, &real_git_dir).expect("move git dir aside");
+        unix_fs::symlink(&outside_dir, &git_dir).expect("replace git dir with symlink");
+        let writable_displayed_inside_git =
+            HostFilesystemLocation::new(git_dir.join("hooks")).expect("capture symlink target");
+
+        Sandbox::new(SandboxPolicy {
+            fs: SandboxFsPolicy::Restricted {
+                writable_paths: vec![writable_displayed_inside_git],
+                protected_paths: vec![protected_git],
+            },
+            network: SandboxNetPolicy::Blocked,
+        })
+        .expect("captured writable fd is outside protected metadata");
+    }
+
+    #[test]
     fn fs_merge_unrestricted_dominates_else_unions_paths() {
         // Writable paths are captured as real `HostFilesystemLocation`s (keyed on
         // the inode), so the union/dedup test needs three distinct real dirs.
@@ -1204,15 +1393,24 @@ mod tests {
             }
         );
         assert_eq!(
-            a.merge(SandboxFsPolicy::Unrestricted),
-            SandboxFsPolicy::Unrestricted
+            a.merge(SandboxFsPolicy::Unrestricted {
+                protected_paths: vec![location(&dir_a)],
+            }),
+            SandboxFsPolicy::Unrestricted {
+                protected_paths: vec![location(&dir_c), location(&dir_a)],
+            }
         );
         assert_eq!(
-            SandboxFsPolicy::Unrestricted.merge(SandboxFsPolicy::Restricted {
+            SandboxFsPolicy::Unrestricted {
+                protected_paths: vec![location(&dir_d)],
+            }
+            .merge(SandboxFsPolicy::Restricted {
                 writable_paths: vec![location(&dir_a)],
-                protected_paths: Vec::new(),
+                protected_paths: vec![location(&dir_c)],
             }),
-            SandboxFsPolicy::Unrestricted
+            SandboxFsPolicy::Unrestricted {
+                protected_paths: vec![location(&dir_d), location(&dir_c)],
+            }
         );
     }
 

@@ -231,10 +231,9 @@ impl Component for SandboxStatusTooltip {
             .group(SandboxGroup::new("Network Access").row(SandboxRow::message("None")));
 
         let unrestricted_section = SandboxSection::new("Defined in your settings:")
-            .group(
-                SandboxGroup::new("Write Access")
-                    .row(SandboxRow::message("All paths (unrestricted)")),
-            )
+            .group(SandboxGroup::new("Write Access").row(SandboxRow::message(
+                "All paths except protected Git metadata",
+            )))
             .group(
                 SandboxGroup::new("Network Access")
                     .row(SandboxRow::message("All domains (unrestricted)")),
