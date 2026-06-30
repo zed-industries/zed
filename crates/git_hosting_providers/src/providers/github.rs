@@ -82,6 +82,9 @@ struct GithubPullRequestComment {
     body: String,
     #[serde(with = "time::serde::rfc3339")]
     created_at: OffsetDateTime,
+    path: String,
+    #[serde(default)]
+    line: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -263,6 +266,8 @@ impl Github {
                 author_name: comment.user.login,
                 body: comment.body,
                 created_at: comment.created_at,
+                file_path: comment.path,
+                line: comment.line,
             })
             .collect())
     }
@@ -912,12 +917,16 @@ mod tests {
                 {
                     "user": { "login": "octocat" },
                     "body": "Looks good to me!",
-                    "created_at": "2024-01-01T00:00:00Z"
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "path": "src/main.rs",
+                    "line": 42
                 },
                 {
                     "user": { "login": "nanobot" },
                     "body": "One nit below.",
-                    "created_at": "2024-01-02T00:00:00Z"
+                    "created_at": "2024-01-02T00:00:00Z",
+                    "path": "src/lib.rs",
+                    "line": null
                 }
             ]"#,
         );
@@ -942,9 +951,13 @@ mod tests {
         assert_eq!(comments[0].author_name, "octocat");
         assert_eq!(comments[0].body, "Looks good to me!");
         assert_eq!(comments[0].created_at, datetime!(2024-01-01 0:00 UTC));
+        assert_eq!(comments[0].file_path, "src/main.rs");
+        assert_eq!(comments[0].line, Some(42));
         assert_eq!(comments[1].author_name, "nanobot");
         assert_eq!(comments[1].body, "One nit below.");
         assert_eq!(comments[1].created_at, datetime!(2024-01-02 0:00 UTC));
+        assert_eq!(comments[1].file_path, "src/lib.rs");
+        assert_eq!(comments[1].line, None);
     }
 
     #[gpui::test]

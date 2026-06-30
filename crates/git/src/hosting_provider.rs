@@ -23,6 +23,9 @@ pub struct PullRequestComment {
     pub author_name: String,
     pub body: String,
     pub created_at: OffsetDateTime,
+    pub file_path: String,
+    /// 1-indexed
+    pub line: Option<u32>,
 }
 
 #[derive(Clone)]

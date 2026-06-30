@@ -1,132 +1,130 @@
 use anyhow::Result;
-use git::{GitHostingProviderRegistry, PullRequest, PullRequestComment, parse_git_remote_url};
-use gpui::{Context, Entity, SharedString, Subscription, Task};
-use project::git_store::{Repository, RepositoryEvent};
+use collections::HashMap;
+use git::{GitHostingProviderRegistry, PullRequestComment, parse_git_remote_url};
+use gpui::{
+    App, AppContext as _, Context, Entity, EntityId, Global, Subscription, Task, WeakEntity,
+};
+use project::{
+    Project,
+    git_store::{GitStoreEvent, Repository, RepositoryEvent},
+};
 
-/// Identifies the branch state a fetch corresponds to, so repeated repository
-/// notifications that don't change the branch or head commit don't trigger
-/// redundant network requests.
 #[derive(Clone, PartialEq, Eq)]
 struct FetchKey {
+    repository: EntityId,
     branch: String,
     head_sha: Option<String>,
 }
 
-pub enum PullRequestState {
-    /// There is no branch, no remote, or the remote isn't a recognized hosting
-    /// provider, so no pull request can be resolved.
-    Unavailable,
-    Loading,
-    Loaded {
-        /// `None` when the branch has no associated pull request.
-        pull_request: Option<PullRequest>,
-        comments: Vec<PullRequestComment>,
-    },
-    Error(SharedString),
-}
-
-/// Tracks the pull request (and its comments) associated with the current
-/// branch of a [`Repository`], refetching whenever the branch or head commit
-/// changes.
-///
-/// This deliberately performs the network request locally (via
-/// [`gpui::App::http_client`]), mirroring how commit-author avatars are fetched
-/// in `commit_tooltip`. It is not proxied to a collab host.
-//
-// TODO(pr-comments): the underlying provider requests still have known gaps:
-//   - auth is limited to the `GITHUB_TOKEN` environment variable,
-//   - comment results are not paginated (first page only),
-//   - pull requests opened from forks aren't found (the `head` filter assumes
-//     the branch lives in the base repo's owner).
 pub struct PullRequestStore {
-    repository: Entity<Repository>,
-    state: PullRequestState,
+    project: WeakEntity<Project>,
+    active_repository: Option<Entity<Repository>>,
+    comments_by_path: HashMap<String, Vec<PullRequestComment>>,
     fetched_key: Option<FetchKey>,
     _fetch_task: Option<Task<()>>,
-    _subscription: Subscription,
+    _git_store_subscription: Subscription,
 }
 
+#[derive(Default)]
+struct GlobalPullRequestStores(HashMap<EntityId, WeakEntity<PullRequestStore>>);
+
+impl Global for GlobalPullRequestStores {}
+
 impl PullRequestStore {
-    pub fn new(repository: Entity<Repository>, cx: &mut Context<Self>) -> Self {
-        let subscription = Self::subscribe(&repository, cx);
+    pub fn for_project(project: &Entity<Project>, cx: &mut App) -> Entity<Self> {
+        let project_id = project.entity_id();
+        if let Some(store) = cx
+            .try_global::<GlobalPullRequestStores>()
+            .and_then(|stores| stores.0.get(&project_id))
+            .and_then(WeakEntity::upgrade)
+        {
+            return store;
+        }
+
+        let store = cx.new(|cx| Self::new(project.clone(), cx));
+        cx.default_global::<GlobalPullRequestStores>()
+            .0
+            .insert(project_id, store.downgrade());
+        store
+    }
+
+    fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
+        let git_store = project.read(cx).git_store().clone();
+        let subscription = cx.subscribe(&git_store, |this, _git_store, event, cx| match event {
+            GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::HeadChanged, _)
+            | GitStoreEvent::ActiveRepositoryChanged(_) => this.refresh(cx),
+            _ => {}
+        });
+
         let mut this = Self {
-            repository,
-            state: PullRequestState::Unavailable,
+            project: project.downgrade(),
+            active_repository: None,
+            comments_by_path: HashMap::default(),
             fetched_key: None,
             _fetch_task: None,
-            _subscription: subscription,
+            _git_store_subscription: subscription,
         };
         this.refresh(cx);
         this
     }
 
-    pub fn state(&self) -> &PullRequestState {
-        &self.state
+    pub fn active_repository(&self) -> Option<&Entity<Repository>> {
+        self.active_repository.as_ref()
     }
 
-    pub fn repository(&self) -> &Entity<Repository> {
-        &self.repository
+    pub fn comments_for_file(&self, file_path: &str) -> &[PullRequestComment] {
+        self.comments_by_path
+            .get(file_path)
+            .map_or(&[], Vec::as_slice)
     }
 
-    /// Binds to a different repository, e.g. when the active repository changes.
-    pub fn set_repository(&mut self, repository: Entity<Repository>, cx: &mut Context<Self>) {
-        if repository == self.repository {
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        let Some(project) = self.project.upgrade() else {
             return;
-        }
-        self._subscription = Self::subscribe(&repository, cx);
-        self.repository = repository;
-        self.fetched_key = None;
-        self.refresh(cx);
-    }
+        };
+        let active_repository = project.read(cx).active_repository(cx);
+        self.active_repository = active_repository.clone();
 
-    fn subscribe(repository: &Entity<Repository>, cx: &mut Context<Self>) -> Subscription {
-        cx.subscribe(repository, |this, _repository, event, cx| {
-            if matches!(event, RepositoryEvent::HeadChanged) {
-                this.refresh(cx);
-            }
-        })
-    }
+        let Some(repository) = active_repository else {
+            self.clear(cx);
+            return;
+        };
 
-    pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let repository = self.repository.read(cx);
-        let branch_name = repository
-            .branch
-            .as_ref()
-            .map(|branch| branch.name().to_string());
-        let head_sha = repository
+        let repository_id = repository.entity_id();
+        let repo = repository.read(cx);
+        let branch_name = repo.branch.as_ref().map(|branch| branch.name().to_string());
+        let head_sha = repo
             .head_commit
             .as_ref()
             .map(|commit| commit.sha.to_string());
-        let remote_url = repository.default_remote_url();
+        let remote_url = repo.default_remote_url();
 
         let (Some(branch_name), Some(remote_url)) = (branch_name, remote_url) else {
-            self.set_unavailable(cx);
+            self.clear(cx);
             return;
         };
 
         let key = FetchKey {
+            repository: repository_id,
             branch: branch_name.clone(),
             head_sha,
         };
         if self.fetched_key.as_ref() == Some(&key) {
-            // We've already loaded (or are loading) this exact branch state.
             return;
         }
 
         let Some((provider, remote)) =
             parse_git_remote_url(GitHostingProviderRegistry::global(cx), &remote_url)
         else {
-            self.set_unavailable(cx);
+            self.clear(cx);
             return;
         };
 
         let http_client = cx.http_client();
         self.fetched_key = Some(key);
-        self.state = PullRequestState::Loading;
-        cx.notify();
 
         self._fetch_task = Some(cx.spawn(async move |this, cx| {
-            let result: Result<(Option<PullRequest>, Vec<PullRequestComment>)> = async {
+            let result: Result<Vec<PullRequestComment>> = async {
                 let pull_request = provider
                     .pull_request_for_branch(
                         remote.owner.as_ref(),
@@ -136,33 +134,34 @@ impl PullRequestStore {
                     )
                     .await?;
                 let Some(pull_request) = pull_request else {
-                    return Ok((None, Vec::new()));
+                    return Ok(Vec::new());
                 };
-                let comments = provider
+                provider
                     .pull_request_comments(
                         remote.owner.as_ref(),
                         remote.repo.as_ref(),
                         &pull_request.number.to_string(),
                         http_client,
                     )
-                    .await?;
-                Ok((Some(pull_request), comments))
+                    .await
             }
             .await;
 
             this.update(cx, |this, cx| {
                 match result {
-                    Ok((pull_request, comments)) => {
-                        this.state = PullRequestState::Loaded {
-                            pull_request,
-                            comments,
-                        };
+                    Ok(comments) => {
+                        this.comments_by_path.clear();
+                        for comment in comments {
+                            this.comments_by_path
+                                .entry(comment.file_path.clone())
+                                .or_default()
+                                .push(comment);
+                        }
                     }
                     Err(error) => {
-                        // Clear the key so a later `HeadChanged` retries instead
-                        // of treating the failed branch state as loaded.
+                        log::error!("failed to fetch pull request comments: {error:#}");
                         this.fetched_key = None;
-                        this.state = PullRequestState::Error(error.to_string().into());
+                        this.comments_by_path.clear();
                     }
                 }
                 cx.notify();
@@ -171,9 +170,11 @@ impl PullRequestStore {
         }));
     }
 
-    fn set_unavailable(&mut self, cx: &mut Context<Self>) {
+    fn clear(&mut self, cx: &mut Context<Self>) {
         self.fetched_key = None;
-        self.state = PullRequestState::Unavailable;
+        if !self.comments_by_path.is_empty() {
+            self.comments_by_path.clear();
+        }
         cx.notify();
     }
 }
