@@ -59,7 +59,7 @@ impl WindowsDispatcher {
             })
         };
 
-        ThreadPool::RunWithPriorityAsync(&handler, priority).log_err();
+        ThreadPool::RunWithPriorityAsync(&handler, WorkItemPriority(priority.0 + 3)).log_err();
     }
 
     fn dispatch_on_threadpool_after(&self, runnable: RunnableVariant, duration: Duration) {

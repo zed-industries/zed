@@ -9,10 +9,8 @@
 # The reason for not using the RUSTFLAGS environment variable is that doing so would override all the settings in the config.toml file, even if the contents of the latter are completely nonsensical. See: https://github.com/rust-lang/cargo/issues/5376
 # Here, we opted to use `[target.'cfg(all())']` instead of `[build]` because `[target.'**']` is guaranteed to be cumulative.
 [target.'cfg(all())']
-rustflags = ["-D", "warnings"]
+rustflags = []
 
 # We don't need fullest debug information for dev stuff (tests etc.) in CI.
 [profile.dev]
 debug = "limited"
-
-
