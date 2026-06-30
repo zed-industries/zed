@@ -343,6 +343,7 @@ impl Editor {
         }
         let item = self.cut_common(true, window, cx);
         cx.write_to_clipboard(item);
+        self.selection_mark_mode = false;
     }
 
     pub(super) fn kill_ring_cut(
@@ -365,7 +366,8 @@ impl Editor {
             });
         });
         let item = self.cut_common(false, window, cx);
-        cx.set_global(KillRing(item))
+        cx.set_global(KillRing(item));
+        self.selection_mark_mode = false;
     }
 
     pub(super) fn kill_ring_yank(
@@ -384,6 +386,7 @@ impl Editor {
             return;
         };
         self.do_paste(&text, metadata, false, window, cx);
+        self.selection_mark_mode = false;
     }
 
     pub(super) fn copy_and_trim(
@@ -395,8 +398,17 @@ impl Editor {
         self.do_copy(true, cx);
     }
 
-    pub(super) fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn copy(&mut self, _: &Copy, window: &mut Window, cx: &mut Context<Self>) {
         self.do_copy(false, cx);
+        if self.selection_mark_mode {
+            // Reset current selection
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.move_with(&mut |_, selection| {
+                    selection.collapse_to(selection.head(), SelectionGoal::None);
+                });
+            });
+            self.selection_mark_mode = false;
+        }
     }
 
     pub(super) fn diff_clipboard_with_selection(

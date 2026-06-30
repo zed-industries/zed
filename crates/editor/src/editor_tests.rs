@@ -8993,6 +8993,42 @@ async fn test_cut_line_ends(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_clipboard_ops_end_mark_mode(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇhello world");
+    cx.update_editor(|e, window, cx| {
+        e.set_mark(&SetMark, window, cx);
+        e.select_to_next_word_end(&SelectToNextWordEnd, window, cx);
+        e.copy(&Copy, window, cx);
+        assert!(!e.selection_mark_mode, "copy should end mark mode");
+    });
+    cx.assert_editor_state("helloˇ world");
+
+    cx.set_state("ˇhello world");
+    cx.update_editor(|e, window, cx| {
+        e.set_mark(&SetMark, window, cx);
+        e.cut(&Cut, window, cx);
+        assert!(!e.selection_mark_mode, "cut should end mark mode");
+    });
+
+    cx.set_state("ˇhello world");
+    cx.update_editor(|e, window, cx| {
+        e.set_mark(&SetMark, window, cx);
+        e.kill_ring_cut(&KillRingCut, window, cx);
+        assert!(!e.selection_mark_mode, "kill_ring_cut should end mark mode");
+    });
+
+    cx.set_state("ˇhello world");
+    cx.update_editor(|e, window, cx| {
+        e.set_mark(&SetMark, window, cx);
+        e.kill_ring_yank(&KillRingYank, window, cx);
+        assert!(!e.selection_mark_mode, "kill_ring_yank should end mark mode");
+    });
+}
+
+#[gpui::test]
 async fn test_clipboard(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
