@@ -581,6 +581,7 @@ impl Render for ConfigOptionSelector {
                     .id(ElementId::Name(
                         format!("config-option-{}", option_id.0).into(),
                     ))
+                    .pr_1()
                     .tooltip(tooltip)
                     .child(
                         Switch::new(
