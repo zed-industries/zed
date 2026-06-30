@@ -44,6 +44,7 @@ use project::{AgentId, AgentServerStore, Project, ProjectEntryId, ProjectPath};
 
 use crate::conversation_view::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationCardStyle, ElicitationFormState,
+    should_render_elicitation,
 };
 use crate::message_editor::SessionCapabilities;
 use crate::{AgentThreadSource, DEFAULT_THREAD_TITLE, resolve_agent_image};
@@ -2455,6 +2456,7 @@ impl ConversationView {
             .elicitations()
             .iter()
             .enumerate()
+            .filter(|(_, elicitation)| should_render_elicitation(elicitation))
             .map(|(ix, elicitation)| {
                 ElicitationCard::new(
                     ix,
@@ -2463,7 +2465,7 @@ impl ConversationView {
                     style,
                     handlers.clone(),
                 )
-                .render()
+                .render(cx)
                 .into_any_element()
             })
             .collect()

@@ -45,6 +45,7 @@ use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
 use super::elicitation::{
     ElicitationCard, ElicitationCardHandlers, ElicitationCardStyle, ElicitationFormState,
+    should_render_elicitation,
 };
 use super::*;
 
@@ -6238,7 +6239,7 @@ impl ThreadView {
                 }
             }
             AgentThreadEntry::Elicitation(elicitation) => {
-                if cx.has_flag::<AcpBetaFeatureFlag>() {
+                if cx.has_flag::<AcpBetaFeatureFlag>() && should_render_elicitation(elicitation) {
                     let elicitation = self.render_elicitation(entry_ix, elicitation, window, cx);
 
                     if let Some(handle) = self
@@ -6391,7 +6392,7 @@ impl ThreadView {
             ),
             self.elicitation_card_handlers(cx),
         )
-        .render()
+        .render(cx)
     }
 
     fn elicitation_card_handlers(&self, cx: &Context<Self>) -> ElicitationCardHandlers {

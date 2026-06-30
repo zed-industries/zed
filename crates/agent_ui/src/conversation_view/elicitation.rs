@@ -8,7 +8,8 @@ use gpui::{AnyElement, App, Div, Empty, Entity, Hsla, Rems, SharedString, Window
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use ui::{
-    Button, Checkbox, Color, Icon, IconName, IconSize, Label, LabelSize, ToggleState, prelude::*,
+    Button, Checkbox, Color, Icon, IconName, IconSize, Indicator, Label, LabelSize, ToggleState,
+    prelude::*,
 };
 
 #[derive(Clone)]
@@ -341,6 +342,49 @@ mod tests {
         }
     }
 
+    #[test]
+    fn should_render_only_pending_elicitations() {
+        let pending = Elicitation {
+            id: ElicitationEntryId("pending".into()),
+            request: acp::CreateElicitationRequest::new(
+                acp::ElicitationFormMode::new(
+                    preview_request_scope(0),
+                    acp::ElicitationSchema::new(),
+                ),
+                "Review this request.",
+            ),
+            status: pending_status(),
+        };
+        assert!(should_render_elicitation(&pending));
+
+        let accepted_url = Elicitation {
+            id: ElicitationEntryId("accepted-url".into()),
+            request: acp::CreateElicitationRequest::new(
+                acp::ElicitationUrlMode::new(
+                    preview_request_scope(1),
+                    acp::ElicitationId::new("accepted-url"),
+                    "https://auth.example.com/device",
+                ),
+                "Authorize Zed in your browser.",
+            ),
+            status: ElicitationStatus::Accepted,
+        };
+        assert!(!should_render_elicitation(&accepted_url));
+
+        let accepted_form = Elicitation {
+            id: ElicitationEntryId("accepted-form".into()),
+            request: acp::CreateElicitationRequest::new(
+                acp::ElicitationFormMode::new(
+                    preview_request_scope(2),
+                    acp::ElicitationSchema::new(),
+                ),
+                "Review this request.",
+            ),
+            status: ElicitationStatus::Accepted,
+        };
+        assert!(!should_render_elicitation(&accepted_form));
+    }
+
     #[gpui::test]
     fn form_state_preserves_string_whitespace(cx: &mut TestAppContext) {
         crate::conversation_view::tests::init_test(cx);
@@ -485,11 +529,6 @@ impl Component for ElicitationCardPreview {
                             ),
                         )
                         .width(px(640.)),
-                        single_example(
-                            "Submitted Form",
-                            render_form_preview(2, ElicitationStatus::Accepted, None, window, cx),
-                        )
-                        .width(px(640.)),
                     ],
                 )
                 .vertical()
@@ -500,16 +539,6 @@ impl Component for ElicitationCardPreview {
                         single_example(
                             "URL Consent",
                             render_url_preview(3, pending_status(), window, cx),
-                        )
-                        .width(px(640.)),
-                        single_example(
-                            "URL Accepted",
-                            render_url_preview(4, ElicitationStatus::Accepted, window, cx),
-                        )
-                        .width(px(640.)),
-                        single_example(
-                            "URL Completed",
-                            render_url_preview(5, ElicitationStatus::Completed, window, cx),
                         )
                         .width(px(640.)),
                     ],
@@ -606,7 +635,7 @@ fn render_preview_card(
                 preview_style(cx),
                 ElicitationCardHandlers::noop(),
             )
-            .render(),
+            .render(cx),
         )
         .into_any_element()
 }
@@ -970,6 +999,10 @@ impl ElicitationCardStyle {
     }
 }
 
+pub(crate) fn should_render_elicitation(elicitation: &Elicitation) -> bool {
+    matches!(elicitation.status, ElicitationStatus::Pending { .. })
+}
+
 pub(crate) struct ElicitationCard<'a> {
     entry_ix: usize,
     elicitation: &'a Elicitation,
@@ -995,15 +1028,10 @@ impl<'a> ElicitationCard<'a> {
         }
     }
 
-    pub(crate) fn render(self) -> Div {
+    pub(crate) fn render(self, cx: &App) -> Div {
         let is_pending = matches!(&self.elicitation.status, ElicitationStatus::Pending { .. });
         let (status_label, status_icon, status_color) = match &self.elicitation.status {
             ElicitationStatus::Pending { .. } => ("Waiting for input", IconName::Info, Color::Info),
-            ElicitationStatus::Accepted
-                if matches!(&self.elicitation.request.mode, acp::ElicitationMode::Url(_)) =>
-            {
-                ("Waiting for completion", IconName::Info, Color::Info)
-            }
             ElicitationStatus::Accepted => ("Submitted", IconName::Check, Color::Success),
             ElicitationStatus::Declined => ("Declined", IconName::Close, Color::Muted),
             ElicitationStatus::Canceled => ("Canceled", IconName::Circle, Color::Muted),
@@ -1015,11 +1043,12 @@ impl<'a> ElicitationCard<'a> {
             .p_3()
             .child(Label::new(self.elicitation.request.message.clone()).size(LabelSize::Small));
         let body = match &self.elicitation.request.mode {
-            acp::ElicitationMode::Form(mode) if is_pending => body.child(self.render_form(mode)),
+            acp::ElicitationMode::Form(mode) if is_pending => {
+                body.child(self.render_form(mode, cx))
+            }
             acp::ElicitationMode::Url(mode) if is_pending => {
                 body.child(self.render_url_elicitation(mode))
             }
-            acp::ElicitationMode::Url(mode) => body.child(Self::render_url_summary(&mode.url)),
             _ => body,
         };
 
@@ -1063,7 +1092,7 @@ impl<'a> ElicitationCard<'a> {
             .when(is_pending, |this| this.child(self.render_actions()))
     }
 
-    fn render_form(&self, mode: &acp::ElicitationFormMode) -> AnyElement {
+    fn render_form(&self, mode: &acp::ElicitationFormMode, cx: &App) -> AnyElement {
         let Some(state) = self.form_state else {
             return Empty.into_any_element();
         };
@@ -1073,7 +1102,7 @@ impl<'a> ElicitationCard<'a> {
             .children(mode.requested_schema.properties.iter().filter_map(
                 |(field_name, property)| {
                     let field = state.fields.get(field_name)?;
-                    Some(self.render_field(field_name, property, field))
+                    Some(self.render_field(field_name, property, field, cx))
                 },
             ))
             .when_some(state.error.clone(), |this, error| {
@@ -1087,6 +1116,7 @@ impl<'a> ElicitationCard<'a> {
         field_name: &str,
         property: &acp::ElicitationPropertySchema,
         field: &ElicitationFieldState,
+        cx: &App,
     ) -> AnyElement {
         let label = property_title(field_name, property);
         let description = property_description(property);
@@ -1138,7 +1168,7 @@ impl<'a> ElicitationCard<'a> {
                         }
                         _ => Vec::new(),
                     };
-                    self.render_single_select(field_name, value.as_ref(), options)
+                    self.render_single_select(field_name, value.as_ref(), options, cx)
                 }
                 ElicitationFieldState::MultiSelect(selected) => {
                     let options = match property {
@@ -1171,7 +1201,6 @@ impl<'a> ElicitationCard<'a> {
                                 .cursor_pointer()
                                 .on_click({
                                     let field_name = field_name.clone();
-                                    let value = value;
                                     move |_, _window, cx| {
                                         on_multi_select_change(
                                             elicitation_id.clone(),
@@ -1202,6 +1231,7 @@ impl<'a> ElicitationCard<'a> {
         field_name: &str,
         selected_value: Option<&String>,
         options: Vec<ElicitationOption>,
+        cx: &App,
     ) -> AnyElement {
         let entry_ix = self.entry_ix;
         let style = self.style;
@@ -1229,21 +1259,25 @@ impl<'a> ElicitationCard<'a> {
                     .gap_2()
                     .rounded_sm()
                     .border_1()
-                    .border_color(if is_selected {
-                        style.border_color
-                    } else {
-                        style.border_color.opacity(0.5)
-                    })
+                    .border_color(style.border_color.opacity(0.5))
                     .bg(if is_selected {
-                        style.header_background
+                        style
+                            .editor_background
+                            .blend(Color::Accent.color(cx).opacity(0.08))
                     } else {
                         style.editor_background
                     })
                     .px_2()
                     .py_1()
                     .hover({
-                        let header_background = style.header_background;
-                        move |this| this.bg(header_background).cursor_pointer()
+                        let hover_background = if is_selected {
+                            style
+                                .editor_background
+                                .blend(Color::Accent.color(cx).opacity(0.1))
+                        } else {
+                            style.header_background
+                        };
+                        move |this| this.bg(hover_background).cursor_pointer()
                     })
                     .on_click(move |_, _window, cx| {
                         on_single_select_change(
@@ -1256,11 +1290,15 @@ impl<'a> ElicitationCard<'a> {
                     .child(
                         div()
                             .size_3()
-                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
                             .rounded_full()
                             .border_1()
                             .border_color(style.border_color)
-                            .when(is_selected, |this| this.bg(style.border_color)),
+                            .when(is_selected, |this| {
+                                this.child(Indicator::dot().color(Color::Accent))
+                            }),
                     )
                     .child(Label::new(option.label).size(LabelSize::Small).truncate())
             }))
