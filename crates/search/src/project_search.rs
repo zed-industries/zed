@@ -11,7 +11,7 @@ use crate::{
     text_finder::TextFinder,
 };
 use anyhow::Context as _;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
     SelectionEffects,
@@ -441,6 +441,11 @@ impl ProjectSearch {
     }
 
     fn search(&mut self, query: SearchQuery, incremental: bool, cx: &mut Context<Self>) {
+        // Excerpt reuse relies on search results arriving in `PathKey` order, which only
+        // holds for local file-based searches: open-buffers-only searches are sorted
+        // ignoring worktree ids, and remote searches stream results produced by the host.
+        let reuse_excerpts =
+            incremental && !query.is_opened_only() && self.project.read(cx).is_local();
         let project_search_turning_into_text_finder =
             Arc::clone(&self.project_search_turning_into_text_finder);
         let search = self
@@ -457,7 +462,7 @@ impl ProjectSearch {
         self.pending_search_is_incremental = incremental;
         self.search_state = SearchState::Running(SearchActivity::Searching);
         self.pending_search = Some(cx.spawn(async move |project_search, cx| {
-            if !incremental {
+            if !reuse_excerpts {
                 project_search
                     .update(cx, |project_search, cx| {
                         project_search.match_ranges.clear();
@@ -471,7 +476,7 @@ impl ProjectSearch {
             consume_search_stream(
                 project_search,
                 search,
-                incremental,
+                reuse_excerpts,
                 project_search_turning_into_text_finder,
                 cx,
             )
@@ -540,7 +545,18 @@ async fn consume_search_stream(
     let mut matches = pin!(search_results.rx.clone().ready_chunks(1024));
 
     let mut limit_reached = false;
-    let mut seen_paths = HashSet::default();
+    let mut stale_paths = if incremental {
+        project_search
+            .read_with(cx, |project_search, cx| {
+                project_search.excerpts.read(cx).existing_excerpt_paths()
+            })
+            .ok()?
+            .into_iter()
+            .peekable()
+    } else {
+        Vec::new().into_iter().peekable()
+    };
+    let mut last_seen_path: Option<PathKey> = None;
     while let Some(results) = matches.next().await {
         let (buffers_with_ranges, has_reached_limit, search_activity) = cx
             .background_executor()
@@ -585,15 +601,26 @@ async fn consume_search_stream(
             if buffers_with_ranges.is_empty() {
                 continue;
             }
-            let (mut chunk_ranges, chunk_paths) = project_search
+            let mut chunk_ranges = project_search
                 .update(cx, |project_search, cx| {
-                    let mut paths = Vec::new();
-                    let futures = project_search.excerpts.update(cx, |excerpts, cx| {
+                    project_search.excerpts.update(cx, |excerpts, cx| {
                         buffers_with_ranges
                             .into_iter()
                             .map(|(buffer, ranges)| {
                                 let path_key = PathKey::for_buffer(&buffer, cx);
-                                paths.push(path_key.clone());
+                                debug_assert!(
+                                    last_seen_path.as_ref().is_none_or(|last| *last <= path_key),
+                                    "incremental search results must be PathKey-sorted"
+                                );
+                                last_seen_path = Some(path_key.clone());
+                                while let Some(stale) =
+                                    stale_paths.next_if(|stale| *stale < path_key)
+                                {
+                                    excerpts.remove_excerpts(stale, cx);
+                                }
+                                if stale_paths.peek() == Some(&path_key) {
+                                    stale_paths.next();
+                                }
                                 excerpts.set_anchored_excerpts_for_path(
                                     path_key,
                                     buffer,
@@ -603,11 +630,9 @@ async fn consume_search_stream(
                                 )
                             })
                             .collect::<FuturesOrdered<_>>()
-                    });
-                    (futures, paths)
+                    })
                 })
                 .ok()?;
-            seen_paths.extend(chunk_paths);
             while let Some(ranges) = chunk_ranges.next().await {
                 smol::future::yield_now().await;
                 project_search
@@ -617,19 +642,6 @@ async fn consume_search_stream(
                     })
                     .ok()?;
             }
-            project_search
-                .update(cx, |project_search, cx| {
-                    project_search.excerpts.update(cx, |excerpts, cx| {
-                        for path in excerpts
-                            .existing_excerpt_paths()
-                            .into_iter()
-                            .filter(|path| !seen_paths.contains(path))
-                        {
-                            excerpts.remove_excerpts(path, cx);
-                        }
-                    });
-                })
-                .ok()?;
             continue;
         }
 
@@ -683,10 +695,12 @@ async fn consume_search_stream(
                 SearchState::Completed(SearchCompletion::Results { limit_reached })
             };
             project_search.pending_search.take();
-            if incremental && seen_paths.is_empty() {
-                project_search
-                    .excerpts
-                    .update(cx, |excerpts, cx| excerpts.clear(cx));
+            if incremental {
+                project_search.excerpts.update(cx, |excerpts, cx| {
+                    for stale in stale_paths.by_ref() {
+                        excerpts.remove_excerpts(stale, cx);
+                    }
+                });
             }
             cx.notify();
         })
@@ -2985,7 +2999,9 @@ pub fn perform_project_search(
 #[cfg(test)]
 pub mod tests {
     use std::{
+        cell::RefCell,
         path::PathBuf,
+        rc::Rc,
         sync::{
             Arc,
             atomic::{self, AtomicUsize},
@@ -6462,6 +6478,111 @@ pub mod tests {
                 });
             })
             .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_incremental_search_reuses_unchanged_excerpts(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "aaa.rs": "fn needle() {}",
+                "bbb.rs": "fn needle_stable() {}",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        perform_search(search_view, "needle", cx);
+        assert_eq!(read_match_texts(search_view, cx), vec!["needle", "needle"]);
+
+        let excerpts = search.read_with(cx, |search, _| search.excerpts.clone());
+        let (stale_buffer_id, stable_buffer_id) = cx.read(|cx| {
+            let buffer_id_for_path = |path: &util::rel_path::RelPath| {
+                excerpts.read(cx).all_buffers_iter().find_map(|buffer| {
+                    let buffer = buffer.read(cx);
+                    (buffer.file()?.path().as_ref() == path).then(|| buffer.remote_id())
+                })
+            };
+            (
+                buffer_id_for_path(rel_path("aaa.rs")).expect("aaa.rs buffer expected"),
+                buffer_id_for_path(rel_path("bbb.rs")).expect("bbb.rs buffer expected"),
+            )
+        });
+        let excerpts_for_buffer = |buffer_id, cx: &mut TestAppContext| {
+            cx.read(|cx| {
+                excerpts
+                    .read(cx)
+                    .snapshot(cx)
+                    .excerpts_for_buffer(buffer_id)
+                    .collect::<Vec<_>>()
+            })
+        };
+        let stale_excerpts_before = excerpts_for_buffer(stale_buffer_id, cx);
+        let stable_excerpts_before = excerpts_for_buffer(stable_buffer_id, cx);
+
+        let updated_paths = Rc::new(RefCell::new(Vec::new()));
+        let removed_buffers = Rc::new(RefCell::new(Vec::new()));
+        let _subscription = cx.update(|cx| {
+            cx.subscribe(&excerpts, {
+                let updated_paths = updated_paths.clone();
+                let removed_buffers = removed_buffers.clone();
+                move |_, event: &multi_buffer::Event, _| match event {
+                    multi_buffer::Event::BufferRangesUpdated { path_key, .. } => {
+                        updated_paths.borrow_mut().push(path_key.clone());
+                    }
+                    multi_buffer::Event::BuffersRemoved { removed_buffer_ids } => {
+                        removed_buffers
+                            .borrow_mut()
+                            .extend(removed_buffer_ids.iter().copied());
+                    }
+                    _ => {}
+                }
+            })
+        });
+
+        // Re-running the same query incrementally must reuse every excerpt as is,
+        // without editing the multibuffer at all.
+        perform_incremental_search(search_view, "needle", cx);
+        assert_eq!(read_match_texts(search_view, cx), vec!["needle", "needle"]);
+        assert_eq!(
+            excerpts_for_buffer(stale_buffer_id, cx),
+            stale_excerpts_before
+        );
+        assert_eq!(
+            excerpts_for_buffer(stable_buffer_id, cx),
+            stable_excerpts_before
+        );
+        assert_eq!(*updated_paths.borrow(), Vec::<PathKey>::new());
+        assert_eq!(*removed_buffers.borrow(), Vec::<language::BufferId>::new());
+
+        // Narrowing incremental search: bbb.rs keeps matching on the same line, so its
+        // excerpt keeps its context range, while aaa.rs gets pruned as stale.
+        perform_incremental_search(search_view, "needle_stable", cx);
+        assert_eq!(read_match_texts(search_view, cx), vec!["needle_stable"]);
+        assert_eq!(*removed_buffers.borrow(), vec![stale_buffer_id]);
+        assert_eq!(excerpts_for_buffer(stale_buffer_id, cx), Vec::new());
+        assert_eq!(
+            excerpts_for_buffer(stable_buffer_id, cx)
+                .into_iter()
+                .map(|range| range.context)
+                .collect::<Vec<_>>(),
+            stable_excerpts_before
+                .into_iter()
+                .map(|range| range.context)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[gpui::test]

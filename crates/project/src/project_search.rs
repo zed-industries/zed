@@ -112,7 +112,11 @@ impl Search {
         limit: usize,
         cx: &mut App,
     ) -> Self {
-        let worktrees = worktree_store.read(cx).visible_worktrees(cx).collect();
+        let mut worktrees = worktree_store
+            .read(cx)
+            .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+        worktrees.sort_by_key(|worktree| worktree.read(cx).id().to_proto());
         Self {
             kind: SearchKind::Local { fs, worktrees },
             buffer_store,
@@ -176,6 +180,9 @@ impl Search {
                 unnamed_buffers.push(handle)
             };
         }
+        // Emit unnamed buffers in the same order as their excerpt `PathKey`s, which are
+        // derived from the buffer entity id formatted as a string.
+        unnamed_buffers.sort_by_key(|buffer| buffer.entity_id().to_string());
         let open_buffers = Arc::new(open_buffers);
         let executor = cx.background_executor().clone();
         let (tx, rx) = unbounded();
