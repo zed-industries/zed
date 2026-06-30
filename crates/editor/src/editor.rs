@@ -983,6 +983,7 @@ pub struct Editor {
     enable_runnables: bool,
     enable_code_lens: bool,
     enable_mouse_wheel_zoom: bool,
+    min_gutter_line_number_digits: Option<u32>,
     show_line_numbers: Option<bool>,
     use_relative_line_numbers: Option<bool>,
     show_git_diff_gutter: Option<bool>,
@@ -1210,6 +1211,7 @@ pub struct EditorSnapshot {
     pub mode: EditorMode,
     show_gutter: bool,
     offset_content: bool,
+    min_gutter_line_number_digits: Option<u32>,
     show_line_numbers: Option<bool>,
     number_deleted_lines: bool,
     show_git_diff_gutter: Option<bool>,
@@ -2277,6 +2279,7 @@ impl Editor {
             offset_content: !matches!(mode, EditorMode::SingleLine),
             breadcrumbs_visibility: BreadcrumbsVisibility::from_settings(cx),
             show_gutter: full_mode,
+            min_gutter_line_number_digits: None,
             show_line_numbers: (!full_mode).then_some(false),
             use_relative_line_numbers: None,
             disable_expand_excerpt_buttons: !full_mode,
@@ -2984,6 +2987,7 @@ impl Editor {
             mode: self.mode.clone(),
             show_gutter: self.show_gutter,
             offset_content: self.offset_content,
+            min_gutter_line_number_digits: self.min_gutter_line_number_digits,
             show_line_numbers: self.show_line_numbers,
             number_deleted_lines: self.number_deleted_lines,
             show_git_diff_gutter: self.show_git_diff_gutter,
@@ -3042,6 +3046,17 @@ impl Editor {
 
     pub fn set_in_project_search(&mut self, in_project_search: bool) {
         self.in_project_search = in_project_search;
+    }
+
+    pub fn set_min_gutter_line_number_digits(
+        &mut self,
+        digits: Option<u32>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.min_gutter_line_number_digits != digits {
+            self.min_gutter_line_number_digits = digits;
+            cx.notify();
+        }
     }
 
     pub fn set_custom_context_menu(
@@ -11617,8 +11632,10 @@ impl EditorSnapshot {
             let line_gutter_width = if show_line_numbers {
                 // Avoid flicker-like gutter resizes when the line number gains another digit by
                 // only resizing the gutter on files with > 10**min_line_number_digits lines.
-                let min_width_for_number_on_gutter =
-                    ch_advance * gutter_settings.min_line_number_digits as f32;
+                let min_digits = gutter_settings
+                    .min_line_number_digits
+                    .max(self.min_gutter_line_number_digits.unwrap_or(0) as usize);
+                let min_width_for_number_on_gutter = ch_advance * min_digits as f32;
                 self.max_line_number_width(style, window)
                     .max(min_width_for_number_on_gutter)
             } else {
