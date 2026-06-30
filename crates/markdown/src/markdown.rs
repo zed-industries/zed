@@ -1996,16 +1996,9 @@ impl MarkdownElement {
             gpui::AvailableSpace::Definite(bounds.size.width),
             gpui::AvailableSpace::MinContent,
         );
-        let mut code_block_ids = HashSet::default();
         let mut measured = Vec::new();
         for (segment, range) in to_measure {
-            let mut builder = MarkdownElementBuilder::new(
-                &self.style.container_style,
-                self.style.base_text_style.clone(),
-                self.style.syntax.clone(),
-            );
-            self.build_events(
-                &mut builder,
+            let (_, height) = self.build_segment(
                 &layout.parsed_markdown,
                 segment,
                 &layout.images,
@@ -2013,13 +2006,11 @@ impl MarkdownElement {
                 layout.markdown_end,
                 layout.render_mermaid_diagrams,
                 &layout.mermaid_state,
-                &mut code_block_ids,
+                available,
                 window,
                 cx,
             );
-            let mut rendered = builder.build();
-            let size = rendered.element.layout_as_root(available, window, cx);
-            measured.push((range, size.height));
+            measured.push((range, height));
         }
         self.markdown.update(cx, |markdown, _| {
             for (range, height) in measured {
@@ -2107,12 +2098,13 @@ impl MarkdownElement {
         });
     }
 
-    /// Build the element subtree for an index range into `parsed_markdown.events`.
+    /// Build one block's element (the events in `events`, an index range into
+    /// `parsed_markdown.events`) and measure its height. The single build path
+    /// for on-screen placement and off-screen measurement, so they can't drift.
     /// Each root block is a balanced subtree (see `root_block_event_ranges`), so
-    /// calling this per-block matches building the whole document.
-    fn build_events(
+    /// building per-block matches building the whole document.
+    fn build_segment(
         &self,
-        builder: &mut MarkdownElementBuilder,
         parsed_markdown: &ParsedMarkdown,
         events: Range<usize>,
         images: &HashMap<usize, Arc<Image>>,
@@ -2120,10 +2112,16 @@ impl MarkdownElement {
         markdown_end: usize,
         render_mermaid_diagrams: bool,
         mermaid_state: &MermaidState,
-        code_block_ids: &mut HashSet<usize>,
+        available: gpui::Size<gpui::AvailableSpace>,
         window: &mut Window,
         cx: &mut App,
-    ) {
+    ) -> (RenderedMarkdown, Pixels) {
+        let mut owned_builder = MarkdownElementBuilder::new(
+            &self.style.container_style,
+            self.style.base_text_style.clone(),
+            self.style.syntax.clone(),
+        );
+        let builder = &mut owned_builder;
         let mut current_img_block_range: Option<Range<usize>> = None;
         let mut handled_html_block = false;
         let mut rendered_mermaid_block = false;
@@ -2292,9 +2290,6 @@ impl MarkdownElement {
                             } else {
                                 None
                             };
-                            if scroll_handle.is_some() {
-                                code_block_ids.insert(range.start);
-                            }
 
                             match (&self.code_block_renderer, is_indented) {
                                 (CodeBlockRenderer::Default { .. }, _) | (_, true) => {
@@ -2788,6 +2783,12 @@ impl MarkdownElement {
                 }
             }
         }
+        let mut rendered = owned_builder.build();
+        let height = rendered
+            .element
+            .layout_as_root(available, window, cx)
+            .height;
+        (rendered, height)
     }
 }
 
@@ -2893,7 +2894,6 @@ impl Element for MarkdownElement {
             gpui::AvailableSpace::MinContent,
         );
 
-        let mut code_block_ids = HashSet::default();
         let mut blocks = Vec::new();
         let mut lines = Vec::new();
         let mut links = Vec::new();
@@ -2905,13 +2905,7 @@ impl Element for MarkdownElement {
             let height = *height;
             let block_top = y;
             if block_top + height >= visible_top && block_top <= visible_bottom {
-                let mut builder = MarkdownElementBuilder::new(
-                    &self.style.container_style,
-                    self.style.base_text_style.clone(),
-                    self.style.syntax.clone(),
-                );
-                self.build_events(
-                    &mut builder,
+                let (mut rendered, measured_height) = self.build_segment(
                     &layout.parsed_markdown,
                     segment.clone(),
                     &layout.images,
@@ -2919,12 +2913,10 @@ impl Element for MarkdownElement {
                     layout.markdown_end,
                     layout.render_mermaid_diagrams,
                     &layout.mermaid_state,
-                    &mut code_block_ids,
+                    available,
                     window,
                     cx,
                 );
-                let mut rendered = builder.build();
-                let measured_size = rendered.element.layout_as_root(available, window, cx);
                 rendered
                     .element
                     .prepaint_at(point(bounds.left(), block_top), window, cx);
@@ -2935,13 +2927,13 @@ impl Element for MarkdownElement {
                     .reparsable_blocks
                     .contains(&range.start)
                 {
-                    measured.push((range.clone(), measured_size.height));
+                    measured.push((range.clone(), measured_height));
                 }
                 lines.extend(rendered.text.lines.iter().cloned());
                 links.extend(rendered.text.links.iter().cloned());
                 footnote_refs.extend(rendered.text.footnote_refs.iter().cloned());
                 blocks.push(rendered.element);
-                y = block_top + measured_size.height;
+                y = block_top + measured_height;
                 #[cfg(test)]
                 BLOCKS_BUILT.with(|count| count.set(count.get() + 1));
             } else {
@@ -4551,7 +4543,7 @@ mod tests {
         let draw = |cx: &mut gpui::VisualTestContext, markdown: &Entity<Markdown>, scroll: f32| {
             let markdown = markdown.clone();
             cx.draw(point(px(0.), px(-scroll)), viewport, move |_, _| {
-                MarkdownElement::new(markdown.clone(), MarkdownStyle::default()).code_block_renderer(
+                MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
                     CodeBlockRenderer::Default {
                         copy_button_visibility: CopyButtonVisibility::Hidden,
                         wrap_button_visibility: WrapButtonVisibility::Hidden,
@@ -4605,7 +4597,7 @@ mod tests {
         // Tall doc: at scroll 0 only the first ~30 blocks fall in viewport +
         // overscan, so deep blocks are never measured.
         let markdown = cx.new(|cx| Markdown::new(perf_doc(100).into(), None, None, cx));
-        let (_, mut cx) = cx.add_window_view(|_, _| TestWindow);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         cx.simulate_resize(size(px(800.), px(600.)));
         cx.run_until_parked();
 
@@ -4620,7 +4612,7 @@ mod tests {
         // the target on demand.
         let markdown_for_draw = markdown.clone();
         cx.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), move |_, _| {
-            MarkdownElement::new(markdown_for_draw.clone(), MarkdownStyle::default())
+            MarkdownElement::new(markdown_for_draw, MarkdownStyle::default())
                 .code_block_renderer(CodeBlockRenderer::Default {
                     copy_button_visibility: CopyButtonVisibility::Hidden,
                     wrap_button_visibility: WrapButtonVisibility::Hidden,
