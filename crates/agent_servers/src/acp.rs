@@ -736,7 +736,10 @@ fn connect_client_future(
         )
 }
 
-fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities {
+fn client_capabilities_for_agent(
+    agent_id: &AgentId,
+    supports_boolean_config_options: bool,
+) -> acp::ClientCapabilities {
     let mut meta = acp::Meta::from_iter([
         ("terminal_output".into(), true.into()),
         ("terminal-auth".into(), true.into()),
@@ -746,13 +749,24 @@ fn client_capabilities_for_agent(agent_id: &AgentId) -> acp::ClientCapabilities 
         meta.insert(PARAMETERIZED_MODEL_PICKER_META_KEY.into(), true.into());
     }
 
-    acp::ClientCapabilities::new()
+    let mut capabilities = acp::ClientCapabilities::new()
         .fs(acp::FileSystemCapabilities::new()
             .read_text_file(true)
             .write_text_file(true))
         .terminal(true)
         .auth(acp::AuthCapabilities::new().terminal(true))
-        .meta(meta)
+        .meta(meta);
+
+    if supports_boolean_config_options {
+        capabilities = capabilities.session(
+            acp::ClientSessionCapabilities::new().config_options(
+                acp::SessionConfigOptionsCapabilities::new()
+                    .boolean(acp::BooleanConfigOptionCapabilities::new()),
+            ),
+        );
+    }
+
+    capabilities
 }
 
 impl AcpConnection {
@@ -942,7 +956,10 @@ impl AcpConnection {
         let initialize_response = connection
             .send_request(
                 acp::InitializeRequest::new(ProtocolVersion::V1)
-                    .client_capabilities(client_capabilities_for_agent(&agent_id))
+                    .client_capabilities(client_capabilities_for_agent(
+                        &agent_id,
+                        cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>()),
+                    ))
                     .client_info(
                         acp::Implementation::new("zed", version)
                             .title(release_channel.map(ToOwned::to_owned)),
@@ -2518,7 +2535,7 @@ mod tests {
 
     #[test]
     fn cursor_client_capabilities_include_parameterized_model_picker_meta() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new(CURSOR_ID));
+        let capabilities = client_capabilities_for_agent(&AgentId::new(CURSOR_ID), false);
         let meta = capabilities
             .meta
             .expect("expected client capabilities meta");
@@ -2533,12 +2550,32 @@ mod tests {
 
     #[test]
     fn non_cursor_client_capabilities_do_not_include_parameterized_model_picker_meta() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"));
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
         let meta = capabilities
             .meta
             .expect("expected client capabilities meta");
 
         assert!(!meta.contains_key(PARAMETERIZED_MODEL_PICKER_META_KEY));
+    }
+
+    #[test]
+    fn client_capabilities_include_boolean_config_options_when_supported() {
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), true);
+
+        assert!(
+            capabilities
+                .session
+                .and_then(|session| session.config_options)
+                .and_then(|config_options| config_options.boolean)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn client_capabilities_omit_boolean_config_options_when_unsupported() {
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
+
+        assert!(capabilities.session.is_none());
     }
 
     #[test]
