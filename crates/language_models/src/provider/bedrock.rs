@@ -1087,10 +1087,6 @@ impl LanguageModel for BedrockMantleModel {
                         object.remove("context_management");
                         object.remove("include");
 
-                        // Gemma/Grok stream full plaintext reasoning and stall
-                        // for minutes (returning nothing) when a reasoning
-                        // summary is requested. Only keep `reasoning.summary` for
-                        // models that actually emit summaries.
                         if !model.emits_reasoning_summary()
                             && let Some(reasoning) =
                                 object.get_mut("reasoning").and_then(|r| r.as_object_mut())
@@ -1153,7 +1149,7 @@ fn into_mantle(
     request: LanguageModelRequest,
     model: &bedrock::mantle::MantleModel,
 ) -> bedrock::mantle::Request {
-    use bedrock::mantle as mantle;
+    use bedrock::mantle;
 
     let mut messages: Vec<mantle::RequestMessage> = Vec::new();
     for message in request.messages {
@@ -1219,9 +1215,11 @@ fn into_mantle(
                         .content
                         .iter()
                         .map(|part| match part {
-                            LanguageModelToolResultContent::Text(text) => mantle::MessagePart::Text {
-                                text: text.to_string(),
-                            },
+                            LanguageModelToolResultContent::Text(text) => {
+                                mantle::MessagePart::Text {
+                                    text: text.to_string(),
+                                }
+                            }
                             LanguageModelToolResultContent::Image(image) => {
                                 mantle::MessagePart::Image {
                                     image_url: mantle::ImageUrl {
@@ -1242,12 +1240,11 @@ fn into_mantle(
         }
     }
 
-    let parallel_tool_calls =
-        if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
-            Some(true)
-        } else {
-            None
-        };
+    let parallel_tool_calls = if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
+        Some(true)
+    } else {
+        None
+    };
 
     let prompt_cache_key = if model.supports_prompt_cache_key() {
         request.thread_id
@@ -1313,7 +1310,7 @@ fn add_mantle_content_part(
     role: Role,
     messages: &mut Vec<bedrock::mantle::RequestMessage>,
 ) {
-    use bedrock::mantle as mantle;
+    use bedrock::mantle;
     match (role, messages.last_mut()) {
         (Role::User, Some(mantle::RequestMessage::User { content }))
         | (
@@ -1367,7 +1364,8 @@ impl MantleEventMapper {
     fn map_stream(
         mut self,
         events: BoxStream<'static, Result<bedrock::mantle::ResponseStreamEvent>>,
-    ) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+    ) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
         events
             .flat_map(move |event| {
                 futures::stream::iter(match event {
@@ -1508,7 +1506,8 @@ impl MantleResponseEventMapper {
     fn map_stream(
         mut self,
         events: BoxStream<'static, Result<bedrock::mantle::ResponsesStreamEvent>>,
-    ) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+    ) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
         events
             .flat_map(move |event| {
                 futures::stream::iter(match event {
