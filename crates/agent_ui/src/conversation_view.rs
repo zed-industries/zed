@@ -244,6 +244,17 @@ impl ProfileProvider for Entity<agent::Thread> {
     fn model_selected(&self, cx: &App) -> bool {
         self.read(cx).model().is_some()
     }
+
+    fn is_restricted(&self, cx: &App) -> bool {
+        project::trusted_worktrees::TrustedWorktrees::has_restricted_worktrees(
+            &self.read(cx).project().read(cx).worktree_store(),
+            cx,
+        )
+    }
+
+    fn profile_downgraded(&self, cx: &App) -> bool {
+        self.read(cx).profile_was_downgraded()
+    }
 }
 
 #[derive(Default)]

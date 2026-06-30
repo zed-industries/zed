@@ -288,6 +288,7 @@ dependencies = [
  "quick-xml 0.38.3",
  "rand 0.9.4",
  "regex",
+ "release_channel",
  "reqwest_client",
  "rust-embed",
  "sandbox",
@@ -11441,6 +11442,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases 0.2.1",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -15972,6 +15974,7 @@ dependencies = [
  "http_proxy",
  "libc",
  "log",
+ "nix 0.29.0",
  "serde",
  "serde_json",
  "smol",

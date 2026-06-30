@@ -18,8 +18,8 @@ use crate::sandboxing::{
 use crate::tools::{SandboxGitPathCandidates, sandbox_git_paths};
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{
-    AgentProfileId, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT,
-    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentProfileSettings, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT,
+    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT, builtin_profiles,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Local, Utc};
@@ -46,7 +46,7 @@ use language_model::{
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, SelectedModel, Speed,
     StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
-use project::Project;
+use project::{Project, trusted_worktrees::TrustedWorktrees};
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::de::DeserializeOwned;
@@ -1226,6 +1226,9 @@ pub struct Thread {
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     pub(crate) context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
+    /// Whether `profile_id` was downgraded to `minimal` at thread start because
+    /// the workspace is restricted. Used purely to surface a warning in the UI.
+    profile_downgraded_for_restricted_workspace: bool,
     project_context: Entity<ProjectContext>,
     pub(crate) templates: Arc<Templates>,
     model: ThreadModel,
@@ -1320,7 +1323,8 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Self {
         let settings = AgentSettings::get_global(cx);
-        let profile_id = settings.default_profile.clone();
+        let (profile_id, profile_downgraded_for_restricted_workspace) =
+            Self::profile_for_restricted_workspace(settings.default_profile.clone(), &project, cx);
         let enable_thinking = settings
             .default_model
             .as_ref()
@@ -1363,6 +1367,7 @@ impl Thread {
             },
             context_server_registry,
             profile_id,
+            profile_downgraded_for_restricted_workspace,
             project_context,
             templates,
             model,
@@ -1395,6 +1400,8 @@ impl Thread {
         self.thinking_effort = parent.thinking_effort.clone();
         self.summarization_model = parent.summarization_model.clone();
         self.profile_id = parent.profile_id.clone();
+        self.profile_downgraded_for_restricted_workspace =
+            parent.profile_downgraded_for_restricted_workspace;
     }
 
     fn apply_model_selection(
@@ -1738,6 +1745,7 @@ impl Thread {
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
             profile_id,
+            profile_downgraded_for_restricted_workspace: false,
             project_context,
             templates,
             model,
@@ -2195,7 +2203,44 @@ impl Thread {
         &self.profile_id
     }
 
+    /// Whether this thread's profile was downgraded to `minimal` at thread start
+    /// because the workspace is restricted.
+    pub fn profile_was_downgraded(&self) -> bool {
+        self.profile_downgraded_for_restricted_workspace
+    }
+
+    /// Computes the profile a thread should start with, given the user's chosen
+    /// profile. In a restricted workspace, the built-in `write`/`ask` profiles
+    /// are downgraded to `minimal` — but only when both the chosen profile and
+    /// `minimal` are unmodified, shipped defaults, so we never override a user's
+    /// custom or customized profiles.
+    ///
+    /// Returns the (possibly downgraded) profile and whether a downgrade
+    /// happened.
+    fn profile_for_restricted_workspace(
+        profile_id: AgentProfileId,
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> (AgentProfileId, bool) {
+        let is_write_or_ask = profile_id.as_str() == builtin_profiles::WRITE
+            || profile_id.as_str() == builtin_profiles::ASK;
+        let minimal = AgentProfileId(builtin_profiles::MINIMAL.into());
+        if is_write_or_ask
+            && TrustedWorktrees::has_restricted_worktrees(&project.read(cx).worktree_store(), cx)
+            && AgentProfileSettings::is_unmodified_default(&profile_id, cx)
+            && AgentProfileSettings::is_unmodified_default(&minimal, cx)
+        {
+            (minimal, true)
+        } else {
+            (profile_id, false)
+        }
+    }
+
     pub fn set_profile(&mut self, profile_id: AgentProfileId, cx: &mut Context<Self>) {
+        // An explicit selection means any earlier automatic downgrade no longer
+        // applies, even if the user re-selects the same profile.
+        self.profile_downgraded_for_restricted_workspace = false;
+
         if self.profile_id == profile_id {
             return;
         }
@@ -3458,6 +3503,26 @@ impl Thread {
         cancellation_rx: watch::Receiver<bool>,
         cx: &mut Context<Self>,
     ) -> Task<LanguageModelToolResult> {
+        // A workspace can become restricted after a thread has already started.
+        // Tools that aren't allowed in restricted workspaces must never run in
+        // that state, even though they were exposed to the model earlier.
+        if !tool.allow_in_restricted_mode()
+            && TrustedWorktrees::has_restricted_worktrees(
+                &self.project.read(cx).worktree_store(),
+                cx,
+            )
+        {
+            return Task::ready(LanguageModelToolResult {
+                tool_use_id,
+                tool_name,
+                is_error: true,
+                content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                    "workspace has become restricted",
+                ))],
+                output: None,
+            });
+        }
+
         let fs = self.project.read(cx).fs().clone();
         let tool_event_stream = ToolCallEventStream::new(
             tool_use_id.clone(),
@@ -3936,9 +4001,16 @@ impl Thread {
         // to the model under that name.
         let use_sandboxed_terminal = sandboxing_enabled_for_project(self.project.read(cx), cx);
 
+        // Tools that aren't allowed in restricted workspaces must never be
+        // provided to the model while the workspace is restricted, regardless
+        // of what the active profile enables.
+        let is_restricted =
+            TrustedWorktrees::has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx);
+
         let mut tools = self
             .tools
             .iter()
+            .filter(|(_, tool)| !is_restricted || tool.allow_in_restricted_mode())
             .filter_map(|(tool_name, tool)| {
                 let terminal_variant = matches!(
                     tool_name.as_ref(),
@@ -4904,6 +4976,14 @@ where
         true
     }
 
+    /// Whether this tool may be provided to an agent in a restricted workspace.
+    ///
+    /// Tools that return `false` are never exposed to the model while the
+    /// workspace is restricted, and will fail if invoked in that state.
+    fn allow_in_restricted_mode() -> bool {
+        true
+    }
+
     /// Runs the tool with the provided input.
     ///
     /// Returns `Result<Self::Output, Self::Output>` rather than `Result<Self::Output, anyhow::Error>`
@@ -4967,6 +5047,9 @@ pub trait AnyAgentTool {
     fn supports_provider(&self, _provider: &LanguageModelProviderId) -> bool {
         true
     }
+    fn allow_in_restricted_mode(&self) -> bool {
+        true
+    }
     /// See [`AgentTool::run`] for why this returns `Result<AgentToolOutput, AgentToolOutput>`.
     fn run(
         self: Arc<Self>,
@@ -5016,6 +5099,10 @@ where
 
     fn supports_provider(&self, provider: &LanguageModelProviderId) -> bool {
         T::supports_provider(provider)
+    }
+
+    fn allow_in_restricted_mode(&self) -> bool {
+        T::allow_in_restricted_mode()
     }
 
     fn run(
