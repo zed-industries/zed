@@ -704,7 +704,13 @@ impl TerminalView {
         self.terminal.update(cx, |term, cx| {
             term.scroll_wheel(
                 event,
-                TerminalSettings::get_global(cx).scroll_multiplier.max(0.01),
+                if (event.modifiers.alt) {
+                    EditorSettings::get_global(cx)
+                        .fast_scroll_sensitivity
+                        .max(0.01)
+                } else {
+                    TerminalSettings::get_global(cx).scroll_multiplier.max(0.01)
+                },
             )
         });
     }
