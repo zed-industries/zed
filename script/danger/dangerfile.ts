@@ -144,32 +144,44 @@ const SENSITIVE_CONFIG_FILES = [
   "GEMINI.md",
   "binding.gyp",
   "langchain.json",
-  "script/danger/dangerfile.ts",
-  // Cloudflare
+  "script/danger/**",
   ".cloudflare/**",
-  // Zed
   ".zed/settings.json",
   ".zed/tasks.json",
   ".zed/settings.local.json",
 ];
 
-const prLabels = danger.github.issue.labels.map((label) => label.name);
-const hasConfigChangeLabel = prLabels.includes(CONFIG_CHANGE_LABEL);
+const CHANGES_ALLOWED = [
+  ".rules",
+  "AGENTS.md",
+  "CLAUDE.md",
+  "GEMINI.md",
+  ".zed/settings.json",
+  ".zed/tasks.json",
+  "script/danger/**",
+  ".cloudflare/**",
+];
 
-const configMatches = danger.git.fileMatch(...SENSITIVE_CONFIG_FILES).getKeyedPaths();
-const touchedConfigFiles = Array.from(
-  new Set([...configMatches.created, ...configMatches.edited, ...configMatches.deleted, ...configMatches.modified]),
-);
+const touchedPaths = (patterns: string[]) => {
+  const matches = danger.git.fileMatch(...patterns).getKeyedPaths();
+  return new Set([...matches.edited, ...matches.deleted]);
+};
 
-if (touchedConfigFiles.length > 0) {
-  const touchedConfigFilesStr = touchedConfigFiles.map((path) => "`" + path + "`").join(", ");
-  const notify = hasConfigChangeLabel ? message : fail;
+const allowedPaths = touchedPaths(CHANGES_ALLOWED);
+const disallowedConfigFiles = [...touchedPaths(SENSITIVE_CONFIG_FILES)].filter((path) => !allowedPaths.has(path));
+const guardedConfigFiles = [...allowedPaths];
 
-  notify(
-    [
-      `:rotating_light: This PR touches sensitive configuration files (${touchedConfigFilesStr}).`,
-      "",
-      "These files can influence local developer tooling and AI agents (auto-running commands, injecting instructions), are deployed to production infrastructure, or define the repository's default editor configuration, so changes to them must be reviewed with **extreme caution**.",
-    ].join("\n"),
-  );
+const hasConfigChangeLabel = danger.github.issue.labels.some((label) => label.name === CONFIG_CHANGE_LABEL);
+const format = (paths: string[]) => paths.map((path) => "`" + path + "`").join(", ");
+
+if (disallowedConfigFiles.length > 0) {
+  fail(`This PR changes disallowed sensitive config files: ${format(disallowedConfigFiles)}.`);
+}
+
+if (guardedConfigFiles.length > 0) {
+  if (hasConfigChangeLabel) {
+    message(`This PR changes sensitive config files: ${format(guardedConfigFiles)}.`);
+  } else {
+    fail(`Changing ${format(guardedConfigFiles)} requires the \`${CONFIG_CHANGE_LABEL}\` label.`);
+  }
 }

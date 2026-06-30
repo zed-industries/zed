@@ -58,3 +58,23 @@ crates/docs_preprocessor/actions.json
 
 # NixOS integration test state
 .nixos-test-history
+
+# Agent, editor, and tooling config that must not be committed.
+# Enforced in script/danger/dangerfile.ts; only already-tracked paths may change.
+.aider.conf.yml
+.claude.json
+.claude/
+.clinerules
+.codeium/
+.config/github-copilot/
+.cursor/
+.cursorrules
+.gemini/
+.github/copilot-instructions.md
+.kiro/
+.openai.json
+.openai/
+.windsurfrules
+.zed/settings.local.json
+binding.gyp
+langchain.json
