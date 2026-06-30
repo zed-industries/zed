@@ -119,7 +119,11 @@ impl Search {
         limit: usize,
         cx: &mut App,
     ) -> Self {
-        let worktrees = worktree_store.read(cx).visible_worktrees(cx).collect();
+        let mut worktrees = worktree_store
+            .read(cx)
+            .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+        worktrees.sort_by_key(|worktree| worktree.read(cx).id());
         Self {
             kind: SearchKind::Local { fs, worktrees },
             buffer_store,
@@ -183,6 +187,9 @@ impl Search {
                 unnamed_buffers.push(handle)
             };
         }
+        // Results are consumed in `PathKey` order downstream; fileless buffers get a `PathKey`
+        // built from the stringified `EntityId` (see `PathKey::for_buffer`), so match that here.
+        unnamed_buffers.sort_by_cached_key(|buffer| buffer.entity_id().to_string());
         let open_buffers = Arc::new(open_buffers);
         let executor = cx.background_executor().clone();
         let (tx, rx) = unbounded();
