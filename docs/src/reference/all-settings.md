@@ -3279,7 +3279,7 @@ Examples:
 
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
-   There are several ways to convert a preview tab into a regular tab:
+  There are several ways to convert a preview tab into a regular tab:
 
   - Double-clicking on the file
   - Double-clicking on the tab header
@@ -3688,7 +3688,8 @@ Non-negative `integer` values
     "case_sensitive": false,
     "include_ignored": false,
     "regex": false,
-    "center_on_match": false
+    "center_on_match": false,
+    "search_on_input": true
   }
 }
 ```
@@ -3730,6 +3731,12 @@ Non-negative `integer` values
 - Description: Whether to center the cursor on each search match when navigating.
 - Setting: `center_on_match`
 - Default: `false`
+
+### Search On Input
+
+- Description: Whether to search on input in project search.
+- Setting: `search_on_input`
+- Default: `true`
 
 ## Search Wrap
 
