@@ -347,6 +347,19 @@ pub struct AgentSettingsContent {
     /// These are populated when choosing "Allow always" from a sandbox
     /// escalation prompt.
     pub sandbox_permissions: Option<SandboxPermissionsContent>,
+
+    /// Maximum size, in bytes, of a single tool result's text content that is
+    /// sent inline to the model. When a tool (including MCP/context server
+    /// tools) returns more text than this, the full output is written to a
+    /// temporary file and the model receives a short notice with the file path
+    /// and a preview instead. This prevents a single oversized tool response
+    /// from overflowing the model's context window; the agent can then inspect
+    /// the file (e.g. with the terminal tool) to retrieve only what it needs.
+    ///
+    /// Set to 0 to disable offloading and always send full tool output inline.
+    ///
+    /// Default: 65536
+    pub tool_output_inline_limit: Option<usize>,
 }
 
 impl AgentSettingsContent {

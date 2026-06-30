@@ -3459,6 +3459,11 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Task<LanguageModelToolResult> {
         let fs = self.project.read(cx).fs().clone();
+        let offload_fs = fs.clone();
+        let inline_limit = AgentSettings::get_global(cx).tool_output_inline_limit;
+        let thread_id = self.id.to_string();
+        let ui_event_stream = event_stream.clone();
+        let ui_tool_use_id = tool_use_id.clone();
         let tool_event_stream = ToolCallEventStream::new(
             tool_use_id.clone(),
             event_stream.clone(),
@@ -3473,7 +3478,7 @@ impl Thread {
         let supports_images = self.model().is_some_and(|model| model.supports_images());
         let tool_result = tool.run(tool_input, tool_event_stream, cx);
         cx.foreground_executor().spawn(async move {
-            let (is_error, output) = match tool_result.await {
+            let (is_error, mut output) = match tool_result.await {
                 Ok(mut output) => {
                     let contains_image = output
                         .llm_output
@@ -3515,6 +3520,31 @@ impl Thread {
                 }
                 Err(output) => (true, output),
             };
+
+            // Keep a single oversized tool result (commonly from MCP/context
+            // server tools) from overflowing the model's context window by
+            // spilling the full text to a temp file the agent can inspect on
+            // demand. The raw output is left untouched for UI/replay.
+            let offloaded = offload_large_tool_output(
+                &offload_fs,
+                output.llm_output,
+                inline_limit,
+                &tool_name,
+                &thread_id,
+            )
+            .await;
+            output.llm_output = offloaded.content;
+            // Surface a notice plus a clickable link in the UI when we spilled
+            // the output to a file, so the user knows it was cached and can open
+            // the full data.
+            if let Some(spilled) = &offloaded.spilled {
+                notify_offloaded_tool_output_in_ui(
+                    &ui_event_stream,
+                    &ui_tool_use_id,
+                    spilled,
+                    inline_limit,
+                );
+            }
 
             LanguageModelToolResult {
                 tool_use_id,
@@ -4928,6 +4958,179 @@ where
 }
 
 pub struct Erased<T>(T);
+
+/// Number of leading characters of an offloaded tool result to inline as a
+/// preview alongside the pointer to the full output file.
+const TOOL_OUTPUT_PREVIEW_CHARS: usize = 2000;
+
+/// Result of [`offload_large_tool_output`].
+struct OffloadedToolOutput {
+    /// The (possibly rewritten) content to send to the model.
+    content: Vec<LanguageModelToolResultContent>,
+    /// Set when the output was actually spilled to a file, so the caller can
+    /// surface a notice with a clickable link in the UI.
+    spilled: Option<SpilledToolOutput>,
+}
+
+struct SpilledToolOutput {
+    path: PathBuf,
+    byte_count: usize,
+}
+
+/// When a tool returns more inline text than `inline_limit` bytes, write the
+/// full text to a file under the temp directory and replace the model-facing
+/// content with a short notice pointing at that file plus a short preview. This
+/// keeps a single oversized tool result (often from MCP/context servers) from
+/// overflowing the model's context window while still letting the agent inspect
+/// the full output on demand (e.g. via the terminal tool). Image parts are
+/// preserved as-is, and an `inline_limit` of 0 disables offloading entirely.
+async fn offload_large_tool_output(
+    fs: &Arc<dyn Fs>,
+    content: Vec<LanguageModelToolResultContent>,
+    inline_limit: usize,
+    tool_name: &str,
+    thread_id: &str,
+) -> OffloadedToolOutput {
+    if inline_limit == 0 {
+        return OffloadedToolOutput {
+            content,
+            spilled: None,
+        };
+    }
+
+    let text_bytes: usize = content
+        .iter()
+        .filter_map(|part| match part {
+            LanguageModelToolResultContent::Text(text) => Some(text.len()),
+            LanguageModelToolResultContent::Image(_) => None,
+        })
+        .sum();
+
+    if text_bytes <= inline_limit {
+        return OffloadedToolOutput {
+            content,
+            spilled: None,
+        };
+    }
+
+    // Only text is offloaded; image parts are passed through unchanged.
+    let mut images = Vec::new();
+    let mut full_text = String::with_capacity(text_bytes);
+    for part in &content {
+        match part {
+            LanguageModelToolResultContent::Text(text) => {
+                if !full_text.is_empty() {
+                    full_text.push('\n');
+                }
+                full_text.push_str(text);
+            }
+            LanguageModelToolResultContent::Image(image) => images.push(image.clone()),
+        }
+    }
+
+    // Write to the OS temp directory (not Zed's cache dir) so the operating
+    // system reclaims these files as part of its normal temp cleanup.
+    let dir = std::env::temp_dir().join("zed-tool-output").join(thread_id);
+    let path = dir.join(format!(
+        "{}-{}.txt",
+        sanitize_for_file_name(tool_name),
+        Uuid::new_v4()
+    ));
+
+    if let Err(error) = fs.create_dir(&dir).await {
+        log::error!("Failed to create tool-output offload directory {dir:?}: {error:#}");
+        return OffloadedToolOutput {
+            content,
+            spilled: None,
+        };
+    }
+    if let Err(error) = fs.write(&path, full_text.as_bytes()).await {
+        log::error!("Failed to write offloaded tool output to {path:?}: {error:#}");
+        return OffloadedToolOutput {
+            content,
+            spilled: None,
+        };
+    }
+
+    let preview: String = full_text.chars().take(TOOL_OUTPUT_PREVIEW_CHARS).collect();
+    let preview_len = preview.chars().count();
+    let notice = format!(
+        "Tool result was {text_bytes} bytes, exceeding the inline limit of \
+         {inline_limit} bytes, so the full output is not included here. It was \
+         written to:\n\n{path}\n\nUse the terminal tool to inspect only what you \
+         need, for example:\n  rg <pattern> {path}\n  sed -n '1,40p' {path}\n  \
+         wc -l {path}\n\nPreview of the first {preview_len} characters:\n\n{preview}",
+        path = path.display(),
+    );
+
+    let mut result = Vec::with_capacity(1 + images.len());
+    result.push(LanguageModelToolResultContent::Text(Arc::from(notice)));
+    result.extend(
+        images
+            .into_iter()
+            .map(LanguageModelToolResultContent::Image),
+    );
+    OffloadedToolOutput {
+        content: result,
+        spilled: Some(SpilledToolOutput {
+            path,
+            byte_count: text_bytes,
+        }),
+    }
+}
+
+/// Replaces a tool call's UI content with a short notice plus a clickable file
+/// link pointing at the offloaded output, so the user can see that the result
+/// was cached and open the full data with a click.
+fn notify_offloaded_tool_output_in_ui(
+    event_stream: &ThreadEventStream,
+    tool_use_id: &LanguageModelToolUseId,
+    spilled: &SpilledToolOutput,
+    inline_limit: usize,
+) {
+    let uri = MentionUri::File {
+        abs_path: spilled.path.clone(),
+    };
+    let notice = format!(
+        "Output was {} bytes, exceeding the inline limit of {} bytes, so it was \
+         cached to a file instead of being sent to the model. Open the file \
+         below to view the full output.",
+        spilled.byte_count, inline_limit,
+    );
+    event_stream.update_tool_call_fields(
+        tool_use_id,
+        acp::ToolCallUpdateFields::new().content(vec![
+            acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::Text(
+                acp::TextContent::new(notice),
+            ))),
+            acp::ToolCallContent::Content(acp::Content::new(acp::ContentBlock::ResourceLink(
+                acp::ResourceLink::new(uri.name(), uri.to_uri()),
+            ))),
+        ]),
+        None,
+    );
+}
+
+/// Turns an arbitrary tool name into a string safe to embed in a file name,
+/// replacing anything that isn't alphanumeric, `-`, or `_` with `_`.
+fn sanitize_for_file_name(name: &str) -> String {
+    let sanitized: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed = sanitized.trim_matches('_');
+    if trimmed.is_empty() {
+        "tool".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
 
 pub struct AgentToolOutput {
     pub llm_output: Vec<LanguageModelToolResultContent>,
@@ -6464,6 +6667,86 @@ mod tests {
         let mut settings = AgentSettings::get_global(cx).clone();
         settings.auto_compact = auto_compact;
         AgentSettings::override_global(settings, cx);
+    }
+
+    #[test]
+    fn test_sanitize_for_file_name() {
+        assert_eq!(sanitize_for_file_name("read_file"), "read_file");
+        assert_eq!(sanitize_for_file_name("mcp:server:tool"), "mcp_server_tool");
+        assert_eq!(sanitize_for_file_name("weird/name with spaces"), "weird_name_with_spaces");
+        // Leading/trailing separators are trimmed, and an all-separator name
+        // falls back to a stable default so we never produce an empty stem.
+        assert_eq!(sanitize_for_file_name("///"), "tool");
+    }
+
+    #[gpui::test]
+    async fn test_offload_large_tool_output_under_limit_is_unchanged(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.background_executor.clone()) as Arc<dyn Fs>;
+        let content = vec![LanguageModelToolResultContent::Text(Arc::from("small output"))];
+
+        let result =
+            offload_large_tool_output(&fs, content.clone(), 1024, "my_tool", "thread-1").await;
+
+        assert_eq!(result.content, content);
+        assert!(result.spilled.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_offload_large_tool_output_disabled_with_zero_limit(cx: &mut TestAppContext) {
+        let fs = fs::FakeFs::new(cx.background_executor.clone()) as Arc<dyn Fs>;
+        let big = "x".repeat(10_000);
+        let content = vec![LanguageModelToolResultContent::Text(Arc::from(big.as_str()))];
+
+        // A limit of 0 disables offloading entirely.
+        let result =
+            offload_large_tool_output(&fs, content.clone(), 0, "my_tool", "thread-1").await;
+
+        assert_eq!(result.content, content);
+        assert!(result.spilled.is_none());
+    }
+
+    #[gpui::test]
+    async fn test_offload_large_tool_output_writes_file_and_replaces_text(
+        cx: &mut TestAppContext,
+    ) {
+        let fs = fs::FakeFs::new(cx.background_executor.clone()) as Arc<dyn Fs>;
+        let big = "abcd".repeat(5_000); // 20_000 bytes
+        let content = vec![LanguageModelToolResultContent::Text(Arc::from(big.as_str()))];
+
+        let result =
+            offload_large_tool_output(&fs, content, 4096, "mcp:server:tool", "thread-42").await;
+
+        // The text is collapsed into a single notice part.
+        assert_eq!(result.content.len(), 1);
+        let LanguageModelToolResultContent::Text(notice) = &result.content[0] else {
+            panic!("expected the offloaded result to be a text notice");
+        };
+        assert!(notice.contains("20000 bytes"));
+        assert!(notice.contains("4096 bytes"));
+        assert!(notice.contains("Preview of the first"));
+        // The notice references a file under the per-thread temp directory whose
+        // name is derived from the (sanitized) tool name.
+        assert!(notice.contains("thread-42"));
+        assert!(notice.contains("mcp_server_tool-"));
+
+        // The spilled metadata reports the byte count and a path under the
+        // per-thread temp directory.
+        let spilled = result.spilled.expect("output should have been spilled");
+        assert_eq!(spilled.byte_count, 20_000);
+        assert!(
+            spilled.path.starts_with(
+                std::env::temp_dir()
+                    .join("zed-tool-output")
+                    .join("thread-42")
+            )
+        );
+
+        // That file contains the full original output.
+        let written = fs
+            .load(&spilled.path)
+            .await
+            .expect("offloaded file should be readable");
+        assert_eq!(written, big);
     }
 
     #[test]

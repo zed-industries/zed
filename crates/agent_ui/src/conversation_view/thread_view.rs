@@ -11558,15 +11558,28 @@ pub(crate) fn open_link(
         workspace.update(cx, |workspace, cx| match mention {
             MentionUri::File { abs_path } => {
                 let project = workspace.project();
-                let Some(path) =
-                    project.update(cx, |project, cx| project.find_project_path(abs_path, cx))
-                else {
-                    return;
-                };
-
-                workspace
-                    .open_path(path, None, true, window, cx)
-                    .detach_and_log_err(cx);
+                if let Some(path) =
+                    project.update(cx, |project, cx| project.find_project_path(&abs_path, cx))
+                {
+                    workspace
+                        .open_path(path, None, true, window, cx)
+                        .detach_and_log_err(cx);
+                } else {
+                    // Files outside any worktree (e.g. offloaded tool output
+                    // cached in the temp directory) don't resolve to a project
+                    // path, so open them directly by absolute path.
+                    workspace
+                        .open_abs_path(
+                            abs_path,
+                            workspace::OpenOptions {
+                                focus: Some(true),
+                                ..Default::default()
+                            },
+                            window,
+                            cx,
+                        )
+                        .detach_and_log_err(cx);
+                }
             }
             MentionUri::PastedImage { .. } => {}
             MentionUri::Directory { abs_path } => {

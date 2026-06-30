@@ -177,3 +177,21 @@ Common error scenarios include:
 
 The error message from the context server will be shown in the agent's response, allowing you to diagnose and correct the issue.
 Check the context server's logs or documentation for details about specific error codes.
+
+### Large Tool Outputs
+
+Some MCP tools return very large responses (for example, dumping an entire file, a large query result, or verbose logs). A single oversized tool result can overflow the model's context window and cause the agent to fail.
+
+To prevent this, Zed caps how much tool result text is sent inline to the model. When a tool result's text exceeds `agent.tool_output_inline_limit` (default `65536` bytes), Zed writes the full output to a temporary file and instead sends the model a short notice containing the file path and a preview. The agent can then inspect only the parts it needs (for example, using the terminal tool to `grep`, `sed`, or `cat` the file).
+
+In the Agent Panel, the tool call shows a note that the output was cached, along with a clickable link that opens the full output file in the editor.
+
+This applies to every tool, including built-in tools and MCP/context server tools. Set the limit to `0` to disable offloading and always send full tool output inline:
+
+```json
+{
+  "agent": {
+    "tool_output_inline_limit": 65536
+  }
+}
+```
