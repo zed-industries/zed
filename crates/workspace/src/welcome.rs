@@ -97,6 +97,7 @@ impl RenderOnce for SectionButton {
     fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
         let id = format!("onb-button-{}-{}", self.label, self.tab_index);
         let action_ref: &dyn Action = &*self.action;
+        let label = self.label.to_string();
 
         ButtonLike::new(id)
             .tab_index(self.tab_index as isize)
@@ -122,6 +123,7 @@ impl RenderOnce for SectionButton {
                     ),
             )
             .on_click(move |_, window, cx| {
+                telemetry::event!("Welcome Page Button Clicked", button = label.as_str());
                 self.focus_handle.dispatch_action(&*self.action, window, cx)
             })
     }

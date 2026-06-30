@@ -1,7 +1,8 @@
 use crate::multibuffer_hint::MultibufferHint;
+use agent_ui::AgentPanel;
 use client::{Client, UserStore, zed_urls};
 use cloud_api_types::Plan;
-use db::kvp::KeyValueStore;
+use db::kvp::{Dismissable, KeyValueStore};
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AppContext, AsyncWindowContext, Context, Entity, EventEmitter,
@@ -23,7 +24,7 @@ pub use workspace::welcome::ShowWelcome;
 use workspace::welcome::WelcomePage;
 use workspace::{
     AppState, Workspace, WorkspaceId,
-    dock::DockPosition,
+    dock::{DockPosition, Panel},
     item::{Item, ItemEvent},
     notifications::NotifyResultExt as _,
     open_new, register_serializable_item, with_active_or_new_workspace,
@@ -211,6 +212,10 @@ struct Onboarding {
     user_store: Entity<UserStore>,
     scroll_handle: ScrollHandle,
     _settings_subscription: Subscription,
+    // Registered lazily on first render, since `new` has no `Window`. Fires when
+    // focus leaves onboarding for another surface (a dock panel, another tab,
+    // etc.), which we treat as leaving onboarding.
+    _focus_out_subscription: Option<Subscription>,
 }
 
 impl Onboarding {
@@ -269,6 +274,7 @@ impl Onboarding {
                 user_store: workspace.user_store().clone(),
                 _settings_subscription: cx
                     .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+                _focus_out_subscription: None,
             }
         })
     }
@@ -276,6 +282,7 @@ impl Onboarding {
     fn on_finish(_: &Finish, _: &mut Window, cx: &mut App) {
         telemetry::event!("Finish Setup");
         go_to_welcome_page(cx);
+        on_leave_onboarding(LeaveTrigger::Finish, cx);
     }
 
     fn handle_sign_in(&mut self, _: &SignIn, window: &mut Window, cx: &mut Context<Self>) {
@@ -299,10 +306,26 @@ impl Onboarding {
     fn render_page(&mut self, cx: &mut Context<Self>) -> AnyElement {
         crate::basics_page::render_basics_page(&self.user_store, cx).into_any_element()
     }
+
+    fn register_focus_out_subscription(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self._focus_out_subscription.is_some() {
+            return;
+        }
+        self._focus_out_subscription =
+            Some(cx.on_focus_out(&self.focus_handle, window, |_, _, _, cx| {
+                // Focus moved away from onboarding to another surface (a dock
+                // panel, another tab, etc.). Treat that as leaving onboarding.
+                // Opening a modal from within onboarding (e.g. the base keymap
+                // picker) also fires this, but that case is filtered out via
+                // `has_active_modal` in `on_leave_onboarding`.
+                on_leave_onboarding(LeaveTrigger::FocusOut, cx);
+            }));
+    }
 }
 
 impl Render for Onboarding {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.register_focus_out_subscription(window, cx);
         div()
             .image_cache(gpui::retain_all("onboarding-page"))
             .key_context({
@@ -424,11 +447,20 @@ impl Item for Onboarding {
             scroll_handle: ScrollHandle::new(),
             focus_handle: cx.focus_handle(),
             _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+            _focus_out_subscription: None,
         })))
     }
 
     fn to_item_events(event: &Self::Event, f: &mut dyn FnMut(workspace::item::ItemEvent)) {
         f(*event)
+    }
+
+    fn deactivated(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        // The user has navigated away from onboarding (e.g. opened a file or
+        // switched tabs) without explicitly finishing setup. Treat this as an
+        // exit from onboarding and reveal the agent panel if they configured an
+        // agent, so it's easy to find.
+        on_leave_onboarding(LeaveTrigger::Deactivated, cx);
     }
 }
 
@@ -465,6 +497,230 @@ fn go_to_welcome_page(cx: &mut App) {
 
             pane.remove_item(onboarding_id, false, false, window, cx);
         });
+    });
+}
+
+/// Persists whether the user has already been exposed to the post-onboarding
+/// agent-panel experiment, so each user is enrolled exactly once (across
+/// sessions) regardless of how many times they leave onboarding.
+struct OnboardingAgentExperimentExposed;
+
+impl Dismissable for OnboardingAgentExperimentExposed {
+    const KEY: &'static str = "onboarding_agent_experiment_exposed";
+}
+
+/// In-memory companion to the persisted exposure flag. The persisted flag is
+/// written asynchronously, so several leave-signals firing in the same tick
+/// (e.g. on "Finish": deactivation + focus-out + the explicit call) would all
+/// read it as not-yet-set and each enroll/reveal. This flag is set synchronously
+/// the moment we enroll, so later signals in the same tick see it and skip.
+#[derive(Default)]
+struct OnboardingAgentExperimentExposedThisSession(bool);
+
+impl Global for OnboardingAgentExperimentExposedThisSession {}
+
+impl OnboardingAgentExperimentExposedThisSession {
+    fn is_set(cx: &App) -> bool {
+        cx.try_global::<Self>().is_some_and(|this| this.0)
+    }
+
+    fn set(cx: &mut App) {
+        cx.update_default_global::<Self, _>(|this, _| this.0 = true);
+    }
+}
+
+/// Whether this user has already been enrolled in the experiment, this session
+/// or any previous one.
+fn already_exposed_to_experiment(cx: &App) -> bool {
+    OnboardingAgentExperimentExposedThisSession::is_set(cx)
+        || OnboardingAgentExperimentExposed::dismissed(cx)
+}
+
+fn mark_exposed_to_experiment(cx: &mut App) {
+    // Set the synchronous flag first so sibling exits queued in this same tick
+    // observe it before the async persisted write lands.
+    OnboardingAgentExperimentExposedThisSession::set(cx);
+    OnboardingAgentExperimentExposed::set_dismissed(true, cx);
+}
+
+/// Salt + ramp for the post-onboarding agent-panel experiment. Bump the salt to
+/// start a fresh experiment (re-buckets everyone); change the percentage to ramp
+/// the treatment arm (0 disables it, 100 gives everyone the treatment).
+const EXPERIMENT_SALT: &str = "agent-panel-autoopen-v1";
+const TREATMENT_PERCENTAGE: u64 = 50;
+
+/// Which arm of the experiment a user is in. Assignment is computed locally from
+/// a stable installation id so it works for logged-out users too (many configure
+/// external CLI agents without signing in), and is emitted on the exposure event
+/// so downstream analytics can segment by it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ExperimentArm {
+    Control,
+    Treatment,
+}
+
+impl ExperimentArm {
+    fn as_str(self) -> &'static str {
+        match self {
+            ExperimentArm::Control => "control",
+            ExperimentArm::Treatment => "treatment",
+        }
+    }
+}
+
+/// The way the user left onboarding when the experiment fired. Emitted on the
+/// exposure event so we can later learn which trigger drives engagement.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum LeaveTrigger {
+    Finish,
+    Deactivated,
+    FocusOut,
+}
+
+impl LeaveTrigger {
+    fn as_str(self) -> &'static str {
+        match self {
+            LeaveTrigger::Finish => "finish",
+            LeaveTrigger::Deactivated => "deactivated",
+            LeaveTrigger::FocusOut => "focus_out",
+        }
+    }
+}
+
+/// Deterministic 64-bit FNV-1a hash. Used for experiment bucketing: stable
+/// across builds and platforms (unlike `DefaultHasher`), so a user keeps the
+/// same arm across sessions and releases.
+fn stable_hash(salt: &str, id: &str) -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+    const PRIME: u64 = 0x100000001b3;
+    let mut hash = OFFSET_BASIS;
+    for byte in salt.bytes().chain(std::iter::once(b':')).chain(id.bytes()) {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}
+
+fn experiment_arm(installation_id: &str) -> ExperimentArm {
+    if stable_hash(EXPERIMENT_SALT, installation_id) % 100 < TREATMENT_PERCENTAGE {
+        ExperimentArm::Treatment
+    } else {
+        ExperimentArm::Control
+    }
+}
+
+/// The featured external agents the user has installed, for the exposure event.
+fn configured_featured_agents(cx: &App) -> Vec<&'static str> {
+    let installed_agents = cx
+        .global::<SettingsStore>()
+        .get::<AllAgentServersSettings>(None);
+    basics_page::FEATURED_AGENT_IDS
+        .iter()
+        .filter(|id| installed_agents.contains_key(**id))
+        .copied()
+        .collect()
+}
+
+fn zed_agent_signed_in(cx: &App) -> bool {
+    let status = *Client::global(cx).status().borrow();
+    !(status.is_signed_out()
+        || matches!(
+            status,
+            client::Status::AuthenticationError | client::Status::ConnectionError
+        ))
+}
+
+/// Returns whether the user has at least one agent configured: either signed in
+/// to the Zed Agent, or one of the featured external agents installed.
+fn any_agent_configured(cx: &App) -> bool {
+    !configured_featured_agents(cx).is_empty() || zed_agent_signed_in(cx)
+}
+
+/// How the agent panel is revealed after onboarding. Injectable as a global so
+/// tests can observe reveals: the production implementation opens the concrete
+/// `AgentPanel` (whose constructor is private to `agent_ui`), while tests can
+/// substitute a recorder. Returns whether the panel was actually revealed, so
+/// the one-shot is only "spent" on a real reveal (e.g. not when the panel is
+/// disabled).
+#[derive(Clone)]
+struct AgentPanelRevealer(
+    Arc<dyn Fn(&mut Workspace, &mut Window, &mut Context<Workspace>) -> bool + Send + Sync>,
+);
+
+impl Global for AgentPanelRevealer {}
+
+impl AgentPanelRevealer {
+    fn get(cx: &App) -> Self {
+        cx.try_global::<Self>().cloned().unwrap_or_else(|| {
+            AgentPanelRevealer(Arc::new(|workspace, window, cx| {
+                let panel_enabled = workspace
+                    .panel::<AgentPanel>(cx)
+                    .is_some_and(|panel| panel.read(cx).enabled(cx));
+                if panel_enabled {
+                    workspace.open_panel::<AgentPanel>(window, cx);
+                }
+                panel_enabled
+            }))
+        })
+    }
+}
+
+/// Enrolls the user in the post-onboarding agent-panel experiment at most once
+/// ever, when they *leave* onboarding (by finishing setup or navigating
+/// elsewhere) having configured an agent. For the treatment arm this reveals the
+/// agent panel (without taking keyboard focus); both arms emit an exposure event
+/// so downstream analytics can measure engagement lift by arm.
+///
+/// We intentionally fire on leaving rather than the moment an agent is
+/// configured, so the panel doesn't pop open mid-setup. The work is deferred
+/// (via `with_active_or_new_workspace`) so it runs after the current
+/// pane/item/focus update has settled rather than re-entering the workspace.
+fn on_leave_onboarding(trigger: LeaveTrigger, cx: &mut App) {
+    if already_exposed_to_experiment(cx) {
+        return;
+    }
+    if !any_agent_configured(cx) {
+        return;
+    }
+
+    // Assignment is computed from a stable installation id so logged-out users
+    // are bucketed too. Without one (e.g. telemetry disabled) we can't enroll or
+    // measure, so we leave the user out of the experiment entirely.
+    let Some(installation_id) = Client::global(cx).telemetry().installation_id() else {
+        return;
+    };
+    let arm = experiment_arm(&installation_id);
+    let agents = configured_featured_agents(cx);
+    let zed_agent = zed_agent_signed_in(cx);
+    let revealer = AgentPanelRevealer::get(cx);
+
+    with_active_or_new_workspace(cx, move |workspace, window, cx| {
+        // Re-check inside the deferred closure: another exit (possibly earlier in
+        // this same tick) may have already enrolled the user.
+        if already_exposed_to_experiment(cx) {
+            return;
+        }
+        // A modal opened from onboarding (e.g. the base keymap picker) counts as
+        // still being in setup, so don't enroll/reveal underneath it. A later
+        // exit can still enroll.
+        if workspace.has_active_modal(window, cx) {
+            return;
+        }
+
+        let revealed = match arm {
+            ExperimentArm::Treatment => (revealer.0)(workspace, window, cx),
+            ExperimentArm::Control => false,
+        };
+
+        mark_exposed_to_experiment(cx);
+        telemetry::event!(
+            "Onboarding Agent Experiment Exposed",
+            arm = arm.as_str(),
+            trigger = trigger.as_str(),
+            revealed = revealed,
+            configured_agents = agents,
+            zed_agent_signed_in = zed_agent,
+        );
     });
 }
 
@@ -713,4 +969,362 @@ mod persistence {
             }
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{DismissEvent, TestAppContext, UpdateGlobal, VisualTestContext};
+    use project::Project;
+    use settings::SettingsStore;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use workspace::{ModalView, MultiWorkspace, dock::test::TestPanel};
+
+    fn init_test(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            // Isolate the KVP DB so the once-ever flag is hermetic per test and
+            // doesn't read/write the developer's real database.
+            cx.set_global(db::AppDatabase::test_new());
+            let app_state = workspace::AppState::test(cx);
+            // `AppState::test` builds a client but doesn't install it as the
+            // global; `Onboarding::new`/`any_agent_configured` read it via
+            // `Client::global`.
+            Client::set_global(app_state.client.clone(), cx);
+            theme::init(theme::LoadThemes::JustBase, cx);
+            // The basics page renders theme previews for specific named themes
+            // that aren't part of the base set; register stand-ins (cloned from
+            // the base theme) so rendering doesn't panic in tests.
+            let registry = theme::ThemeRegistry::global(cx);
+            if let Ok(base) = registry.get("One Dark") {
+                for name in [
+                    "One Light",
+                    "Ayu Light",
+                    "Gruvbox Light",
+                    "Ayu Dark",
+                    "Gruvbox Dark",
+                ] {
+                    let mut theme = (*base).clone();
+                    theme.name = name.into();
+                    registry.insert_themes([theme]);
+                }
+            }
+        });
+    }
+
+    /// Replaces the real agent-panel opener with a recorder, returning a counter
+    /// of how many times a reveal actually happened.
+    fn record_reveals(cx: &mut App) -> Arc<AtomicUsize> {
+        let count = Arc::new(AtomicUsize::new(0));
+        let count_for_revealer = count.clone();
+        cx.set_global(AgentPanelRevealer(Arc::new(
+            move |_workspace, _window, _cx| {
+                count_for_revealer.fetch_add(1, Ordering::SeqCst);
+                true
+            },
+        )));
+        count
+    }
+
+    /// Marks an agent as configured so `any_agent_configured` returns true.
+    fn set_agent_configured(cx: &mut App) {
+        SettingsStore::update_global(cx, |store, cx| {
+            store
+                .set_user_settings(r#"{"agent_servers":{"cursor":{"type":"registry"}}}"#, cx)
+                .unwrap();
+        });
+    }
+
+    /// Returns an installation id that the experiment buckets into `arm`.
+    fn installation_id_for(arm: ExperimentArm) -> String {
+        (0..1_000_000u32)
+            .map(|i| format!("install-{i}"))
+            .find(|id| experiment_arm(id) == arm)
+            .expect("an installation id should map to each arm")
+    }
+
+    fn already_exposed(cx: &mut VisualTestContext) -> bool {
+        cx.update(|_, cx| already_exposed_to_experiment(cx))
+    }
+
+    /// Builds a workspace with an active, focused onboarding item and returns the
+    /// reveal counter. `installation_id` controls experiment assignment; pass
+    /// `None` to simulate a user with no stable id (e.g. telemetry disabled).
+    /// Leaves the agent unconfigured by default.
+    async fn setup_onboarding(
+        cx: &mut TestAppContext,
+        installation_id: Option<String>,
+    ) -> (
+        Entity<Workspace>,
+        Entity<Onboarding>,
+        Arc<AtomicUsize>,
+        gpui::AnyWindowHandle,
+    ) {
+        let fs = fs::FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = window
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let any_window: gpui::AnyWindowHandle = window.into();
+        let cx = &mut VisualTestContext::from_window(any_window, cx);
+
+        let count = cx.update(|_, cx| {
+            if let Some(installation_id) = installation_id {
+                Client::global(cx).telemetry().start(
+                    Some("test-system".to_string()),
+                    Some(installation_id),
+                    "test-session".to_string(),
+                    cx,
+                );
+            }
+            record_reveals(cx)
+        });
+
+        let onboarding = workspace.update_in(cx, |workspace, window, cx| {
+            let onboarding = Onboarding::new(workspace, cx);
+            workspace.add_item_to_active_pane(Box::new(onboarding.clone()), None, true, window, cx);
+            onboarding
+        });
+        // Render once so the focus-out subscription registers, then focus it.
+        cx.run_until_parked();
+        onboarding.update_in(cx, |onboarding, window, cx| {
+            let handle = onboarding.focus_handle(cx);
+            window.focus(&handle, cx);
+        });
+        cx.run_until_parked();
+
+        (workspace, onboarding, count, any_window)
+    }
+
+    #[test]
+    fn test_experiment_arm_is_deterministic_and_split() {
+        // Stable for a given id.
+        assert_eq!(experiment_arm("abc-123"), experiment_arm("abc-123"));
+
+        // Roughly balanced around the 50% treatment ramp.
+        let mut treatment = 0;
+        let mut control = 0;
+        for i in 0..2000 {
+            match experiment_arm(&format!("installation-{i}")) {
+                ExperimentArm::Treatment => treatment += 1,
+                ExperimentArm::Control => control += 1,
+            }
+        }
+        assert!(treatment > 800, "treatment was {treatment}");
+        assert!(control > 800, "control was {control}");
+    }
+
+    #[gpui::test]
+    async fn test_treatment_arm_reveals_on_finish(cx: &mut TestAppContext) {
+        init_test(cx);
+        let id = installation_id_for(ExperimentArm::Treatment);
+        let (workspace, _onboarding, count, window) = setup_onboarding(cx, Some(id)).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        cx.update(|_, cx| set_agent_configured(cx));
+
+        workspace.update_in(cx, |_, window, cx| {
+            Onboarding::on_finish(&Finish, window, cx)
+        });
+        cx.run_until_parked();
+
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+        assert!(already_exposed(cx));
+    }
+
+    #[gpui::test]
+    async fn test_control_arm_enrolls_but_does_not_reveal(cx: &mut TestAppContext) {
+        init_test(cx);
+        let id = installation_id_for(ExperimentArm::Control);
+        let (workspace, _onboarding, count, window) = setup_onboarding(cx, Some(id)).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        cx.update(|_, cx| set_agent_configured(cx));
+
+        workspace.update_in(cx, |_, window, cx| {
+            Onboarding::on_finish(&Finish, window, cx)
+        });
+        cx.run_until_parked();
+
+        // Control users don't get the panel, but they are still enrolled (and
+        // logged) exactly once, so they form the comparison cohort.
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+        assert!(already_exposed(cx));
+    }
+
+    #[gpui::test]
+    async fn test_not_configured_does_not_enroll(cx: &mut TestAppContext) {
+        init_test(cx);
+        let id = installation_id_for(ExperimentArm::Treatment);
+        let (workspace, _onboarding, count, window) = setup_onboarding(cx, Some(id)).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+
+        workspace.update_in(cx, |_, window, cx| {
+            Onboarding::on_finish(&Finish, window, cx)
+        });
+        cx.run_until_parked();
+
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+        assert!(!already_exposed(cx));
+    }
+
+    #[gpui::test]
+    async fn test_no_installation_id_is_not_enrolled(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (workspace, _onboarding, count, window) = setup_onboarding(cx, None).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        cx.update(|_, cx| set_agent_configured(cx));
+
+        workspace.update_in(cx, |_, window, cx| {
+            Onboarding::on_finish(&Finish, window, cx)
+        });
+        cx.run_until_parked();
+
+        // Without a stable id we can't bucket or measure, so the user is left out.
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+        assert!(!already_exposed(cx));
+    }
+
+    #[gpui::test]
+    async fn test_deactivated_reveals_for_treatment(cx: &mut TestAppContext) {
+        init_test(cx);
+        let id = installation_id_for(ExperimentArm::Treatment);
+        let (_workspace, onboarding, count, window) = setup_onboarding(cx, Some(id)).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        cx.update(|_, cx| set_agent_configured(cx));
+
+        onboarding.update_in(cx, |onboarding, window, cx| {
+            onboarding.deactivated(window, cx)
+        });
+        cx.run_until_parked();
+
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn test_focus_out_to_dock_panel_reveals_for_treatment(cx: &mut TestAppContext) {
+        init_test(cx);
+        let id = installation_id_for(ExperimentArm::Treatment);
+        let (workspace, _onboarding, count, window) = setup_onboarding(cx, Some(id)).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        cx.update(|_, cx| set_agent_configured(cx));
+
+        // Add a dock panel and move focus to it. Onboarding stays the active
+        // center item, so this exercises the focus-out path (not deactivated).
+        let panel = workspace.update_in(cx, |workspace, window, cx| {
+            let panel = cx.new(|cx| TestPanel::new(workspace::dock::DockPosition::Left, 0, cx));
+            workspace.add_panel(panel.clone(), window, cx);
+            panel
+        });
+        cx.run_until_parked();
+
+        panel.update_in(cx, |panel, window, cx| {
+            let handle = panel.focus_handle(cx);
+            window.focus(&handle, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn test_enrolls_only_once(cx: &mut TestAppContext) {
+        init_test(cx);
+        let id = installation_id_for(ExperimentArm::Treatment);
+        let (workspace, onboarding, count, window) = setup_onboarding(cx, Some(id)).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        cx.update(|_, cx| set_agent_configured(cx));
+
+        workspace.update_in(cx, |_, window, cx| {
+            Onboarding::on_finish(&Finish, window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+
+        // A subsequent leave must not reveal again.
+        onboarding.update_in(cx, |onboarding, window, cx| {
+            onboarding.deactivated(window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn test_leaving_unconfigured_then_configured_enrolls_later(cx: &mut TestAppContext) {
+        init_test(cx);
+        let id = installation_id_for(ExperimentArm::Treatment);
+        let (_workspace, onboarding, count, window) = setup_onboarding(cx, Some(id)).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+
+        // Leave once with nothing configured: no enrollment, latch not spent.
+        onboarding.update_in(cx, |onboarding, window, cx| {
+            onboarding.deactivated(window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+        assert!(!already_exposed(cx));
+
+        // Configure an agent, then leave again: now it enrolls and reveals.
+        cx.update(|_, cx| set_agent_configured(cx));
+        onboarding.update_in(cx, |onboarding, window, cx| {
+            onboarding.deactivated(window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[gpui::test]
+    async fn test_modal_suppresses_enrollment(cx: &mut TestAppContext) {
+        init_test(cx);
+        let id = installation_id_for(ExperimentArm::Treatment);
+        let (workspace, _onboarding, count, window) = setup_onboarding(cx, Some(id)).await;
+        let cx = &mut VisualTestContext::from_window(window, cx);
+        cx.update(|_, cx| set_agent_configured(cx));
+
+        // Opening a modal moves focus out of onboarding, but a modal means we're
+        // still in setup, so enrollment/reveal must be suppressed.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, |_, cx| TestModal::new(cx));
+        });
+        cx.run_until_parked();
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+        assert!(!already_exposed(cx));
+
+        // Dismiss the modal and genuinely leave: now it enrolls and reveals.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, |_, cx| TestModal::new(cx));
+        });
+        cx.run_until_parked();
+        workspace.update_in(cx, |_, window, cx| {
+            Onboarding::on_finish(&Finish, window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    struct TestModal {
+        focus_handle: FocusHandle,
+    }
+
+    impl TestModal {
+        fn new(cx: &mut Context<Self>) -> Self {
+            Self {
+                focus_handle: cx.focus_handle(),
+            }
+        }
+    }
+
+    impl Render for TestModal {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            gpui::div().track_focus(&self.focus_handle)
+        }
+    }
+
+    impl Focusable for TestModal {
+        fn focus_handle(&self, _: &App) -> FocusHandle {
+            self.focus_handle.clone()
+        }
+    }
+
+    impl EventEmitter<DismissEvent> for TestModal {}
+
+    impl ModalView for TestModal {}
 }
