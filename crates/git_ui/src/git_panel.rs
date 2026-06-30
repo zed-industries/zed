@@ -4840,6 +4840,7 @@ impl GitPanel {
         &self,
         id: impl Into<ElementId>,
         keybinding_target: Option<FocusHandle>,
+        disabled: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         PopoverMenu::new(id.into())
@@ -4847,6 +4848,7 @@ impl GitPanel {
                 ui::ButtonLike::new_rounded_right("commit-split-button-right")
                     .layer(ui::ElevationIndex::ModalSurface)
                     .size(ButtonSize::None)
+                    .disabled(disabled)
                     .child(
                         h_flex()
                             .px_1()
@@ -4900,8 +4902,14 @@ impl GitPanel {
             .anchor(Anchor::TopRight)
     }
 
+    pub fn is_generating_commit_message(&self) -> bool {
+        self.generate_commit_message_task.is_some()
+    }
+
     pub fn configure_commit_button(&self, cx: &mut Context<Self>) -> (bool, &'static str) {
-        if self.has_unstaged_conflicts() {
+        if self.generate_commit_message_task.is_some() {
+            (false, "Generating commit message...")
+        } else if self.has_unstaged_conflicts() {
             (false, "You must resolve conflicts before committing")
         } else if !self.has_staged_changes() && !self.has_tracked_changes() && !self.amend_pending {
             (false, "No changes to commit")
@@ -5413,6 +5421,7 @@ impl GitPanel {
                 self.render_git_commit_menu(
                     ElementId::Name(format!("split-button-right-{}", title).into()),
                     Some(commit_tooltip_focus_handle),
+                    self.generate_commit_message_task.is_some(),
                     cx,
                 )
                 .into_any_element(),
