@@ -448,6 +448,55 @@ async fn test_complex_path(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_tail_proximity_bonus_prefers_later_match(cx: &mut TestAppContext) {
+    let app_state = init_test(cx);
+
+    cx.update(|cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                hide_root: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            path!("/root"),
+            json!({
+                "zzz": { "zed": { "Cargo.toml": "" } },
+                "zed": { "zzz": { "Cargo.toml": "" } },
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
+    let (picker, _, cx) = build_find_picker(project, cx);
+
+    picker
+        .update_in(cx, |picker, window, cx| {
+            picker
+                .delegate
+                .update_matches("zed cargo".to_string(), window, cx)
+        })
+        .await;
+
+    picker.update(cx, |picker, _| {
+        assert_eq!(
+            collect_search_matches(picker).search_paths_only(),
+            vec![
+                rel_path("zzz/zed/Cargo.toml").into(),
+                rel_path("zed/zzz/Cargo.toml").into(),
+            ],
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
     let app_state = init_test(cx);
 
