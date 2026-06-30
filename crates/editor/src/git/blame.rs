@@ -16,7 +16,7 @@ use language::{Bias, BufferSnapshot, Edit};
 use markdown::Markdown;
 use multi_buffer::{MultiBuffer, RowInfo};
 use project::{
-    Project, ProjectItem as _,
+    Project, ProjectItem as _, ProjectPath,
     git_store::{GitStoreEvent, Repository},
 };
 use smallvec::SmallVec;
@@ -110,6 +110,11 @@ pub struct GitBlame {
     project: Entity<Project>,
     multi_buffer: WeakEntity<MultiBuffer>,
     buffers: HashMap<BufferId, GitBlameBuffer>,
+    /// Repository resolved for each blamed buffer (main buffers and diff base
+    /// text buffers). Base-text and synthetic buffers aren't registered in the
+    /// project, so callers like the blame popover can't resolve their
+    /// repository by id; this map lets them.
+    repositories: HashMap<BufferId, Entity<Repository>>,
     task: Task<Result<()>>,
     focused: bool,
     changed_while_blurred: bool,
@@ -286,6 +291,7 @@ impl GitBlame {
             project,
             multi_buffer: multi_buffer.downgrade(),
             buffers: HashMap::default(),
+            repositories: HashMap::default(),
             user_triggered,
             revisions,
             focused,
@@ -303,6 +309,12 @@ impl GitBlame {
     }
 
     pub fn repository(&self, cx: &App, id: BufferId) -> Option<Entity<Repository>> {
+        // Prefer the repository resolved during blame generation, which also
+        // covers diff base text and synthetic buffers that aren't registered in
+        // the project (and so can't be resolved by buffer id).
+        if let Some(repository) = self.repositories.get(&id) {
+            return Some(repository.clone());
+        }
         self.project
             .read(cx)
             .git_store()
@@ -549,12 +561,14 @@ impl GitBlame {
         self.task = cx.spawn(async move |this, cx| {
             let mut all_results = Vec::new();
             let mut all_errors = Vec::new();
+            let mut all_repositories: Vec<(BufferId, Entity<Repository>)> = Vec::new();
 
             for buffers in buffers_to_blame.chunks(4) {
                 let span = ztracing::debug_span!("for each chunk of buffers");
                 let _enter = span.enter();
-                let blame = cx.update(|cx| {
+                let (blame, repositories) = cx.update(|cx| {
                     let mut blame_futures: Vec<BlameTargetFuture> = Vec::new();
+                    let mut repositories: Vec<(BufferId, Entity<Repository>)> = Vec::new();
                     for buffer in buffers {
                         let buffer = buffer.upgrade().context("buffer was dropped")?;
                         let project = project.upgrade().context("project was dropped")?;
@@ -573,7 +587,16 @@ impl GitBlame {
                             git_store
                                 .repository_and_path_for_buffer_id(id, cx)
                                 .or_else(|| {
-                                    let project_path = buffer.read(cx).project_path(cx)?;
+                                    // Synthetic buffers (e.g. the commit view's
+                                    // historical blobs) aren't in the buffer store and
+                                    // report a `Historic` disk state, so
+                                    // `Buffer::project_path` returns `None`. Build the
+                                    // project path straight from the file instead.
+                                    let file = buffer.read(cx).file()?;
+                                    let project_path = ProjectPath {
+                                        worktree_id: file.worktree_id(cx),
+                                        path: file.path().clone(),
+                                    };
                                     git_store
                                         .repository_and_path_for_project_path(&project_path, cx)
                                 })
@@ -582,6 +605,10 @@ impl GitBlame {
                         let remote_url = repository
                             .as_ref()
                             .and_then(|(repo, _)| repo.read(cx).default_remote_url());
+
+                        if let Some((repo, _)) = &repository {
+                            repositories.push((id, repo.clone()));
+                        }
 
                         // Blame for the main buffer: either at a specific revision
                         // (commit view) or against the working-tree contents.
@@ -623,6 +650,7 @@ impl GitBlame {
                             let base_snapshot = base_buffer.read(cx).snapshot();
                             let base_edits =
                                 base_buffer.update(cx, |buffer, _| buffer.subscribe());
+                            repositories.push((base_id, repo.clone()));
                             let revision = revisions.base_text_revision.clone().unwrap_or_else(
                                 || git::repository::BlameRevision::Revision("HEAD".to_string()),
                             );
@@ -645,8 +673,9 @@ impl GitBlame {
                             }));
                         }
                     }
-                    Result::<_>::Ok(blame_futures)
+                    Result::<_>::Ok((blame_futures, repositories))
                 })?;
+                all_repositories.extend(repositories);
                 let provider_registry =
                     cx.update(|cx| GitHostingProviderRegistry::default_global(cx));
                 let (results, errors) = cx
@@ -703,6 +732,8 @@ impl GitBlame {
 
             this.update(cx, |this, cx| {
                 this.buffers.clear();
+                this.repositories.clear();
+                this.repositories.extend(all_repositories);
                 for (id, snapshot, buffer_edits, entries, commit_details) in all_results {
                     let Some(entries) = entries else {
                         continue;
