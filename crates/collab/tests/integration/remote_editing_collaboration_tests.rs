@@ -752,6 +752,8 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.format_on_save =
+                    Some(settings::FormatOnSave::On);
                 file.project.all_languages.defaults.formatter = Some(FormatterList::default());
                 file.project.all_languages.defaults.prettier = Some(PrettierSettingsContent {
                     allowed: Some(true),
@@ -763,6 +765,8 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     cx_b.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
             store.update_user_settings(cx, |file| {
+                file.project.all_languages.defaults.format_on_save =
+                    Some(settings::FormatOnSave::On);
                 file.project.all_languages.defaults.formatter = Some(FormatterList::Single(
                     Formatter::LanguageServer(LanguageServerFormatterSpecifier::Current),
                 ));

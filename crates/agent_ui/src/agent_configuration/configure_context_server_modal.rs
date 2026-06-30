@@ -31,10 +31,12 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
 
-use crate::AddContextServer;
+use crate::{AddContextServer, ContextServerType};
 
 enum ConfigurationTarget {
-    New,
+    New {
+        server_type: ContextServerType,
+    },
     Existing {
         id: ContextServerId,
         command: ContextServerCommand,
@@ -56,11 +58,11 @@ enum ConfigurationTarget {
 enum ConfigurationSource {
     New {
         editor: Entity<Editor>,
-        is_http: bool,
+        server_type: ContextServerType,
     },
     Existing {
         editor: Entity<Editor>,
-        is_http: bool,
+        server_type: ContextServerType,
     },
     Extension {
         id: ContextServerId,
@@ -106,9 +108,17 @@ impl ConfigurationSource {
         }
 
         match target {
-            ConfigurationTarget::New => ConfigurationSource::New {
-                editor: create_editor(context_server_input(None), jsonc_language, window, cx),
-                is_http: false,
+            ConfigurationTarget::New { server_type } => ConfigurationSource::New {
+                editor: create_editor(
+                    match server_type {
+                        ContextServerType::Remote => context_server_http_input(None),
+                        ContextServerType::Local => context_server_input(None),
+                    },
+                    jsonc_language,
+                    window,
+                    cx,
+                ),
+                server_type,
             },
             ConfigurationTarget::Existing { id, command } => ConfigurationSource::Existing {
                 editor: create_editor(
@@ -117,7 +127,7 @@ impl ConfigurationSource {
                     window,
                     cx,
                 ),
-                is_http: false,
+                server_type: ContextServerType::Local,
             },
             ConfigurationTarget::ExistingHttp {
                 id,
@@ -131,7 +141,7 @@ impl ConfigurationSource {
                     window,
                     cx,
                 ),
-                is_http: true,
+                server_type: ContextServerType::Remote,
             },
 
             ConfigurationTarget::Extension {
@@ -169,9 +179,15 @@ impl ConfigurationSource {
 
     fn output(&self, cx: &mut App) -> Result<(ContextServerId, ContextServerSettings)> {
         match self {
-            ConfigurationSource::New { editor, is_http }
-            | ConfigurationSource::Existing { editor, is_http } => {
-                if *is_http {
+            ConfigurationSource::New {
+                editor,
+                server_type,
+            }
+            | ConfigurationSource::Existing {
+                editor,
+                server_type,
+            } => match *server_type {
+                ContextServerType::Remote => {
                     parse_http_input(&editor.read(cx).text(cx)).map(|(id, url, auth, oauth)| {
                         (
                             id,
@@ -184,7 +200,8 @@ impl ConfigurationSource {
                             },
                         )
                     })
-                } else {
+                }
+                ContextServerType::Local => {
                     parse_input(&editor.read(cx).text(cx)).map(|(id, command)| {
                         (
                             id,
@@ -196,7 +213,7 @@ impl ConfigurationSource {
                         )
                     })
                 }
-            }
+            },
             ConfigurationSource::Extension {
                 id,
                 editor,
@@ -440,7 +457,7 @@ impl ConfigureContextServerModal {
             ConfigurationTarget::Existing { id, .. }
             | ConfigurationTarget::ExistingHttp { id, .. }
             | ConfigurationTarget::Extension { id, .. } => Some(id),
-            ConfigurationTarget::New => None,
+            ConfigurationTarget::New { .. } => None,
         }) else {
             return State::Idle;
         };
@@ -474,13 +491,14 @@ impl ConfigureContextServerModal {
         _cx: &mut Context<Workspace>,
     ) {
         workspace.register_action({
-            move |_workspace, _: &AddContextServer, window, cx| {
+            move |_workspace, action: &AddContextServer, window, cx| {
                 let workspace_handle = cx.weak_entity();
                 let language_registry = language_registry.clone();
+                let server_type = action.context_server_type;
                 window
                     .spawn(cx, async move |cx| {
                         Self::show_modal(
-                            ConfigurationTarget::New,
+                            ConfigurationTarget::New { server_type },
                             language_registry,
                             workspace_handle,
                             cx,
@@ -580,7 +598,7 @@ impl ConfigureContextServerModal {
                         ConfigurationTarget::Existing { id, .. } => Some(id.clone()),
                         ConfigurationTarget::ExistingHttp { id, .. } => Some(id.clone()),
                         ConfigurationTarget::Extension { id, .. } => Some(id.clone()),
-                        ConfigurationTarget::New => None,
+                        ConfigurationTarget::New { .. } => None,
                     },
                     source: ConfigurationSource::from_target(
                         target,
@@ -859,7 +877,9 @@ impl ConfigureContextServerModal {
 
     fn render_tab_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let is_http = match &self.source {
-            ConfigurationSource::New { is_http, .. } => *is_http,
+            ConfigurationSource::New { server_type, .. } => {
+                *server_type == ContextServerType::Remote
+            }
             _ => return None,
         };
 
@@ -870,14 +890,15 @@ impl ConfigureContextServerModal {
                 .p_1()
                 .text_sm()
                 .border_b_1()
-                .when(active, |this| {
-                    this.border_color(cx.theme().colors().border_focused)
-                })
-                .when(!active, |this| {
-                    this.border_color(gpui::transparent_black())
-                        .text_color(cx.theme().colors().text_muted)
-                        .hover(|s| s.text_color(cx.theme().colors().text))
-                })
+                .when_else(
+                    active,
+                    |this| this.border_color(cx.theme().colors().border_focused),
+                    |this| {
+                        this.border_color(gpui::transparent_black())
+                            .text_color(cx.theme().colors().text_muted)
+                            .hover(|s| s.text_color(cx.theme().colors().text))
+                    },
+                )
                 .child(label)
         };
 
@@ -890,27 +911,33 @@ impl ConfigureContextServerModal {
                 .border_color(cx.theme().colors().border.opacity(0.5))
                 .child(
                     tab("Local", !is_http).on_click(cx.listener(|this, _, window, cx| {
-                        if let ConfigurationSource::New { editor, is_http } = &mut this.source {
-                            if *is_http {
-                                *is_http = false;
-                                let new_text = context_server_input(None);
-                                editor.update(cx, |editor, cx| {
-                                    editor.set_text(new_text, window, cx);
-                                });
-                            }
+                        if let ConfigurationSource::New {
+                            editor,
+                            server_type,
+                        } = &mut this.source
+                            && *server_type != ContextServerType::Local
+                        {
+                            *server_type = ContextServerType::Local;
+                            let new_text = context_server_input(None);
+                            editor.update(cx, |editor, cx| {
+                                editor.set_text(new_text, window, cx);
+                            });
                         }
                     })),
                 )
                 .child(
                     tab("Remote", is_http).on_click(cx.listener(|this, _, window, cx| {
-                        if let ConfigurationSource::New { editor, is_http } = &mut this.source {
-                            if !*is_http {
-                                *is_http = true;
-                                let new_text = context_server_http_input(None);
-                                editor.update(cx, |editor, cx| {
-                                    editor.set_text(new_text, window, cx);
-                                });
-                            }
+                        if let ConfigurationSource::New {
+                            editor,
+                            server_type,
+                        } = &mut this.source
+                            && *server_type != ContextServerType::Remote
+                        {
+                            *server_type = ContextServerType::Remote;
+                            let new_text = context_server_http_input(None);
+                            editor.update(cx, |editor, cx| {
+                                editor.set_text(new_text, window, cx);
+                            });
                         }
                     })),
                 )
