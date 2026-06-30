@@ -3514,6 +3514,17 @@ async fn test_edit_prediction_settled_sends_sample_data_after_quiescence(cx: &mu
                 snippet_buffer_row_range: 0..0,
                 diagnostic_range_in_snippet: 0..0,
             }],
+            editable_context: vec![zeta_prompt::RelatedFile {
+                path: Path::new("foo.md").into(),
+                max_row: 60,
+                excerpts: vec![zeta_prompt::RelatedExcerpt {
+                    row_range: 0..2,
+                    text: "line 0\nline 1\n".into(),
+                    order: 0,
+                    context_source: zeta_prompt::ContextSource::CurrentFile,
+                }],
+                in_open_source_repo: true,
+            }],
         },
         Some(boundary),
         VecDeque::from([RecentFile {
@@ -3553,6 +3564,7 @@ async fn test_edit_prediction_settled_sends_sample_data_after_quiescence(cx: &mu
             revision: None,
             uncommitted_diff: None,
             buffer_diagnostics: Vec::new(),
+            editable_context: Vec::new(),
         },
         Some(boundary),
         VecDeque::new(),
@@ -3617,6 +3629,14 @@ async fn test_edit_prediction_settled_sends_sample_data_after_quiescence(cx: &mu
     assert_eq!(sample_data.editable_path.as_ref(), Path::new("foo.md"));
     assert_eq!(sample_data.editable_offset_range, editable_offset_range);
     assert_eq!(sample_data.buffer_diagnostics.len(), 1);
+    assert_eq!(sample_data.editable_context.len(), 1);
+    let editable_context = &sample_data.editable_context[0];
+    assert_eq!(editable_context.path.as_ref(), Path::new("foo.md"));
+    assert_eq!(editable_context.excerpts.len(), 1);
+    assert_eq!(
+        editable_context.excerpts[0].context_source,
+        zeta_prompt::ContextSource::CurrentFile
+    );
     assert_eq!(sample_data.future_edit_history_events.len(), 4);
     assert_eq!(sample_data.navigation_history.len(), 1);
     assert_eq!(sample_data.edit_events_before_quiescence, 5);
@@ -3700,6 +3720,7 @@ async fn test_edit_prediction_settled_sample_data_requires_observing_all_events_
             revision: None,
             uncommitted_diff: None,
             buffer_diagnostics: Vec::new(),
+            editable_context: Vec::new(),
         },
         Some(boundary_observed),
         VecDeque::new(),
@@ -3731,6 +3752,7 @@ async fn test_edit_prediction_settled_sample_data_requires_observing_all_events_
             revision: None,
             uncommitted_diff: None,
             buffer_diagnostics: Vec::new(),
+            editable_context: Vec::new(),
         },
         Some(boundary_missed),
         VecDeque::new(),
@@ -3784,6 +3806,7 @@ async fn test_edit_prediction_settled_drops_future_events_when_their_oss_status_
             revision: None,
             uncommitted_diff: None,
             buffer_diagnostics: Vec::new(),
+            editable_context: Vec::new(),
         },
         None,
         VecDeque::new(),
