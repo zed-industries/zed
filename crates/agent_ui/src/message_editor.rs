@@ -3002,8 +3002,8 @@ mod tests {
 
         message_editor.read_with(&cx, |message_editor, _| {
             message_editor.set_local_commands(vec![
-                PromptLocalCommand::ScrollToTop,
-                PromptLocalCommand::OpenAsMarkdown,
+                PromptLocalCommand::ThumbsUp,
+                PromptLocalCommand::ThumbsDown,
             ]);
         });
 
@@ -3019,14 +3019,14 @@ mod tests {
             })
         });
 
-        cx.simulate_input("/scroll-to-top");
+        cx.simulate_input("/helpful");
         cx.run_until_parked();
 
         editor.read_with(&cx, |editor, _| {
             assert!(editor.has_visible_completions_menu());
             assert_eq!(
                 current_completion_labels(editor),
-                &[PromptLocalCommand::ScrollToTop.label().to_string()],
+                &[PromptLocalCommand::ThumbsUp.label().to_string()],
             );
         });
 
@@ -3042,10 +3042,7 @@ mod tests {
             assert!(!editor.has_visible_completions_menu());
         });
 
-        assert_eq!(
-            invoked.borrow().as_slice(),
-            &[PromptLocalCommand::ScrollToTop],
-        );
+        assert_eq!(invoked.borrow().as_slice(), &[PromptLocalCommand::ThumbsUp],);
     }
 
     /// Opening slash-command autocomplete must emit

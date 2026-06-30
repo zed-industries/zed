@@ -191,15 +191,12 @@ impl PromptContextAction {
 }
 
 /// A slash command that runs a local UI action against the conversation
-/// (scrolling, exporting, sending feedback) instead of being sent to the
-/// agent as part of a prompt. Each variant maps to a method on `ThreadView`;
-/// the completion provider only surfaces them and emits an event, while
-/// `ThreadView` performs the actual work (see `handle_message_editor_event`).
+/// (sending feedback) instead of being sent to the agent as part of a prompt.
+/// Each variant maps to a method on `ThreadView`; the completion provider only
+/// surfaces them and emits an event, while `ThreadView` performs the actual
+/// work (see `handle_message_editor_event`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptLocalCommand {
-    OpenAsMarkdown,
-    ScrollToTop,
-    ScrollToRecentUserPrompt,
     ThumbsUp,
     ThumbsDown,
 }
@@ -207,9 +204,6 @@ pub enum PromptLocalCommand {
 impl PromptLocalCommand {
     pub fn keyword(&self) -> &'static str {
         match self {
-            Self::OpenAsMarkdown => "markdown",
-            Self::ScrollToTop => "scroll-to-top",
-            Self::ScrollToRecentUserPrompt => "scroll-to-prompt",
             Self::ThumbsUp => "helpful",
             Self::ThumbsDown => "not-helpful",
         }
@@ -217,21 +211,13 @@ impl PromptLocalCommand {
 
     pub fn label(&self) -> &'static str {
         match self {
-            Self::OpenAsMarkdown => "Open Thread as Markdown",
-            Self::ScrollToTop => "Scroll to Top",
-            Self::ScrollToRecentUserPrompt => "Scroll to Most Recent User Prompt",
-            Self::ThumbsUp => "Helpful Response",
-            Self::ThumbsDown => "Not Helpful Response",
+            Self::ThumbsUp => "Positive Feedback",
+            Self::ThumbsDown => "Negative Feedback",
         }
     }
 
     pub fn description(&self) -> &'static str {
         match self {
-            Self::OpenAsMarkdown => "Open this thread as a Markdown document.",
-            Self::ScrollToTop => "Scroll to the top of the conversation.",
-            Self::ScrollToRecentUserPrompt => {
-                "Scroll to the most recent user prompt in the conversation."
-            }
             Self::ThumbsUp => {
                 "Rate this response as helpful. Sends the current conversation to the Zed team."
             }
@@ -243,9 +229,6 @@ impl PromptLocalCommand {
 
     pub fn icon(&self) -> IconName {
         match self {
-            Self::OpenAsMarkdown => IconName::FileMarkdown,
-            Self::ScrollToTop => IconName::ArrowUp,
-            Self::ScrollToRecentUserPrompt => IconName::ForwardArrow,
             Self::ThumbsUp => IconName::ThumbsUp,
             Self::ThumbsDown => IconName::ThumbsDown,
         }

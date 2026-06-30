@@ -1118,16 +1118,6 @@ impl ThreadView {
         cx: &mut Context<Self>,
     ) {
         match command {
-            PromptLocalCommand::OpenAsMarkdown => {
-                if let Some(workspace) = self.workspace.upgrade() {
-                    self.open_thread_as_markdown(workspace, window, cx)
-                        .detach_and_log_err(cx);
-                }
-            }
-            PromptLocalCommand::ScrollToTop => self.scroll_to_top(cx),
-            PromptLocalCommand::ScrollToRecentUserPrompt => {
-                self.scroll_to_most_recent_user_prompt(cx)
-            }
             PromptLocalCommand::ThumbsUp => {
                 self.handle_feedback_click(ThreadFeedback::Positive, window, cx);
                 self.show_local_command_toast("Thanks for your feedback!", cx);
@@ -6198,7 +6188,7 @@ impl ThreadView {
                 .w_full()
                 .child(primary)
                 .when(!needs_confirmation, |this| {
-                    this.child(self.render_thread_stats(&thread, cx))
+                    this.child(self.render_thread_controls(&thread, cx))
                 })
                 .when_some(comments_editor, |this, editor| {
                     this.child(Self::render_feedback_feedback_editor(editor, cx))
@@ -6275,7 +6265,7 @@ impl ThreadView {
             )
     }
 
-    fn render_thread_stats(
+    fn render_thread_controls(
         &self,
         thread: &Entity<AcpThread>,
         cx: &Context<Self>,
@@ -6286,9 +6276,46 @@ impl ThreadView {
             return Empty.into_any_element();
         }
 
+        let last_response_index = thread
+            .read(cx)
+            .entries()
+            .iter()
+            .rposition(|entry| matches!(entry, AgentThreadEntry::AssistantMessage(_)));
+
+        let copy_response_button = last_response_index.map(|response_index| {
+            IconButton::new("copy_agent_response", IconName::Copy)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::text("Copy This Agent Response"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let entries = this.thread.read(cx).entries();
+                    if let Some(text) = Self::get_agent_message_content(entries, response_index, cx)
+                    {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    }
+                }))
+        });
+
+        let scroll_to_recent_user_prompt =
+            IconButton::new("scroll_to_recent_user_prompt", IconName::UserArrowUp)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::text("Scroll to Most Recent User Message"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.scroll_to_most_recent_user_prompt(cx);
+                }));
+
+        let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUp)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
+            .tooltip(Tooltip::text("Scroll to Top"))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.scroll_to_top(cx);
+            }));
+
         let show_stats = AgentSettings::get_global(cx).show_turn_stats;
 
-        let Some(last_turn_clock) = show_stats
+        let last_turn_clock = show_stats
             .then(|| {
                 self.turn_fields
                     .last_turn_duration
@@ -6299,34 +6326,51 @@ impl ThreadView {
                             .color(Color::Muted)
                     })
             })
-            .flatten()
-        else {
-            return Empty.into_any_element();
-        };
+            .flatten();
 
-        let last_turn_tokens_label = self
-            .turn_fields
-            .last_turn_tokens
-            .filter(|&tokens| tokens > TOKEN_THRESHOLD)
-            .map(|tokens| {
-                Label::new(format!("{} tokens", crate::humanize_token_count(tokens)))
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-            });
+        let last_turn_tokens_label = last_turn_clock
+            .is_some()
+            .then(|| {
+                self.turn_fields
+                    .last_turn_tokens
+                    .filter(|&tokens| tokens > TOKEN_THRESHOLD)
+                    .map(|tokens| {
+                        Label::new(format!("{} tokens", crate::humanize_token_count(tokens)))
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                    })
+            })
+            .flatten();
 
         h_flex()
             .w_full()
-            .py_2()
-            .px_5()
-            .gap_1()
-            .when_some(last_turn_tokens_label, |this, label| this.child(label))
-            .child(
-                Label::new("•")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .alpha(0.5),
+            .py_1p5()
+            .px_4()
+            .justify_end()
+            .opacity(0.4)
+            .hover(|s| s.opacity(1.))
+            .when(
+                last_turn_tokens_label.is_some() || last_turn_clock.is_some(),
+                |this| {
+                    this.child(
+                        h_flex()
+                            .px_1()
+                            .gap_1()
+                            .when_some(last_turn_tokens_label, |this, label| {
+                                this.child(label).child(
+                                    Label::new("•")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .alpha(0.5),
+                                )
+                            })
+                            .when_some(last_turn_clock, |this, label| this.child(label)),
+                    )
+                },
             )
-            .child(last_turn_clock)
+            .when_some(copy_response_button, |this, button| this.child(button))
+            .child(scroll_to_recent_user_prompt)
+            .child(scroll_to_top)
             .into_any_element()
     }
 
@@ -6349,11 +6393,7 @@ impl ThreadView {
     // Kept in sync with the availability of the corresponding actions via
     // `sync_local_commands`.
     fn available_local_commands(&self, cx: &App) -> Vec<PromptLocalCommand> {
-        let mut commands = vec![
-            PromptLocalCommand::OpenAsMarkdown,
-            PromptLocalCommand::ScrollToRecentUserPrompt,
-            PromptLocalCommand::ScrollToTop,
-        ];
+        let mut commands = Vec::new();
 
         if self.is_thread_feedback_enabled(cx) {
             commands.push(PromptLocalCommand::ThumbsUp);
