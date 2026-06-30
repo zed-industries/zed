@@ -57,6 +57,16 @@ impl FakeTransport {
         }
     }
 
+    /// Push a raw JSON-RPC frame onto the receive stream as if the server had
+    /// emitted it. Tests use this to deliver unsolicited notifications
+    /// (e.g. `notifications/progress`) or out-of-band responses without going
+    /// through `on_request`.
+    pub fn inject_message(&self, message: impl Into<String>) {
+        self.tx
+            .unbounded_send(message.into())
+            .expect("FakeTransport receive channel has been dropped");
+    }
+
     pub fn on_request<T, Fut>(
         mut self,
         handler: impl 'static + Send + Sync + Fn(T::Params) -> Fut,
