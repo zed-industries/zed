@@ -1229,7 +1229,7 @@ impl GitStore {
         uncommitted_hunks.sort_by_key(|hunk| hunk.buffer_range.start.to_offset(&buffer_snapshot));
         uncommitted_hunks.dedup_by(|a, b| a.buffer_range.start == b.buffer_range.start);
 
-        let index_edits = if !file_exists {
+        let mut index_edits = if !file_exists {
             // The worktree file is gone: staging removes it from the index.
             None
         } else {
@@ -1245,9 +1245,34 @@ impl GitStore {
                         );
                         (hunk.diff_base_byte_range.clone(), replacement)
                     })
-                    .collect(),
+                    .collect::<Vec<_>>(),
             )
         };
+
+        if file_exists {
+            let pending_unstage_hunks = uncommitted_hunks
+                .iter()
+                .filter(|hunk| {
+                    hunk.secondary_status == DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if !pending_unstage_hunks.is_empty() {
+                let (pending_unstage_edits, _) = uncommitted_snapshot
+                    .compute_uncommitted_index_edits(
+                        unstaged_snapshot,
+                        true,
+                        &pending_unstage_hunks,
+                        &buffer_snapshot,
+                        file_exists,
+                    );
+                if let (Some(index_edits), Some(mut pending_unstage_edits)) =
+                    (&mut index_edits, pending_unstage_edits)
+                {
+                    index_edits.append(&mut pending_unstage_edits);
+                }
+            }
+        }
 
         let version = buffer_snapshot.version().clone();
         let unstaged_pending = pending_hunks(&unstaged_hunks, &version, PendingSense::Suppress);
@@ -4640,7 +4665,10 @@ impl BufferGitState {
                 let mut edits = self.pending_index_edits.take().unwrap_or_default();
                 for (range, replacement) in new_edits {
                     edits.retain(|(existing, _)| {
-                        existing.end <= range.start || range.end <= existing.start
+                        (existing.end <= range.start || range.end <= existing.start)
+                            && !(existing.is_empty()
+                                && range.is_empty()
+                                && existing.start == range.start)
                     });
                     let position =
                         edits.partition_point(|(existing, _)| existing.start < range.start);

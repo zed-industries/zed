@@ -10592,11 +10592,12 @@ async fn test_staging_random_hunks(
     use DiffHunkSecondaryStatus::*;
     init_test(cx);
 
-    let committed_text = (0..30).map(|i| format!("line {i}\n")).collect::<String>();
+    let committed_text = (0..40).map(|i| format!("line {i}\n")).collect::<String>();
     let index_text = committed_text.clone();
-    let buffer_text = (0..30)
-        .map(|i| match i % 5 {
-            0 => format!("line {i} (modified)\n"),
+    let buffer_text = (0..40)
+        .map(|i| match i {
+            35 => format!("line {i}\ninserted after {i}\n"),
+            _ if i < 30 && i % 5 == 0 => format!("line {i} (modified)\n"),
             _ => format!("line {i}\n"),
         })
         .collect::<String>();
@@ -10641,7 +10642,42 @@ async fn test_staging_random_hunks(
     let mut hunks = uncommitted_diff.update(cx, |diff, cx| {
         diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>()
     });
-    assert_eq!(hunks.len(), 6);
+    assert_eq!(hunks.len(), 7);
+    let insertion_hunk = hunks
+        .iter()
+        .find(|hunk| hunk.diff_base_byte_range.is_empty())
+        .unwrap()
+        .clone();
+    fs.pause_events();
+    project
+        .update(cx, |project, cx| {
+            project.stage_hunks(
+                buffer.clone(),
+                vec![insertion_hunk.buffer_range.clone()],
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+    project
+        .update(cx, |project, cx| {
+            project.unstage_uncommitted_hunks(buffer.clone(), vec![insertion_hunk.buffer_range], cx)
+        })
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert_eq!(
+        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
+            .await
+            .unwrap(),
+        index_text
+    );
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+    hunks = uncommitted_diff.update(cx, |diff, cx| {
+        diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>()
+    });
+    assert_eq!(hunks.len(), 7);
 
     for _i in 0..operations {
         let hunk_ix = rng.random_range(0..hunks.len());
