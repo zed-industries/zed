@@ -132,7 +132,7 @@
 
 use crate::ProjectPanel;
 use anyhow::{Context, Result, anyhow};
-use fs::TrashedEntry;
+use fs::{TrashRestoreError, TrashedEntry};
 use futures::channel::mpsc;
 use gpui::{AppContext, AsyncApp, SharedString, Task, WeakEntity};
 use project::{ProjectPath, WorktreeId};
@@ -329,7 +329,15 @@ impl Inner {
             };
 
             if let Err(e) = res {
-                Self::show_error(error_title, self.workspace.clone(), e.to_string(), &mut cx);
+                // Use the alternate formatter (`{:#}`) so the full cause chain is
+                // shown; the plain `Display` only prints the outermost context,
+                // which often omits the actual reason (e.g. the filesystem error).
+                Self::show_error(
+                    error_title,
+                    self.workspace.clone(),
+                    format!("{e:#}"),
+                    &mut cx,
+                );
             }
 
             self.can_undo.store(self.can_undo(), Ordering::Relaxed);
@@ -480,18 +488,38 @@ impl Inner {
             return Err(anyhow!("Failed to obtain workspace."));
         };
 
+        let from_name = from.path.file_name().unwrap_or("file").to_string();
+        let to_name = to.path.file_name().unwrap_or("file").to_string();
+
         let res: Result<Task<Result<CreatedEntry>>> = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 let entry_id = project
                     .entry_for_path(from, cx)
                     .map(|entry| entry.id)
-                    .ok_or_else(|| anyhow!("No entry for path."))?;
+                    .with_context(|| format!("\"{from_name}\" no longer exists"))?;
 
                 Ok(project.rename_entry(entry_id, to.clone(), cx))
             })
         });
 
-        res?.await
+        res?.await.map_err(|err| {
+            // `rename_entry` performs a no-overwrite rename, so a pre-existing
+            // file at the destination surfaces either as an `AlreadyExists` IO
+            // error or, on filesystems without atomic no-replace rename, as an
+            // "already exists" bail. Translate both into a clear message rather
+            // than leaking absolute paths and OS error codes to the user.
+            let already_exists = err.chain().any(|cause| {
+                cause
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::AlreadyExists)
+            }) || format!("{err:#}").contains("already exists");
+
+            if already_exists {
+                anyhow!("\"{to_name}\" already exists")
+            } else {
+                err
+            }
+        })
     }
 
     async fn trash(&self, project_path: &ProjectPath, cx: &mut AsyncApp) -> Result<TrashedEntry> {
@@ -528,6 +556,8 @@ impl Inner {
             return Err(anyhow!("Failed to obtain workspace."));
         };
 
+        let name = trashed_entry.name.to_string_lossy().into_owned();
+
         workspace
             .update(cx, |workspace, cx| {
                 workspace.project().update(cx, |project, cx| {
@@ -535,6 +565,14 @@ impl Inner {
                 })
             })
             .await
+            .map_err(|err| match err.downcast_ref::<TrashRestoreError>() {
+                Some(TrashRestoreError::Collision { .. }) => anyhow!(
+                    "Couldn't restore \"{name}\" because something already exists at its original location"
+                ),
+                _ => anyhow!(
+                    "Couldn't restore \"{name}\" from the Trash. It may have been permanently deleted."
+                ),
+            })
     }
 
     /// Displays a notification with the provided `title` and `error`.
