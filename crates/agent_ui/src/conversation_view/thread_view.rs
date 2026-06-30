@@ -6111,8 +6111,6 @@ impl ThreadView {
             primary
         };
 
-        let thread = self.thread.clone();
-
         let primary = if is_indented {
             let line_top = if is_first_indented {
                 rems_from_px(-12.0)
@@ -6140,17 +6138,12 @@ impl ThreadView {
             primary
         };
 
-        let needs_confirmation = Self::is_waiting_for_confirmation(entry);
-
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
         let primary = if entry_ix + 1 == total_entries {
             v_flex()
                 .w_full()
                 .child(primary)
-                .when(!needs_confirmation, |this| {
-                    this.child(self.render_thread_controls(&thread, cx))
-                })
                 .when_some(comments_editor, |this, editor| {
                     this.child(Self::render_feedback_feedback_editor(editor, cx))
                 })
@@ -6248,14 +6241,24 @@ impl ThreadView {
                 }
             }));
 
-        let scroll_to_recent_user_prompt =
-            IconButton::new("scroll_to_recent_user_prompt", IconName::ForwardArrow)
+        let scroll_to_previous_user_prompt =
+            IconButton::new("scroll_to_previous_user_prompt", IconName::ChevronUp)
                 .shape(ui::IconButtonShape::Square)
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Ignored)
-                .tooltip(Tooltip::text("Scroll To Most Recent User Prompt"))
+                .tooltip(Tooltip::text("Scroll To Previous User Prompt"))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    this.scroll_to_most_recent_user_prompt(cx);
+                    this.scroll_to_previous_user_prompt(cx);
+                }));
+
+        let scroll_to_next_user_prompt =
+            IconButton::new("scroll_to_next_user_prompt", IconName::ChevronDown)
+                .shape(ui::IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Ignored)
+                .tooltip(Tooltip::text("Scroll To Next User Prompt"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.scroll_to_next_user_prompt(cx);
                 }));
 
         let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUp)
@@ -6265,6 +6268,15 @@ impl ThreadView {
             .tooltip(Tooltip::text("Scroll To Top"))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.scroll_to_top(cx);
+            }));
+
+        let scroll_to_bottom = IconButton::new("scroll_to_bottom", IconName::ArrowDown)
+            .shape(ui::IconButtonShape::Square)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Ignored)
+            .tooltip(Tooltip::text("Scroll To Bottom"))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.scroll_to_end(cx);
             }));
 
         let show_stats = AgentSettings::get_global(cx).show_turn_stats;
@@ -6296,13 +6308,15 @@ impl ThreadView {
             .flatten();
 
         let mut container = h_flex()
-            .w_full()
-            .py_2()
-            .px_5()
+            .py_1()
+            .px_2()
             .gap_px()
             .opacity(0.6)
             .hover(|s| s.opacity(1.))
-            .justify_end()
+            .bg(cx.theme().colors().element_background)
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .rounded_md()
             .when(
                 last_turn_tokens_label.is_some() || last_turn_clock.is_some(),
                 |this| {
@@ -6390,8 +6404,10 @@ impl ThreadView {
 
         container
             .child(open_as_markdown)
-            .child(scroll_to_recent_user_prompt)
+            .child(scroll_to_previous_user_prompt)
+            .child(scroll_to_next_user_prompt)
             .child(scroll_to_top)
+            .child(scroll_to_bottom)
             .into_any_element()
     }
 
@@ -6414,6 +6430,55 @@ impl ThreadView {
             cx.notify();
         } else {
             self.scroll_to_end(cx);
+        }
+    }
+
+    pub(crate) fn scroll_to_previous_user_prompt(&mut self, cx: &mut Context<Self>) {
+        let entries = self.thread.read(cx).entries();
+        if entries.is_empty() {
+            return;
+        }
+
+        let current_top = self.list_state.logical_scroll_top().item_ix;
+        if current_top == 0 {
+            return;
+        }
+
+        // Find the last user message strictly before the current scroll position.
+        if let Some(ix) = entries[..current_top]
+            .iter()
+            .rposition(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+        {
+            self.list_state.scroll_to(ListOffset {
+                item_ix: ix,
+                offset_in_item: px(0.0),
+            });
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn scroll_to_next_user_prompt(&mut self, cx: &mut Context<Self>) {
+        let entries = self.thread.read(cx).entries();
+        if entries.is_empty() {
+            return;
+        }
+
+        let current_top = self.list_state.logical_scroll_top().item_ix;
+        let search_start = current_top + 1;
+        if search_start >= entries.len() {
+            return;
+        }
+
+        // Find the first user message strictly after the current scroll position.
+        if let Some(relative_ix) = entries[search_start..]
+            .iter()
+            .position(|entry| matches!(entry, AgentThreadEntry::UserMessage(_)))
+        {
+            self.list_state.scroll_to(ListOffset {
+                item_ix: search_start + relative_ix,
+                offset_in_item: px(0.0),
+            });
+            cx.notify();
         }
     }
 
@@ -11195,7 +11260,7 @@ impl Render for ThreadView {
         let has_messages = self.list_state.item_count() > 0;
         let list_state = self.list_state.clone();
 
-        let conversation = v_flex()
+        let inner_conversation = v_flex()
             .when(self.resumed_without_history, |this| {
                 this.child(Self::render_resume_notice(cx))
             })
@@ -11209,6 +11274,28 @@ impl Render for ThreadView {
                 } else {
                     this.into_any()
                 }
+            });
+
+        let thread = self.thread.clone();
+        let thread_controls = if has_messages {
+            Some(self.render_thread_controls(&thread, cx))
+        } else {
+            None
+        };
+
+        let conversation = v_flex()
+            .relative()
+            .when(has_messages, |this| this.flex_1().size_full())
+            .child(inner_conversation)
+            .when_some(thread_controls, |this, controls| {
+                this.child(
+                    div()
+                        .absolute()
+                        .bottom_2()
+                        .right_5()
+                        .occlude()
+                        .child(controls),
+                )
             });
 
         v_flex()
