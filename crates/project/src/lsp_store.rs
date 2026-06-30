@@ -1633,19 +1633,12 @@ impl LocalLspStore {
         // handle whitespace formatting
         if settings.remove_trailing_whitespace_on_save {
             zlog::trace!(logger => "removing trailing whitespace");
-            let diff = if let Some(row_ranges) = &selection_row_ranges {
-                buffer
-                    .handle
-                    .read_with(cx, |buffer, cx| {
-                        buffer.remove_trailing_whitespace_in_ranges(row_ranges, cx)
-                    })
-                    .await
-            } else {
-                buffer
-                    .handle
-                    .read_with(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx))
-                    .await
-            };
+            let diff = buffer
+                .handle
+                .read_with(cx, |buffer, cx| {
+                    buffer.remove_trailing_whitespace(selection_row_ranges.as_deref(), cx)
+                })
+                .await;
             extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
                 buffer.apply_diff(diff, cx);
             })?;
@@ -1653,28 +1646,12 @@ impl LocalLspStore {
 
         if settings.ensure_final_newline_on_save {
             zlog::trace!(logger => "ensuring final newline");
-            if let Some(row_ranges) = &selection_row_ranges {
-                let diff = buffer.handle.read_with(cx, |buffer, _cx| {
-                    buffer.ensure_final_newline_in_range(row_ranges)
-                });
-                extend_formatting_transaction(
-                    buffer,
-                    formatting_transaction_id,
-                    cx,
-                    |buffer, cx| {
-                        buffer.apply_diff(diff, cx);
-                    },
-                )?;
-            } else {
-                extend_formatting_transaction(
-                    buffer,
-                    formatting_transaction_id,
-                    cx,
-                    |buffer, cx| {
-                        buffer.ensure_final_newline(cx);
-                    },
-                )?;
-            }
+            let diff = buffer.handle.read_with(cx, |buffer, _cx| {
+                buffer.ensure_final_newline(selection_row_ranges.as_deref())
+            });
+            extend_formatting_transaction(buffer, formatting_transaction_id, cx, |buffer, cx| {
+                buffer.apply_diff(diff, cx);
+            })?;
         }
 
         let line_ending_policy = match settings.line_ending {

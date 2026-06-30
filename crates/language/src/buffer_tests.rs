@@ -559,7 +559,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
 
     // Spawn a task to format the buffer's whitespace.
     // Pause so that the formatting task starts running.
-    let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx));
+    let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(None, cx));
     yield_now().await;
 
     // Edit the buffer while the normalization task is running.
@@ -3744,7 +3744,7 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
     }
 
     let rope = Rope::from(text.as_str());
-    let actual_ranges = trailing_whitespace_ranges(&rope);
+    let actual_ranges = trailing_whitespace_ranges(&rope, None);
     let expected_ranges = TRAILING_WHITESPACE_REGEX
         .find_iter(&text)
         .map(|m| m.range())
@@ -3777,12 +3777,12 @@ fn test_trailing_whitespace_ranges_in_rows(mut rng: StdRng) {
     }
 
     let rope = Rope::from(text.as_str());
-    let all_ranges = trailing_whitespace_ranges(&rope);
+    let all_ranges = trailing_whitespace_ranges(&rope, None);
     let lines = text.split('\n').collect::<Vec<_>>();
 
     // A range covering every row must reproduce the unfiltered full scan exactly.
     assert_eq!(
-        trailing_whitespace_ranges_in_rows(&rope, &[0..u32::MAX]),
+        trailing_whitespace_ranges(&rope, Some(&[0..u32::MAX])),
         all_ranges,
         "full-coverage mismatch for lines:\n{lines:?}",
     );
@@ -3811,7 +3811,7 @@ fn test_trailing_whitespace_ranges_in_rows(mut rng: StdRng) {
         .cloned()
         .collect::<Vec<_>>();
     assert_eq!(
-        trailing_whitespace_ranges_in_rows(&rope, &row_ranges),
+        trailing_whitespace_ranges(&rope, Some(&row_ranges)),
         expected,
         "subset mismatch for ranges {row_ranges:?} and lines:\n{lines:?}",
     );
@@ -3832,7 +3832,7 @@ async fn test_trailing_whitespace_in_ranges(cx: &mut gpui::TestAppContext) {
     let modified_rows = [1u32..2, 5..6];
     let diff = buffer
         .update(cx, |buffer, cx| {
-            buffer.remove_trailing_whitespace_in_ranges(&modified_rows, cx)
+            buffer.remove_trailing_whitespace(Some(&modified_rows), cx)
         })
         .await;
     buffer.update(cx, |buffer, cx| {
@@ -3851,7 +3851,7 @@ async fn test_trailing_whitespace_empty_ranges(cx: &mut gpui::TestAppContext) {
 
     let diff = buffer
         .update(cx, |buffer, cx| {
-            buffer.remove_trailing_whitespace_in_ranges(&[], cx)
+            buffer.remove_trailing_whitespace(Some(&[]), cx)
         })
         .await;
     buffer.update(cx, |buffer, cx| {
@@ -3867,7 +3867,7 @@ async fn test_final_newline_modified_last_line(cx: &mut gpui::TestAppContext) {
     let buffer = cx.new(|cx| Buffer::local(text, cx));
 
     buffer.update(cx, |buffer, cx| {
-        let diff = buffer.ensure_final_newline_in_range(&[0u32..3]);
+        let diff = buffer.ensure_final_newline(Some(&[0u32..3]));
         buffer.apply_diff(diff, cx);
         assert_eq!(buffer.text(), "line0\nline1\nline2\n");
     });
@@ -3880,36 +3880,36 @@ async fn test_final_newline_unmodified_last_line(cx: &mut gpui::TestAppContext) 
     let buffer = cx.new(|cx| Buffer::local(text, cx));
 
     buffer.update(cx, |buffer, cx| {
-        let diff = buffer.ensure_final_newline_in_range(&[0u32..2]);
+        let diff = buffer.ensure_final_newline(Some(&[0u32..2]));
         buffer.apply_diff(diff, cx);
         assert_eq!(buffer.text(), "line0\nline1\nline2");
     });
 }
 
 // An empty last line (file already ends with a newline) is left untouched, even with extra
-// trailing blank lines. The whole-buffer `ensure_final_newline` would collapse these; the
-// range-scoped variant must not, to avoid deleting unselected rows.
+// trailing blank lines. With `None` these would collapse; scoped to rows they must not, to
+// avoid deleting unselected rows.
 #[gpui::test]
 async fn test_final_newline_does_not_collapse_trailing_blank_lines(cx: &mut gpui::TestAppContext) {
     let text = "line0\nline1\n\n";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
 
     buffer.update(cx, |buffer, cx| {
-        let diff = buffer.ensure_final_newline_in_range(&[0u32..4]);
+        let diff = buffer.ensure_final_newline(Some(&[0u32..4]));
         buffer.apply_diff(diff, cx);
         assert_eq!(buffer.text(), "line0\nline1\n\n");
     });
 }
 
-// The range-scoped variant only inserts a newline; unlike the whole-buffer
-// `ensure_final_newline`, it does not trim trailing whitespace on the last line.
+// When scoped to rows, only a newline is inserted; unlike the `None` (whole-buffer) case, it
+// does not trim trailing whitespace on the last line.
 #[gpui::test]
 async fn test_final_newline_in_range_only_inserts(cx: &mut gpui::TestAppContext) {
     let text = "line0\nline1  ";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
 
     buffer.update(cx, |buffer, cx| {
-        let diff = buffer.ensure_final_newline_in_range(&[0u32..2]);
+        let diff = buffer.ensure_final_newline(Some(&[0u32..2]));
         buffer.apply_diff(diff, cx);
         assert_eq!(buffer.text(), "line0\nline1  \n");
     });
@@ -3927,7 +3927,7 @@ async fn test_trailing_whitespace_in_ranges_crlf(cx: &mut gpui::TestAppContext) 
     let modified_rows = [1u32..2, 5..6];
     let diff = buffer
         .update(cx, |buffer, cx| {
-            buffer.remove_trailing_whitespace_in_ranges(&modified_rows, cx)
+            buffer.remove_trailing_whitespace(Some(&modified_rows), cx)
         })
         .await;
     buffer.update(cx, |buffer, cx| {
@@ -3947,7 +3947,7 @@ async fn test_final_newline_in_range_crlf(cx: &mut gpui::TestAppContext) {
     });
 
     buffer.update(cx, |buffer, cx| {
-        let diff = buffer.ensure_final_newline_in_range(&[0u32..3]);
+        let diff = buffer.ensure_final_newline(Some(&[0u32..3]));
         buffer.apply_diff(diff, cx);
         assert_eq!(buffer.text(), "line0\nline1\nline2\n");
         assert_eq!(buffer.line_ending(), LineEnding::Windows);

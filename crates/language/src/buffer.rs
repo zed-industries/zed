@@ -2241,63 +2241,21 @@ impl Buffer {
         })
     }
 
-    /// Spawns a background task that searches the buffer for any whitespace
-    /// at the ends of a lines, and returns a `Diff` that removes that whitespace.
-    pub fn remove_trailing_whitespace(&self, cx: &App) -> Task<Diff> {
-        let old_text = self.as_rope().clone();
-        let line_ending = self.line_ending();
-        let base_version = self.version();
-        cx.background_spawn(async move {
-            let ranges = trailing_whitespace_ranges(&old_text);
-            let empty = Arc::<str>::from("");
-            Diff {
-                base_version,
-                line_ending,
-                edits: ranges
-                    .into_iter()
-                    .map(|range| (range, empty.clone()))
-                    .collect(),
-            }
-        })
-    }
-
-    /// Ensures that the buffer ends with a single newline character, and
-    /// no other whitespace. Skips if the buffer is empty.
-    pub fn ensure_final_newline(&mut self, cx: &mut Context<Self>) {
-        let len = self.len();
-        if len == 0 {
-            return;
-        }
-        let mut offset = len;
-        for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
-            let non_whitespace_len = chunk
-                .trim_end_matches(|c: char| c.is_ascii_whitespace())
-                .len();
-            offset -= chunk.len();
-            offset += non_whitespace_len;
-            if non_whitespace_len != 0 {
-                if offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n") {
-                    return;
-                }
-                break;
-            }
-        }
-        self.edit([(offset..len, "\n")], None, cx);
-    }
-
-    /// Like [`remove_trailing_whitespace`](Self::remove_trailing_whitespace), but only removes
-    /// trailing whitespace on lines whose row falls within one of the given `modified_rows` ranges.
-    pub fn remove_trailing_whitespace_in_ranges(
+    /// Spawns a background task that returns a `Diff` removing trailing whitespace from line ends.
+    ///
+    /// When `modified_rows` is `Some`, only lines whose row falls within one of the given ranges
+    /// are trimmed; when it is `None`, the whole buffer is scanned.
+    pub fn remove_trailing_whitespace(
         &self,
-        modified_rows: &[Range<u32>],
+        modified_rows: Option<&[Range<u32>]>,
         cx: &App,
     ) -> Task<Diff> {
         let old_text = self.as_rope().clone();
         let line_ending = self.line_ending();
         let base_version = self.version();
-        let modified_rows = modified_rows.to_vec();
+        let modified_rows = modified_rows.map(|rows| rows.to_vec());
         cx.background_spawn(async move {
-            let ranges = trailing_whitespace_ranges_in_rows(&old_text, &modified_rows);
+            let ranges = trailing_whitespace_ranges(&old_text, modified_rows.as_deref());
             let empty = Arc::<str>::from("");
             Diff {
                 base_version,
@@ -2310,28 +2268,54 @@ impl Buffer {
         })
     }
 
-    /// Like [`ensure_final_newline`](Self::ensure_final_newline), but scoped to a "Format
-    /// Selection" operation: it only inserts a final newline when the buffer's last line falls
-    /// within one of the given `modified_rows` ranges, and never modifies rows outside it.
+    /// Returns a `Diff` ensuring the buffer ends with a trailing newline.
     ///
-    /// Unlike the whole-buffer [`ensure_final_newline`](Self::ensure_final_newline) (which also
-    /// trims trailing whitespace and collapses blank lines at the end of the file), this only
-    /// appends a single newline when the last line is non-empty. Collapsing trailing blank lines
-    /// is intentionally omitted so that formatting a selection cannot delete unselected rows.
-    pub fn ensure_final_newline_in_range(&self, modified_rows: &[Range<u32>]) -> Diff {
+    /// When `modified_rows` is `None`, the whole buffer is considered: trailing whitespace and
+    /// blank lines at the end of the file are collapsed into a single newline.
+    ///
+    /// When `modified_rows` is `Some`, the operation is scoped to a "Format Selection": a single
+    /// newline is appended only when the last line is non-empty and its row falls within one of
+    /// the ranges. Trailing blank lines are left intact so that formatting a selection cannot
+    /// delete unselected rows.
+    pub fn ensure_final_newline(&self, modified_rows: Option<&[Range<u32>]>) -> Diff {
         let len = self.len();
         let line_ending = self.line_ending();
         let base_version = self.version();
-        let max_point = self.max_point();
+        let newline = Arc::<str>::from("\n");
 
-        let last_line_is_empty = max_point.column == 0;
-        let last_row_is_modified = modified_rows
-            .iter()
-            .any(|range| range.contains(&max_point.row));
-        let edits = if len == 0 || last_line_is_empty || !last_row_is_modified {
+        let edits = if len == 0 {
             Vec::new()
+        } else if let Some(modified_rows) = modified_rows {
+            let max_point = self.max_point();
+            let last_line_is_empty = max_point.column == 0;
+            let last_row_is_modified = modified_rows
+                .iter()
+                .any(|range| range.contains(&max_point.row));
+            if last_line_is_empty || !last_row_is_modified {
+                Vec::new()
+            } else {
+                Vec::from([(len..len, newline)])
+            }
         } else {
-            Vec::from([(len..len, Arc::<str>::from("\n"))])
+            let mut offset = len;
+            for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
+                let non_whitespace_len = chunk
+                    .trim_end_matches(|c: char| c.is_ascii_whitespace())
+                    .len();
+                offset -= chunk.len();
+                offset += non_whitespace_len;
+                if non_whitespace_len != 0 {
+                    if offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n") {
+                        offset = len;
+                    }
+                    break;
+                }
+            }
+            if offset == len {
+                Vec::new()
+            } else {
+                Vec::from([(offset..len, newline)])
+            }
         };
         Diff {
             base_version,
@@ -6127,48 +6111,20 @@ impl CharClassifier {
 ///
 /// This could also be done with a regex search, but this implementation
 /// avoids copying text.
-pub fn trailing_whitespace_ranges(rope: &Rope) -> Vec<Range<usize>> {
-    let mut ranges = Vec::new();
-
-    let mut offset = 0;
-    let mut prev_chunk_trailing_whitespace_range = 0..0;
-    for chunk in rope.chunks() {
-        let mut prev_line_trailing_whitespace_range = 0..0;
-        for (i, line) in chunk.split('\n').enumerate() {
-            let line_end_offset = offset + line.len();
-            let trimmed_line_len = line.trim_end_matches([' ', '\t']).len();
-            let mut trailing_whitespace_range = (offset + trimmed_line_len)..line_end_offset;
-
-            if i == 0 && trimmed_line_len == 0 {
-                trailing_whitespace_range.start = prev_chunk_trailing_whitespace_range.start;
-            }
-            if !prev_line_trailing_whitespace_range.is_empty() {
-                ranges.push(prev_line_trailing_whitespace_range);
-            }
-
-            offset = line_end_offset + 1;
-            prev_line_trailing_whitespace_range = trailing_whitespace_range;
-        }
-
-        offset -= 1;
-        prev_chunk_trailing_whitespace_range = prev_line_trailing_whitespace_range;
-    }
-
-    if !prev_chunk_trailing_whitespace_range.is_empty() {
-        ranges.push(prev_chunk_trailing_whitespace_range);
-    }
-
-    ranges
-}
-
-/// Like [`trailing_whitespace_ranges`], but only returns ranges for lines whose
-/// row falls within one of the given `row_ranges`. Performs a single pass over
-/// the rope, avoiding the quadratic cost of collecting all ranges and then filtering.
-pub fn trailing_whitespace_ranges_in_rows(
+/// Returns the byte ranges of trailing whitespace at the end of each line.
+///
+/// When `row_ranges` is `Some`, only lines whose row falls within one of the ranges are
+/// included. The single pass keeps filtering cheap, avoiding collecting every range up front.
+pub(crate) fn trailing_whitespace_ranges(
     rope: &Rope,
-    row_ranges: &[Range<u32>],
+    row_ranges: Option<&[Range<u32>]>,
 ) -> Vec<Range<usize>> {
     let mut ranges = Vec::new();
+
+    let is_row_included = |row: u32| match row_ranges {
+        Some(row_ranges) => row_ranges.iter().any(|range| range.contains(&row)),
+        None => true,
+    };
 
     let mut offset = 0;
     let mut current_row: u32 = 0;
@@ -6185,9 +6141,7 @@ pub fn trailing_whitespace_ranges_in_rows(
                 trailing_whitespace_range.start = prev_chunk_trailing_whitespace_range.start;
             }
             if let Some(row) = prev_row {
-                if !prev_line_trailing_whitespace_range.is_empty()
-                    && row_ranges.iter().any(|r| r.contains(&row))
-                {
+                if !prev_line_trailing_whitespace_range.is_empty() && is_row_included(row) {
                     ranges.push(prev_line_trailing_whitespace_range);
                 }
             }
@@ -6203,9 +6157,7 @@ pub fn trailing_whitespace_ranges_in_rows(
         prev_chunk_trailing_whitespace_range = prev_line_trailing_whitespace_range;
     }
 
-    if !prev_chunk_trailing_whitespace_range.is_empty()
-        && row_ranges.iter().any(|r| r.contains(&current_row))
-    {
+    if !prev_chunk_trailing_whitespace_range.is_empty() && is_row_included(current_row) {
         ranges.push(prev_chunk_trailing_whitespace_range);
     }
 
