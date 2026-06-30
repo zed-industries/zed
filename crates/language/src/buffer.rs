@@ -2298,6 +2298,7 @@ impl Buffer {
             }
         } else {
             let mut offset = len;
+            let mut already_normalized = false;
             for chunk in self.as_rope().reversed_chunks_in_range(0..len) {
                 let non_whitespace_len = chunk
                     .trim_end_matches(|c: char| c.is_ascii_whitespace())
@@ -2305,13 +2306,12 @@ impl Buffer {
                 offset -= chunk.len();
                 offset += non_whitespace_len;
                 if non_whitespace_len != 0 {
-                    if offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n") {
-                        offset = len;
-                    }
+                    already_normalized =
+                        offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n");
                     break;
                 }
             }
-            if offset == len {
+            if already_normalized {
                 Vec::new()
             } else {
                 Vec::from([(offset..len, newline)])
