@@ -7,8 +7,12 @@
     allow(dead_code)
 )]
 
+mod completions;
+
+use crate::completions::Shell;
+
 use anyhow::{Context as _, Result};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use cli::{CliRequest, CliResponse, IpcHandshake, ipc::IpcOneShotServer};
 use parking_lot::Mutex;
 use std::{
@@ -89,11 +93,12 @@ struct Args {
         not(any(target_os = "windows", target_os = "macos")),
         doc = "`$XDG_DATA_HOME/zed`."
     )]
-    #[arg(long, value_name = "DIR")]
+    #[arg(long, value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
     user_data_dir: Option<String>,
     /// The paths to open in Zed (space-separated).
     ///
     /// Use `path:line:column` syntax to open a file at the given line and column.
+    #[arg(trailing_var_arg = true, value_hint = clap::ValueHint::AnyPath)]
     paths_with_position: Vec<String>,
     /// Print Zed's version and the app path.
     #[arg(short, long)]
@@ -131,8 +136,11 @@ struct Args {
     dev_container: bool,
     /// Pairs of file paths to diff. Can be specified multiple times.
     /// When directories are provided, recurses into them and shows all changed files in a single multi-diff view.
-    #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"])]
+    #[arg(long, action = clap::ArgAction::Append, num_args = 2, value_names = ["OLD_PATH", "NEW_PATH"], value_hint = clap::ValueHint::AnyPath)]
     diff: Vec<String>,
+    /// Generate shell completions for Zed
+    #[arg(long, value_names = ["SHELL"])]
+    completions: Option<Shell>,
     /// Uninstall Zed from user system
     #[cfg(all(
         any(target_os = "linux", target_os = "macos"),
@@ -513,6 +521,20 @@ fn run() -> Result<()> {
     let args = flatpak::set_bin_if_no_escape(args);
 
     let app = Detect::detect(args.zed.as_deref()).context("Bundle detection")?;
+
+    if let Some(shell) = &args.completions {
+        let file_path = std::env::current_exe()?;
+        let file_name = file_path
+            .file_name()
+            .and_then(OsStr::to_str)
+            .ok_or("--completions expects a UTF-8 name for cli bin")
+            .map_err(anyhow::Error::msg)?;
+        let mut cmd = Args::command();
+        cmd.set_bin_name(file_name);
+        cmd.build();
+        crate::completions::main(&cmd, shell);
+        return Ok(());
+    }
 
     if args.version {
         println!("{}", app.zed_version_string());

@@ -2,12 +2,13 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use editor::{Editor, HighlightKey, MultiBuffer, RowHighlightOptions};
+use editor::{Editor, EditorSettings, HighlightKey, MultiBuffer, RowHighlightOptions};
 use gpui::{App, Task};
 use gpui::{AppContext, Context, Entity, TaskExt, Window};
 use language::{Buffer, HighlightedText, HighlightedTextBuilder, ToPoint};
 use project::Project;
 use rope::Point;
+use settings::Settings;
 use ui::{ActiveTheme, IntoElement, Pixels, px};
 use util::rel_path::RelPath;
 
@@ -148,6 +149,7 @@ impl EditorPreview {
             let capability = language::Capability::ReadWrite; // Later narrowed per buffer
             let multi_buffer = cx.new(|_| MultiBuffer::without_headers(capability));
             let mut editor = Editor::for_multibuffer(multi_buffer, None, window, cx);
+            let editor_settings = EditorSettings::get_global(cx).clone();
 
             // We want editing to happen in the multibuffer not in the modal. The editor acts
             // as one big <send to multibuffer> button.
@@ -159,8 +161,8 @@ impl EditorPreview {
             editor.disable_diagnostics(cx);
             editor.disable_expand_excerpt_buttons(cx);
             editor.disable_mouse_wheel_zoom();
-            editor.set_show_gutter(true, cx); // needed for line numbers
-            editor.set_show_line_numbers(true, cx);
+            editor.set_show_gutter(editor_settings.gutter.line_numbers, cx); // needed for line numbers
+            editor.set_show_line_numbers(editor_settings.gutter.line_numbers, cx);
             editor.set_show_breakpoints(false, cx);
             editor.set_show_bookmarks(false, cx);
             editor.set_show_code_actions(false, cx);
@@ -253,7 +255,8 @@ impl EditorPreview {
 
         const MIN_LINE_HEIGHT_PX: Pixels = px(6.0);
         const MARGIN: u32 = 2; // scrolling can offset things;
-        let max_rows = (window.viewport_size().height / MIN_LINE_HEIGHT_PX).ceil() as u32 + MARGIN;
+        let max_visible_rows =
+            (window.viewport_size().height / MIN_LINE_HEIGHT_PX).ceil() as u32 + MARGIN;
 
         self.preview_editor.update(cx, |editor, cx| {
             let focus_row = highlight
@@ -264,8 +267,7 @@ impl EditorPreview {
                         .to_point(&buffer.read(cx).text_snapshot())
                         .row
                 })
-                .unwrap_or_default()
-                .min(max_rows);
+                .unwrap_or_default();
 
             let multi_buffer = editor.buffer().clone();
             multi_buffer.update(cx, |multi_buffer, cx| {
@@ -273,7 +275,7 @@ impl EditorPreview {
                 multi_buffer.set_excerpts_for_buffer(
                     buffer,
                     [Point::new(focus_row, 0)..Point::new(focus_row, 0)],
-                    max_rows,
+                    max_visible_rows,
                     cx,
                 );
             });
