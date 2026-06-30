@@ -1059,6 +1059,17 @@ impl Element for TerminalElement {
                         }
                     }
 
+                    // While the input composer is open, grow the PTY past the
+                    // visible area by a fixed strip and let the parent's
+                    // `overflow_hidden` clip it. A bottom-pinned TUI keeps drawing
+                    // its own input box + status line into those extra rows, now
+                    // off-screen behind the composer, so its chrome doesn't
+                    // duplicate ours. Output stays at the top, untouched.
+                    if self.terminal_view.read(cx).input_overlay.is_some() {
+                        size.height +=
+                            px(crate::INPUT_COMPOSER_TERMINAL_MASK_ROWS as f32 * line_height);
+                    }
+
                     // Snap to device pixels to avoid subpixel jitter while resizing.
                     // Terminal rendering is grid-based; allowing fractional origins can cause the
                     // glyph rasterization to shift between frames, which looks like flicker.
