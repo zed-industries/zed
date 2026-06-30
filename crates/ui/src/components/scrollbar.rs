@@ -82,6 +82,7 @@ where
     let element_id = config.id.take().unwrap_or_else(|| caller_location.into());
     let track_color = config.track_color;
     let has_border = config.border;
+    let scrollable_handle = config.scrollable_handle.clone();
 
     let state = window.use_keyed_state(element_id, cx, |_, cx| {
         let parent_id = cx.entity_id();
@@ -90,6 +91,7 @@ where
 
     state.update(cx, |state, cx| {
         state.0.update(cx, |state, _cx| {
+            state.update_scroll_handle(scrollable_handle);
             state.update_colors(track_color, has_border)
         })
     });
@@ -658,6 +660,13 @@ impl<T: ScrollableHandle> ScrollbarState<T> {
             mouse_in_parent: true,
             last_prepaint_state: None,
             _auto_hide_task: None,
+        }
+    }
+
+    fn update_scroll_handle(&mut self, scrollable_handle: Handle<T>) {
+        if let Handle::Tracked(scroll_handle) = scrollable_handle {
+            self.manually_added = true;
+            self.scroll_handle = scroll_handle;
         }
     }
 
