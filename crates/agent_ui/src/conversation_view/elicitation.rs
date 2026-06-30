@@ -1171,7 +1171,7 @@ impl<'a> ElicitationCard<'a> {
                                 .cursor_pointer()
                                 .on_click({
                                     let field_name = field_name.clone();
-                                    let value = value.clone();
+                                    let value = value;
                                     move |_, _window, cx| {
                                         on_multi_select_change(
                                             elicitation_id.clone(),
