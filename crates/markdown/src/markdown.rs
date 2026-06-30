@@ -4214,29 +4214,32 @@ impl RenderedText {
     }
 
     fn text_for_range(&self, range: Range<usize>) -> String {
-        // Visible lines hold exact stripped text; if the range reaches culled
-        // blocks, recover those from the source events.
-        if self.lines_cover(&range) {
-            self.text_from_lines(range)
-        } else {
-            self.text_from_source(range)
-        }
-    }
-
-    /// Whether the on-screen lines reach the end of `range` (i.e. it doesn't
-    /// extend into culled blocks below).
-    fn lines_cover(&self, range: &Range<usize>) -> bool {
-        match self.lines.last() {
-            Some(last) => range.end <= last.source_end,
-            None => range.start == range.end,
-        }
+        // Reconstruct from the source events rather than the on-screen lines, so
+        // copy yields the same text regardless of what is scrolled into view (and
+        // works for off-screen blocks, which have no laid-out lines).
+        self.text_from_source(range)
     }
 
     /// Recover the rendered text for `range` from the source events, so copying a
     /// selection across off-screen blocks still yields their text.
     fn text_from_source(&self, range: Range<usize>) -> String {
         let mut out = String::new();
-        let mut block_break = false;
+        // The renderer flushes a new line on every block-level container
+        // (`push_div`), so break on those same boundaries plus block ends. The
+        // break is queued and emitted before the next text, which collapses
+        // adjacent boundaries and drops leading/trailing breaks.
+        let mut pending_break = false;
+        let flush = |out: &mut String, pending_break: &mut bool| {
+            // Collapse a queued break into a newline the content already ends
+            // with (e.g. a fenced code block carries a trailing newline), so a
+            // block boundary never doubles it.
+            if *pending_break {
+                if !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                *pending_break = false;
+            }
+        };
         let in_range = |event_range: &Range<usize>| {
             event_range.start >= range.start && event_range.start < range.end
         };
@@ -4245,76 +4248,63 @@ impl RenderedText {
                 break;
             }
             match event {
-                MarkdownEvent::Text | MarkdownEvent::Code => {
+                MarkdownEvent::Start(tag)
+                    if !matches!(
+                        tag,
+                        MarkdownTag::Emphasis
+                            | MarkdownTag::Strong
+                            | MarkdownTag::Strikethrough
+                            | MarkdownTag::Superscript
+                            | MarkdownTag::Subscript
+                            | MarkdownTag::Link { .. }
+                            | MarkdownTag::Image { .. }
+                    ) =>
+                {
+                    if !out.is_empty() {
+                        pending_break = true;
+                    }
+                }
+                // The renderer shows raw HTML as literal text (it does not render
+                // it), so copy it verbatim too. Block HTML comments render to
+                // nothing, so skip them.
+                MarkdownEvent::Html if self.source[event_range.clone()].starts_with("<!--") => {}
+                MarkdownEvent::Text
+                | MarkdownEvent::Code
+                | MarkdownEvent::Html
+                | MarkdownEvent::InlineHtml => {
                     let start = event_range.start.max(range.start);
                     let end = event_range.end.min(range.end);
                     if start < end {
-                        if block_break {
-                            out.push('\n');
-                            block_break = false;
-                        }
+                        flush(&mut out, &mut pending_break);
                         out.push_str(&self.source[start..end]);
                     }
                 }
                 MarkdownEvent::SubstitutedText(text) => {
                     if event_range.start < range.end && event_range.end > range.start {
-                        if block_break {
-                            out.push('\n');
-                            block_break = false;
-                        }
+                        flush(&mut out, &mut pending_break);
                         out.push_str(text);
                     }
                 }
                 MarkdownEvent::SoftBreak if in_range(event_range) => out.push(' '),
                 MarkdownEvent::HardBreak if in_range(event_range) => out.push('\n'),
                 MarkdownEvent::FootnoteReference(label) if in_range(event_range) => {
-                    if block_break {
-                        out.push('\n');
-                        block_break = false;
-                    }
+                    flush(&mut out, &mut pending_break);
                     out.push_str(&format!("[{label}]"));
                 }
-                MarkdownEvent::RootEnd(_) if !out.is_empty() && event_range.end > range.start => {
-                    block_break = true;
+                MarkdownEvent::RootEnd(_) => {
+                    if !out.is_empty() {
+                        pending_break = true;
+                    }
                 }
                 _ => {}
             }
         }
-        out
-    }
-
-    fn text_from_lines(&self, range: Range<usize>) -> String {
-        let mut accumulator = String::new();
-
-        for line in self.lines.iter() {
-            if range.start > line.source_end {
-                continue;
-            }
-            let line_source_start = line.source_mappings.first().unwrap().source_index;
-            if range.end < line_source_start {
-                break;
-            }
-
-            let text = line.layout.text();
-
-            let start = if range.start < line_source_start {
-                0
-            } else {
-                line.rendered_index_for_source_index(range.start)
-            };
-            let end = if range.end > line.source_end {
-                line.rendered_index_for_source_index(line.source_end)
-            } else {
-                line.rendered_index_for_source_index(range.end)
-            }
-            .min(text.len());
-
-            accumulator.push_str(&text[start..end]);
-            accumulator.push('\n');
+        // Match the on-screen path, which drops a trailing line break (e.g. the
+        // newline a fenced code block carries before its closing fence).
+        while out.ends_with('\n') {
+            out.pop();
         }
-        // Remove trailing newline
-        accumulator.pop();
-        accumulator
+        out
     }
 
     fn link_for_source_index(&self, source_index: usize) -> Option<&RenderedLink> {
@@ -4628,6 +4618,25 @@ mod tests {
         );
     }
 
+    // Copying a selection that ends inside a substituted glyph (smart
+    // punctuation is on by default, so "..." renders as a single "…") must not
+    // panic and must yield the source text up to the cut. The old on-screen
+    // path sliced rendered bytes and panicked here.
+    #[gpui::test]
+    fn copy_selection_inside_substituted_glyph(cx: &mut TestAppContext) {
+        let src = "Loading the file took a while... then it finished.";
+        let rendered = render_markdown(src, cx);
+        let dots = src.find("...").unwrap();
+        // Ending exactly before the glyph yields the clean prefix.
+        assert_eq!(rendered.text_for_range(0..dots), &src[..dots]);
+        // Ending inside the "…" includes the whole glyph (can't copy half), and
+        // crucially does not panic.
+        let with_glyph = format!("{}…", &src[..dots]);
+        for cut in [dots + 1, dots + 2, dots + 3] {
+            assert_eq!(rendered.text_for_range(0..cut), with_glyph);
+        }
+    }
+
     #[gpui::test]
     fn test_mappings(cx: &mut TestAppContext) {
         // Formatting.
@@ -4730,7 +4739,9 @@ mod tests {
             },
             cx,
         );
-        assert_eq!(rendered.text_for_range(0..24), "title\nPost\nBody");
+        // With the single source-based copy path, a metadata block yields its raw
+        // source line rather than the rendered key/value table.
+        assert_eq!(rendered.text_for_range(0..24), "title: Post\nBody");
     }
 
     #[gpui::test]
