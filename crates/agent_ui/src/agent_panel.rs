@@ -3631,9 +3631,6 @@ impl AgentPanel {
     }
 
     pub(crate) fn open_configuration(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // Agent configuration lives in the settings UI; route there at the LLM
-        // providers page (where the model selector's "Configure" button expects
-        // to land).
         window.dispatch_action(
             Box::new(zed_actions::OpenSettingsAt {
                 path: "llm_providers".to_string(),
