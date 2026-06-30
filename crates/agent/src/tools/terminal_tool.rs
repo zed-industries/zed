@@ -15,11 +15,11 @@ use std::{
 
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use crate::SandboxFallbackDecision;
-use crate::sandboxing::{NetworkRequest, sandboxing_enabled_for_project};
+use crate::sandboxing::{
+    NetworkRequest, sandbox_git_dirs, sandbox_worktree_writable_paths,
+    sandboxing_enabled_for_project,
+};
 use crate::{AgentTool, ThreadEnvironment, ToolCallEventStream, ToolInput};
-use sandbox_git_paths::{SandboxGitPathCandidates, sandbox_git_paths};
-
-pub(crate) mod sandbox_git_paths;
 
 const COMMAND_OUTPUT_LIMIT: u64 = 16 * 1024;
 
@@ -163,21 +163,12 @@ pub struct SandboxedTerminalToolInput {
     /// set of paths is known. Requesting it triggers a user approval prompt.
     #[serde(default, alias = "allow_fs_write")]
     pub allow_fs_write_all: Option<bool>,
-    /// Set to `true` when the command needs access to protected Git metadata.
-    ///
-    /// By default sandboxed commands can't write to the `.git` directories of
-    /// opened worktrees and discovered repositories. On macOS, `.git` file
-    /// contents are also hidden while metadata stays visible; on Linux and
-    /// Windows/WSL, `.git` contents remain readable but are mounted read-only.
-    /// Set this for Git operations that need to write those paths (commit,
-    /// fetch, rebase, …). Requesting it triggers a user approval prompt.
-    #[serde(default)]
-    pub allow_git_access: Option<bool>,
+
     /// Set to `true` only as a last resort, to run the command fully outside
     /// the sandbox.
     ///
-    /// First try the narrower options (`allow_hosts`, `fs_write_paths`,
-    /// `allow_fs_write_all`, `allow_git_access`); use this only when the command
+    /// First try the narrower options (`allow_hosts`, `fs_write_paths`, or
+    /// `allow_fs_write_all`); use this only when the command
     /// needs behavior the sandbox can't grant on a per-permission basis.
     /// Requesting it triggers a user approval prompt.
     #[cfg_attr(
@@ -192,8 +183,8 @@ pub struct SandboxedTerminalToolInput {
     #[serde(default)]
     pub unsandboxed: Option<bool>,
     /// A short justification for why this command needs the sandbox
-    /// permission(s) it requests (`allow_network`, `fs_write_paths`,
-    /// `allow_fs_write_all`, or `unsandboxed`).
+    /// permission(s) it requests (`allow_hosts`, `allow_all_hosts`,
+    /// `fs_write_paths`, `allow_fs_write_all`, or `unsandboxed`).
     ///
     /// Required whenever you request any of those permissions; omit it for
     /// ordinary commands that request none. Write it in your own voice — it
@@ -209,7 +200,6 @@ struct TerminalSandboxInput {
     allow_all_hosts: Option<bool>,
     fs_write_paths: Vec<String>,
     allow_fs_write_all: Option<bool>,
-    allow_git_access: Option<bool>,
     unsandboxed: Option<bool>,
     reason: Option<String>,
 }
@@ -252,7 +242,6 @@ impl From<SandboxedTerminalToolInput> for TerminalToolRequest {
                 allow_all_hosts: input.allow_all_hosts,
                 fs_write_paths: input.fs_write_paths,
                 allow_fs_write_all: input.allow_fs_write_all,
-                allow_git_access: input.allow_git_access,
                 unsandboxed: input.unsandboxed,
                 reason: input.reason,
             }),
@@ -442,7 +431,6 @@ async fn run_terminal_tool(
     let want_fs_write_all = sandboxing && sandbox_input.allow_fs_write_all == Some(true);
     let want_unsandboxed = sandboxing && sandbox_input.unsandboxed == Some(true);
     let want_all_hosts = sandboxing && sandbox_input.allow_all_hosts == Some(true);
-    let want_git_access = sandboxing && sandbox_input.allow_git_access == Some(true);
 
     let persistent = cx.update(|cx| {
         agent_settings::AgentSettings::get_global(cx)
@@ -569,7 +557,6 @@ async fn run_terminal_tool(
 
     let request = crate::sandboxing::SandboxRequest {
         network,
-        allow_git_access: !want_unsandboxed && want_git_access,
         allow_fs_write_all: !want_unsandboxed && want_fs_write_all,
         unsandboxed: want_unsandboxed,
         write_paths,
@@ -618,7 +605,7 @@ async fn run_terminal_tool(
         allow(unused_mut)
     )]
     let mut sandbox_not_applied: Option<acp_thread::SandboxNotAppliedReason> = None;
-    let mut git_access_downgrade_note = None;
+
     let sandbox_wrap = if sandboxing && !want_unsandboxed {
         if unsandboxed_floor {
             // Every command in this thread runs unsandboxed because the user
@@ -635,32 +622,16 @@ async fn run_terminal_tool(
                         .to_string(),
                 );
             }
-            let (fs, sandbox_path_candidates) = cx.update(|cx| {
+            let (writable_paths, protected_paths) = cx.update(|cx| {
                 (
-                    project.read(cx).fs().clone(),
-                    SandboxGitPathCandidates::from_project(project.read(cx), cx),
+                    sandbox_worktree_writable_paths(project.read(cx), cx),
+                    sandbox_git_dirs(project.read(cx), cx),
                 )
             });
-            let sandbox_paths = sandbox_git_paths(
-                sandbox_path_candidates,
-                fs.as_ref(),
-                effective.allow_git_access,
-            )
-            .await;
-            if effective.allow_git_access && !sandbox_paths.allow_git_access {
-                log::warn!(
-                    "Downgrading requested agent terminal Git metadata access because one or more external Git metadata paths could not be verified"
-                );
-                git_access_downgrade_note = Some(
-                    "Note: Git metadata access was requested or already allowed, but Zed could not verify one or more external Git metadata paths for this project. The command ran with Git metadata protected, so Git operations that read or write `.git` may fail with sandbox permission errors."
-                        .to_string(),
-                );
-            }
             let wrap = acp_thread::SandboxWrap {
-                writable_paths: sandbox_paths.writable_paths,
+                writable_paths,
                 extra_write_paths: effective.write_paths,
-                git_dirs: sandbox_paths.git_dirs,
-                allow_git_access: sandbox_paths.allow_git_access,
+                protected_paths,
                 network: network_request_to_sandbox_network_access(&effective.network),
                 allow_fs_write: effective.allow_fs_write_all,
                 is_local: is_local_project,
@@ -944,13 +915,7 @@ async fn run_terminal_tool(
     let output = terminal.current_output(cx).map_err(|e| e.to_string())?;
 
     let result = process_content(output, &input.command, timed_out, user_stopped, selection);
-    let git_access_downgrade_note = (sandbox_wrap.is_some() && sandbox_not_applied.is_none())
-        .then_some(git_access_downgrade_note)
-        .flatten();
-    let notes = sandbox_note
-        .into_iter()
-        .chain(git_access_downgrade_note)
-        .collect::<Vec<_>>();
+    let notes = sandbox_note.into_iter().collect::<Vec<_>>();
     Ok(if notes.is_empty() {
         result
     } else {

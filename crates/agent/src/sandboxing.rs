@@ -30,9 +30,7 @@ use feature_flags::{FeatureFlagAppExt as _, SandboxingFeatureFlag};
 use gpui::App;
 use http_proxy::HostPattern;
 use project::Project;
-use sandbox::{
-    GitSandboxPolicy, HostFilesystemLocation, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy,
-};
+use sandbox::{HostFilesystemLocation, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 use settings::Settings;
 use std::path::PathBuf;
 
@@ -48,14 +46,10 @@ pub fn sandbox_worktree_writable_paths(project: &Project, cx: &App) -> Vec<PathB
         .collect()
 }
 
-/// The candidate `.git` directories the sandbox protects for a project. Locating
-/// these requires Git knowledge the sandbox layer can't derive itself: a
-/// worktree's `.git`, a linked worktree's common dir (which lives outside the
-/// worktree), and every discovered repository's git/common dirs.
-///
-/// When Git metadata access is granted, terminal enforcement and the status UI
-/// both run these candidates through the verifier in `sandbox_git_paths` before
-/// treating external Git metadata as writable.
+/// The candidate `.git` paths the sandbox protects for a project. Locating these
+/// requires Git knowledge the sandbox layer can't derive itself: a worktree's
+/// `.git`, a linked worktree's common dir (which lives outside the worktree),
+/// and every discovered repository's git/common dirs.
 pub fn sandbox_git_dirs(project: &Project, cx: &App) -> Vec<PathBuf> {
     let mut git_dirs = Vec::new();
 
@@ -120,27 +114,20 @@ impl ThreadSandbox {
         matches!(self, ThreadSandbox::Unsandboxed)
     }
 
-    /// Attach the project's Git policy to a sandboxed layer. The settings/grants
-    /// don't know the project's `.git` locations, so the caller computes them
-    /// (via [`sandbox_git_dirs`]) and passes whether this layer grants Git
-    /// access. A no-op for the `Unsandboxed` variant.
-    pub fn with_git(self, allowed: bool, git_dirs: Vec<PathBuf>) -> ThreadSandbox {
+    /// Attach the project's protected paths to a sandboxed layer. The settings
+    /// and grants don't know the project's `.git` locations, so the caller
+    /// computes them via [`sandbox_git_dirs`]. A no-op for `Unsandboxed`.
+    pub fn with_protected_paths(self, protected_paths: Vec<PathBuf>) -> ThreadSandbox {
         match self {
             ThreadSandbox::Unsandboxed => ThreadSandbox::Unsandboxed,
             ThreadSandbox::Sandboxed(policy) => {
-                // Capture each `.git` location (pinning its inode / canonical
-                // path). A location that can't be captured (e.g. doesn't exist)
-                // is dropped — fail-closed.
-                let git_dirs = git_dirs
+                // Capture each protected location (pinning its inode / canonical
+                // path). A location that can't be captured is dropped — fail-closed.
+                let protected_paths = protected_paths
                     .into_iter()
                     .filter_map(|path| HostFilesystemLocation::new(path).ok())
                     .collect();
-                let git = if allowed {
-                    GitSandboxPolicy::Allowed { git_dirs }
-                } else {
-                    GitSandboxPolicy::Denied { git_dirs }
-                };
-                ThreadSandbox::Sandboxed(policy.with_git(git))
+                ThreadSandbox::Sandboxed(policy.with_protected_paths(protected_paths))
             }
         }
     }
@@ -172,6 +159,7 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
                 .iter()
                 .filter_map(|path| HostFilesystemLocation::new(path).ok())
                 .collect(),
+            protected_paths: Vec::new(),
         }
     };
     let network = if persistent.allow_all_hosts {
@@ -183,13 +171,7 @@ pub fn settings_sandbox_policy(persistent: &SandboxPermissions) -> SandboxPolicy
             allowed_domains: persistent.network_hosts.clone(),
         }
     };
-    // The persistent settings don't know the project's `.git` locations; the UI
-    // layer attaches the real Git policy via `SandboxPolicy::with_git`.
-    SandboxPolicy {
-        fs,
-        network,
-        git: GitSandboxPolicy::default(),
-    }
+    SandboxPolicy { fs, network }
 }
 
 /// Whether agent-run terminal commands should be wrapped in an OS-level
@@ -275,8 +257,7 @@ impl NetworkRequest {
 pub(crate) struct SandboxRequest {
     /// Outbound network access requested for this command.
     pub network: NetworkRequest,
-    /// Allow access to protected Git metadata paths.
-    pub allow_git_access: bool,
+
     /// Allow unrestricted filesystem writes (the broad escape hatch).
     pub allow_fs_write_all: bool,
     /// Run the command fully outside the sandbox.
@@ -291,7 +272,6 @@ impl SandboxRequest {
     /// scope, and therefore needs user approval.
     pub fn needs_escalation(&self) -> bool {
         self.network.is_requested()
-            || self.allow_git_access
             || self.allow_fs_write_all
             || self.unsandboxed
             || !self.write_paths.is_empty()
@@ -312,7 +292,6 @@ pub(crate) struct ThreadSandboxGrants {
     /// Host patterns granted network access for the thread. Each covers its
     /// whole subdomain space; redundant entries are pruned on insert.
     network_hosts: Vec<HostPattern>,
-    allow_git_access: bool,
     allow_fs_write_all: bool,
     unsandboxed: bool,
     /// Whether the user approved running commands *without* a sandbox for the
@@ -353,9 +332,7 @@ impl ThreadSandboxGrants {
         if !self.network_covered(&request.network, persistent) {
             return false;
         }
-        if request.allow_git_access && !(self.allow_git_access || persistent.allow_git_access) {
-            return false;
-        }
+
         if request.allow_fs_write_all && !(self.allow_fs_write_all || persistent.allow_fs_write_all)
         {
             return false;
@@ -412,12 +389,6 @@ impl ThreadSandboxGrants {
         self.unsandboxed
     }
 
-    /// Whether the user approved access to protected Git directories for the
-    /// rest of the thread.
-    pub fn git_access_granted(&self) -> bool {
-        self.allow_git_access
-    }
-
     /// Record that the user approved running commands unsandboxed for the rest
     /// of the thread when the sandbox can't be created. Only the Bubblewrap
     /// sandboxes (Linux directly, Windows via WSL) can fail to create a
@@ -455,6 +426,7 @@ impl ThreadSandboxGrants {
                     .iter()
                     .filter_map(|path| HostFilesystemLocation::new(path).ok())
                     .collect(),
+                protected_paths: Vec::new(),
             }
         };
         let network = if self.network_any_host {
@@ -470,13 +442,7 @@ impl ThreadSandboxGrants {
                     .collect(),
             }
         };
-        // Grants don't carry the project's `.git` locations; the UI layer
-        // attaches the real Git policy via `SandboxPolicy::with_git`.
-        SandboxPolicy {
-            fs,
-            network,
-            git: GitSandboxPolicy::default(),
-        }
+        SandboxPolicy { fs, network }
     }
 
     /// Serialize these grants for persistence in the thread's database row.
@@ -491,7 +457,6 @@ impl ThreadSandboxGrants {
                 .map(|host| host.to_string())
                 .collect(),
             network_any_host: self.network_any_host,
-            allow_git_access: self.allow_git_access,
             allow_fs_write_all: self.allow_fs_write_all,
             unsandboxed: self.unsandboxed,
             sandbox_fallback: self.sandbox_fallback,
@@ -514,7 +479,6 @@ impl ThreadSandboxGrants {
         Self {
             network_any_host: db.network_any_host,
             network_hosts,
-            allow_git_access: db.allow_git_access,
             allow_fs_write_all: db.allow_fs_write_all,
             unsandboxed: db.unsandboxed,
             sandbox_fallback: db.sandbox_fallback,
@@ -534,7 +498,6 @@ impl ThreadSandboxGrants {
                 }
             }
         }
-        self.allow_git_access |= request.allow_git_access;
         self.allow_fs_write_all |= request.allow_fs_write_all;
         self.unsandboxed |= request.unsandboxed;
         for path in &request.write_paths {
@@ -586,9 +549,6 @@ impl ThreadSandboxGrants {
         }
         SandboxRequest {
             network,
-            allow_git_access: persistent.allow_git_access
-                || self.allow_git_access
-                || request.allow_git_access,
             allow_fs_write_all: persistent.allow_fs_write_all
                 || self.allow_fs_write_all
                 || request.allow_fs_write_all,
@@ -643,7 +603,6 @@ mod tests {
     fn request(network: NetworkRequest, all: bool, paths: &[&str]) -> SandboxRequest {
         SandboxRequest {
             network,
-            allow_git_access: false,
             allow_fs_write_all: all,
             unsandboxed: false,
             write_paths: paths.iter().map(PathBuf::from).collect(),
@@ -653,7 +612,6 @@ mod tests {
     fn unsandboxed_request() -> SandboxRequest {
         SandboxRequest {
             network: NetworkRequest::None,
-            allow_git_access: false,
             allow_fs_write_all: false,
             unsandboxed: true,
             write_paths: Vec::new(),
@@ -675,6 +633,7 @@ mod tests {
                     .iter()
                     .map(|p| HostFilesystemLocation::new(p).expect("capture temp dir"))
                     .collect(),
+                protected_paths: Vec::new(),
             },
             network: if hosts.is_empty() {
                 SandboxNetPolicy::Blocked
@@ -683,7 +642,6 @@ mod tests {
                     allowed_domains: hosts.iter().map(|h| h.to_string()).collect(),
                 }
             },
-            git: GitSandboxPolicy::default(),
         };
 
         // Unsandboxed on either side wins — the agent runs with ambient access.
@@ -783,7 +741,8 @@ mod tests {
             SandboxFsPolicy::Restricted {
                 writable_paths: vec![
                     HostFilesystemLocation::new(build_dir.path()).expect("capture temp dir")
-                ]
+                ],
+                protected_paths: Vec::new(),
             }
         );
         assert_eq!(
@@ -798,7 +757,8 @@ mod tests {
         assert_eq!(
             empty.fs,
             SandboxFsPolicy::Restricted {
-                writable_paths: Vec::new()
+                writable_paths: Vec::new(),
+                protected_paths: Vec::new(),
             }
         );
         assert_eq!(empty.network, SandboxNetPolicy::Blocked);
@@ -828,7 +788,8 @@ mod tests {
             SandboxFsPolicy::Restricted {
                 writable_paths: vec![
                     HostFilesystemLocation::new(log_dir.path()).expect("capture temp dir")
-                ]
+                ],
+                protected_paths: Vec::new(),
             }
         );
         assert_eq!(
@@ -1031,33 +992,6 @@ mod tests {
     }
 
     #[test]
-    fn git_access_grant_tracked_independently() {
-        let mut git_request = request(NetworkRequest::None, false, &[]);
-        git_request.allow_git_access = true;
-
-        let mut grants = ThreadSandboxGrants::default();
-        assert!(!covers(&grants, &git_request));
-
-        grants.record(&git_request);
-        assert!(covers(&grants, &git_request));
-        assert!(!covers(
-            &grants,
-            &request(NetworkRequest::AnyHost, false, &[])
-        ));
-        assert!(!covers(&grants, &request(NetworkRequest::None, true, &[])));
-    }
-
-    #[test]
-    fn unrestricted_writes_do_not_cover_git_access() {
-        let mut grants = ThreadSandboxGrants::default();
-        grants.record(&request(NetworkRequest::None, true, &[]));
-
-        let mut git_request = request(NetworkRequest::None, false, &[]);
-        git_request.allow_git_access = true;
-        assert!(!covers(&grants, &git_request));
-    }
-
-    #[test]
     fn persistent_grants_combine_with_thread_grants() {
         let mut grants = ThreadSandboxGrants::default();
         grants.record(&request(hosts(&["github.com"]), false, &[]));
@@ -1189,7 +1123,6 @@ mod tests {
         let grants = ThreadSandboxGrants::default();
         let persistent = SandboxPermissions {
             allow_all_hosts: true,
-            allow_git_access: true,
             write_paths: vec![PathBuf::from("/tmp/always")],
             ..Default::default()
         };
@@ -1197,7 +1130,6 @@ mod tests {
         let effective = grants
             .effective_with_persistent(&request(NetworkRequest::None, false, &[]), &persistent);
         assert_eq!(effective.network, NetworkRequest::AnyHost);
-        assert!(effective.allow_git_access);
         assert_eq!(effective.write_paths, vec![PathBuf::from("/tmp/always")]);
     }
 

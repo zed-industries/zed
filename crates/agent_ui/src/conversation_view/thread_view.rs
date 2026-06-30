@@ -20,7 +20,7 @@ use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
-use sandbox::{GitSandboxPolicy, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
+use sandbox::{SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
 use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
@@ -5614,7 +5614,6 @@ impl Render for TokenUsageTooltip {
 struct SandboxPolicyDisplay {
     fs: SandboxFsDisplay,
     network: SandboxNetPolicy,
-    git: SandboxGitDisplay,
 }
 
 /// The filesystem write-access portion of a [`SandboxPolicyDisplay`].
@@ -5636,14 +5635,6 @@ enum WritableEntryDisplay {
     IsolatedTmp,
 }
 
-/// The Git-access portion of a [`SandboxPolicyDisplay`]: whether `.git` writes
-/// are granted, and the (display-only) `.git` directories the policy governs.
-#[derive(Clone)]
-struct SandboxGitDisplay {
-    allowed: bool,
-    git_dirs: Vec<String>,
-}
-
 impl SandboxPolicyDisplay {
     /// Display a policy verbatim (used for the per-thread overrides, which carry
     /// no implicit baseline grants). Takes the policy by reference and stringifies
@@ -5651,7 +5642,7 @@ impl SandboxPolicyDisplay {
     fn from_policy(policy: &SandboxPolicy) -> Self {
         let fs = match &policy.fs {
             SandboxFsPolicy::Unrestricted => SandboxFsDisplay::Unrestricted,
-            SandboxFsPolicy::Restricted { writable_paths } => SandboxFsDisplay::Restricted(
+            SandboxFsPolicy::Restricted { writable_paths, .. } => SandboxFsDisplay::Restricted(
                 writable_paths
                     .iter()
                     .map(|location| {
@@ -5663,21 +5654,6 @@ impl SandboxPolicyDisplay {
         SandboxPolicyDisplay {
             fs,
             network: policy.network.clone(),
-            git: SandboxGitDisplay::from_policy(&policy.git),
-        }
-    }
-}
-
-impl SandboxGitDisplay {
-    /// Stringify a Git policy's `.git` directories for display, retaining no fds.
-    fn from_policy(git: &GitSandboxPolicy) -> Self {
-        SandboxGitDisplay {
-            allowed: git.allows_writes(),
-            git_dirs: git
-                .git_dirs()
-                .iter()
-                .map(|location| location.untrusted_path_display().to_string())
-                .collect(),
         }
     }
 }
@@ -5695,7 +5671,7 @@ fn augment_settings_sandbox_policy(
 ) -> SandboxPolicyDisplay {
     let fs = match &policy.fs {
         SandboxFsPolicy::Unrestricted => SandboxFsDisplay::Unrestricted,
-        SandboxFsPolicy::Restricted { writable_paths } => {
+        SandboxFsPolicy::Restricted { writable_paths, .. } => {
             // Dedup by display string. We deliberately don't open the locations'
             // fds to dedup by inode here: this is a display-only tooltip and the
             // string is the location's identity for that purpose. The string can
@@ -5730,15 +5706,12 @@ fn augment_settings_sandbox_policy(
     SandboxPolicyDisplay {
         fs,
         network: policy.network.clone(),
-        git: SandboxGitDisplay::from_policy(&policy.git),
     }
 }
 
 fn sandbox_section(title: &str, policy: &SandboxPolicyDisplay, show_empty: bool) -> SandboxSection {
     let write_empty = fs_grants_nothing(&policy.fs);
     let network_empty = network_grants_nothing(&policy.network);
-    let git_empty = git_grants_nothing(&policy.git);
-
     let mut section = SandboxSection::new(title.to_string());
 
     if show_empty || !write_empty {
@@ -5751,40 +5724,13 @@ fn sandbox_section(title: &str, policy: &SandboxPolicyDisplay, show_empty: bool)
             .group(SandboxGroup::new("Network Access").rows(sandbox_network_rows(&policy.network)));
     }
 
-    if !git_empty {
-        section = section
-            .group(SandboxGroup::new("Git Metadata Access").rows(sandbox_git_rows(&policy.git)));
-    }
-
     section
 }
 
 /// Whether a policy grants nothing worth surfacing, used to decide whether to
 /// show the per-thread overrides section at all.
 fn sandbox_policy_grants_nothing(policy: &SandboxPolicyDisplay) -> bool {
-    fs_grants_nothing(&policy.fs)
-        && network_grants_nothing(&policy.network)
-        && git_grants_nothing(&policy.git)
-}
-
-/// Git access grants nothing to surface unless `.git` writes are allowed *and*
-/// at least one `.git` directory is known.
-fn git_grants_nothing(git: &SandboxGitDisplay) -> bool {
-    !git.allowed || git.git_dirs.is_empty()
-}
-
-/// Rows for the Git-access group: one row per writable `.git` directory (these
-/// may live outside the project for a linked worktree).
-fn sandbox_git_rows(git: &SandboxGitDisplay) -> Vec<SandboxRow> {
-    if !git.allowed {
-        return Vec::new();
-    }
-    git.git_dirs
-        .iter()
-        // The display string was captured up front; reconstruct a throwaway path
-        // here purely to render a label + icon (never used as an identity).
-        .map(|dir| SandboxRow::git(PathBuf::from(dir)))
-        .collect()
+    fs_grants_nothing(&policy.fs) && network_grants_nothing(&policy.network)
 }
 
 fn fs_grants_nothing(fs: &SandboxFsDisplay) -> bool {
@@ -5810,7 +5756,7 @@ fn sandbox_fs_rows(fs: &SandboxFsDisplay) -> Vec<SandboxRow> {
         SandboxFsDisplay::Restricted(entries) => entries
             .iter()
             .map(|entry| match entry {
-                // The display string was captured up front; see `sandbox_git_rows`.
+                // The display string was captured up front.
                 WritableEntryDisplay::Path(path) => SandboxRow::path(PathBuf::from(path)),
                 #[cfg(target_os = "linux")]
                 WritableEntryDisplay::IsolatedTmp => {
@@ -8289,12 +8235,7 @@ impl ThreadView {
     ) -> AnyElement {
         let has_network = details.network_all_hosts || !details.network_hosts.is_empty();
         let has_write = details.allow_fs_write_all || !details.write_paths.is_empty();
-        if !has_network
-            && !has_write
-            && !details.allow_git_access
-            && !details.unsandboxed
-            && details.reason.is_empty()
-        {
+        if !has_network && !has_write && !details.unsandboxed && details.reason.is_empty() {
             return Empty.into_any_element();
         }
 
@@ -8506,23 +8447,6 @@ impl ThreadView {
                 )
         });
 
-        let git_access_section = details.allow_git_access.then(|| {
-            v_flex().px_2().py_1().gap_0p5().child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Icon::new(IconName::GitBranch)
-                            .color(Color::Muted)
-                            .size(IconSize::Small),
-                    )
-                    .child(
-                        Label::new("Git metadata access")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-            )
-        });
-
         let reason_section = (!details.reason.is_empty()).then(|| {
             v_flex()
                 .px_2()
@@ -8542,7 +8466,6 @@ impl ThreadView {
         v_flex()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
-            .children(git_access_section)
             .children(network_section)
             .children(write_section)
             .children(unsandboxed_section)

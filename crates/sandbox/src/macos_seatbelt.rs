@@ -211,7 +211,7 @@ fn generate_seatbelt_config(
 ) -> Result<String> {
     // These paths are already the canonical identities captured once, at
     // validation time, inside each `HostFilesystemLocation` (resolving symlinks
-    // and, for a not-yet-created `.git`, its existing parent). We deliberately do
+    // and, for a not-yet-created leaf, its existing parent). We deliberately do
     // NOT re-canonicalize here: re-resolving a path at profile-generation time
     // is the time-of-check-to-time-of-use hole this design closes. Use them
     // verbatim as Seatbelt rule literals.
@@ -311,11 +311,10 @@ fn generate_seatbelt_config(
     for protected_path in &canonical_protected_paths {
         let escaped_path = escape_sandbox_path(protected_path)?;
         // `subpath` already matches the path itself plus everything beneath it,
-        // so it covers both a `.git` directory and a linked worktree's `.git`
-        // gitlink file without a redundant `literal` rule.
+        // so no redundant `literal` rule is needed.
         config.push_str(&format!(
             r#"
-; Block Git metadata content access unless Git access is approved
+; Block protected path content access
 (deny file-read-data file-write*
     (subpath "{escaped_path}"))
 "#
