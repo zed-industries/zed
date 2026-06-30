@@ -203,7 +203,7 @@ pub(crate) enum PaintOperation {
     EndLayer,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[expect(missing_docs)]
 pub enum Primitive {
     Shadow(Shadow),
