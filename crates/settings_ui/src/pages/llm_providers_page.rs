@@ -247,16 +247,13 @@ fn render_subpage_body(
         .gap_4()
         .items_center()
         .justify_between()
-        .child(
-            v_flex()
-                .w_full()
-                .min_w_0()
-                .max_w_1_2()
-                .child(Label::new("Configure Provider"))
-                .when_some(description, |this, description| {
-                    this.child(render_inline_description(provider_name, description))
-                }),
-        )
+        .child(v_flex().w_full().min_w_0().max_w_1_2().map(|this| {
+            if let Some(description) = description {
+                this.child(render_inline_description(provider_name, description))
+            } else {
+                this.child(Label::new("Configure Provider"))
+            }
+        }))
         .child(
             Button::new(format!("configure-{}", provider_id.0), "Configure")
                 .style(ButtonStyle::OutlinedGhost)
