@@ -1499,10 +1499,6 @@ impl ConfigurationView {
             .detach_and_log_err(cx);
     }
 
-    fn should_render_editor(&self, cx: &Context<Self>) -> bool {
-        self.state.read(cx).is_authenticated()
-    }
-
     fn on_tab(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut Context<Self>) {
         window.focus_next(cx);
     }
@@ -1584,7 +1580,7 @@ impl Render for ConfigurationView {
             None
         };
 
-        if self.should_render_editor(cx) {
+        if self.state.read(cx).is_authenticated() {
             return ConfiguredApiCard::new(configured_label)
                 .disabled(env_var_set || is_settings_derived)
                 .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx)))
