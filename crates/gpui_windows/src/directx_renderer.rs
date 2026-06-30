@@ -94,7 +94,8 @@ struct DirectXRenderPipelines {
 
 struct DirectXGlobalElements {
     global_params_buffer: Option<ID3D11Buffer>,
-    sampler: Option<ID3D11SamplerState>,
+    sampler_linear: Option<ID3D11SamplerState>,
+    sampler_nearest: Option<ID3D11SamplerState>,
 }
 
 struct DirectComposition {
@@ -334,9 +335,11 @@ impl DirectXRenderer {
                 PrimitiveBatch::SubpixelSprites { texture_id, range } => {
                     self.draw_subpixel_sprites(texture_id, range.start, range.len())
                 }
-                PrimitiveBatch::PolychromeSprites { texture_id, range } => {
-                    self.draw_polychrome_sprites(texture_id, range.start, range.len())
-                }
+                PrimitiveBatch::PolychromeSprites {
+                    texture_id,
+                    filter,
+                    range,
+                } => self.draw_polychrome_sprites(texture_id, filter, range.start, range.len()),
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(&scene.surfaces[range]),
             }
             .context(format!(
@@ -603,7 +606,7 @@ impl DirectXRenderer {
             slice::from_ref(&resources.path_intermediate_srv),
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
-            slice::from_ref(&self.globals.sampler),
+            slice::from_ref(&self.globals.sampler_linear),
             sprites.len() as u32,
         )
     }
@@ -643,7 +646,7 @@ impl DirectXRenderer {
             &texture_view,
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
-            slice::from_ref(&self.globals.sampler),
+            slice::from_ref(&self.globals.sampler_linear),
             start as u32,
             len as u32,
         )
@@ -667,7 +670,7 @@ impl DirectXRenderer {
             &texture_view,
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
-            slice::from_ref(&self.globals.sampler),
+            slice::from_ref(&self.globals.sampler_linear),
             start as u32,
             len as u32,
         )
@@ -676,6 +679,7 @@ impl DirectXRenderer {
     fn draw_polychrome_sprites(
         &mut self,
         texture_id: AtlasTextureId,
+        filter: ImageFilter,
         start: usize,
         len: usize,
     ) -> Result<()> {
@@ -685,13 +689,17 @@ impl DirectXRenderer {
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
         let texture_view = self.atlas.get_texture_view(texture_id);
+        let sampler = match filter {
+            ImageFilter::Linear => &self.globals.sampler_linear,
+            ImageFilter::Nearest => &self.globals.sampler_nearest,
+        };
         self.pipelines.poly_sprites.draw_range_with_texture(
             &devices.device,
             &devices.device_context,
             &texture_view,
             slice::from_ref(&resources.viewport),
             slice::from_ref(&self.globals.global_params_buffer),
-            slice::from_ref(&self.globals.sampler),
+            slice::from_ref(sampler),
             start as u32,
             len as u32,
         )
@@ -933,9 +941,26 @@ impl DirectXGlobalElements {
             buffer
         };
 
-        let sampler = unsafe {
+        let sampler_linear = unsafe {
             let desc = D3D11_SAMPLER_DESC {
                 Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                AddressU: D3D11_TEXTURE_ADDRESS_WRAP,
+                AddressV: D3D11_TEXTURE_ADDRESS_WRAP,
+                AddressW: D3D11_TEXTURE_ADDRESS_WRAP,
+                MipLODBias: 0.0,
+                MaxAnisotropy: 1,
+                ComparisonFunc: D3D11_COMPARISON_ALWAYS,
+                BorderColor: [0.0; 4],
+                MinLOD: 0.0,
+                MaxLOD: D3D11_FLOAT32_MAX,
+            };
+            let mut output = None;
+            device.CreateSamplerState(&desc, Some(&mut output))?;
+            output
+        };
+        let sampler_nearest = unsafe {
+            let desc = D3D11_SAMPLER_DESC {
+                Filter: D3D11_FILTER_MIN_MAG_MIP_POINT,
                 AddressU: D3D11_TEXTURE_ADDRESS_WRAP,
                 AddressV: D3D11_TEXTURE_ADDRESS_WRAP,
                 AddressW: D3D11_TEXTURE_ADDRESS_WRAP,
@@ -953,7 +978,8 @@ impl DirectXGlobalElements {
 
         Ok(Self {
             global_params_buffer,
-            sampler,
+            sampler_linear,
+            sampler_nearest,
         })
     }
 }

@@ -1,8 +1,8 @@
 use crate::{
     AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength, Element, ElementId,
-    Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId, InteractiveElement,
-    Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, Resource,
-    SharedString, SharedUri, StyleRefinement, Styled, Task, Window, px,
+    Entity, GlobalElementId, Hitbox, Image, ImageCache, ImageFilter, InspectorElementId,
+    InteractiveElement, Interactivity, IntoElement, LayoutId, Length, ObjectFit, Pixels,
+    RenderImage, Resource, SharedString, SharedUri, StyleRefinement, Styled, Task, Window, px,
 };
 use anyhow::Result;
 
@@ -127,6 +127,7 @@ where
 /// The style of an image element.
 pub struct ImageStyle {
     grayscale: bool,
+    filter: ImageFilter,
     object_fit: ObjectFit,
     loading: Option<Box<dyn Fn() -> AnyElement>>,
     fallback: Option<Box<dyn Fn() -> AnyElement>>,
@@ -136,6 +137,7 @@ impl Default for ImageStyle {
     fn default() -> Self {
         Self {
             grayscale: false,
+            filter: ImageFilter::default(),
             object_fit: ObjectFit::Contain,
             loading: None,
             fallback: None,
@@ -151,6 +153,12 @@ pub trait StyledImage: Sized {
     /// Set the image to be displayed in grayscale.
     fn grayscale(mut self, grayscale: bool) -> Self {
         self.image_style().grayscale = grayscale;
+        self
+    }
+
+    /// Pick the sampling filter used when the image is scaled.
+    fn image_filter(mut self, filter: ImageFilter) -> Self {
+        self.image_style().filter = filter;
         self
     }
 
@@ -497,6 +505,7 @@ impl Element for Img {
                             data,
                             layout_state.frame_index,
                             self.style.grayscale,
+                            self.style.filter,
                         )
                         .log_err();
                 } else if let Some(replacement) = &mut layout_state.replacement {

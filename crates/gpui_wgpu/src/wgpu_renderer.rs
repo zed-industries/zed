@@ -1,9 +1,9 @@
 use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use bytemuck::{Pod, Zeroable};
 use gpui::{
-    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
-    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
-    Underline, get_gamma_correction_ratios,
+    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, ImageFilter, MonochromeSprite,
+    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
+    SubpixelSprite, Underline, get_gamma_correction_ratios,
 };
 use log::warn;
 #[cfg(not(target_family = "wasm"))]
@@ -111,7 +111,8 @@ struct WgpuResources {
     surface: wgpu::Surface<'static>,
     pipelines: WgpuPipelines,
     bind_group_layouts: WgpuBindGroupLayouts,
-    atlas_sampler: wgpu::Sampler,
+    atlas_sampler_linear: wgpu::Sampler,
+    atlas_sampler_nearest: wgpu::Sampler,
     globals_buffer: wgpu::Buffer,
     globals_bind_group: wgpu::BindGroup,
     path_globals_bind_group: wgpu::BindGroup,
@@ -361,10 +362,16 @@ impl WgpuRenderer {
             dual_source_blending,
         );
 
-        let atlas_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("atlas_sampler"),
+        let atlas_sampler_linear = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("atlas_sampler_linear"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let atlas_sampler_nearest = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("atlas_sampler_nearest"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
 
@@ -452,7 +459,8 @@ impl WgpuRenderer {
             surface,
             pipelines,
             bind_group_layouts,
-            atlas_sampler,
+            atlas_sampler_linear,
+            atlas_sampler_nearest,
             globals_buffer,
             globals_bind_group,
             path_globals_bind_group,
@@ -1293,13 +1301,17 @@ impl WgpuRenderer {
                                 &mut instance_offset,
                                 &mut pass,
                             ),
-                        PrimitiveBatch::PolychromeSprites { texture_id, range } => self
-                            .draw_polychrome_sprites(
-                                &scene.polychrome_sprites[range],
-                                texture_id,
-                                &mut instance_offset,
-                                &mut pass,
-                            ),
+                        PrimitiveBatch::PolychromeSprites {
+                            texture_id,
+                            filter,
+                            range,
+                        } => self.draw_polychrome_sprites(
+                            &scene.polychrome_sprites[range],
+                            texture_id,
+                            filter,
+                            &mut instance_offset,
+                            &mut pass,
+                        ),
                         PrimitiveBatch::Surfaces(_surfaces) => {
                             // Surfaces are macOS-only for video playback
                             // Not implemented for Linux/wgpu
@@ -1392,11 +1404,13 @@ impl WgpuRenderer {
     ) -> bool {
         let tex_info = self.atlas.get_texture_info(texture_id);
         let data = unsafe { Self::instance_bytes(sprites) };
+        let resources = self.resources();
         self.draw_instances_with_texture(
             data,
             sprites.len() as u32,
             &tex_info.view,
-            &self.resources().pipelines.mono_sprites,
+            &resources.atlas_sampler_linear,
+            &resources.pipelines.mono_sprites,
             instance_offset,
             pass,
         )
@@ -1421,6 +1435,7 @@ impl WgpuRenderer {
             data,
             sprites.len() as u32,
             &tex_info.view,
+            &resources.atlas_sampler_linear,
             pipeline,
             instance_offset,
             pass,
@@ -1431,16 +1446,23 @@ impl WgpuRenderer {
         &self,
         sprites: &[PolychromeSprite],
         texture_id: AtlasTextureId,
+        filter: ImageFilter,
         instance_offset: &mut u64,
         pass: &mut wgpu::RenderPass<'_>,
     ) -> bool {
         let tex_info = self.atlas.get_texture_info(texture_id);
         let data = unsafe { Self::instance_bytes(sprites) };
+        let resources = self.resources();
+        let sampler = match filter {
+            ImageFilter::Linear => &resources.atlas_sampler_linear,
+            ImageFilter::Nearest => &resources.atlas_sampler_nearest,
+        };
         self.draw_instances_with_texture(
             data,
             sprites.len() as u32,
             &tex_info.view,
-            &self.resources().pipelines.poly_sprites,
+            sampler,
+            &resources.pipelines.poly_sprites,
             instance_offset,
             pass,
         )
@@ -1483,6 +1505,7 @@ impl WgpuRenderer {
         data: &[u8],
         instance_count: u32,
         texture_view: &wgpu::TextureView,
+        sampler: &wgpu::Sampler,
         pipeline: &wgpu::RenderPipeline,
         instance_offset: &mut u64,
         pass: &mut wgpu::RenderPass<'_>,
@@ -1510,7 +1533,7 @@ impl WgpuRenderer {
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&resources.atlas_sampler),
+                        resource: wgpu::BindingResource::Sampler(sampler),
                     },
                 ],
             });
@@ -1563,6 +1586,7 @@ impl WgpuRenderer {
             sprite_data,
             sprites.len() as u32,
             path_intermediate_view,
+            &resources.atlas_sampler_linear,
             &resources.pipelines.paths,
             instance_offset,
             pass,
