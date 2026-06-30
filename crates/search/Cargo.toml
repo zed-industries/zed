@@ -34,6 +34,7 @@ language.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 picker.workspace = true
+picker_preview.workspace = true
 project.workspace = true
 serde.workspace = true
 serde_json.workspace = true

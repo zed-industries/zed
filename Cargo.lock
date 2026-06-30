@@ -288,6 +288,7 @@ dependencies = [
  "quick-xml 0.38.3",
  "rand 0.9.4",
  "regex",
+ "release_channel",
  "reqwest_client",
  "rust-embed",
  "sandbox",
@@ -6596,6 +6597,7 @@ dependencies = [
  "menu",
  "open_path_prompt",
  "picker",
+ "picker_preview",
  "pretty_assertions",
  "project",
  "project_panel",
@@ -11439,6 +11441,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases 0.2.1",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -13454,9 +13457,7 @@ dependencies = [
  "gpui",
  "language",
  "menu",
- "multi_buffer",
  "project",
- "rope",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -13468,6 +13469,23 @@ dependencies = [
  "util",
  "workspace",
  "zed_actions",
+]
+
+[[package]]
+name = "picker_preview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "gpui",
+ "language",
+ "multi_buffer",
+ "picker",
+ "project",
+ "rope",
+ "settings",
+ "ui",
+ "util",
 ]
 
 [[package]]
@@ -15955,6 +15973,7 @@ dependencies = [
  "http_proxy",
  "libc",
  "log",
+ "nix 0.29.0",
  "serde",
  "serde_json",
  "smol",
@@ -16237,6 +16256,7 @@ dependencies = [
  "menu",
  "multi_buffer",
  "picker",
+ "picker_preview",
  "pretty_assertions",
  "project",
  "serde",

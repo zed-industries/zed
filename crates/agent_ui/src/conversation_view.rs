@@ -244,6 +244,17 @@ impl ProfileProvider for Entity<agent::Thread> {
     fn model_selected(&self, cx: &App) -> bool {
         self.read(cx).model().is_some()
     }
+
+    fn is_restricted(&self, cx: &App) -> bool {
+        project::trusted_worktrees::TrustedWorktrees::has_restricted_worktrees(
+            &self.read(cx).project().read(cx).worktree_store(),
+            cx,
+        )
+    }
+
+    fn profile_downgraded(&self, cx: &App) -> bool {
+        self.read(cx).profile_was_downgraded()
+    }
 }
 
 #[derive(Default)]
@@ -1160,7 +1171,6 @@ impl ConversationView {
 
         // Check for config options first
         // Config options take precedence over legacy mode/model selectors
-        // (feature flag gating happens at the data layer)
         let config_options_provider = connection.session_config_options(&session_id, cx);
 
         let config_options_view;

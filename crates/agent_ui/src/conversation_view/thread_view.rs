@@ -4645,7 +4645,7 @@ impl ThreadView {
             // Sandboxed by settings, but disabled for this thread: show the
             // settings scope (greyed) for context above the disabled status.
             (ThreadSandbox::Sandboxed(settings_policy), ThreadSandbox::Unsandboxed) => {
-                let settings = augment_settings_sandbox_policy(settings_policy, baseline);
+                let settings = augment_settings_sandbox_policy(&settings_policy, baseline);
                 SandboxStatusTooltip::disabled_for_thread(sandbox_section(
                     "Defined in your settings:",
                     &settings,
@@ -4656,10 +4656,11 @@ impl ThreadView {
                 ThreadSandbox::Sandboxed(settings_policy),
                 ThreadSandbox::Sandboxed(thread_policy),
             ) => {
-                let settings = augment_settings_sandbox_policy(settings_policy, baseline);
+                let settings = augment_settings_sandbox_policy(&settings_policy, baseline);
+                let thread = SandboxPolicyDisplay::from_policy(&thread_policy);
                 // Omit the per-thread section when it grants nothing extra.
-                let thread = (!sandbox_policy_grants_nothing(&thread_policy))
-                    .then(|| sandbox_section("Allowed for this thread:", &thread_policy, false));
+                let thread = (!sandbox_policy_grants_nothing(&thread))
+                    .then(|| sandbox_section("Allowed for this thread:", &thread, false));
                 SandboxStatusTooltip::enabled(
                     sandbox_section("Defined in your settings:", &settings, true),
                     thread,
@@ -5604,6 +5605,83 @@ impl Render for TokenUsageTooltip {
     }
 }
 
+/// A display-ready snapshot of a sandbox policy for the status tooltip.
+///
+/// The opaque `HostFilesystemLocation`s in a policy are stringified up front,
+/// when this is built, so the tooltip state (which outlives the build and is
+/// captured by the lazy tooltip closure) never holds the locations' fds open.
+#[derive(Clone)]
+struct SandboxPolicyDisplay {
+    fs: SandboxFsDisplay,
+    network: SandboxNetPolicy,
+    git: SandboxGitDisplay,
+}
+
+/// The filesystem write-access portion of a [`SandboxPolicyDisplay`].
+#[derive(Clone)]
+enum SandboxFsDisplay {
+    Unrestricted,
+    Restricted(Vec<WritableEntryDisplay>),
+}
+
+/// A single writable entry to display in the sandbox tooltip: either a real host
+/// location (already stringified for display) or the Linux-only host-isolated
+/// `/tmp` overlay, which has no backing host path and is purely a label.
+#[derive(Clone)]
+enum WritableEntryDisplay {
+    Path(String),
+    // Only ever constructed on Linux (the bwrap `--tmpfs /tmp` overlay), so the
+    // variant is gated to match and avoid dead-code warnings elsewhere.
+    #[cfg(target_os = "linux")]
+    IsolatedTmp,
+}
+
+/// The Git-access portion of a [`SandboxPolicyDisplay`]: whether `.git` writes
+/// are granted, and the (display-only) `.git` directories the policy governs.
+#[derive(Clone)]
+struct SandboxGitDisplay {
+    allowed: bool,
+    git_dirs: Vec<String>,
+}
+
+impl SandboxPolicyDisplay {
+    /// Display a policy verbatim (used for the per-thread overrides, which carry
+    /// no implicit baseline grants). Takes the policy by reference and stringifies
+    /// its locations immediately, so no fd is retained past this call.
+    fn from_policy(policy: &SandboxPolicy) -> Self {
+        let fs = match &policy.fs {
+            SandboxFsPolicy::Unrestricted => SandboxFsDisplay::Unrestricted,
+            SandboxFsPolicy::Restricted { writable_paths } => SandboxFsDisplay::Restricted(
+                writable_paths
+                    .iter()
+                    .map(|location| {
+                        WritableEntryDisplay::Path(location.untrusted_path_display().to_string())
+                    })
+                    .collect(),
+            ),
+        };
+        SandboxPolicyDisplay {
+            fs,
+            network: policy.network.clone(),
+            git: SandboxGitDisplay::from_policy(&policy.git),
+        }
+    }
+}
+
+impl SandboxGitDisplay {
+    /// Stringify a Git policy's `.git` directories for display, retaining no fds.
+    fn from_policy(git: &GitSandboxPolicy) -> Self {
+        SandboxGitDisplay {
+            allowed: git.allows_writes(),
+            git_dirs: git
+                .git_dirs()
+                .iter()
+                .map(|location| location.untrusted_path_display().to_string())
+                .collect(),
+        }
+    }
+}
+
 /// Fold the always-granted baseline writable paths (the project's worktree
 /// roots, derived from the same source the terminal tool uses) and, on Linux,
 /// the host-isolated `/tmp` overlay into a settings policy for display. These
@@ -5612,27 +5690,51 @@ impl Render for TokenUsageTooltip {
 /// section rather than stored. A no-op when the fs is unrestricted (rendered as
 /// "All paths"), since there's nothing to scope.
 fn augment_settings_sandbox_policy(
-    mut policy: SandboxPolicy,
+    policy: &SandboxPolicy,
     baseline: Vec<PathBuf>,
-) -> SandboxPolicy {
-    if let SandboxFsPolicy::Restricted { writable_paths } = &mut policy.fs {
-        let mut merged = baseline;
-        for path in writable_paths.drain(..) {
-            if !merged.contains(&path) {
-                merged.push(path);
+) -> SandboxPolicyDisplay {
+    let fs = match &policy.fs {
+        SandboxFsPolicy::Unrestricted => SandboxFsDisplay::Unrestricted,
+        SandboxFsPolicy::Restricted { writable_paths } => {
+            // Dedup by display string. We deliberately don't open the locations'
+            // fds to dedup by inode here: this is a display-only tooltip and the
+            // string is the location's identity for that purpose. The string can
+            // only diverge from the captured inode while a symlink-swap is
+            // actively in progress, and in that case the bind validator refuses
+            // to run the command at all (see the `sandbox` crate) — so showing the
+            // requested path is always safe, and not worth a blocking syscall on
+            // the render path.
+            let mut merged: Vec<String> = Vec::new();
+            let baseline_paths = baseline.iter().map(|path| path.display().to_string());
+            let granted_paths = writable_paths
+                .iter()
+                .map(|location| location.untrusted_path_display().to_string());
+            for path in baseline_paths.chain(granted_paths) {
+                if !merged.contains(&path) {
+                    merged.push(path);
+                }
             }
+            // `mut` is only needed on Linux, where the isolated `/tmp` entry is
+            // pushed below.
+            #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+            let mut entries: Vec<WritableEntryDisplay> =
+                merged.into_iter().map(WritableEntryDisplay::Path).collect();
+            // The ephemeral, host-isolated tmpfs at /tmp is Linux-specific (the
+            // bwrap `--tmpfs /tmp` overlay). It's a display-only label, not a
+            // real host path, so it can't be a captured location.
+            #[cfg(target_os = "linux")]
+            entries.push(WritableEntryDisplay::IsolatedTmp);
+            SandboxFsDisplay::Restricted(entries)
         }
-        // The ephemeral, host-isolated tmpfs at /tmp is Linux-specific (the
-        // bwrap `--tmpfs /tmp` overlay). It's a display-only label, not a real
-        // host path, so it can't come from the path source above.
-        #[cfg(target_os = "linux")]
-        merged.push(PathBuf::from("/tmp (isolated)"));
-        *writable_paths = merged;
+    };
+    SandboxPolicyDisplay {
+        fs,
+        network: policy.network.clone(),
+        git: SandboxGitDisplay::from_policy(&policy.git),
     }
-    policy
 }
 
-fn sandbox_section(title: &str, policy: &SandboxPolicy, show_empty: bool) -> SandboxSection {
+fn sandbox_section(title: &str, policy: &SandboxPolicyDisplay, show_empty: bool) -> SandboxSection {
     let write_empty = fs_grants_nothing(&policy.fs);
     let network_empty = network_grants_nothing(&policy.network);
     let git_empty = git_grants_nothing(&policy.git);
@@ -5659,7 +5761,7 @@ fn sandbox_section(title: &str, policy: &SandboxPolicy, show_empty: bool) -> San
 
 /// Whether a policy grants nothing worth surfacing, used to decide whether to
 /// show the per-thread overrides section at all.
-fn sandbox_policy_grants_nothing(policy: &SandboxPolicy) -> bool {
+fn sandbox_policy_grants_nothing(policy: &SandboxPolicyDisplay) -> bool {
     fs_grants_nothing(&policy.fs)
         && network_grants_nothing(&policy.network)
         && git_grants_nothing(&policy.git)
@@ -5667,24 +5769,26 @@ fn sandbox_policy_grants_nothing(policy: &SandboxPolicy) -> bool {
 
 /// Git access grants nothing to surface unless `.git` writes are allowed *and*
 /// at least one `.git` directory is known.
-fn git_grants_nothing(git: &GitSandboxPolicy) -> bool {
-    !git.allows_writes() || git.git_dirs().is_empty()
+fn git_grants_nothing(git: &SandboxGitDisplay) -> bool {
+    !git.allowed || git.git_dirs.is_empty()
 }
 
 /// Rows for the Git-access group: one row per writable `.git` directory (these
 /// may live outside the project for a linked worktree).
-fn sandbox_git_rows(git: &GitSandboxPolicy) -> Vec<SandboxRow> {
-    match git {
-        GitSandboxPolicy::Allowed { git_dirs } if !git_dirs.is_empty() => git_dirs
-            .iter()
-            .map(|path| SandboxRow::git(path.clone()))
-            .collect(),
-        _ => Vec::new(),
+fn sandbox_git_rows(git: &SandboxGitDisplay) -> Vec<SandboxRow> {
+    if !git.allowed {
+        return Vec::new();
     }
+    git.git_dirs
+        .iter()
+        // The display string was captured up front; reconstruct a throwaway path
+        // here purely to render a label + icon (never used as an identity).
+        .map(|dir| SandboxRow::git(PathBuf::from(dir)))
+        .collect()
 }
 
-fn fs_grants_nothing(fs: &SandboxFsPolicy) -> bool {
-    matches!(fs, SandboxFsPolicy::Restricted { writable_paths } if writable_paths.is_empty())
+fn fs_grants_nothing(fs: &SandboxFsDisplay) -> bool {
+    matches!(fs, SandboxFsDisplay::Restricted(entries) if entries.is_empty())
 }
 
 fn network_grants_nothing(network: &SandboxNetPolicy) -> bool {
@@ -5697,15 +5801,22 @@ fn network_grants_nothing(network: &SandboxNetPolicy) -> bool {
 
 /// Rows for the write-access group: a message for the "all"/"none" cases, or one
 /// row per granted path.
-fn sandbox_fs_rows(fs: &SandboxFsPolicy) -> Vec<SandboxRow> {
+fn sandbox_fs_rows(fs: &SandboxFsDisplay) -> Vec<SandboxRow> {
     match fs {
-        SandboxFsPolicy::Unrestricted => vec![SandboxRow::message("All paths (unrestricted)")],
-        SandboxFsPolicy::Restricted { writable_paths } if writable_paths.is_empty() => {
+        SandboxFsDisplay::Unrestricted => vec![SandboxRow::message("All paths (unrestricted)")],
+        SandboxFsDisplay::Restricted(entries) if entries.is_empty() => {
             vec![SandboxRow::message("None")]
         }
-        SandboxFsPolicy::Restricted { writable_paths } => writable_paths
+        SandboxFsDisplay::Restricted(entries) => entries
             .iter()
-            .map(|path| SandboxRow::path(path.clone()))
+            .map(|entry| match entry {
+                // The display string was captured up front; see `sandbox_git_rows`.
+                WritableEntryDisplay::Path(path) => SandboxRow::path(PathBuf::from(path)),
+                #[cfg(target_os = "linux")]
+                WritableEntryDisplay::IsolatedTmp => {
+                    SandboxRow::path(PathBuf::from("/tmp (isolated)"))
+                }
+            })
             .collect(),
     }
 }
@@ -8265,27 +8376,23 @@ impl ThreadView {
                         }),
                 )
                 .when(has_host_list && is_open, |this| {
-                    this.child(
-                        v_flex()
-                            .id(("sandbox-network-hosts-list", entry_ix))
-                            .max_h_40()
-                            .overflow_y_scroll()
-                            .children(hosts.iter().enumerate().map(|(host_ix, host)| {
-                                h_flex()
-                                    .min_w_0()
-                                    .px_2()
-                                    .py_1p5()
-                                    .bg(cx.theme().colors().editor_background)
-                                    .when(host_ix < hosts.len() - 1, |this| {
-                                        this.border_b_1().border_color(cx.theme().colors().border)
-                                    })
-                                    .child(
-                                        Label::new(host.clone())
-                                            .size(LabelSize::XSmall)
-                                            .buffer_font(cx),
-                                    )
-                            })),
-                    )
+                    this.child(v_flex().children(hosts.iter().enumerate().map(
+                        |(host_ix, host)| {
+                            h_flex()
+                                .min_w_0()
+                                .px_2()
+                                .py_1p5()
+                                .bg(cx.theme().colors().editor_background)
+                                .when(host_ix < hosts.len() - 1, |this| {
+                                    this.border_b_1().border_color(cx.theme().colors().border)
+                                })
+                                .child(
+                                    Label::new(host.clone())
+                                        .size(LabelSize::XSmall)
+                                        .buffer_font(cx),
+                                )
+                        },
+                    )))
                 })
         });
 
@@ -8368,21 +8475,17 @@ impl ThreadView {
                         }),
                 )
                 .when(has_path_list && is_open, |this| {
-                    this.child(
-                        v_flex()
-                            .id(("sandbox-authorization-paths-list", entry_ix))
-                            .max_h_40()
-                            .overflow_y_scroll()
-                            .children(paths.iter().enumerate().map(|(path_ix, path)| {
-                                self.render_sandbox_authorization_path_row(
-                                    entry_ix,
-                                    path_ix,
-                                    path,
-                                    path_ix < paths.len() - 1,
-                                    cx,
-                                )
-                            })),
-                    )
+                    this.child(v_flex().children(paths.iter().enumerate().map(
+                        |(path_ix, path)| {
+                            self.render_sandbox_authorization_path_row(
+                                entry_ix,
+                                path_ix,
+                                path,
+                                path_ix < paths.len() - 1,
+                                cx,
+                            )
+                        },
+                    )))
                 })
         });
 
@@ -8439,9 +8542,9 @@ impl ThreadView {
         v_flex()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
+            .children(git_access_section)
             .children(network_section)
             .children(write_section)
-            .children(git_access_section)
             .children(unsandboxed_section)
             .children(reason_section)
             .into_any_element()
@@ -10921,7 +11024,7 @@ impl ThreadView {
             ),
         };
 
-        let description = "To continue, start a new thread from a summary.";
+        let description = "To continue, run /compact or start a new thread and @-mention this one";
 
         Some(
             Callout::new()
