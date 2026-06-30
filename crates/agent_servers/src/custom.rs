@@ -124,6 +124,107 @@ impl AgentServer for CustomAgentServer {
         });
     }
 
+    fn custom_config_option_value_ids(
+        &self,
+        config_id: &acp::SessionConfigId,
+        cx: &App,
+    ) -> Vec<acp::SessionConfigValueId> {
+        let settings = cx.read_global(|settings: &SettingsStore, _| {
+            settings
+                .get::<AllAgentServersSettings>(None)
+                .get(self.agent_id().0.as_ref())
+                .cloned()
+        });
+
+        settings
+            .as_ref()
+            .and_then(|s| s.custom_config_option_values(config_id.0.as_ref()))
+            .map(|values| {
+                values
+                    .iter()
+                    .cloned()
+                    .map(acp::SessionConfigValueId::new)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn add_custom_config_option_value(
+        &self,
+        config_id: acp::SessionConfigId,
+        value_id: acp::SessionConfigValueId,
+        fs: Arc<dyn Fs>,
+        cx: &App,
+    ) {
+        let agent_id = self.agent_id();
+        let config_id = config_id.to_string();
+        let value_id = value_id.to_string();
+
+        update_settings_file(fs, cx, move |settings, _cx| {
+            let settings = settings
+                .agent_servers
+                .get_or_insert_default()
+                .entry(agent_id.0.to_string())
+                .or_insert_with(default_settings_for_agent);
+
+            match settings {
+                settings::CustomAgentServerSettings::Custom {
+                    custom_config_option_values,
+                    ..
+                }
+                | settings::CustomAgentServerSettings::Registry {
+                    custom_config_option_values,
+                    ..
+                } => {
+                    let entry = custom_config_option_values
+                        .entry(config_id.clone())
+                        .or_insert_with(Vec::new);
+                    if !entry.iter().any(|v| v == &value_id) {
+                        entry.push(value_id.clone());
+                    }
+                }
+            }
+        });
+    }
+
+    fn remove_custom_config_option_value(
+        &self,
+        config_id: acp::SessionConfigId,
+        value_id: acp::SessionConfigValueId,
+        fs: Arc<dyn Fs>,
+        cx: &App,
+    ) {
+        let agent_id = self.agent_id();
+        let config_id = config_id.to_string();
+        let value_id = value_id.to_string();
+
+        update_settings_file(fs, cx, move |settings, _cx| {
+            let settings = settings
+                .agent_servers
+                .get_or_insert_default()
+                .entry(agent_id.0.to_string())
+                .or_insert_with(default_settings_for_agent);
+
+            match settings {
+                settings::CustomAgentServerSettings::Custom {
+                    custom_config_option_values,
+                    ..
+                }
+                | settings::CustomAgentServerSettings::Registry {
+                    custom_config_option_values,
+                    ..
+                } => {
+                    if let Some(entry) = custom_config_option_values.get_mut(&config_id) {
+                        entry.retain(|v| v != &value_id);
+                        if entry.is_empty() {
+                            custom_config_option_values.remove(&config_id);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     fn set_default_mode(&self, mode_id: Option<acp::SessionModeId>, fs: Arc<dyn Fs>, cx: &mut App) {
         let agent_id = self.agent_id();
         update_settings_file(fs, cx, move |settings, _cx| {
@@ -328,6 +429,7 @@ fn default_settings_for_agent() -> settings::CustomAgentServerSettings {
         env: Default::default(),
         default_config_options: Default::default(),
         favorite_config_option_values: Default::default(),
+        custom_config_option_values: Default::default(),
     }
 }
 
@@ -422,6 +524,7 @@ mod tests {
                     default_mode: None,
                     default_config_options: HashMap::default(),
                     favorite_config_option_values: HashMap::default(),
+                    custom_config_option_values: HashMap::default(),
                 },
             )],
         );

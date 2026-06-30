@@ -2946,6 +2946,7 @@ mod tests {
                             "manual".to_string(),
                         )]),
                         favorite_config_option_values: HashMap::default(),
+                        custom_config_option_values: HashMap::default(),
                     }
                     .into(),
                 )])),
