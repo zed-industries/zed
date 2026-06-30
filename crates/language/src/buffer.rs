@@ -2310,55 +2310,34 @@ impl Buffer {
         })
     }
 
-    /// Like [`ensure_final_newline`](Self::ensure_final_newline), but only applies the fix when
-    /// the last line's row falls within one of the given `modified_rows` ranges. Returns an empty
-    /// [`Diff`] when the last line is not in any modified range.
-    pub fn ensure_final_newline_in_range(
-        &self,
-        modified_rows: &[Range<u32>],
-        cx: &App,
-    ) -> Task<Diff> {
+    /// Like [`ensure_final_newline`](Self::ensure_final_newline), but scoped to a "Format
+    /// Selection" operation: it only inserts a final newline when the buffer's last line falls
+    /// within one of the given `modified_rows` ranges, and never modifies rows outside it.
+    ///
+    /// Unlike the whole-buffer [`ensure_final_newline`](Self::ensure_final_newline) (which also
+    /// trims trailing whitespace and collapses blank lines at the end of the file), this only
+    /// appends a single newline when the last line is non-empty. Collapsing trailing blank lines
+    /// is intentionally omitted so that formatting a selection cannot delete unselected rows.
+    pub fn ensure_final_newline_in_range(&self, modified_rows: &[Range<u32>]) -> Diff {
         let len = self.len();
         let line_ending = self.line_ending();
         let base_version = self.version();
-        let last_row = self.max_point().row;
+        let max_point = self.max_point();
 
-        let last_row_is_modified = modified_rows.iter().any(|r| r.contains(&last_row));
-        if len == 0 || !last_row_is_modified {
-            return Task::ready(Diff {
-                base_version,
-                line_ending,
-                edits: Vec::new(),
-            });
+        let last_line_is_empty = max_point.column == 0;
+        let last_row_is_modified = modified_rows
+            .iter()
+            .any(|range| range.contains(&max_point.row));
+        let edits = if len == 0 || last_line_is_empty || !last_row_is_modified {
+            Vec::new()
+        } else {
+            Vec::from([(len..len, Arc::<str>::from("\n"))])
+        };
+        Diff {
+            base_version,
+            line_ending,
+            edits,
         }
-
-        let old_text = self.as_rope().clone();
-        cx.background_spawn(async move {
-            let mut offset = len;
-            for chunk in old_text.reversed_chunks_in_range(0..len) {
-                let non_whitespace_len = chunk
-                    .trim_end_matches(|c: char| c.is_ascii_whitespace())
-                    .len();
-                offset -= chunk.len();
-                offset += non_whitespace_len;
-                if non_whitespace_len != 0 {
-                    if offset == len - 1 && chunk.get(non_whitespace_len..) == Some("\n") {
-                        return Diff {
-                            base_version,
-                            line_ending,
-                            edits: Vec::new(),
-                        };
-                    }
-                    break;
-                }
-            }
-            let newline: Arc<str> = Arc::from("\n");
-            Diff {
-                base_version,
-                line_ending,
-                edits: vec![(offset..len, newline)],
-            }
-        })
     }
 
     /// Applies a diff to the buffer. If the buffer has changed since the given diff was

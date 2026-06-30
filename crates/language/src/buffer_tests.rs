@@ -3757,21 +3757,79 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
     );
 }
 
+#[gpui::test(iterations = 500)]
+fn test_trailing_whitespace_ranges_in_rows(mut rng: StdRng) {
+    let mut text = String::new();
+    for _ in 0..rng.random_range(0..16) {
+        for _ in 0..rng.random_range(0..36) {
+            text.push(match rng.random_range(0..10) {
+                0..=1 => ' ',
+                3 => '\t',
+                _ => rng.random_range('a'..='z'),
+            });
+        }
+        text.push('\n');
+    }
+    match rng.random_range(0..10) {
+        0..=1 => drop(text.pop()),
+        2..=3 => text.push_str(&"\n".repeat(rng.random_range(1..5))),
+        _ => {}
+    }
+
+    let rope = Rope::from(text.as_str());
+    let all_ranges = trailing_whitespace_ranges(&rope);
+    let lines = text.split('\n').collect::<Vec<_>>();
+
+    // A range covering every row must reproduce the unfiltered full scan exactly.
+    assert_eq!(
+        trailing_whitespace_ranges_in_rows(&rope, &[0..u32::MAX]),
+        all_ranges,
+        "full-coverage mismatch for lines:\n{lines:?}",
+    );
+
+    // For a random (possibly gappy) subset of rows, the filtered variant must equal
+    // the full scan restricted to ranges whose line is in the subset.
+    let max_row = rope.max_point().row;
+    let mut row_ranges = Vec::new();
+    let mut row = 0;
+    while row <= max_row {
+        let span = rng.random_range(0..=3);
+        if span > 0 {
+            let end = (row + span).min(max_row + 1);
+            row_ranges.push(row..end);
+            row = end;
+        }
+        row += 1;
+    }
+
+    let expected = all_ranges
+        .iter()
+        .filter(|range| {
+            let row = rope.offset_to_point(range.start).row;
+            row_ranges.iter().any(|r| r.contains(&row))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        trailing_whitespace_ranges_in_rows(&rope, &row_ranges),
+        expected,
+        "subset mismatch for ranges {row_ranges:?} and lines:\n{lines:?}",
+    );
+}
+
 #[gpui::test]
 async fn test_trailing_whitespace_in_ranges(cx: &mut gpui::TestAppContext) {
-    // Lines 0-5:
-    // line 0: "zero"        (no trailing whitespace)
-    // line 1: "one  "       (2 trailing spaces)
-    // line 2: "two"         (no trailing whitespace)
-    // line 3: "three   "    (3 trailing spaces)
-    // line 4: "four"        (no trailing whitespace)
-    // line 5: "five    "    (4 trailing spaces)
+    // line 0: "zero"      (no trailing whitespace)
+    // line 1: "one  "     (2 trailing spaces)
+    // line 2: "two"       (no trailing whitespace)
+    // line 3: "three   "  (3 trailing spaces)
+    // line 4: "four"      (no trailing whitespace)
+    // line 5: "five    "  (4 trailing spaces)
     let text = ["zero", "one  ", "two", "three   ", "four", "five    "].join("\n");
     let buffer = cx.new(|cx| Buffer::local(text, cx));
 
-    // modified_rows covers rows 1..2 and 5..6, so lines 1 and 5 should be cleaned.
-    // Line 3 must remain untouched.
-    let modified_rows = vec![1u32..2u32, 5u32..6u32];
+    // Only rows 1 and 5 are modified, so only those lines get cleaned; line 3 stays untouched.
+    let modified_rows = [1u32..2, 5..6];
     let diff = buffer
         .update(cx, |buffer, cx| {
             buffer.remove_trailing_whitespace_in_ranges(&modified_rows, cx)
@@ -3791,11 +3849,9 @@ async fn test_trailing_whitespace_empty_ranges(cx: &mut gpui::TestAppContext) {
     let text = ["zero", "one  ", "two  "].join("\n");
     let buffer = cx.new(|cx| Buffer::local(text.clone(), cx));
 
-    // Empty modified_rows → no changes.
-    let modified_rows: Vec<std::ops::Range<u32>> = vec![];
     let diff = buffer
         .update(cx, |buffer, cx| {
-            buffer.remove_trailing_whitespace_in_ranges(&modified_rows, cx)
+            buffer.remove_trailing_whitespace_in_ranges(&[], cx)
         })
         .await;
     buffer.update(cx, |buffer, cx| {
@@ -3806,18 +3862,12 @@ async fn test_trailing_whitespace_empty_ranges(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_final_newline_modified_last_line(cx: &mut gpui::TestAppContext) {
-    // Buffer without final newline. Modified ranges include the last line.
+    // No final newline; the modified range (rows 0..3) includes the last line (row 2).
     let text = "line0\nline1\nline2";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
 
-    // The text has 3 lines (rows 0, 1, 2). Modified range includes row 2.
-    let modified_rows = vec![0u32..3u32];
-    let diff = buffer
-        .update(cx, |buffer, cx| {
-            buffer.ensure_final_newline_in_range(&modified_rows, cx)
-        })
-        .await;
     buffer.update(cx, |buffer, cx| {
+        let diff = buffer.ensure_final_newline_in_range(&[0u32..3]);
         buffer.apply_diff(diff, cx);
         assert_eq!(buffer.text(), "line0\nline1\nline2\n");
     });
@@ -3825,21 +3875,43 @@ async fn test_final_newline_modified_last_line(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_final_newline_unmodified_last_line(cx: &mut gpui::TestAppContext) {
-    // Buffer without final newline. Modified ranges do NOT include the last line.
+    // No final newline; the modified range (rows 0..2) excludes the last line (row 2), so nothing changes.
     let text = "line0\nline1\nline2";
     let buffer = cx.new(|cx| Buffer::local(text, cx));
 
-    // The text has 3 lines (rows 0, 1, 2). Modified range only covers rows 0..2 (excludes row 2).
-    let modified_rows = vec![0u32..2u32];
-    let diff = buffer
-        .update(cx, |buffer, cx| {
-            buffer.ensure_final_newline_in_range(&modified_rows, cx)
-        })
-        .await;
     buffer.update(cx, |buffer, cx| {
+        let diff = buffer.ensure_final_newline_in_range(&[0u32..2]);
         buffer.apply_diff(diff, cx);
-        // No newline should have been added.
         assert_eq!(buffer.text(), "line0\nline1\nline2");
+    });
+}
+
+// An empty last line (file already ends with a newline) is left untouched, even with extra
+// trailing blank lines. The whole-buffer `ensure_final_newline` would collapse these; the
+// range-scoped variant must not, to avoid deleting unselected rows.
+#[gpui::test]
+async fn test_final_newline_does_not_collapse_trailing_blank_lines(cx: &mut gpui::TestAppContext) {
+    let text = "line0\nline1\n\n";
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+
+    buffer.update(cx, |buffer, cx| {
+        let diff = buffer.ensure_final_newline_in_range(&[0u32..4]);
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "line0\nline1\n\n");
+    });
+}
+
+// The range-scoped variant only inserts a newline; unlike the whole-buffer
+// `ensure_final_newline`, it does not trim trailing whitespace on the last line.
+#[gpui::test]
+async fn test_final_newline_in_range_only_inserts(cx: &mut gpui::TestAppContext) {
+    let text = "line0\nline1  ";
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+
+    buffer.update(cx, |buffer, cx| {
+        let diff = buffer.ensure_final_newline_in_range(&[0u32..2]);
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "line0\nline1  \n");
     });
 }
 
@@ -3852,7 +3924,7 @@ async fn test_trailing_whitespace_in_ranges_crlf(cx: &mut gpui::TestAppContext) 
         buffer
     });
 
-    let modified_rows = vec![1u32..2u32, 5u32..6u32];
+    let modified_rows = [1u32..2, 5..6];
     let diff = buffer
         .update(cx, |buffer, cx| {
             buffer.remove_trailing_whitespace_in_ranges(&modified_rows, cx)
@@ -3874,13 +3946,8 @@ async fn test_final_newline_in_range_crlf(cx: &mut gpui::TestAppContext) {
         buffer
     });
 
-    let modified_rows = vec![0u32..3u32];
-    let diff = buffer
-        .update(cx, |buffer, cx| {
-            buffer.ensure_final_newline_in_range(&modified_rows, cx)
-        })
-        .await;
     buffer.update(cx, |buffer, cx| {
+        let diff = buffer.ensure_final_newline_in_range(&[0u32..3]);
         buffer.apply_diff(diff, cx);
         assert_eq!(buffer.text(), "line0\nline1\nline2\n");
         assert_eq!(buffer.line_ending(), LineEnding::Windows);

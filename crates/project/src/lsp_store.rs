@@ -1608,17 +1608,36 @@ impl LocalLspStore {
             .handle
             .read_with(cx, |buffer, _| buffer.max_point().row > 0);
 
+        // When formatting a selection, only the rows it spans may be touched.
+        let selection_row_ranges = buffer.ranges.as_ref().map(|ranges| {
+            buffer.handle.read_with(cx, |buffer, _cx| {
+                let snapshot = buffer.snapshot();
+                ranges
+                    .iter()
+                    .map(|range| {
+                        let start = range.start.to_point(&snapshot);
+                        let end = range.end.to_point(&snapshot);
+                        // A selection ending at column 0 of a row only includes that row's
+                        // preceding line break, not its content, so it shouldn't be trimmed.
+                        let end_row = if end.column == 0 && end.row > start.row {
+                            end.row
+                        } else {
+                            end.row + 1
+                        };
+                        start.row..end_row
+                    })
+                    .collect::<Vec<_>>()
+            })
+        });
+
         // handle whitespace formatting
         if settings.remove_trailing_whitespace_on_save {
             zlog::trace!(logger => "removing trailing whitespace");
-            let diff = if let Some(ranges) = buffer.ranges.as_ref() {
-                let row_ranges = buffer.handle.read_with(cx, |buffer, _cx| {
-                    anchor_ranges_to_row_ranges(ranges, buffer)
-                });
+            let diff = if let Some(row_ranges) = &selection_row_ranges {
                 buffer
                     .handle
                     .read_with(cx, |buffer, cx| {
-                        buffer.remove_trailing_whitespace_in_ranges(&row_ranges, cx)
+                        buffer.remove_trailing_whitespace_in_ranges(row_ranges, cx)
                     })
                     .await
             } else {
@@ -1634,16 +1653,10 @@ impl LocalLspStore {
 
         if settings.ensure_final_newline_on_save {
             zlog::trace!(logger => "ensuring final newline");
-            if let Some(ranges) = buffer.ranges.as_ref() {
-                let row_ranges = buffer.handle.read_with(cx, |buffer, _cx| {
-                    anchor_ranges_to_row_ranges(ranges, buffer)
+            if let Some(row_ranges) = &selection_row_ranges {
+                let diff = buffer.handle.read_with(cx, |buffer, _cx| {
+                    buffer.ensure_final_newline_in_range(row_ranges)
                 });
-                let diff = buffer
-                    .handle
-                    .read_with(cx, |buffer, cx| {
-                        buffer.ensure_final_newline_in_range(&row_ranges, cx)
-                    })
-                    .await;
                 extend_formatting_transaction(
                     buffer,
                     formatting_transaction_id,
@@ -2186,12 +2199,8 @@ impl LocalLspStore {
                             formatting_transaction_id,
                             cx,
                             |buffer, cx| {
-                                zlog::info!(
-                                    "Applying edits {edits:?}. Content: {:?}",
-                                    buffer.text()
-                                );
+                                zlog::trace!("Applying {} edits", edits.len());
                                 buffer.edit(edits, None, cx);
-                                zlog::info!("Applied edits. New Content: {:?}", buffer.text());
                             },
                         )?;
                     }
@@ -2340,8 +2349,8 @@ impl LocalLspStore {
             range_formatting_provider,
             Some(OneOf::Left(true) | OneOf::Right(_))
         ) {
-            log::info!(
-                "Skipping range formatting - LSP {} does not support document_range_formatting_provider",
+            log::debug!(
+                "Skipping range formatting: language server {} does not support range formatting",
                 language_server.name()
             );
             return Ok(None);
@@ -3963,18 +3972,6 @@ impl LocalLspStore {
             None
         }
     }
-}
-
-fn anchor_ranges_to_row_ranges(ranges: &[Range<Anchor>], buffer: &Buffer) -> Vec<Range<u32>> {
-    let snapshot = buffer.snapshot();
-    ranges
-        .iter()
-        .map(|r| {
-            let start = r.start.to_point(&snapshot).row;
-            let end = r.end.to_point(&snapshot).row;
-            start..end + 1
-        })
-        .collect()
 }
 
 fn notify_server_capabilities_updated(server: &LanguageServer, cx: &mut Context<LspStore>) {
