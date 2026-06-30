@@ -30,6 +30,7 @@ pub struct WorkspaceSettings {
     pub command_aliases: HashMap<String, CommandAliasTarget>,
     pub max_tabs: Option<NonZeroUsize>,
     pub when_closing_with_no_tabs: settings::CloseWindowWhenNoItems,
+    pub on_last_tab_closed_if_no_project: bool,
     pub on_last_window_closed: settings::OnLastWindowClosed,
     pub text_rendering_mode: settings::TextRenderingMode,
     pub resize_all_panels_in_dock: Vec<DockPosition>,
@@ -111,6 +112,7 @@ impl Settings for WorkspaceSettings {
             command_aliases: workspace.command_aliases.clone(),
             max_tabs: workspace.max_tabs,
             when_closing_with_no_tabs: workspace.when_closing_with_no_tabs.unwrap(),
+            on_last_tab_closed_if_no_project: workspace.on_last_tab_closed_if_no_project.unwrap(),
             on_last_window_closed: workspace.on_last_window_closed.unwrap(),
             text_rendering_mode: workspace.text_rendering_mode.unwrap(),
             resize_all_panels_in_dock: workspace
