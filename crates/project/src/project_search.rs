@@ -112,7 +112,11 @@ impl Search {
         limit: usize,
         cx: &mut App,
     ) -> Self {
-        let worktrees = worktree_store.read(cx).visible_worktrees(cx).collect();
+        let mut worktrees = worktree_store
+            .read(cx)
+            .visible_worktrees(cx)
+            .collect::<Vec<_>>();
+        worktrees.sort_by_key(|worktree| worktree.read(cx).id().to_proto());
         Self {
             kind: SearchKind::Local { fs, worktrees },
             buffer_store,

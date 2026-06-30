@@ -11,7 +11,7 @@ use crate::{
     text_finder::TextFinder,
 };
 use anyhow::Context as _;
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
     SelectionEffects,
@@ -520,7 +520,18 @@ async fn consume_search_stream(
     let mut matches = pin!(search_results.rx.clone().ready_chunks(1024));
 
     let mut limit_reached = false;
-    let mut seen_paths = HashSet::default();
+    let mut stale_paths = if incremental {
+        project_search
+            .read_with(cx, |project_search, cx| {
+                project_search.excerpts.read(cx).existing_excerpt_paths()
+            })
+            .ok()?
+            .into_iter()
+            .peekable()
+    } else {
+        Vec::new().into_iter().peekable()
+    };
+    let mut last_seen_path: Option<PathKey> = None;
     while let Some(results) = matches.next().await {
         let (buffers_with_ranges, has_reached_limit, search_activity) = cx
             .background_executor()
@@ -565,15 +576,25 @@ async fn consume_search_stream(
             if buffers_with_ranges.is_empty() {
                 continue;
             }
-            let (mut chunk_ranges, chunk_paths) = project_search
+            let mut chunk_ranges = project_search
                 .update(cx, |project_search, cx| {
-                    let mut paths = Vec::new();
-                    let futures = project_search.excerpts.update(cx, |excerpts, cx| {
+                    project_search.excerpts.update(cx, |excerpts, cx| {
                         buffers_with_ranges
                             .into_iter()
                             .map(|(buffer, ranges)| {
                                 let path_key = PathKey::for_buffer(&buffer, cx);
-                                paths.push(path_key.clone());
+                                debug_assert!(
+                                    last_seen_path.as_ref().is_none_or(|last| *last <= path_key),
+                                    "incremental search results must be PathKey-sorted"
+                                );
+                                last_seen_path = Some(path_key.clone());
+                                while stale_paths.peek().is_some_and(|stale| *stale < path_key) {
+                                    let stale = stale_paths.next().unwrap();
+                                    excerpts.remove_excerpts(stale, cx);
+                                }
+                                if stale_paths.peek() == Some(&path_key) {
+                                    stale_paths.next();
+                                }
                                 excerpts.set_anchored_excerpts_for_path(
                                     path_key,
                                     buffer,
@@ -583,11 +604,9 @@ async fn consume_search_stream(
                                 )
                             })
                             .collect::<FuturesOrdered<_>>()
-                    });
-                    (futures, paths)
+                    })
                 })
                 .ok()?;
-            seen_paths.extend(chunk_paths);
             while let Some(ranges) = chunk_ranges.next().await {
                 smol::future::yield_now().await;
                 project_search
@@ -597,19 +616,6 @@ async fn consume_search_stream(
                     })
                     .ok()?;
             }
-            project_search
-                .update(cx, |project_search, cx| {
-                    project_search.excerpts.update(cx, |excerpts, cx| {
-                        for path in excerpts
-                            .existing_excerpt_paths()
-                            .into_iter()
-                            .filter(|path| !seen_paths.contains(path))
-                        {
-                            excerpts.remove_excerpts(path, cx);
-                        }
-                    });
-                })
-                .ok()?;
             continue;
         }
 
@@ -663,10 +669,12 @@ async fn consume_search_stream(
                 SearchState::Completed(SearchCompletion::Results { limit_reached })
             };
             project_search.pending_search.take();
-            if incremental && seen_paths.is_empty() {
-                project_search
-                    .excerpts
-                    .update(cx, |excerpts, cx| excerpts.clear(cx));
+            if incremental {
+                project_search.excerpts.update(cx, |excerpts, cx| {
+                    for stale in stale_paths.by_ref() {
+                        excerpts.remove_excerpts(stale, cx);
+                    }
+                });
             }
             cx.notify();
         })
