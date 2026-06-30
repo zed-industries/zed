@@ -63,6 +63,9 @@ actions!(
         HelixSelectNext,
         /// Select the previous match for the current search query.
         HelixSelectPrevious,
+        /// Trim leading and trailing whitespace from each selection.
+        /// Originally-empty selections (cursors) are dropped before trimming.
+        HelixTrimSelections,
     ]
 );
 
@@ -89,6 +92,7 @@ pub fn register(editor: &mut Editor, cx: &mut Context<Vim>) {
     Vim::action(editor, cx, Vim::helix_jump_to_word);
     Vim::action(editor, cx, Vim::helix_select_next);
     Vim::action(editor, cx, Vim::helix_select_previous);
+    Vim::action(editor, cx, Vim::helix_trim_selections);
     Vim::action(editor, cx, |vim, _: &PushHelixSurroundAdd, window, cx| {
         vim.clear_operator(window, cx);
         vim.push_operator(Operator::HelixSurroundAdd, window, cx);
@@ -898,6 +902,90 @@ impl Vim {
                 .selections
                 .newest::<MultiBufferOffset>(&editor.display_snapshot(cx));
             editor.change_selections(Default::default(), window, cx, |s| s.select(vec![newest]));
+        });
+    }
+
+    fn helix_trim_selections(
+        &mut self,
+        _: &HelixTrimSelections,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.update_editor(cx, |_, editor, cx| {
+            let display_snapshot = editor.display_snapshot(cx);
+            let buffer = display_snapshot.buffer_snapshot();
+            let selections = editor.selections.all::<MultiBufferOffset>(&display_snapshot);
+            let mut trimmed = Vec::new();
+
+            for selection in &selections {
+                if selection.is_empty() {
+                    continue;
+                }
+                let all_whitespace = buffer
+                    .text_for_range(selection.start..selection.end)
+                    .flat_map(|chunk| chunk.chars())
+                    .all(|ch| ch.is_whitespace());
+                if all_whitespace {
+                    continue;
+                }
+
+                let mut new_start = selection.start;
+                for ch in buffer.chars_at(selection.start) {
+                    if !ch.is_whitespace() {
+                        break;
+                    }
+                    new_start += ch.len_utf8();
+                }
+
+                let mut new_end = selection.end;
+                for ch in buffer.reversed_chars_at(selection.end) {
+                    if !ch.is_whitespace() {
+                        break;
+                    }
+                    new_end -= ch.len_utf8();
+                }
+
+                let mut new_selection = selection.clone();
+                new_selection.start = new_start;
+                new_selection.end = new_end;
+                trimmed.push(new_selection);
+            }
+
+            if !trimmed.is_empty() {
+                editor.change_selections(Default::default(), window, cx, |s| {
+                    s.select(trimmed);
+                });
+                return;
+            }
+
+            // All selections were empty or entirely whitespace. Match Helix's
+            // fallback: `collapse_selection` followed by `keep_primary_selection`.
+            // Take the newest selection and collapse it to a one-char cursor at
+            // the head (head - 1 for a forward, non-empty selection; head as-is
+            // otherwise).
+            let newest = editor
+                .selections
+                .newest::<MultiBufferOffset>(&display_snapshot);
+            let head = if newest.reversed {
+                newest.start
+            } else {
+                newest.end
+            };
+            let cursor_offset = if !newest.reversed && !newest.is_empty() {
+                let mut p = head;
+                if let Some(ch) = buffer.reversed_chars_at(head).next() {
+                    p -= ch.len_utf8();
+                }
+                p
+            } else {
+                head
+            };
+            let mut collapsed = newest;
+            collapsed.start = cursor_offset;
+            collapsed.end = cursor_offset;
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select(vec![collapsed]);
+            });
         });
     }
 
@@ -4239,5 +4327,32 @@ mod test {
             lˇ»ine three"},
             Mode::HelixSelect,
         );
+    }
+
+    #[gpui::test]
+    async fn test_helix_trim_selections(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // Canonical case: a line selection (as produced by `x`) including its
+        // trailing newline. `_` strips the leading indent and trailing newline.
+        cx.set_state("«    indented line\nˇ»next line\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("_");
+        cx.assert_state("    «indented lineˇ»\nnext line\n", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_trim_selections_all_whitespace(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        // An entirely-whitespace selection is filtered out before trimming.
+        // When every selection filters out, Helix falls back to
+        // `collapse_selection` + `keep_primary_selection`, which collapses the
+        // primary selection to a one-char cursor at head - 1 (the last
+        // whitespace char of the original selection).
+        cx.set_state("aa«    ˇ»next\n", Mode::HelixNormal);
+        cx.simulate_keystrokes("_");
+        cx.assert_state("aa   ˇ next\n", Mode::HelixNormal);
     }
 }
