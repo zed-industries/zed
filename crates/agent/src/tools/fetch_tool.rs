@@ -124,6 +124,10 @@ impl AgentTool for FetchTool {
         acp::ToolKind::Fetch
     }
 
+    fn allow_in_restricted_mode() -> bool {
+        false
+    }
+
     fn initial_title(
         &self,
         input: Result<Self::Input, serde_json::Value>,

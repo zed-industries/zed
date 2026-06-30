@@ -94,6 +94,7 @@ fn developer_page(cx: &App) -> SettingsPage {
             title: "Feature Flags".into(),
             r#type: Default::default(),
             description: None,
+            search_aliases: &[],
             json_path: Some("feature_flags"),
             in_json: true,
             files: USER,
@@ -3376,6 +3377,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                     title: language_name,
                     r#type: crate::SubPageType::Language,
                     description: None,
+                    search_aliases: &[],
                     json_path: Some(link.leak()),
                     in_json: true,
                     files: USER | PROJECT,
@@ -7941,8 +7943,8 @@ fn collaboration_page() -> SettingsPage {
 }
 
 fn ai_page(cx: &App) -> SettingsPage {
-    fn general_section(_cx: &App) -> Box<[SettingsPageItem]> {
-        let mut items = vec![
+    fn general_section() -> [SettingsPageItem; 3] {
+        [
             SettingsPageItem::SectionHeader("General"),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Disable AI",
@@ -7972,34 +7974,55 @@ fn ai_page(cx: &App) -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ];
-
-        items.push(SettingsPageItem::SubPageLink(SubPageLink {
-            title: "LLM Providers".into(),
-            r#type: Default::default(),
-            json_path: Some("llm_providers"),
-            description: Some("Configure API keys and settings for LLM providers.".into()),
-            in_json: false,
-            files: USER,
-            render: render_llm_providers_page,
-        }));
-        items.push(SettingsPageItem::SubPageLink(SubPageLink {
-            title: "External Agents".into(),
-            r#type: Default::default(),
-            json_path: Some("agent_servers"),
-            description: Some(
-                "View, add, and remove agents connected through the Agent Client Protocol.".into(),
-            ),
-            in_json: false,
-            files: USER,
-            render: render_external_agents_page,
-        }));
-
-        items.into_boxed_slice()
+        ]
     }
 
-    fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
+    fn agent_configuration_section(cx: &App) -> Box<[SettingsPageItem]> {
+        use feature_flags::FeatureFlagAppExt as _;
+
+        // The LLM provider and MCP server pages are gated behind a feature flag
+        // while their configuration is being moved out of the agent panel.
+        let agent_settings_ui_enabled = cx.has_flag::<feature_flags::AgentSettingsUiFeatureFlag>();
+
         let mut items = vec![SettingsPageItem::SectionHeader("Agent Configuration")];
+
+        if agent_settings_ui_enabled {
+            items.push(SettingsPageItem::SubPageLink(SubPageLink {
+                title: "LLM Providers".into(),
+                r#type: Default::default(),
+                json_path: Some("llm_providers"),
+                description: Some("Configure API keys and settings for LLM providers.".into()),
+                search_aliases: &[
+                    "ai",
+                    "amazon",
+                    "anthropic",
+                    "api key",
+                    "azure",
+                    "bedrock",
+                    "chat",
+                    "claude",
+                    "copilot",
+                    "gemini",
+                    "github",
+                    "google",
+                    "gpt",
+                    "grok",
+                    "llama",
+                    "llm",
+                    "lm studio",
+                    "mistral",
+                    "ollama",
+                    "openai",
+                    "opencode",
+                    "provider",
+                    "vercel",
+                    "xai",
+                ],
+                in_json: false,
+                files: USER,
+                render: render_llm_providers_page,
+            }));
+        }
 
         items.extend([
             SettingsPageItem::SubPageLink(SubPageLink {
@@ -8007,6 +8030,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                 r#type: Default::default(),
                 json_path: Some(zed_actions::AGENT_SKILLS_SETTINGS_PATH),
                 description: Some("View and manage agent skills installed globally or in project worktrees.".into()),
+                search_aliases: &["agent skill", "agent skills", "custom instructions", "skill", "skills"],
                 in_json: false,
                 files: USER | PROJECT,
                 render: render_skills_setup_page,
@@ -8019,6 +8043,15 @@ fn ai_page(cx: &App) -> SettingsPage {
                     "Review and change the elevated terminal sandbox permissions that are always allowed without prompting."
                         .into(),
                 ),
+                search_aliases: &[
+                    "allow",
+                    "domain",
+                    "filesystem",
+                    "network",
+                    "sandbox",
+                    "unsandboxed",
+                    "permissions",
+                ],
                 in_json: true,
                 files: USER,
                 render: render_sandbox_settings_page,
@@ -8028,10 +8061,57 @@ fn ai_page(cx: &App) -> SettingsPage {
                 r#type: Default::default(),
                 json_path: Some("agent.tool_permissions"),
                 description: Some("Set up regex patterns to auto-allow, auto-deny, or always request confirmation, for specific tool inputs.".into()),
+                search_aliases: &[],
                 in_json: true,
                 files: USER,
                 render: render_tool_permissions_setup_page,
             }),
+        ]);
+
+        if agent_settings_ui_enabled {
+            items.push(SettingsPageItem::SubPageLink(SubPageLink {
+                title: "MCP Servers".into(),
+                r#type: Default::default(),
+                json_path: Some("context_servers"),
+                description: Some(
+                    "View, add, configure, and remove Model Context Protocol servers.".into(),
+                ),
+                search_aliases: &["context server", "mcp", "model context protocol"],
+                in_json: false,
+                files: USER,
+                render: render_mcp_servers_page,
+            }));
+            items.push(SettingsPageItem::SubPageLink(SubPageLink {
+                title: "External Agents".into(),
+                r#type: Default::default(),
+                json_path: Some("agent_servers"),
+                description: Some(
+                    "View, add, and remove agents connected through the Agent Client Protocol."
+                        .into(),
+                ),
+                search_aliases: &[
+                    "acp",
+                    "agent client protocol",
+                    "amp",
+                    "claude agent",
+                    "claude code",
+                    "codex",
+                    "copilot cli",
+                    "cursor",
+                    "external agent",
+                    "factory droid",
+                    "github copilot",
+                    "grok build",
+                    "junie",
+                    "opencode",
+                ],
+                in_json: false,
+                files: USER,
+                render: render_external_agents_page,
+            }));
+        }
+
+        items.extend([
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Single File Review",
                 description: "When enabled, agent edits will also be displayed in single-file buffers for review.",
@@ -8387,39 +8467,26 @@ fn ai_page(cx: &App) -> SettingsPage {
         items.into_boxed_slice()
     }
 
-    fn context_servers_section(_cx: &App) -> Box<[SettingsPageItem]> {
-        let mut items = vec![SettingsPageItem::SectionHeader("Model Context Protocol")];
-
-        items.push(SettingsPageItem::SubPageLink(SubPageLink {
-            title: "MCP Servers".into(),
-            r#type: Default::default(),
-            json_path: Some("context_servers"),
-            description: Some(
-                "View, add, configure, and remove Model Context Protocol servers.".into(),
-            ),
-            in_json: false,
-            files: USER,
-            render: render_mcp_servers_page,
-        }));
-
-        items.push(SettingsPageItem::SettingItem(SettingItem {
-            title: "Context Server Timeout",
-            description: "Default timeout in seconds for context server tool calls. Can be overridden per-server in context_servers configuration.",
-            field: Box::new(SettingField {
-                organization_override: None,
-                json_path: Some("context_server_timeout"),
-                pick: |settings_content| {
-                    settings_content.project.context_server_timeout.as_ref()
-                },
-                write: |settings_content, value, _| {
-                    settings_content.project.context_server_timeout = value;
-                },
+    fn context_servers_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Context Servers"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Context Server Timeout",
+                description: "Default timeout in seconds for context server tool calls. Can be overridden per-server in context_servers configuration.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("context_server_timeout"),
+                    pick: |settings_content| {
+                        settings_content.project.context_server_timeout.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.project.context_server_timeout = value;
+                    },
+                }),
+                metadata: None,
+                files: USER | PROJECT,
             }),
-            metadata: None,
-            files: USER | PROJECT,
-        }));
-
-        items.into_boxed_slice()
+        ]
     }
 
     fn edit_prediction_display_sub_section() -> [SettingsPageItem; 1] {
@@ -8461,11 +8528,11 @@ fn ai_page(cx: &App) -> SettingsPage {
 
     let mut items = concat_sections!(
         @vec,
-        general_section(cx),
+        general_section(),
         agent_configuration_section(cx),
     );
     if !agent_settings_ui_enabled {
-        items.extend(context_servers_section(cx));
+        items.extend(context_servers_section());
     }
     items.extend(concat_sections!(
         @vec,
@@ -10363,6 +10430,7 @@ fn edit_prediction_language_settings_section() -> [SettingsPageItem; 5] {
             r#type: Default::default(),
             json_path: Some("edit_predictions.providers"),
             description: Some("Set up different edit prediction providers in complement to Zed's built-in Zeta model.".into()),
+            search_aliases: &[],
             in_json: false,
             files: USER,
             render: render_edit_prediction_setup_page
