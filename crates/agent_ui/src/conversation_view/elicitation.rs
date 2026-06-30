@@ -1162,29 +1162,33 @@ impl<'a> ElicitationCard<'a> {
                             let field_name = field_name.to_string();
                             let value = option.value.clone();
                             h_flex()
+                                .id(SharedString::from(format!(
+                                    "elicitation-multi-option-{}-{field_name}-{}",
+                                    self.entry_ix, option.value
+                                )))
                                 .gap_1()
-                                .child(
-                                    Checkbox::new(
-                                        format!(
-                                            "elicitation-multi-{}-{field_name}-{}",
-                                            self.entry_ix, option.value
-                                        ),
-                                        checkbox_state,
-                                    )
-                                    .on_click(
-                                        move |state, _window, cx| {
-                                            let is_selected =
-                                                matches!(state, ToggleState::Selected);
-                                            on_multi_select_change(
-                                                elicitation_id.clone(),
-                                                field_name.clone(),
-                                                value.clone(),
-                                                is_selected,
-                                                cx,
-                                            );
-                                        },
+                                .rounded_sm()
+                                .cursor_pointer()
+                                .on_click({
+                                    let field_name = field_name.clone();
+                                    let value = value.clone();
+                                    move |_, _window, cx| {
+                                        on_multi_select_change(
+                                            elicitation_id.clone(),
+                                            field_name.clone(),
+                                            value.clone(),
+                                            !is_selected,
+                                            cx,
+                                        );
+                                    }
+                                })
+                                .child(Checkbox::new(
+                                    format!(
+                                        "elicitation-multi-{}-{field_name}-{}",
+                                        self.entry_ix, option.value
                                     ),
-                                )
+                                    checkbox_state,
+                                ))
                                 .child(Label::new(option.label).size(LabelSize::Small))
                         }))
                         .into_any_element()
