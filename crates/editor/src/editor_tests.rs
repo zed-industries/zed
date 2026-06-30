@@ -1682,6 +1682,40 @@ async fn test_fold_with_unindented_multiline_block_comment_includes_closing_brac
 }
 
 #[gpui::test]
+async fn test_fold_with_column_zero_preprocessor_directives(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.update_buffer(|buffer, cx| {
+        buffer.set_language(
+            Some(languages::language("c", tree_sitter_c::LANGUAGE.into())),
+            cx,
+        )
+    });
+
+    cx.set_state(indoc! {"
+        ˇvoid foo(void) {
+            int a = 1;
+        #if DEBUG
+            int b = 2;
+        #endif
+            int c = 3;
+        }
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.fold_at_level(&FoldAtLevel(1), window, cx);
+        assert_eq!(
+            editor.display_text(cx),
+            indoc! {"
+                void foo(void) {⋯}
+            "},
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_fold_preserves_top_level_comments_between_python_classes(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
