@@ -2487,7 +2487,7 @@ impl ThreadView {
         Some(())
     }
 
-    fn is_waiting_for_confirmation(entry: &AgentThreadEntry, cx: &Context<Self>) -> bool {
+    fn is_waiting_for_confirmation(&self, entry: &AgentThreadEntry, cx: &Context<Self>) -> bool {
         match entry {
             AgentThreadEntry::ToolCall(tool_call) => {
                 matches!(
@@ -2495,9 +2495,15 @@ impl ThreadView {
                     ToolCallStatus::WaitingForConfirmation { .. }
                 )
             }
-            AgentThreadEntry::Elicitation(elicitation) => {
+            AgentThreadEntry::Elicitation(elicitation_id) => {
                 cx.has_flag::<AcpBetaFeatureFlag>()
-                    && matches!(elicitation.status, ElicitationStatus::Pending { .. })
+                    && self
+                        .thread
+                        .read(cx)
+                        .elicitation(elicitation_id)
+                        .is_some_and(|(_, elicitation)| {
+                            matches!(elicitation.status, ElicitationStatus::Pending { .. })
+                        })
             }
             _ => false,
         }
@@ -2509,32 +2515,30 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let elicitation_id = {
+            let thread = self.thread.read(cx);
+            let Some(AgentThreadEntry::Elicitation(elicitation_id)) = thread.entries().get(index)
+            else {
+                return;
+            };
+            elicitation_id.clone()
+        };
+
         if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            let elicitation_id = self.thread.read(cx).entries().get(index).and_then(|entry| {
-                if let AgentThreadEntry::Elicitation(elicitation) = entry {
-                    Some(elicitation.id.clone())
-                } else {
-                    None
-                }
-            });
-            if let Some(elicitation_id) = elicitation_id {
-                self.elicitation_form_states.remove(&elicitation_id);
-            }
+            self.elicitation_form_states.remove(&elicitation_id);
             return;
         }
 
-        let entry = self.thread.read(cx).entries().get(index).and_then(|entry| {
-            let AgentThreadEntry::Elicitation(elicitation) = entry else {
-                return None;
-            };
-            Some((
-                elicitation.id.clone(),
+        let thread = self.thread.read(cx);
+        let entry = thread.elicitation(&elicitation_id).map(|(_, elicitation)| {
+            (
+                elicitation_id.clone(),
                 matches!(elicitation.status, ElicitationStatus::Pending { .. }),
                 match &elicitation.request.mode {
                     acp::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
                     _ => None,
                 },
-            ))
+            )
         });
 
         let Some((id, is_pending, schema)) = entry else {
@@ -5918,7 +5922,7 @@ impl ThreadView {
                 } else if this.generating_indicator_in_list {
                     let confirmation = entries
                         .last()
-                        .is_some_and(|entry| Self::is_waiting_for_confirmation(entry, cx));
+                        .is_some_and(|entry| this.is_waiting_for_confirmation(entry, cx));
                     let rendered = this.render_generating(confirmation, cx);
                     centered_container(rendered.into_any_element()).into_any_element()
                 } else {
@@ -6237,8 +6241,12 @@ impl ThreadView {
                     tool_call.into_any()
                 }
             }
-            AgentThreadEntry::Elicitation(elicitation) => {
-                if cx.has_flag::<AcpBetaFeatureFlag>() && should_render_elicitation(elicitation) {
+            AgentThreadEntry::Elicitation(elicitation_id) => {
+                let thread = self.thread.read(cx);
+                if cx.has_flag::<AcpBetaFeatureFlag>()
+                    && let Some((_, elicitation)) = thread.elicitation(elicitation_id)
+                    && should_render_elicitation(elicitation)
+                {
                     let elicitation = self.render_elicitation(entry_ix, elicitation, window, cx);
 
                     if let Some(handle) = self
@@ -6328,7 +6336,7 @@ impl ThreadView {
             primary
         };
 
-        let needs_confirmation = Self::is_waiting_for_confirmation(entry, cx);
+        let needs_confirmation = self.is_waiting_for_confirmation(entry, cx);
 
         let comments_editor = self.thread_feedback.comments_editor.clone();
 

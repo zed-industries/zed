@@ -387,7 +387,7 @@ pub enum AgentThreadEntry {
     UserMessage(UserMessage),
     AssistantMessage(AssistantMessage),
     ToolCall(ToolCall),
-    Elicitation(Elicitation),
+    Elicitation(ElicitationEntryId),
     CompletedPlan(Vec<PlanEntry>),
     ContextCompaction(ContextCompaction),
 }
@@ -427,9 +427,160 @@ pub struct ElicitationStore {
 
 impl EventEmitter<ElicitationStoreEvent> for ElicitationStore {}
 
+enum ExpectedElicitationScope<'a> {
+    Request,
+    Session(&'a acp::SessionId),
+}
+
 impl ElicitationStore {
     pub fn elicitations(&self) -> &[Elicitation] {
         &self.elicitations
+    }
+
+    fn validate_request(
+        request: &acp::CreateElicitationRequest,
+        expected_scope: ExpectedElicitationScope<'_>,
+        cx: &App,
+    ) -> Result<(), acp::Error> {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            return Err(
+                acp::Error::invalid_params().data("elicitation support requires the ACP beta flag")
+            );
+        }
+
+        match (request.scope(), expected_scope) {
+            (acp::ElicitationScope::Request(_), ExpectedElicitationScope::Request) => {}
+            (
+                acp::ElicitationScope::Session(scope),
+                ExpectedElicitationScope::Session(session_id),
+            ) if &scope.session_id == session_id => {}
+            (acp::ElicitationScope::Session(_), ExpectedElicitationScope::Request) => {
+                return Err(acp::Error::invalid_params()
+                    .data("session-scoped elicitations must be routed through a session thread"));
+            }
+            (acp::ElicitationScope::Request(_), ExpectedElicitationScope::Session(_)) => {
+                return Err(acp::Error::invalid_params()
+                    .data("request-scoped elicitations must be routed through the connection"));
+            }
+            (
+                acp::ElicitationScope::Session(scope),
+                ExpectedElicitationScope::Session(session_id),
+            ) => {
+                return Err(acp::Error::invalid_params().data(format!(
+                    "elicitation targets session {}, but this thread is {}",
+                    scope.session_id, session_id
+                )));
+            }
+            _ => {
+                return Err(acp::Error::invalid_params().data("unknown elicitation scope"));
+            }
+        }
+
+        if let acp::ElicitationMode::Url(mode) = &request.mode {
+            url::Url::parse(&mode.url)
+                .map_err(|_| acp::Error::invalid_params().data("invalid elicitation URL"))?;
+        }
+
+        Ok(())
+    }
+
+    fn insert_pending_elicitation(
+        &mut self,
+        request: acp::CreateElicitationRequest,
+    ) -> (
+        ElicitationEntryId,
+        oneshot::Receiver<acp::CreateElicitationResponse>,
+    ) {
+        let (respond_tx, response_rx) = oneshot::channel();
+        let id = ElicitationEntryId(Uuid::new_v4().to_string().into());
+        self.elicitations.push(Elicitation {
+            id: id.clone(),
+            request,
+            status: ElicitationStatus::Pending { respond_tx },
+        });
+        (id, response_rx)
+    }
+
+    fn response_task<T>(
+        id: ElicitationEntryId,
+        response_rx: oneshot::Receiver<acp::CreateElicitationResponse>,
+        cx: &mut Context<T>,
+        emit_responded: impl FnOnce(&mut T, &mut Context<T>, ElicitationEntryId) + 'static,
+    ) -> Task<acp::CreateElicitationResponse>
+    where
+        T: 'static,
+    {
+        cx.spawn(async move |this, cx| {
+            let response = response_rx.await.unwrap_or_else(|oneshot::Canceled| {
+                acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel)
+            });
+            this.update(cx, |this, cx| emit_responded(this, cx, id))
+                .ok();
+            response
+        })
+    }
+
+    fn respond_to_elicitation_entry(
+        elicitation: &mut Elicitation,
+        response: acp::CreateElicitationResponse,
+    ) -> bool {
+        if !matches!(elicitation.status, ElicitationStatus::Pending { .. }) {
+            return false;
+        }
+        let ElicitationStatus::Pending { respond_tx } = mem::replace(
+            &mut elicitation.status,
+            elicitation_status_for_response(&response),
+        ) else {
+            return false;
+        };
+        respond_tx.send(response).ok();
+        true
+    }
+
+    fn complete_url_elicitation_entry(elicitation: &mut Elicitation) -> bool {
+        let previous_status = mem::replace(&mut elicitation.status, ElicitationStatus::Completed);
+        match previous_status {
+            ElicitationStatus::Pending { respond_tx } => {
+                respond_tx
+                    .send(acp::CreateElicitationResponse::new(
+                        acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new()),
+                    ))
+                    .ok();
+                true
+            }
+            ElicitationStatus::Accepted => true,
+            ElicitationStatus::Completed => false,
+            previous_status @ (ElicitationStatus::Declined | ElicitationStatus::Canceled) => {
+                elicitation.status = previous_status;
+                false
+            }
+        }
+    }
+
+    fn cancel_elicitation_entry(
+        elicitation: &mut Elicitation,
+        cancel_accepted_url_elicitations: bool,
+    ) -> bool {
+        match mem::replace(&mut elicitation.status, ElicitationStatus::Canceled) {
+            ElicitationStatus::Pending { respond_tx } => {
+                respond_tx
+                    .send(acp::CreateElicitationResponse::new(
+                        acp::ElicitationAction::Cancel,
+                    ))
+                    .ok();
+                true
+            }
+            ElicitationStatus::Accepted
+                if cancel_accepted_url_elicitations
+                    && matches!(&elicitation.request.mode, acp::ElicitationMode::Url(_)) =>
+            {
+                true
+            }
+            previous_status => {
+                elicitation.status = previous_status;
+                false
+            }
+        }
     }
 
     pub fn request_elicitation(
@@ -437,46 +588,20 @@ impl ElicitationStore {
         request: acp::CreateElicitationRequest,
         cx: &mut Context<Self>,
     ) -> Result<Task<acp::CreateElicitationResponse>, acp::Error> {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            return Err(
-                acp::Error::invalid_params().data("elicitation support requires the ACP beta flag")
-            );
-        }
-
-        match request.scope() {
-            acp::ElicitationScope::Request(_) => {}
-            acp::ElicitationScope::Session(_) => {
-                return Err(acp::Error::invalid_params()
-                    .data("session-scoped elicitations must be routed through a session thread"));
-            }
-            _ => {
-                return Err(acp::Error::invalid_params().data("unknown elicitation scope"));
-            }
-        }
-
-        validate_elicitation_request(&request)?;
-
-        let (respond_tx, rx) = oneshot::channel();
-        let id = ElicitationEntryId(Uuid::new_v4().to_string().into());
-        self.elicitations.push(Elicitation {
-            id: id.clone(),
-            request,
-            status: ElicitationStatus::Pending { respond_tx },
-        });
+        Self::validate_request(&request, ExpectedElicitationScope::Request, cx)?;
+        let (id, response_rx) = self.insert_pending_elicitation(request);
         cx.emit(ElicitationStoreEvent::ElicitationRequested(id.clone()));
         cx.notify();
 
-        Ok(cx.spawn(async move |this, cx| {
-            let response = rx.await.unwrap_or_else(|oneshot::Canceled| {
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel)
-            });
-            this.update(cx, |_this, cx| {
+        Ok(Self::response_task(
+            id,
+            response_rx,
+            cx,
+            |_store, cx, id| {
                 cx.emit(ElicitationStoreEvent::ElicitationResponded(id));
                 cx.notify();
-            })
-            .ok();
-            response
-        }))
+            },
+        ))
     }
 
     pub fn respond_to_elicitation(
@@ -489,16 +614,9 @@ impl ElicitationStore {
             return;
         };
 
-        if !matches!(elicitation.status, ElicitationStatus::Pending { .. }) {
+        if !Self::respond_to_elicitation_entry(elicitation, response) {
             return;
         }
-        let ElicitationStatus::Pending { respond_tx } = mem::replace(
-            &mut elicitation.status,
-            elicitation_status_for_response(&response),
-        ) else {
-            return;
-        };
-        respond_tx.send(response).ok();
 
         cx.emit(ElicitationStoreEvent::ElicitationUpdated(id.clone()));
         cx.notify();
@@ -509,26 +627,14 @@ impl ElicitationStore {
         elicitation_id: &acp::ElicitationId,
         cx: &mut Context<Self>,
     ) {
-        let Some((_, elicitation)) = self.elicitation_mut_for_url_id(elicitation_id) else {
+        let Some(entry_id) = self.entry_id_for_url_elicitation(elicitation_id) else {
             return;
         };
-        let entry_id = elicitation.id.clone();
-
-        let previous_status = mem::replace(&mut elicitation.status, ElicitationStatus::Completed);
-        match previous_status {
-            ElicitationStatus::Pending { respond_tx } => {
-                respond_tx
-                    .send(acp::CreateElicitationResponse::new(
-                        acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new()),
-                    ))
-                    .ok();
-            }
-            ElicitationStatus::Accepted => {}
-            ElicitationStatus::Completed => return,
-            previous_status @ (ElicitationStatus::Declined | ElicitationStatus::Canceled) => {
-                elicitation.status = previous_status;
-                return;
-            }
+        let Some((_, elicitation)) = self.elicitation_mut(&entry_id) else {
+            return;
+        };
+        if !Self::complete_url_elicitation_entry(elicitation) {
+            return;
         }
 
         cx.emit(ElicitationStoreEvent::ElicitationUpdated(entry_id));
@@ -599,6 +705,21 @@ impl ElicitationStore {
             })
     }
 
+    fn entry_id_for_url_elicitation(
+        &self,
+        elicitation_id: &acp::ElicitationId,
+    ) -> Option<ElicitationEntryId> {
+        self.elicitations.iter().rev().find_map(|elicitation| {
+            if let acp::ElicitationMode::Url(mode) = &elicitation.request.mode
+                && &mode.elicitation_id == elicitation_id
+            {
+                Some(elicitation.id.clone())
+            } else {
+                None
+            }
+        })
+    }
+
     fn elicitation_mut(&mut self, id: &ElicitationEntryId) -> Option<(usize, &mut Elicitation)> {
         self.elicitations
             .iter_mut()
@@ -609,50 +730,14 @@ impl ElicitationStore {
             })
     }
 
-    fn elicitation_mut_for_url_id(
-        &mut self,
-        elicitation_id: &acp::ElicitationId,
-    ) -> Option<(usize, &mut Elicitation)> {
-        self.elicitations
-            .iter_mut()
-            .enumerate()
-            .rev()
-            .find_map(|(index, elicitation)| {
-                if let acp::ElicitationMode::Url(mode) = &elicitation.request.mode
-                    && &mode.elicitation_id == elicitation_id
-                {
-                    Some((index, elicitation))
-                } else {
-                    None
-                }
-            })
-    }
-
     fn cancel_pending(
         &mut self,
         mut should_cancel: impl FnMut(&Elicitation) -> bool,
     ) -> Vec<ElicitationEntryId> {
         let mut canceled_ids = Vec::new();
         for elicitation in &mut self.elicitations {
-            if should_cancel(elicitation) {
-                match mem::replace(&mut elicitation.status, ElicitationStatus::Canceled) {
-                    ElicitationStatus::Pending { respond_tx } => {
-                        respond_tx
-                            .send(acp::CreateElicitationResponse::new(
-                                acp::ElicitationAction::Cancel,
-                            ))
-                            .ok();
-                        canceled_ids.push(elicitation.id.clone());
-                    }
-                    ElicitationStatus::Accepted
-                        if matches!(&elicitation.request.mode, acp::ElicitationMode::Url(_)) =>
-                    {
-                        canceled_ids.push(elicitation.id.clone());
-                    }
-                    previous_status => {
-                        elicitation.status = previous_status;
-                    }
-                }
+            if should_cancel(elicitation) && Self::cancel_elicitation_entry(elicitation, true) {
+                canceled_ids.push(elicitation.id.clone());
             }
         }
         canceled_ids
@@ -711,9 +796,7 @@ impl AgentThreadEntry {
             Self::UserMessage(message) => message.to_markdown(cx),
             Self::AssistantMessage(message) => message.to_markdown(cx),
             Self::ToolCall(tool_call) => tool_call.to_markdown(cx),
-            Self::Elicitation(elicitation) => {
-                format!("## Input Requested\n\n{}\n\n", elicitation.request.message)
-            }
+            Self::Elicitation(_) => "## Input Requested\n\n".to_string(),
             Self::CompletedPlan(entries) => {
                 let mut md = String::from("## Plan\n\n");
                 for entry in entries {
@@ -1250,15 +1333,6 @@ fn elicitation_status_for_response(response: &acp::CreateElicitationResponse) ->
         acp::ElicitationAction::Cancel => ElicitationStatus::Canceled,
         _ => ElicitationStatus::Canceled,
     }
-}
-
-fn validate_elicitation_request(request: &acp::CreateElicitationRequest) -> Result<(), acp::Error> {
-    if let acp::ElicitationMode::Url(mode) = &request.mode {
-        url::Url::parse(&mode.url)
-            .map_err(|_| acp::Error::invalid_params().data("invalid elicitation URL"))?;
-    }
-
-    Ok(())
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -2011,6 +2085,7 @@ pub struct AcpThread {
     title: Option<SharedString>,
     provisional_title: Option<SharedString>,
     entries: Vec<AgentThreadEntry>,
+    elicitations: ElicitationStore,
     plan: Plan,
     project: Entity<Project>,
     action_log: Entity<ActionLog>,
@@ -2224,6 +2299,7 @@ impl AcpThread {
             update_last_checkpoint_if_changed_task: None,
             shared_buffers: Default::default(),
             entries: Default::default(),
+            elicitations: ElicitationStore::default(),
             plan: Default::default(),
             title,
             provisional_title: None,
@@ -2376,10 +2452,15 @@ impl AcpThread {
                     status: ToolCallStatus::WaitingForConfirmation { .. },
                     ..
                 }) => return true,
-                AgentThreadEntry::Elicitation(Elicitation {
-                    status: ElicitationStatus::Pending { .. },
-                    ..
-                }) => return true,
+                AgentThreadEntry::Elicitation(elicitation_id)
+                    if self.elicitations.elicitation(elicitation_id).is_some_and(
+                        |(_, elicitation)| {
+                            matches!(elicitation.status, ElicitationStatus::Pending { .. })
+                        },
+                    ) =>
+                {
+                    return true;
+                }
                 AgentThreadEntry::ToolCall(_)
                 | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
@@ -3394,54 +3475,22 @@ impl AcpThread {
         request: acp::CreateElicitationRequest,
         cx: &mut Context<Self>,
     ) -> Result<Task<acp::CreateElicitationResponse>, acp::Error> {
-        if !cx.has_flag::<AcpBetaFeatureFlag>() {
-            return Err(
-                acp::Error::invalid_params().data("elicitation support requires the ACP beta flag")
-            );
-        }
-
-        match request.scope() {
-            acp::ElicitationScope::Session(scope) => {
-                if scope.session_id != self.session_id {
-                    return Err(acp::Error::invalid_params().data(format!(
-                        "elicitation targets session {}, but this thread is {}",
-                        scope.session_id, self.session_id
-                    )));
-                }
-            }
-            acp::ElicitationScope::Request(_) => {
-                return Err(acp::Error::invalid_params()
-                    .data("request-scoped elicitations must be routed through the connection"));
-            }
-            _ => {
-                return Err(acp::Error::invalid_params().data("unknown elicitation scope"));
-            }
-        }
-
-        validate_elicitation_request(&request)?;
-
-        let (respond_tx, rx) = oneshot::channel();
-        let id = ElicitationEntryId(Uuid::new_v4().to_string().into());
-        self.push_entry(
-            AgentThreadEntry::Elicitation(Elicitation {
-                id: id.clone(),
-                request,
-                status: ElicitationStatus::Pending { respond_tx },
-            }),
+        ElicitationStore::validate_request(
+            &request,
+            ExpectedElicitationScope::Session(&self.session_id),
             cx,
-        );
+        )?;
+
+        let (id, response_rx) = self.elicitations.insert_pending_elicitation(request);
+        self.push_entry(AgentThreadEntry::Elicitation(id.clone()), cx);
         cx.emit(AcpThreadEvent::ElicitationRequested(id.clone()));
 
-        Ok(cx.spawn(async move |this, cx| {
-            let response = rx.await.unwrap_or_else(|oneshot::Canceled| {
-                acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel)
-            });
-            this.update(cx, |_this, cx| {
-                cx.emit(AcpThreadEvent::ElicitationResponded(id))
-            })
-            .ok();
-            response
-        }))
+        Ok(ElicitationStore::response_task(
+            id,
+            response_rx,
+            cx,
+            |_thread, cx, id| cx.emit(AcpThreadEvent::ElicitationResponded(id)),
+        ))
     }
 
     pub fn respond_to_elicitation(
@@ -3450,20 +3499,16 @@ impl AcpThread {
         response: acp::CreateElicitationResponse,
         cx: &mut Context<Self>,
     ) {
-        let Some((ix, elicitation)) = self.elicitation_mut(id) else {
+        let Some(ix) = self.elicitation_entry_ix(id) else {
+            return;
+        };
+        let Some((_, elicitation)) = self.elicitations.elicitation_mut(id) else {
             return;
         };
 
-        if !matches!(elicitation.status, ElicitationStatus::Pending { .. }) {
+        if !ElicitationStore::respond_to_elicitation_entry(elicitation, response) {
             return;
         }
-        let ElicitationStatus::Pending { respond_tx } = mem::replace(
-            &mut elicitation.status,
-            elicitation_status_for_response(&response),
-        ) else {
-            return;
-        };
-        respond_tx.send(response).ok();
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
     }
@@ -3473,80 +3518,41 @@ impl AcpThread {
         elicitation_id: &acp::ElicitationId,
         cx: &mut Context<Self>,
     ) {
-        let Some((ix, elicitation)) = self.elicitation_mut_for_url_id(elicitation_id) else {
+        let Some(entry_id) = self
+            .elicitations
+            .entry_id_for_url_elicitation(elicitation_id)
+        else {
+            return;
+        };
+        let Some(ix) = self.elicitation_entry_ix(&entry_id) else {
+            return;
+        };
+        let Some((_, elicitation)) = self.elicitations.elicitation_mut(&entry_id) else {
             return;
         };
 
-        let previous_status = mem::replace(&mut elicitation.status, ElicitationStatus::Completed);
-        match previous_status {
-            ElicitationStatus::Pending { respond_tx } => {
-                respond_tx
-                    .send(acp::CreateElicitationResponse::new(
-                        acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new()),
-                    ))
-                    .ok();
-            }
-            ElicitationStatus::Accepted => {}
-            ElicitationStatus::Completed => return,
-            previous_status @ (ElicitationStatus::Declined | ElicitationStatus::Canceled) => {
-                elicitation.status = previous_status;
-                return;
-            }
+        if !ElicitationStore::complete_url_elicitation_entry(elicitation) {
+            return;
         }
 
         cx.emit(AcpThreadEvent::EntryUpdated(ix));
     }
 
-    fn elicitation_mut(&mut self, id: &ElicitationEntryId) -> Option<(usize, &mut Elicitation)> {
-        self.entries
-            .iter_mut()
-            .enumerate()
-            .rev()
-            .find_map(|(index, entry)| {
-                if let AgentThreadEntry::Elicitation(elicitation) = entry
-                    && &elicitation.id == id
-                {
-                    Some((index, elicitation))
-                } else {
-                    None
-                }
-            })
-    }
-
-    fn elicitation_mut_for_url_id(
-        &mut self,
-        elicitation_id: &acp::ElicitationId,
-    ) -> Option<(usize, &mut Elicitation)> {
-        self.entries
-            .iter_mut()
-            .enumerate()
-            .rev()
-            .find_map(|(index, entry)| {
-                if let AgentThreadEntry::Elicitation(elicitation) = entry
-                    && let acp::ElicitationMode::Url(mode) = &elicitation.request.mode
-                    && &mode.elicitation_id == elicitation_id
-                {
-                    Some((index, elicitation))
-                } else {
-                    None
-                }
-            })
-    }
-
-    pub fn elicitation(&self, id: &ElicitationEntryId) -> Option<(usize, &Elicitation)> {
+    fn elicitation_entry_ix(&self, id: &ElicitationEntryId) -> Option<usize> {
         self.entries
             .iter()
             .enumerate()
             .rev()
             .find_map(|(index, entry)| {
-                if let AgentThreadEntry::Elicitation(elicitation) = entry
-                    && &elicitation.id == id
-                {
-                    Some((index, elicitation))
-                } else {
-                    None
-                }
+                matches!(entry, AgentThreadEntry::Elicitation(elicitation_id) if elicitation_id == id)
+                    .then_some(index)
             })
+    }
+
+    pub fn elicitation(&self, id: &ElicitationEntryId) -> Option<(usize, &Elicitation)> {
+        let index = self.elicitation_entry_ix(id)?;
+        let (_, elicitation) = self.elicitations.elicitation(id)?;
+        Some((index, elicitation))
     }
 
     pub fn plan(&self) -> &Plan {
@@ -3936,28 +3942,18 @@ impl AcpThread {
         cx: &mut Context<Self>,
     ) {
         for ix in entries {
-            let Some(AgentThreadEntry::Elicitation(elicitation)) = self.entries.get_mut(ix) else {
+            let Some(AgentThreadEntry::Elicitation(elicitation_id)) = self.entries.get(ix) else {
+                continue;
+            };
+            let Some((_, elicitation)) = self.elicitations.elicitation_mut(elicitation_id) else {
                 continue;
             };
 
-            match mem::replace(&mut elicitation.status, ElicitationStatus::Canceled) {
-                ElicitationStatus::Pending { respond_tx } => {
-                    respond_tx
-                        .send(acp::CreateElicitationResponse::new(
-                            acp::ElicitationAction::Cancel,
-                        ))
-                        .ok();
-                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
-                }
-                ElicitationStatus::Accepted
-                    if cancel_accepted_url_elicitations
-                        && matches!(&elicitation.request.mode, acp::ElicitationMode::Url(_)) =>
-                {
-                    cx.emit(AcpThreadEvent::EntryUpdated(ix));
-                }
-                previous_status => {
-                    elicitation.status = previous_status;
-                }
+            if ElicitationStore::cancel_elicitation_entry(
+                elicitation,
+                cancel_accepted_url_elicitations,
+            ) {
+                cx.emit(AcpThreadEvent::EntryUpdated(ix));
             }
         }
     }
@@ -4555,7 +4551,19 @@ impl AcpThread {
     }
 
     pub fn to_markdown(&self, cx: &App) -> String {
-        self.entries.iter().map(|e| e.to_markdown(cx)).collect()
+        self.entries
+            .iter()
+            .map(|entry| match entry {
+                AgentThreadEntry::Elicitation(elicitation_id) => self
+                    .elicitations
+                    .elicitation(elicitation_id)
+                    .map(|(_, elicitation)| {
+                        format!("## Input Requested\n\n{}\n\n", elicitation.request.message)
+                    })
+                    .unwrap_or_else(|| entry.to_markdown(cx)),
+                _ => entry.to_markdown(cx),
+            })
+            .collect()
     }
 
     pub fn emit_load_error(&mut self, error: LoadError, cx: &mut Context<Self>) {
@@ -7306,6 +7314,29 @@ mod tests {
         .unwrap()
     }
 
+    fn only_thread_elicitation(thread: &AcpThread) -> (ElicitationEntryId, &Elicitation) {
+        let [entry] = thread.entries() else {
+            panic!("expected one elicitation entry, got {:?}", thread.entries());
+        };
+        let AgentThreadEntry::Elicitation(id) = entry else {
+            panic!("expected one elicitation entry, got {:?}", thread.entries());
+        };
+        let Some((_, elicitation)) = thread.elicitation(id) else {
+            panic!("missing elicitation entry");
+        };
+        (id.clone(), elicitation)
+    }
+
+    fn latest_thread_elicitation(thread: &AcpThread) -> (ElicitationEntryId, &Elicitation) {
+        let Some(AgentThreadEntry::Elicitation(id)) = thread.entries().last() else {
+            panic!("expected latest entry to be an elicitation");
+        };
+        let Some((_, elicitation)) = thread.elicitation(id) else {
+            panic!("missing elicitation entry");
+        };
+        (id.clone(), elicitation)
+    }
+
     #[gpui::test]
     async fn test_elicitation_requires_acp_beta_flag(cx: &mut TestAppContext) {
         init_test(cx);
@@ -7358,14 +7389,12 @@ mod tests {
         });
 
         let elicitation_id = thread.read_with(cx, |thread, _| {
-            let [AgentThreadEntry::Elicitation(elicitation)] = thread.entries() else {
-                panic!("expected one elicitation entry, got {:?}", thread.entries());
-            };
+            let (elicitation_id, elicitation) = only_thread_elicitation(thread);
             let acp::ElicitationScope::Session(scope) = elicitation.request.scope() else {
                 panic!("expected session-scoped elicitation");
             };
             assert_eq!(scope.tool_call_id.as_ref(), Some(&tool_call_id));
-            elicitation.id.clone()
+            elicitation_id
         });
 
         let expected_content = std::collections::BTreeMap::from([(
@@ -7422,10 +7451,8 @@ mod tests {
         });
 
         let entry_id = thread.read_with(cx, |thread, _| {
-            let [AgentThreadEntry::Elicitation(elicitation)] = thread.entries() else {
-                panic!("expected one elicitation entry, got {:?}", thread.entries());
-            };
-            elicitation.id.clone()
+            let (entry_id, _) = only_thread_elicitation(thread);
+            entry_id
         });
 
         thread.update(cx, |thread, cx| {
@@ -7475,10 +7502,8 @@ mod tests {
         });
 
         let entry_id = thread.read_with(cx, |thread, _| {
-            let [AgentThreadEntry::Elicitation(elicitation)] = thread.entries() else {
-                panic!("expected one elicitation entry, got {:?}", thread.entries());
-            };
-            elicitation.id.clone()
+            let (entry_id, _) = only_thread_elicitation(thread);
+            entry_id
         });
 
         thread.update(cx, |thread, cx| {
@@ -7541,10 +7566,8 @@ mod tests {
         });
 
         let entry_id = thread.read_with(cx, |thread, _| {
-            let [AgentThreadEntry::Elicitation(elicitation)] = thread.entries() else {
-                panic!("expected one elicitation entry, got {:?}", thread.entries());
-            };
-            elicitation.id.clone()
+            let (entry_id, _) = only_thread_elicitation(thread);
+            entry_id
         });
 
         thread.update(cx, |thread, cx| {
@@ -7651,10 +7674,8 @@ mod tests {
         });
 
         let entry_id = thread.read_with(cx, |thread, _| {
-            let Some(AgentThreadEntry::Elicitation(elicitation)) = thread.entries().last() else {
-                panic!("expected latest entry to be a url elicitation");
-            };
-            elicitation.id.clone()
+            let (entry_id, _) = latest_thread_elicitation(thread);
+            entry_id
         });
 
         thread.update(cx, |thread, cx| {
@@ -7825,10 +7846,8 @@ mod tests {
         });
 
         let elicitation_id = thread.read_with(cx, |thread, _| {
-            let [AgentThreadEntry::Elicitation(elicitation)] = thread.entries() else {
-                panic!("expected one elicitation entry, got {:?}", thread.entries());
-            };
-            elicitation.id.clone()
+            let (elicitation_id, _) = only_thread_elicitation(thread);
+            elicitation_id
         });
 
         thread.update(cx, |thread, cx| {
@@ -7908,12 +7927,11 @@ mod tests {
             Some(acp::ElicitationAction::Cancel)
         );
         thread.read_with(cx, |thread, _| {
-            let Some(elicitation) = thread.entries().iter().find_map(|entry| {
-                if let AgentThreadEntry::Elicitation(elicitation) = entry {
-                    Some(elicitation)
-                } else {
-                    None
+            let Some(elicitation) = thread.entries().iter().find_map(|entry| match entry {
+                AgentThreadEntry::Elicitation(id) => {
+                    thread.elicitation(id).map(|(_, elicitation)| elicitation)
                 }
+                _ => None,
             }) else {
                 panic!("expected an elicitation entry");
             };
@@ -7964,12 +7982,11 @@ mod tests {
             Some(acp::ElicitationAction::Cancel)
         );
         thread.read_with(cx, |thread, _| {
-            let Some(elicitation) = thread.entries().iter().find_map(|entry| {
-                if let AgentThreadEntry::Elicitation(elicitation) = entry {
-                    Some(elicitation)
-                } else {
-                    None
+            let Some(elicitation) = thread.entries().iter().find_map(|entry| match entry {
+                AgentThreadEntry::Elicitation(id) => {
+                    thread.elicitation(id).map(|(_, elicitation)| elicitation)
                 }
+                _ => None,
             }) else {
                 panic!("expected an elicitation entry");
             };
@@ -8333,10 +8350,8 @@ mod tests {
         });
 
         let elicitation_id = thread.read_with(cx, |thread, _| {
-            let [AgentThreadEntry::Elicitation(elicitation)] = thread.entries() else {
-                panic!("expected one elicitation entry, got {:?}", thread.entries());
-            };
-            elicitation.id.clone()
+            let (elicitation_id, _) = only_thread_elicitation(thread);
+            elicitation_id
         });
 
         thread.update(cx, |thread, cx| {
@@ -8380,10 +8395,8 @@ mod tests {
         });
 
         let elicitation_id = thread.read_with(cx, |thread, _| {
-            let [AgentThreadEntry::Elicitation(elicitation)] = thread.entries() else {
-                panic!("expected one elicitation entry, got {:?}", thread.entries());
-            };
-            elicitation.id.clone()
+            let (elicitation_id, _) = only_thread_elicitation(thread);
+            elicitation_id
         });
 
         thread.update(cx, |thread, cx| {

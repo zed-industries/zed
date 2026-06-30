@@ -5856,8 +5856,8 @@ pub(crate) mod tests {
             });
             let elicitation_id = thread.read_with(cx, |thread, _cx| {
                 thread.entries().iter().find_map(|entry| {
-                    if let AgentThreadEntry::Elicitation(elicitation) = entry {
-                        Some(elicitation.id.clone())
+                    if let AgentThreadEntry::Elicitation(elicitation_id) = entry {
+                        Some(elicitation_id.clone())
                     } else {
                         None
                     }
