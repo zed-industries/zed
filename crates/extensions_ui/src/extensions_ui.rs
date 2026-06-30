@@ -336,7 +336,6 @@ impl ExtensionFilter {
 enum Feature {
     AgentClaude,
     AgentCodex,
-    AgentGemini,
     ExtensionBasedpyright,
     ExtensionRuff,
     ExtensionTailwind,
@@ -363,7 +362,6 @@ fn keywords_by_feature() -> &'static BTreeMap<Feature, Vec<&'static str>> {
                 vec!["claude", "claude code", "claude agent"],
             ),
             (Feature::AgentCodex, vec!["codex", "codex cli"]),
-            (Feature::AgentGemini, vec!["gemini", "gemini cli"]),
             (
                 Feature::ExtensionBasedpyright,
                 vec!["basedpyright", "pyright"],
@@ -1642,12 +1640,6 @@ impl ExtensionsPage {
                 Feature::AgentCodex => self.render_feature_upsell_banner(
                     "Codex CLI support is built-in to Zed!".into(),
                     "https://zed.dev/docs/ai/external-agents#codex-cli".into(),
-                    false,
-                    cx,
-                ),
-                Feature::AgentGemini => self.render_feature_upsell_banner(
-                    "Gemini CLI support is built-in to Zed!".into(),
-                    "https://zed.dev/docs/ai/external-agents#gemini-cli".into(),
                     false,
                     cx,
                 ),

@@ -41,9 +41,8 @@ use acp_thread::{AcpThread, AuthRequired, LoadError, TerminalProviderEvent};
 use terminal::TerminalBuilder;
 use terminal::terminal_settings::{AlternateScroll, CursorShape};
 
-use crate::{CURSOR_ID, GEMINI_ID};
+use crate::CURSOR_ID;
 
-pub const GEMINI_TERMINAL_AUTH_METHOD_ID: &str = "spawn-gemini-cli";
 const PARAMETERIZED_MODEL_PICKER_META_KEY: &str = "parameterizedModelPicker";
 const MAX_DEBUG_BACKLOG_MESSAGES: usize = 2000;
 
@@ -509,7 +508,6 @@ impl ConfigOptions {
 
 pub struct AcpSession {
     thread: WeakEntity<AcpThread>,
-    suppress_abort_err: bool,
     session_modes: Option<Rc<RefCell<acp::SessionModeState>>>,
     config_options: Option<ConfigOptions>,
     ref_count: usize,
@@ -802,7 +800,6 @@ impl AcpConnection {
                 .next()
                 .cloned()
         });
-        let original_command = command.clone();
         let (path, args, env) = project
             .read_with(cx, |project, cx| {
                 project.remote_client().and_then(|client| {
@@ -1039,25 +1036,7 @@ impl AcpConnection {
             None
         };
 
-        // TODO: Remove this override once Google team releases their official auth methods
-        let auth_methods = if agent_id.0.as_ref() == GEMINI_ID {
-            let mut gemini_args = original_command.args.clone();
-            gemini_args.retain(|a| a != "--experimental-acp" && a != "--acp");
-            let value = serde_json::json!({
-                "label": "gemini /auth",
-                "command": original_command.path.to_string_lossy(),
-                "args": gemini_args,
-                "env": original_command.env.unwrap_or_default(),
-            });
-            let meta = acp::Meta::from_iter([("terminal-auth".to_string(), value)]);
-            vec![acp::AuthMethod::Agent(
-                acp::AuthMethodAgent::new(GEMINI_TERMINAL_AUTH_METHOD_ID, "Login")
-                    .description("Login with your Google or Vertex AI account")
-                    .meta(meta),
-            )]
-        } else {
-            response.auth_methods
-        };
+        let auth_methods = response.auth_methods;
         let defaults = AcpConnectionDefaults::new(default_mode, default_config_options);
         let settings_subscription = cx.update({
             let agent_id = agent_id.clone();
@@ -1206,7 +1185,6 @@ impl AcpConnection {
                         session_id.clone(),
                         AcpSession {
                             thread: thread.downgrade(),
-                            suppress_abort_err: false,
                             session_modes: None,
                             config_options: None,
                             ref_count: 1,
@@ -1673,7 +1651,6 @@ impl AgentConnection for AcpConnection {
                 response.session_id,
                 AcpSession {
                     thread: thread.downgrade(),
-                    suppress_abort_err: false,
                     session_modes: modes,
                     config_options: config_options.map(ConfigOptions::new),
                     ref_count: 1,
@@ -1931,17 +1908,8 @@ impl AgentConnection for AcpConnection {
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
         let conn = self.connection.clone();
-        let sessions = self.sessions.clone();
-        let session_id = params.session_id.clone();
         cx.foreground_executor().spawn(async move {
             let result = conn.send_request(params).block_task().await;
-
-            let mut suppress_abort_err = false;
-
-            if let Some(session) = sessions.borrow_mut().get_mut(&session_id) {
-                suppress_abort_err = session.suppress_abort_err;
-                session.suppress_abort_err = false;
-            }
 
             match result {
                 Ok(response) => Ok(response),
@@ -1958,9 +1926,6 @@ impl AgentConnection for AcpConnection {
                         anyhow::bail!(err)
                     };
 
-                    // Temporary workaround until the following PR is generally available:
-                    // https://github.com/google-gemini/gemini-cli/pull/6656
-
                     #[derive(Deserialize)]
                     #[serde(deny_unknown_fields)]
                     struct ErrorDetails {
@@ -1968,16 +1933,7 @@ impl AgentConnection for AcpConnection {
                     }
 
                     match serde_json::from_value(data.clone()) {
-                        Ok(ErrorDetails { details }) => {
-                            if suppress_abort_err
-                                && (details.contains("This operation was aborted")
-                                    || details.contains("The user aborted a request"))
-                            {
-                                Ok(acp::PromptResponse::new(acp::StopReason::Cancelled))
-                            } else {
-                                Err(anyhow!(details))
-                            }
-                        }
+                        Ok(ErrorDetails { details }) => Err(anyhow!(details)),
                         Err(_) => Err(anyhow!(err)),
                     }
                 }
@@ -1986,9 +1942,6 @@ impl AgentConnection for AcpConnection {
     }
 
     fn cancel(&self, session_id: &acp::SessionId, _cx: &mut App) {
-        if let Some(session) = self.sessions.borrow_mut().get_mut(session_id) {
-            session.suppress_abort_err = true;
-        }
         let params = acp::CancelNotification::new(session_id.clone());
         self.connection.send_notification(params).log_err();
     }

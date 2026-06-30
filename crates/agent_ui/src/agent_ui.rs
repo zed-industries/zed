@@ -1248,15 +1248,15 @@ mod tests {
 
     #[test]
     fn test_deserialize_new_external_agent_thread() {
-        let action = serde_json::from_str::<NewExternalAgentThread>(r#"{"agent":"gemini"}"#)
+        let action = serde_json::from_str::<NewExternalAgentThread>(r#"{"agent":"my-agent"}"#)
             .expect("should deserialize agent id");
-        assert_eq!(action.agent, AgentId::from("gemini"));
+        assert_eq!(action.agent, AgentId::from("my-agent"));
 
         let action = serde_json::from_str::<NewExternalAgentThread>(
-            r#"{"agent":{"custom":{"name":"gemini"}}}"#,
+            r#"{"agent":{"custom":{"name":"my-agent"}}}"#,
         )
         .expect("should deserialize legacy custom agent payload");
-        assert_eq!(action.agent, AgentId::from("gemini"));
+        assert_eq!(action.agent, AgentId::from("my-agent"));
 
         let action = serde_json::from_str::<NewExternalAgentThread>(r#"{"agent":"NativeAgent"}"#)
             .expect("should deserialize legacy native agent payload");

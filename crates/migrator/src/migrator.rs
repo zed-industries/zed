@@ -1205,8 +1205,8 @@ mod tests {
             )],
             r#"{
     "agent_servers": {
-        "gemini": {
-            "default_model": "gemini-1.5-pro"
+        "another-custom-agent": {
+            "default_model": "custom-model"
         },
         "claude": {},
         "codex": {},
@@ -1228,8 +1228,9 @@ mod tests {
             Some(
                 r#"{
     "agent_servers": {
-        "gemini": {
-            "default_model": "gemini-1.5-pro"
+        "another-custom-agent": {
+            "type": "custom",
+            "default_model": "custom-model"
         },
         "claude": {},
         "codex": {},
@@ -4082,9 +4083,6 @@ mod tests {
             )],
             r#"{
     "agent_servers": {
-        "gemini": {
-            "default_model": "gemini-2.0-flash"
-        },
         "claude": {
             "default_mode": "plan"
         },
@@ -4103,10 +4101,6 @@ mod tests {
         "claude-acp": {
             "type": "registry",
             "default_mode": "plan"
-        },
-        "gemini": {
-            "type": "registry",
-            "default_model": "gemini-2.0-flash"
         }
     }
 }"#,
@@ -4122,7 +4116,6 @@ mod tests {
             )],
             r#"{
     "agent_servers": {
-        "gemini": {},
         "claude": {},
         "codex": {}
     }
@@ -4134,9 +4127,6 @@ mod tests {
             "type": "registry"
         },
         "claude-acp": {
-            "type": "registry"
-        },
-        "gemini": {
             "type": "registry"
         }
     }
@@ -4184,89 +4174,6 @@ mod tests {
     }
 
     #[test]
-    fn test_migrate_builtin_agent_servers_gemini_with_command() {
-        assert_migrate_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
-            )],
-            r#"{
-    "agent_servers": {
-        "gemini": {
-            "command": "/opt/gemini/bin/gemini",
-            "default_model": "gemini-2.0-flash"
-        }
-    }
-}"#,
-            Some(
-                r#"{
-    "agent_servers": {
-        "gemini-custom": {
-            "type": "custom",
-            "command": "/opt/gemini/bin/gemini",
-            "default_model": "gemini-2.0-flash"
-        }
-    }
-}"#,
-            ),
-        );
-    }
-
-    #[test]
-    fn test_migrate_builtin_agent_servers_gemini_ignore_system_version_false() {
-        assert_migrate_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
-            )],
-            r#"{
-    "agent_servers": {
-        "gemini": {
-            "ignore_system_version": false,
-            "default_model": "gemini-2.0-flash"
-        }
-    }
-}"#,
-            Some(
-                r#"{
-    "agent_servers": {
-        "gemini-custom": {
-            "type": "custom",
-            "command": "gemini",
-            "default_model": "gemini-2.0-flash"
-        }
-    }
-}"#,
-            ),
-        );
-    }
-
-    #[test]
-    fn test_migrate_builtin_agent_servers_gemini_ignore_system_version_true() {
-        assert_migrate_with_migrations(
-            &[MigrationType::Json(
-                migrations::m_2026_02_25::migrate_builtin_agent_servers_to_registry,
-            )],
-            r#"{
-    "agent_servers": {
-        "gemini": {
-            "ignore_system_version": true,
-            "default_model": "gemini-2.0-flash"
-        }
-    }
-}"#,
-            Some(
-                r#"{
-    "agent_servers": {
-        "gemini": {
-            "type": "registry",
-            "default_model": "gemini-2.0-flash"
-        }
-    }
-}"#,
-            ),
-        );
-    }
-
-    #[test]
     fn test_migrate_builtin_agent_servers_already_typed_unchanged() {
         assert_migrate_with_migrations(
             &[MigrationType::Json(
@@ -4274,9 +4181,9 @@ mod tests {
             )],
             r#"{
     "agent_servers": {
-        "gemini": {
-            "type": "registry",
-            "default_model": "gemini-2.0-flash"
+        "my-custom-agent": {
+            "type": "custom",
+            "command": "/path/to/agent"
         },
         "claude-acp": {
             "type": "registry",
@@ -4455,9 +4362,9 @@ mod tests {
             )],
             r#"{
     "agent_servers": {
-        "gemini": {
-            "type": "registry",
-            "default_model": "gemini-2.0-flash"
+        "my-custom-agent": {
+            "type": "custom",
+            "command": "/path/to/agent"
         },
         "claude": {
             "default_mode": "plan"
@@ -4475,9 +4382,9 @@ mod tests {
             "type": "registry",
             "default_mode": "plan"
         },
-        "gemini": {
-            "type": "registry",
-            "default_model": "gemini-2.0-flash"
+        "my-custom-agent": {
+            "type": "custom",
+            "command": "/path/to/agent"
         }
     }
 }"#,

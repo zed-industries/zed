@@ -33,7 +33,7 @@ fn migrate_custom_agent_settings(
     let server_name = mat.nodes_for_capture_index(server_name_index).next()?;
     let server_name_text = &contents[server_name.byte_range()];
 
-    if matches!(server_name_text, "gemini" | "claude" | "codex") {
+    if matches!(server_name_text, "claude" | "codex") {
         return None;
     }
 

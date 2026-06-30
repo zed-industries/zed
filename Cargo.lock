@@ -384,7 +384,6 @@ dependencies = [
  "feature_flags",
  "fs",
  "futures 0.3.32",
- "google_ai",
  "gpui",
  "gpui_tokio",
  "http_client",
@@ -408,7 +407,6 @@ dependencies = [
  "util",
  "uuid",
  "watch",
- "zed_credentials_provider",
 ]
 
 [[package]]

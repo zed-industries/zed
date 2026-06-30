@@ -8,9 +8,9 @@ use acp_thread::{AgentConnection, Plan};
 use action_log::{ActionLog, ActionLogTelemetry, DiffStats};
 use agent::{NativeAgentServer, NoModelConfiguredError, ThreadStore};
 use agent_client_protocol::schema::v1 as acp;
+use agent_servers::AgentServer;
 #[cfg(test)]
 use agent_servers::AgentServerDelegate;
-use agent_servers::{AgentServer, GEMINI_TERMINAL_AUTH_METHOD_ID};
 use agent_settings::{AgentProfileId, AgentSettings};
 use anyhow::{Result, anyhow};
 #[cfg(feature = "audio")]
@@ -1844,7 +1844,6 @@ impl ConversationView {
                                 workspace,
                                 project,
                                 method.clone(),
-                                false,
                                 window,
                                 cx,
                             )
@@ -2006,7 +2005,6 @@ impl ConversationView {
         workspace: Entity<Workspace>,
         project: Entity<Project>,
         method: acp::AuthMethodId,
-        previous_attempt: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<()>> {
@@ -2048,7 +2046,7 @@ impl ConversationView {
                 .await?;
 
             let success_patterns = match method.0.as_ref() {
-                "claude-login" | GEMINI_TERMINAL_AUTH_METHOD_ID => vec![
+                "claude-login" => vec![
                     "Login successful".to_string(),
                     "Type your message".to_string(),
                 ],
@@ -2101,24 +2099,6 @@ impl ConversationView {
                         }
                     }
                     _ = exit_status => {
-                        if !previous_attempt
-                            && project.read_with(cx, |project, _| project.is_via_remote_server())
-                            && method.0.as_ref() == GEMINI_TERMINAL_AUTH_METHOD_ID
-                        {
-                            return cx
-                                .update(|window, cx| {
-                                    Self::spawn_external_agent_login(
-                                        login,
-                                        workspace,
-                                        project.clone(),
-                                        method,
-                                        true,
-                                        window,
-                                        cx,
-                                    )
-                                })?
-                                .await;
-                        }
                         return Err(anyhow!("exited before logging in"));
                     }
                 }
@@ -2771,7 +2751,7 @@ impl ConversationView {
 
     fn current_model_name(&self, cx: &App) -> SharedString {
         // For native agent (Zed Agent), use the specific model name (e.g., "Claude 3.5 Sonnet")
-        // For ACP agents, use the agent name (e.g., "Claude Agent", "Gemini CLI")
+        // For ACP agents, use the agent name (e.g., "Claude Agent", "Codex CLI")
         // This provides better clarity about what refused the request
         if self.as_native_connection(cx).is_some() {
             self.root_thread_view()
@@ -2780,7 +2760,7 @@ impl ConversationView {
                 .map(|model| model.name.clone())
                 .unwrap_or_else(|| SharedString::from("The model"))
         } else {
-            // ACP agent - use the agent name (e.g., "Claude Agent", "Gemini CLI")
+            // ACP agent - use the agent name (e.g., "Claude Agent", "Codex CLI")
             self.agent.agent_id().0
         }
     }

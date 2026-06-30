@@ -12,10 +12,6 @@ struct BuiltinMapping {
 
 const BUILTIN_MAPPINGS: &[BuiltinMapping] = &[
     BuiltinMapping {
-        old_key: "gemini",
-        registry_key: "gemini",
-    },
-    BuiltinMapping {
         old_key: "claude",
         registry_key: "claude-acp",
     },
@@ -82,15 +78,7 @@ fn migrate_builtin_entry(
     };
 
     let has_command = old_obj.contains_key("command");
-    let ignore_system_version = old_obj
-        .get("ignore_system_version")
-        .and_then(|v| v.as_bool());
-
-    // A custom entry is needed when the user configured a custom binary
-    // or explicitly opted into using the system version via
-    // `ignore_system_version: false` (only meaningful for gemini).
-    let needs_custom = has_command
-        || (mapping.old_key == "gemini" && matches!(ignore_system_version, Some(false)));
+    let needs_custom = has_command;
 
     if needs_custom {
         let local_key = format!("{}-custom", mapping.registry_key);
@@ -112,12 +100,6 @@ fn migrate_builtin_entry(
                     custom_obj.insert("args".to_string(), args.clone());
                 }
             }
-        } else {
-            // ignore_system_version: false — the user wants the binary from $PATH
-            custom_obj.insert(
-                "command".to_string(),
-                Value::String(mapping.old_key.to_string()),
-            );
         }
 
         // Carry over all compatible fields to the custom entry.

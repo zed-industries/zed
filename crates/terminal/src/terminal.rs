@@ -3371,9 +3371,9 @@ mod tests {
         assert_eq!(
             foreground_process_command_from_argv(&[
                 "node".to_string(),
-                "/opt/homebrew/lib/node_modules/@google/gemini-cli/dist/index.js".to_string(),
+                "/opt/homebrew/lib/node_modules/qwen/dist/index.js".to_string(),
             ]),
-            Some("gemini".to_string())
+            Some("qwen".to_string())
         );
         assert_eq!(
             foreground_process_command_from_argv(&[

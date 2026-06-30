@@ -122,7 +122,6 @@ const KNOWN_TERMINAL_AGENT_COMMANDS: &[&str] = &[
     "crush",
     "devin",
     "droid",
-    "gemini",
     "goose",
     "grok",
     "openhands",
