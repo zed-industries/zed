@@ -1585,6 +1585,7 @@ struct SubPageLink {
     title: SharedString,
     r#type: SubPageType,
     description: Option<SharedString>,
+    search_aliases: &'static [&'static str],
     /// See [`SettingField.json_path`]
     json_path: Option<&'static str>,
     /// Whether or not the settings in this sub page are configurable in settings.json
@@ -2351,19 +2352,30 @@ impl SettingsWindow {
                     }
                     SettingsPageItem::SubPageLink(sub_page_link) => {
                         json_path = sub_page_link.json_path;
+                        let mut parts = vec![page.title, header_str, sub_page_link.title.as_ref()];
+                        if let Some(description) = sub_page_link.description.as_ref() {
+                            parts.push(description.as_ref());
+                        }
+                        parts.extend(sub_page_link.search_aliases);
                         documents.push(SearchDocument {
                             id: key_index,
-                            words: split_into_words(&[
-                                page.title,
-                                header_str,
-                                sub_page_link.title.as_ref(),
-                            ]),
+                            words: split_into_words(&parts),
                         });
                         push_candidates(
                             &mut fuzzy_match_candidates,
                             key_index,
                             sub_page_link.title.as_ref(),
                         );
+                        if let Some(description) = sub_page_link.description.as_ref() {
+                            push_candidates(
+                                &mut fuzzy_match_candidates,
+                                key_index,
+                                description.as_ref(),
+                            );
+                        }
+                        for alias in sub_page_link.search_aliases {
+                            push_candidates(&mut fuzzy_match_candidates, key_index, alias);
+                        }
                     }
                     SettingsPageItem::ActionLink(action_link) => {
                         documents.push(SearchDocument {
@@ -4128,6 +4140,7 @@ impl SettingsWindow {
             title: title.into(),
             r#type: SubPageType::default(),
             description: None,
+            search_aliases: &[],
             json_path,
             in_json,
             files: USER,
@@ -4185,6 +4198,7 @@ impl SettingsWindow {
             title: "Create Skill".into(),
             r#type: SubPageType::SkillCreator,
             description: None,
+            search_aliases: &[],
             json_path: None,
             in_json: false,
             files: USER | PROJECT,
