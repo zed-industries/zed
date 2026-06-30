@@ -400,6 +400,9 @@ pub struct Markdown {
     /// renderer size the document and place off-screen blocks without laying them
     /// out. Reparsable blocks are never stored — their render can change.
     block_heights: HashMap<Range<usize>, Pixels>,
+    /// Width the cached heights were measured at; clearing the cache on a change
+    /// keeps wrap-dependent heights from going stale after a resize.
+    last_layout_width: Option<Pixels>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -593,6 +596,7 @@ impl Markdown {
             search_highlights: Vec::new(),
             active_search_highlight: None,
             block_heights: HashMap::default(),
+            last_layout_width: None,
         };
         this.parse(cx);
         this
@@ -2868,6 +2872,16 @@ impl Element for MarkdownElement {
         let visible_top = viewport.top() - BLOCK_OVERSCAN;
         let visible_bottom = viewport.bottom() + BLOCK_OVERSCAN;
 
+        // Heights depend on wrap width, so drop the cache when the width changes;
+        // blocks then re-measure at the new width instead of keeping stale
+        // (wider-width) heights that would mis-size the extent and positions.
+        self.markdown.update(cx, |markdown, _| {
+            if markdown.last_layout_width != Some(bounds.size.width) {
+                markdown.last_layout_width = Some(bounds.size.width);
+                markdown.block_heights.clear();
+            }
+        });
+
         let available = gpui::size(
             gpui::AvailableSpace::Definite(bounds.size.width),
             gpui::AvailableSpace::MinContent,
@@ -4616,6 +4630,63 @@ mod tests {
             to_last < to_first - px(500.),
             "autoscroll landed at block granularity, not line: \
              first={to_first:?} last={to_last:?}"
+        );
+    }
+
+    // A resize changes wrap width, so cached heights of off-screen blocks (which
+    // aren't re-measured each frame) would otherwise stay stale. The width-change
+    // clear drops them so they re-measure at the new width.
+    #[gpui::test]
+    fn resize_invalidates_height_cache(cx: &mut TestAppContext) {
+        struct TestWindow;
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| Markdown::new(perf_doc(100).into(), None, None, cx));
+        let (_, mut cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.simulate_resize(size(px(800.), px(600.)));
+        cx.run_until_parked();
+
+        let draw = |cx: &mut gpui::VisualTestContext, width: f32, scroll: f32| {
+            let markdown = markdown.clone();
+            cx.draw(point(px(0.), px(-scroll)), size(px(width), px(600.)), move |_, _| {
+                MarkdownElement::new(markdown, MarkdownStyle::default()).code_block_renderer(
+                    CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    },
+                )
+            });
+        };
+
+        // Measure top blocks at the wide width.
+        draw(&mut cx, 800., 0.);
+        let top_range = cx.update(|_, cx| {
+            markdown
+                .read(cx)
+                .block_heights
+                .keys()
+                .min_by_key(|range| range.start)
+                .cloned()
+                .expect("top blocks measured")
+        });
+
+        // Scroll it off-screen (same width): its cached height persists.
+        draw(&mut cx, 800., 2000.);
+        assert!(
+            cx.update(|_, cx| markdown.read(cx).block_heights.contains_key(&top_range)),
+            "off-screen block should keep its cached height across a scroll"
+        );
+
+        // Resize narrower while it's off-screen: the stale height is dropped.
+        draw(&mut cx, 300., 2000.);
+        assert!(
+            !cx.update(|_, cx| markdown.read(cx).block_heights.contains_key(&top_range)),
+            "resize did not invalidate the off-screen block's stale height"
         );
     }
 
