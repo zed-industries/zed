@@ -103,6 +103,10 @@ pub(crate) fn build_static_bwrap(arch: Arch, deps: &[&NamedJob]) -> NamedJob {
         Arch::X86_64 => assets::BWRAP_LINUX_X86_64,
         Arch::AARCH64 => assets::BWRAP_LINUX_AARCH64,
     };
+    let manifest_name = match arch {
+        Arch::X86_64 => assets::BWRAP_MANIFEST_LINUX_X86_64,
+        Arch::AARCH64 => assets::BWRAP_MANIFEST_LINUX_AARCH64,
+    };
     let binary_name = artifact_name
         .strip_suffix(".gz")
         .expect("static bwrap artifact name should end in .gz");
@@ -110,6 +114,8 @@ pub(crate) fn build_static_bwrap(arch: Arch, deps: &[&NamedJob]) -> NamedJob {
         cp result/bin/bwrap {binary_name}
         chmod 755 {binary_name}
         gzip -f --stdout --best {binary_name} > {artifact_name}
+        version=$(nix eval --raw nixpkgs#pkgsStatic.bubblewrap.version)
+        printf '{{"version":"%s"}}\n' "$version" > {manifest_name}
     "#};
 
     NamedJob {
@@ -138,7 +144,8 @@ pub(crate) fn build_static_bwrap(arch: Arch, deps: &[&NamedJob]) -> NamedJob {
             )
             .add_step(named::bash("nix build nixpkgs#pkgsStatic.bubblewrap -L"))
             .add_step(named::bash(&copy_artifact))
-            .add_step(upload_artifact(artifact_name)),
+            .add_step(upload_artifact(artifact_name))
+            .add_step(upload_artifact(manifest_name)),
     }
 }
 
