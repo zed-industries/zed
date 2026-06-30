@@ -1322,7 +1322,21 @@ struct GitGraphContextMenu {
     _subscription: Subscription,
 }
 
+/// Where a [`GitGraph`] is being hosted. Some interactions differ depending on
+/// whether the graph fills an editor tab or sits in the narrow sidebar panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum GitGraphHost {
+    /// Hosted as a workspace item (a tab in a pane). Clicking a commit shows
+    /// its details in an inline split below the graph.
+    #[default]
+    Item,
+    /// Hosted inside the git graph sidebar panel. The inline details split is
+    /// suppressed and clicking a commit opens it in a separate `CommitView` tab.
+    Panel,
+}
+
 pub struct GitGraph {
+    host: GitGraphHost,
     focus_handle: FocusHandle,
     search_state: SearchState,
     graph_data: GraphData,
@@ -1539,6 +1553,7 @@ impl GitGraph {
         .detach();
 
         let mut this = GitGraph {
+            host: GitGraphHost::default(),
             focus_handle,
             git_store,
             search_state: SearchState {
@@ -2175,6 +2190,14 @@ impl GitGraph {
             cx.notify();
         });
 
+        // In the sidebar panel the inline details split is not rendered, so the
+        // commit diff is never shown; skip loading it to avoid wasted work.
+        if self.host == GitGraphHost::Panel {
+            cx.emit(ItemEvent::Edit);
+            cx.notify();
+            return;
+        }
+
         let Some(commit) = self.graph_data.commits.get(idx) else {
             return;
         };
@@ -2245,6 +2268,10 @@ impl GitGraph {
 
         self.search_state.selected_index = Some(next_selection);
         self.select_commit_by_sha(oid, cx);
+    }
+
+    pub(crate) fn set_host(&mut self, host: GitGraphHost) {
+        self.host = host;
     }
 
     pub fn set_repo_id(&mut self, repo_id: RepositoryId, cx: &mut Context<Self>) {
@@ -3576,7 +3603,10 @@ impl GitGraph {
 
         self.select_entry(entry_idx, scroll_strategy, cx);
 
-        if event.click_count() >= 2 {
+        // In the panel there is no inline details split, so a single click opens
+        // the commit in a `CommitView` tab. In a tab it takes a double click,
+        // since a single click just drives the inline split.
+        if self.host == GitGraphHost::Panel || event.click_count() >= 2 {
             self.open_commit_view(entry_idx, window, cx);
         }
     }
@@ -3991,10 +4021,13 @@ impl Render for GitGraph {
                         state.commit_ratio();
                     });
                 }))
-                .when(self.selected_entry_idx.is_some(), |this| {
-                    this.child(self.render_commit_view_resize_handle(window, cx))
-                        .child(self.render_commit_detail_panel(window, cx))
-                })
+                .when(
+                    self.selected_entry_idx.is_some() && self.host != GitGraphHost::Panel,
+                    |this| {
+                        this.child(self.render_commit_view_resize_handle(window, cx))
+                            .child(self.render_commit_detail_panel(window, cx))
+                    },
+                )
         };
 
         div()

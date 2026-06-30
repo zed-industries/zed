@@ -12,7 +12,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
 };
 
-use crate::git_graph::GitGraph;
+use crate::git_graph::{GitGraph, GitGraphHost};
 
 actions!(
     git_graph_panel,
@@ -104,8 +104,11 @@ impl GitGraphPanel {
         } else {
             let git_store = self.git_store.clone();
             let workspace = self.workspace.clone();
-            let graph =
-                cx.new(|cx| GitGraph::new(repo_id, git_store, workspace, None, window, cx));
+            let graph = cx.new(|cx| {
+                let mut graph = GitGraph::new(repo_id, git_store, workspace, None, window, cx);
+                graph.set_host(GitGraphHost::Panel);
+                graph
+            });
             self.graph = Some(graph);
         }
         cx.notify();
