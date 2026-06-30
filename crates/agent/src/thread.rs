@@ -7,7 +7,7 @@ use crate::{
     TerminalTool, ToolPermissionDecision, WebSearchTool, WriteFileTool,
     decide_permission_from_settings,
 };
-use acp_thread::{MentionUri, UserMessageId};
+use acp_thread::{ClientUserMessageId, MentionUri};
 use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 
@@ -241,7 +241,7 @@ impl Message {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserMessage {
-    pub id: UserMessageId,
+    pub id: ClientUserMessageId,
     pub content: Arc<[UserMessageContent]>,
 }
 
@@ -1209,12 +1209,13 @@ pub struct Thread {
     /// Survives across multiple requests as the model performs tool calls and
     /// we run tools, report their results.
     running_turn: Option<RunningTurn>,
-    /// Flag indicating the UI has a queued message waiting to be sent.
-    /// Used to signal that the turn should end at the next message boundary.
-    has_queued_message: bool,
+    /// When set, the current turn ends at the next message boundary instead of
+    /// running to completion. The UI sets this to deliver a "steering" queued
+    /// message mid-task; by default queued messages wait for the turn to finish.
+    end_turn_at_next_boundary: bool,
     pending_message: Option<AgentMessage>,
     pub(crate) tools: BTreeMap<SharedString, Arc<dyn AnyAgentTool>>,
-    request_token_usage: HashMap<UserMessageId, language_model::TokenUsage>,
+    request_token_usage: HashMap<ClientUserMessageId, language_model::TokenUsage>,
     cumulative_token_usage: TokenUsage,
     /// The per-field maximum usage snapshot already added to
     /// `cumulative_token_usage` for the in-flight completion request. Reset at
@@ -1236,8 +1237,6 @@ pub struct Thread {
     pub(crate) prompt_capabilities_rx: watch::Receiver<acp::PromptCapabilities>,
     pub(crate) project: Entity<Project>,
     pub(crate) action_log: Entity<ActionLog>,
-    /// True if this thread was imported from a shared thread and can be synced.
-    imported: bool,
     /// If this is a subagent thread, contains context about the parent
     subagent_context: Option<SubagentContext>,
     /// The user's unsent prompt text, persisted so it can be restored when reloading the thread.
@@ -1349,7 +1348,7 @@ impl Thread {
             messages: Vec::new(),
             user_store: project.read(cx).user_store(),
             running_turn: None,
-            has_queued_message: false,
+            end_turn_at_next_boundary: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: HashMap::default(),
@@ -1375,7 +1374,6 @@ impl Thread {
             prompt_capabilities_rx,
             project,
             action_log,
-            imported: false,
             subagent_context: None,
             draft_prompt: None,
             ui_scroll_position: None,
@@ -1452,11 +1450,6 @@ impl Thread {
         self.sandboxed_terminal_temp_dir = Some(temp_dir.clone());
         cx.notify();
         Ok(temp_dir)
-    }
-
-    /// Returns true if this thread was imported from a shared thread.
-    pub fn is_imported(&self) -> bool {
-        self.imported
     }
 
     pub fn replay(
@@ -1735,7 +1728,7 @@ impl Thread {
             messages: db_thread.messages,
             user_store: project.read(cx).user_store(),
             running_turn: None,
-            has_queued_message: false,
+            end_turn_at_next_boundary: false,
             pending_message: None,
             tools: BTreeMap::default(),
             request_token_usage: db_thread.request_token_usage.clone(),
@@ -1757,7 +1750,6 @@ impl Thread {
             updated_at: db_thread.updated_at,
             prompt_capabilities_tx,
             prompt_capabilities_rx,
-            imported: db_thread.imported,
             subagent_context: db_thread.subagent_context,
             draft_prompt: db_thread.draft_prompt,
             ui_scroll_position: db_thread.ui_scroll_position.map(|sp| gpui::ListOffset {
@@ -1901,7 +1893,6 @@ impl Thread {
             request_token_usage: self.request_token_usage.clone(),
             model: (&self.model).into(),
             profile: Some(self.profile_id.clone()),
-            imported: self.imported,
             subagent_context: self.subagent_context.clone(),
             speed: self.speed,
             thinking_enabled: self.thinking_enabled,
@@ -2246,12 +2237,12 @@ impl Thread {
         })
     }
 
-    pub fn set_has_queued_message(&mut self, has_queued: bool) {
-        self.has_queued_message = has_queued;
+    pub fn set_end_turn_at_next_boundary(&mut self, end_at_boundary: bool) {
+        self.end_turn_at_next_boundary = end_at_boundary;
     }
 
-    pub fn has_queued_message(&self) -> bool {
-        self.has_queued_message
+    pub fn end_turn_at_next_boundary(&self) -> bool {
+        self.end_turn_at_next_boundary
     }
 
     fn accumulate_token_usage(&mut self, update: language_model::TokenUsage) {
@@ -2301,14 +2292,18 @@ impl Thread {
         cx.notify();
     }
 
-    pub fn truncate(&mut self, message_id: UserMessageId, cx: &mut Context<Self>) -> Result<()> {
+    pub fn truncate(
+        &mut self,
+        client_user_message_id: ClientUserMessageId,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         self.cancel(cx).detach();
         // Clear pending message since cancel will try to flush it asynchronously,
         // and we don't want that content to be added after we truncate
         self.pending_message.take();
-        let Some(position) = self.messages.iter().position(
-            |msg| matches!(&**msg, Message::User(UserMessage { id, .. }) if id == &message_id),
-        ) else {
+        let Some(position) = self.messages.iter().position(|msg| {
+            matches!(&**msg, Message::User(UserMessage { id, .. }) if id == &client_user_message_id)
+        }) else {
             return Err(anyhow!("Message not found"));
         };
 
@@ -2355,8 +2350,8 @@ impl Thread {
     /// - `target_id` is the first message (no previous message)
     /// - The previous message hasn't received a response yet (no usage data)
     /// - `target_id` is not found in the messages
-    pub fn tokens_before_message(&self, target_id: &UserMessageId) -> Option<u64> {
-        let mut previous_user_message_id: Option<&UserMessageId> = None;
+    pub fn tokens_before_message(&self, target_id: &ClientUserMessageId) -> Option<u64> {
+        let mut previous_user_message_id: Option<&ClientUserMessageId> = None;
 
         for message in &self.messages {
             if let Message::User(user_msg) = &**message {
@@ -2416,7 +2411,7 @@ impl Thread {
     /// The returned channel will report all the occurrences in which the model stops before erroring or ending its turn.
     pub fn send<T>(
         &mut self,
-        id: UserMessageId,
+        id: ClientUserMessageId,
         content: impl IntoIterator<Item = T>,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>>
@@ -2452,7 +2447,7 @@ impl Thread {
     /// regardless of the current token usage or context window size.
     pub fn compact(
         &mut self,
-        id: UserMessageId,
+        id: ClientUserMessageId,
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
         let model = self
@@ -2544,7 +2539,7 @@ impl Thread {
 
     pub fn push_acp_user_block(
         &mut self,
-        id: UserMessageId,
+        id: ClientUserMessageId,
         blocks: impl IntoIterator<Item = acp::ContentBlock>,
         path_style: PathStyle,
         cx: &mut Context<Self>,
@@ -2981,9 +2976,10 @@ impl Thread {
             } else if end_turn {
                 return Ok(());
             } else {
-                let has_queued = this.update(cx, |this, _| this.has_queued_message())?;
-                if has_queued {
-                    log::debug!("Queued message found, ending turn at message boundary");
+                let end_at_boundary =
+                    this.update(cx, |this, _| this.end_turn_at_next_boundary())?;
+                if end_at_boundary {
+                    log::debug!("Steering message queued, ending turn at message boundary");
                     return Ok(());
                 }
                 intent = CompletionIntent::ToolResults;
@@ -4615,7 +4611,7 @@ enum CompactionInsertion {
     /// (which may be before a trailing not-yet-answered user message).
     Auto { insertion_ix: usize },
     /// Manual `/compact` appends a zero-content user message followed by the summary.
-    Manual { marker_id: UserMessageId },
+    Manual { marker_id: ClientUserMessageId },
 }
 
 struct RunningTurn {
@@ -6492,7 +6488,7 @@ mod tests {
         );
     }
 
-    fn user_text_message(id: UserMessageId, text: &str) -> Arc<Message> {
+    fn user_text_message(id: ClientUserMessageId, text: &str) -> Arc<Message> {
         Arc::new(Message::User(UserMessage {
             id,
             content: vec![UserMessageContent::Text(text.to_string())].into(),
@@ -6528,7 +6524,7 @@ mod tests {
     async fn test_compaction_threshold_uses_percentage_setting(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        let user_message_id = UserMessageId::new();
+        let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -6564,7 +6560,7 @@ mod tests {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
         model.set_max_output_tokens(Some(32_000));
-        let user_message_id = UserMessageId::new();
+        let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -6627,7 +6623,7 @@ mod tests {
     async fn test_compaction_threshold_respects_enabled_setting(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        let user_message_id = UserMessageId::new();
+        let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             set_auto_compact_settings(
@@ -6659,7 +6655,7 @@ mod tests {
     async fn test_compaction_threshold_respects_token_settings(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        let user_message_id = UserMessageId::new();
+        let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             set_auto_compact_settings(
@@ -6731,7 +6727,7 @@ mod tests {
         let model = Arc::new(FakeLanguageModel::default());
         // A context window below the minimum disables auto-compaction.
         model.set_max_token_count(MIN_COMPACTION_CONTEXT_WINDOW - 1);
-        let user_message_id = UserMessageId::new();
+        let user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -6758,8 +6754,8 @@ mod tests {
     ) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        let old_user_message_id = UserMessageId::new();
-        let new_user_message_id = UserMessageId::new();
+        let old_user_message_id = ClientUserMessageId::new();
+        let new_user_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -6837,8 +6833,8 @@ mod tests {
         // A context window below the minimum and no recorded token usage would
         // both disable *automatic* compaction. Manual compaction forces it anyway.
         model.set_max_token_count(MIN_COMPACTION_CONTEXT_WINDOW - 1);
-        let user_message_id = UserMessageId::new();
-        let compact_message_id = UserMessageId::new();
+        let user_message_id = ClientUserMessageId::new();
+        let compact_message_id = ClientUserMessageId::new();
 
         cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -6921,13 +6917,17 @@ mod tests {
                 thread.set_model(model.clone(), cx);
                 thread
                     .messages
-                    .push(user_text_message(UserMessageId::new(), "old user"));
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
                 thread.messages.push(agent_text_message("old assistant"));
             });
         });
 
         let _events = cx
-            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+            })
             .unwrap();
         cx.run_until_parked();
         // The compaction request is in flight but hasn't streamed a summary.
@@ -6956,13 +6956,17 @@ mod tests {
                 thread.set_model(model.clone(), cx);
                 thread
                     .messages
-                    .push(user_text_message(UserMessageId::new(), "old user"));
+                    .push(user_text_message(ClientUserMessageId::new(), "old user"));
                 thread.messages.push(agent_text_message("old assistant"));
             });
         });
 
         let mut events = cx
-            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+            })
             .unwrap();
         cx.run_until_parked();
 
@@ -6997,7 +7001,11 @@ mod tests {
         cx.update(|cx| thread.update(cx, |thread, cx| thread.set_model(model.clone(), cx)));
 
         let _events = cx
-            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.compact(ClientUserMessageId::new(), cx)
+                })
+            })
             .unwrap();
         cx.run_until_parked();
 
@@ -7013,13 +7021,13 @@ mod tests {
     #[gpui::test]
     async fn test_manual_compact_marker_replays_as_empty_user_message(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let marker_id = UserMessageId::new();
+        let marker_id = ClientUserMessageId::new();
 
         let mut replay_events = cx.update(|cx| {
             thread.update(cx, |thread, cx| {
                 thread
                     .messages
-                    .push(user_text_message(UserMessageId::new(), "before"));
+                    .push(user_text_message(ClientUserMessageId::new(), "before"));
                 thread.messages.push(agent_text_message("answer"));
                 thread.messages.push(Arc::new(Message::User(UserMessage {
                     id: marker_id.clone(),
@@ -7057,8 +7065,8 @@ mod tests {
     async fn test_compaction_usage_counts_toward_cumulative_usage(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
         let model = Arc::new(FakeLanguageModel::default());
-        let old_user_message_id = UserMessageId::new();
-        let new_user_message_id = UserMessageId::new();
+        let old_user_message_id = ClientUserMessageId::new();
+        let new_user_message_id = ClientUserMessageId::new();
         let prior_usage = TokenUsage {
             input_tokens: 960_000,
             output_tokens: 25,
@@ -7157,7 +7165,7 @@ mod tests {
     #[gpui::test]
     async fn test_replay_emits_context_compaction(cx: &mut TestAppContext) {
         let (thread, _event_stream) = setup_thread_for_test(cx).await;
-        let user_message_id = UserMessageId::new();
+        let user_message_id = ClientUserMessageId::new();
 
         let mut replay_events = cx.update(|cx| {
             thread.update(cx, |thread, cx| {
@@ -7209,18 +7217,20 @@ mod tests {
 
         let request_messages = cx.update(|cx| {
             thread.update(cx, |thread, cx| {
-                thread
-                    .messages
-                    .push(user_text_message(UserMessageId::new(), "before native"));
+                thread.messages.push(user_text_message(
+                    ClientUserMessageId::new(),
+                    "before native",
+                ));
                 thread.messages.push(Arc::new(Message::Compaction(
                     CompactionInfo::ProviderNative {
                         provider: LanguageModelProviderId::from("openai".to_string()),
                         items: vec![json!({"type": "compaction"})],
                     },
                 )));
-                thread
-                    .messages
-                    .push(user_text_message(UserMessageId::new(), "after native"));
+                thread.messages.push(user_text_message(
+                    ClientUserMessageId::new(),
+                    "after native",
+                ));
 
                 thread.build_request_messages(Vec::new(), cx)
             })
@@ -7242,7 +7252,7 @@ mod tests {
         let request_messages = cx.update(|cx| {
             thread.update(cx, |thread, cx| {
                 thread.messages.push(user_text_message(
-                    UserMessageId::new(),
+                    ClientUserMessageId::new(),
                     "dropped older user",
                 ));
                 thread
@@ -7250,15 +7260,15 @@ mod tests {
                     .push(agent_text_message("dropped assistant"));
                 thread
                     .messages
-                    .push(user_text_message(UserMessageId::new(), &long_text));
+                    .push(user_text_message(ClientUserMessageId::new(), &long_text));
                 thread
                     .messages
-                    .push(user_text_message(UserMessageId::new(), "new"));
+                    .push(user_text_message(ClientUserMessageId::new(), "new"));
                 thread.messages.push(summary_compaction("summary context"));
                 thread.messages.push(agent_text_message("after assistant"));
                 thread
                     .messages
-                    .push(user_text_message(UserMessageId::new(), "after user"));
+                    .push(user_text_message(ClientUserMessageId::new(), "after user"));
 
                 thread.build_request_messages(Vec::new(), cx)
             })

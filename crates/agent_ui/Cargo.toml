@@ -108,6 +108,7 @@ theme_settings.workspace = true
 time.workspace = true
 ui.workspace = true
 ui_input.workspace = true
+unicode-segmentation.workspace = true
 url.workspace = true
 util.workspace = true
 uuid.workspace = true

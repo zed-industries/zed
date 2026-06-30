@@ -22,7 +22,6 @@ use util::maybe;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::iter;
 use std::mem;
 use std::ops::Range;
 use std::path::Path;
@@ -176,8 +175,12 @@ impl MarkdownStyle {
                 theme_settings.agent_buffer_font_size(cx),
                 theme_settings.agent_ui_font_size(cx),
             ),
-            MarkdownFont::Editor | MarkdownFont::Preview => (
+            MarkdownFont::Editor => (
                 theme_settings.buffer_font_size(cx),
+                theme_settings.ui_font_size(cx),
+            ),
+            MarkdownFont::Preview => (
+                theme_settings.markdown_preview_font_size(cx),
                 theme_settings.ui_font_size(cx),
             ),
         };
@@ -200,7 +203,11 @@ impl MarkdownStyle {
             font_family: Some(body_font_family),
             font_fallbacks: theme_settings.ui_font.fallbacks.clone(),
             font_features: Some(theme_settings.ui_font.features.clone()),
-            font_size: Some(ui_font_size.into()),
+            font_size: Some(if is_preview {
+                rems(1.0).into()
+            } else {
+                ui_font_size.into()
+            }),
             line_height: Some(line_height.into()),
             color: Some(colors.text),
             ..Default::default()
@@ -307,14 +314,14 @@ impl MarkdownStyle {
         };
 
         if is_preview {
-            style.with_preview_overrides(ui_font_size, colors)
+            style.with_preview_overrides(colors)
         } else {
             style
         }
     }
 
-    fn with_preview_overrides(mut self, ui_font_size: Pixels, colors: &theme::ThemeColors) -> Self {
-        let body_font_size = ui_font_size * 0.92;
+    fn with_preview_overrides(mut self, colors: &theme::ThemeColors) -> Self {
+        let body_font_size = rems(0.92);
         self.base_text_style.font_size = body_font_size.into();
         self.container_style.text.font_size = Some(body_font_size.into());
 
@@ -392,7 +399,8 @@ pub struct Markdown {
     wrapped_code_blocks: HashSet<usize>,
     code_block_scroll_handles: BTreeMap<usize, ScrollHandle>,
     context_menu_link: Option<SharedString>,
-    context_menu_selected_text: Option<String>,
+    context_menu_selected_text: Option<SharedString>,
+    context_menu_selected_markdown: Option<SharedString>,
     search_highlights: Vec<Range<usize>>,
     active_search_highlight: Option<usize>,
 }
@@ -585,6 +593,7 @@ impl Markdown {
             code_block_scroll_handles: BTreeMap::default(),
             context_menu_link: None,
             context_menu_selected_text: None,
+            context_menu_selected_markdown: None,
             search_highlights: Vec::new(),
             active_search_highlight: None,
         };
@@ -857,8 +866,8 @@ impl Markdown {
     }
 
     fn copy_as_markdown(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = self.context_menu_selected_text.take() {
-            cx.write_to_clipboard(ClipboardItem::new_string(text));
+        if let Some(text) = self.context_menu_selected_markdown.take() {
+            cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
             return;
         }
         if self.selection.end <= self.selection.start {
@@ -868,8 +877,23 @@ impl Markdown {
         cx.write_to_clipboard(ClipboardItem::new_string(text));
     }
 
-    fn capture_for_context_menu(&mut self, link: Option<SharedString>) {
-        self.context_menu_selected_text = self.selected_text();
+    fn capture_for_context_menu(
+        &mut self,
+        link: Option<SharedString>,
+        rendered_text: Option<&RenderedText>,
+    ) {
+        let range = self.selection.start..self.selection.end;
+        if range.end > range.start {
+            self.context_menu_selected_markdown =
+                Some(SharedString::new(&self.source[range.clone()]));
+            self.context_menu_selected_text = rendered_text
+                .map(|text| text.text_for_range(range))
+                .map(SharedString::new)
+                .or_else(|| self.context_menu_selected_markdown.clone());
+        } else {
+            self.context_menu_selected_markdown = None;
+            self.context_menu_selected_text = None;
+        }
         self.context_menu_link = link;
     }
 
@@ -878,6 +902,18 @@ impl Markdown {
     /// views to include a "Copy Link" item in their context menus.
     pub fn context_menu_link(&self) -> Option<&SharedString> {
         self.context_menu_link.as_ref()
+    }
+
+    /// Returns the rendered (plain) text that was selected when the most recent
+    /// context menu invocation happened.
+    pub fn context_menu_selected_text(&self) -> Option<&SharedString> {
+        self.context_menu_selected_text.as_ref()
+    }
+
+    /// Returns the raw markdown source that was selected when the most recent
+    /// context menu invocation happened.
+    pub fn context_menu_selected_markdown(&self) -> Option<&SharedString> {
+        self.context_menu_selected_markdown.as_ref()
     }
 
     fn parse(&mut self, cx: &mut Context<Self>) {
@@ -1342,14 +1378,14 @@ impl MarkdownElement {
         width: Option<DefiniteLength>,
         height: Option<DefiniteLength>,
     ) {
-        builder.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
-
         let image_element = div().min_w_0().child(
             img(source)
                 .id(("markdown-image", range.start))
                 .min_w_0()
                 .max_w_full()
                 .rounded_md()
+                .mr_1()
+                .mb_1()
                 .when_some(height, |this, height| this.h(height))
                 .when_some(width, |this, width| this.w(width))
                 .with_fallback(move || image_fallback_element(dest_url.clone(), alt_text.clone())),
@@ -1723,7 +1759,7 @@ impl MarkdownElement {
                         .ok()
                         .and_then(|ix| rendered_text.link_for_source_index(ix))
                         .map(|link| link.destination_url.clone());
-                    markdown.capture_for_context_menu(link);
+                    markdown.capture_for_context_menu(link, Some(&rendered_text));
                 }
             }
         });
@@ -2597,6 +2633,9 @@ impl Element for MarkdownElement {
                         cx,
                     );
                 }
+                MarkdownEvent::SubstitutedCode(text) => {
+                    self.push_markdown_code_span(&mut builder, text, range.clone(), cx);
+                }
                 MarkdownEvent::Html => {
                     let html = &parsed_markdown.source[range.clone()];
                     if html.starts_with("<!--") {
@@ -2647,14 +2686,12 @@ impl Element for MarkdownElement {
                     );
                     builder.pop_div()
                 }
-                MarkdownEvent::SoftBreak => {
-                    if self.style.soft_break_as_hard_break {
-                        builder.push_text("\n", range.clone())
-                    } else {
-                        builder.push_text(" ", range.clone())
-                    }
+                MarkdownEvent::SoftBreak if !self.style.soft_break_as_hard_break => {
+                    builder.push_soft_break(range.clone());
                 }
-                MarkdownEvent::HardBreak => builder.push_text("\n", range.clone()),
+                MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak => {
+                    builder.push_line_break(range.clone());
+                }
                 MarkdownEvent::TaskListMarker(_) => {
                     // handled inside the `MarkdownTag::Item` case
                 }
@@ -3013,7 +3050,7 @@ struct MetadataCellStyle {
 }
 
 struct MarkdownElementBuilder {
-    div_stack: Vec<AnyDiv>,
+    div_stack: Vec<DivStackEntry>,
     rendered_lines: Vec<RenderedLine>,
     pending_line: PendingLine,
     rendered_links: Vec<RenderedLink>,
@@ -3028,6 +3065,26 @@ struct MarkdownElementBuilder {
     list_stack: Vec<ListStackEntry>,
     table: TableState,
     syntax_theme: Arc<SyntaxTheme>,
+}
+
+struct DivStackEntry {
+    div: AnyDiv,
+    line_break_mode: LineBreakMode,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum LineBreakMode {
+    TextLayout,
+    FlexWrap,
+}
+
+impl DivStackEntry {
+    fn new(div: impl Into<AnyDiv>) -> Self {
+        Self {
+            div: div.into(),
+            line_break_mode: LineBreakMode::TextLayout,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -3051,7 +3108,7 @@ impl MarkdownElementBuilder {
             div_stack: vec![{
                 let mut base_div = div();
                 base_div.style().refine(container_style);
-                base_div.debug_selector(|| "inner".into()).into()
+                DivStackEntry::new(base_div.debug_selector(|| "inner".into()))
             }],
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
@@ -3115,7 +3172,7 @@ impl MarkdownElementBuilder {
             });
         }
 
-        self.div_stack.push(div);
+        self.div_stack.push(DivStackEntry::new(div));
     }
 
     fn push_root_block(&mut self, range: &Range<usize>, markdown_end: usize) {
@@ -3128,17 +3185,43 @@ impl MarkdownElementBuilder {
     }
 
     fn push_image_child(&mut self, child: impl IntoElement) {
-        self.flush_text();
+        self.modify_current_div(|el| el.flex().flex_row().flex_wrap().items_start());
+        self.div_stack.last_mut().unwrap().line_break_mode = LineBreakMode::FlexWrap;
+        self.append_child(child.into_any_element());
+    }
+
+    fn push_line_break(&mut self, source_range: Range<usize>) {
+        if self.uses_flex_line_breaks() {
+            self.modify_current_div(|el| el.child(div().w_full().h_0()));
+        } else {
+            self.push_text("\n", source_range);
+        }
+    }
+
+    fn push_soft_break(&mut self, source_range: Range<usize>) {
+        // A soft break right after an item in flex wrap container would otherwise
+        // render as a stray leading space before the next wrapped item.
+        if self.uses_flex_line_breaks() && self.pending_line.text.is_empty() {
+            return;
+        }
+        self.push_text(" ", source_range);
+    }
+
+    fn append_child(&mut self, child: AnyElement) {
+        self.div_stack.last_mut().unwrap().div.extend([child]);
+    }
+
+    fn uses_flex_line_breaks(&self) -> bool {
         self.div_stack
-            .last_mut()
-            .unwrap()
-            .extend([child.into_any_element()]);
+            .last()
+            .is_some_and(|entry| entry.line_break_mode == LineBreakMode::FlexWrap)
     }
 
     fn modify_current_div(&mut self, f: impl FnOnce(AnyDiv) -> AnyDiv) {
         self.flush_text();
-        if let Some(div) = self.div_stack.pop() {
-            self.div_stack.push(f(div));
+        if let Some(mut entry) = self.div_stack.pop() {
+            entry.div = f(entry.div);
+            self.div_stack.push(entry);
         }
     }
 
@@ -3173,20 +3256,20 @@ impl MarkdownElementBuilder {
 
     fn pop_div(&mut self) {
         self.flush_text();
-        let div = self.div_stack.pop().unwrap().into_any_element();
-        self.div_stack.last_mut().unwrap().extend(iter::once(div));
+        let div = self.div_stack.pop().unwrap().div.into_any_element();
+        self.append_child(div);
     }
 
     fn push_sourced_element(&mut self, source_range: Range<usize>, element: impl Into<AnyElement>) {
         self.flush_text();
         let anchor = self.render_source_anchor(source_range);
-        self.div_stack.last_mut().unwrap().extend([{
+        self.append_child(
             div()
                 .relative()
                 .child(anchor)
                 .child(element.into())
-                .into_any_element()
-        }]);
+                .into_any_element(),
+        );
     }
 
     fn push_list(&mut self, bullet_index: Option<u64>) {
@@ -3328,10 +3411,7 @@ impl MarkdownElementBuilder {
             TextAlign::Right => checkbox_container.justify_end(),
         };
 
-        self.div_stack
-            .last_mut()
-            .unwrap()
-            .extend([checkbox_container.child(checkbox).into_any_element()]);
+        self.append_child(checkbox_container.child(checkbox).into_any_element());
     }
 
     fn source_range_for_rendered(&self, rendered: &Range<usize>) -> Option<Range<usize>> {
@@ -3377,14 +3457,14 @@ impl MarkdownElementBuilder {
             language: self.code_block_stack.last().cloned().flatten(),
             text_align,
         });
-        self.div_stack.last_mut().unwrap().extend([text.into_any()]);
+        self.append_child(text.into_any());
     }
 
     fn build(mut self) -> RenderedMarkdown {
         debug_assert_eq!(self.div_stack.len(), 1);
         self.flush_text();
         RenderedMarkdown {
-            element: self.div_stack.pop().unwrap().into_any_element(),
+            element: self.div_stack.pop().unwrap().div.into_any_element(),
             text: RenderedText {
                 lines: self.rendered_lines.into(),
                 links: self.rendered_links.into(),
@@ -3926,12 +4006,20 @@ impl RenderedText {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, size};
+    use gpui::{RenderImage, TestAppContext, UpdateGlobal, size};
     use language::{Language, LanguageConfig, LanguageMatcher};
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+
+    struct TestWindow;
+
+    impl Render for TestWindow {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
 
     fn ensure_theme_initialized(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -4123,14 +4211,6 @@ mod tests {
         callback: impl Fn(&str, &App) -> Option<SharedString> + 'static,
         cx: &mut TestAppContext,
     ) -> RenderedText {
-        struct TestWindow;
-
-        impl Render for TestWindow {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div()
-            }
-        }
-
         ensure_theme_initialized(cx);
 
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
@@ -4166,14 +4246,6 @@ mod tests {
         options: MarkdownOptions,
         cx: &mut TestAppContext,
     ) -> RenderedText {
-        struct TestWindow;
-
-        impl Render for TestWindow {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div()
-            }
-        }
-
         ensure_theme_initialized(cx);
 
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
@@ -4201,6 +4273,192 @@ mod tests {
             },
         );
         rendered.text
+    }
+
+    fn render_markdown_with_image_resolver(
+        markdown: &str,
+        options: MarkdownOptions,
+        resolver: impl Fn(&str) -> Option<ImageSource> + 'static,
+        cx: &mut TestAppContext,
+    ) -> RenderedText {
+        ensure_theme_initialized(cx);
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(markdown.to_string().into(), None, None, options, cx)
+        });
+        cx.run_until_parked();
+        let (rendered, _) = cx.draw(
+            Default::default(),
+            size(px(600.0), px(600.0)),
+            |_window, _cx| {
+                MarkdownElement::new(markdown, MarkdownStyle::default())
+                    .image_resolver(resolver)
+                    .code_block_renderer(CodeBlockRenderer::Default {
+                        copy_button_visibility: CopyButtonVisibility::Hidden,
+                        wrap_button_visibility: WrapButtonVisibility::Hidden,
+                        border: false,
+                    })
+            },
+        );
+        rendered.text
+    }
+
+    fn test_image(cx: &mut TestAppContext) -> Arc<RenderImage> {
+        cx.update(|cx| {
+            cx.svg_renderer()
+                .render_single_frame(
+                    br#"<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"></svg>"#,
+                    1.0,
+                )
+                .expect("test svg should render")
+        })
+    }
+
+    #[gpui::test]
+    fn test_soft_break_keeps_space_in_paragraph_with_image(cx: &mut TestAppContext) {
+        let image = test_image(cx);
+        let rendered = render_markdown_with_image_resolver(
+            "Here is an image ![alt](https://example.com/a.png) and more text\nthat continues",
+            MarkdownOptions::default(),
+            move |_| Some(ImageSource::Render(image.clone())),
+            cx,
+        );
+        let text: String = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect();
+        assert!(
+            text.contains("more text that continues"),
+            "soft break in an image paragraph should still separate words with a space; got: {text:?}"
+        );
+        assert!(
+            !text.contains("textthat"),
+            "soft break between words must not be dropped; got: {text:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_soft_break_after_image_does_not_insert_leading_space(cx: &mut TestAppContext) {
+        let image = test_image(cx);
+        let rendered = render_markdown_with_image_resolver(
+            "![alt](https://example.com/a.png)\ncaption",
+            MarkdownOptions::default(),
+            move |_| Some(ImageSource::Render(image.clone())),
+            cx,
+        );
+        let text: String = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect();
+        assert_eq!(
+            text, "caption",
+            "a soft break after an image should not insert leading whitespace before caption text; got: {text:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_break_between_images_does_not_inject_leading_space(cx: &mut TestAppContext) {
+        let image = test_image(cx);
+        let rendered = render_markdown_with_image_resolver(
+            "![Image 3](https://example.com/3.png)\n<br>\n![Image 4](https://example.com/4.png)",
+            MarkdownOptions {
+                parse_html: true,
+                ..Default::default()
+            },
+            move |_| Some(ImageSource::Render(image.clone())),
+            cx,
+        );
+        let stray_whitespace_line = rendered.lines.iter().find_map(|line| {
+            let text = line.layout.wrapped_text();
+            (!text.is_empty() && text.trim().is_empty()).then_some(text)
+        });
+        assert!(
+            stray_whitespace_line.is_none(),
+            "soft break after a <br> between images must not render a stray space \
+             before the wrapped image; got whitespace-only line: {stray_whitespace_line:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_break_in_tight_list_item_after_image_item_is_newline(cx: &mut TestAppContext) {
+        let image = test_image(cx);
+        let rendered = render_markdown_with_image_resolver(
+            "- ![alt](https://example.com/a.png)\n- first<br>second",
+            MarkdownOptions {
+                parse_html: true,
+                ..Default::default()
+            },
+            move |_| Some(ImageSource::Render(image.clone())),
+            cx,
+        );
+        let text: String = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect();
+        assert!(
+            text.contains("first\nsecond"),
+            "break in a text-only tight list item should render as a newline; got: {text:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_hard_style_soft_break_after_image_moves_caption_to_next_row(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+
+        let image = test_image(cx);
+        let markdown_source = "![alt](https://example.com/a.png)\ncaption";
+        let caption_range = markdown_source.len() - "caption".len()..markdown_source.len();
+
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        let markdown = cx.new(|cx| {
+            Markdown::new_with_options(
+                markdown_source.to_string().into(),
+                None,
+                None,
+                MarkdownOptions::default(),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let mut caption_top = |soft_break_as_hard_break: bool| {
+            let mut style = MarkdownStyle::default();
+            style.soft_break_as_hard_break = soft_break_as_hard_break;
+            let image = image.clone();
+            let (rendered, _) = cx.draw(
+                Default::default(),
+                size(px(600.0), px(600.0)),
+                |_window, _cx| {
+                    MarkdownElement::new(markdown.clone(), style)
+                        .image_resolver(move |_| Some(ImageSource::Render(image.clone())))
+                        .code_block_renderer(CodeBlockRenderer::Default {
+                            copy_button_visibility: CopyButtonVisibility::Hidden,
+                            wrap_button_visibility: WrapButtonVisibility::Hidden,
+                            border: false,
+                        })
+                },
+            );
+            rendered
+                .text
+                .bounds_for_source_range(caption_range.clone())
+                .into_iter()
+                .next()
+                .expect("caption should have text bounds")
+                .top()
+        };
+
+        let caption_top_with_break = caption_top(true);
+        let caption_top_without_break = caption_top(false);
+
+        assert!(
+            caption_top_with_break > caption_top_without_break,
+            "caption should render below the image for hard-style soft breaks; \
+             top with break: {caption_top_with_break:?}, top without break: {caption_top_without_break:?}"
+        );
     }
 
     #[gpui::test]
@@ -4486,6 +4744,33 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    fn test_escaped_pipes_in_inline_code_inside_tables(cx: &mut TestAppContext) {
+        let markdown = "\
+| Pattern | What it does |
+| --- | --- |
+| `^echo(\\s\\|$)` | command pattern |
+| `a\\|b` | alternation |
+| `(a\\|b)` | grouped alternation |
+| `a\\|\\|b` | empty middle alternative |";
+        let rendered = render_markdown(markdown, cx);
+        let text = rendered.text_for_range(0..markdown.len());
+
+        assert_eq!(
+            text,
+            "Pattern\n\
+             What it does\n\
+             ^echo(\\s|$)\n\
+             command pattern\n\
+             a|b\n\
+             alternation\n\
+             (a|b)\n\
+             grouped alternation\n\
+             a||b\n\
+             empty middle alternative"
+        );
+    }
+
     #[test]
     fn test_source_range_for_rendered_handles_split_chunks() {
         let mappings = vec![
@@ -4754,6 +5039,56 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    fn test_inline_br_renders_as_line_break(cx: &mut TestAppContext) {
+        let options = MarkdownOptions {
+            parse_html: true,
+            ..Default::default()
+        };
+
+        for br in ["<br>", "<br/>", "<br />"] {
+            let md = format!("first{br}second");
+            let rendered = render_markdown_with_options(&md, None, options, cx);
+            let text: String = rendered
+                .lines
+                .iter()
+                .map(|line| line.layout.wrapped_text())
+                .collect();
+            assert!(
+                !text.contains(br),
+                "{br} should not appear as literal text; got: {text:?}"
+            );
+            assert!(
+                text.contains("first\nsecond"),
+                "{br} should produce a newline between 'first' and 'second'; got: {text:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn test_hard_break_in_text_paragraph_after_paragraph(cx: &mut TestAppContext) {
+        let options = MarkdownOptions {
+            parse_html: true,
+            ..Default::default()
+        };
+        let rendered =
+            render_markdown_with_options("para one\n\nfirst<br>second", None, options, cx);
+        let all_text: String = rendered
+            .lines
+            .iter()
+            .map(|line| line.layout.wrapped_text())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            all_text.contains("first") && all_text.contains("second"),
+            "both sides of <br> should be present; got: {all_text:?}"
+        );
+        assert!(
+            !all_text.contains("<br>"),
+            "<br> should not appear as literal text; got: {all_text:?}"
+        );
+    }
+
     #[test]
     fn test_escape_prevents_code_block() {
         let diagnostic = "    | { a: string }";
@@ -4812,6 +5147,21 @@ mod tests {
     }
 
     #[gpui::test]
+    fn test_code_span_link_receives_decoded_inline_code(cx: &mut TestAppContext) {
+        let source = r"| Pattern |
+| --- |
+| `a\|b` |";
+        let rendered = render_markdown_with_code_span_link(
+            source,
+            |text, _cx| (text == "a|b").then(|| "file:///tmp/a-or-b".into()),
+            cx,
+        );
+
+        assert_eq!(rendered.links.len(), 1);
+        assert_eq!(rendered.links[0].destination_url, "file:///tmp/a-or-b");
+    }
+
+    #[gpui::test]
     fn test_code_span_link_ignores_code_when_mouse_interaction_is_prevented(
         cx: &mut TestAppContext,
     ) {
@@ -4858,13 +5208,6 @@ mod tests {
 
     #[gpui::test]
     fn test_context_menu_link_initial_state(cx: &mut TestAppContext) {
-        struct TestWindow;
-        impl Render for TestWindow {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div()
-            }
-        }
-
         ensure_theme_initialized(cx);
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
         let markdown =
@@ -4878,39 +5221,71 @@ mod tests {
 
     #[gpui::test]
     fn test_capture_for_context_menu(cx: &mut TestAppContext) {
-        struct TestWindow;
-        impl Render for TestWindow {
-            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-                div()
-            }
-        }
-
         ensure_theme_initialized(cx);
         let (_, cx) = cx.add_window_view(|_, _| TestWindow);
-        let markdown = cx.new(|cx| Markdown::new("text".into(), None, None, cx));
+        let markdown = cx.new(|cx| Markdown::new("some text".into(), None, None, cx));
         cx.run_until_parked();
 
-        // Simulates right-clicking on a link
+        // Simulates right-clicking on a link, with "text" selected
         let url: SharedString = "https://example.com".into();
         markdown.update(cx, |md, _cx| {
-            md.capture_for_context_menu(Some(url.clone()));
+            md.selection.start = 5;
+            md.selection.end = 9;
+            md.capture_for_context_menu(Some(url.clone()), None);
         });
         cx.update(|_window, cx| {
+            let markdown = markdown.read(cx);
+            assert_eq!(
+                markdown.context_menu_link().map(SharedString::as_ref),
+                Some("https://example.com")
+            );
             assert_eq!(
                 markdown
-                    .read(cx)
-                    .context_menu_link()
+                    .context_menu_selected_markdown()
                     .map(SharedString::as_ref),
-                Some("https://example.com")
+                Some("text")
+            );
+            assert_eq!(
+                markdown
+                    .context_menu_selected_text()
+                    .map(SharedString::as_ref),
+                Some("text")
             );
         });
 
-        // Simulates right-clicking on plain text — link is cleared
+        // Simulates right-clicking on plain text with no selection — everything is cleared
         markdown.update(cx, |md, _cx| {
-            md.capture_for_context_menu(None);
+            md.selection.start = 0;
+            md.selection.end = 0;
+            md.capture_for_context_menu(None, None);
         });
         cx.update(|_window, cx| {
-            assert!(markdown.read(cx).context_menu_link().is_none());
+            let markdown = markdown.read(cx);
+            assert!(markdown.context_menu_link().is_none());
+            assert!(markdown.context_menu_selected_markdown().is_none());
+            assert!(markdown.context_menu_selected_text().is_none());
+        });
+    }
+
+    #[gpui::test]
+    fn test_preview_body_font_size_is_rem_based(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.update(|window, cx| {
+            let style = MarkdownStyle::themed(MarkdownFont::Preview, window, cx);
+            assert!(
+                matches!(style.base_text_style.font_size, AbsoluteLength::Rems(_)),
+                "preview body font size must be rem-based, got {:?}",
+                style.base_text_style.font_size
+            );
+            assert!(
+                matches!(
+                    style.container_style.text.font_size,
+                    Some(AbsoluteLength::Rems(_))
+                ),
+                "preview container font size must be rem-based, got {:?}",
+                style.container_style.text.font_size
+            );
         });
     }
 
@@ -5021,5 +5396,71 @@ mod tests {
             h3_line_height > body_line_height,
             "H3 line height ({h3_line_height:?}) should be greater than body text ({body_line_height:?})"
         );
+    }
+
+    #[gpui::test]
+    fn test_editor_zoom_does_not_affect_markdown_preview(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.buffer_font_size = Some(16.0.into());
+                    settings.theme.markdown_preview_font_size = None;
+                });
+            });
+        });
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let before = ThemeSettings::get_global(cx).markdown_preview_font_size(cx);
+            assert_eq!(before, px(16.0));
+
+            theme_settings::increase_buffer_font_size(cx);
+            theme_settings::increase_buffer_font_size(cx);
+            theme_settings::increase_buffer_font_size(cx);
+
+            assert_eq!(ThemeSettings::get_global(cx).buffer_font_size(cx), px(19.0));
+            assert_eq!(
+                ThemeSettings::get_global(cx).markdown_preview_font_size(cx),
+                before
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn test_markdown_preview_follows_buffer_font_size_setting_when_unset(cx: &mut TestAppContext) {
+        ensure_theme_initialized(cx);
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.buffer_font_size = Some(20.0.into());
+                    settings.theme.markdown_preview_font_size = None;
+                });
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                ThemeSettings::get_global(cx).markdown_preview_font_size(cx),
+                px(20.0)
+            );
+        });
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.theme.buffer_font_size = Some(24.0.into());
+                });
+            });
+        });
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                ThemeSettings::get_global(cx).markdown_preview_font_size(cx),
+                px(24.0)
+            );
+        });
     }
 }

@@ -571,7 +571,7 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn initial_width(mut self, width: impl Into<RelativeWidth>) -> Self {
         let width = width.into();
         self.default_shape.width = width;
-        if !self.shape_loaded_from_persistence {
+        if self.live_shape_is_hidden_default() {
             self.shape.set_initial_width(width);
         }
         // A plain picker's whole-picker minimum tracks its opening width. Preview
@@ -591,10 +591,21 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn max_height(mut self, height: impl Into<RelativeHeight>) -> Self {
         let height = height.into();
         self.default_shape.height = height;
-        if !self.shape_loaded_from_persistence {
+        if self.live_shape_is_hidden_default() {
             self.shape.set_initial_height(height);
         }
         self
+    }
+
+    /// Whether the live shape still reflects the hidden-layout default, i.e. it
+    /// was not restored from a persisted size and currently opens with no
+    /// preview. Only then may `initial_width`/`max_height` push their
+    /// hidden/no-preview defaults onto it; a picker reopened in a preview layout
+    /// keeps the larger telescope default, which those (smaller) no-preview
+    /// values must not shrink.
+    fn live_shape_is_hidden_default(&self) -> bool {
+        !self.shape_loaded_from_persistence
+            && self.preview_layout().unwrap_or(preview::Layout::Hidden) == preview::Layout::Hidden
     }
 
     /// Whether the picker fills its full height (preview visible) or shrinks to
@@ -1242,6 +1253,15 @@ impl<D: PickerDelegate> Picker<D> {
         self.preview.as_ref().map(|p| p.layout)
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn results_width(&self, window: &Window) -> gpui::Pixels {
+        let layout = self.preview_layout().unwrap_or(preview::Layout::Hidden);
+        let pos = self
+            .shape
+            .results_position_and_size(layout, &self.size_bounds, window);
+        pos.right - pos.left
+    }
+
     fn toggle_preview(&mut self, _: &TogglePreview, window: &mut Window, cx: &mut Context<Self>) {
         self.toggle_preview_visible(window, cx);
     }
@@ -1260,6 +1280,8 @@ impl<D: PickerDelegate> Picker<D> {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        persistence::store_last_layout(D::name(), self.preview.as_ref().map(|_| layout), cx);
+
         let Some(preview) = &mut self.preview else {
             return;
         };

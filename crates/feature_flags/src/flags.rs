@@ -27,14 +27,6 @@ impl FeatureFlag for AcpBetaFeatureFlag {
 }
 register_feature_flag!(AcpBetaFeatureFlag);
 
-pub struct AgentSharingFeatureFlag;
-
-impl FeatureFlag for AgentSharingFeatureFlag {
-    const NAME: &'static str = "agent-sharing";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(AgentSharingFeatureFlag);
-
 pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
@@ -126,6 +118,18 @@ impl FeatureFlag for AutoWatchFeatureFlag {
     type Value = PresenceFlag;
 }
 register_feature_flag!(AutoWatchFeatureFlag);
+
+/// Moves LLM provider and MCP server configuration out of the dedicated agent
+/// panel page and into the settings UI. When enabled, the agent panel no longer
+/// shows its configuration overlay and the settings UI exposes the "LLM
+/// Providers" and "MCP Servers" sub-pages instead.
+pub struct AgentSettingsUiFeatureFlag;
+
+impl FeatureFlag for AgentSettingsUiFeatureFlag {
+    const NAME: &'static str = "agent-settings-ui";
+    type Value = PresenceFlag;
+}
+register_feature_flag!(AgentSettingsUiFeatureFlag);
 
 /// Wraps agent-run terminal commands in an OS-level sandbox where supported
 /// (currently macOS Seatbelt only). When off, terminal commands run with the

@@ -38,7 +38,8 @@ fn normalize_reasoning_effort(effort: &str) -> Option<ReasoningEffort> {
         "low" => Some(ReasoningEffort::Low),
         "medium" => Some(ReasoningEffort::Medium),
         "high" => Some(ReasoningEffort::High),
-        "max" | "xhigh" => Some(ReasoningEffort::XHigh),
+        "xhigh" => Some(ReasoningEffort::XHigh),
+        "max" => Some(ReasoningEffort::Max),
         _ => None,
     }
 }
@@ -51,6 +52,7 @@ fn reasoning_effort_display(effort: ReasoningEffort) -> (&'static str, &'static 
         ReasoningEffort::Medium => ("Medium", "medium"),
         ReasoningEffort::High => ("High", "high"),
         ReasoningEffort::XHigh => ("XHigh", "xhigh"),
+        ReasoningEffort::Max => ("Max", "max"),
     }
 }
 
