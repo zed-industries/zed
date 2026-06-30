@@ -276,7 +276,17 @@ fn expand_directory_pair(
 fn collect_files(root: &Path) -> anyhow::Result<BTreeMap<PathBuf, PathBuf>> {
     let mut files = BTreeMap::new();
 
-    for entry in WalkDir::new(root) {
+    // Skip `.git` entirely. In a linked git worktree `.git` is a regular file
+    // (a gitfile), while in a normal checkout it is a directory; including it
+    // pollutes the diff with VCS metadata and, when the same relative path is a
+    // file on one side and a directory on the other, breaks the stub layout in
+    // `create_empty_stub`. Pruning it here also avoids walking the entire git
+    // object store.
+    let walker = WalkDir::new(root)
+        .into_iter()
+        .filter_entry(|entry| entry.file_name() != ".git");
+
+    for entry in walker {
         let entry = entry?;
         if entry.file_type().is_file() {
             let rel = entry
@@ -419,6 +429,53 @@ mod tests {
         })
         .unwrap();
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_collect_files_excludes_git() {
+        // A `.git` object key makes `TempTree` run a real `git init`, so the
+        // tree contains genuine VCS metadata (HEAD, config, objects, etc.).
+        let temp_tree = TempTree::new(json!({
+            "src": {
+                "main.rs": "fn main() {}",
+            },
+            "README.md": "hello",
+            ".git": {},
+        }));
+
+        let files = collect_files(temp_tree.path()).unwrap();
+        let collected: BTreeSet<PathBuf> = files.keys().cloned().collect();
+
+        let expected: BTreeSet<PathBuf> = [
+            PathBuf::from("README.md"),
+            PathBuf::from(path!("src/main.rs")),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(collected, expected);
+
+        assert!(
+            !collected.iter().any(|path| path
+                .components()
+                .any(|component| component.as_os_str() == ".git")),
+            "collected files should not include any `.git` entries: {collected:?}"
+        );
+    }
+
+    // A linked git worktree stores its `.git` as a regular file (a gitfile)
+    // rather than a directory. Ensure that variant is excluded too.
+    #[test]
+    fn test_collect_files_excludes_git_file() {
+        let temp_tree = TempTree::new(json!({
+            "file.txt": "contents",
+            ".git": "gitdir: /some/other/path/.git/worktrees/foo",
+        }));
+
+        let files = collect_files(temp_tree.path()).unwrap();
+        let collected: BTreeSet<PathBuf> = files.keys().cloned().collect();
+
+        let expected: BTreeSet<PathBuf> = [PathBuf::from("file.txt")].into_iter().collect();
+        assert_eq!(collected, expected);
     }
 }
 
