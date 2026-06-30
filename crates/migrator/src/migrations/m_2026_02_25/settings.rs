@@ -78,9 +78,7 @@ fn migrate_builtin_entry(
     };
 
     let has_command = old_obj.contains_key("command");
-    let needs_custom = has_command;
-
-    if needs_custom {
+    if has_command {
         let local_key = format!("{}-custom", mapping.registry_key);
 
         // Don't overwrite an existing `-custom` entry.
