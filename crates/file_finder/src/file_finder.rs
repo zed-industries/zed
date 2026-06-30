@@ -85,7 +85,14 @@ impl FileFinder {
         workspace.register_action(
             |workspace, action: &workspace::ToggleFileFinder, window, cx| {
                 let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
-                    Self::open(workspace, action.separate_history, window, cx).detach();
+                    Self::open(
+                        workspace,
+                        action.separate_history,
+                        action.include_ignored,
+                        window,
+                        cx,
+                    )
+                    .detach();
                     return;
                 };
 
@@ -102,6 +109,7 @@ impl FileFinder {
     fn open(
         workspace: &mut Workspace,
         separate_history: bool,
+        include_ignored: Option<bool>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
@@ -154,6 +162,7 @@ impl FileFinder {
                             currently_opened_path,
                             history_items.collect(),
                             separate_history,
+                            include_ignored,
                             window,
                             cx,
                         );
@@ -906,6 +915,7 @@ impl FileFinderDelegate {
         currently_opened_path: Option<FoundPath>,
         history_items: Vec<FoundPath>,
         separate_history: bool,
+        include_ignored: Option<bool>,
         window: &mut Window,
         cx: &mut Context<FileFinder>,
     ) -> Self {
@@ -934,7 +944,7 @@ impl FileFinderDelegate {
             separate_history,
             first_update: true,
             focus_handle: cx.focus_handle(),
-            include_ignored: FileFinderSettings::get_global(cx).include_ignored,
+            include_ignored: include_ignored.or(FileFinderSettings::get_global(cx).include_ignored),
             include_ignored_refresh: Task::ready(()),
         }
     }
