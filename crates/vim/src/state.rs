@@ -1194,8 +1194,9 @@ impl Operator {
             | Operator::OppositeCase
             | Operator::ToggleComments
             | Operator::ToggleBlockComments
-            | Operator::HelixMatch => false,
-            Operator::HelixNext { .. } | Operator::HelixPrevious { .. } => true,
+            | Operator::HelixMatch
+            | Operator::HelixNext { .. }
+            | Operator::HelixPrevious { .. } => false,
             Operator::HelixSurroundAdd
             | Operator::HelixSurroundReplace { .. }
             | Operator::HelixSurroundDelete => true,

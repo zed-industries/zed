@@ -1089,18 +1089,7 @@ impl Vim {
         if let Some(action) = keystroke_event.action.as_ref() {
             // Keystroke is handled by the vim system, so continue forward
             if action.name().starts_with("vim::") {
-                // HelixNext/HelixPrevious complete on any action in their context,
-                // including vim:: navigation actions. Allow those to fall through to
-                // operator clearing below, but skip the push actions that initiate them.
-                let is_helix_nav_push = action.as_any().downcast_ref::<PushHelixNext>().is_some()
-                    || action.as_any().downcast_ref::<PushHelixPrevious>().is_some();
-                let is_helix_nav_operator = matches!(
-                    self.active_operator(),
-                    Some(Operator::HelixNext { .. }) | Some(Operator::HelixPrevious { .. })
-                );
-                if !is_helix_nav_operator || is_helix_nav_push {
-                    return;
-                }
+                return;
             }
         } else if window.has_pending_keystrokes() || keystroke_event.keystroke.is_ime_in_progress()
         {
@@ -1116,9 +1105,6 @@ impl Vim {
                         window,
                         cx,
                     );
-                }
-                Operator::HelixNext { .. } | Operator::HelixPrevious { .. } => {
-                    self.clear_operator(window, cx);
                 }
                 _ if !operator.is_waiting(self.mode) => {
                     self.clear_operator(window, cx);
@@ -1483,16 +1469,22 @@ impl Vim {
                 } else {
                     mode = "waiting".to_string();
                 }
-                // HelixNext/HelixPrevious dispatch follow-up keys via keymap context
-                // predicates (vim_operator == helix_next/helix_previous), so operator_id
-                // must be set even in waiting mode. Other waiting operators use raw text
-                // input and must not set operator_id to avoid activating unrelated contexts.
-                if matches!(
-                    active_operator,
-                    Operator::HelixNext { .. } | Operator::HelixPrevious { .. }
-                ) {
-                    operator_id = active_operator.id();
-                }
+            } else if matches!(
+                active_operator,
+                Operator::HelixNext { .. } | Operator::HelixPrevious { .. }
+            ) {
+                // Helix `[`/`]` take a curated, keymap-dispatched selector key
+                // rather than a motion over a range, so they keep `operator_id`
+                // set (so `vim_operator == helix_next/previous` context must
+                // resolve) but must not use the `operator` mode, as that adds
+                // `VimControl` and the `vim_mode == operator` context, whose `g
+                // ...` bindings would make a single-key follow-up like `g` a
+                // multi-key prefix and leave `] g` waiting for more input.
+                // Setting the mode to `waiting` carries none of those
+                // conflicting bindings and still provides bindings for
+                // `escape`/`ctrl-c` to `ClearOperators`.
+                operator_id = active_operator.id();
+                mode = "waiting".to_string();
             } else {
                 operator_id = active_operator.id();
                 mode = "operator".to_string();
