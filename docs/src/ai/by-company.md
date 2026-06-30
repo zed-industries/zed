@@ -35,12 +35,11 @@ For detailed setup, follow the links in the `Setup` column. This page answers ro
 
 Claude Pro and Max subscriptions are separate from Anthropic API credits. If you want Claude subscription-limit behavior, use Claude Agent or Claude Code where supported. See [Use an Existing Subscription](./use-an-existing-subscription.md#claude).
 
-## Google / Gemini / Gemini CLI {#google-gemini}
+## Google / Gemini {#google-gemini}
 
-| Path          | Support level                    | What you get                                      | Account / billing     | Setup                                                                                         |
-| ------------- | -------------------------------- | ------------------------------------------------- | --------------------- | --------------------------------------------------------------------------------------------- |
-| Google AI API | Configured in Zed                | Gemini models through API access                  | Google AI API billing | [Use API Access](./use-api-access.md#google-ai)                                               |
-| Gemini CLI    | Hosted in Zed or run in terminal | Gemini CLI as an External Agent or native CLI/TUI | Owned by Gemini CLI   | [External Agents](./external-agents.md#gemini-cli), [Terminal Threads](./terminal-threads.md) |
+| Path          | Support level     | What you get                     | Account / billing     | Setup                                           |
+| ------------- | ----------------- | -------------------------------- | --------------------- | ----------------------------------------------- |
+| Google AI API | Configured in Zed | Gemini models through API access | Google AI API billing | [Use API Access](./use-api-access.md#google-ai) |
 
 ## GitHub / Copilot {#github-copilot}
 

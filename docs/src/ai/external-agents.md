@@ -34,7 +34,7 @@ Common External Agents include:
 
 This list is curated, not exhaustive. Open the ACP Registry in Zed for the current list of available agents.
 
-For company-specific setup paths, including Claude, Codex, Gemini, OpenCode, Copilot, Cursor, and Pi, see [AI by Company](./by-company.md).
+For company-specific setup paths, including Claude, Codex, Google AI/Gemini, OpenCode, Copilot, Cursor, and Pi, see [AI by Company](./by-company.md).
 
 ## Claude Agent {#claude-agent}
 
@@ -51,14 +51,6 @@ Use Codex when you want Codex running as an ACP-integrated External Agent in Zed
 Install Codex from the [ACP Registry](#registry), then start a Codex thread from the Agent Panel or Threads Sidebar. Codex owns its own authentication and billing. An OpenAI API key configured for [Zed Agent](./zed-agent.md) does not automatically configure Codex.
 
 Codex may support ChatGPT login, Codex API keys, OpenAI API keys, or Codex-native configuration depending on the installed version and environment. To change authentication, use the Codex thread's native login/logout flow.
-
-## Gemini CLI {#gemini-cli}
-
-Use Gemini CLI when you want Gemini running as an ACP-integrated External Agent in Zed.
-
-Install Gemini CLI from the [ACP Registry](#registry), then start a Gemini CLI thread from the Agent Panel or Threads Sidebar. Gemini CLI owns its own authentication and may prompt you to log in with Google, Vertex AI, or another Gemini-supported flow.
-
-If `GEMINI_API_KEY` or `GOOGLE_AI_API_KEY` is available to the agent process, Gemini CLI uses that key. Otherwise, if you have configured an API key for Zed's Google AI provider, Zed passes that key to Gemini CLI as `GEMINI_API_KEY`.
 
 ## OpenCode {#opencode}
 

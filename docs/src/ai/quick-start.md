@@ -27,7 +27,7 @@ Start in the [Agent Panel](./agent-panel.md) to prompt the agent, add context, r
 
 ## Use Another Coding Agent in Zed {#agent-cli}
 
-Use this path for Claude, Codex, OpenCode, Copilot, Cursor, Pi Coding Agent, Gemini CLI, or another coding agent.
+Use this path for Claude, Codex, OpenCode, Copilot, Cursor, Pi Coding Agent, or another coding agent.
 
 | If the agent...                 | Use                                       |
 | ------------------------------- | ----------------------------------------- |

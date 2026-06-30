@@ -41,7 +41,7 @@ You can search your threads in history; search will fuzzy match on thread titles
 
 If you have External Agents installed, Zed will detect whether you have existing threads and invite you to import them into Zed. Once you open Thread History, you'll find an import icon button in the Thread History toolbar that lets you import threads at any time. Clicking on it opens a modal where you can select the agents whose threads you want to import.
 
-> **Note:** Thread import is subject to agent support. Some agents (such as Cursor and Gemini CLI) are not currently supported.
+> **Note:** Thread import is subject to agent support. Some agents, such as Cursor, are not currently supported.
 
 ## Running Multiple Threads {#running-multiple-threads}
 
