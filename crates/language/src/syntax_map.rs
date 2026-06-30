@@ -152,6 +152,14 @@ impl SyntaxLayerContent {
             SyntaxLayerContent::Pending { .. } => None,
         }
     }
+
+    #[cfg(debug_assertions)]
+    fn language_name(&self) -> SharedString {
+        match self {
+            SyntaxLayerContent::Parsed { language, .. } => language.name().0,
+            SyntaxLayerContent::Pending { language_name } => language_name.clone().into(),
+        }
+    }
 }
 
 /// A layer of syntax highlighting, corresponding to a single syntax
@@ -901,22 +909,34 @@ impl SyntaxSnapshot {
 
     #[cfg(debug_assertions)]
     fn check_invariants(&self, text: &BufferSnapshot) {
+        let out_of_order = |reason: &str| -> ! {
+            let mut dump = format!("layers out of order: {reason}\nlayers:\n");
+            for layer in self.layers.iter() {
+                dump.push_str(&format!(
+                    "  depth={} range={:?} language={} id={:?}\n",
+                    layer.depth,
+                    layer.range.to_offset(text),
+                    layer.content.language_name(),
+                    layer.content.language_id(),
+                ));
+            }
+            panic!("{dump}");
+        };
+
         let mut max_depth = 0;
         let mut prev_layer: Option<(Range<Anchor>, Option<LanguageId>)> = None;
         for layer in self.layers.iter() {
             match Ord::cmp(&layer.depth, &max_depth) {
-                Ordering::Less => {
-                    panic!("layers out of order")
-                }
+                Ordering::Less => out_of_order("depth decreased"),
                 Ordering::Equal => {
                     if let Some((prev_range, prev_language_id)) = prev_layer {
                         match layer.range.start.cmp(&prev_range.start, text) {
-                            Ordering::Less => panic!("layers out of order"),
+                            Ordering::Less => out_of_order("start decreased"),
                             Ordering::Equal => match layer.range.end.cmp(&prev_range.end, text) {
-                                Ordering::Less => panic!("layers out of order"),
+                                Ordering::Less => out_of_order("end decreased at equal start"),
                                 Ordering::Equal => {
                                     if layer.content.language_id() < prev_language_id {
-                                        panic!("layers out of order")
+                                        out_of_order("language id decreased at equal range")
                                     }
                                 }
                                 Ordering::Greater => {}
@@ -1677,7 +1697,12 @@ fn get_injections(
             range: outer_range.clone(),
             included_ranges,
             mode: ParseMode::Combined {
-                parent_layer_range: node.start_byte()..node.end_byte(),
+                // This must match the layer's stored `range` (`outer_range`) so
+                // that the queue (ordered by `ParseStep::range()`) emits layers
+                // in the same order they are stored/sorted. Using the parsed
+                // node span instead breaks the sorted-by-start invariant when
+                // the parent layer has content outside its injected ranges.
+                parent_layer_range: outer_range.to_offset(text),
                 parent_layer_changed_ranges: changed_ranges.to_vec(),
             },
         })
