@@ -14,7 +14,7 @@ use gpui::{
 use ordered_float::OrderedFloat;
 use picker::popover_menu::PickerPopoverMenu;
 use picker::{Picker, PickerDelegate};
-use settings::SettingsStore;
+use settings::{AgentConfigOptionValue, SettingsStore};
 use ui::{
     ElevationIndex, IconButton, KeyBinding, ListItem, ListItemSpacing, PopoverMenuHandle, Switch,
     SwitchLabelPosition, ToggleState, Tooltip, prelude::*,
@@ -113,7 +113,7 @@ impl ConfigOptionsView {
 
         self.agent_server.set_default_config_option(
             config_id.0.as_ref(),
-            default_value.as_deref(),
+            default_value,
             self.fs.clone(),
             cx,
         );
@@ -593,10 +593,9 @@ impl Render for ConfigOptionSelector {
                         .disabled(self.setting_value)
                         .on_click(move |state, _window, cx| {
                             let next_value = matches!(state, ToggleState::Selected);
-                            let default_value = next_value.to_string();
                             agent_server.set_default_config_option(
                                 config_id.0.as_ref(),
-                                Some(default_value.as_str()),
+                                Some(AgentConfigOptionValue::Boolean(next_value)),
                                 fs.clone(),
                                 cx,
                             );
@@ -786,7 +785,7 @@ impl PickerDelegate for ConfigOptionPickerDelegate {
         {
             self.agent_server.set_default_config_option(
                 self.config_id.0.as_ref(),
-                Some(option.value.0.as_ref()),
+                Some(AgentConfigOptionValue::ValueId(option.value.0.to_string())),
                 self.fs.clone(),
                 cx,
             );
@@ -977,10 +976,16 @@ fn get_current_select_value(
         })
 }
 
-fn setting_value_for_config_option_value(value: &acp::SessionConfigOptionValue) -> Option<String> {
+fn setting_value_for_config_option_value(
+    value: &acp::SessionConfigOptionValue,
+) -> Option<AgentConfigOptionValue> {
     match value {
-        acp::SessionConfigOptionValue::ValueId { value } => Some(value.0.to_string()),
-        acp::SessionConfigOptionValue::Boolean { value } => Some(value.to_string()),
+        acp::SessionConfigOptionValue::ValueId { value } => {
+            Some(AgentConfigOptionValue::ValueId(value.0.to_string()))
+        }
+        acp::SessionConfigOptionValue::Boolean { value } => {
+            Some(AgentConfigOptionValue::Boolean(*value))
+        }
         _ => None,
     }
 }
@@ -1148,7 +1153,10 @@ mod tests {
 
         assert_eq!(
             agent_server.saved_defaults.lock().as_slice(),
-            &[("mode".to_string(), Some("manual".to_string()))]
+            &[(
+                "mode".to_string(),
+                Some(AgentConfigOptionValue::ValueId("manual".to_string()))
+            )]
         );
         assert_eq!(
             config_options.set_values.borrow().as_slice(),
@@ -1191,7 +1199,10 @@ mod tests {
 
         assert_eq!(
             agent_server.saved_defaults.lock().as_slice(),
-            &[("web_search".to_string(), Some("true".to_string()))]
+            &[(
+                "web_search".to_string(),
+                Some(AgentConfigOptionValue::Boolean(true))
+            )]
         );
         assert_eq!(
             config_options.set_values.borrow().as_slice(),
@@ -1278,7 +1289,10 @@ mod tests {
 
         assert_eq!(
             agent_server.saved_defaults.lock().as_slice(),
-            &[("model".to_string(), Some("large".to_string()))]
+            &[(
+                "model".to_string(),
+                Some(AgentConfigOptionValue::ValueId("large".to_string()))
+            )]
         );
         assert_eq!(
             config_options.set_values.borrow().as_slice(),
@@ -1331,7 +1345,7 @@ mod tests {
 
     #[derive(Default)]
     struct TestAgentServer {
-        saved_defaults: Arc<Mutex<Vec<(String, Option<String>)>>>,
+        saved_defaults: Arc<Mutex<Vec<(String, Option<AgentConfigOptionValue>)>>>,
     }
 
     fn init_feature_flag_settings(cx: &mut App) {
@@ -1379,14 +1393,13 @@ mod tests {
         fn set_default_config_option(
             &self,
             config_id: &str,
-            value_id: Option<&str>,
+            value: Option<AgentConfigOptionValue>,
             _fs: Arc<dyn Fs>,
             _cx: &mut App,
         ) {
-            self.saved_defaults.lock().push((
-                config_id.to_string(),
-                value_id.map(|value| value.to_string()),
-            ));
+            self.saved_defaults
+                .lock()
+                .push((config_id.to_string(), value));
         }
     }
 

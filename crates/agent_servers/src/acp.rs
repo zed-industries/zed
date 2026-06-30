@@ -22,7 +22,7 @@ use project::agent_server_store::{
 use project::{AgentId, Project};
 use remote::remote_client::Interactive;
 use serde::Deserialize;
-use settings::SettingsStore;
+use settings::{AgentConfigOptionValue, SettingsStore};
 use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
 use std::rc::Rc;
@@ -408,11 +408,14 @@ pub struct AcpConnection {
 #[derive(Clone, Default)]
 struct AcpConnectionDefaults {
     mode: Rc<RefCell<Option<acp::SessionModeId>>>,
-    config_options: Rc<RefCell<HashMap<String, String>>>,
+    config_options: Rc<RefCell<HashMap<String, AgentConfigOptionValue>>>,
 }
 
 impl AcpConnectionDefaults {
-    fn new(mode: Option<acp::SessionModeId>, config_options: HashMap<String, String>) -> Self {
+    fn new(
+        mode: Option<acp::SessionModeId>,
+        config_options: HashMap<String, AgentConfigOptionValue>,
+    ) -> Self {
         Self {
             mode: Rc::new(RefCell::new(mode)),
             config_options: Rc::new(RefCell::new(config_options)),
@@ -423,11 +426,15 @@ impl AcpConnectionDefaults {
         self.mode.borrow().clone()
     }
 
-    fn config_option(&self, config_id: &str) -> Option<String> {
+    fn config_option(&self, config_id: &str) -> Option<AgentConfigOptionValue> {
         self.config_options.borrow().get(config_id).cloned()
     }
 
-    fn set(&self, mode: Option<acp::SessionModeId>, config_options: HashMap<String, String>) {
+    fn set(
+        &self,
+        mode: Option<acp::SessionModeId>,
+        config_options: HashMap<String, AgentConfigOptionValue>,
+    ) {
         *self.mode.borrow_mut() = mode;
         *self.config_options.borrow_mut() = config_options;
     }
@@ -627,7 +634,7 @@ pub async fn connect(
     command: AgentServerCommand,
     agent_server_store: WeakEntity<AgentServerStore>,
     default_mode: Option<acp::SessionModeId>,
-    default_config_options: HashMap<String, String>,
+    default_config_options: HashMap<String, AgentConfigOptionValue>,
     cx: &mut AsyncApp,
 ) -> Result<Rc<dyn AgentConnection>> {
     let conn = AcpConnection::stdio(
@@ -785,7 +792,7 @@ impl AcpConnection {
         command: AgentServerCommand,
         agent_server_store: WeakEntity<AgentServerStore>,
         default_mode: Option<acp::SessionModeId>,
-        default_config_options: HashMap<String, String>,
+        default_config_options: HashMap<String, AgentConfigOptionValue>,
         cx: &mut AsyncApp,
     ) -> Result<Self> {
         let root_dir = project.read_with(cx, |project, cx| {
@@ -1281,34 +1288,36 @@ impl AcpConnection {
                     let default_value = self.defaults.config_option(config_option.id.0.as_ref())?;
 
                     let value_to_apply = match &config_option.kind {
-                        acp::SessionConfigKind::Select(select) => match &select.options {
-                            acp::SessionConfigSelectOptions::Ungrouped(options) => options
-                                .iter()
-                                .any(|opt| &*opt.value.0 == default_value.as_str())
-                                .then(|| {
-                                    acp::SessionConfigOptionValue::value_id(default_value.clone())
-                                }),
-                            acp::SessionConfigSelectOptions::Grouped(groups) => groups
-                                .iter()
-                                .any(|group| {
-                                    group
-                                        .options
-                                        .iter()
-                                        .any(|opt| &*opt.value.0 == default_value.as_str())
-                                })
-                                .then(|| {
-                                    acp::SessionConfigOptionValue::value_id(default_value.clone())
-                                }),
-                            _ => None,
-                        },
+                        acp::SessionConfigKind::Select(select) => {
+                            let value_id = default_value.as_value_id()?;
+                            match &select.options {
+                                acp::SessionConfigSelectOptions::Ungrouped(options) => options
+                                    .iter()
+                                    .any(|opt| &*opt.value.0 == value_id)
+                                    .then(|| {
+                                        acp::SessionConfigOptionValue::value_id(
+                                            value_id.to_string(),
+                                        )
+                                    }),
+                                acp::SessionConfigSelectOptions::Grouped(groups) => groups
+                                    .iter()
+                                    .any(|group| {
+                                        group.options.iter().any(|opt| &*opt.value.0 == value_id)
+                                    })
+                                    .then(|| {
+                                        acp::SessionConfigOptionValue::value_id(
+                                            value_id.to_string(),
+                                        )
+                                    }),
+                                _ => None,
+                            }
+                        }
                         acp::SessionConfigKind::Boolean(_) if !apply_boolean_defaults => {
                             return None;
                         }
-                        acp::SessionConfigKind::Boolean(_) => match default_value.as_str() {
-                            "true" => Some(acp::SessionConfigOptionValue::boolean(true)),
-                            "false" => Some(acp::SessionConfigOptionValue::boolean(false)),
-                            _ => None,
-                        },
+                        acp::SessionConfigKind::Boolean(_) => default_value
+                            .as_bool()
+                            .map(acp::SessionConfigOptionValue::boolean),
                         _ => None,
                     };
 
@@ -3025,7 +3034,7 @@ mod tests {
                         default_mode: Some("manual".to_string()),
                         default_config_options: HashMap::from_iter([(
                             "mode".to_string(),
-                            "manual".to_string(),
+                            AgentConfigOptionValue::from("manual"),
                         )]),
                         favorite_config_option_values: HashMap::default(),
                     }
@@ -3041,8 +3050,13 @@ mod tests {
             Some(acp::SessionModeId::new("manual"))
         );
         assert_eq!(
-            harness.connection.defaults.config_option("mode").as_deref(),
-            Some("manual")
+            harness
+                .connection
+                .defaults
+                .config_option("mode")
+                .as_ref()
+                .and_then(AgentConfigOptionValue::as_value_id),
+            Some("manual"),
         );
 
         cx.update(|cx| {
@@ -3067,8 +3081,11 @@ mod tests {
         connection.defaults.set(
             None,
             HashMap::from_iter([
-                ("web_search".to_string(), "true".to_string()),
-                ("mode".to_string(), "manual".to_string()),
+                (
+                    "web_search".to_string(),
+                    AgentConfigOptionValue::Boolean(true),
+                ),
+                ("mode".to_string(), AgentConfigOptionValue::from("manual")),
             ]),
         );
         let config_options = Rc::new(RefCell::new(vec![
@@ -3121,7 +3138,10 @@ mod tests {
         let (connection, set_config_requests) = connect_config_defaults_test_agent(cx).await;
         connection.defaults.set(
             None,
-            HashMap::from_iter([("web_search".to_string(), "true".to_string())]),
+            HashMap::from_iter([(
+                "web_search".to_string(),
+                AgentConfigOptionValue::Boolean(true),
+            )]),
         );
         let config_options = Rc::new(RefCell::new(vec![acp::SessionConfigOption::boolean(
             "web_search",
