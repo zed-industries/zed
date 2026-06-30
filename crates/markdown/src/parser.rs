@@ -43,7 +43,7 @@ pub(crate) struct ParsedMarkdownData {
     /// Source offsets of blocks with an unresolved reference, whose render can
     /// change once a later chunk defines it — so their heights are never reused
     /// across reparses.
-    pub reparsable_blocks: HashSet<usize>,
+    pub volatile_blocks: HashSet<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -659,7 +659,7 @@ pub(crate) fn parse_markdown_with_options(
     let footnote_definitions = build_footnote_definitions(&state.events);
 
     // The containing root block is the last start <= the span.
-    let reparsable_blocks: HashSet<usize> = broken_link_spans
+    let volatile_blocks: HashSet<usize> = broken_link_spans
         .borrow()
         .iter()
         .filter_map(|span| {
@@ -679,7 +679,7 @@ pub(crate) fn parse_markdown_with_options(
         metadata_blocks,
         heading_slugs,
         footnote_definitions,
-        reparsable_blocks,
+        volatile_blocks,
     }
 }
 

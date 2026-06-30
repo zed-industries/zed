@@ -932,7 +932,7 @@ impl Markdown {
                         mermaid_diagrams: BTreeMap::default(),
                         heading_slugs: HashMap::default(),
                         footnote_definitions: HashMap::default(),
-                        reparsable_blocks: HashSet::default(),
+                        volatile_blocks: HashSet::default(),
                     },
                     Default::default(),
                 );
@@ -952,7 +952,7 @@ impl Markdown {
             let metadata_blocks = parsed.metadata_blocks;
             let heading_slugs = parsed.heading_slugs;
             let footnote_definitions = parsed.footnote_definitions;
-            let reparsable_blocks = parsed.reparsable_blocks;
+            let volatile_blocks = parsed.volatile_blocks;
             let mermaid_diagrams = if should_render_mermaid_diagrams {
                 extract_mermaid_diagrams(&source, &events)
             } else {
@@ -1022,7 +1022,7 @@ impl Markdown {
                     mermaid_diagrams,
                     heading_slugs,
                     footnote_definitions,
-                    reparsable_blocks,
+                    volatile_blocks,
                 },
                 images_by_source_offset,
             )
@@ -1164,7 +1164,7 @@ pub struct ParsedMarkdown {
     pub footnote_definitions: HashMap<SharedString, usize>,
     /// Source offsets of blocks with an unresolved reference, whose render can
     /// change once a later chunk defines it — so their heights are never reused.
-    pub(crate) reparsable_blocks: HashSet<usize>,
+    pub(crate) volatile_blocks: HashSet<usize>,
 }
 
 impl ParsedMarkdown {
@@ -1183,7 +1183,7 @@ impl ParsedMarkdown {
     /// Event-index range of each top-level block. `RootStart`/`RootEnd` fire only
     /// at depth 0, so each range is a balanced subtree: building it alone renders
     /// exactly that block — the basis for building only the on-screen ones.
-    pub(crate) fn root_block_event_ranges(&self) -> Vec<Range<usize>> {
+    fn root_block_event_ranges(&self) -> Vec<Range<usize>> {
         let mut ranges = Vec::with_capacity(self.root_block_starts.len());
         let mut start = None;
         for (index, (_, event)) in self.events.iter().enumerate() {
@@ -1946,10 +1946,10 @@ impl MarkdownElement {
             .style
             .base_text_style
             .line_height_in_pixels(window.rem_size());
-        let heights = segment_heights(
+        let heights = root_block_heights(
             &self.markdown.read(cx).block_heights,
             &layout.parsed_markdown.events,
-            &layout.segments,
+            &layout.root_blocks,
         );
         let mut y = bounds.top();
         for (range, height) in heights {
@@ -1976,15 +1976,15 @@ impl MarkdownElement {
         let mut to_measure = Vec::new();
         {
             let block_heights = &self.markdown.read(cx).block_heights;
-            for segment in &layout.segments {
-                let range = segment_source_range(&layout.parsed_markdown.events, segment);
+            for root_block in &layout.root_blocks {
+                let range = root_block_source_range(&layout.parsed_markdown.events, root_block);
                 if range.contains(&source_index) {
                     break;
                 }
                 if !block_heights.contains_key(&range)
-                    && !layout.parsed_markdown.reparsable_blocks.contains(&range.start)
+                    && !layout.parsed_markdown.volatile_blocks.contains(&range.start)
                 {
-                    to_measure.push((segment.clone(), range));
+                    to_measure.push((root_block.clone(), range));
                 }
             }
         }
@@ -1997,10 +1997,10 @@ impl MarkdownElement {
             gpui::AvailableSpace::MinContent,
         );
         let mut measured = Vec::new();
-        for (segment, range) in to_measure {
-            let (_, height) = self.build_segment(
+        for (root_block, range) in to_measure {
+            let (_, height) = self.build_root_block(
                 &layout.parsed_markdown,
-                segment,
+                root_block,
                 &layout.images,
                 layout.active_root_block,
                 layout.markdown_end,
@@ -2103,7 +2103,7 @@ impl MarkdownElement {
     /// for on-screen placement and off-screen measurement, so they can't drift.
     /// Each root block is a balanced subtree (see `root_block_event_ranges`), so
     /// building per-block matches building the whole document.
-    fn build_segment(
+    fn build_root_block(
         &self,
         parsed_markdown: &ParsedMarkdown,
         events: Range<usize>,
@@ -2829,26 +2829,26 @@ impl Element for MarkdownElement {
         };
         let markdown_end = parsed_markdown.events.last().map_or(0, |last| last.0.end);
 
-        // Per-block segments (plus any events between blocks). prepaint builds
-        // only the on-screen ones — the viewport isn't known until then.
-        let mut segments = Vec::new();
-        let mut cursor = 0;
-        for block in parsed_markdown.root_block_event_ranges() {
-            if cursor < block.start {
-                segments.push(cursor..block.start);
-            }
-            cursor = block.end;
-            segments.push(block);
-        }
-        if cursor < parsed_markdown.events.len() {
-            segments.push(cursor..parsed_markdown.events.len());
-        }
+        // Each depth-0 block is wrapped in RootStart/RootEnd, so these ranges
+        // cover every event contiguously — there are never gaps between
+        // top-level blocks. prepaint builds only the on-screen ones.
+        let root_blocks = parsed_markdown.root_block_event_ranges();
+        debug_assert!(
+            match (root_blocks.first(), root_blocks.last()) {
+                (Some(first), Some(last)) =>
+                    first.start == 0
+                        && last.end == parsed_markdown.events.len()
+                        && root_blocks.windows(2).all(|pair| pair[0].end == pair[1].start),
+                _ => true,
+            },
+            "root block ranges must cover all events without gaps"
+        );
 
-        // Per-segment heights (estimating unmeasured blocks); sets the extent
+        // Per-root_block heights (estimating unmeasured blocks); sets the extent
         // without laying anything out, and is reused by prepaint.
         let heights = {
             let block_heights = &self.markdown.read(cx).block_heights;
-            segment_heights(block_heights, &parsed_markdown.events, &segments)
+            root_block_heights(block_heights, &parsed_markdown.events, &root_blocks)
         };
         let total_height: Pixels = heights.iter().map(|(_, height)| *height).sum();
 
@@ -2860,8 +2860,8 @@ impl Element for MarkdownElement {
             layout_id,
             MarkdownLayout {
                 parsed_markdown,
-                segments,
-                segment_heights: heights,
+                root_blocks,
+                root_block_heights: heights,
                 images,
                 active_root_block,
                 markdown_end,
@@ -2901,13 +2901,13 @@ impl Element for MarkdownElement {
         let mut measured = Vec::new();
 
         let mut y = bounds.top();
-        for (segment, (range, height)) in layout.segments.iter().zip(&layout.segment_heights) {
+        for (root_block, (range, height)) in layout.root_blocks.iter().zip(&layout.root_block_heights) {
             let height = *height;
             let block_top = y;
             if block_top + height >= visible_top && block_top <= visible_bottom {
-                let (mut rendered, measured_height) = self.build_segment(
+                let (mut rendered, measured_height) = self.build_root_block(
                     &layout.parsed_markdown,
-                    segment.clone(),
+                    root_block.clone(),
                     &layout.images,
                     layout.active_root_block,
                     layout.markdown_end,
@@ -2920,11 +2920,11 @@ impl Element for MarkdownElement {
                 rendered
                     .element
                     .prepaint_at(point(bounds.left(), block_top), window, cx);
-                // Don't cache reparsable blocks: a later definition can
+                // Don't cache volatile blocks: a later definition can
                 // re-render them at the same range.
                 if !layout
                     .parsed_markdown
-                    .reparsable_blocks
+                    .volatile_blocks
                     .contains(&range.start)
                 {
                     measured.push((range.clone(), measured_height));
@@ -3005,12 +3005,12 @@ impl Element for MarkdownElement {
     }
 }
 
-/// Per-block segments plus the context to build each on demand. `request_layout`
+/// The root blocks plus the context to build each on demand. `request_layout`
 /// produces it without building; `prepaint` builds only the on-screen ones.
 pub struct MarkdownLayout {
     parsed_markdown: ParsedMarkdown,
-    segments: Vec<Range<usize>>,
-    segment_heights: Vec<(Range<usize>, Pixels)>,
+    root_blocks: Vec<Range<usize>>,
+    root_block_heights: Vec<(Range<usize>, Pixels)>,
     images: HashMap<usize, Arc<Image>>,
     active_root_block: Option<usize>,
     markdown_end: usize,
@@ -3033,14 +3033,14 @@ const ESTIMATED_BLOCK_HEIGHT: Pixels = px(40.);
 /// scrolls don't reveal unpainted gaps.
 const BLOCK_OVERSCAN: Pixels = px(800.);
 
-/// Source byte range of a segment — the height cache key (stable across
+/// Source byte range of a root block — the height cache key (stable across
 /// append-only reparses).
-fn segment_source_range(
+fn root_block_source_range(
     events: &[(Range<usize>, MarkdownEvent)],
-    segment: &Range<usize>,
+    root_block: &Range<usize>,
 ) -> Range<usize> {
-    let start = events.get(segment.start).map_or(0, |(range, _)| range.start);
-    let end = segment
+    let start = events.get(root_block.start).map_or(0, |(range, _)| range.start);
+    let end = root_block
         .end
         .checked_sub(1)
         .and_then(|index| events.get(index))
@@ -3048,18 +3048,18 @@ fn segment_source_range(
     start..end
 }
 
-/// Per-segment (source range, height), substituting `ESTIMATED_BLOCK_HEIGHT`
+/// Per-root_block (source range, height), substituting `ESTIMATED_BLOCK_HEIGHT`
 /// for any block not yet measured. Shared by the extent sum, block positioning,
 /// and scroll-target estimation.
-fn segment_heights(
+fn root_block_heights(
     block_heights: &HashMap<Range<usize>, Pixels>,
     events: &[(Range<usize>, MarkdownEvent)],
-    segments: &[Range<usize>],
+    root_blocks: &[Range<usize>],
 ) -> Vec<(Range<usize>, Pixels)> {
-    segments
+    root_blocks
         .iter()
-        .map(|segment| {
-            let range = segment_source_range(events, segment);
+        .map(|root_block| {
+            let range = root_block_source_range(events, root_block);
             let height = block_heights
                 .get(&range)
                 .copied()
@@ -4503,11 +4503,11 @@ mod tests {
     }
 
     #[test]
-    fn unresolved_reference_flags_block_as_reparsable() {
+    fn unresolved_reference_flags_block_as_volatile() {
         let unresolved =
             parse_markdown_with_options("Text with [a link][ref] inside.", true, false, false);
         assert!(
-            !unresolved.reparsable_blocks.is_empty(),
+            !unresolved.volatile_blocks.is_empty(),
             "an unresolved reference should flag its block"
         );
 
@@ -4518,7 +4518,7 @@ mod tests {
             false,
         );
         assert!(
-            resolved.reparsable_blocks.is_empty(),
+            resolved.volatile_blocks.is_empty(),
             "a resolved reference should not flag its block"
         );
     }
