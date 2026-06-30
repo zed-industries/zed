@@ -309,6 +309,7 @@ pub struct ProjectSearchView {
     pending_replace_all: bool,
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
+    reserved_line_number_digits: u32,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -1161,6 +1162,10 @@ impl ProjectSearchView {
 
                     if EditorSettings::get_global(cx).search.search_on_input {
                         if this.query_editor.read(cx).is_empty(cx) {
+                            this.reserved_line_number_digits = 0;
+                            this.results_editor.update(cx, |editor, cx| {
+                                editor.set_min_gutter_line_number_digits(None, cx)
+                            });
                             this.entity.update(cx, |model, cx| {
                                 model.pending_search = None;
                                 model.match_ranges.clear();
@@ -1282,6 +1287,7 @@ impl ProjectSearchView {
             pending_replace_all: false,
             included_opened_only: false,
             regex_language: None,
+            reserved_line_number_digits: 0,
             _subscriptions: subscriptions,
         };
 
@@ -1550,6 +1556,12 @@ impl ProjectSearchView {
             None
         };
         if let Some(query) = self.build_search_query(cx, open_buffers) {
+            if !incremental {
+                self.reserved_line_number_digits = 0;
+                self.results_editor.update(cx, |editor, cx| {
+                    editor.set_min_gutter_line_number_digits(None, cx)
+                });
+            }
             self.entity
                 .update(cx, |model, cx| model.search(query, incremental, cx));
         }
@@ -1850,6 +1862,8 @@ impl ProjectSearchView {
         let search_on_input = EditorSettings::get_global(cx).search.search_on_input;
         let is_incremental_pending = model.pending_search.is_some() && search_on_input;
 
+        self.reserve_gutter_for_current_results(cx);
+
         if match_ranges.is_empty() {
             if !is_incremental_pending {
                 self.active_match_index = None;
@@ -1887,6 +1901,27 @@ impl ProjectSearchView {
 
         if self.pending_replace_all && self.entity.read(cx).pending_search.is_none() {
             self.replace_all(&ReplaceAll, window, cx);
+        }
+    }
+
+    fn reserve_gutter_for_current_results(&mut self, cx: &mut Context<Self>) {
+        let widest_line_number = self
+            .entity
+            .read(cx)
+            .excerpts
+            .read(cx)
+            .snapshot(cx)
+            .widest_line_number();
+        let digits = if widest_line_number == 0 {
+            1
+        } else {
+            widest_line_number.ilog10() + 1
+        };
+        if digits > self.reserved_line_number_digits {
+            self.reserved_line_number_digits = digits;
+            self.results_editor.update(cx, |editor, cx| {
+                editor.set_min_gutter_line_number_digits(Some(digits), cx)
+            });
         }
     }
 
@@ -6016,6 +6051,61 @@ pub mod tests {
         perform_incremental_search(search_view, "delta_unique_word", cx);
         assert_eq!(read_match_count(search_view, cx), 1);
         assert_eq!(read_match_texts(search_view, cx), vec!["delta_unique_word"]);
+    }
+
+    #[gpui::test]
+    async fn test_incremental_search_gutter_width_never_shrinks(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let big_file = (1..=12000)
+            .map(|i| {
+                if i == 11000 {
+                    format!("line {i}: needle_in_big")
+                } else {
+                    format!("line {i}: filler")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "small.rs": "fn needle_small() {}",
+                "big.txt": big_file,
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let search = cx.new(|cx| ProjectSearch::new(project.clone(), cx));
+        let search_view = cx.add_window(|window, cx| {
+            ProjectSearchView::new(workspace.downgrade(), search.clone(), window, cx, None)
+        });
+
+        perform_search(search_view, "needle_in_big", cx);
+        assert_eq!(read_match_count(search_view, cx), 1);
+        assert_eq!(reserved_gutter_digits(search_view, cx), 5);
+
+        perform_incremental_search(search_view, "needle_small", cx);
+        assert_eq!(read_match_count(search_view, cx), 1);
+        assert_eq!(reserved_gutter_digits(search_view, cx), 5);
+
+        perform_search(search_view, "needle_small", cx);
+        assert_eq!(reserved_gutter_digits(search_view, cx), 1);
+    }
+
+    fn reserved_gutter_digits(
+        search_view: WindowHandle<ProjectSearchView>,
+        cx: &mut TestAppContext,
+    ) -> u32 {
+        search_view
+            .read_with(cx, |search_view, _| search_view.reserved_line_number_digits)
+            .unwrap()
     }
 
     #[gpui::test]
