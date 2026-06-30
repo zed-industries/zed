@@ -562,7 +562,11 @@ mod tests {
         use std::process::Command;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let protected_file = temp_dir.path().join(".gitignore");
+        // Canonicalize so the policy paths resolve the macOS `/var` -> `/private/var`
+        // symlink; Seatbelt matches rules against the resolved path, as production
+        // does via `HostFilesystemLocation`.
+        let dir = std::fs::canonicalize(temp_dir.path()).unwrap();
+        let protected_file = dir.join(".gitignore");
         std::fs::write(&protected_file, "target\n").unwrap();
 
         let (program, args, _config_file) = wrap_invocation(
@@ -576,7 +580,7 @@ mod tests {
                     protected_file.display(),
                 ),
             ],
-            &[temp_dir.path()],
+            &[dir.as_path()],
             &[protected_file.as_path()],
             &[],
             SandboxPermissions::default(),
@@ -605,7 +609,10 @@ mod tests {
         use std::process::Command;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let protected_file = temp_dir.path().join(".gitignore");
+        // See the sibling protected-path test: canonicalize so policy paths resolve
+        // the macOS `/var` -> `/private/var` symlink that Seatbelt matches against.
+        let dir = std::fs::canonicalize(temp_dir.path()).unwrap();
+        let protected_file = dir.join(".gitignore");
         std::fs::write(&protected_file, "target\n").unwrap();
 
         let (program, args, _config_file) = wrap_invocation(
@@ -618,7 +625,7 @@ mod tests {
                     protected_file.display(),
                 ),
             ],
-            &[temp_dir.path()],
+            &[dir.as_path()],
             &[protected_file.as_path()],
             &[],
             SandboxPermissions {
@@ -868,7 +875,11 @@ mod tests {
 
         let project_dir = tempfile::tempdir().unwrap();
         let scratch_dir = tempfile::tempdir().unwrap();
-        let test_file = scratch_dir.path().join("test_write.txt");
+        // Canonicalize so the writable subpaths resolve the macOS `/var` ->
+        // `/private/var` symlink that Seatbelt matches against.
+        let project_path = std::fs::canonicalize(project_dir.path()).unwrap();
+        let scratch_path = std::fs::canonicalize(scratch_dir.path()).unwrap();
+        let test_file = scratch_path.join("test_write.txt");
 
         let (program, args, _config_file) = wrap_invocation(
             "/bin/sh",
@@ -876,7 +887,7 @@ mod tests {
                 "-c".to_string(),
                 format!("echo 'hello' > '{}'", test_file.display()),
             ],
-            &[project_dir.path(), scratch_dir.path()],
+            &[project_path.as_path(), scratch_path.as_path()],
             &[],
             &[],
             SandboxPermissions::default(),
@@ -901,7 +912,10 @@ mod tests {
         use std::process::Command;
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let test_file = temp_dir.path().join("test_write.txt");
+        // Canonicalize so the writable subpath resolves the macOS `/var` ->
+        // `/private/var` symlink that Seatbelt matches against.
+        let dir = std::fs::canonicalize(temp_dir.path()).unwrap();
+        let test_file = dir.join("test_write.txt");
 
         let (program, args, _config_file) = wrap_invocation(
             "/bin/sh",
@@ -909,7 +923,7 @@ mod tests {
                 "-c".to_string(),
                 format!("echo 'hello' > '{}'", test_file.display()),
             ],
-            &[temp_dir.path()],
+            &[dir.as_path()],
             &[],
             &[],
             SandboxPermissions::default(),
