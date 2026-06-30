@@ -72,7 +72,7 @@ const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
 
-pub(crate) fn provider_compatible_tool_name(tool_name: &str) -> SharedString {
+pub(crate) fn provider_compatible_tool_name(tool_name: &str) -> String {
     let mut sanitized = String::new();
     for character in tool_name.chars() {
         if sanitized.len() >= MAX_TOOL_NAME_LENGTH {
@@ -90,7 +90,7 @@ pub(crate) fn provider_compatible_tool_name(tool_name: &str) -> SharedString {
         sanitized.push_str("tool");
     }
 
-    sanitized.into()
+    sanitized
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -4042,7 +4042,7 @@ impl Thread {
                         }
                         (TerminalTool::NAME | SandboxedTerminalTool::NAME, _) => None,
                         _ => Some((
-                            provider_compatible_tool_name(tool_name.as_ref()),
+                            provider_compatible_tool_name(tool_name.as_ref()).into(),
                             tool.clone(),
                         )),
                     }
@@ -4059,7 +4059,8 @@ impl Thread {
         for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
             for (tool_name, tool) in server_tools {
                 if profile.is_context_server_tool_enabled(&server_id.0, &tool_name) {
-                    let tool_name = provider_compatible_tool_name(tool_name.as_ref());
+                    let tool_name: SharedString =
+                        provider_compatible_tool_name(tool_name.as_ref()).into();
                     if !seen_tools.insert(tool_name.clone()) {
                         duplicate_tool_names.insert(tool_name.clone());
                     }
