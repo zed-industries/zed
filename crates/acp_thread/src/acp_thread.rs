@@ -617,20 +617,26 @@ impl ElicitationStore {
         request: acp::CreateElicitationRequest,
         cx: &mut Context<Self>,
     ) -> Result<Task<acp::CreateElicitationResponse>, acp::Error> {
+        self.request_elicitation_with_id(request, cx)
+            .map(|(_, task)| task)
+    }
+
+    pub fn request_elicitation_with_id(
+        &mut self,
+        request: acp::CreateElicitationRequest,
+        cx: &mut Context<Self>,
+    ) -> Result<(ElicitationEntryId, Task<acp::CreateElicitationResponse>), acp::Error> {
         Self::validate_request(&request, ExpectedElicitationScope::Request, cx)?;
         let (id, response_rx) = self.insert_pending_elicitation(request);
         cx.emit(ElicitationStoreEvent::ElicitationRequested(id.clone()));
         cx.notify();
 
-        Ok(Self::response_task(
-            id,
-            response_rx,
-            cx,
-            |_store, cx, id| {
-                cx.emit(ElicitationStoreEvent::ElicitationResponded(id));
-                cx.notify();
-            },
-        ))
+        let task = Self::response_task(id.clone(), response_rx, cx, |_store, cx, id| {
+            cx.emit(ElicitationStoreEvent::ElicitationResponded(id));
+            cx.notify();
+        });
+
+        Ok((id, task))
     }
 
     pub fn respond_to_elicitation(
@@ -660,6 +666,15 @@ impl ElicitationStore {
         }
 
         cx.emit(ElicitationStoreEvent::ElicitationUpdated(entry_id));
+        cx.notify();
+    }
+
+    pub fn cancel_elicitation(&mut self, id: &ElicitationEntryId, cx: &mut Context<Self>) {
+        if !self.cancel_elicitation_by_id(id, true) {
+            return;
+        }
+
+        cx.emit(ElicitationStoreEvent::ElicitationUpdated(id.clone()));
         cx.notify();
     }
 
@@ -3497,6 +3512,15 @@ impl AcpThread {
         request: acp::CreateElicitationRequest,
         cx: &mut Context<Self>,
     ) -> Result<Task<acp::CreateElicitationResponse>, acp::Error> {
+        self.request_elicitation_with_id(request, cx)
+            .map(|(_, task)| task)
+    }
+
+    pub fn request_elicitation_with_id(
+        &mut self,
+        request: acp::CreateElicitationRequest,
+        cx: &mut Context<Self>,
+    ) -> Result<(ElicitationEntryId, Task<acp::CreateElicitationResponse>), acp::Error> {
         ElicitationStore::validate_request(
             &request,
             ExpectedElicitationScope::Session(&self.session_id),
@@ -3507,12 +3531,12 @@ impl AcpThread {
         self.push_entry(AgentThreadEntry::Elicitation(id.clone()), cx);
         cx.emit(AcpThreadEvent::ElicitationRequested(id.clone()));
 
-        Ok(ElicitationStore::response_task(
-            id,
-            response_rx,
-            cx,
-            |_thread, cx, id| cx.emit(AcpThreadEvent::ElicitationResponded(id)),
-        ))
+        let task =
+            ElicitationStore::response_task(id.clone(), response_rx, cx, |_thread, cx, id| {
+                cx.emit(AcpThreadEvent::ElicitationResponded(id))
+            });
+
+        Ok((id, task))
     }
 
     pub fn respond_to_elicitation(
@@ -3546,6 +3570,17 @@ impl AcpThread {
             return;
         };
         if !self.elicitations.complete_url_elicitation_by_id(&entry_id) {
+            return;
+        }
+
+        cx.emit(AcpThreadEvent::EntryUpdated(ix));
+    }
+
+    pub fn cancel_elicitation(&mut self, id: &ElicitationEntryId, cx: &mut Context<Self>) {
+        let Some(ix) = self.elicitation_entry_ix(id) else {
+            return;
+        };
+        if !self.elicitations.cancel_elicitation_by_id(id, true) {
             return;
         }
 
@@ -7834,6 +7869,41 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_cancel_session_elicitation_by_id_resolves_cancel(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let thread = new_test_thread(cx).await;
+        let session_id = thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let (elicitation_id, response_task) = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation_with_id(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationSessionScope::new(session_id),
+                            acp::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.cancel_elicitation(&elicitation_id, cx);
+        });
+
+        assert_eq!(response_task.await.action, acp::ElicitationAction::Cancel);
+        thread.read_with(cx, |thread, _| {
+            let Some((_, elicitation)) = thread.elicitation(&elicitation_id) else {
+                panic!("missing elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+        });
+    }
+
+    #[gpui::test]
     async fn test_cancel_pending_session_elicitation_resolves_cancel(cx: &mut TestAppContext) {
         init_test(cx);
         enable_acp_beta(cx);
@@ -7999,6 +8069,40 @@ mod tests {
                 _ => None,
             }) else {
                 panic!("expected an elicitation entry");
+            };
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_cancel_request_scoped_elicitation_resolves_cancel(cx: &mut TestAppContext) {
+        init_test(cx);
+        enable_acp_beta(cx);
+        let store = cx.update(|cx| cx.new(|_| ElicitationStore::default()));
+
+        let (elicitation_id, response_task) = store.update(cx, |store, cx| {
+            store
+                .request_elicitation_with_id(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationRequestScope::new(acp::RequestId::Number(1)),
+                            acp::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+
+        store.update(cx, |store, cx| {
+            store.cancel_elicitation(&elicitation_id, cx);
+        });
+
+        assert_eq!(response_task.await.action, acp::ElicitationAction::Cancel);
+        store.read_with(cx, |store, _| {
+            let Some((_, elicitation)) = store.elicitation(&elicitation_id) else {
+                panic!("missing elicitation entry");
             };
             assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
         });

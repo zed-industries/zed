@@ -4667,28 +4667,70 @@ fn handle_create_elicitation(
                 Err(e) => return respond_err(responder, e),
             };
 
-            let task = match thread
-                .update(cx, |thread, cx| thread.request_elicitation(args, cx))
+            let (elicitation_id, task) = match thread
+                .update(cx, |thread, cx| {
+                    thread.request_elicitation_with_id(args, cx)
+                })
                 .flatten_acp()
             {
                 Ok(task) => task,
                 Err(e) => return respond_err(responder, e),
             };
 
-            cx.spawn(async move |_cx| {
-                responder.respond(task.await).log_err();
+            let cancellation = responder.cancellation();
+            cx.spawn(async move |cx| {
+                let result: Result<_, acp::Error> = cancellation
+                    .run_until_cancelled(async { Ok(task.await) })
+                    .await;
+
+                match result {
+                    Ok(response) => {
+                        responder.respond(response).log_err();
+                    }
+                    Err(e) => {
+                        if e.code == ErrorCode::RequestCancelled {
+                            thread
+                                .update(cx, |thread, cx| {
+                                    thread.cancel_elicitation(&elicitation_id, cx)
+                                })
+                                .log_err();
+                        }
+                        respond_err(responder, e);
+                    }
+                }
             })
             .detach();
         }
         acp::ElicitationScope::Request(_) => {
             let store = ctx.request_elicitations.clone();
-            let task = match store.update(cx, |store, cx| store.request_elicitation(args, cx)) {
-                Ok(task) => task,
-                Err(e) => return respond_err(responder, e),
-            };
+            let (elicitation_id, task) =
+                match store.update(cx, |store, cx| store.request_elicitation_with_id(args, cx)) {
+                    Ok(task) => task,
+                    Err(e) => return respond_err(responder, e),
+                };
+            let store = store.downgrade();
 
-            cx.spawn(async move |_cx| {
-                responder.respond(task.await).log_err();
+            let cancellation = responder.cancellation();
+            cx.spawn(async move |cx| {
+                let result: Result<_, acp::Error> = cancellation
+                    .run_until_cancelled(async { Ok(task.await) })
+                    .await;
+
+                match result {
+                    Ok(response) => {
+                        responder.respond(response).log_err();
+                    }
+                    Err(e) => {
+                        if e.code == ErrorCode::RequestCancelled {
+                            store
+                                .update(cx, |store, cx| {
+                                    store.cancel_elicitation(&elicitation_id, cx)
+                                })
+                                .log_err();
+                        }
+                        respond_err(responder, e);
+                    }
+                }
             })
             .detach();
         }
