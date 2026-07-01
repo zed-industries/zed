@@ -41,6 +41,7 @@ pub enum CellControlType {
 
 pub enum CellEvent {
     Run(CellId),
+    CancelQueuedExecution(CellId),
     FocusedIn(CellId),
 }
 
@@ -658,6 +659,7 @@ pub struct CodeCell {
     execution_start_time: Option<Instant>,
     execution_duration: Option<Duration>,
     is_executing: bool,
+    is_queued: bool,
 }
 
 impl EventEmitter<CellEvent> for CodeCell {}
@@ -739,6 +741,7 @@ impl CodeCell {
             execution_start_time: None,
             execution_duration: None,
             is_executing: false,
+            is_queued: false,
             _language_task: language_task,
         }
     }
@@ -803,9 +806,30 @@ impl CodeCell {
         self.execution_duration = None;
     }
 
+    pub fn queue_execution(&mut self) {
+        self.execution_duration = None;
+        self.is_queued = true;
+    }
+
+    pub fn cancel_queued_execution(&mut self) {
+        self.is_queued = false;
+    }
+
+    pub fn cancel_execution(&mut self) {
+        self.execution_start_time = None;
+        self.execution_duration = None;
+        self.is_executing = false;
+        self.is_queued = false;
+    }
+
+    pub fn is_queued(&self) -> bool {
+        self.is_queued
+    }
+
     pub fn start_execution(&mut self) {
         self.execution_start_time = Some(Instant::now());
         self.execution_duration = None;
+        self.is_queued = false;
         self.is_executing = true;
     }
 
@@ -814,6 +838,7 @@ impl CodeCell {
             self.execution_duration = Some(start_time.elapsed());
         }
         self.is_executing = false;
+        self.is_queued = false;
     }
 
     pub fn is_executing(&self) -> bool {
@@ -836,6 +861,7 @@ impl CodeCell {
         }));
         self.execution_start_time = None;
         self.is_executing = false;
+        self.is_queued = false;
         cx.notify();
     }
 
@@ -960,7 +986,7 @@ impl RenderableCell for CodeCell {
     }
 
     fn control(&self, _window: &mut Window, cx: &mut Context<Self>) -> Option<CellControl> {
-        let control_type = if self.is_executing {
+        let control_type = if self.is_executing || self.is_queued {
             CellControlType::StopCell
         } else if self.has_outputs() {
             CellControlType::RerunCell
@@ -973,6 +999,8 @@ impl RenderableCell for CodeCell {
                 move |this, _, window, cx| {
                     if this.is_executing {
                         window.dispatch_action(Box::new(InterruptKernel), cx);
+                    } else if this.is_queued {
+                        cx.emit(CellEvent::CancelQueuedExecution(this.id.clone()));
                     } else {
                         this.run(window, cx);
                     }
@@ -1134,10 +1162,14 @@ impl Render for CodeCell {
                     ),
             )
             .when(
-                self.has_outputs() || self.execution_duration.is_some() || self.is_executing,
+                self.has_outputs()
+                    || self.execution_duration.is_some()
+                    || self.is_executing
+                    || self.is_queued,
                 |this| {
                     let execution_time_label = self.execution_duration.map(Self::format_duration);
                     let is_executing = self.is_executing;
+                    let is_queued = self.is_queued;
                     this.child(
                         h_flex()
                             .w_full()
@@ -1158,7 +1190,9 @@ impl Render for CodeCell {
                                         .border_1()
                                         // execution status/time at the TOP
                                         .when(
-                                            is_executing || execution_time_label.is_some(),
+                                            is_queued
+                                                || is_executing
+                                                || execution_time_label.is_some(),
                                             |this| {
                                                 let time_element = if is_executing {
                                                     h_flex()
@@ -1178,6 +1212,26 @@ impl Render for CodeCell {
                                                                     cx.theme().colors().text_muted,
                                                                 )
                                                                 .child("Running..."),
+                                                        )
+                                                        .into_any_element()
+                                                } else if is_queued {
+                                                    h_flex()
+                                                        .gap_1()
+                                                        .items_center()
+                                                        .child(
+                                                            Icon::new(IconName::ArrowCircle)
+                                                                .size(IconSize::XSmall)
+                                                                .color(Color::Muted)
+                                                                .with_rotate_animation(2)
+                                                                .into_any_element(),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .text_xs()
+                                                                .text_color(
+                                                                    cx.theme().colors().text_muted,
+                                                                )
+                                                                .child("Waiting..."),
                                                         )
                                                         .into_any_element()
                                                 } else if let Some(duration_text) =
