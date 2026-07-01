@@ -10,7 +10,9 @@ use postage::stream::Stream;
 use pretty_assertions::assert_eq;
 use rand::prelude::*;
 use rpc::{AnyProtoClient, NoopProtoClient, proto};
-use worktree::{Entry, EntryKind, Event, PathChange, Worktree, WorktreeModelHandle};
+use worktree::{
+    Entry, EntryKind, Event, FS_WATCH_LATENCY, PathChange, Worktree, WorktreeModelHandle,
+};
 
 use serde_json::json;
 use settings::{SettingsStore, WorktreeId};
@@ -1614,6 +1616,626 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
         fs.read_dir_call_count() + fs.metadata_call_count() - prev_fs_call_count - ancestors,
         0
     );
+}
+
+#[gpui::test]
+async fn test_path_prefix_scan_is_not_starved_by_rescan(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "heavy\nlight\n",
+            "heavy": {
+                "a": { "a1.js": "a1" },
+                "b": { "b1.js": "b1" },
+                "c": { "c1.js": "c1" },
+            },
+            "light": {
+                "x.js": "",
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Load the heavy gitignored subtree so a later rescan will re-crawl it.
+    tree.update(cx, |tree, cx| tree.load_file(rel_path("heavy/a/a1.js"), cx))
+        .await
+        .unwrap();
+
+    // "light" has not been loaded yet.
+    tree.read_with(cx, |tree, _| {
+        assert!(tree.entry_for_path(rel_path("light/x.js")).is_none());
+    });
+
+    // Suspend the rescan mid-flight, then emit a watcher "lost sync" rescan for that subtree.
+    // The scanner's main loop is now parked, waiting on the blocked read.
+    let mut scan = fs
+        .with_read_dir_blocked("/root/heavy", async {
+            fs.emit_fs_event("/root/heavy", Some(PathEventKind::Rescan));
+            cx.executor().run_until_parked();
+
+            // While the rescan is suspended, ask the scanner to load a different,
+            // new gitignored subtree. This must be serviced by a free scan worker
+            // rather than waiting for the blocked rescan to complete.
+            let done = tree.update(cx, |tree, _| {
+                tree.as_local()
+                    .unwrap()
+                    .add_path_prefix_to_scan(rel_path("light").into())
+            });
+            cx.executor().run_until_parked();
+
+            tree.read_with(cx, |tree, _| {
+                assert!(
+                    tree.entry_for_path(rel_path("light/x.js")).is_some(),
+                    "path-prefix scan was starved by the in-flight rescan"
+                );
+            });
+
+            done
+        })
+        .await;
+
+    scan.recv().await;
+    cx.executor().run_until_parked();
+}
+
+#[gpui::test(iterations = 50)]
+async fn test_concurrent_path_prefix_requests_do_not_lose_each_other(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().set_num_cpus(8);
+
+    let num_dirs = 6;
+    let mut root = serde_json::Map::new();
+    let mut gitignore = String::new();
+    for i in 0..num_dirs {
+        root.insert(
+            format!("dir{i}"),
+            json!({ "sub": { "file.txt": "contents" } }),
+        );
+        gitignore.push_str(&format!("dir{i}\n"));
+    }
+    gitignore.push_str("heavy\n");
+    root.insert(".gitignore".to_string(), json!(gitignore));
+    root.insert("heavy".to_string(), json!({ "a": { "a1.js": "a1" } }));
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree("/root", serde_json::Value::Object(root))
+        .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Load "heavy" so a later rescan of it has something to re-crawl.
+    tree.update(cx, |tree, cx| tree.load_file(rel_path("heavy/a/a1.js"), cx))
+        .await
+        .unwrap();
+
+    // Block "heavy"'s `read_dir` calls so the rescan below parks mid-flight.
+    let mut scans = fs
+        .with_read_dir_blocked("/root/heavy", async {
+            fs.emit_fs_event("/root/heavy", Some(PathEventKind::Rescan));
+            cx.executor().run_until_parked();
+
+            let completion_receivers: Vec<_> = (0..num_dirs)
+                .map(|i| {
+                    tree.update(cx, |tree, _| {
+                        tree.as_local()
+                            .unwrap()
+                            .add_path_prefix_to_scan(rel_path(&format!("dir{i}/sub")).into())
+                    })
+                })
+                .collect();
+            cx.executor().run_until_parked();
+            completion_receivers
+        })
+        .await;
+
+    for scan in &mut scans {
+        scan.recv().await;
+    }
+    cx.executor().run_until_parked();
+
+    for i in 0..num_dirs {
+        tree.read_with(cx, |tree, _| {
+            assert!(
+                tree.entry_for_path(rel_path(&format!("dir{i}/sub/file.txt")))
+                    .is_some(),
+                "dir{i}/sub was starved by a concurrent path-prefix request and never loaded"
+            );
+        });
+    }
+}
+
+#[gpui::test(iterations = 200)]
+async fn test_duplicate_concurrent_path_prefix_requests_do_not_lose_each_other(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+    cx.executor().set_num_cpus(8);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "dir\nheavy\n",
+            "dir": {
+                "sub": {
+                    "subsub": {
+                        "subsubsub": {
+                            "file.txt": "contents"
+                        }
+                    }
+                }
+            },
+            "heavy": {
+                "a": { "a1.js": "a1" }
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Load "heavy" so a later rescan of it has something to re-crawl.
+    tree.update(cx, |tree, cx| tree.load_file(rel_path("heavy/a/a1.js"), cx))
+        .await
+        .unwrap();
+
+    // Block "heavy"'s `read_dir` calls so the rescan below parks mid-flight.
+    let mut scans = fs
+        .with_read_dir_blocked("/root/heavy", async {
+            fs.emit_fs_event("/root/heavy", Some(PathEventKind::Rescan));
+            cx.executor().run_until_parked();
+
+            // Fire the exact same path-prefix request multiple times back to
+            // back, without yielding in between, so several copies can be
+            // picked up by distinct idle scan workers concurrently.
+            let completion_receivers = (0..8)
+                .map(|_| {
+                    tree.update(cx, |tree, _| {
+                        tree.as_local()
+                            .unwrap()
+                            .add_path_prefix_to_scan(rel_path("dir/sub/subsub/subsubsub").into())
+                    })
+                })
+                .collect::<Vec<_>>();
+            cx.executor().run_until_parked();
+            completion_receivers
+        })
+        .await;
+
+    for scan in &mut scans {
+        scan.recv().await;
+    }
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("dir/sub/subsub/subsubsub/file.txt"))
+                .is_some(),
+            "dir/sub/subsub/subsubsub was starved by a duplicate concurrent path-prefix request"
+        );
+    });
+}
+
+#[gpui::test(iterations = 50)]
+async fn test_duplicate_concurrent_path_prefix_requests_scan_subtree_once(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().set_num_cpus(8);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "heavy\nsolo\ndup\n",
+            "heavy": {
+                "a": { "a1.js": "a1" },
+            },
+            "solo": {
+                "a": { "b": { "file.txt": "contents" } },
+            },
+            "dup": {
+                "a": { "b": { "file.txt": "contents" } },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Load "heavy" so a later rescan of it has something to re-crawl.
+    tree.update(cx, |tree, cx| tree.load_file(rel_path("heavy/a/a1.js"), cx))
+        .await
+        .unwrap();
+
+    // Baseline: expand a single gitignored subtree (no rescan in flight) and
+    // record how many directory reads one full crawl of an identical subtree costs.
+    let prev_read_dir_count = fs.read_dir_call_count();
+    let mut solo_scan = tree.update(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .add_path_prefix_to_scan(rel_path("solo").into())
+    });
+    solo_scan.recv().await;
+    cx.executor().run_until_parked();
+    let solo_reads = fs.read_dir_call_count() - prev_read_dir_count;
+
+    // Now fire eight identical requests for "dup" while a rescan of "heavy" is
+    // parked mid-flight, so the duplicates land on distinct idle scan workers
+    // concurrently. With dedup, exactly one of them crawls the subtree.
+    let mut scans = fs
+        .with_read_dir_blocked("/root/heavy", async {
+            fs.emit_fs_event("/root/heavy", Some(PathEventKind::Rescan));
+            cx.executor().run_until_parked();
+
+            let prev_read_dir_count = fs.read_dir_call_count();
+            let completion_receivers = (0..8)
+                .map(|_| {
+                    tree.update(cx, |tree, _| {
+                        tree.as_local()
+                            .unwrap()
+                            .add_path_prefix_to_scan(rel_path("dup").into())
+                    })
+                })
+                .collect::<Vec<_>>();
+            cx.executor().run_until_parked();
+
+            let mut completion_receivers = completion_receivers;
+            for scan in &mut completion_receivers {
+                scan.recv().await;
+            }
+            cx.executor().run_until_parked();
+
+            let dup_reads = fs.read_dir_call_count() - prev_read_dir_count;
+
+            tree.read_with(cx, |tree, _| {
+                assert!(
+                    tree.entry_for_path(rel_path("dup/a/b/file.txt")).is_some(),
+                    "dup subtree was never loaded"
+                );
+            });
+
+            (completion_receivers, dup_reads)
+        })
+        .await;
+
+    cx.executor().run_until_parked();
+
+    let (_completion_receivers, dup_reads) = &mut scans;
+    assert!(
+        *dup_reads <= solo_reads,
+        "eight concurrent duplicate requests crawled the subtree {dup_reads} times \
+         (one crawl costs {solo_reads}); without dedup they would each crawl it (~8x)"
+    );
+}
+
+#[gpui::test(iterations = 200)]
+async fn test_coalesced_path_prefix_completion_implies_visibility(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().set_num_cpus(8);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "dup\nheavy\n",
+            "dup": {
+                "a": { "b": { "file.txt": "contents" } },
+            },
+            "heavy": {
+                "a": { "a1.js": "a1" },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Load "heavy" so a later rescan of it has something to re-crawl.
+    tree.update(cx, |tree, cx| tree.load_file(rel_path("heavy/a/a1.js"), cx))
+        .await
+        .unwrap();
+
+    // Block "heavy"'s `read_dir` calls so the rescan below parks mid-flight,
+    // keeping scan workers busy long enough for the duplicate "dup" requests to
+    // land on distinct workers and coalesce onto a single in-flight crawl.
+    fs.with_read_dir_blocked("/root/heavy", async {
+        fs.emit_fs_event("/root/heavy", Some(PathEventKind::Rescan));
+        cx.executor().run_until_parked();
+
+        let mut completion_receivers = (0..8)
+            .map(|_| {
+                tree.update(cx, |tree, _| {
+                    tree.as_local()
+                        .unwrap()
+                        .add_path_prefix_to_scan(rel_path("dup").into())
+                })
+            })
+            .collect::<Vec<_>>();
+
+        // Awaiting each completion drives the executor, but the moment a barrier
+        // resolves the scanned entries must already be applied to the snapshot.
+        for receiver in &mut completion_receivers {
+            receiver.recv().await;
+            tree.read_with(cx, |tree, _| {
+                assert!(
+                    tree.entry_for_path(rel_path("dup/a/b/file.txt")).is_some(),
+                    "a coalesced path-prefix request reported completion before its \
+                     scanned entries were visible on the foreground worktree"
+                );
+            });
+        }
+    })
+    .await;
+
+    cx.executor().run_until_parked();
+}
+
+#[gpui::test]
+async fn test_path_prefix_expansion_reports_incremental_progress(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "expand\n",
+            "expand": {
+                "fast": { "file.txt": "contents" },
+                "slow": { "file.txt": "contents" },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // Block only "expand/slow", so "expand" and "expand/fast" can be fully
+    // listed and loaded while "expand/slow" is still stuck mid-scan.
+    let mut done = fs
+        .with_read_dir_blocked("/root/expand/slow", async {
+            let done = tree.update(cx, |tree, _| {
+                tree.as_local()
+                    .unwrap()
+                    .add_path_prefix_to_scan(rel_path("expand").into())
+            });
+            cx.executor().run_until_parked();
+
+            // The expansion is now parked on the blocked "expand/slow" read, with
+            // "expand" and "expand/fast" already crawled. Advancing past the
+            // progress interval lets a free worker emit a periodic progress
+            // update, which should push "expand/fast"'s contents to the
+            // foreground before the expansion as a whole completes.
+            cx.executor().advance_clock(FS_WATCH_LATENCY * 2);
+            cx.executor().run_until_parked();
+
+            tree.read_with(cx, |tree, _| {
+                assert!(
+                    tree.entry_for_path(rel_path("expand/fast/file.txt"))
+                        .is_some(),
+                    "expand/fast should already be visible to the foreground before the whole \
+                     expansion finishes, via drain_scan_jobs's periodic progress updates"
+                );
+            });
+
+            done
+        })
+        .await;
+
+    done.recv().await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("expand/slow/file.txt"))
+                .is_some(),
+            "expand/slow should be loaded once the expansion fully completes"
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_path_prefix_expansion_registers_nested_git_repository(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "vendor\n",
+            "vendor": {
+                "pkg": {
+                    ".git": {},
+                    "lib.rs": "",
+                },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+
+    // The gitignored "vendor" directory hasn't been expanded yet, so the
+    // repository nested inside it is not yet known.
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.as_local().unwrap().repositories().is_empty(),
+            "nested repo should not be known before the gitignored dir is expanded"
+        );
+    });
+
+    // Force-expand the gitignored subtree that contains the nested repository.
+    // This path no longer routes through `process_events`, so this guards
+    // against a regression in `scan_dir`'s inline `.git` detection.
+    let mut done = tree.update(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .add_path_prefix_to_scan(rel_path("vendor/pkg").into())
+    });
+    done.recv().await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("vendor/pkg/lib.rs")).is_some(),
+            "the force-expanded gitignored subtree should be loaded"
+        );
+        pretty_assertions::assert_eq!(
+            tree.as_local().unwrap().repositories(),
+            vec![Path::new("/root/vendor/pkg").into()],
+            "a git repository nested inside a force-expanded gitignored directory \
+             should be registered"
+        );
+    });
+}
+
+#[gpui::test(iterations = 100)]
+async fn test_path_prefix_request_during_initial_scan_is_not_lost(cx: &mut TestAppContext) {
+    init_test(cx);
+    cx.executor().set_num_cpus(8);
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            ".gitignore": "ignored\n",
+            // "a" is a normal (non-ignored) directory; "a/ignored" is gitignored.
+            "a": {
+                "ignored": {
+                    "sub": {
+                        "file.txt": "contents",
+                    },
+                },
+            },
+        }),
+    )
+    .await;
+
+    let tree = Worktree::local(
+        Path::new("/root"),
+        true,
+        fs.clone(),
+        Default::default(),
+        true,
+        WorktreeId::from_proto(0),
+        &mut cx.to_async(),
+    )
+    .await
+    .unwrap();
+
+    // Queue a path-prefix expansion before the initial scan has had a chance to
+    // run. The request must not be silently dropped just because that ancestor
+    // isn't loaded yet.
+    let mut done = tree.update(cx, |tree, _| {
+        tree.as_local()
+            .unwrap()
+            .add_path_prefix_to_scan(rel_path("a/ignored/sub").into())
+    });
+
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    done.recv().await;
+    cx.executor().run_until_parked();
+
+    tree.read_with(cx, |tree, _| {
+        assert!(
+            tree.entry_for_path(rel_path("a/ignored/sub/file.txt"))
+                .is_some(),
+            "a path-prefix request issued during the initial scan was dropped because \
+             its ancestor directory had not been loaded yet"
+        );
+    });
 }
 
 #[gpui::test]
