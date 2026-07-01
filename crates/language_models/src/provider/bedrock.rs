@@ -446,6 +446,21 @@ impl BedrockLanguageModelProvider {
             request_limiter: RateLimiter::new(4),
         })
     }
+
+    fn create_mantle_language_model(
+        &self,
+        model: bedrock::mantle::MantleModel,
+    ) -> Arc<dyn LanguageModel> {
+        Arc::new(BedrockMantleModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            aws_http_client: self.http_client.clone(),
+            handle: self.handle.clone(),
+            state: self.state.clone(),
+            request_limiter: RateLimiter::new(4),
+            mantle_auth: OnceCell::new(),
+        })
+    }
 }
 
 impl LanguageModelProvider for BedrockLanguageModelProvider {
@@ -512,6 +527,11 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         models
             .into_values()
             .map(|model| self.create_language_model(model))
+            .chain(
+                bedrock::mantle::MantleModel::iter()
+                    .filter(|model| !matches!(model, bedrock::mantle::MantleModel::Custom { .. }))
+                    .map(|model| self.create_mantle_language_model(model)),
+            )
             .collect()
     }
 
@@ -851,6 +871,631 @@ fn deny_tool_use_events(
             other => other,
         }
     })
+}
+
+// ---- Bedrock Mantle path -------------------------------------------------
+//
+// Models served on the `bedrock-mantle` endpoint (GPT, Gemma, Grok) speak an
+// OpenAI-shaped wire protocol over a plain HTTP client rather than the AWS SDK
+// Converse API. They are exposed through the same Bedrock provider but backed
+// by this separate `LanguageModel` so the Converse `BedrockModel` path stays
+// untouched. Which one a model uses is decided purely by its identity in
+// `provided_models`.
+
+struct BedrockMantleModel {
+    id: LanguageModelId,
+    model: bedrock::mantle::MantleModel,
+    aws_http_client: AwsHttpClient,
+    handle: tokio::runtime::Handle,
+    state: Entity<State>,
+    request_limiter: RateLimiter,
+    mantle_auth: OnceCell<bedrock::mantle::MantleAuth>,
+}
+
+impl BedrockMantleModel {
+    /// Resolves the provider's configured `BedrockAuth` into a concrete
+    /// `MantleAuth`. API keys and static IAM credentials map directly; profile,
+    /// SSO, and automatic auth require resolving the AWS credential chain to
+    /// frozen credentials, which we then sign requests with via SigV4.
+    fn get_or_init_auth(&self, cx: &AsyncApp) -> anyhow::Result<bedrock::mantle::MantleAuth> {
+        self.mantle_auth
+            .get_or_try_init_blocking(|| {
+                let (auth, region) = cx.read_entity(&self.state, |state, _cx| {
+                    (state.auth.clone(), state.get_region())
+                });
+
+                match auth {
+                    Some(BedrockAuth::ApiKey { api_key }) => {
+                        anyhow::Ok(bedrock::mantle::MantleAuth::ApiKey { api_key })
+                    }
+                    Some(BedrockAuth::IamCredentials {
+                        access_key_id,
+                        secret_access_key,
+                        session_token,
+                    }) => anyhow::Ok(bedrock::mantle::MantleAuth::SigV4 {
+                        access_key_id,
+                        secret_access_key,
+                        session_token,
+                    }),
+                    // Automatic / NamedProfile / SingleSignOn / None: resolve the
+                    // SDK credential chain to concrete credentials for SigV4.
+                    other => {
+                        use aws_credential_types::provider::ProvideCredentials;
+
+                        let mut builder = aws_config::defaults(BehaviorVersion::latest())
+                            .region(Region::new(region));
+                        if let Some(
+                            BedrockAuth::NamedProfile { profile_name }
+                            | BedrockAuth::SingleSignOn { profile_name },
+                        ) = &other
+                            && !profile_name.is_empty()
+                        {
+                            builder = builder.profile_name(profile_name.clone());
+                        }
+
+                        let config = self.handle.block_on(builder.load());
+                        let provider = config
+                            .credentials_provider()
+                            .context("no AWS credentials provider available for Mantle SigV4")?;
+                        let credentials = self
+                            .handle
+                            .block_on(provider.provide_credentials())
+                            .context("resolving AWS credentials for Mantle SigV4")?;
+
+                        anyhow::Ok(bedrock::mantle::MantleAuth::SigV4 {
+                            access_key_id: credentials.access_key_id().to_string(),
+                            secret_access_key: credentials.secret_access_key().to_string(),
+                            session_token: credentials.session_token().map(str::to_string),
+                        })
+                    }
+                }
+            })
+            .context("initializing Bedrock Mantle auth")?;
+
+        self.mantle_auth
+            .get()
+            .cloned()
+            .context("Bedrock Mantle auth not initialized")
+    }
+}
+
+impl LanguageModel for BedrockMantleModel {
+    fn id(&self) -> LanguageModelId {
+        self.id.clone()
+    }
+
+    fn name(&self) -> LanguageModelName {
+        LanguageModelName::from(self.model.display_name().to_string())
+    }
+
+    fn provider_id(&self) -> LanguageModelProviderId {
+        PROVIDER_ID
+    }
+
+    fn provider_name(&self) -> LanguageModelProviderName {
+        PROVIDER_NAME
+    }
+
+    fn supports_tools(&self) -> bool {
+        true
+    }
+
+    fn supports_images(&self) -> bool {
+        true
+    }
+
+    fn supports_thinking(&self) -> bool {
+        self.model.reasoning_effort().is_some()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
+        let efforts = self.model.supported_reasoning_efforts();
+        // Only worth surfacing a picker when there's a real choice to make.
+        if efforts.len() <= 1 {
+            return Vec::new();
+        }
+        let default = self.model.reasoning_effort();
+        efforts
+            .iter()
+            .copied()
+            .map(|effort| language_model::LanguageModelEffortLevel {
+                name: effort.label().into(),
+                value: effort.value().into(),
+                is_default: Some(effort) == default,
+            })
+            .collect()
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        matches!(
+            choice,
+            LanguageModelToolChoice::Auto
+                | LanguageModelToolChoice::Any
+                | LanguageModelToolChoice::None
+        )
+    }
+
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
+    fn telemetry_id(&self) -> String {
+        format!("bedrock/{}", self.model.id())
+    }
+
+    fn max_token_count(&self) -> u64 {
+        self.model.max_token_count()
+    }
+
+    fn max_output_tokens(&self) -> Option<u64> {
+        self.model.max_output_tokens()
+    }
+
+    fn stream_completion(
+        &self,
+        mut request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
+        >,
+    > {
+        let auth = match self.get_or_init_auth(cx) {
+            Ok(auth) => auth,
+            Err(error) => return futures::future::ready(Err(error.into())).boxed(),
+        };
+
+        let region = cx.read_entity(&self.state, |state, _cx| state.get_region());
+        let extra_headers = self.state.read_with(cx, |_, cx| {
+            AllLanguageModelSettings::get_global(cx)
+                .bedrock
+                .custom_headers
+                .clone()
+        });
+
+        let http_client = self.aws_http_client.client();
+        let model = self.model.clone();
+
+        // The Responses API is the preferred (and for GPT-5.x, only) Mantle
+        // transport; the Chat Completions path is kept for custom models that
+        // opt into it. `service_tier` only applies when Priority is available.
+        if !model.supports_priority() {
+            request.speed = None;
+        }
+        // Mantle rejects the `context_management` parameter for every model, so
+        // never let the request emit compaction settings.
+        if !model.supports_compaction() {
+            request.compact_at_tokens = None;
+        }
+
+        if model.uses_responses_api() {
+            let responses_request = open_ai::completion::into_open_ai_response(
+                request,
+                model.id(),
+                model.supports_parallel_tool_calls(),
+                model.supports_prompt_cache_key(),
+                model.max_output_tokens(),
+                model.reasoning_effort(),
+                model
+                    .supported_reasoning_efforts()
+                    .contains(&bedrock::mantle::ReasoningEffort::None),
+            );
+
+            let request_value = match serde_json::to_value(&responses_request) {
+                Ok(mut value) => {
+                    if let Some(object) = value.as_object_mut() {
+                        // Mantle rejects `context_management` for every model.
+                        object.remove("context_management");
+
+                        // Only models that produce encrypted reasoning (GPT)
+                        // benefit from requesting it back for cross-turn
+                        // continuity. Gemma/Grok stream plaintext reasoning and
+                        // never produce encrypted content, so drop it for them.
+                        if !model.uses_encrypted_reasoning() {
+                            object.remove("include");
+                        }
+
+                        if !model.emits_reasoning_summary()
+                            && let Some(reasoning) =
+                                object.get_mut("reasoning").and_then(|r| r.as_object_mut())
+                        {
+                            reasoning.remove("summary");
+                        }
+                    }
+                    value
+                }
+                Err(error) => {
+                    return futures::future::ready(Err(anyhow!(error).into())).boxed();
+                }
+            };
+
+            let responses_url = model.responses_url(&region);
+            let future = self.request_limiter.stream(async move {
+                let stream = bedrock::mantle::stream_responses(
+                    http_client.as_ref(),
+                    &region,
+                    &responses_url,
+                    &auth,
+                    request_value,
+                    &extra_headers,
+                )
+                .await
+                .map_err(LanguageModelCompletionError::from)?;
+
+                Ok(bedrock::mantle_responses::MantleResponseEventMapper::new().map_stream(stream))
+            });
+
+            return async move { Ok(future.await?.boxed()) }.boxed();
+        }
+
+        let chat_completions_url = model.chat_completions_url(&region);
+        let mantle_request = into_mantle(request, &model);
+
+        let future = self.request_limiter.stream(async move {
+            let stream = bedrock::mantle::stream_completion(
+                http_client.as_ref(),
+                &region,
+                &chat_completions_url,
+                &auth,
+                mantle_request,
+                &extra_headers,
+            )
+            .await
+            .map_err(LanguageModelCompletionError::from)?;
+
+            Ok(MantleEventMapper::new().map_stream(stream.boxed()))
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+}
+
+/// Converts a [`LanguageModelRequest`] into the OpenAI-shaped request the Mantle
+/// endpoint expects. Mirrors `open_ai::into_open_ai`, but emits the parallel
+/// types defined in `bedrock::mantle`.
+fn into_mantle(
+    request: LanguageModelRequest,
+    model: &bedrock::mantle::MantleModel,
+) -> bedrock::mantle::Request {
+    use bedrock::mantle;
+
+    let mut messages: Vec<mantle::RequestMessage> = Vec::new();
+    for message in request.messages {
+        for content in message.content {
+            match content {
+                MessageContent::Text(text) => {
+                    let should_add = if message.role == Role::User {
+                        !text.trim().is_empty()
+                    } else {
+                        !text.is_empty()
+                    };
+                    if should_add {
+                        add_mantle_content_part(
+                            mantle::MessagePart::Text { text },
+                            message.role,
+                            &mut messages,
+                        );
+                    }
+                }
+                // Mantle's Chat Completions wire format does not carry reasoning
+                // back to the model, so thinking/compaction content is dropped.
+                MessageContent::Thinking { .. }
+                | MessageContent::RedactedThinking(_)
+                | MessageContent::Compaction(_) => {}
+                MessageContent::Image(image) => {
+                    add_mantle_content_part(
+                        mantle::MessagePart::Image {
+                            image_url: mantle::ImageUrl {
+                                url: image.to_base64_url(),
+                                detail: None,
+                            },
+                        },
+                        message.role,
+                        &mut messages,
+                    );
+                }
+                MessageContent::ToolUse(tool_use) => {
+                    let tool_call = mantle::ToolCall {
+                        id: tool_use.id.to_string(),
+                        content: mantle::ToolCallContent::Function {
+                            function: mantle::FunctionContent {
+                                name: tool_use.name.to_string(),
+                                arguments: serde_json::to_string(&tool_use.input)
+                                    .unwrap_or_default(),
+                            },
+                        },
+                    };
+
+                    if let Some(mantle::RequestMessage::Assistant { tool_calls, .. }) =
+                        messages.last_mut()
+                    {
+                        tool_calls.push(tool_call);
+                    } else {
+                        messages.push(mantle::RequestMessage::Assistant {
+                            content: None,
+                            tool_calls: vec![tool_call],
+                            reasoning_content: None,
+                        });
+                    }
+                }
+                MessageContent::ToolResult(tool_result) => {
+                    let parts: Vec<mantle::MessagePart> = tool_result
+                        .content
+                        .iter()
+                        .map(|part| match part {
+                            LanguageModelToolResultContent::Text(text) => {
+                                mantle::MessagePart::Text {
+                                    text: text.to_string(),
+                                }
+                            }
+                            LanguageModelToolResultContent::Image(image) => {
+                                mantle::MessagePart::Image {
+                                    image_url: mantle::ImageUrl {
+                                        url: image.to_base64_url(),
+                                        detail: None,
+                                    },
+                                }
+                            }
+                        })
+                        .collect();
+
+                    messages.push(mantle::RequestMessage::Tool {
+                        content: parts.into(),
+                        tool_call_id: tool_result.tool_use_id.to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    let parallel_tool_calls = if model.supports_parallel_tool_calls() && !request.tools.is_empty() {
+        Some(true)
+    } else {
+        None
+    };
+
+    let prompt_cache_key = if model.supports_prompt_cache_key() {
+        request.thread_id
+    } else {
+        None
+    };
+
+    // Resolve the reasoning effort sent on the wire. When thinking is allowed we
+    // honor an explicitly selected effort (if the model supports it), otherwise
+    // fall back to the model's default. When thinking is disabled we send
+    // `none` for models that support disabling reasoning (Grok 4.3); models that
+    // can't disable it (Gemma 4) keep reasoning at their default.
+    let supported_efforts = model.supported_reasoning_efforts();
+    let reasoning_effort = if request.thinking_allowed {
+        request
+            .thinking_effort
+            .as_deref()
+            .and_then(|effort| effort.parse::<mantle::ReasoningEffort>().ok())
+            .filter(|effort| supported_efforts.contains(effort))
+            .or_else(|| model.reasoning_effort())
+    } else if supported_efforts.contains(&mantle::ReasoningEffort::None) {
+        Some(mantle::ReasoningEffort::None)
+    } else {
+        model.reasoning_effort()
+    };
+
+    mantle::Request {
+        model: model.id().to_string(),
+        messages,
+        stream: true,
+        stream_options: Some(mantle::StreamOptions::default()),
+        // `max_output_tokens()` is a practical cap kept below the context window,
+        // so it is safe to send as the chat-completions output budget.
+        max_completion_tokens: model.max_output_tokens(),
+        max_tokens: None,
+        stop: request.stop,
+        temperature: request.temperature,
+        tool_choice: request.tool_choice.map(|choice| match choice {
+            LanguageModelToolChoice::Auto => mantle::ToolChoice::Auto,
+            LanguageModelToolChoice::Any => mantle::ToolChoice::Required,
+            LanguageModelToolChoice::None => mantle::ToolChoice::None,
+        }),
+        parallel_tool_calls,
+        tools: request
+            .tools
+            .into_iter()
+            .map(|tool| mantle::ToolDefinition::Function {
+                function: mantle::FunctionDefinition {
+                    name: tool.name,
+                    description: Some(tool.description),
+                    parameters: Some(tool.input_schema),
+                },
+            })
+            .collect(),
+        prompt_cache_key,
+        reasoning_effort,
+        service_tier: None,
+    }
+}
+
+fn add_mantle_content_part(
+    new_part: bedrock::mantle::MessagePart,
+    role: Role,
+    messages: &mut Vec<bedrock::mantle::RequestMessage>,
+) {
+    use bedrock::mantle;
+    match (role, messages.last_mut()) {
+        (Role::User, Some(mantle::RequestMessage::User { content }))
+        | (
+            Role::Assistant,
+            Some(mantle::RequestMessage::Assistant {
+                content: Some(content),
+                ..
+            }),
+        )
+        | (Role::System, Some(mantle::RequestMessage::System { content, .. })) => {
+            content.push_part(new_part);
+        }
+        _ => {
+            messages.push(match role {
+                Role::User => mantle::RequestMessage::User {
+                    content: mantle::MessageContent::from(vec![new_part]),
+                },
+                Role::Assistant => mantle::RequestMessage::Assistant {
+                    content: Some(mantle::MessageContent::from(vec![new_part])),
+                    tool_calls: Vec::new(),
+                    reasoning_content: None,
+                },
+                Role::System => mantle::RequestMessage::System {
+                    content: mantle::MessageContent::from(vec![new_part]),
+                },
+            });
+        }
+    }
+}
+
+/// Accumulates streamed Mantle chat-completion deltas into
+/// [`LanguageModelCompletionEvent`]s. Mirrors `open_ai::OpenAiEventMapper`.
+struct MantleEventMapper {
+    tool_calls_by_index: HashMap<usize, MantleRawToolCall>,
+}
+
+#[derive(Default)]
+struct MantleRawToolCall {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+impl MantleEventMapper {
+    fn new() -> Self {
+        Self {
+            tool_calls_by_index: HashMap::default(),
+        }
+    }
+
+    fn map_stream(
+        mut self,
+        events: BoxStream<'static, Result<bedrock::mantle::ResponseStreamEvent>>,
+    ) -> BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>
+    {
+        events
+            .flat_map(move |event| {
+                futures::stream::iter(match event {
+                    Ok(event) => self.map_event(event),
+                    Err(error) => vec![Err(LanguageModelCompletionError::from(error))],
+                })
+            })
+            .boxed()
+    }
+
+    fn map_event(
+        &mut self,
+        event: bedrock::mantle::ResponseStreamEvent,
+    ) -> Vec<Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
+        let mut events = Vec::new();
+        if let Some(usage) = event.usage
+            && let Some(prompt_tokens) = usage.prompt_tokens
+            && let Some(completion_tokens) = usage.completion_tokens
+        {
+            events.push(Ok(LanguageModelCompletionEvent::UsageUpdate(TokenUsage {
+                input_tokens: prompt_tokens,
+                output_tokens: completion_tokens,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
+            })));
+        }
+
+        let Some(choice) = event.choices.first() else {
+            return events;
+        };
+
+        if let Some(delta) = choice.delta.as_ref() {
+            if let Some(reasoning) = delta.reasoning.clone()
+                && !reasoning.is_empty()
+            {
+                events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                    text: reasoning,
+                    signature: None,
+                }));
+            }
+            if let Some(reasoning_content) = delta.reasoning_content.clone()
+                && !reasoning_content.is_empty()
+            {
+                events.push(Ok(LanguageModelCompletionEvent::Thinking {
+                    text: reasoning_content,
+                    signature: None,
+                }));
+            }
+            if let Some(content) = delta.content.clone()
+                && !content.is_empty()
+            {
+                events.push(Ok(LanguageModelCompletionEvent::Text(content)));
+            }
+
+            if let Some(tool_calls) = delta.tool_calls.as_ref() {
+                for tool_call in tool_calls {
+                    let entry = self.tool_calls_by_index.entry(tool_call.index).or_default();
+
+                    if let Some(tool_id) = tool_call.id.clone()
+                        && !tool_id.is_empty()
+                    {
+                        entry.id = tool_id;
+                    }
+
+                    if let Some(function) = tool_call.function.as_ref() {
+                        if let Some(name) = function.name.clone()
+                            && !name.is_empty()
+                        {
+                            entry.name = name;
+                        }
+                        if let Some(arguments) = function.arguments.clone() {
+                            entry.arguments.push_str(&arguments);
+                        }
+                    }
+                }
+            }
+        }
+
+        match choice.finish_reason.as_deref() {
+            Some("stop") => {
+                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                    language_model::StopReason::EndTurn,
+                )));
+            }
+            Some("tool_calls") => {
+                events.extend(self.tool_calls_by_index.drain().map(|(_, tool_call)| {
+                    match parse_tool_arguments(&tool_call.arguments) {
+                        Ok(input) => Ok(LanguageModelCompletionEvent::ToolUse(
+                            LanguageModelToolUse {
+                                id: tool_call.id.clone().into(),
+                                name: tool_call.name.as_str().into(),
+                                is_input_complete: true,
+                                input,
+                                raw_input: tool_call.arguments.clone(),
+                                thought_signature: None,
+                            },
+                        )),
+                        Err(error) => Ok(LanguageModelCompletionEvent::ToolUseJsonParseError {
+                            id: tool_call.id.into(),
+                            tool_name: tool_call.name.into(),
+                            raw_input: tool_call.arguments.clone().into(),
+                            json_parse_error: error.to_string(),
+                        }),
+                    }
+                }));
+                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                    language_model::StopReason::ToolUse,
+                )));
+            }
+            Some(stop_reason) => {
+                log::error!("Unexpected Mantle stop_reason: {stop_reason:?}");
+                events.push(Ok(LanguageModelCompletionEvent::Stop(
+                    language_model::StopReason::EndTurn,
+                )));
+            }
+            None => {}
+        }
+
+        events
+    }
 }
 
 pub fn into_bedrock(
