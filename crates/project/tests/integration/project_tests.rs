@@ -27,7 +27,7 @@ use buffer_diff::{
 use collections::{BTreeSet, HashMap, HashSet};
 use encoding_rs;
 use fs::{FakeFs, PathEventKind};
-use futures::{StreamExt, future};
+use futures::{FutureExt as _, StreamExt, future};
 use git::{
     GitHostingProviderRegistry,
     repository::{RepoPath, repo_path},
@@ -6673,6 +6673,101 @@ async fn test_dirty_buffer_reloads_after_undo(cx: &mut gpui::TestAppContext) {
         );
         assert!(!buffer.is_dirty());
     });
+}
+
+#[cfg(target_os = "linux")]
+#[gpui::test]
+async fn test_single_file_buffer_reloads_after_undoing_external_atomic_save(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let dir = TempTree::new(json!({
+        "file.txt": "version 1",
+    }));
+    let file_path = dir.path().join("file.txt");
+
+    let project = Project::test(
+        Arc::new(RealFs::new(None, cx.executor())),
+        [file_path.as_path()],
+        cx,
+    )
+    .await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(file_path.as_path(), cx)
+        })
+        .await
+        .unwrap();
+
+    atomic_replace_file(&file_path, "version 2 from external tool");
+    wait_for_buffer_text(
+        &buffer,
+        "version 2 from external tool",
+        Duration::from_secs(3),
+        cx,
+    )
+    .await;
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.undo(cx);
+    });
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "version 1");
+        assert!(!buffer.is_dirty());
+    });
+
+    atomic_replace_file(&file_path, "version 3 from external tool");
+    wait_for_buffer_text(
+        &buffer,
+        "version 3 from external tool",
+        Duration::from_secs(3),
+        cx,
+    )
+    .await;
+
+    buffer.read_with(cx, |buffer, _| {
+        assert!(!buffer.is_dirty());
+    });
+}
+
+#[cfg(target_os = "linux")]
+fn atomic_replace_file(path: &Path, contents: &str) {
+    let temp_path = path.with_extension("tmp");
+    std::fs::write(&temp_path, contents).unwrap();
+    std::fs::rename(temp_path, path).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+async fn wait_for_buffer_text(
+    buffer: &Entity<Buffer>,
+    expected_text: &str,
+    timeout: Duration,
+    cx: &mut gpui::TestAppContext,
+) {
+    let timeout = cx.executor().timer(timeout).fuse();
+    futures::pin_mut!(timeout);
+    loop {
+        if buffer.read_with(cx, |buffer, _| buffer.text() == expected_text) {
+            return;
+        }
+
+        futures::select_biased! {
+            _ = cx.background_executor.timer(Duration::from_millis(20)).fuse() => {
+                cx.executor().run_until_parked();
+            }
+            _ = timeout => {
+                let actual_text = buffer.read_with(cx, |buffer, _| buffer.text());
+                panic!("buffer text never became {expected_text:?}; actual text: {actual_text:?}");
+            }
+        }
+    }
 }
 
 #[gpui::test]
