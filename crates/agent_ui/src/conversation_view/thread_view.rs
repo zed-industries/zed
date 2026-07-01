@@ -6690,6 +6690,62 @@ impl ThreadView {
             })
             .flatten();
 
+        let feedback_buttons = (self.is_subagent() && self.is_thread_feedback_enabled(cx)).then(
+            || {
+                let feedback = self.thread_feedback.feedback;
+                let tooltip_meta =
+                    "Rating the thread sends all of your current conversation to the Zed team.";
+
+                h_flex()
+                    .child(
+                        IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
+                            .icon_size(IconSize::Small)
+                            .icon_color(match feedback {
+                                Some(ThreadFeedback::Positive) => Color::Accent,
+                                _ => Color::Muted,
+                            })
+                            .tooltip(move |window, cx| match feedback {
+                                Some(ThreadFeedback::Positive) => {
+                                    Tooltip::text("Thanks for your feedback!")(window, cx)
+                                }
+                                _ => Tooltip::with_meta(
+                                    "Helpful Response",
+                                    None,
+                                    tooltip_meta,
+                                    cx,
+                                ),
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.handle_feedback_click(ThreadFeedback::Positive, window, cx);
+                            })),
+                    )
+                    .child(
+                        IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
+                            .icon_size(IconSize::Small)
+                            .icon_color(match feedback {
+                                Some(ThreadFeedback::Negative) => Color::Accent,
+                                _ => Color::Muted,
+                            })
+                            .tooltip(move |window, cx| match feedback {
+                                Some(ThreadFeedback::Negative) => Tooltip::text(
+                                    "We appreciate your feedback and will use it to improve in the future.",
+                                )(
+                                    window, cx
+                                ),
+                                _ => Tooltip::with_meta(
+                                    "Not Helpful Response",
+                                    None,
+                                    tooltip_meta,
+                                    cx,
+                                ),
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.handle_feedback_click(ThreadFeedback::Negative, window, cx);
+                            })),
+                    )
+            },
+        );
+
         h_flex()
             .w_full()
             .py_1p5()
@@ -6716,6 +6772,7 @@ impl ThreadView {
                     )
                 },
             )
+            .when_some(feedback_buttons, |this, buttons| this.child(buttons))
             .when_some(copy_response_button, |this, button| this.child(button))
             .child(scroll_to_recent_user_prompt)
             .child(scroll_to_top)
