@@ -182,6 +182,8 @@ pub struct X11ClientState {
     pub(crate) compositor_gpu: Option<CompositorGpuHint>,
 
     pub(crate) scale_factor: f32,
+    pub(crate) scale_locked: bool,
+    pub(crate) randr_monitor_support: bool,
 
     xkb_context: xkbc::Context,
     pub(crate) xcb_connection: Rc<XCBConnection>,
@@ -442,7 +444,11 @@ impl X11Client {
 
         let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection)
             .context("Failed to create resource database")?;
-        let scale_factor = get_scale_factor(&xcb_connection, &resource_database, x_root_index);
+        let ScaleInfo {
+            scale_factor,
+            scale_locked,
+            randr_monitor_support,
+        } = get_scale_factor(&xcb_connection, &resource_database, x_root_index);
         let cursor_handle = cursor::Handle::new(&xcb_connection, x_root_index, &resource_database)
             .context("Failed to initialize cursor theme handler")?
             .reply()
@@ -454,6 +460,26 @@ impl X11Client {
         let compositor_gpu = detect_compositor_gpu(&xcb_connection, screen);
 
         let xcb_connection = Rc::new(xcb_connection);
+
+        // X11 does not push DPI updates to windows. Without this subscription scale
+        // changes are only detected when the user moves the window.
+        if !scale_locked && randr_monitor_support {
+            let randr_root = xcb_connection.setup().roots[x_root_index].root;
+            match xcb_connection.randr_select_input(randr_root, randr::NotifyMask::SCREEN_CHANGE) {
+                Err(err) => log::warn!(
+                    "Failed to select RandR events for DPI change detection: {:?}",
+                    err
+                ),
+                Ok(cookie) => {
+                    if let Err(err) = cookie.check() {
+                        log::warn!(
+                            "Failed to select RandR events for DPI change detection: {:?}",
+                            err
+                        );
+                    }
+                }
+            }
+        }
 
         let ximc = X11rbClient::init(Rc::clone(&xcb_connection), x_root_index, None).ok();
         let xim_handler = if ximc.is_some() {
@@ -525,6 +551,8 @@ impl X11Client {
             gpu_context: Rc::new(RefCell::new(None)),
             compositor_gpu,
             scale_factor,
+            scale_locked,
+            randr_monitor_support,
 
             xkb_context,
             xcb_connection,
@@ -949,6 +977,25 @@ impl X11Client {
                     .set_bounds(bounds)
                     .context("X11: Failed to set window bounds")
                     .log_err();
+            }
+            Event::RandrScreenChangeNotify(_) => {
+                let state = self.0.borrow();
+                if !state.scale_locked {
+                    let windows: Vec<X11WindowStatePtr> =
+                        state.windows.values().map(|w| w.window.clone()).collect();
+                    let xcb_connection = state.xcb_connection.clone();
+                    let x_root_index = state.x_root_index;
+                    drop(state);
+                    for window in windows {
+                        window.update_scale_from_randr();
+                    }
+                    // Keep the client-level scale current so new windows opened
+                    // after this event start at the right scale.
+                    let randr_root = xcb_connection.setup().roots[x_root_index].root;
+                    if let Some(scale) = scale_from_randr_monitors(&xcb_connection, randr_root) {
+                        self.0.borrow_mut().scale_factor = scale;
+                    }
+                }
             }
             Event::PropertyNotify(event) => {
                 let window = self.get_window(event.window)?;
@@ -1607,6 +1654,8 @@ impl LinuxClient for X11Client {
         let x_root_index = state.x_root_index;
         let atoms = state.atoms;
         let scale_factor = state.scale_factor;
+        let scale_locked = state.scale_locked;
+        let randr_monitor_support = state.randr_monitor_support;
         let appearance = state.common.appearance;
         let compositor_gpu = state.compositor_gpu.take();
         let supports_xinput_gestures = state.supports_xinput_gestures;
@@ -1627,6 +1676,8 @@ impl LinuxClient for X11Client {
             x_window,
             &atoms,
             scale_factor,
+            scale_locked,
+            randr_monitor_support,
             appearance,
             parent_window,
             supports_xinput_gestures,
@@ -2519,11 +2570,17 @@ enum DpiMode {
     NotSet,
 }
 
+struct ScaleInfo {
+    scale_factor: f32,
+    scale_locked: bool,
+    randr_monitor_support: bool,
+}
+
 fn get_scale_factor(
     connection: &XCBConnection,
     resource_database: &Database,
     screen_index: usize,
-) -> f32 {
+) -> ScaleInfo {
     let env_dpi = std::env::var(GPUI_X11_SCALE_FACTOR_ENV)
         .ok()
         .map(|var| {
@@ -2549,28 +2606,43 @@ fn get_scale_factor(
         })
         .unwrap_or(DpiMode::NotSet);
 
-    match env_dpi {
-        DpiMode::Scale(scale) => {
+    // randr_monitor_support is irrelevant when scale is pinned because all per-monitor
+    // detection is gated on !scale_locked.
+    let is_randr_explicit = matches!(&env_dpi, DpiMode::Randr);
+    if let DpiMode::Scale(scale) = env_dpi {
+        log::info!(
+            "Using scale factor from {}: {}",
+            GPUI_X11_SCALE_FACTOR_ENV,
+            scale
+        );
+        return ScaleInfo {
+            scale_factor: scale,
+            scale_locked: true,
+            randr_monitor_support: false,
+        };
+    }
+
+    let (randr_scale, randr_monitor_support) = get_randr_info(connection, screen_index);
+
+    if is_randr_explicit {
+        if let Some(scale) = randr_scale {
             log::info!(
-                "Using scale factor from {}: {}",
+                "Using RandR scale factor from {}=randr: {}",
                 GPUI_X11_SCALE_FACTOR_ENV,
                 scale
             );
-            return scale;
+            return ScaleInfo {
+                scale_factor: scale,
+                scale_locked: false,
+                randr_monitor_support,
+            };
         }
-        DpiMode::Randr => {
-            if let Some(scale) = get_randr_scale_factor(connection, screen_index) {
-                log::info!(
-                    "Using RandR scale factor from {}=randr: {}",
-                    GPUI_X11_SCALE_FACTOR_ENV,
-                    scale
-                );
-                return scale;
-            }
-            log::warn!("Failed to calculate RandR scale factor, falling back to default");
-            return 1.0;
-        }
-        DpiMode::NotSet => {}
+        log::warn!("Failed to calculate RandR scale factor, falling back to default");
+        return ScaleInfo {
+            scale_factor: 1.0,
+            scale_locked: false,
+            randr_monitor_support,
+        };
     }
 
     // TODO: Use scale factor from XSettings here
@@ -2582,34 +2654,68 @@ fn get_scale_factor(
     {
         let scale = dpi / 96.0; // base dpi
         log::info!("Using scale factor from Xft.dpi: {}", scale);
-        return scale;
+        // Xft.dpi is an explicit user or DE override. Locking scale prevents a
+        // subsequent RandR event from replacing it with raw physical DPI, which
+        // disagrees with Xft.dpi on GNOME/KDE fractional or integer scaling setups.
+        return ScaleInfo {
+            scale_factor: scale,
+            scale_locked: true,
+            randr_monitor_support: false,
+        };
     }
 
-    if let Some(scale) = get_randr_scale_factor(connection, screen_index) {
+    if let Some(scale) = randr_scale {
         log::info!("Using RandR scale factor: {}", scale);
-        return scale;
+        return ScaleInfo {
+            scale_factor: scale,
+            scale_locked: false,
+            randr_monitor_support,
+        };
     }
 
     log::info!("Using default scale factor: 1.0");
-    1.0
+    ScaleInfo {
+        scale_factor: 1.0,
+        scale_locked: false,
+        randr_monitor_support,
+    }
 }
 
-fn get_randr_scale_factor(connection: &XCBConnection, screen_index: usize) -> Option<f32> {
-    let root = connection.setup().roots.get(screen_index)?.root;
+fn get_randr_info(connection: &XCBConnection, screen_index: usize) -> (Option<f32>, bool) {
+    let root = match connection.setup().roots.get(screen_index) {
+        Some(screen) => screen.root,
+        None => return (None, false),
+    };
 
-    let version_cookie = connection.randr_query_version(1, 6).ok()?;
-    let version_reply = version_cookie.reply().ok()?;
-    if version_reply.major_version < 1
-        || (version_reply.major_version == 1 && version_reply.minor_version < 5)
+    let version_reply = match connection
+        .randr_query_version(1, 6)
+        .ok()
+        .and_then(|c| c.reply().ok())
     {
-        return legacy_get_randr_scale_factor(connection, root); // for randr <1.5
+        Some(r) => r,
+        None => return (None, false),
+    };
+
+    let randr_monitor_support = version_reply.major_version > 1
+        || (version_reply.major_version == 1 && version_reply.minor_version >= 5);
+
+    if !randr_monitor_support {
+        return (legacy_get_randr_scale_factor(connection, root), false);
     }
 
-    let monitors_cookie = connection.randr_get_monitors(root, true).ok()?; // true for active only
-    let monitors_reply = monitors_cookie.reply().ok()?;
+    let scale = scale_from_randr_monitors(connection, root);
 
-    let mut fallback_scale: Option<f32> = None;
-    for monitor in monitors_reply.monitors {
+    (scale, true)
+}
+
+fn scale_from_randr_monitors(connection: &XCBConnection, root: xproto::Window) -> Option<f32> {
+    let reply = connection
+        .randr_get_monitors(root, true)
+        .ok()?
+        .reply()
+        .ok()?;
+    let mut fallback: Option<f32> = None;
+    for monitor in reply.monitors {
         if monitor.width_in_millimeters == 0 || monitor.height_in_millimeters == 0 {
             continue;
         }
@@ -2622,12 +2728,11 @@ fn get_randr_scale_factor(connection: &XCBConnection, screen_index: usize) -> Op
         );
         if monitor.primary {
             return Some(scale_factor);
-        } else if fallback_scale.is_none() {
-            fallback_scale = Some(scale_factor);
+        } else if fallback.is_none() {
+            fallback = Some(scale_factor);
         }
     }
-
-    fallback_scale
+    fallback
 }
 
 fn legacy_get_randr_scale_factor(connection: &XCBConnection, root: u32) -> Option<f32> {
@@ -2729,6 +2834,55 @@ fn legacy_get_randr_scale_factor(connection: &XCBConnection, root: u32) -> Optio
     }
 
     fallback_scale
+}
+
+pub(crate) fn get_monitor_scale_at_bounds(
+    connection: &XCBConnection,
+    root: xproto::Window,
+    bounds: Bounds<i32>,
+) -> Option<f32> {
+    let monitors = connection
+        .randr_get_monitors(root, true)
+        .ok()?
+        .reply()
+        .ok()?
+        .monitors;
+
+    let win_left = bounds.origin.x;
+    let win_top = bounds.origin.y;
+    let win_right = bounds.origin.x + bounds.size.width;
+    let win_bottom = bounds.origin.y + bounds.size.height;
+
+    let mut best_scale: Option<f32> = None;
+    let mut best_area: i64 = -1;
+
+    for monitor in monitors {
+        if monitor.width_in_millimeters == 0 || monitor.height_in_millimeters == 0 {
+            continue;
+        }
+
+        let mon_left = monitor.x as i32;
+        let mon_top = monitor.y as i32;
+        let mon_right = mon_left + monitor.width as i32;
+        let mon_bottom = mon_top + monitor.height as i32;
+
+        let overlap_w = (win_right.min(mon_right) - win_left.max(mon_left)).max(0);
+        let overlap_h = (win_bottom.min(mon_bottom) - win_top.max(mon_top)).max(0);
+        let area = overlap_w as i64 * overlap_h as i64;
+
+        if area > best_area {
+            best_area = area;
+            best_scale = Some(get_dpi_factor(
+                (monitor.width as u32, monitor.height as u32),
+                (
+                    monitor.width_in_millimeters as u64,
+                    monitor.height_in_millimeters as u64,
+                ),
+            ));
+        }
+    }
+
+    best_scale
 }
 
 fn get_dpi_factor((width_px, height_px): (u32, u32), (width_mm, height_mm): (u64, u64)) -> f32 {
