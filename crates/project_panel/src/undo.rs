@@ -547,7 +547,7 @@ impl Inner {
 
             if already_exists {
                 anyhow!(
-                    "Failed to {verb} `{from_name}` to `{to_name}`. A file or folder already exists there."
+                    "Failed to {operation} `{from_name}` to `{to_name}`. A file or folder already exists there."
                 )
             } else {
                 err
