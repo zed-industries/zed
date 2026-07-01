@@ -207,7 +207,41 @@ Since v0.196.0, on Linux, if the key that you type doesn't produce an ASCII char
 
 We do not yet remap shortcuts so every built-in shortcut is typeable on every layout. If your layout cannot type some ASCII characters, you may need custom key bindings. We plan to improve this.
 
-## Tips and tricks
+## Tips and Tricks
+
+### Subword Navigation
+
+Zed exposes word and subword motions as separate actions. Word motions stop at whitespace and punctuation boundaries, while subword motions also stop inside identifiers such as `camelCase`, `PascalCase`, and `snake_case`.
+
+The JetBrains base keymap uses editor-local `alt-left` / `alt-right` and `shift-alt-left` / `shift-alt-right` for subword navigation to match JetBrains-style CamelHump navigation. If you use another base keymap and want that behavior, add this to your `keymap.json`:
+
+```json [keymap]
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "alt-left": "editor::MoveToPreviousSubwordStart",
+      "alt-right": "editor::MoveToNextSubwordEnd",
+      "shift-alt-left": "editor::SelectToPreviousSubwordStart",
+      "shift-alt-right": "editor::SelectToNextSubwordEnd"
+    }
+  }
+]
+```
+
+If you use the JetBrains base keymap and want `alt-left` / `alt-right` to keep moving between tabs in editors, add this override:
+
+```json [keymap]
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "alt-left": "pane::ActivatePreviousItem",
+      "alt-right": "pane::ActivateNextItem"
+    }
+  }
+]
+```
 
 ### Disabling a binding
 
