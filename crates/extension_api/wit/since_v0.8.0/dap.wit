@@ -115,6 +115,40 @@ interface dap {
         request: start-debugging-request-arguments-request,
     }
 
+    /// Icon for a custom action toolbar button.
+    enum dap-custom-action-icon {
+        flame,
+        rotate-cw,
+        bolt,
+        play,
+        sparkle,
+    }
+
+    /// When a custom action should be triggered.
+    enum dap-custom-action-trigger {
+        /// Only show as a toolbar button.
+        toolbar,
+        /// Only trigger automatically on file save.
+        on-save,
+        /// Both toolbar button and on file save.
+        both,
+    }
+
+    /// A custom action that can be triggered from the debugger toolbar.
+    /// Extensions declare these to expose adapter-specific commands (e.g. hot reload).
+    record dap-custom-action {
+        /// Human-readable label for the toolbar button.
+        label: string,
+        /// The DAP command to send (e.g. "hotReload").
+        command: string,
+        /// JSON-encoded arguments for the DAP command.
+        arguments: string,
+        /// When this action should be triggered.
+        trigger: dap-custom-action-trigger,
+        /// Icon to display on the toolbar button.
+        icon: dap-custom-action-icon,
+    }
+
     /// The lowest-level representation of a debug session, which specifies:
     /// - How to start a debug adapter process
     /// - How to start a debug session with it (using DAP protocol)
