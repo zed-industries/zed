@@ -318,6 +318,21 @@ impl MantleModel {
         }
     }
 
+    /// Whether this model produces opaque, encrypted reasoning content
+    /// (`reasoning.encrypted_content`) that must be requested via `include` and
+    /// replayed on subsequent turns to preserve reasoning continuity.
+    ///
+    /// GPT-5.x work this way. Gemma and Grok stream plaintext reasoning instead
+    /// and never produce encrypted content, so requesting it is pointless for
+    /// them.
+    pub fn uses_encrypted_reasoning(&self) -> bool {
+        match self {
+            Self::Gpt5_4 | Self::Gpt5_5 => true,
+            Self::Gemma4_31B | Self::Gemma4_26B | Self::Gemma4E2b | Self::Grok4_3 => false,
+            Self::Custom { .. } => false,
+        }
+    }
+
     /// Returns whether the given model supports the `parallel_tool_calls` parameter.
     ///
     /// If the model does not support the parameter, do not pass it up, or the API will return an error.

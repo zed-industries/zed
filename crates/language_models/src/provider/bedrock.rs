@@ -1079,13 +1079,16 @@ impl LanguageModel for BedrockMantleModel {
             let request_value = match serde_json::to_value(&responses_request) {
                 Ok(mut value) => {
                     if let Some(object) = value.as_object_mut() {
-                        // Mantle does not accept `context_management`, and its
-                        // models stream plaintext reasoning rather than encrypted
-                        // content — requesting encrypted reasoning (which is also
-                        // not portable across models) is both unsupported and
-                        // unnecessary here.
+                        // Mantle rejects `context_management` for every model.
                         object.remove("context_management");
-                        object.remove("include");
+
+                        // Only models that produce encrypted reasoning (GPT)
+                        // benefit from requesting it back for cross-turn
+                        // continuity. Gemma/Grok stream plaintext reasoning and
+                        // never produce encrypted content, so drop it for them.
+                        if !model.uses_encrypted_reasoning() {
+                            object.remove("include");
+                        }
 
                         if !model.emits_reasoning_summary()
                             && let Some(reasoning) =
