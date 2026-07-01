@@ -5661,7 +5661,13 @@ impl AgentPanel {
                             menu = menu
                                 .separator()
                                 .header("MCP Servers")
-                                .action("Add Server…", Box::new(AddContextServer::local()))
+                                .action(
+                                    "Add Server…",
+                                    Box::new(zed_actions::OpenSettingsAt {
+                                        path: "context_servers".to_string(),
+                                        target: None,
+                                    }),
+                                )
                                 .action(
                                     "Install New Servers…",
                                     Box::new(zed_actions::Extensions {
