@@ -535,6 +535,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "shlex",
  "streaming_diff",
  "task",
  "telemetry",
@@ -16246,6 +16247,7 @@ dependencies = [
  "anyhow",
  "bitflags 2.10.0",
  "collections",
+ "db",
  "editor",
  "file_icons",
  "fs",
@@ -18418,6 +18420,7 @@ dependencies = [
  "serde_json",
  "settings",
  "shellexpand",
+ "shlex",
  "task",
  "terminal",
  "theme",
@@ -22964,7 +22967,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.10.0"
+version = "1.11.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

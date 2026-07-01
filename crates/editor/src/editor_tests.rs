@@ -29140,6 +29140,13 @@ impl BookmarkTestContext {
             });
     }
 
+    fn toggle_bookmark_with_label(&mut self) {
+        self.editor
+            .update_in(&mut self.cx, |editor: &mut Editor, window, cx| {
+                editor.toggle_bookmark_with_label(&actions::ToggleBookmarkWithLabel, window, cx);
+            });
+    }
+
     fn confirm_bookmark_prompt(&mut self, label: &str) {
         if !label.is_empty() {
             self.cx.simulate_input(label);
@@ -29149,7 +29156,7 @@ impl BookmarkTestContext {
     }
 
     fn add_bookmark_with_label(&mut self, label: &str) {
-        self.toggle_bookmark();
+        self.toggle_bookmark_with_label();
         self.confirm_bookmark_prompt(label);
     }
 
@@ -29204,12 +29211,38 @@ async fn test_bookmark_toggling(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_bookmark_toggling_with_multiple_selections(cx: &mut TestAppContext) {
+async fn test_bookmark_toggling_unnamed_with_multiple_selections(cx: &mut TestAppContext) {
     let mut ctx =
         BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
 
     ctx.select_rows(&[0, 1, 2]);
     ctx.toggle_bookmark();
+
+    ctx.assert_prompt_block_count(0);
+    ctx.assert_bookmarked_file_count(1);
+    ctx.assert_bookmark_labels(vec![(0, ""), (1, ""), (2, "")]);
+
+    ctx.select_rows(&[0, 1, 2, 3]);
+    ctx.toggle_bookmark();
+
+    ctx.assert_prompt_block_count(0);
+    ctx.assert_bookmark_rows(vec![0, 1, 2, 3]);
+
+    ctx.select_rows(&[0, 1, 2, 3]);
+    ctx.toggle_bookmark();
+
+    ctx.assert_prompt_block_count(0);
+    ctx.assert_bookmarked_file_count(0);
+    ctx.assert_bookmark_rows(vec![]);
+}
+
+#[gpui::test]
+async fn test_bookmark_toggling_with_label_with_multiple_selections(cx: &mut TestAppContext) {
+    let mut ctx =
+        BookmarkTestContext::new("First line\nSecond line\nThird line\nFourth line", cx).await;
+
+    ctx.select_rows(&[0, 1, 2]);
+    ctx.toggle_bookmark_with_label();
 
     ctx.assert_prompt_block_count(3);
     ctx.assert_bookmarked_file_count(0);
@@ -29229,7 +29262,7 @@ async fn test_bookmark_toggling_with_multiple_selections(cx: &mut TestAppContext
     ]);
 
     ctx.select_rows(&[0, 1, 2, 3]);
-    ctx.toggle_bookmark();
+    ctx.toggle_bookmark_with_label();
 
     ctx.assert_prompt_block_count(1);
     ctx.assert_bookmark_labels(vec![
@@ -29249,7 +29282,7 @@ async fn test_bookmark_toggling_with_multiple_selections(cx: &mut TestAppContext
     ]);
 
     ctx.select_rows(&[0, 1, 2, 3]);
-    ctx.toggle_bookmark();
+    ctx.toggle_bookmark_with_label();
 
     ctx.assert_prompt_block_count(0);
     ctx.assert_bookmarked_file_count(0);
