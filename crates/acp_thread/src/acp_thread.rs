@@ -3885,16 +3885,12 @@ impl AcpThread {
 
     pub fn cancel(&mut self, cx: &mut Context<Self>) -> Task<()> {
         Self::flush_streaming_text(&mut self.streaming_text_buffer, cx);
-        let has_running_turn = self.running_turn.is_some();
-        if has_running_turn {
-            self.cancel_pending_turn_entries(cx);
-        } else {
-            self.cancel_pending_elicitations(false, cx);
-        }
+        self.cancel_outstanding_elicitations(cx);
 
         let Some(turn) = self.running_turn.take() else {
             return Task::ready(());
         };
+        self.mark_pending_entries_as_canceled(cx);
         self.connection.cancel(&self.session_id, cx);
         cx.emit(AcpThreadEvent::StatusChanged);
 
@@ -3903,9 +3899,8 @@ impl AcpThread {
     }
 
     fn cancel_pending_turn_entries(&mut self, cx: &mut Context<Self>) {
-        let turn_start_ix = self.last_user_message().map(|(ix, _)| ix + 1).unwrap_or(0);
         self.mark_pending_entries_as_canceled(cx);
-        self.cancel_pending_elicitations_in_range(turn_start_ix..self.entries.len(), true, cx);
+        self.cancel_outstanding_elicitations(cx);
     }
 
     fn mark_pending_entries_as_canceled(&mut self, cx: &mut Context<Self>) {
@@ -3934,31 +3929,14 @@ impl AcpThread {
         }
     }
 
-    fn cancel_pending_elicitations(
-        &mut self,
-        cancel_accepted_url_elicitations: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.cancel_pending_elicitations_in_range(
-            0..self.entries.len(),
-            cancel_accepted_url_elicitations,
-            cx,
-        );
-    }
-
-    fn cancel_pending_elicitations_in_range(
-        &mut self,
-        entries: Range<usize>,
-        cancel_accepted_url_elicitations: bool,
-        cx: &mut Context<Self>,
-    ) {
-        for ix in entries {
+    fn cancel_outstanding_elicitations(&mut self, cx: &mut Context<Self>) {
+        for ix in 0..self.entries.len() {
             let Some(AgentThreadEntry::Elicitation(elicitation_id)) = self.entries.get(ix) else {
                 continue;
             };
             if self
                 .elicitations
-                .cancel_elicitation_by_id(elicitation_id, cancel_accepted_url_elicitations)
+                .cancel_elicitation_by_id(elicitation_id, true)
             {
                 cx.emit(AcpThreadEvent::EntryUpdated(ix));
             }
@@ -7485,7 +7463,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_idle_cancel_preserves_accepted_url_elicitation(cx: &mut TestAppContext) {
+    async fn test_idle_cancel_cancels_accepted_url_elicitation(cx: &mut TestAppContext) {
         init_test(cx);
         enable_acp_beta(cx);
         let thread = new_test_thread(cx).await;
@@ -7534,7 +7512,7 @@ mod tests {
             let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
                 panic!("missing elicitation entry");
             };
-            assert!(matches!(elicitation.status, ElicitationStatus::Accepted));
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
         });
 
         thread.update(cx, |thread, cx| {
@@ -7544,7 +7522,7 @@ mod tests {
             let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
                 panic!("missing elicitation entry");
             };
-            assert!(matches!(elicitation.status, ElicitationStatus::Completed));
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
         });
     }
 
@@ -7598,10 +7576,6 @@ mod tests {
         });
 
         thread.update(cx, |thread, cx| {
-            thread.running_turn = Some(RunningTurn {
-                id: thread.turn_id + 1,
-                send_task: Task::ready(()),
-            });
             thread.cancel(cx).detach();
         });
         thread.read_with(cx, |thread, _| {
@@ -7623,7 +7597,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_turn_cancel_preserves_accepted_url_elicitation_from_previous_turn(
+    async fn test_turn_cancel_cancels_accepted_url_elicitation_from_previous_turn(
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
@@ -7709,7 +7683,7 @@ mod tests {
             let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
                 panic!("missing elicitation entry");
             };
-            assert!(matches!(elicitation.status, ElicitationStatus::Accepted));
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
         });
 
         thread.update(cx, |thread, cx| {
@@ -7719,7 +7693,7 @@ mod tests {
             let Some((_, elicitation)) = thread.elicitation(&entry_id) else {
                 panic!("missing elicitation entry");
             };
-            assert!(matches!(elicitation.status, ElicitationStatus::Completed));
+            assert!(matches!(elicitation.status, ElicitationStatus::Canceled));
         });
     }
 
