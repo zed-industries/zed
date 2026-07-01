@@ -7483,7 +7483,7 @@ impl Sidebar {
         let has_query = self.has_filter_query(cx);
         let sidebar_on_left = self.side(cx) == SidebarSide::Left;
         let sidebar_on_right = self.side(cx) == SidebarSide::Right;
-        let not_fullscreen = !window.is_fullscreen();
+        let not_fullscreen = !window.is_fullscreen() && !window.is_simple_fullscreen();
         let traffic_lights = cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
         let left_window_controls = !cfg!(target_os = "macos") && not_fullscreen && sidebar_on_left;
         let right_window_controls =

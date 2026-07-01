@@ -141,6 +141,9 @@ actions!(
         ShowAll,
         /// Toggles fullscreen mode.
         ToggleFullScreen,
+        /// Toggles simple (borderless) fullscreen mode, which covers the entire
+        /// screen including the menu bar and the area around the notch on macOS.
+        ToggleSimpleFullScreen,
         /// Zooms the window.
         Zoom,
         /// Triggers a test panic for debugging.
@@ -911,6 +914,9 @@ fn register_actions(
         })
         .register_action(|_, _: &ToggleFullScreen, window, _| {
             window.toggle_fullscreen();
+        })
+        .register_action(|_, _: &ToggleSimpleFullScreen, window, _| {
+            window.toggle_simple_fullscreen();
         })
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open(RawOpenRequest {
