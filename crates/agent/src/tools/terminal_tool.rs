@@ -377,14 +377,19 @@ fn terminal_initial_title(input: Result<String, serde_json::Value>) -> SharedStr
 
 /// Windows only: resolve the `(release channel, version)` of the Linux `zed` to
 /// provision inside WSL as the sandbox helper. Dev (source) builds have no
-/// matching release, so they pull the latest nightly; every other channel pins
-/// its exact running version (stripped of pre-release/build metadata, which the
-/// release API doesn't key on).
+/// matching release, so they pull the latest nightly. Nightly builds also track
+/// `latest`: nightly assets are keyed by their full build metadata
+/// (`X.Y.Z+nightly.<n>.<sha>`), which `AppVersion` strips, so a bare `X.Y.Z`
+/// never resolves on the nightly host. Preview and stable pin their exact
+/// running version (stripped of pre-release/build metadata, which the release
+/// API doesn't key on).
 #[cfg(target_os = "windows")]
 fn wsl_zed_release(cx: &App) -> Option<(String, String)> {
     use release_channel::{AppVersion, ReleaseChannel};
     match *release_channel::RELEASE_CHANNEL {
-        ReleaseChannel::Dev => Some(("nightly".to_string(), "latest".to_string())),
+        ReleaseChannel::Dev | ReleaseChannel::Nightly => {
+            Some(("nightly".to_string(), "latest".to_string()))
+        }
         channel => {
             let version = AppVersion::global(cx);
             Some((
