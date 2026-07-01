@@ -1004,7 +1004,7 @@ impl Sandbox {
         // time; pass it straight through as the Seatbelt rule literal. The
         // profile generator must NOT re-canonicalize (that reopened the
         // verify-vs-enforce gap); see `generate_seatbelt_config`.
-        let mut writable: Vec<&Path> = self
+        let writable: Vec<&Path> = self
             .fs
             .writable_paths
             .iter()
