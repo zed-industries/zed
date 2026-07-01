@@ -17,6 +17,7 @@ default = []
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
 
 [dependencies]
 anyhow.workspace = true
