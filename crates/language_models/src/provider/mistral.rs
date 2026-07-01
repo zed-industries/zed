@@ -6,12 +6,12 @@ use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Global, SharedString, Task, TaskExt, Window};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolResultContent,
-    LanguageModelToolUse, MessageContent, ProviderConfigurationView, RateLimiter, Role, StopReason,
-    TokenUsage, env_var,
+    ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
+    StopReason, TokenUsage, env_var,
 };
 pub use mistral::{MISTRAL_API_URL, StreamResponse};
 pub use settings::MistralAvailableModel as AvailableModel;
@@ -237,28 +237,19 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
             .update(cx, |state, cx| state.set_api_key(None, cx))
     }
 
-    fn configuration_view_v2(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> ProviderConfigurationView {
-        let state = self.state.clone();
-        ProviderConfigurationView::Inline(
-            cx.new(|cx| {
-                crate::ApiKeyEditor::new(
-                    state,
-                    "https://console.mistral.ai/api-keys",
-                    "Paste your Mistral API key",
-                    |state, _cx| crate::api_key_status(&state.api_key_state),
-                    |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
-                    |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
-                    window,
-                    cx,
-                )
-            })
-            .into(),
-        )
+    fn api_key_configuration(&self, cx: &App) -> Option<ApiKeyConfiguration> {
+        let state = self.state.read(cx);
+        Some(ApiKeyConfiguration {
+            has_key: state.api_key_state.has_key(),
+            is_from_env_var: state.api_key_state.is_from_env_var(),
+            env_var_name: state.api_key_state.env_var_name().clone(),
+            api_key_url: "https://console.mistral.ai/api-keys".into(),
+        })
+    }
+
+    fn set_api_key(&self, key: String, cx: &mut App) -> Task<Result<()>> {
+        self.state
+            .update(cx, |state, cx| state.set_api_key(Some(key), cx))
     }
 }
 
@@ -898,7 +889,7 @@ impl Render for ConfigurationView {
                 .size_full()
                 .gap_1()
                 .child(
-                    ConfiguredApiCard::new(configured_card_label)
+                    ConfiguredApiCard::new("mistral-reset-key", configured_card_label)
                         .disabled(env_var_set)
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
                         .when(env_var_set, |this| {

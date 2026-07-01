@@ -9,11 +9,11 @@ use http_client::{
     http::{HeaderName, HeaderValue},
 };
 use language_model::{
-    AuthenticateError, FastModeConfirmation, IconOrSvg, LanguageModel,
+    AuthenticateError, FastModeConfirmation, IconOrSvg, InlineDescription, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, RateLimiter,
+    LanguageModelToolChoice, ProviderConfigurationView, RateLimiter,
 };
 use open_ai::{ReasoningEffort, responses::stream_response};
 use rand::RngCore as _;
@@ -30,6 +30,9 @@ use crate::provider::open_ai::{OpenAiResponseEventMapper, into_open_ai_response}
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai-subscribed");
 const PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("ChatGPT Subscription");
+
+const SUBSCRIPTION_DESCRIPTION: &str =
+    "Sign in with your ChatGPT Plus or Pro subscription to use OpenAI models in Zed's agent.";
 
 const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 const OPENAI_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
@@ -248,8 +251,48 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
     ) -> AnyView {
         let state = self.state.clone();
         let http_client = self.http_client.clone();
-        cx.new(|_cx| ConfigurationView { state, http_client })
-            .into()
+        cx.new(|_cx| ConfigurationView {
+            state,
+            http_client,
+            compact: false,
+        })
+        .into()
+    }
+
+    fn configuration_view_v2(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> ProviderConfigurationView {
+        let state = self.state.clone();
+        let http_client = self.http_client.clone();
+
+        ProviderConfigurationView::Inline {
+            view: cx
+                .new(|_cx| ConfigurationView {
+                    state,
+                    http_client,
+                    compact: true,
+                })
+                .into(),
+        }
+    }
+
+    fn inline_title(&self, cx: &App) -> Option<SharedString> {
+        if self.state.read(cx).is_authenticated() {
+            None
+        } else {
+            Some("Configure ChatGPT".into())
+        }
+    }
+
+    fn inline_description(&self, cx: &App) -> Option<InlineDescription> {
+        if self.state.read(cx).is_authenticated() {
+            None
+        } else {
+            Some(InlineDescription::Text(SUBSCRIPTION_DESCRIPTION.into()))
+        }
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
@@ -1043,6 +1086,9 @@ fn do_sign_out(state: &gpui::WeakEntity<State>, cx: &mut App) -> Task<Result<()>
 struct ConfigurationView {
     state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
+    /// When `true`, the description is rendered elsewhere (the settings row's
+    /// left column), so it's omitted here to avoid duplication.
+    compact: bool,
 }
 
 impl Render for ConfigurationView {
@@ -1059,7 +1105,7 @@ impl Render for ConfigurationView {
 
             return v_flex()
                 .child(
-                    ConfiguredApiCard::new(SharedString::from(label))
+                    ConfiguredApiCard::new("openai-subscribed-sign-out", SharedString::from(label))
                         .button_label("Sign Out")
                         .on_click(cx.listener(move |_this, _, _window, cx| {
                             do_sign_out(&weak_state, cx).detach_and_log_err(cx);
@@ -1076,27 +1122,21 @@ impl Render for ConfigurationView {
         let button_label = if is_signing_in {
             "Signing in…"
         } else {
-            "Sign in to use ChatGPT Subscription"
+            "Sign In"
         };
 
         v_flex()
             .gap_2()
-            .child(Label::new(
-                "Sign in with your ChatGPT Plus or Pro subscription to use OpenAI models in Zed's agent.",
-            ))
+            .when(!self.compact, |this| {
+                this.child(Label::new(SUBSCRIPTION_DESCRIPTION))
+            })
             .child(
                 Button::new("sign-in", button_label)
-                    .full_width()
+                    .when(!self.compact, |this| this.full_width())
                     .style(ButtonStyle::Outlined)
+                    .size(ButtonSize::Medium)
                     .loading(is_signing_in)
                     .disabled(is_signing_in)
-                    .when(!is_signing_in, |this| {
-                        this.start_icon(
-                            Icon::new(IconName::AiOpenAi)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                    })
                     .on_click(move |_, _window, cx| {
                         do_sign_in(&provider_state, &http_client, cx);
                     }),
