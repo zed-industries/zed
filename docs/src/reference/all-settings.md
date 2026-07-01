@@ -1947,9 +1947,9 @@ This mode requires source control and LSP range formatting support. If no git di
 }
 ```
 
-Similar to `modifications`, but falls back to formatting the entire file when no git diff is available (e.g., for untracked files) or when source control is unavailable. Requires LSP range formatting support. If the LSP doesn't support range formatting, the mode behaves like `on` instead.
+Similar to `modifications`, but falls back to formatting the entire file whenever range formatting cannot be applied. This includes when no git diff is available (e.g., for untracked files or files outside a repository), when there are no uncommitted changes to format, or when the language server does not support range formatting. In all of these cases, the mode behaves like `on` instead.
 
-This option aligns with VSCode's `editor.formatOnSaveMode` setting.
+This option is inspired by VSCode's `editor.formatOnSaveMode: "modificationsIfAvailable"` setting. Unlike VS Code, which skips formatting when range formatting cannot be applied, Zed always falls back to full-file formatting.
 
 ## Formatter
 
@@ -3301,7 +3301,7 @@ Examples:
 
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
-   There are several ways to convert a preview tab into a regular tab:
+  There are several ways to convert a preview tab into a regular tab:
 
   - Double-clicking on the file
   - Double-clicking on the tab header
