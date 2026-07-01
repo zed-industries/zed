@@ -132,16 +132,21 @@
 
 use crate::ProjectPanel;
 use anyhow::{Context, Result, anyhow};
-use fs::TrashedEntry;
+use fs::{TrashRestoreError, TrashedEntry};
 use futures::channel::mpsc;
-use gpui::{AppContext, AsyncApp, SharedString, Task, WeakEntity};
+use gpui::{AppContext, AsyncApp, IntoElement, SharedString, Styled, Task, WeakEntity};
+use markdown::{Markdown, MarkdownElement};
+use project::Project;
 use project::{ProjectPath, WorktreeId};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::VecDeque, sync::Arc};
-use ui::App;
+use ui::{App, TextSize};
+use util::{paths::PathStyle, rel_path::RelPath};
 use workspace::{
     Workspace,
-    notifications::{NotificationId, simple_message_notification::MessageNotification},
+    notifications::{
+        NotificationId, markdown_style, simple_message_notification::MessageNotification,
+    },
 };
 use worktree::CreatedEntry;
 
@@ -296,10 +301,21 @@ impl UndoMessage {
             UndoMessage::Changed(_) => {
                 "this is a bug in the manage_undo_and_redo task please report"
             }
-            UndoMessage::Undo => "Undo failed",
-            UndoMessage::Redo => "Redo failed",
+            UndoMessage::Undo => "Undo Failed",
+            UndoMessage::Redo => "Redo Failed",
         }
     }
+}
+
+fn project_path_display(
+    project: &Project,
+    project_path: &ProjectPath,
+    path_style: PathStyle,
+    cx: &App,
+) -> String {
+    project
+        .short_full_path_for_project_path(project_path, cx)
+        .unwrap_or_else(|| project_path.path.display(path_style).to_string())
 }
 
 impl Inner {
@@ -329,16 +345,22 @@ impl Inner {
             };
 
             if let Err(e) = res {
-                Self::show_error(error_title, self.workspace.clone(), e.to_string(), &mut cx);
+                // Use the alternate formatter (`{:#}`) so the full cause chain is
+                // shown; the plain `Display` only prints the outermost context,
+                // which often omits the actual reason (e.g. the filesystem error).
+                Self::show_error(
+                    error_title,
+                    self.workspace.clone(),
+                    format!("{e:#}"),
+                    &mut cx,
+                );
             }
 
             self.can_undo.store(self.can_undo(), Ordering::Relaxed);
             self.can_redo.store(self.can_redo(), Ordering::Relaxed);
         }
     }
-}
 
-impl Inner {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         panel: WeakEntity<ProjectPanel>,
@@ -480,18 +502,57 @@ impl Inner {
             return Err(anyhow!("Failed to obtain workspace."));
         };
 
+        let (from_name, to_name) = workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().read(cx);
+            let path_style = project.path_style(cx);
+
+            (
+                project_path_display(project, from, path_style, cx),
+                project_path_display(project, to, path_style, cx),
+            )
+        });
+
+        // Since the Project Panel's rename operation is used for both renaming
+        // and moving files and directories, we'll assume that, if both paths
+        // share the parent folder, then it was a simple rename, otherwise it
+        // was a move.
+        let operation = if from.path.parent() == to.path.parent() {
+            "rename"
+        } else {
+            "move"
+        };
+
         let res: Result<Task<Result<CreatedEntry>>> = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 let entry_id = project
                     .entry_for_path(from, cx)
                     .map(|entry| entry.id)
-                    .ok_or_else(|| anyhow!("No entry for path."))?;
+                    .with_context(|| {
+                        format!("Failed to {operation} `{from_name}`. It no longer exists.")
+                    })?;
 
                 Ok(project.rename_entry(entry_id, to.clone(), cx))
             })
         });
 
-        res?.await
+        res?.await.map_err(|err| {
+            // It is possible for `RealFs::rename` to return an error other than
+            // `io::Error` when the file already exists, hence why we're also
+            // checking if the error contains the "already exists" string.
+            let already_exists = err.chain().any(|cause| {
+                cause
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::AlreadyExists)
+            }) || format!("{err:#}").contains("already exists");
+
+            if already_exists {
+                anyhow!(
+                    "Failed to {operation} `{from_name}` to `{to_name}`. A file or folder already exists there."
+                )
+            } else {
+                err
+            }
+        })
     }
 
     async fn trash(&self, project_path: &ProjectPath, cx: &mut AsyncApp) -> Result<TrashedEntry> {
@@ -499,23 +560,31 @@ impl Inner {
             return Err(anyhow!("Failed to obtain workspace."));
         };
 
-        workspace
-            .update(cx, |workspace, cx| {
-                workspace.project().update(cx, |project, cx| {
-                    let entry_id = project
-                        .entry_for_path(&project_path, cx)
-                        .map(|entry| entry.id)
-                        .ok_or_else(|| anyhow!("No entry for path."))?;
+        let name = workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().read(cx);
+            let path_style = project.path_style(cx);
 
-                    project
-                        .delete_entry(entry_id, true, cx)
-                        .ok_or_else(|| anyhow!("Worktree entry should exist"))
-                })
-            })?
-            .await
-            .and_then(|entry| {
-                entry.ok_or_else(|| anyhow!("When trashing we should always get a trashentry"))
+            project_path_display(project, project_path, path_style, cx)
+        });
+
+        let task = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                let entry_id = project
+                    .entry_for_path(project_path, cx)
+                    .map(|entry| entry.id)
+                    .with_context(|| format!("Failed to trash `{name}`. It no longer exists."))?;
+
+                project
+                    .delete_entry(entry_id, true, cx)
+                    .with_context(|| format!("Failed to trash `{name}`."))
             })
+        })?;
+
+        match task.await {
+            Ok(Some(entry)) => Ok(entry),
+            Ok(None) => Err(anyhow!("Failed to trash `{name}`.")),
+            Err(err) => Err(err).context(format!("Failed to trash `{name}`.")),
+        }
     }
 
     async fn restore(
@@ -528,6 +597,28 @@ impl Inner {
             return Err(anyhow!("Failed to obtain workspace."));
         };
 
+        // In order to be able to show an error message, if restoring the file
+        // or directory fails, in case there's another file or directory in its
+        // original path, or in case it no longer exists in trash, we'll need to
+        // reconstruct the original path.
+        let path = trashed_entry.original_parent.join(&trashed_entry.name);
+        let name = workspace
+            .update(cx, |workspace, cx| {
+                let project = workspace.project().read(cx);
+                let path_style = project.path_style(cx);
+                let worktree = project.worktree_for_id(worktree_id, cx)?;
+                let worktree_abs_path = worktree.read(cx).abs_path();
+                let rel_path = path.strip_prefix(worktree_abs_path.as_ref()).ok()?;
+                let rel_path = RelPath::new(rel_path, path_style).ok()?;
+                let project_path = ProjectPath {
+                    worktree_id,
+                    path: rel_path.into_arc(),
+                };
+
+                Some(project_path_display(project, &project_path, path_style, cx))
+            })
+            .unwrap_or_else(|| trashed_entry.name.to_string_lossy().into_owned());
+
         workspace
             .update(cx, |workspace, cx| {
                 workspace.project().update(cx, |project, cx| {
@@ -535,22 +626,39 @@ impl Inner {
                 })
             })
             .await
+            .map_err(|err| match err.downcast_ref::<TrashRestoreError>() {
+                Some(TrashRestoreError::Collision { .. }) => anyhow!(
+                    "Failed to restore `{name}`. Something already exists at its original location."
+                ),
+                _ => anyhow!("Failed to restore `{name}`. It may have been permanently deleted."),
+            })
     }
 
-    /// Displays a notification with the provided `title` and `error`.
+    /// Displays a notification with the provided `title` and `error`. The
+    /// `error` is rendered as markdown, so file names wrapped in backticks show
+    /// up as inline code.
     fn show_error(
         title: impl Into<SharedString>,
         workspace: WeakEntity<Workspace>,
         error: String,
         cx: &mut AsyncApp,
     ) {
+        let title = title.into();
         workspace
             .update(cx, move |workspace, cx| {
                 let notification_id =
                     NotificationId::Named(SharedString::new_static("project_panel_undo"));
 
                 workspace.show_notification(notification_id, cx, move |cx| {
-                    cx.new(|cx| MessageNotification::new(error, cx).with_title(title))
+                    cx.new(move |cx| {
+                        let markdown = cx.new(|cx| Markdown::new(error.into(), None, None, cx));
+                        MessageNotification::new_from_builder(cx, move |window, cx| {
+                            MarkdownElement::new(markdown.clone(), markdown_style(window, cx))
+                                .text_size(TextSize::Default.rems(cx))
+                                .into_any_element()
+                        })
+                        .with_title(title)
+                    })
                 })
             })
             .ok();
