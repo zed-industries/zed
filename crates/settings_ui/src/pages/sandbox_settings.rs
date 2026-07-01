@@ -10,8 +10,6 @@ use util::ResultExt as _;
 use crate::SettingsWindow;
 use crate::components::{SettingsInputField, SettingsSectionHeader};
 
-const SANDBOX_DISCLAIMER: &str = "Customize how the sandbox for the agents tool should behave.";
-
 const DOMAINS_DESCRIPTION: &str = "Each entry is an exact domain (github.com) or a leading-*. subdomain wildcard (*.npmjs.org). IP addresses and local domains are not allowed.";
 
 const WRITE_PATHS_DESCRIPTION: &str =
@@ -58,17 +56,9 @@ pub(crate) fn render_sandbox_settings_page(
         .pt_2p5()
         .px_8()
         .pb_16()
-        .gap_4()
+        .gap_6()
         .overflow_y_scroll()
         .track_scroll(scroll_handle)
-        .child(
-            Banner::new().child(
-                Label::new(SANDBOX_DISCLAIMER)
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .mt_0p5(),
-            ),
-        )
         .child(
             SwitchField::new(
                 "sandbox-enabled",
@@ -102,7 +92,7 @@ pub(crate) fn render_sandbox_settings_page(
         })
         .child(
             v_flex()
-                .gap_3()
+                .gap_4()
                 .child(SettingsSectionHeader::new("Network").no_padding(true))
                 .child(
                     SwitchField::new(
@@ -130,7 +120,7 @@ pub(crate) fn render_sandbox_settings_page(
         .child(Divider::horizontal())
         .child(
             v_flex()
-                .gap_3()
+                .gap_4()
                 .child(SettingsSectionHeader::new("Git").no_padding(true))
                 .child(
                     SwitchField::new(
@@ -151,14 +141,14 @@ pub(crate) fn render_sandbox_settings_page(
         .child(Divider::horizontal())
         .child(
             v_flex()
-                .gap_3()
-                .child(SettingsSectionHeader::new("Filesystem").no_padding(true))
+                .gap_4()
+                .child(SettingsSectionHeader::new("File System").no_padding(true))
                 .child(
                     SwitchField::new(
                         "sandbox-allow-fs-write-all",
-                        Some("Allow All Filesystem Writes"),
+                        Some("Allow All File System Writes"),
                         Some(
-                            "Let sandboxed commands write anywhere on the filesystem without prompting."
+                            "Let sandboxed commands write anywhere on the file system without prompting."
                                 .into(),
                         ),
                         permissions.allow_fs_write_all,
