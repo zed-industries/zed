@@ -153,26 +153,30 @@ enum Operation {
 }
 
 impl Operation {
-    async fn execute(self, undo_manager: &Inner, cx: &mut AsyncApp) -> Result<Change> {
+    async fn execute(self, undo_manager: &Inner, cx: &mut AsyncApp) -> Result<Option<Change>> {
         Ok(match self {
-            Operation::Trash(project_path) => {
-                let trash_entry = undo_manager.trash(&project_path, cx).await?;
-                Change::Trashed(project_path.worktree_id, trash_entry)
-            }
+            Operation::Trash(project_path) => match undo_manager.trash(&project_path, cx).await? {
+                None => None,
+                Some(trashed_entry) => {
+                    Some(Change::Trashed(project_path.worktree_id, trashed_entry))
+                }
+            },
             Operation::Rename(from, to) => {
                 undo_manager.rename(&from, &to, cx).await?;
-                Change::Renamed(from, to)
+                Some(Change::Renamed(from, to))
             }
             Operation::Restore(worktree_id, trashed_entry) => {
                 let project_path = undo_manager.restore(worktree_id, trashed_entry, cx).await?;
-                Change::Restored(project_path)
+                Some(Change::Restored(project_path))
             }
             Operation::Batch(operations) => {
-                let mut res = Vec::new();
-                for op in operations {
-                    res.push(Box::pin(op.execute(undo_manager, cx)).await?);
+                let mut batch = Vec::new();
+                for operation in operations {
+                    if let Some(change) = Box::pin(operation.execute(undo_manager, cx)).await? {
+                        batch.push(change)
+                    }
                 }
-                Change::Batched(res)
+                Some(Change::Batched(batch))
             }
         })
     }
@@ -413,14 +417,17 @@ impl Inner {
         // manual intervention would likely be needed in order to undo. As such,
         // we remove the change from the `history` even before attempting to
         // execute its inversion.
-        let undo_change = self
+        if let Some(undo_change) = self
             .history
             .remove(before_cursor)
             .expect("we can undo")
             .to_inverse()
             .execute(self, cx)
-            .await?;
-        self.history.insert(before_cursor, undo_change);
+            .await?
+        {
+            self.history.insert(before_cursor, undo_change);
+        }
+
         Ok(())
     }
 
@@ -433,15 +440,18 @@ impl Inner {
         // manual intervention would likely be needed in order to redo. As such,
         // we remove the change from the `history` even before attempting to
         // execute its inversion.
-        let redo_change = self
+        if let Some(redo_change) = self
             .history
             .remove(self.cursor)
             .expect("we can redo")
             .to_inverse()
             .execute(self, cx)
-            .await?;
-        self.history.insert(self.cursor, redo_change);
-        self.cursor += 1;
+            .await?
+        {
+            self.history.insert(self.cursor, redo_change);
+            self.cursor += 1;
+        }
+
         Ok(())
     }
 
@@ -494,28 +504,36 @@ impl Inner {
         res?.await
     }
 
-    async fn trash(&self, project_path: &ProjectPath, cx: &mut AsyncApp) -> Result<TrashedEntry> {
+    /// Attempts to trash the provided `project_path`. If the file or directory
+    /// no longer exists at the provided path, we assume it has been deleted
+    /// from the project and simply return `Ok(None)`.
+    async fn trash(
+        &self,
+        project_path: &ProjectPath,
+        cx: &mut AsyncApp,
+    ) -> Result<Option<TrashedEntry>> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Err(anyhow!("Failed to obtain workspace."));
         };
 
-        workspace
-            .update(cx, |workspace, cx| {
-                workspace.project().update(cx, |project, cx| {
-                    let entry_id = project
-                        .entry_for_path(&project_path, cx)
-                        .map(|entry| entry.id)
-                        .ok_or_else(|| anyhow!("No entry for path."))?;
-
-                    project
-                        .delete_entry(entry_id, true, cx)
-                        .ok_or_else(|| anyhow!("Worktree entry should exist"))
-                })
-            })?
-            .await
-            .and_then(|entry| {
-                entry.ok_or_else(|| anyhow!("When trashing we should always get a trashentry"))
+        let task = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                let entry_id = project.entry_for_path(&project_path, cx)?.id;
+                project.delete_entry(entry_id, true, cx)
             })
+        });
+
+        // No file or directory found at the provided `project_path`, assume
+        // that it was already deleted.
+        let Some(task) = task else {
+            return Ok(None);
+        };
+
+        let trashed_entry = task
+            .await?
+            .context("trashing should always yield a trashed entry")?;
+
+        Ok(Some(trashed_entry))
     }
 
     async fn restore(
