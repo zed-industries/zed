@@ -23,14 +23,16 @@ terminal tabs, [External Agents](./external-agents.md), or [Terminal Threads](./
 
 ## Sandboxed Tools {#sandboxed-tools}
 
-Zed Agent sandboxing currently applies to the `terminal` tool.
+Zed Agent sandboxing currently applies to the `terminal` and `fetch` tools.
 
 | Tool       | What sandboxing limits                                                                                |
 | ---------- | ----------------------------------------------------------------------------------------------------- |
 | `terminal` | Filesystem writes and outbound network access for commands the agent runs; Git metadata is protected. |
+| `fetch`    | Domains which can be accessed.                                                                        |
 
-Other built-in tools, including `fetch`, are still governed by [Tool Permissions](./tool-permissions.md),
-[Agent Profiles](./agent-profiles.md), and project trust, but they are not currently run inside this OS sandbox.
+Tools are still governed by [Tool Permissions](./tool-permissions.md), [Agent
+Profiles](./agent-profiles.md), and project trust, but they are not currently
+run inside this OS sandbox.
 
 ## Default Access {#default-access}
 

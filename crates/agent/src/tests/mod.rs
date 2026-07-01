@@ -7350,6 +7350,194 @@ async fn test_fetch_tool_unsandboxed_lifts_restrictions(cx: &mut TestAppContext)
     );
 }
 
+/// A granted host that redirects to a loopback target must not have that
+/// redirect followed: loopback hosts can't be granted individually, so the hop
+/// is refused just like a direct loopback fetch. This is the redirect variant of
+/// the SSRF protection — the approved domain can't be used to bounce the request
+/// onto the local machine.
+#[gpui::test]
+async fn test_fetch_tool_refuses_redirect_to_loopback(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            FetchTool::NAME.into(),
+            agent_settings::ToolRules {
+                default: Some(settings::ToolPermissionMode::Allow),
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        settings
+            .sandbox_permissions
+            .network_hosts
+            .push("example.com".into());
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let http_client = gpui::http_client::FakeHttpClient::create(|req| async move {
+        let uri = req.uri().to_string();
+        assert!(
+            uri.contains("example.com"),
+            "the loopback redirect target must never be requested, but saw {uri}"
+        );
+        Ok(gpui::http_client::Response::builder()
+            .status(302)
+            .header("location", "http://localhost:3000/internal")
+            .body("".into())
+            .unwrap())
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::FetchTool::new(http_client));
+    let (event_stream, _rx) = crate::ToolCallEventStream::test();
+
+    let input: crate::FetchToolInput =
+        serde_json::from_value(json!({"url": "https://example.com/start"})).unwrap();
+
+    let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+    let result = task.await;
+    assert!(
+        result.is_err(),
+        "expected a redirect to a loopback host to be refused"
+    );
+    assert!(
+        result.unwrap_err().contains("unsandboxed"),
+        "error should point at unsandboxed access as the way to reach loopback hosts"
+    );
+}
+
+/// A granted host that redirects to a *different*, ungranted host triggers a
+/// fresh per-host authorization prompt for the redirect target — the redirect is
+/// not silently followed to a host the user never approved.
+#[gpui::test]
+async fn test_fetch_tool_reauthorizes_redirect_to_new_host(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            FetchTool::NAME.into(),
+            agent_settings::ToolRules {
+                default: Some(settings::ToolPermissionMode::Allow),
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        settings
+            .sandbox_permissions
+            .network_hosts
+            .push("example.com".into());
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let http_client = gpui::http_client::FakeHttpClient::create(|req| async move {
+        let uri = req.uri().to_string();
+        assert!(
+            uri.contains("example.com"),
+            "the ungranted redirect target must not be requested before authorization, \
+             but saw {uri}"
+        );
+        Ok(gpui::http_client::Response::builder()
+            .status(302)
+            .header("location", "https://redirect-target.example/landing")
+            .body("".into())
+            .unwrap())
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::FetchTool::new(http_client));
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+    let input: crate::FetchToolInput =
+        serde_json::from_value(json!({"url": "https://example.com/start"})).unwrap();
+
+    let _task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+
+    cx.run_until_parked();
+
+    let authorization = rx.expect_authorization().await;
+    let details =
+        acp_thread::sandbox_authorization_details_from_meta(&authorization.tool_call.meta)
+            .expect("a redirect to an ungranted host should request a sandbox network grant");
+    assert_eq!(
+        details.network_hosts,
+        vec!["redirect-target.example".to_string()]
+    );
+    assert!(!details.network_all_hosts);
+}
+
+/// Redirects between paths on an already-granted host are followed without any
+/// additional prompt, so ordinary redirects (http→https upgrades, trailing-slash
+/// canonicalization, etc.) keep working after the per-hop authorization change.
+#[gpui::test]
+async fn test_fetch_tool_follows_same_host_redirect(cx: &mut TestAppContext) {
+    init_test(cx);
+
+    cx.update(|cx| {
+        let mut settings = agent_settings::AgentSettings::get_global(cx).clone();
+        settings.tool_permissions.tools.insert(
+            FetchTool::NAME.into(),
+            agent_settings::ToolRules {
+                default: Some(settings::ToolPermissionMode::Allow),
+                always_allow: vec![],
+                always_deny: vec![],
+                always_confirm: vec![],
+                invalid_patterns: vec![],
+            },
+        );
+        settings
+            .sandbox_permissions
+            .network_hosts
+            .push("example.com".into());
+        agent_settings::AgentSettings::override_global(settings, cx);
+    });
+
+    let http_client = gpui::http_client::FakeHttpClient::create(|req| async move {
+        let uri = req.uri().to_string();
+        if uri.ends_with("/start") {
+            Ok(gpui::http_client::Response::builder()
+                .status(302)
+                .header("location", "https://example.com/final")
+                .body("".into())
+                .unwrap())
+        } else if uri.ends_with("/final") {
+            Ok(gpui::http_client::Response::builder()
+                .status(200)
+                .header("content-type", "text/plain")
+                .body("final content".into())
+                .unwrap())
+        } else {
+            panic!("unexpected request to {uri}");
+        }
+    });
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let tool = Arc::new(crate::FetchTool::new(http_client));
+    let (event_stream, mut rx) = crate::ToolCallEventStream::test();
+
+    let input: crate::FetchToolInput =
+        serde_json::from_value(json!({"url": "https://example.com/start"})).unwrap();
+
+    let task = cx.update(|cx| tool.run(ToolInput::resolved(input), event_stream, cx));
+    let result = task.await;
+    assert_eq!(
+        result.expect("same-host redirect should succeed"),
+        "final content"
+    );
+
+    let event = rx.try_recv();
+    assert!(
+        !matches!(event, Ok(Ok(ThreadEvent::ToolCallAuthorization(_)))),
+        "expected no authorization prompt for a redirect to an already-granted host"
+    );
+}
+
 /// Approving one pending tool call with "Always for <tool>" auto-resolves
 /// sibling pending authorizations for the same tool in the same turn.
 #[gpui::test]
