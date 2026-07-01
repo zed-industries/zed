@@ -2226,14 +2226,14 @@ mod tests {
     use futures::{FutureExt as _, StreamExt as _};
     use gpui::{
         AppContext, ClipboardEntry, ClipboardItem, Entity, EventEmitter, ExternalPaths,
-        FocusHandle, Focusable, Task, TestAppContext, VisualTestContext,
+        FocusHandle, Focusable, InteractiveElement, ParentElement, Task, TestAppContext,
+        VisualTestContext,
     };
     use language_model::LanguageModelRegistry;
     use lsp::{CompletionContext, CompletionTriggerKind};
     use parking_lot::RwLock;
     use project::{AgentId, CompletionIntent, Project, ProjectPath};
     use serde_json::{Value, json};
-
     use text::Point;
     use ui::{App, Context, IntoElement, Render, SharedString, Window};
     use util::{path, paths::PathStyle, rel_path::rel_path};
@@ -2247,6 +2247,12 @@ mod tests {
             Mention, MessageEditor, MessageEditorEvent, SessionCapabilities, parse_mention_links,
         },
     };
+
+    #[cfg(target_os = "macos")]
+    const JETBRAINS_KEYMAP_PATH: &str = "keymaps/macos/jetbrains.json";
+
+    #[cfg(not(target_os = "macos"))]
+    const JETBRAINS_KEYMAP_PATH: &str = "keymaps/linux/jetbrains.json";
 
     #[test]
     fn test_session_capabilities_keep_commands_and_skills_separate() {
@@ -2738,6 +2744,36 @@ mod tests {
     impl Render for MessageEditorItem {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             self.0.clone().into_any_element()
+        }
+    }
+
+    struct AcpThreadMessageEditorItem(Entity<MessageEditor>);
+
+    impl Item for AcpThreadMessageEditorItem {
+        type Event = ();
+
+        fn include_in_nav_history() -> bool {
+            false
+        }
+
+        fn tab_content_text(&self, _detail: usize, _cx: &App) -> SharedString {
+            "Test".into()
+        }
+    }
+
+    impl EventEmitter<()> for AcpThreadMessageEditorItem {}
+
+    impl Focusable for AcpThreadMessageEditorItem {
+        fn focus_handle(&self, cx: &App) -> FocusHandle {
+            self.0.read(cx).focus_handle(cx)
+        }
+    }
+
+    impl Render for AcpThreadMessageEditorItem {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            ui::div()
+                .key_context("AcpThread")
+                .child(self.0.clone().into_any_element())
         }
     }
 
@@ -5405,6 +5441,58 @@ mod tests {
         (message_editor, cx)
     }
 
+    async fn setup_acp_thread_message_editor(
+        cx: &mut TestAppContext,
+        mode: EditorMode,
+    ) -> (
+        Entity<MessageEditor>,
+        Entity<Editor>,
+        &mut VisualTestContext,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({"file.txt": ""})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let (message_editor, editor) = workspace.update_in(cx, |workspace, window, cx| {
+            let workspace_handle = cx.weak_entity();
+            let message_editor = cx.new(|cx| {
+                MessageEditor::new(
+                    workspace_handle,
+                    project.downgrade(),
+                    None,
+                    Default::default(),
+                    "Test Agent".into(),
+                    "Test",
+                    mode,
+                    window,
+                    cx,
+                )
+            });
+            let editor = message_editor.read(cx).editor().clone();
+
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(
+                    Box::new(cx.new(|_| AcpThreadMessageEditorItem(message_editor.clone()))),
+                    true,
+                    true,
+                    None,
+                    window,
+                    cx,
+                );
+            });
+            message_editor.read(cx).focus_handle(cx).focus(window, cx);
+
+            (message_editor, editor)
+        });
+
+        cx.run_until_parked();
+        (message_editor, editor, cx)
+    }
+
     #[gpui::test]
     async fn test_set_message_plain_text(cx: &mut TestAppContext) {
         init_test(cx);
@@ -5450,6 +5538,76 @@ mod tests {
         let mention_uris =
             message_editor.update(cx, |editor, cx| editor.mention_set.read(cx).mentions());
         assert_eq!(mention_uris.len(), 1);
+    }
+
+    #[gpui::test]
+    async fn test_shift_enter_inserts_newline_at_cursor_with_message_editor_override_in_acp_thread(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.clear_key_bindings();
+            cx.bind_keys([
+                gpui::KeyBinding::new("shift-enter", editor::actions::NewlineBelow, Some("Editor")),
+                gpui::KeyBinding::new(
+                    "shift-enter",
+                    editor::actions::Newline,
+                    Some("MessageEditor > Editor"),
+                ),
+            ]);
+        });
+
+        let (message_editor, editor, cx) = setup_acp_thread_message_editor(
+            cx,
+            EditorMode::Full {
+                scale_ui_elements_with_buffer_font_size: false,
+                show_active_line_background: false,
+                sizing_behavior: editor::SizingBehavior::ExcludeOverscrollMargin,
+            },
+        )
+        .await;
+
+        cx.simulate_input("abcd");
+        editor.update_in(cx, |editor, window, cx| {
+            editor.move_left(&editor::actions::MoveLeft, window, cx);
+            editor.move_left(&editor::actions::MoveLeft, window, cx);
+        });
+
+        cx.simulate_keystrokes("shift-enter");
+
+        let text = message_editor.update(cx, |editor, cx| editor.text(cx));
+        assert_eq!(text, "ab\ncd");
+    }
+
+    #[test]
+    fn test_jetbrains_keymap_loads_message_editor_override_after_editor_binding() {
+        let keymap_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets")
+            .join(JETBRAINS_KEYMAP_PATH);
+        let keymap_contents = std::fs::read_to_string(&keymap_path).unwrap();
+        let keymap: Value = serde_json_lenient::from_str(&keymap_contents).unwrap();
+
+        let sections = keymap.as_array().unwrap();
+        let editor_binding_index = sections.iter().position(|section| {
+            section.get("context").and_then(Value::as_str) == Some("Editor")
+                && section
+                    .get("bindings")
+                    .and_then(|bindings| bindings.get("shift-enter"))
+                    .and_then(Value::as_str)
+                    == Some("editor::NewlineBelow")
+        });
+        let message_editor_binding_index = sections.iter().position(|section| {
+            section.get("context").and_then(Value::as_str) == Some("MessageEditor > Editor")
+                && section
+                    .get("bindings")
+                    .and_then(|bindings| bindings.get("shift-enter"))
+                    .and_then(Value::as_str)
+                    == Some("editor::Newline")
+        });
+
+        assert!(editor_binding_index.is_some());
+        assert!(message_editor_binding_index.is_some());
+        assert!(message_editor_binding_index > editor_binding_index);
     }
 
     #[gpui::test]
