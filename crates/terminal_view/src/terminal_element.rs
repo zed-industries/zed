@@ -33,6 +33,7 @@ use crate::{BlockContext, BlockProperties, ContentMode, TerminalMode, TerminalVi
 pub struct LayoutState {
     hitbox: Hitbox,
     batched_text_runs: Vec<BatchedTextRun>,
+    block_element_rects: Vec<BlockElementLayoutRect>,
     rects: Vec<LayoutRect>,
     relative_highlighted_ranges: Vec<(Range, Hsla)>,
     cursor: Option<CursorLayout>,
@@ -177,6 +178,49 @@ impl BatchedTextRun {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct BlockElementLayoutRect {
+    point: LayoutPoint,
+    num_of_columns: usize,
+    num_of_lines: usize,
+    color: Hsla,
+}
+
+impl BlockElementLayoutRect {
+    fn new(point: LayoutPoint, num_of_columns: usize, num_of_lines: usize, color: Hsla) -> Self {
+        Self {
+            point,
+            num_of_columns,
+            num_of_lines,
+            color,
+        }
+    }
+
+    pub fn paint(
+        &self,
+        origin: GpuiPoint<Pixels>,
+        dimensions: &TerminalBounds,
+        window: &mut Window,
+    ) {
+        let subcell_width = dimensions.cell_width / 2.0;
+        let subcell_height = dimensions.line_height / 6.0;
+        let position = point(
+            origin.x + self.point.column as f32 * subcell_width,
+            origin.y + self.point.line as f32 * subcell_height,
+        );
+        let size = size(
+            subcell_width * self.num_of_columns as f32,
+            subcell_height * self.num_of_lines as f32,
+        );
+
+        window.paint_quad(fill(Bounds::new(position, size), self.color));
+    }
+
+    pub fn line(&self) -> i32 {
+        (self.point.line + self.num_of_lines as i32 - 1) / 6
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct LayoutRect {
     point: LayoutPoint,
@@ -216,7 +260,7 @@ impl LayoutRect {
     }
 }
 
-/// Represents a rectangular region with a specific background color
+/// Represents a rectangular region with a specific color on a logical grid.
 #[derive(Debug, Clone)]
 struct BackgroundRegion {
     start_line: i32,
@@ -233,6 +277,22 @@ impl BackgroundRegion {
             start_col: col,
             end_line: line,
             end_col: col,
+            color,
+        }
+    }
+
+    fn with_extents(
+        start_line: i32,
+        start_col: i32,
+        end_line: i32,
+        end_col: i32,
+        color: Hsla,
+    ) -> Self {
+        BackgroundRegion {
+            start_line,
+            start_col,
+            end_line,
+            end_col,
             color,
         }
     }
@@ -290,7 +350,7 @@ impl TerminalLayoutCell for &IndexedCell {
     }
 }
 
-/// Merge background regions to minimize the number of rectangles
+/// Merge grid regions to minimize the number of rectangles.
 fn merge_background_regions(regions: Vec<BackgroundRegion>) -> Vec<BackgroundRegion> {
     if regions.is_empty() {
         return regions;
@@ -376,7 +436,11 @@ impl TerminalElement {
         hyperlink: Option<(HighlightStyle, &Range)>,
         minimum_contrast: f32,
         cx: &App,
-    ) -> (Vec<LayoutRect>, Vec<BatchedTextRun>) {
+    ) -> (
+        Vec<LayoutRect>,
+        Vec<BatchedTextRun>,
+        Vec<BlockElementLayoutRect>,
+    ) {
         let start_time = Instant::now();
         let theme = cx.theme();
 
@@ -386,6 +450,7 @@ impl TerminalElement {
         let estimated_regions = estimated_cells / 20; // Estimate ~20 cells per background region
 
         let mut batched_runs = Vec::with_capacity(estimated_runs);
+        let mut block_element_regions = Vec::new();
         let mut cell_count = 0;
 
         // Collect background regions for efficient merging
@@ -460,6 +525,18 @@ impl TerminalElement {
                         );
 
                         let cell_point = LayoutPoint::new(display_line, point.column as i32);
+                        if Self::collect_block_element_regions(
+                            cell_point,
+                            cell.character(),
+                            cell_style.color,
+                            &mut block_element_regions,
+                        ) {
+                            if let Some(batch) = current_batch.take() {
+                                batched_runs.push(batch);
+                            }
+                            continue;
+                        }
+
                         let zero_width_chars = cell.zerowidth();
 
                         // Try to batch with existing run
@@ -528,20 +605,24 @@ impl TerminalElement {
             }
         }
 
+        let block_element_region_count = block_element_regions.len();
+        let block_element_rects = Self::block_element_regions_to_rects(block_element_regions);
         let layout_time = start_time.elapsed();
 
         log::debug!(
             "Terminal layout_grid: {} cells processed, \
-            {} batched runs created, {} rects (from {} merged regions), \
+            {} batched runs created, {} block element rects (from {} regions), {} rects (from {} merged regions), \
             layout took {:?}",
             cell_count,
             batched_runs.len(),
+            block_element_rects.len(),
+            block_element_region_count,
             rects.len(),
             region_count,
             layout_time
         );
 
-        (rects, batched_runs)
+        (rects, batched_runs, block_element_rects)
     }
 
     /// Computes the cursor position based on the cursor point and terminal dimensions.
@@ -575,6 +656,7 @@ impl TerminalElement {
             0x2500..=0x257F // Box Drawing (└ ┐ ─ │ etc.)
             | 0x2580..=0x259F // Block Elements (▀ ▄ █ ░ ▒ ▓ etc.)
             | 0x25A0..=0x25FF // Geometric Shapes (■ ▶ ● etc. - includes triangular/circular separators)
+            | 0x1FB00..=0x1FB3B // Symbols for Legacy Computing sextants used by terminal QR renderers
 
             // Private Use Area - Powerline separator symbols only
             | 0xE0B0..=0xE0B7 // Powerline separators: triangles (E0B0-E0B3) and half circles (E0B4-E0B7)
@@ -596,6 +678,120 @@ impl TerminalElement {
     }
 
     /// Converts terminal cell styles to GPUI text styles and background color.
+    fn sextant_char_to_packed(ch: char) -> Option<u8> {
+        let codepoint = ch as u32;
+        if !(0x1FB00..=0x1FB3B).contains(&codepoint) {
+            return None;
+        }
+
+        let offset = codepoint - 0x1FB00;
+        let sextant = (offset + 1 + u32::from(offset >= 20) + u32::from(offset >= 40)) as u8;
+        Some(Self::reverse_lower_six_bits(sextant) ^ 0b11_1111)
+    }
+
+    fn reverse_lower_six_bits(value: u8) -> u8 {
+        ((value & 0b00_0001) << 5)
+            | ((value & 0b00_0010) << 3)
+            | ((value & 0b00_0100) << 1)
+            | ((value & 0b00_1000) >> 1)
+            | ((value & 0b01_0000) >> 3)
+            | ((value & 0b10_0000) >> 5)
+    }
+
+    fn collect_block_element_regions(
+        point: LayoutPoint,
+        ch: char,
+        color: Hsla,
+        regions: &mut Vec<BackgroundRegion>,
+    ) -> bool {
+        match ch {
+            '█' => {
+                Self::push_block_element_region(point, 0, 0, 2, 6, color, regions);
+                true
+            }
+            '▀' => {
+                Self::push_block_element_region(point, 0, 0, 2, 3, color, regions);
+                true
+            }
+            '▄' => {
+                Self::push_block_element_region(point, 0, 3, 2, 3, color, regions);
+                true
+            }
+            '▌' => {
+                Self::push_block_element_region(point, 0, 0, 1, 6, color, regions);
+                true
+            }
+            '▐' => {
+                Self::push_block_element_region(point, 1, 0, 1, 6, color, regions);
+                true
+            }
+            ch => {
+                let Some(packed) = Self::sextant_char_to_packed(ch) else {
+                    return false;
+                };
+
+                for row in 0..3 {
+                    for column in 0..2 {
+                        let bit = 5 - (row * 2 + column);
+                        let bit_is_set = (packed & (1 << bit)) != 0;
+                        if bit_is_set {
+                            continue;
+                        }
+
+                        Self::push_block_element_region(
+                            point,
+                            column,
+                            row * 2,
+                            1,
+                            2,
+                            color,
+                            regions,
+                        );
+                    }
+                }
+
+                true
+            }
+        }
+    }
+
+    fn push_block_element_region(
+        point: LayoutPoint,
+        column: i32,
+        line: i32,
+        num_of_columns: i32,
+        num_of_lines: i32,
+        color: Hsla,
+        regions: &mut Vec<BackgroundRegion>,
+    ) {
+        let start_line = point.line * 6 + line;
+        let start_col = point.column * 2 + column;
+        regions.push(BackgroundRegion::with_extents(
+            start_line,
+            start_col,
+            start_line + num_of_lines - 1,
+            start_col + num_of_columns - 1,
+            color,
+        ));
+    }
+
+    fn block_element_regions_to_rects(
+        regions: Vec<BackgroundRegion>,
+    ) -> Vec<BlockElementLayoutRect> {
+        merge_background_regions(regions)
+            .into_iter()
+            .map(|region| {
+                BlockElementLayoutRect::new(
+                    LayoutPoint::new(region.start_line, region.start_col),
+                    (region.end_col - region.start_col + 1) as usize,
+                    (region.end_line - region.start_line + 1) as usize,
+                    region.color,
+                )
+            })
+            .collect()
+    }
+
+    /// Converts the Alacritty cell styles to GPUI text styles and background color.
     fn cell_style(
         point: Point,
         cell: &Cell,
@@ -1158,10 +1354,11 @@ impl Element for TerminalElement {
                 // This handles the case where the terminal has been scrolled past (above or
                 // below the viewport), similar to the editor fix in PR #45077 where start_row
                 // could exceed max_row when the editor was positioned above the viewport.
-                let (rects, batched_text_runs) = if intersection.size.height <= px(0.)
+                let (rects, batched_text_runs, block_element_rects) = if intersection.size.height
+                    <= px(0.)
                     || intersection.size.width <= px(0.)
                 {
-                    (Vec::new(), Vec::new())
+                    (Vec::new(), Vec::new(), Vec::new())
                 } else if intersection == content_bounds {
                     // Fast path: terminal fully visible, no clipping needed.
                     // Avoid grouping/allocation overhead by streaming cells directly.
@@ -1304,6 +1501,7 @@ impl Element for TerminalElement {
                 LayoutState {
                     hitbox,
                     batched_text_runs,
+                    block_element_rects,
                     cursor,
                     ime_cursor_bounds,
                     background_color,
@@ -1425,6 +1623,9 @@ impl Element for TerminalElement {
                     let text_paint_start = Instant::now();
                     for batch in &layout.batched_text_runs {
                         batch.paint(origin, &layout.dimensions, window, cx);
+                    }
+                    for block_element_rect in &layout.block_element_rects {
+                        block_element_rect.paint(origin, &layout.dimensions, window);
                     }
                     let text_paint_time = text_paint_start.elapsed();
 
@@ -1829,6 +2030,85 @@ mod tests {
         assert!(TerminalElement::is_decorative_character('\u{25A0}')); // First char
         assert!(TerminalElement::is_decorative_character('\u{25FF}')); // Last char
         assert!(!TerminalElement::is_decorative_character('\u{2600}')); // Just after
+
+        // Sextant range boundaries
+        assert!(TerminalElement::is_decorative_character('\u{1FB00}')); // First char
+        assert!(TerminalElement::is_decorative_character('\u{1FB3B}')); // Last char
+        assert!(!TerminalElement::is_decorative_character('\u{1FAFF}')); // Just before
+        assert!(!TerminalElement::is_decorative_character('\u{1FB3C}')); // Just after
+    }
+
+    #[test]
+    fn test_sextant_char_to_packed() {
+        assert_eq!(
+            TerminalElement::sextant_char_to_packed('\u{1FB00}'),
+            Some(0b01_1111)
+        );
+        assert_eq!(
+            TerminalElement::sextant_char_to_packed('\u{1FB3B}'),
+            Some(0b10_0000)
+        );
+        assert_eq!(TerminalElement::sextant_char_to_packed('█'), None);
+    }
+
+    #[test]
+    fn test_block_element_rects_merge_across_adjacent_full_blocks() {
+        let color = Hsla::default();
+        let mut regions = Vec::new();
+        assert!(TerminalElement::collect_block_element_regions(
+            LayoutPoint::new(0, 0),
+            '█',
+            color,
+            &mut regions,
+        ));
+        assert!(TerminalElement::collect_block_element_regions(
+            LayoutPoint::new(0, 1),
+            '█',
+            color,
+            &mut regions,
+        ));
+
+        let rects = TerminalElement::block_element_regions_to_rects(regions);
+
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].point.line(), 0);
+        assert_eq!(rects[0].point.column(), 0);
+        assert_eq!(rects[0].num_of_columns, 4);
+        assert_eq!(rects[0].num_of_lines, 6);
+        assert_eq!(rects[0].line(), 0);
+    }
+
+    #[test]
+    fn test_block_element_rects_cover_half_blocks_and_sextants() {
+        let color = Hsla::default();
+        let mut regions = Vec::new();
+        assert!(TerminalElement::collect_block_element_regions(
+            LayoutPoint::new(0, 0),
+            '▄',
+            color,
+            &mut regions,
+        ));
+        assert!(TerminalElement::collect_block_element_regions(
+            LayoutPoint::new(1, 0),
+            '\u{1FB00}',
+            color,
+            &mut regions,
+        ));
+
+        let rects = TerminalElement::block_element_regions_to_rects(regions);
+
+        assert!(rects.iter().any(|rect| {
+            rect.point.line() == 3
+                && rect.point.column() == 0
+                && rect.num_of_columns == 2
+                && rect.num_of_lines == 3
+        }));
+        assert!(rects.iter().any(|rect| {
+            rect.point.line() == 6
+                && rect.point.column() == 0
+                && rect.num_of_columns == 1
+                && rect.num_of_lines == 2
+        }));
     }
 
     #[test]
