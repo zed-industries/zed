@@ -4770,6 +4770,7 @@ impl Window {
         }
 
         let mut currently_pending = self.pending_input.take().unwrap_or_default();
+        let had_pending_input = !currently_pending.keystrokes.is_empty();
         if currently_pending.focus.is_some() && currently_pending.focus != self.focus {
             currently_pending = PendingInput::default();
         }
@@ -4779,6 +4780,12 @@ impl Window {
             keystroke,
             &dispatch_path,
         );
+
+        let pending_input_was_cleared = had_pending_input && match_result.pending.is_empty();
+        if pending_input_was_cleared {
+            // Synchronous binding actions may edit immediately, so clear pending input first.
+            self.pending_input_changed(cx);
+        }
 
         if !match_result.to_replay.is_empty() {
             self.replay_pending_input(match_result.to_replay, cx);
@@ -4864,14 +4871,18 @@ impl Window {
                         match_result.context_stack,
                         cx,
                     );
-                    self.pending_input_changed(cx);
+                    if !pending_input_was_cleared {
+                        self.pending_input_changed(cx);
+                    }
                     return;
                 }
             }
         }
 
         self.finish_dispatch_key_event(event, dispatch_path, match_result.context_stack, cx);
-        self.pending_input_changed(cx);
+        if !pending_input_was_cleared {
+            self.pending_input_changed(cx);
+        }
     }
 
     fn finish_dispatch_key_event(
