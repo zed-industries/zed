@@ -213,10 +213,10 @@ pub(crate) struct DevContainer {
     user_env_probe: Option<UserEnvProbe>,
     pub(crate) override_command: Option<bool>,
     shutdown_action: Option<ShutdownAction>,
-    init: Option<bool>,
+    pub(crate) init: Option<bool>,
     pub(crate) privileged: Option<bool>,
-    cap_add: Option<Vec<String>>,
-    security_opt: Option<Vec<String>>,
+    pub(crate) cap_add: Option<Vec<String>>,
+    pub(crate) security_opt: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_mount_definitions")]
     pub(crate) mounts: Option<Vec<MountDefinition>>,
     pub(crate) features: Option<HashMap<String, FeatureOptions>>,
