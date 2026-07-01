@@ -936,6 +936,15 @@ impl ConversationView {
         Self::request_elicitation_connection_for_state(&self.server_state)
     }
 
+    fn active_thread_renders_request_elicitations(&self) -> bool {
+        match &self.server_state {
+            ServerState::Connected(connected) => {
+                connected.auth_state.is_ok() && connected.active_view().is_some()
+            }
+            _ => false,
+        }
+    }
+
     fn request_elicitation_connection_for_state(
         state: &ServerState,
     ) -> Option<Rc<dyn AgentConnection>> {
@@ -2507,13 +2516,11 @@ impl ConversationView {
                 let view = view.clone();
                 move |elicitation_id, field_name, value, cx| {
                     view.update(cx, |this, cx| {
-                        if let Some(form) = this
-                            .request_elicitation_form_states
-                            .get_mut(&elicitation_id)
-                        {
-                            form.set_boolean(&field_name, value);
-                            cx.notify();
-                        }
+                        this.update_request_elicitation_form_state(
+                            &elicitation_id,
+                            |form| form.set_boolean(&field_name, value),
+                            cx,
+                        );
                     })
                     .log_err();
                 }
@@ -2522,30 +2529,45 @@ impl ConversationView {
                 let view = view.clone();
                 move |elicitation_id, field_name, value, cx| {
                     view.update(cx, |this, cx| {
-                        if let Some(form) = this
-                            .request_elicitation_form_states
-                            .get_mut(&elicitation_id)
-                        {
-                            form.set_single_select(&field_name, value);
-                            cx.notify();
-                        }
+                        this.update_request_elicitation_form_state(
+                            &elicitation_id,
+                            |form| form.set_single_select(&field_name, value),
+                            cx,
+                        );
                     })
                     .log_err();
                 }
             },
             move |elicitation_id, field_name, value, selected, cx| {
                 view.update(cx, |this, cx| {
-                    if let Some(form) = this
-                        .request_elicitation_form_states
-                        .get_mut(&elicitation_id)
-                    {
-                        form.set_multi_select(&field_name, value, selected);
-                        cx.notify();
-                    }
+                    this.update_request_elicitation_form_state(
+                        &elicitation_id,
+                        |form| form.set_multi_select(&field_name, value, selected),
+                        cx,
+                    );
                 })
                 .log_err();
             },
         )
+    }
+
+    fn update_request_elicitation_form_state(
+        &mut self,
+        elicitation_id: &ElicitationEntryId,
+        update: impl FnOnce(&mut ElicitationFormState),
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(form) = self.request_elicitation_form_states.get_mut(elicitation_id) {
+            update(form);
+            self.notify_request_elicitation_renderers(cx);
+        }
+    }
+
+    fn notify_request_elicitation_renderers(&self, cx: &mut Context<Self>) {
+        if let Some(active_thread) = self.active_thread().cloned() {
+            active_thread.update(cx, |_thread, cx| cx.notify());
+        }
+        cx.notify();
     }
 
     fn submit_request_elicitation(
@@ -2582,13 +2604,11 @@ impl ConversationView {
                         ))
                     }
                     Err(errors) => {
-                        if let Some(state) = self
-                            .request_elicitation_form_states
-                            .get_mut(&elicitation_id)
-                        {
-                            state.set_errors(errors);
-                        }
-                        cx.notify();
+                        self.update_request_elicitation_form_state(
+                            &elicitation_id,
+                            |state| state.set_errors(errors),
+                            cx,
+                        );
                         return;
                     }
                 }
@@ -3364,7 +3384,8 @@ impl Render for ConversationView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_request_elicitation_states(window, cx);
         let request_elicitation_connection = self.request_elicitation_connection();
-        let active_thread_renders_request_elicitations = self.active_thread().is_some();
+        let active_thread_renders_request_elicitations =
+            self.active_thread_renders_request_elicitations();
         let content = match &self.server_state {
             ServerState::Loading { .. } => {
                 let label_text = self
@@ -4771,6 +4792,10 @@ pub(crate) mod tests {
                 "There should be no active thread since no session was created"
             );
             assert!(
+                !view.active_thread_renders_request_elicitations(),
+                "request elicitations should render outside ThreadView when no thread exists"
+            );
+            assert!(
                 connected.threads.is_empty(),
                 "There should be no threads since no session was created"
             );
@@ -4809,6 +4834,10 @@ pub(crate) mod tests {
                 connected.active_id.is_some(),
                 "There should be an active thread after successful auth"
             );
+            assert!(
+                view.active_thread_renders_request_elicitations(),
+                "request elicitations should render inside ThreadView while authenticated"
+            );
             assert_eq!(
                 connected.threads.len(),
                 1,
@@ -4838,6 +4867,14 @@ pub(crate) mod tests {
             assert!(
                 !view.supports_logout(),
                 "Logout should be hidden after logout"
+            );
+            assert!(
+                view.active_thread().is_some(),
+                "The existing thread should still exist after logout"
+            );
+            assert!(
+                !view.active_thread_renders_request_elicitations(),
+                "Unauthenticated auth UI should render request elicitations outside ThreadView"
             );
         });
     }
