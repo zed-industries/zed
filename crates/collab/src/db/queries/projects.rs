@@ -620,7 +620,8 @@ impl Database {
     ) -> Result<TransactionGuard<Vec<ConnectionId>>> {
         let project_id = ProjectId::from_proto(update.project_id);
         let kind = match update.kind {
-            Some(kind) => proto::LocalSettingsKind::from_i32(kind)
+            Some(kind) => proto::LocalSettingsKind::try_from(kind)
+                .ok()
                 .with_context(|| format!("unknown worktree settings kind: {kind}"))?,
             None => proto::LocalSettingsKind::Settings,
         };

@@ -332,7 +332,8 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
                     selections: Arc::from(selections),
                     line_mode: message.line_mode,
                     cursor_shape: deserialize_cursor_shape(
-                        proto::CursorShape::from_i32(message.cursor_shape)
+                        proto::CursorShape::try_from(message.cursor_shape)
+                            .ok()
                             .context("Missing cursor shape")?,
                     ),
                 }
@@ -364,7 +365,8 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
                         value: message.lamport_timestamp,
                     },
                     line_ending: deserialize_line_ending(
-                        proto::LineEnding::from_i32(message.line_ending)
+                        proto::LineEnding::try_from(message.line_ending)
+                            .ok()
                             .context("missing line_ending")?,
                     ),
                 }
@@ -446,7 +448,9 @@ pub fn deserialize_diagnostics(
                 range: deserialize_anchor(diagnostic.start?)?..deserialize_anchor(diagnostic.end?)?,
                 diagnostic: Diagnostic {
                     source: diagnostic.source,
-                    severity: match proto::diagnostic::Severity::from_i32(diagnostic.severity)? {
+                    severity: match proto::diagnostic::Severity::try_from(diagnostic.severity)
+                        .ok()?
+                    {
                         proto::diagnostic::Severity::Error => DiagnosticSeverity::ERROR,
                         proto::diagnostic::Severity::Warning => DiagnosticSeverity::WARNING,
                         proto::diagnostic::Severity::Information => DiagnosticSeverity::INFORMATION,
@@ -465,9 +469,11 @@ pub fn deserialize_diagnostics(
                     is_unnecessary: diagnostic.is_unnecessary,
                     underline: diagnostic.underline,
                     registration_id: diagnostic.registration_id.map(SharedString::from),
-                    source_kind: match proto::diagnostic::SourceKind::from_i32(
+                    source_kind: match proto::diagnostic::SourceKind::try_from(
                         diagnostic.source_kind,
-                    )? {
+                    )
+                    .ok()?
+                    {
                         proto::diagnostic::SourceKind::Pulled => DiagnosticSourceKind::Pulled,
                         proto::diagnostic::SourceKind::Pushed => DiagnosticSourceKind::Pushed,
                         proto::diagnostic::SourceKind::Other => DiagnosticSourceKind::Other,
@@ -490,7 +496,7 @@ pub fn deserialize_anchor(anchor: proto::Anchor) -> Option<Anchor> {
         replica_id: ReplicaId::new(anchor.replica_id as u16),
         value: anchor.timestamp,
     };
-    let bias = match proto::Bias::from_i32(anchor.bias)? {
+    let bias = match proto::Bias::try_from(anchor.bias).ok()? {
         proto::Bias::Left => Bias::Left,
         proto::Bias::Right => Bias::Right,
     };
