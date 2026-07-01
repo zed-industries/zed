@@ -4932,6 +4932,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                 visible: true,
                 abs_path: "/home/user/project".to_string(),
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             },
             client,
             PathStyle::Posix,
@@ -4989,6 +4990,7 @@ async fn test_remote_worktree_without_git_emits_root_repo_event_after_first_upda
                 updated_repositories: vec![],
                 removed_repositories: vec![],
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             });
     });
 
@@ -5027,6 +5029,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                 visible: true,
                 abs_path: "/home/user/project".to_string(),
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             },
             client,
             PathStyle::Posix,
@@ -5081,6 +5084,7 @@ async fn test_remote_worktree_with_git_emits_root_repo_event_when_repo_info_arri
                 updated_repositories: vec![],
                 removed_repositories: vec![],
                 root_repo_common_dir: Some("/home/user/project/.git".to_string()),
+                root_repo_is_linked_worktree: false,
             });
     });
 
@@ -5152,6 +5156,7 @@ async fn test_remote_worktree_update_entries_carry_changed_paths(cx: &mut TestAp
                 visible: true,
                 abs_path: path!("/root").to_string(),
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             },
             AnyProtoClient::new(NoopProtoClient::new()),
             PathStyle::local(),

@@ -525,6 +525,7 @@ impl RejoinedProject {
                     visible: worktree.visible,
                     abs_path: worktree.abs_path.clone(),
                     root_repo_common_dir: None,
+                    root_repo_is_linked_worktree: false,
                 })
                 .collect(),
             collaborators: self

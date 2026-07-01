@@ -1599,6 +1599,7 @@ fn notify_rejoined_projects(
                 abs_path: worktree.abs_path.clone(),
                 root_name: worktree.root_name,
                 root_repo_common_dir: worktree.root_repo_common_dir,
+                root_repo_is_linked_worktree: false,
                 updated_entries: worktree.updated_entries,
                 removed_entries: worktree.removed_entries,
                 scan_id: worktree.scan_id,
@@ -2007,6 +2008,7 @@ async fn join_project(
             visible: worktree.visible,
             abs_path: worktree.abs_path.clone(),
             root_repo_common_dir: None,
+            root_repo_is_linked_worktree: false,
         })
         .collect::<Vec<_>>();
 
@@ -2059,6 +2061,7 @@ async fn join_project(
             abs_path: worktree.abs_path.clone(),
             root_name: worktree.root_name,
             root_repo_common_dir: worktree.root_repo_common_dir,
+            root_repo_is_linked_worktree: false,
             updated_entries: worktree.entries,
             removed_entries: Default::default(),
             scan_id: worktree.scan_id,
@@ -2144,10 +2147,13 @@ async fn leave_project(request: proto::LeaveProject, session: MessageContext) ->
 
 /// Updates other participants with changes to the project
 async fn update_project(
-    request: proto::UpdateProject,
+    mut request: proto::UpdateProject,
     response: Response<proto::UpdateProject>,
     session: MessageContext,
 ) -> Result<()> {
+    for worktree in &mut request.worktrees {
+        worktree.root_repo_is_linked_worktree = false;
+    }
     let project_id = ProjectId::from_proto(request.project_id);
     let (room, guest_connection_ids) = &*session
         .db()
@@ -2173,10 +2179,11 @@ async fn update_project(
 
 /// Updates other participants with changes to the worktree
 async fn update_worktree(
-    request: proto::UpdateWorktree,
+    mut request: proto::UpdateWorktree,
     response: Response<proto::UpdateWorktree>,
     session: MessageContext,
 ) -> Result<()> {
+    request.root_repo_is_linked_worktree = false;
     let guest_connection_ids = session
         .db()
         .await
