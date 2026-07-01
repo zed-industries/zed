@@ -18433,6 +18433,7 @@ name = "text"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bincode",
  "clock",
  "collections",
  "ctor",
@@ -18443,10 +18444,12 @@ dependencies = [
  "rand 0.9.4",
  "regex",
  "rope",
+ "serde",
  "smallvec",
  "sum_tree",
  "util",
  "zlog",
+ "zstd",
 ]
 
 [[package]]
