@@ -1,8 +1,7 @@
 use gpui::{Hsla, Rgba};
 
-use crate::ColorScale;
 use crate::scale::{ColorScaleSet, ColorScales};
-use crate::{SystemColors, ThemeColors};
+use crate::{AccentColors, ColorScale, SystemColors, ThemeColors};
 
 pub(crate) fn neutral() -> ColorScaleSet {
     sand()
@@ -193,6 +192,26 @@ impl ThemeColors {
             vim_visual_block_foreground: system.transparent,
             vim_helix_normal_foreground: system.transparent,
             vim_helix_select_foreground: system.transparent,
+            editor_indent_guide_cycle: AccentColors::light()
+                .0
+                .iter()
+                .map(|c| c.alpha(0.2))
+                .collect(),
+            editor_indent_guide_cycle_active: AccentColors::light()
+                .0
+                .iter()
+                .map(|c| c.alpha(0.4))
+                .collect(),
+            editor_indent_guide_background_cycle: AccentColors::light()
+                .0
+                .iter()
+                .map(|c| c.alpha(0.1))
+                .collect(),
+            editor_indent_guide_background_cycle_active: AccentColors::light()
+                .0
+                .iter()
+                .map(|c| c.alpha(0.2))
+                .collect(),
         }
     }
 
@@ -346,6 +365,26 @@ impl ThemeColors {
             vim_visual_block_foreground: system.transparent,
             vim_helix_normal_foreground: system.transparent,
             vim_helix_select_foreground: system.transparent,
+            editor_indent_guide_cycle: AccentColors::dark()
+                .0
+                .iter()
+                .map(|c| c.alpha(0.2))
+                .collect(),
+            editor_indent_guide_cycle_active: AccentColors::dark()
+                .0
+                .iter()
+                .map(|c| c.alpha(0.4))
+                .collect(),
+            editor_indent_guide_background_cycle: AccentColors::dark()
+                .0
+                .iter()
+                .map(|c| c.alpha(0.1))
+                .collect(),
+            editor_indent_guide_background_cycle_active: AccentColors::dark()
+                .0
+                .iter()
+                .map(|c| c.alpha(0.2))
+                .collect(),
         }
     }
 }

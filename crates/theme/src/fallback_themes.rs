@@ -277,6 +277,26 @@ pub(crate) fn zed_default_dark() -> Theme {
                 vim_visual_block_foreground: SystemColors::default().transparent,
                 vim_helix_normal_foreground: SystemColors::default().transparent,
                 vim_helix_select_foreground: SystemColors::default().transparent,
+                editor_indent_guide_cycle: AccentColors::dark()
+                    .0
+                    .iter()
+                    .map(|c| c.alpha(0.2))
+                    .collect(),
+                editor_indent_guide_cycle_active: AccentColors::dark()
+                    .0
+                    .iter()
+                    .map(|c| c.alpha(0.4))
+                    .collect(),
+                editor_indent_guide_background_cycle: AccentColors::dark()
+                    .0
+                    .iter()
+                    .map(|c| c.alpha(0.1))
+                    .collect(),
+                editor_indent_guide_background_cycle_active: AccentColors::dark()
+                    .0
+                    .iter()
+                    .map(|c| c.alpha(0.2))
+                    .collect(),
             },
             status: StatusColors {
                 conflict: yellow,
