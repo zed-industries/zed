@@ -947,18 +947,24 @@ actions!(
     ]
 );
 
+/// Goes to the definition of the symbol at cursor.
 #[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct GoToDefinition {
+    /// Where to show the definitions. Falls back to the `lsp_results_location`
+    /// setting when omitted. A single result is always opened directly.
     #[serde(default)]
     pub open_results_in: Option<OpenResultsIn>,
 }
 
+/// Goes to the implementation of the symbol at cursor.
 #[derive(PartialEq, Clone, Default, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
 pub struct GoToImplementation {
+    /// Where to show the implementations. Falls back to the `lsp_results_location`
+    /// setting when omitted. A single result is always opened directly.
     #[serde(default)]
     pub open_results_in: Option<OpenResultsIn>,
 }
@@ -970,6 +976,8 @@ pub struct GoToImplementation {
 pub struct FindAllReferences {
     #[serde(default = "default_true")]
     pub always_open_multibuffer: bool,
+    /// Where to show the references. Falls back to the `lsp_results_location`
+    /// setting when omitted. A single result is always opened directly.
     #[serde(default)]
     pub open_results_in: Option<OpenResultsIn>,
 }

@@ -1349,26 +1349,9 @@ impl Editor {
 
         let (buffer, head) = multi_buffer.text_anchor_for_position(head, cx)?;
         let references = project.update(cx, |project, cx| project.references(&buffer, head, cx));
-        Some(cx.spawn(async move |editor, cx| {
-            let locations = references.await?.unwrap_or_default();
-            // Drop the reference covering the cursor, matching `find_all_references`
-            // (otherwise the picker lists the symbol you invoked it on).
-            editor.update(cx, |_, cx| {
-                let snapshot = buffer.read(cx).snapshot();
-                let head_offset = head.to_offset(&snapshot);
-                locations
-                    .into_iter()
-                    .filter(|location| {
-                        if location.buffer != buffer {
-                            return true;
-                        }
-                        let start = location.range.start.to_offset(&snapshot);
-                        let end = location.range.end.to_offset(&snapshot);
-                        !(start <= head_offset && head_offset <= end)
-                    })
-                    .collect()
-            })
-        }))
+        // Keep every reference, including the one under the cursor, to match the
+        // default `find_all_references` multibuffer (`always_open_multibuffer`).
+        Some(cx.spawn(async move |_, _| Ok(references.await?.unwrap_or_default())))
     }
 
     pub fn find_all_references(
