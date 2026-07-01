@@ -298,6 +298,10 @@ impl AgentTool for TerminalTool {
         acp::ToolKind::Execute
     }
 
+    fn allow_in_restricted_mode() -> bool {
+        false
+    }
+
     fn initial_title(
         &self,
         input: Result<Self::Input, serde_json::Value>,
@@ -336,6 +340,10 @@ impl AgentTool for SandboxedTerminalTool {
         acp::ToolKind::Execute
     }
 
+    fn allow_in_restricted_mode() -> bool {
+        false
+    }
+
     fn initial_title(
         &self,
         input: Result<Self::Input, serde_json::Value>,
@@ -372,6 +380,32 @@ fn terminal_initial_title(input: Result<String, serde_json::Value>) -> SharedStr
     }
 }
 
+/// Windows only: resolve the `(release channel, version)` of the Linux `zed` to
+/// provision inside WSL as the sandbox helper. Dev (source) builds have no
+/// matching release, so they pull the latest nightly; every other channel pins
+/// its exact running version (stripped of pre-release/build metadata, which the
+/// release API doesn't key on).
+#[cfg(target_os = "windows")]
+fn wsl_zed_release(cx: &App) -> Option<(String, String)> {
+    use release_channel::{AppVersion, ReleaseChannel};
+    match *release_channel::RELEASE_CHANNEL {
+        ReleaseChannel::Dev => Some(("nightly".to_string(), "latest".to_string())),
+        channel => {
+            let version = AppVersion::global(cx);
+            Some((
+                channel.dev_name().to_string(),
+                format!("{}.{}.{}", version.major, version.minor, version.patch),
+            ))
+        }
+    }
+}
+
+/// Non-Windows platforms don't route through WSL, so there's no helper to fetch.
+#[cfg(not(target_os = "windows"))]
+fn wsl_zed_release(_cx: &App) -> Option<(String, String)> {
+    None
+}
+
 async fn run_terminal_tool(
     project: Entity<Project>,
     environment: Rc<dyn ThreadEnvironment>,
@@ -382,17 +416,26 @@ async fn run_terminal_tool(
     let selection = input.selection;
     let sandbox_input = input.sandbox.clone().unwrap_or_default();
 
-    let (working_dir, authorize, sandboxing, is_local_project) = cx.update(|cx| {
-        let working_dir = working_dir(&input.cd, &project, cx).map_err(|err| err.to_string())?;
-        let context =
-            crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
-        let authorize =
-            event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
-        let sandboxing =
-            input.sandbox.is_some() && sandboxing_enabled_for_project(project.read(cx), cx);
-        let is_local_project = project.read(cx).is_local();
-        Result::<_, String>::Ok((working_dir, authorize, sandboxing, is_local_project))
-    })?;
+    let (working_dir, authorize, sandboxing, is_local_project, wsl_zed_release) =
+        cx.update(|cx| {
+            let working_dir =
+                working_dir(&input.cd, &project, cx).map_err(|err| err.to_string())?;
+            let context =
+                crate::ToolPermissionContext::new(TerminalTool::NAME, vec![input.command.clone()]);
+            let authorize =
+                event_stream.authorize(SharedString::new(input.command.clone()), context, cx);
+            let sandboxing =
+                input.sandbox.is_some() && sandboxing_enabled_for_project(project.read(cx), cx);
+            let is_local_project = project.read(cx).is_local();
+            let wsl_zed_release = wsl_zed_release(cx);
+            Result::<_, String>::Ok((
+                working_dir,
+                authorize,
+                sandboxing,
+                is_local_project,
+                wsl_zed_release,
+            ))
+        })?;
 
     authorize.await.map_err(|e| e.to_string())?;
 
@@ -621,6 +664,7 @@ async fn run_terminal_tool(
                 network: network_request_to_sandbox_network_access(&effective.network),
                 allow_fs_write: effective.allow_fs_write_all,
                 is_local: is_local_project,
+                wsl_zed_release: wsl_zed_release.clone(),
             };
 
             // The viability check runs a brief probe subprocess, so do it off
@@ -637,10 +681,9 @@ async fn run_terminal_tool(
                 let mut retries = 0usize;
                 loop {
                     let probe_wrap = wrap.clone();
-                    let probe_cwd = working_dir.clone();
                     let error = match cx
                         .background_executor()
-                        .spawn(async move { probe_wrap.can_create_sandbox(probe_cwd.as_deref()) })
+                        .spawn(async move { probe_wrap.can_create_sandbox() })
                         .await
                     {
                         Ok(()) => break Some(wrap),
@@ -686,10 +729,9 @@ async fn run_terminal_tool(
             #[cfg(not(target_os = "linux"))]
             {
                 let probe_wrap = wrap.clone();
-                let probe_cwd = working_dir.clone();
                 match cx
                     .background_executor()
-                    .spawn(async move { probe_wrap.can_create_sandbox(probe_cwd.as_deref()) })
+                    .spawn(async move { probe_wrap.can_create_sandbox() })
                     .await
                 {
                     Ok(()) => Some(wrap),
