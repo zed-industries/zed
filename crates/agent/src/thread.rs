@@ -2517,8 +2517,7 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Result<mpsc::UnboundedReceiver<Result<ThreadEvent>>> {
         let model = self
-            .model()
-            .cloned()
+            .compaction_model(cx)
             .ok_or_else(|| anyhow!(NoModelConfiguredError))?;
 
         // Flush any pending message and cancel an in-flight turn before we
@@ -2527,6 +2526,7 @@ impl Thread {
         self.flush_pending_message(cx);
         self.cancel(cx).detach();
 
+        let compaction_model_for_telemetry = model.clone();
         let compaction = self.forced_compaction_target_ix().map(|request_end_ix| {
             self.advance_prompt_id();
             let request = self.build_compaction_request(request_end_ix, &model, cx);
@@ -2535,7 +2535,8 @@ impl Thread {
         });
 
         if compaction.is_some() {
-            self.pending_compaction_telemetry = self.build_compaction_telemetry("manual", cx);
+            self.pending_compaction_telemetry =
+                self.build_compaction_telemetry("manual", &compaction_model_for_telemetry, cx);
         }
 
         self.clear_summary();
@@ -3092,13 +3093,14 @@ impl Thread {
     ) -> Result<ControlFlow<()>> {
         let Some((model, request, insertion_ix)) = this.update(cx, |this, cx| {
             let insertion_ix = this.compaction_message_target_ix(cx)?;
-            let model = this.model().cloned()?;
+            let model = this.compaction_model(cx)?;
             let request = this.build_compaction_request(insertion_ix, &model, cx);
             this.current_request_token_usage = TokenUsage::default();
             // Preserve telemetry across retries so the retry count keeps
             // accumulating rather than resetting on each attempt.
             if this.pending_compaction_telemetry.is_none() {
-                this.pending_compaction_telemetry = this.build_compaction_telemetry("auto", cx);
+                this.pending_compaction_telemetry =
+                    this.build_compaction_telemetry("auto", &model, cx);
             }
             Some((model, request, insertion_ix))
         })?
@@ -4227,16 +4229,24 @@ impl Thread {
     }
 
     /// Captures the data for an `"Agent Compaction Completed"` telemetry event
-    /// at the moment a compaction starts. Returns `None` if there's no model.
+    /// at the moment a compaction starts. `compaction_model` is the model that
+    /// will actually stream the request; `self.model()` (when present) drives
+    /// the threshold-related fields, since those describe the thread's
+    /// primary model rather than the one used for compaction.
     fn build_compaction_telemetry(
         &self,
         trigger: &'static str,
+        compaction_model: &Arc<dyn LanguageModel>,
         cx: &App,
     ) -> Option<CompactionTelemetry> {
-        let model = self.model()?;
         let auto_compact = AgentSettings::get_global(cx).auto_compact;
-        let max_tokens = model.max_token_count();
-        let max_input_tokens = max_tokens.saturating_sub(model.max_output_tokens().unwrap_or(0));
+        // Prefer the thread model for context-window fields. Fall back to the
+        // compaction model only when no thread model is configured (rare —
+        // DB-loaded thread awaiting model resolution).
+        let threshold_source = self.model().unwrap_or(compaction_model);
+        let max_tokens = threshold_source.max_token_count();
+        let max_input_tokens =
+            max_tokens.saturating_sub(threshold_source.max_output_tokens().unwrap_or(0));
         let tokens_before = self
             .latest_request_token_usage()
             .map(|usage| total_input_tokens(usage).saturating_add(usage.output_tokens));
@@ -4245,8 +4255,8 @@ impl Thread {
             thread_id: self.id.to_string(),
             parent_thread_id: self.parent_thread_id().map(|id| id.to_string()),
             prompt_id: self.prompt_id.to_string(),
-            model: model.telemetry_id(),
-            model_provider: model.provider_id().to_string(),
+            model: compaction_model.telemetry_id(),
+            model_provider: compaction_model.provider_id().to_string(),
             thinking_effort: self.thinking_effort.clone(),
             max_tokens,
             tokens_before,
@@ -4337,6 +4347,29 @@ impl Thread {
             return None;
         }
         Some(self.messages.len())
+    }
+
+    /// Resolves the model used for context compaction. Returns the configured
+    /// `agent.compaction_model` if it resolved at config time, otherwise falls
+    /// back to the thread's currently selected model.
+    ///
+    /// Logs a warning when `compaction_model` is configured but didn't resolve,
+    /// so silent fallback to the (potentially much more expensive) thread
+    /// model is observable.
+    ///
+    /// NOTE: distinct from `summarization_model` (thread summaries / titles).
+    fn compaction_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
+        let registry = LanguageModelRegistry::read_global(cx);
+        if let Some(configured) = registry.compaction_model() {
+            return Some(configured.model);
+        }
+        if AgentSettings::get_global(cx).compaction_model.is_some() {
+            log::warn!(
+                "agent.compaction_model is configured but could not be resolved; \
+                         falling back to the thread's model"
+            );
+        }
+        self.model().cloned()
     }
 
     fn build_compaction_request(
@@ -6534,12 +6567,15 @@ mod tests {
     use language_model::LanguageModelToolUseId;
     use language_model::fake_provider::FakeLanguageModel;
     use serde_json::json;
+    use settings::LanguageModelProviderSetting;
     use std::sync::Arc;
 
     async fn setup_thread_for_test(cx: &mut TestAppContext) -> (Entity<Thread>, ThreadEventStream) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
+
+            LanguageModelRegistry::test(cx);
         });
 
         let fs = fs::FakeFs::new(cx.background_executor.clone());
@@ -6574,6 +6610,23 @@ mod tests {
         let mut settings = AgentSettings::get_global(cx).clone();
         settings.auto_compact = auto_compact;
         AgentSettings::override_global(settings, cx);
+    }
+
+    /// Overrides the global `LanguageModelRegistry.compaction_model` slot used
+    /// by `Thread::compaction_model`. Unlike the settings-driven path, this
+    /// bypasses `select_compaction_model`'s provider/model validation, so it
+    /// works in tests without first registering a provider.
+    fn set_registry_compaction_model(cx: &mut App, model: Option<Arc<dyn LanguageModel>>) {
+        use language_model::fake_provider::FakeLanguageModelProvider;
+        use language_model::{ConfiguredModel, LanguageModelProvider};
+        LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+            let configured = model.map(|m| ConfiguredModel {
+                provider: Arc::new(FakeLanguageModelProvider::default())
+                    as Arc<dyn LanguageModelProvider>,
+                model: m,
+            });
+            registry.set_compaction_model(configured, cx);
+        });
     }
 
     #[test]
@@ -7259,6 +7312,175 @@ mod tests {
             matches!(&event, Some(Ok(ThreadEvent::ContextCompaction(_)))),
             "expected the compaction to replay after the marker, got {event:?}"
         );
+    }
+
+    /// When `agent.compaction_model` is configured, manual `/compact` streams
+    /// to the configured model rather than the thread's primary model.
+    #[gpui::test]
+    async fn test_compaction_uses_configured_compaction_model(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let thread_model = Arc::new(FakeLanguageModel::default());
+        let compaction_model = Arc::new(FakeLanguageModel::default());
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(thread_model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+            set_registry_compaction_model(cx, Some(compaction_model.clone()));
+        });
+
+        let _events = cx
+            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(
+            thread_model.pending_completions().len(),
+            0,
+            "thread's primary model should not have been used for compaction"
+        );
+        let request = compaction_model
+            .pending_completions()
+            .pop()
+            .expect("compaction model should have received the request");
+        assert_eq!(
+            request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+
+        thread.read_with(cx, |thread, _cx| {
+            let telemetry = thread
+                .pending_compaction_telemetry
+                .as_ref()
+                .expect("pending telemetry");
+            assert_eq!(telemetry.model, compaction_model.telemetry_id());
+        });
+
+        compaction_model.send_completion_stream_text_chunk(&request, "summary");
+        compaction_model.end_completion_stream(&request);
+        cx.run_until_parked();
+    }
+
+    /// When `agent.compaction_model` is configured but doesn't resolve (e.g.
+    /// the provider isn't registered), manual `/compact` falls back to the
+    /// thread's primary model and the telemetry reflects the actual stream
+    /// model — not the one the user tried to configure.
+    #[gpui::test]
+    async fn test_compaction_falls_back_when_compaction_model_unavailable(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let thread_model = Arc::new(FakeLanguageModel::default());
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(thread_model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(UserMessageId::new(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+            });
+            // Settings say "configured"; registry says "couldn't resolve".
+            let mut settings = AgentSettings::get_global(cx).clone();
+            settings.compaction_model = Some(LanguageModelSelection {
+                provider: LanguageModelProviderSetting("missing".into()),
+                model: "missing-model".into(),
+                enable_thinking: false,
+                effort: None,
+                speed: None,
+            });
+            AgentSettings::override_global(settings, cx);
+            set_registry_compaction_model(cx, None);
+        });
+
+        let _events = cx
+            .update(|cx| thread.update(cx, |thread, cx| thread.compact(UserMessageId::new(), cx)))
+            .unwrap();
+        cx.run_until_parked();
+
+        let request = thread_model
+            .pending_completions()
+            .pop()
+            .expect("thread model should have received the fallback request");
+        assert_eq!(
+            request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+
+        thread.read_with(cx, |thread, _cx| {
+            let telemetry = thread
+                .pending_compaction_telemetry
+                .as_ref()
+                .expect("pending telemetry");
+            assert_eq!(telemetry.model, thread_model.telemetry_id());
+        });
+
+        thread_model.send_completion_stream_text_chunk(&request, "summary");
+        thread_model.end_completion_stream(&request);
+        cx.run_until_parked();
+    }
+
+    /// Auto-compaction triggered by the threshold also honors
+    /// `agent.compaction_model`.
+    #[gpui::test]
+    async fn test_auto_compaction_uses_compaction_model(cx: &mut TestAppContext) {
+        let (thread, _event_stream) = setup_thread_for_test(cx).await;
+        let thread_model = Arc::new(FakeLanguageModel::default());
+        let compaction_model = Arc::new(FakeLanguageModel::default());
+        let old_user_message_id = UserMessageId::new();
+
+        cx.update(|cx| {
+            thread.update(cx, |thread, cx| {
+                thread.set_model(thread_model.clone(), cx);
+                thread
+                    .messages
+                    .push(user_text_message(old_user_message_id.clone(), "old user"));
+                thread.messages.push(agent_text_message("old assistant"));
+                thread.request_token_usage.insert(
+                    old_user_message_id.clone(),
+                    TokenUsage {
+                        input_tokens: u64::MAX,
+                        ..Default::default()
+                    },
+                );
+            });
+            set_auto_compact_settings(
+                cx,
+                agent_settings::AutoCompactSettings {
+                    enabled: true,
+                    threshold: agent_settings::AutoCompactThreshold::Percentage(0.5),
+                },
+            );
+            set_registry_compaction_model(cx, Some(compaction_model.clone()));
+        });
+
+        // The auto-compact gate fires inside `run_turn` when we kick off a
+        // new user message. Drive a `send` so `perform_compaction_if_needed`
+        // runs.
+        let _events = cx
+            .update(|cx| {
+                thread.update(cx, |thread, cx| {
+                    thread.send(UserMessageId::new(), vec!["new prompt"], cx)
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        assert_eq!(thread_model.pending_completions().len(), 0);
+        let request = compaction_model
+            .pending_completions()
+            .pop()
+            .expect("compaction model should have received the auto-compaction request");
+        assert_eq!(
+            request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+
+        compaction_model.send_completion_stream_text_chunk(&request, "summary");
+        compaction_model.end_completion_stream(&request);
+        cx.run_until_parked();
     }
 
     #[gpui::test]

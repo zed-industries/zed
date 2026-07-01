@@ -38,6 +38,7 @@ Some Zed AI features have their own model or prompt settings in `settings.json`,
 - `agent.inline_assistant_model`
 - `agent.commit_message_model`
 - `agent.thread_summary_model`
+- `agent.compaction_model`
 - `agent.subagent_model`
 - `agent.commit_message_instructions`
 - `agent.inline_alternatives`
@@ -82,6 +83,32 @@ The `threshold` value can be one of:
 `0` is not a valid threshold. If the threshold is invalid, Zed falls back to `90%`.
 
 You can compact a Zed Agent thread manually at any time by typing `/compact` in the Agent Panel message editor. For more on thread token usage and compaction behavior, see [Token Usage and Compaction](./agent-panel.md#token-usage).
+
+## Compaction Model {#compaction-model}
+
+By default, context compaction (both `/compact` and auto-compaction) uses the thread's currently selected model. Set `agent.compaction_model` to use a different model:
+
+```json [settings]
+{
+  "agent": {
+    "default_model": {
+      "provider": "anthropic",
+      "model": "claude-opus-4-6"
+    },
+    "compaction_model": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5"
+    }
+  }
+}
+```
+
+If the configured model is unavailable at config time (for example, the provider isn't registered or the model id isn't found), compaction falls back to the thread's current model and logs a warning.
+
+**Notes:**
+
+- Only manual `/compact` runs when the thread has no primary model. Auto-compaction still requires the thread to have a model selected, because `agent.auto_compact.threshold` is measured against the thread model's context window.
+- The configured model should have a context window at least as large as the thread's primary model for predictable behavior.
 
 ## External Agents {#external-agents}
 
