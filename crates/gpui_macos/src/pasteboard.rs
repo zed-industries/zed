@@ -1,4 +1,3 @@
-use core::slice;
 use std::ffi::{CStr, c_void};
 use std::path::PathBuf;
 
@@ -95,9 +94,9 @@ impl Pasteboard {
         unsafe {
             let types: id = self.inner.types();
             if msg_send![types, containsObject: ut_type.inner()] {
-                self.data_for_type(ut_type.inner_mut()).map(|bytes| {
-                    let bytes = bytes.to_vec();
+                self.with_data_for_type(ut_type.inner_mut(), |bytes| {
                     let id = hash(&bytes);
+                    let bytes = bytes.to_vec();
 
                     ClipboardItem {
                         entries: vec![ClipboardEntry::Image(Image { format, bytes, id })],
@@ -118,46 +117,36 @@ impl Pasteboard {
                 return None;
             }
 
-            let data = self.inner.dataForType(string_type);
-            let text_bytes: &[u8] = if data == nil {
-                return None;
-            } else if data.bytes().is_null() {
-                // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
-                // "If the length of the NSData object is 0, this property returns nil."
-                &[]
-            } else {
-                slice::from_raw_parts(data.bytes() as *mut u8, data.length() as usize)
-            };
+            self.with_data_for_type(string_type, |text_bytes| {
+                let text = String::from_utf8_lossy(text_bytes).into_owned();
+                let metadata = self
+                    .with_data_for_type(self.text_hash_type, |hash_bytes| {
+                        let hash_bytes = hash_bytes.try_into().ok()?;
+                        let hash = u64::from_be_bytes(hash_bytes);
+                        let metadata = self.with_data_for_type(self.metadata_type, |metadata| {
+                            if hash == ClipboardString::text_hash(&text) {
+                                String::from_utf8(metadata.to_vec()).ok()
+                            } else {
+                                None
+                            }
+                        })?;
 
-            let text = String::from_utf8_lossy(text_bytes).to_string();
-            let metadata = self
-                .data_for_type(self.text_hash_type)
-                .and_then(|hash_bytes| {
-                    let hash_bytes = hash_bytes.try_into().ok()?;
-                    let hash = u64::from_be_bytes(hash_bytes);
-                    let metadata = self.data_for_type(self.metadata_type)?;
+                        metadata
+                    })
+                    .flatten();
 
-                    if hash == ClipboardString::text_hash(&text) {
-                        String::from_utf8(metadata.to_vec()).ok()
-                    } else {
-                        None
-                    }
-                });
-
-            Some(ClipboardEntry::String(ClipboardString { text, metadata }))
+                ClipboardEntry::String(ClipboardString { text, metadata })
+            })
         }
     }
 
-    unsafe fn data_for_type(&self, kind: id) -> Option<&[u8]> {
+    fn with_data_for_type<R>(&self, kind: id, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
         unsafe {
             let data = self.inner.dataForType(kind);
             if data == nil {
                 None
             } else {
-                Some(slice::from_raw_parts(
-                    data.bytes() as *mut u8,
-                    data.length() as usize,
-                ))
+                Some(with_nsdata_bytes(data, f))
             }
         }
     }
@@ -251,6 +240,23 @@ impl Pasteboard {
 
             self.inner
                 .setData_forType(bytes, Into::<UTType>::into(image.format).inner_mut());
+        }
+    }
+}
+
+unsafe fn with_nsdata_bytes<R>(data: id, f: impl FnOnce(&[u8]) -> R) -> R {
+    unsafe {
+        let bytes = data.bytes();
+        if bytes.is_null() {
+            // https://developer.apple.com/documentation/foundation/nsdata/1410616-bytes?language=objc
+            // "If the length of the NSData object is 0, this property returns nil."
+            debug_assert_eq!(data.length(), 0);
+            f(&[])
+        } else {
+            f(std::slice::from_raw_parts(
+                bytes as *const u8,
+                data.length() as usize,
+            ))
         }
     }
 }
