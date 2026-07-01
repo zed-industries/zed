@@ -4,7 +4,7 @@ use collections::{HashMap, HashSet};
 use component::{Component, ComponentScope, example_group_with_title, single_example};
 use editor::Editor;
 use futures::channel::oneshot;
-use gpui::{AnyElement, App, Div, Empty, Entity, SharedString, Window, div};
+use gpui::{AnyElement, App, Div, Empty, Entity, Hsla, SharedString, Window, div};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use ui::{
@@ -1310,7 +1310,11 @@ impl<'a> ElicitationCard<'a> {
                                 cx,
                             );
                         })
-                        .child(Checkbox::new(checkbox_id, checkbox_state))
+                        .child(
+                            div()
+                                .mt_0p5()
+                                .child(Checkbox::new(checkbox_id, checkbox_state)),
+                        )
                         .child(
                             v_flex()
                                 .gap_0p5()
@@ -1389,43 +1393,45 @@ impl<'a> ElicitationCard<'a> {
                             } else {
                                 ToggleState::Unselected
                             };
+                            let row_background = Self::option_row_background(is_selected, cx);
+                            let hover_background =
+                                Self::option_row_hover_background(is_selected, cx);
                             let on_multi_select_change =
                                 self.handlers.on_multi_select_change.clone();
                             let elicitation_id = self.elicitation.id.clone();
                             let field_name = field_name.to_string();
                             let value = option.value.clone();
+                            let checkbox_id = format!(
+                                "elicitation-multi-{}-{field_name}-{}",
+                                self.entry_ix, option.value
+                            );
                             h_flex()
                                 .id(SharedString::from(format!(
                                     "elicitation-multi-option-{}-{field_name}-{}",
                                     self.entry_ix, option.value
                                 )))
-                                .gap_1()
+                                .w_full()
+                                .min_h(rems_from_px(28.))
+                                .items_center()
+                                .gap_2()
                                 .rounded_sm()
                                 .border_1()
-                                .border_color(field_border_color.opacity(0.7))
-                                .cursor_pointer()
-                                .px_1()
-                                .py_0p5()
-                                .on_click({
-                                    let field_name = field_name.clone();
-                                    move |_, _window, cx| {
-                                        on_multi_select_change(
-                                            elicitation_id.clone(),
-                                            field_name.clone(),
-                                            value.clone(),
-                                            !is_selected,
-                                            cx,
-                                        );
-                                    }
+                                .border_color(field_border_color.opacity(0.5))
+                                .bg(row_background)
+                                .px_2()
+                                .py_1()
+                                .hover(move |this| this.bg(hover_background).cursor_pointer())
+                                .on_click(move |_, _window, cx| {
+                                    on_multi_select_change(
+                                        elicitation_id.clone(),
+                                        field_name.clone(),
+                                        value.clone(),
+                                        !is_selected,
+                                        cx,
+                                    );
                                 })
-                                .child(Checkbox::new(
-                                    format!(
-                                        "elicitation-multi-{}-{field_name}-{}",
-                                        self.entry_ix, option.value
-                                    ),
-                                    checkbox_state,
-                                ))
-                                .child(Label::new(option.label).size(LabelSize::Small))
+                                .child(Checkbox::new(checkbox_id, checkbox_state))
+                                .child(Label::new(option.label).size(LabelSize::Small).truncate())
                         }))
                         .into_any_element()
                 }
@@ -1450,13 +1456,6 @@ impl<'a> ElicitationCard<'a> {
         } else {
             cx.theme().colors().border.opacity(0.8)
         };
-        let editor_background = cx.theme().colors().editor_background;
-        let header_background = cx
-            .theme()
-            .colors()
-            .element_background
-            .blend(cx.theme().colors().editor_foreground.opacity(0.025));
-        let accent_color = Color::Accent.color(cx);
         let elicitation_id = self.elicitation.id.clone();
         let field_name = field_name.to_string();
         let on_single_select_change = self.handlers.on_single_select_change.clone();
@@ -1469,6 +1468,9 @@ impl<'a> ElicitationCard<'a> {
                     format!("elicitation-select-option-{entry_ix}-{field_name}-{option_value}");
                 let is_selected =
                     selected_value.is_some_and(|selected_value| selected_value == &option.value);
+                let row_background = Self::option_row_background(is_selected, cx);
+                let hover_background = Self::option_row_hover_background(is_selected, cx);
+                let control_background = Self::option_control_background(cx);
                 let elicitation_id = elicitation_id.clone();
                 let field_name = field_name.clone();
                 let on_single_select_change = on_single_select_change.clone();
@@ -1482,21 +1484,10 @@ impl<'a> ElicitationCard<'a> {
                     .rounded_sm()
                     .border_1()
                     .border_color(border_color.opacity(0.5))
-                    .bg(if is_selected {
-                        editor_background.blend(accent_color.opacity(0.08))
-                    } else {
-                        editor_background
-                    })
+                    .bg(row_background)
                     .px_2()
                     .py_1()
-                    .hover({
-                        let hover_background = if is_selected {
-                            editor_background.blend(accent_color.opacity(0.1))
-                        } else {
-                            header_background
-                        };
-                        move |this| this.bg(hover_background).cursor_pointer()
-                    })
+                    .hover(move |this| this.bg(hover_background).cursor_pointer())
                     .on_click(move |_, _window, cx| {
                         on_single_select_change(
                             elicitation_id.clone(),
@@ -1505,22 +1496,54 @@ impl<'a> ElicitationCard<'a> {
                             cx,
                         );
                     })
-                    .child(
-                        div()
-                            .size_3()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .rounded_full()
-                            .border_1()
-                            .border_color(border_color)
-                            .when(is_selected, |this| {
-                                this.child(Indicator::dot().color(Color::Accent))
-                            }),
-                    )
+                    .child(Self::render_radio_indicator(
+                        is_selected,
+                        border_color,
+                        control_background,
+                    ))
                     .child(Label::new(option.label).size(LabelSize::Small).truncate())
             }))
             .into_any_element()
+    }
+
+    fn option_row_background(is_selected: bool, cx: &App) -> Hsla {
+        let editor_background = cx.theme().colors().editor_background;
+        if is_selected {
+            editor_background.blend(Color::Accent.color(cx).opacity(0.08))
+        } else {
+            editor_background
+        }
+    }
+
+    fn option_row_hover_background(is_selected: bool, cx: &App) -> Hsla {
+        let editor_background = cx.theme().colors().editor_background;
+        if is_selected {
+            editor_background.blend(Color::Accent.color(cx).opacity(0.1))
+        } else {
+            cx.theme()
+                .colors()
+                .element_background
+                .blend(cx.theme().colors().editor_foreground.opacity(0.025))
+        }
+    }
+
+    fn option_control_background(cx: &App) -> Hsla {
+        cx.theme().colors().editor_background
+    }
+
+    fn render_radio_indicator(is_selected: bool, border_color: Hsla, background: Hsla) -> Div {
+        div()
+            .size_3()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .border_1()
+            .border_color(border_color)
+            .bg(background)
+            .when(is_selected, |this| {
+                this.child(Indicator::dot().color(Color::Accent))
+            })
     }
 
     fn render_url_elicitation(&self, mode: &acp::ElicitationUrlMode) -> AnyElement {
