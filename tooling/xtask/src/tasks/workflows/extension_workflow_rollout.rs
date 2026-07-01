@@ -6,8 +6,8 @@ use indoc::indoc;
 use serde_json::json;
 
 use crate::tasks::workflows::steps::{
-    CheckoutStep, DownloadArtifactStep, IfNoFilesFound, ResultEncoding, TokenPermissions,
-    UploadArtifactStep, cache_rust_dependencies_namespace,
+    CheckoutStep, CommonPermissionSets, DownloadArtifactStep, IfNoFilesFound, ResultEncoding,
+    TokenPermissions, UploadArtifactStep, cache_rust_dependencies_namespace,
 };
 use crate::tasks::workflows::vars::JobOutput;
 use crate::tasks::workflows::{
@@ -41,6 +41,7 @@ pub(crate) fn extension_workflow_rollout() -> Workflow {
     let create_tag = create_rollout_tag(&rollout_workflows, &filter_repos_input);
 
     named::workflow()
+        .with_minimal_permissions()
         .on(Event::default().workflow_dispatch(
             WorkflowDispatch::default()
                 .add_input(filter_repos_input.name, filter_repos_input.input())
