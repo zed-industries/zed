@@ -1,11 +1,13 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use collections::HashMap;
+use gpui::AsyncApp;
 use language::{LanguageServerName, LspAdapter, LspAdapterDelegate, LspInstaller, Toolchain};
-use lsp::LanguageServerBinary;
+use lsp::{LanguageServerBinary, Uri};
 use node_runtime::{NodeRuntime, VersionStrategy};
-use project::ContextProviderWithTasks;
+use project::{ContextProviderWithTasks, lsp_store::language_server_settings};
 use semver::Version;
+use serde_json::Value;
 use std::{future::Future, path::PathBuf, sync::Arc, vec};
 use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::{ResultExt, maybe};
@@ -170,6 +172,21 @@ impl LspInstaller for BashLspAdapter {
 impl LspAdapter for BashLspAdapter {
     fn name(&self) -> LanguageServerName {
         LanguageServerName::new_static(Self::PACKAGE_NAME)
+    }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Option<Toolchain>,
+        _: Option<Uri>,
+        cx: &mut AsyncApp,
+    ) -> Result<Value> {
+        let settings = cx.update(|cx| {
+            language_server_settings(delegate.as_ref(), &self.name(), cx)
+                .and_then(|s| s.settings.clone())
+        });
+
+        Ok(settings.unwrap_or_default())
     }
 }
 
