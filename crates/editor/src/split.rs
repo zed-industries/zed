@@ -635,6 +635,15 @@ impl SplittableEditor {
             editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx);
         });
 
+        // The lhs editor is created lazily here, after the splittable editor was
+        // added to the workspace, so it needs the workspace wired up itself (for
+        // e.g. the blame popover).
+        workspace.update(cx, |workspace, cx| {
+            lhs_editor.update(cx, |lhs_editor, cx| {
+                lhs_editor.added_to_workspace(workspace, window, cx);
+            });
+        });
+
         // The left side renders the diff base content, so blame it at the right
         // side's base revision (`None` means HEAD).
         let rhs_blame_revisions = self.rhs_editor.read(cx).blame_revisions().clone();

@@ -1630,7 +1630,6 @@ impl Editor {
     pub(super) fn render_git_blame_inline(&self, window: &Window, cx: &App) -> bool {
         self.show_git_blame_inline
             && (self.focus_handle.is_focused(window) || self.inline_blame_popover.is_some())
-            && !self.newest_selection_head_on_empty_line(cx)
             && self.has_blame_entries(cx)
     }
 
@@ -1993,14 +1992,6 @@ impl Editor {
             .is_some_and(|blame| blame.read(cx).has_generated_entries())
     }
 
-    fn newest_selection_head_on_empty_line(&self, cx: &App) -> bool {
-        let cursor_anchor = self.selections.newest_anchor().head();
-
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let buffer_row = MultiBufferRow(cursor_anchor.to_point(&snapshot).row);
-
-        snapshot.line_len(buffer_row) == 0
-    }
     fn hunk_after_position(
         &mut self,
         snapshot: &EditorSnapshot,

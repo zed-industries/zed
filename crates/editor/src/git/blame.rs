@@ -322,17 +322,17 @@ impl GitBlame {
     }
 
     pub fn repository(&self, cx: &App, id: BufferId) -> Option<Entity<Repository>> {
-        // Prefer the repository resolved during blame generation, which also
-        // covers diff base text and synthetic buffers that aren't registered in
-        // the project (and so can't be resolved by buffer id).
+        // Prefer the repository resolved during blame generation, which covers
+        // the diff base text of a unified diff (not an excerpt buffer, so it
+        // can't be resolved on demand below).
         if let Some(repository) = self.repositories.get(&id) {
             return Some(repository.clone());
         }
-        self.project
-            .read(cx)
-            .git_store()
-            .read(cx)
-            .repository_and_path_for_buffer_id(id, cx)
+        let multi_buffer = self.multi_buffer.upgrade()?;
+        let buffer = multi_buffer.read(cx).buffer(id)?;
+        let git_store = self.project.read(cx).git_store().clone();
+        let git_store = git_store.read(cx);
+        resolve_repository_and_path(git_store, Some(&multi_buffer), &buffer, id, cx)
             .map(|(repo, _)| repo)
     }
 
