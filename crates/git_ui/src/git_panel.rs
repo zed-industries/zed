@@ -91,6 +91,8 @@ use workspace::{
 };
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
+use crate::git_graph::{GitGraph, GitGraphHost};
+
 const GIT_PANEL_KEY: &str = "GitPanel";
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 // TODO: We should revise this part. It seems the indentation width is not aligned with the one in project panel
@@ -746,6 +748,8 @@ impl TruncatedPatch {
 
 pub struct GitPanel {
     pub(crate) active_repository: Option<Entity<Repository>>,
+    /// Compact commit graph shown at the bottom of the Changes view.
+    graph: Option<Entity<GitGraph>>,
     pub(crate) commit_editor: Entity<Editor>,
     /// Whether the commit editor should fill the vertical height of the panel.
     commit_editor_expanded: bool,
@@ -823,9 +827,12 @@ pub(crate) fn commit_message_editor(
 ) -> Editor {
     let buffer = cx.new(|cx| MultiBuffer::singleton(commit_message_buffer, cx));
     let max_lines = if in_panel { MAX_PANEL_EDITOR_LINES } else { 18 };
+    // In the panel the box grows dynamically from a single line up to
+    // `max_lines`, then scrolls internally; the modal keeps a fixed height.
+    let min_lines = if in_panel { 1 } else { max_lines };
     let mut commit_editor = Editor::new(
         EditorMode::AutoHeight {
-            min_lines: max_lines,
+            min_lines,
             max_lines: Some(max_lines),
         },
         buffer,
@@ -1006,6 +1013,7 @@ impl GitPanel {
                     | GitStoreEvent::GlobalConfigurationUpdated
                     | GitStoreEvent::ActiveRepositoryChanged(_) => {
                         this.schedule_update(window, cx);
+                        this.update_graph_repository(window, cx);
                     }
                     GitStoreEvent::IndexWriteError(error) => {
                         this.workspace
@@ -1022,6 +1030,7 @@ impl GitPanel {
 
             let mut this = Self {
                 active_repository,
+                graph: None,
                 commit_editor,
                 commit_editor_expanded: false,
                 conflicted_count: 0,
@@ -1078,8 +1087,32 @@ impl GitPanel {
             };
 
             this.schedule_update(window, cx);
+            this.update_graph_repository(window, cx);
             this
         })
+    }
+
+    /// Points the embedded commit graph at the active repository, constructing
+    /// it on first use. Called on init and whenever the active repository
+    /// changes.
+    fn update_graph_repository(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repository) = self.active_repository.clone() else {
+            return;
+        };
+        let repo_id = repository.read(cx).id;
+
+        if let Some(graph) = &self.graph {
+            graph.update(cx, |graph, cx| graph.set_repo_id(repo_id, cx));
+        } else {
+            let git_store = self.project.read(cx).git_store().clone();
+            let workspace = self.workspace.clone();
+            let graph = cx.new(|cx| {
+                let mut graph = GitGraph::new(repo_id, git_store, workspace, None, window, cx);
+                graph.set_host(GitGraphHost::Panel);
+                graph
+            });
+            self.graph = Some(graph);
+        }
     }
 
     pub fn entry_by_path(&self, path: &RepoPath) -> Option<usize> {
@@ -4959,7 +4992,7 @@ impl GitPanel {
                 })
             } else {
                 editor.set_mode(EditorMode::AutoHeight {
-                    min_lines: MAX_PANEL_EDITOR_LINES,
+                    min_lines: 1,
                     max_lines: Some(MAX_PANEL_EDITOR_LINES),
                 })
             }
@@ -5233,7 +5266,7 @@ impl GitPanel {
                     .w_full()
                     .when(self.commit_editor_expanded, |this| this.flex_1().min_h_0())
                     .when(!self.commit_editor_expanded, |this| {
-                        this.h(max_height + footer_size)
+                        this.max_h(max_height + footer_size)
                     })
                     .border_t_1()
                     .border_color(if title_exceeds_limit {
@@ -5272,9 +5305,8 @@ impl GitPanel {
                     )
                     .child(
                         div()
-                            .when(self.commit_editor_expanded, |this| {
-                                this.flex_1().min_h_0().pb(footer_size)
-                            })
+                            .pb(footer_size)
+                            .when(self.commit_editor_expanded, |this| this.flex_1().min_h_0())
                             .pr_2p5()
                             .on_action(|&zed_actions::editor::MoveUp, _, cx| {
                                 cx.stop_propagation();
@@ -6064,6 +6096,40 @@ impl GitPanel {
             .child(content)
     }
 
+    /// The compact commit graph section shown at the bottom of the Changes
+    /// view. Grows to fill the remaining vertical space below the changed
+    /// files. The embedded [`GitGraph`] renders responsively in `Panel` mode.
+    fn render_graph_section(&self, cx: &Context<Self>) -> Option<impl IntoElement + use<>> {
+        let graph = self.graph.clone()?;
+        Some(
+            v_flex()
+                .flex_1()
+                .min_h_0()
+                .overflow_hidden()
+                .border_t_1()
+                .border_color(cx.theme().colors().border)
+                .child(
+                    h_flex()
+                        .flex_none()
+                        .h(px(26.))
+                        .px_2()
+                        .gap_1p5()
+                        .bg(cx.theme().colors().elevated_surface_background)
+                        .child(
+                            Icon::new(IconName::GitGraph)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                        .child(
+                            Label::new("Graph")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+                .child(div().flex_1().min_h_0().child(graph)),
+        )
+    }
+
     fn render_no_changes_ui(&self, cx: &Context<Self>) -> AnyElement {
         let show_branch_diff = self.changes_count == 0 && !self.is_on_main_branch(cx);
 
@@ -6260,9 +6326,18 @@ impl GitPanel {
         };
         let repo = repo.downgrade();
 
+        // Size the list to its content so the graph section below sits flush
+        // against the files instead of a flex-split gap. Cap it so a long list
+        // scrolls internally rather than pushing the graph off-screen.
+        let item_height = self.list_item_height().to_pixels(window.rem_size());
+        let content_height = item_height * entry_count.max(1) as f32;
+        let max_height = window.viewport_size().height * 0.5;
+        let entries_height = content_height.min(max_height);
+
         v_flex()
-            .flex_1()
-            .size_full()
+            .flex_none()
+            .h(entries_height)
+            .w_full()
             .overflow_hidden()
             .relative()
             .child(
@@ -7270,29 +7345,34 @@ impl Render for GitPanel {
                     })
                     .map(|this| match self.active_tab {
                         GitPanelTab::Changes => this
-                            .children(self.render_changes_header(window, cx))
-                            .when(!self.commit_editor_expanded, |this| {
-                                this.map(|this| {
-                                    if let Some(repo) = self.active_repository.clone()
-                                        && has_entries
-                                    {
-                                        this.child(self.render_entries(
-                                            has_write_access,
-                                            repo,
-                                            window,
-                                            cx,
-                                        ))
-                                    } else {
-                                        this.child(self.render_empty_state(cx).into_any_element())
-                                    }
-                                })
-                            })
                             .children(self.render_footer(window, cx))
                             .when(self.amend_pending, |this| {
                                 this.child(self.render_pending_amend(cx))
                             })
                             .when(!self.amend_pending, |this| {
                                 this.children(self.render_previous_commit(window, cx))
+                            })
+                            .when(!self.commit_editor_expanded, |this| {
+                                this.children(self.render_changes_header(window, cx))
+                                    .map(|this| {
+                                        if let Some(repo) = self.active_repository.clone()
+                                            && has_entries
+                                        {
+                                            this.child(self.render_entries(
+                                                has_write_access,
+                                                repo,
+                                                window,
+                                                cx,
+                                            ))
+                                        } else if self.graph.is_none() {
+                                            this.child(
+                                                self.render_empty_state(cx).into_any_element(),
+                                            )
+                                        } else {
+                                            this
+                                        }
+                                    })
+                                    .children(self.render_graph_section(cx))
                             }),
                         GitPanelTab::History => this.child(self.render_history_tab(window, cx)),
                     })
