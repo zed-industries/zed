@@ -27,7 +27,7 @@ enum ElicitationFieldState {
 
 pub(crate) struct ElicitationFormState {
     fields: HashMap<String, ElicitationFieldState>,
-    error: Option<SharedString>,
+    field_errors: HashMap<String, SharedString>,
 }
 
 impl ElicitationFormState {
@@ -98,7 +98,7 @@ impl ElicitationFormState {
 
         Self {
             fields,
-            error: None,
+            field_errors: HashMap::default(),
         }
     }
 
@@ -106,9 +106,10 @@ impl ElicitationFormState {
         &self,
         schema: &acp::ElicitationSchema,
         cx: &App,
-    ) -> Result<BTreeMap<String, acp::ElicitationContentValue>, SharedString> {
+    ) -> Result<BTreeMap<String, acp::ElicitationContentValue>, HashMap<String, SharedString>> {
         let required = schema.required.as_deref().unwrap_or_default();
         let mut content = BTreeMap::new();
+        let mut errors = HashMap::default();
 
         for (name, property) in &schema.properties {
             let is_required = required.iter().any(|required| required == name);
@@ -116,7 +117,7 @@ impl ElicitationFormState {
                 continue;
             };
 
-            match (property, field) {
+            let field_content = match (property, field) {
                 (
                     acp::ElicitationPropertySchema::String(schema),
                     ElicitationFieldState::Text(editor),
@@ -124,32 +125,29 @@ impl ElicitationFormState {
                     let value = editor.read(cx).text(cx).to_string();
                     if value.is_empty() {
                         if is_required {
-                            return Err(
-                                format!("{} is required", property_title(name, property)).into()
-                            );
+                            Err(format!("{} is required", property_title(name, property)).into())
+                        } else {
+                            Ok(None)
                         }
-                        continue;
+                    } else {
+                        validate_string_value(property_title(name, property), schema, &value)
+                            .map(|()| Some(value.into()))
                     }
-
-                    validate_string_value(property_title(name, property), schema, &value)?;
-                    content.insert(name.clone(), value.into());
                 }
                 (
                     acp::ElicitationPropertySchema::String(schema),
                     ElicitationFieldState::SingleSelect { value },
                 ) => {
                     if let Some(value) = value {
-                        validate_single_select_value(
-                            property_title(name, property),
-                            schema,
-                            value,
-                        )?;
-                        validate_string_value(property_title(name, property), schema, value)?;
-                        content.insert(name.clone(), value.clone().into());
+                        validate_single_select_value(property_title(name, property), schema, value)
+                            .and_then(|()| {
+                                validate_string_value(property_title(name, property), schema, value)
+                            })
+                            .map(|()| Some(value.clone().into()))
                     } else if is_required {
-                        return Err(
-                            format!("{} is required", property_title(name, property)).into()
-                        );
+                        Err(format!("{} is required", property_title(name, property)).into())
+                    } else {
+                        Ok(None)
                     }
                 }
                 (
@@ -159,15 +157,14 @@ impl ElicitationFormState {
                     let value = editor.read(cx).text(cx).trim().to_string();
                     if value.is_empty() {
                         if is_required {
-                            return Err(
-                                format!("{} is required", property_title(name, property)).into()
-                            );
+                            Err(format!("{} is required", property_title(name, property)).into())
+                        } else {
+                            Ok(None)
                         }
-                        continue;
+                    } else {
+                        validate_number_value(property_title(name, property), schema, &value)
+                            .map(|parsed| Some(parsed.into()))
                     }
-                    let parsed =
-                        validate_number_value(property_title(name, property), schema, &value)?;
-                    content.insert(name.clone(), parsed.into());
                 }
                 (
                     acp::ElicitationPropertySchema::Integer(schema),
@@ -176,42 +173,23 @@ impl ElicitationFormState {
                     let value = editor.read(cx).text(cx).trim().to_string();
                     if value.is_empty() {
                         if is_required {
-                            return Err(
-                                format!("{} is required", property_title(name, property)).into()
-                            );
+                            Err(format!("{} is required", property_title(name, property)).into())
+                        } else {
+                            Ok(None)
                         }
-                        continue;
+                    } else {
+                        validate_integer_value(property_title(name, property), schema, &value)
+                            .map(|parsed| Some(parsed.into()))
                     }
-                    let parsed = value.parse::<i64>().map_err(|_| {
-                        SharedString::from(format!(
-                            "{} must be an integer",
-                            property_title(name, property)
-                        ))
-                    })?;
-                    if schema.minimum.is_some_and(|minimum| parsed < minimum) {
-                        return Err(format!(
-                            "{} must be at least {}",
-                            property_title(name, property),
-                            schema.minimum.unwrap_or_default()
-                        )
-                        .into());
-                    }
-                    if schema.maximum.is_some_and(|maximum| parsed > maximum) {
-                        return Err(format!(
-                            "{} must be at most {}",
-                            property_title(name, property),
-                            schema.maximum.unwrap_or_default()
-                        )
-                        .into());
-                    }
-                    content.insert(name.clone(), parsed.into());
                 }
                 (
                     acp::ElicitationPropertySchema::Boolean(schema),
                     ElicitationFieldState::Boolean(value),
                 ) => {
                     if is_required || *value || schema.default.is_some() {
-                        content.insert(name.clone(), (*value).into());
+                        Ok(Some((*value).into()))
+                    } else {
+                        Ok(None)
                     }
                 }
                 (
@@ -226,45 +204,64 @@ impl ElicitationFormState {
                         .collect::<Vec<_>>();
                     values.sort();
                     if values.is_empty() && !is_required {
-                        continue;
-                    }
-                    if schema
+                        Ok(None)
+                    } else if schema
                         .min_items
                         .is_some_and(|min_items| values.len() < min_items as usize)
                     {
-                        return Err(format!(
-                            "{} needs more selections",
-                            property_title(name, property)
+                        Err(
+                            format!("{} needs more selections", property_title(name, property))
+                                .into(),
                         )
-                        .into());
-                    }
-                    if schema
+                    } else if schema
                         .max_items
                         .is_some_and(|max_items| values.len() > max_items as usize)
                     {
-                        return Err(format!(
-                            "{} has too many selections",
-                            property_title(name, property)
+                        Err(
+                            format!("{} has too many selections", property_title(name, property))
+                                .into(),
                         )
-                        .into());
+                    } else {
+                        Ok(Some(values.into()))
                     }
-                    content.insert(name.clone(), values.into());
                 }
-                _ => {}
+                _ => Ok(None),
+            };
+
+            match field_content {
+                Ok(Some(value)) => {
+                    content.insert(name.clone(), value);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    errors.insert(name.clone(), error);
+                }
             }
         }
 
-        Ok(content)
+        if errors.is_empty() {
+            Ok(content)
+        } else {
+            Err(errors)
+        }
     }
 
-    pub(crate) fn set_error(&mut self, error: impl Into<SharedString>) {
-        self.error = Some(error.into());
+    pub(crate) fn set_errors(&mut self, errors: HashMap<String, SharedString>) {
+        self.field_errors = errors;
+    }
+
+    pub(crate) fn set_field_error(
+        &mut self,
+        field_name: impl Into<String>,
+        error: impl Into<SharedString>,
+    ) {
+        self.field_errors.insert(field_name.into(), error.into());
     }
 
     pub(crate) fn set_boolean(&mut self, field_name: &str, value: bool) {
         if let Some(ElicitationFieldState::Boolean(field)) = self.fields.get_mut(field_name) {
             *field = value;
-            self.error.take();
+            self.field_errors.remove(field_name);
         }
     }
 
@@ -273,7 +270,7 @@ impl ElicitationFormState {
             self.fields.get_mut(field_name)
         {
             *selected = Some(value);
-            self.error.take();
+            self.field_errors.remove(field_name);
         }
     }
 
@@ -284,7 +281,7 @@ impl ElicitationFormState {
             } else {
                 values.remove(&value);
             }
-            self.error.take();
+            self.field_errors.remove(field_name);
         }
     }
 }
@@ -481,10 +478,67 @@ mod tests {
             let mut form_state = ElicitationFormState::new(&schema, window, cx);
             form_state.set_single_select("environment", "development".to_string());
 
+            let errors = form_state
+                .collect(&schema, cx)
+                .expect_err("invalid selected value should be rejected");
             assert_eq!(
-                form_state
-                    .collect(&schema, cx)
-                    .expect_err("invalid selected value should be rejected")
+                errors
+                    .get("environment")
+                    .expect("environment should have an error")
+                    .to_string(),
+                "Environment must be one of the provided options"
+            );
+
+            Editor::single_line(window, cx)
+        });
+    }
+
+    #[gpui::test]
+    fn form_state_reports_all_validation_errors(cx: &mut TestAppContext) {
+        crate::conversation_view::tests::init_test(cx);
+
+        cx.add_window(|window, cx| {
+            let schema = acp::ElicitationSchema::new()
+                .string("account", true)
+                .property(
+                    "age",
+                    acp::IntegerPropertySchema::new().title("Age").minimum(18),
+                    true,
+                )
+                .property(
+                    "environment",
+                    acp::StringPropertySchema::new()
+                        .title("Environment")
+                        .enum_values(vec!["production".to_string(), "staging".to_string()]),
+                    false,
+                );
+            let mut form_state = ElicitationFormState::new(&schema, window, cx);
+            if let Some(ElicitationFieldState::Text(editor)) = form_state.fields.get("age") {
+                editor.update(cx, |editor, cx| editor.set_text("abc", window, cx));
+            }
+            form_state.set_single_select("environment", "development".to_string());
+
+            let errors = form_state
+                .collect(&schema, cx)
+                .expect_err("all invalid fields should be reported");
+            assert_eq!(
+                errors
+                    .get("account")
+                    .expect("account should have an error")
+                    .to_string(),
+                "account is required"
+            );
+            assert_eq!(
+                errors
+                    .get("age")
+                    .expect("age should have an error")
+                    .to_string(),
+                "Age must be an integer"
+            );
+            assert_eq!(
+                errors
+                    .get("environment")
+                    .expect("environment should have an error")
                     .to_string(),
                 "Environment must be one of the provided options"
             );
@@ -587,7 +641,7 @@ fn render_form_preview(
     if let Some(error) = error
         && let Some(form_state) = &mut form_state
     {
-        form_state.set_error(error);
+        form_state.set_field_error("account", error);
     }
 
     render_preview_card(entry_ix, request, status, form_state.as_ref(), cx)
@@ -765,6 +819,28 @@ fn validate_number_value(
     if !parsed.is_finite() {
         return Err(format!("{title} must be a finite number").into());
     }
+    if let Some(minimum) = schema.minimum
+        && parsed < minimum
+    {
+        return Err(format!("{title} must be at least {minimum}").into());
+    }
+    if let Some(maximum) = schema.maximum
+        && parsed > maximum
+    {
+        return Err(format!("{title} must be at most {maximum}").into());
+    }
+
+    Ok(parsed)
+}
+
+fn validate_integer_value(
+    title: SharedString,
+    schema: &acp::IntegerPropertySchema,
+    value: &str,
+) -> Result<i64, SharedString> {
+    let parsed = value
+        .parse::<i64>()
+        .map_err(|_| SharedString::from(format!("{title} must be an integer")))?;
     if let Some(minimum) = schema.minimum
         && parsed < minimum
     {
@@ -1080,12 +1156,15 @@ impl<'a> ElicitationCard<'a> {
             .children(mode.requested_schema.properties.iter().filter_map(
                 |(field_name, property)| {
                     let field = state.fields.get(field_name)?;
-                    Some(self.render_field(field_name, property, field, cx))
+                    Some(self.render_field(
+                        field_name,
+                        property,
+                        field,
+                        state.field_errors.get(field_name),
+                        cx,
+                    ))
                 },
             ))
-            .when_some(state.error.clone(), |this, error| {
-                this.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
-            })
             .into_any_element()
     }
 
@@ -1094,16 +1173,27 @@ impl<'a> ElicitationCard<'a> {
         field_name: &str,
         property: &acp::ElicitationPropertySchema,
         field: &ElicitationFieldState,
+        error: Option<&SharedString>,
         cx: &App,
     ) -> AnyElement {
         let label = property_title(field_name, property);
         let description = property_description(property);
         let border_color = cx.theme().colors().border.opacity(0.8);
+        let field_border_color = if error.is_some() {
+            Color::Error.color(cx)
+        } else {
+            border_color
+        };
         let editor_background = cx.theme().colors().editor_background;
+        let label = if error.is_some() {
+            Label::new(label).size(LabelSize::Small).color(Color::Error)
+        } else {
+            Label::new(label).size(LabelSize::Small)
+        };
 
         v_flex()
             .gap_1()
-            .child(Label::new(label).size(LabelSize::Small))
+            .child(label)
             .when_some(description, |this, description| {
                 this.child(
                     Label::new(description)
@@ -1115,7 +1205,7 @@ impl<'a> ElicitationCard<'a> {
                 ElicitationFieldState::Text(editor) => div()
                     .rounded_sm()
                     .border_1()
-                    .border_color(border_color)
+                    .border_color(field_border_color)
                     .bg(editor_background)
                     .px_1()
                     .py_0p5()
@@ -1131,15 +1221,28 @@ impl<'a> ElicitationCard<'a> {
                     let on_boolean_change = self.handlers.on_boolean_change.clone();
                     let elicitation_id = self.elicitation.id.clone();
                     let field_name = field_name.to_string();
-                    Checkbox::new(
-                        format!("elicitation-bool-{}-{field_name}", self.entry_ix),
-                        checkbox_state,
-                    )
-                    .on_click(move |state, _window, cx| {
-                        let value = matches!(state, ToggleState::Selected);
-                        on_boolean_change(elicitation_id.clone(), field_name.clone(), value, cx);
-                    })
-                    .into_any_element()
+                    div()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(field_border_color)
+                        .px_1()
+                        .py_0p5()
+                        .child(
+                            Checkbox::new(
+                                format!("elicitation-bool-{}-{field_name}", self.entry_ix),
+                                checkbox_state,
+                            )
+                            .on_click(move |state, _window, cx| {
+                                let value = matches!(state, ToggleState::Selected);
+                                on_boolean_change(
+                                    elicitation_id.clone(),
+                                    field_name.clone(),
+                                    value,
+                                    cx,
+                                );
+                            }),
+                        )
+                        .into_any_element()
                 }
                 ElicitationFieldState::SingleSelect { value } => {
                     let options = match property {
@@ -1148,7 +1251,13 @@ impl<'a> ElicitationCard<'a> {
                         }
                         _ => Vec::new(),
                     };
-                    self.render_single_select(field_name, value.as_ref(), options, cx)
+                    self.render_single_select(
+                        field_name,
+                        value.as_ref(),
+                        options,
+                        error.is_some(),
+                        cx,
+                    )
                 }
                 ElicitationFieldState::MultiSelect(selected) => {
                     let options = match property {
@@ -1178,7 +1287,11 @@ impl<'a> ElicitationCard<'a> {
                                 )))
                                 .gap_1()
                                 .rounded_sm()
+                                .border_1()
+                                .border_color(field_border_color.opacity(0.7))
                                 .cursor_pointer()
+                                .px_1()
+                                .py_0p5()
                                 .on_click({
                                     let field_name = field_name.clone();
                                     move |_, _window, cx| {
@@ -1203,6 +1316,9 @@ impl<'a> ElicitationCard<'a> {
                         .into_any_element()
                 }
             })
+            .when_some(error.cloned(), |this, error| {
+                this.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
+            })
             .into_any_element()
     }
 
@@ -1211,10 +1327,15 @@ impl<'a> ElicitationCard<'a> {
         field_name: &str,
         selected_value: Option<&String>,
         options: Vec<ElicitationOption>,
+        has_error: bool,
         cx: &App,
     ) -> AnyElement {
         let entry_ix = self.entry_ix;
-        let border_color = cx.theme().colors().border.opacity(0.8);
+        let border_color = if has_error {
+            Color::Error.color(cx)
+        } else {
+            cx.theme().colors().border.opacity(0.8)
+        };
         let editor_background = cx.theme().colors().editor_background;
         let header_background = cx
             .theme()

@@ -2599,9 +2599,9 @@ impl ThreadView {
                             acp::ElicitationAcceptAction::new().content(content),
                         ))
                     }
-                    Err(error) => {
+                    Err(errors) => {
                         if let Some(state) = self.elicitation_form_states.get_mut(&elicitation_id) {
-                            state.set_error(error);
+                            state.set_errors(errors);
                         }
                         cx.notify();
                         return;
