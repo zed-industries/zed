@@ -448,12 +448,11 @@ impl ContextServerStore {
             let ai_was_disabled = this.ai_disabled;
             this.ai_disabled = ai_disabled;
 
-            let settings =
-                &Self::resolve_project_settings(&this.worktree_store, cx).context_servers;
-            let settings_changed = &this.context_server_settings != settings;
+            let settings = Self::resolve_all_context_server_settings(&this.worktree_store, cx);
+            let settings_changed = this.context_server_settings != settings;
 
             if settings_changed {
-                this.context_server_settings = settings.clone();
+                this.context_server_settings = settings;
             }
 
             // When AI is disabled, stop all running servers
@@ -493,9 +492,7 @@ impl ContextServerStore {
         let mut this = Self {
             state,
             _subscriptions: subscriptions,
-            context_server_settings: Self::resolve_project_settings(&worktree_store, cx)
-                .context_servers
-                .clone(),
+            context_server_settings: Self::resolve_all_context_server_settings(&worktree_store, cx),
             worktree_store,
             project: weak_project,
             registry,
@@ -1003,6 +1000,25 @@ impl ContextServerStore {
                 path: RelPath::empty(),
             });
         ProjectSettings::get(location, cx)
+    }
+
+    /// Merges context server settings from all visible worktrees so that servers defined
+    /// in any project folder in a multi-root workspace are picked up.
+    fn resolve_all_context_server_settings(
+        worktree_store: &Entity<WorktreeStore>,
+        cx: &App,
+    ) -> HashMap<Arc<str>, ContextServerSettings> {
+        let mut merged: HashMap<Arc<str>, ContextServerSettings> = HashMap::default();
+        for worktree in worktree_store.read(cx).visible_worktrees(cx) {
+            let location = settings::SettingsLocation {
+                worktree_id: worktree.read(cx).id(),
+                path: RelPath::empty(),
+            };
+            for (id, settings) in &ProjectSettings::get(Some(location), cx).context_servers {
+                merged.entry(id.clone()).or_insert_with(|| settings.clone());
+            }
+        }
+        merged
     }
 
     fn create_oauth_token_provider(
