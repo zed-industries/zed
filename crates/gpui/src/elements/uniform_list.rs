@@ -129,6 +129,10 @@ pub struct ItemSize {
     /// The size of the item's contents, which may be larger than the item itself,
     /// if the item was bounded by a parent element.
     pub contents: Size<Pixels>,
+    /// The width of the item selected by the
+    /// [`UniformList::with_width_from_item`], representing the "widest item"
+    /// value.
+    pub measured_item_width: Pixels,
 }
 
 impl UniformListScrollHandle {
@@ -374,6 +378,7 @@ impl Element for UniformList {
             handle.last_item_size = Some(ItemSize {
                 item: padded_bounds.size,
                 contents: content_size,
+                measured_item_width: longest_item_size.width,
             });
             handle.deferred_scroll_to_item.take()
         });
