@@ -11583,9 +11583,11 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         init_test(cx);
+        let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
             cx.set_global(db::AppDatabase::test_new());
         });
 
@@ -11595,7 +11597,6 @@ mod tests {
         let kvp = cx.update(|cx| KeyValueStore::global(cx));
         write_global_last_used_agent(kvp, deleted_agent.clone()).await;
 
-        let fs = FakeFs::new(cx.executor());
         fs.insert_tree("/project", json!({ "file.txt": "" })).await;
         let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
         let multi_workspace =
