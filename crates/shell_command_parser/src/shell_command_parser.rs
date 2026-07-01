@@ -20,6 +20,19 @@ pub enum TerminalCommandValidation {
     Unsupported,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutermostOutputPipe {
+    pub command: String,
+    pub behavior: OutputPipeBehavior,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputPipeBehavior {
+    Head(usize),
+    Tail(usize),
+    FullOutput,
+}
+
 pub fn extract_commands(command: &str) -> Option<Vec<String>> {
     let reader = BufReader::new(command.as_bytes());
     let options = ParserOptions::default();
@@ -113,6 +126,145 @@ pub fn validate_terminal_command(command: &str) -> TerminalCommandValidation {
         TerminalProgramValidation::Safe => TerminalCommandValidation::Safe,
         TerminalProgramValidation::Unsafe => TerminalCommandValidation::Unsafe,
         TerminalProgramValidation::Unsupported => TerminalCommandValidation::Unsupported,
+    }
+}
+
+pub fn rewrite_outermost_output_pipe(command: &str) -> Option<OutermostOutputPipe> {
+    let reader = BufReader::new(command.as_bytes());
+    let options = ParserOptions::default();
+    let source_info = SourceInfo::default();
+    let mut parser = Parser::new(reader, &options, &source_info);
+    let program = parser.parse_program().ok()?;
+
+    let pipeline = single_outermost_pipeline(&program)?;
+    if pipeline.timed.is_some() || pipeline.bang || pipeline.seq.len() < 2 {
+        return None;
+    }
+
+    let last_command = pipeline.seq.last()?;
+    let words = simple_command_words(last_command)?;
+    let behavior = output_pipe_behavior(&words)?;
+    let command = command_before_pipeline_stage(command, last_command)?;
+
+    Some(OutermostOutputPipe { command, behavior })
+}
+
+fn single_outermost_pipeline(program: &ast::Program) -> Option<&ast::Pipeline> {
+    let [complete_command] = program.complete_commands.as_slice() else {
+        return None;
+    };
+    let [compound_list_item] = complete_command.0.as_slice() else {
+        return None;
+    };
+    if !matches!(&compound_list_item.1, ast::SeparatorOperator::Sequence) {
+        return None;
+    }
+
+    let and_or_list = &compound_list_item.0;
+    if !and_or_list.additional.is_empty() {
+        return None;
+    }
+    Some(&and_or_list.first)
+}
+
+fn simple_command_words(command: &ast::Command) -> Option<Vec<String>> {
+    let ast::Command::Simple(simple_command) = command else {
+        return None;
+    };
+    if simple_command
+        .prefix
+        .as_ref()
+        .is_some_and(|prefix| !prefix.0.is_empty())
+    {
+        return None;
+    }
+
+    let mut words = vec![normalize_word(simple_command.word_or_name.as_ref()?)?];
+    if let Some(suffix) = &simple_command.suffix {
+        for item in &suffix.0 {
+            match item {
+                ast::CommandPrefixOrSuffixItem::Word(word) => words.push(normalize_word(word)?),
+                _ => return None,
+            }
+        }
+    }
+    Some(words)
+}
+
+fn output_pipe_behavior(words: &[String]) -> Option<OutputPipeBehavior> {
+    match words.first()?.as_str() {
+        "head" | "tail" => head_tail_output_behavior(words),
+        "less" => less_output_behavior(words),
+        _ => None,
+    }
+}
+
+fn head_tail_output_behavior(words: &[String]) -> Option<OutputPipeBehavior> {
+    let command = words.first()?;
+    let line_count = match words.get(1..) {
+        Some([]) => 10,
+        Some([arg]) => line_count_from_argument(arg)?,
+        Some([flag, value]) if flag == "-n" || flag == "--lines" => parse_line_count(value)?,
+        _ => return None,
+    };
+
+    match command.as_str() {
+        "head" => Some(OutputPipeBehavior::Head(line_count)),
+        "tail" => Some(OutputPipeBehavior::Tail(line_count)),
+        _ => None,
+    }
+}
+
+fn less_output_behavior(words: &[String]) -> Option<OutputPipeBehavior> {
+    match words.get(1..) {
+        Some([]) => Some(OutputPipeBehavior::FullOutput),
+        _ => None,
+    }
+}
+
+fn line_count_from_argument(argument: &str) -> Option<usize> {
+    if let Some(value) = argument.strip_prefix("--lines=") {
+        parse_line_count(value)
+    } else if let Some(value) = argument.strip_prefix("-n") {
+        if value.is_empty() {
+            None
+        } else {
+            parse_line_count(value)
+        }
+    } else if let Some(value) = argument.strip_prefix('-') {
+        parse_line_count(value)
+    } else {
+        None
+    }
+}
+
+fn parse_line_count(value: &str) -> Option<usize> {
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    value.parse().ok()
+}
+
+fn command_before_pipeline_stage(source: &str, stage: &ast::Command) -> Option<String> {
+    let stage_location = stage.location()?;
+    let stage_start = byte_index_for_character_index(source, stage_location.start.index)?;
+    let before_stage = source.get(..stage_start)?;
+    let before_pipe = before_stage.trim_end().strip_suffix('|')?.trim_end();
+    if before_pipe.is_empty() {
+        None
+    } else {
+        Some(before_pipe.to_string())
+    }
+}
+
+fn byte_index_for_character_index(text: &str, character_index: usize) -> Option<usize> {
+    if character_index == 0 {
+        return Some(0);
+    }
+    match text.char_indices().nth(character_index) {
+        Some((byte_index, _)) => Some(byte_index),
+        None if text.chars().count() == character_index => Some(text.len()),
+        None => None,
     }
 }
 
@@ -1215,6 +1367,118 @@ mod tests {
     fn test_pipe() {
         let commands = extract_commands("ls | xargs rm -rf").expect("parse failed");
         assert_eq!(commands, vec!["ls", "xargs rm -rf"]);
+    }
+
+    #[test]
+    fn test_rewrite_outermost_tail_pipe_defaults_to_ten_lines() {
+        assert_eq!(
+            rewrite_outermost_output_pipe("git --no-pager diff | tail"),
+            Some(OutermostOutputPipe {
+                command: "git --no-pager diff".to_string(),
+                behavior: OutputPipeBehavior::Tail(10),
+            })
+        );
+    }
+
+    #[test]
+    fn test_rewrite_outermost_head_pipe_with_line_count() {
+        assert_eq!(
+            rewrite_outermost_output_pipe("git --no-pager log | head -n 25"),
+            Some(OutermostOutputPipe {
+                command: "git --no-pager log".to_string(),
+                behavior: OutputPipeBehavior::Head(25),
+            })
+        );
+    }
+
+    #[test]
+    fn test_rewrite_outermost_tail_pipe_with_compact_line_counts() {
+        assert_eq!(
+            rewrite_outermost_output_pipe("rg needle | tail -20"),
+            Some(OutermostOutputPipe {
+                command: "rg needle".to_string(),
+                behavior: OutputPipeBehavior::Tail(20),
+            })
+        );
+        assert_eq!(
+            rewrite_outermost_output_pipe("rg needle | tail -n20"),
+            Some(OutermostOutputPipe {
+                command: "rg needle".to_string(),
+                behavior: OutputPipeBehavior::Tail(20),
+            })
+        );
+        assert_eq!(
+            rewrite_outermost_output_pipe("rg needle | head --lines=3"),
+            Some(OutermostOutputPipe {
+                command: "rg needle".to_string(),
+                behavior: OutputPipeBehavior::Head(3),
+            })
+        );
+    }
+
+    #[test]
+    fn test_rewrite_outermost_less_pipe_to_full_output() {
+        assert_eq!(
+            rewrite_outermost_output_pipe("git --no-pager log | less"),
+            Some(OutermostOutputPipe {
+                command: "git --no-pager log".to_string(),
+                behavior: OutputPipeBehavior::FullOutput,
+            })
+        );
+    }
+
+    #[test]
+    fn test_rewrite_outermost_output_pipe_preserves_unicode_before_pipe() {
+        assert_eq!(
+            rewrite_outermost_output_pipe("echo α | head -n 1"),
+            Some(OutermostOutputPipe {
+                command: "echo α".to_string(),
+                behavior: OutputPipeBehavior::Head(1),
+            })
+        );
+    }
+
+    #[test]
+    fn test_rewrite_outermost_output_pipe_rejects_nested_pipes() {
+        assert_eq!(
+            rewrite_outermost_output_pipe("echo $(git diff | tail)"),
+            None
+        );
+        assert_eq!(rewrite_outermost_output_pipe("(git diff | tail)"), None);
+    }
+
+    #[test]
+    fn test_rewrite_outermost_output_pipe_rejects_chained_commands() {
+        assert_eq!(
+            rewrite_outermost_output_pipe("echo setup && git diff | tail"),
+            None
+        );
+        assert_eq!(
+            rewrite_outermost_output_pipe("echo setup; git diff | tail"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_rewrite_outermost_output_pipe_rejects_complex_arguments() {
+        assert_eq!(rewrite_outermost_output_pipe("rg needle | tail -f"), None);
+        assert_eq!(
+            rewrite_outermost_output_pipe("rg needle | tail log.txt"),
+            None
+        );
+        assert_eq!(
+            rewrite_outermost_output_pipe("rg needle | head -c 20"),
+            None
+        );
+        assert_eq!(
+            rewrite_outermost_output_pipe("rg needle | tail -n +20"),
+            None
+        );
+        assert_eq!(rewrite_outermost_output_pipe("rg needle | less -R"), None);
+        assert_eq!(
+            rewrite_outermost_output_pipe("rg needle | less file.txt"),
+            None
+        );
     }
 
     #[test]
