@@ -422,6 +422,12 @@ pub struct InlayHintSettings {
     ///
     /// Default: false
     pub show_background: bool,
+    /// Maximum number of characters to display for an inlay hint.
+    ///
+    /// Set to 0 to disable truncation.
+    ///
+    /// Default: 45
+    pub max_length: usize,
     /// Whether or not to debounce inlay hints updates after buffer edits.
     ///
     /// Set to 0 to disable debouncing.
@@ -769,6 +775,7 @@ impl settings::Settings for AllLanguageSettings {
                     show_parameter_hints: inlay_hints.show_parameter_hints.unwrap(),
                     show_other_hints: inlay_hints.show_other_hints.unwrap(),
                     show_background: inlay_hints.show_background.unwrap(),
+                    max_length: inlay_hints.max_length.unwrap(),
                     edit_debounce_ms: inlay_hints.edit_debounce_ms.unwrap(),
                     scroll_debounce_ms: inlay_hints.scroll_debounce_ms.unwrap(),
                     toggle_on_modifiers_press: inlay_hints

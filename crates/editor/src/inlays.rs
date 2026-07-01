@@ -58,7 +58,17 @@ pub enum InlayContent {
 
 impl Inlay {
     pub fn hint(id: InlayId, position: Anchor, hint: &InlayHint) -> Self {
+        Self::hint_with_max_length(id, position, hint, 0)
+    }
+
+    pub fn hint_with_max_length(
+        id: InlayId,
+        position: Anchor,
+        hint: &InlayHint,
+        max_length: usize,
+    ) -> Self {
         let mut text = hint.text();
+        truncate_inlay_hint_text(&mut text, max_length);
         let needs_right_padding = hint.padding_right && !text.ends_with(" ");
         let needs_left_padding = hint.padding_left && !text.starts_with(" ");
         if needs_right_padding {
@@ -130,6 +140,28 @@ impl Inlay {
             _ => None,
         }
     }
+}
+
+fn truncate_inlay_hint_text(text: &mut Rope, max_length: usize) {
+    if max_length == 0 {
+        return;
+    }
+
+    let text_string = text.to_string();
+    if text_string.chars().count() <= max_length {
+        return;
+    }
+
+    let truncated = if max_length == 1 {
+        "…".to_string()
+    } else {
+        text_string
+            .chars()
+            .take(max_length - 1)
+            .chain(std::iter::once('…'))
+            .collect()
+    };
+    *text = Rope::from(truncated.as_str());
 }
 
 pub struct InlineValueCache {

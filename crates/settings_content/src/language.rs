@@ -728,6 +728,12 @@ pub struct InlayHintSettingsContent {
     ///
     /// Default: false
     pub show_background: Option<bool>,
+    /// Maximum number of characters to display for an inlay hint.
+    ///
+    /// Set to 0 to disable truncation.
+    ///
+    /// Default: 45
+    pub max_length: Option<usize>,
     /// Whether or not to debounce inlay hints updates after buffer edits.
     ///
     /// Set to 0 to disable debouncing.

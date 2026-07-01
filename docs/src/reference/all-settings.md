@@ -2810,6 +2810,7 @@ Run the {#action icon_theme_selector::Toggle} action in the command palette to s
     "show_parameter_hints": true,
     "show_other_hints": true,
     "show_background": false,
+    "max_length": 45,
     "edit_debounce_ms": 700,
     "scroll_debounce_ms": 50,
     "toggle_on_modifiers_press": null
@@ -2834,6 +2835,7 @@ Use the `lsp` section for the server configuration. Examples are provided in the
 
 Hints are not instantly queried in Zed, two kinds of debounces are used, either may be set to 0 to be disabled.
 Settings-related hint updates are not debounced.
+Set `max_length` to `0` to disable inlay hint truncation.
 
 All possible config values for `toggle_on_modifiers_press` are:
 
