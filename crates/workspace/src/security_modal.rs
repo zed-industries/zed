@@ -512,9 +512,10 @@ fn validate_trust_scope(
         return Err("Enter a folder to trust".into());
     }
     let expanded = match (trimmed.strip_prefix('~'), home_dir) {
-        (Some(rest), Some(home_dir)) => {
-            home_dir.join(rest.strip_prefix(std::path::MAIN_SEPARATOR).unwrap_or(rest))
-        }
+        (Some(rest), Some(home_dir)) => home_dir.join(
+            rest.strip_prefix(path_style.primary_separator())
+                .unwrap_or(rest),
+        ),
         _ => PathBuf::from(trimmed),
     };
     if !util::paths::is_absolute(&expanded.to_string_lossy(), path_style) {
