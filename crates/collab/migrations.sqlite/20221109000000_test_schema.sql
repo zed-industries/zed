@@ -125,6 +125,10 @@ CREATE TABLE "project_repository_statuses" (
     "second_status" INT4 NULL,
     "lines_added" INT4 NULL,
     "lines_deleted" INT4 NULL,
+    "staged_lines_added" INT4 NULL,
+    "staged_lines_deleted" INT4 NULL,
+    "unstaged_lines_added" INT4 NULL,
+    "unstaged_lines_deleted" INT4 NULL,
     "scan_id" INT8 NOT NULL,
     "is_deleted" BOOL NOT NULL,
     PRIMARY KEY (project_id, repository_id, repo_path)

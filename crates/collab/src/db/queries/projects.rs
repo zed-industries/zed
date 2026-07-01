@@ -430,6 +430,18 @@ impl Database {
                             lines_deleted: ActiveValue::set(
                                 status_entry.diff_stat_deleted.map(|v| v as i32),
                             ),
+                            staged_lines_added: ActiveValue::set(
+                                status_entry.staged_diff_stat_added.map(|v| v as i32),
+                            ),
+                            staged_lines_deleted: ActiveValue::set(
+                                status_entry.staged_diff_stat_deleted.map(|v| v as i32),
+                            ),
+                            unstaged_lines_added: ActiveValue::set(
+                                status_entry.unstaged_diff_stat_added.map(|v| v as i32),
+                            ),
+                            unstaged_lines_deleted: ActiveValue::set(
+                                status_entry.unstaged_diff_stat_deleted.map(|v| v as i32),
+                            ),
                         }
                     }),
                 )
@@ -446,6 +458,10 @@ impl Database {
                         project_repository_statuses::Column::SecondStatus,
                         project_repository_statuses::Column::LinesAdded,
                         project_repository_statuses::Column::LinesDeleted,
+                        project_repository_statuses::Column::StagedLinesAdded,
+                        project_repository_statuses::Column::StagedLinesDeleted,
+                        project_repository_statuses::Column::UnstagedLinesAdded,
+                        project_repository_statuses::Column::UnstagedLinesDeleted,
                     ])
                     .to_owned(),
                 )

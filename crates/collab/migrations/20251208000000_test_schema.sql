@@ -328,7 +328,11 @@ CREATE TABLE public.project_repository_statuses (
     scan_id bigint NOT NULL,
     is_deleted boolean NOT NULL,
     lines_added integer,
-    lines_deleted integer
+    lines_deleted integer,
+    staged_lines_added integer,
+    staged_lines_deleted integer,
+    unstaged_lines_added integer,
+    unstaged_lines_deleted integer
 );
 
 CREATE TABLE public.projects (

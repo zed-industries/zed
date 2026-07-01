@@ -1044,6 +1044,14 @@ pub trait GitRepository: Send + Sync {
     fn diff_stat(
         &self,
         path_prefixes: &[RepoPath],
+    ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>> {
+        self.diff_stat_for_kind(DiffStatKind::Aggregate, path_prefixes)
+    }
+
+    fn diff_stat_for_kind(
+        &self,
+        kind: DiffStatKind,
+        path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>>;
 
     /// Creates a checkpoint for the repository.
@@ -1125,6 +1133,13 @@ pub enum DiffType {
     HeadToIndex,
     HeadToWorktree,
     MergeBase { base_ref: SharedString },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffStatKind {
+    Aggregate,
+    Staged,
+    Unstaged,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -2262,8 +2277,9 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn diff_stat(
+    fn diff_stat_for_kind(
         &self,
+        kind: DiffStatKind,
         path_prefixes: &[RepoPath],
     ) -> BoxFuture<'static, Result<crate::status::GitDiffStat>> {
         let path_prefixes = path_prefixes.to_vec();
@@ -2272,12 +2288,13 @@ impl GitRepository for RealGitRepository {
         self.executor
             .spawn(async move {
                 let git_binary = git_binary?;
-                let mut args: Vec<String> = vec![
-                    "diff".into(),
-                    "--numstat".into(),
-                    "--no-renames".into(),
-                    "HEAD".into(),
-                ];
+                let mut args: Vec<String> =
+                    vec!["diff".into(), "--numstat".into(), "--no-renames".into()];
+                match kind {
+                    DiffStatKind::Aggregate => args.push("HEAD".into()),
+                    DiffStatKind::Staged => args.push("--staged".into()),
+                    DiffStatKind::Unstaged => {}
+                }
                 if !path_prefixes.is_empty() {
                     args.push("--".into());
                     args.extend(

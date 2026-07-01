@@ -11215,16 +11215,28 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                         added: 1,
                         deleted: 1,
                     }),
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
                     diff_stat: Some(DiffStat {
+                        added: 0,
+                        deleted: 1,
+                    }),
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: Some(DiffStat {
                         added: 0,
                         deleted: 1,
                     }),
@@ -11253,11 +11265,18 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                         added: 1,
                         deleted: 1,
                     }),
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("c.txt"),
@@ -11266,11 +11285,21 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                         added: 1,
                         deleted: 1,
                     }),
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: Some(DiffStat {
+                        added: 1,
+                        deleted: 1,
+                    }),
                 },
                 StatusEntry {
                     repo_path: repo_path("d.txt"),
                     status: StatusCode::Deleted.worktree(),
                     diff_stat: Some(DiffStat {
+                        added: 0,
+                        deleted: 1,
+                    }),
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: Some(DiffStat {
                         added: 0,
                         deleted: 1,
                     }),
@@ -11308,6 +11337,11 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
                 repo_path: repo_path("a.txt"),
                 status: StatusCode::Deleted.worktree(),
                 diff_stat: Some(DiffStat {
+                    added: 0,
+                    deleted: 1,
+                }),
+                staged_diff_stat: None,
+                unstaged_diff_stat: Some(DiffStat {
                     added: 0,
                     deleted: 1,
                 }),
@@ -11562,6 +11596,8 @@ async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
                 }
                 .into(),
                 diff_stat: None,
+                staged_diff_stat: None,
+                unstaged_diff_stat: None,
             }]
         )
     });
@@ -11768,6 +11804,11 @@ async fn test_repository_pending_ops_staging(
                     added: 1,
                     deleted: 0,
                 }),
+                staged_diff_stat: Some(DiffStat {
+                    added: 1,
+                    deleted: 0,
+                }),
+                unstaged_diff_stat: None,
             }]
         );
     });
@@ -11878,6 +11919,11 @@ async fn test_repository_pending_ops_long_running_staging(
                     added: 1,
                     deleted: 0,
                 }),
+                staged_diff_stat: Some(DiffStat {
+                    added: 1,
+                    deleted: 0,
+                }),
+                unstaged_diff_stat: None,
             }]
         );
     });
@@ -12003,11 +12049,15 @@ async fn test_repository_pending_ops_stage_all(
                     repo_path: repo_path("a.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: None,
                 },
                 StatusEntry {
                     repo_path: repo_path("b.txt"),
                     status: FileStatus::Untracked,
                     diff_stat: None,
+                    staged_diff_stat: None,
+                    unstaged_diff_stat: None,
                 },
             ]
         );
@@ -13281,6 +13331,78 @@ async fn test_git_worktrees_and_submodules(cx: &mut gpui::TestAppContext) {
         pretty_assertions::assert_eq!(
             repo.status_for_path(&repo_path("c.txt")).unwrap().status,
             StatusCode::Modified.worktree(),
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_git_repository_status_includes_staged_and_unstaged_diff_stats(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let root = TempTree::new(json!({
+        "project": {
+            "partial.txt": "a\nb\nc\n",
+        },
+    }));
+
+    let work_dir = root.path().join("project");
+    let repo = git_init(work_dir.as_path());
+    git_add("partial.txt", &repo);
+    git_commit("Initial commit", &repo);
+
+    std::fs::write(work_dir.join("partial.txt"), "a staged\nb\nc\n").unwrap();
+    git_add("partial.txt", &repo);
+    std::fs::write(
+        work_dir.join("partial.txt"),
+        "a staged\nb\nc\nunstaged 1\nunstaged 2\n",
+    )
+    .unwrap();
+
+    let project = Project::test(
+        Arc::new(RealFs::new(None, cx.executor())),
+        [root.path()],
+        cx,
+    )
+    .await;
+
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    repository.read_with(cx, |repository, _| {
+        let entries = repository.cached_status().collect::<Vec<_>>();
+        assert_eq!(
+            entries,
+            [StatusEntry {
+                repo_path: repo_path("partial.txt"),
+                status: TrackedStatus {
+                    index_status: StatusCode::Modified,
+                    worktree_status: StatusCode::Modified,
+                }
+                .into(),
+                diff_stat: Some(DiffStat {
+                    added: 3,
+                    deleted: 1,
+                }),
+                staged_diff_stat: Some(DiffStat {
+                    added: 1,
+                    deleted: 1,
+                }),
+                unstaged_diff_stat: Some(DiffStat {
+                    added: 2,
+                    deleted: 0,
+                }),
+            }]
         );
     });
 }
