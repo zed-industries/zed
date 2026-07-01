@@ -7,11 +7,11 @@ use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
 };
 use language_model::{
-    ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
-    ProviderConfigurationView, RateLimiter, env_var,
+    ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
+    LanguageModelToolSchemaFormat, RateLimiter, env_var,
 };
 use open_ai::ResponseStreamEvent;
 use serde::Deserialize;
@@ -261,28 +261,21 @@ impl LanguageModelProvider for VercelAiGatewayLanguageModelProvider {
             .update(cx, |state, cx| state.set_api_key(None, cx))
     }
 
-    fn configuration_view_v2(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> ProviderConfigurationView {
-        let state = self.state.clone();
-        ProviderConfigurationView::Inline(
-            cx.new(|cx| {
-                crate::ApiKeyEditor::new(
-                    state,
-                    "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys&title=Go+to+AI+Gateway",
-                    "Paste your Vercel AI Gateway API key",
-                    |state, _cx| crate::api_key_status(&state.api_key_state),
-                    |state, key, cx| state.update(cx, |state, cx| state.set_api_key(Some(key), cx)),
-                    |state, cx| state.update(cx, |state, cx| state.set_api_key(None, cx)),
-                    window,
-                    cx,
-                )
-            })
-            .into(),
-        )
+    fn api_key_configuration(&self, cx: &App) -> Option<ApiKeyConfiguration> {
+        let state = self.state.read(cx);
+        Some(ApiKeyConfiguration {
+            has_key: state.api_key_state.has_key(),
+            is_from_env_var: state.api_key_state.is_from_env_var(),
+            env_var_name: state.api_key_state.env_var_name().clone(),
+            api_key_url:
+                "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%2Fapi-keys&title=Go+to+AI+Gateway"
+                    .into(),
+        })
+    }
+
+    fn set_api_key(&self, key: String, cx: &mut App) -> Task<Result<()>> {
+        self.state
+            .update(cx, |state, cx| state.set_api_key(Some(key), cx))
     }
 }
 
@@ -743,7 +736,7 @@ impl Render for ConfigurationView {
                 )
                 .into_any_element()
         } else {
-            ConfiguredApiCard::new(configured_card_label)
+            ConfiguredApiCard::new("vercel-reset-key", configured_card_label)
                 .disabled(env_var_set)
                 .when(env_var_set, |this| {
                     this.tooltip_label(format!("To reset your API key, unset the {API_KEY_ENV_VAR_NAME} environment variable."))

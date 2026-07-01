@@ -24,6 +24,7 @@ use sandbox::{GitSandboxPolicy, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy
 
 use crate::completion_provider::AvailableSkill;
 use crate::message_editor::SharedSessionCapabilities;
+use crate::ui::{SandboxGroup, SandboxRow, SandboxSection, SandboxStatusTooltip};
 
 use db::kvp::KeyValueStore;
 use gpui::List;
@@ -1211,7 +1212,7 @@ impl ThreadView {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
                     && self.thread.read(cx).supports_truncate(cx)
-                    && user_message.id.is_some()
+                    && user_message.client_id.is_some()
                     && !self.is_subagent()
                 {
                     self.editing_message = Some(event.entry_index);
@@ -1222,7 +1223,7 @@ impl ThreadView {
                 if let Some(AgentThreadEntry::UserMessage(user_message)) =
                     self.thread.read(cx).entries().get(event.entry_index)
                     && self.thread.read(cx).supports_truncate(cx)
-                    && user_message.id.is_some()
+                    && user_message.client_id.is_some()
                     && !self.is_subagent()
                 {
                     if editor.read(cx).text(cx).as_str() == user_message.content.to_markdown(cx) {
@@ -1940,8 +1941,13 @@ impl ThreadView {
         }
         let thread = self.thread.clone();
 
-        let Some(user_message_id) = thread.update(cx, |thread, _| {
-            thread.entries().get(entry_ix)?.user_message()?.id.clone()
+        let Some(client_id) = thread.update(cx, |thread, _| {
+            thread
+                .entries()
+                .get(entry_ix)?
+                .user_message()?
+                .client_id
+                .clone()
         }) else {
             return;
         };
@@ -1977,7 +1983,7 @@ impl ThreadView {
             }
 
             thread
-                .update(cx, |thread, cx| thread.rewind(user_message_id, cx))
+                .update(cx, |thread, cx| thread.rewind(client_id, cx))
                 .await?;
             this.update_in(cx, |thread, window, cx| {
                 cx.emit(AcpThreadViewEvent::Interacted);
@@ -2684,10 +2690,10 @@ impl ThreadView {
 
     // thread stuff
 
-    pub fn restore_checkpoint(&mut self, message_id: &UserMessageId, cx: &mut Context<Self>) {
+    pub fn restore_checkpoint(&mut self, client_id: &ClientUserMessageId, cx: &mut Context<Self>) {
         self.thread
             .update(cx, |thread, cx| {
-                thread.restore_checkpoint(message_id.clone(), cx)
+                thread.restore_checkpoint(client_id.clone(), cx)
             })
             .detach_and_log_err(cx);
     }
@@ -4136,7 +4142,6 @@ impl ThreadView {
                                     .gap_0p5()
                                     .child(self.render_add_context_button(cx))
                                     .child(self.render_follow_toggle(cx))
-                                    .children(self.render_sandbox_status(cx))
                                     .children(self.render_fast_mode_control(cx))
                                     .children(self.render_thinking_control(cx)),
                             )
@@ -4614,13 +4619,7 @@ impl ThreadView {
         }
     }
 
-    /// A small lock icon summarizing the sandbox state. Hovering shows the
-    /// write-access paths and network-access domains from the user's settings
-    /// and the per-thread overrides. The lock is struck through when sandboxing
-    /// is turned off (in settings, or for this thread). Shown whenever
-    /// sandboxing is *applicable* to the project, even when disabled, so the
-    /// user can always see and change the state. Clicking opens the settings.
-    fn render_sandbox_status(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub fn render_sandbox_status(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let status = self.refresh_sandbox_status(cx)?;
         let settings_sandbox = status.settings_sandbox.clone();
         let thread_sandbox = status.thread_sandbox.clone();
@@ -4629,52 +4628,67 @@ impl ThreadView {
         // The lock is struck only when the *merged* result is unsandboxed (the
         // agent runs with ambient permissions). A layer that is merely wide open
         // but still sandboxed keeps the closed lock.
-        let icon = if settings_sandbox
+        let (icon, icon_color) = if settings_sandbox
             .clone()
             .merge(thread_sandbox.clone())
             .is_unsandboxed()
         {
-            IconName::LockOutlinedOff
+            (IconName::LockOff, Color::Muted)
         } else {
-            IconName::LockOutlined
+            (IconName::Lock, Color::Default)
         };
 
-        let state = match (settings_sandbox, thread_sandbox) {
+        let tooltip = match (settings_sandbox, thread_sandbox) {
             // No sandbox at all because the user turned it off in settings: the
             // per-thread layer is moot, so don't show it.
-            (ThreadSandbox::Unsandboxed, _) => SandboxTooltipState::DisabledInSettings,
+            (ThreadSandbox::Unsandboxed, _) => SandboxStatusTooltip::disabled_in_settings(),
             // Sandboxed by settings, but disabled for this thread: show the
             // settings scope (greyed) for context above the disabled status.
             (ThreadSandbox::Sandboxed(settings_policy), ThreadSandbox::Unsandboxed) => {
-                SandboxTooltipState::DisabledForThread {
-                    settings: augment_settings_sandbox_policy(settings_policy, baseline),
-                }
+                let settings = augment_settings_sandbox_policy(&settings_policy, baseline);
+                SandboxStatusTooltip::disabled_for_thread(sandbox_section(
+                    "Defined in your settings:",
+                    &settings,
+                    true,
+                ))
             }
             (
                 ThreadSandbox::Sandboxed(settings_policy),
                 ThreadSandbox::Sandboxed(thread_policy),
-            ) => SandboxTooltipState::Enabled {
-                settings: augment_settings_sandbox_policy(settings_policy, baseline),
-                thread: thread_policy,
-            },
+            ) => {
+                let settings = augment_settings_sandbox_policy(&settings_policy, baseline);
+                let thread = SandboxPolicyDisplay::from_policy(&thread_policy);
+                // Omit the per-thread section when it grants nothing extra.
+                let thread = (!sandbox_policy_grants_nothing(&thread))
+                    .then(|| sandbox_section("Allowed for this thread:", &thread, false));
+                SandboxStatusTooltip::enabled(
+                    sandbox_section("Defined in your settings:", &settings, true),
+                    thread,
+                )
+            }
         };
 
         Some(
-            IconButton::new("sandbox-status", icon)
-                .icon_size(IconSize::Small)
-                .icon_color(Color::Muted)
-                .tooltip(Tooltip::element(move |_window, cx| {
-                    render_sandbox_status_tooltip(&state, cx)
-                }))
-                .on_click(|_, window, cx| {
-                    window.dispatch_action(
-                        Box::new(zed_actions::OpenSettingsAt {
-                            path: zed_actions::AGENT_SANDBOX_SETTINGS_PATH.to_string(),
-                            target: None,
+            h_flex()
+                .gap_1()
+                .child(
+                    IconButton::new("sandbox-status", icon)
+                        .icon_size(IconSize::Small)
+                        .icon_color(icon_color)
+                        .tooltip(Tooltip::element(move |_window, _cx| {
+                            tooltip.clone().into_any_element()
+                        }))
+                        .on_click(|_, window, cx| {
+                            window.dispatch_action(
+                                Box::new(zed_actions::OpenSettingsAt {
+                                    path: zed_actions::AGENT_SANDBOX_SETTINGS_PATH.to_string(),
+                                    target: None,
+                                }),
+                                cx,
+                            );
                         }),
-                        cx,
-                    );
-                })
+                )
+                .child(Divider::vertical().h_4())
                 .into_any_element(),
         )
     }
@@ -5591,74 +5605,83 @@ impl Render for TokenUsageTooltip {
     }
 }
 
-/// Which sandbox state the status tooltip describes.
+/// A display-ready snapshot of a sandbox policy for the status tooltip.
+///
+/// The opaque `HostFilesystemLocation`s in a policy are stringified up front,
+/// when this is built, so the tooltip state (which outlives the build and is
+/// captured by the lazy tooltip closure) never holds the locations' fds open.
 #[derive(Clone)]
-enum SandboxTooltipState {
-    /// Sandboxing is on: show the settings policy and the per-thread overrides.
-    Enabled {
-        settings: SandboxPolicy,
-        thread: SandboxPolicy,
-    },
-    /// Turned off via the persistent `allow_unsandboxed` setting.
-    DisabledInSettings,
-    /// Turned off for this thread (the "run without sandbox for this thread"
-    /// fallback). The settings policy is still shown, greyed out, for context.
-    DisabledForThread { settings: SandboxPolicy },
+struct SandboxPolicyDisplay {
+    fs: SandboxFsDisplay,
+    network: SandboxNetPolicy,
+    git: SandboxGitDisplay,
 }
 
-/// Build the hover tooltip for the sandbox status icon. Always opens with a
-/// "Sandboxing settings" title, then describes the active state.
-///
-/// Returns the raw content only: `Tooltip::element` wraps it in the tooltip
-/// container, so wrapping it again here would double the background.
-fn render_sandbox_status_tooltip(state: &SandboxTooltipState, cx: &App) -> AnyElement {
-    let mut body = v_flex()
-        .min_w(rems(15.))
-        .gap_2()
-        .child(Label::new("Sandboxing settings"))
-        .child(Divider::horizontal());
+/// The filesystem write-access portion of a [`SandboxPolicyDisplay`].
+#[derive(Clone)]
+enum SandboxFsDisplay {
+    Unrestricted,
+    Restricted(Vec<WritableEntryDisplay>),
+}
 
-    match state {
-        SandboxTooltipState::DisabledInSettings => {
-            body = body.child(
-                Label::new("Sandboxing is disabled in settings")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            );
-        }
-        SandboxTooltipState::DisabledForThread { settings } => {
-            // The settings policy is moot while disabled, so show it greyed out
-            // for context above the active "disabled for this thread" status.
-            let settings_section =
-                render_sandbox_policy_section("From your settings", settings, true, cx);
-            body = body
-                .children(
-                    settings_section
-                        .map(|section| div().opacity(0.5).child(section).into_any_element()),
-                )
-                .child(Divider::horizontal())
-                .child(Label::new("Sandboxing is disabled for this thread").size(LabelSize::Small));
-        }
-        SandboxTooltipState::Enabled { settings, thread } => {
-            let settings_section =
-                render_sandbox_policy_section("From your settings", settings, true, cx);
-            let thread_section =
-                render_sandbox_policy_section("Allowed in this thread", thread, false, cx);
-            body = body.children(settings_section);
-            if let Some(section) = thread_section {
-                body = body.child(Divider::horizontal()).child(section);
-            }
+/// A single writable entry to display in the sandbox tooltip: either a real host
+/// location (already stringified for display) or the Linux-only host-isolated
+/// `/tmp` overlay, which has no backing host path and is purely a label.
+#[derive(Clone)]
+enum WritableEntryDisplay {
+    Path(String),
+    // Only ever constructed on Linux (the bwrap `--tmpfs /tmp` overlay), so the
+    // variant is gated to match and avoid dead-code warnings elsewhere.
+    #[cfg(target_os = "linux")]
+    IsolatedTmp,
+}
+
+/// The Git-access portion of a [`SandboxPolicyDisplay`]: whether `.git` writes
+/// are granted, and the (display-only) `.git` directories the policy governs.
+#[derive(Clone)]
+struct SandboxGitDisplay {
+    allowed: bool,
+    git_dirs: Vec<String>,
+}
+
+impl SandboxPolicyDisplay {
+    /// Display a policy verbatim (used for the per-thread overrides, which carry
+    /// no implicit baseline grants). Takes the policy by reference and stringifies
+    /// its locations immediately, so no fd is retained past this call.
+    fn from_policy(policy: &SandboxPolicy) -> Self {
+        let fs = match &policy.fs {
+            SandboxFsPolicy::Unrestricted => SandboxFsDisplay::Unrestricted,
+            SandboxFsPolicy::Restricted { writable_paths } => SandboxFsDisplay::Restricted(
+                writable_paths
+                    .iter()
+                    .map(|location| {
+                        WritableEntryDisplay::Path(location.untrusted_path_display().to_string())
+                    })
+                    .collect(),
+            ),
+        };
+        SandboxPolicyDisplay {
+            fs,
+            network: policy.network.clone(),
+            git: SandboxGitDisplay::from_policy(&policy.git),
         }
     }
-
-    body.into_any_element()
 }
 
-/// Render one section of the sandbox status tooltip.
-///
-/// When `show_empty` is true the section is always rendered, and groups that
-/// grant nothing show "None". When false, empty groups are omitted and the
-/// whole section is dropped (`None`) if it grants nothing at all.
+impl SandboxGitDisplay {
+    /// Stringify a Git policy's `.git` directories for display, retaining no fds.
+    fn from_policy(git: &GitSandboxPolicy) -> Self {
+        SandboxGitDisplay {
+            allowed: git.allows_writes(),
+            git_dirs: git
+                .git_dirs()
+                .iter()
+                .map(|location| location.untrusted_path_display().to_string())
+                .collect(),
+        }
+    }
+}
+
 /// Fold the always-granted baseline writable paths (the project's worktree
 /// roots, derived from the same source the terminal tool uses) and, on Linux,
 /// the host-isolated `/tmp` overlay into a settings policy for display. These
@@ -5667,102 +5690,105 @@ fn render_sandbox_status_tooltip(state: &SandboxTooltipState, cx: &App) -> AnyEl
 /// section rather than stored. A no-op when the fs is unrestricted (rendered as
 /// "All paths"), since there's nothing to scope.
 fn augment_settings_sandbox_policy(
-    mut policy: SandboxPolicy,
+    policy: &SandboxPolicy,
     baseline: Vec<PathBuf>,
-) -> SandboxPolicy {
-    if let SandboxFsPolicy::Restricted { writable_paths } = &mut policy.fs {
-        let mut merged = baseline;
-        for path in writable_paths.drain(..) {
-            if !merged.contains(&path) {
-                merged.push(path);
+) -> SandboxPolicyDisplay {
+    let fs = match &policy.fs {
+        SandboxFsPolicy::Unrestricted => SandboxFsDisplay::Unrestricted,
+        SandboxFsPolicy::Restricted { writable_paths } => {
+            // Dedup by display string. We deliberately don't open the locations'
+            // fds to dedup by inode here: this is a display-only tooltip and the
+            // string is the location's identity for that purpose. The string can
+            // only diverge from the captured inode while a symlink-swap is
+            // actively in progress, and in that case the bind validator refuses
+            // to run the command at all (see the `sandbox` crate) — so showing the
+            // requested path is always safe, and not worth a blocking syscall on
+            // the render path.
+            let mut merged: Vec<String> = Vec::new();
+            let baseline_paths = baseline.iter().map(|path| path.display().to_string());
+            let granted_paths = writable_paths
+                .iter()
+                .map(|location| location.untrusted_path_display().to_string());
+            for path in baseline_paths.chain(granted_paths) {
+                if !merged.contains(&path) {
+                    merged.push(path);
+                }
             }
+            // `mut` is only needed on Linux, where the isolated `/tmp` entry is
+            // pushed below.
+            #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+            let mut entries: Vec<WritableEntryDisplay> =
+                merged.into_iter().map(WritableEntryDisplay::Path).collect();
+            // The ephemeral, host-isolated tmpfs at /tmp is Linux-specific (the
+            // bwrap `--tmpfs /tmp` overlay). It's a display-only label, not a
+            // real host path, so it can't be a captured location.
+            #[cfg(target_os = "linux")]
+            entries.push(WritableEntryDisplay::IsolatedTmp);
+            SandboxFsDisplay::Restricted(entries)
         }
-        // The ephemeral, host-isolated tmpfs at /tmp is Linux-specific (the
-        // bwrap `--tmpfs /tmp` overlay). It's a display-only label, not a real
-        // host path, so it can't come from the path source above.
-        #[cfg(target_os = "linux")]
-        merged.push(PathBuf::from("/tmp (isolated)"));
-        *writable_paths = merged;
+    };
+    SandboxPolicyDisplay {
+        fs,
+        network: policy.network.clone(),
+        git: SandboxGitDisplay::from_policy(&policy.git),
     }
-    policy
 }
 
-fn render_sandbox_policy_section(
-    title: &str,
-    policy: &SandboxPolicy,
-    show_empty: bool,
-    cx: &App,
-) -> Option<AnyElement> {
-    let write_rows = sandbox_fs_rows(&policy.fs, cx);
-    let network_rows = sandbox_network_rows(&policy.network, cx);
+fn sandbox_section(title: &str, policy: &SandboxPolicyDisplay, show_empty: bool) -> SandboxSection {
     let write_empty = fs_grants_nothing(&policy.fs);
     let network_empty = network_grants_nothing(&policy.network);
-    // Git access is only ever surfaced when *granted* (the `.git` dirs become
-    // writable), so it never shows a "None" row — unlike write/network, it's
-    // omitted entirely when denied, regardless of `show_empty`.
     let git_empty = git_grants_nothing(&policy.git);
 
-    if !show_empty && write_empty && network_empty && git_empty {
-        return None;
+    let mut section = SandboxSection::new(title.to_string());
+
+    if show_empty || !write_empty {
+        section =
+            section.group(SandboxGroup::new("Write Access").rows(sandbox_fs_rows(&policy.fs)));
     }
 
-    let write_group =
-        (show_empty || !write_empty).then(|| sandbox_status_group("Write access", write_rows));
-    let network_group = (show_empty || !network_empty)
-        .then(|| sandbox_status_group("Network access", network_rows));
-    let git_group = (!git_empty)
-        .then(|| sandbox_status_group("Git metadata access", sandbox_git_rows(&policy.git, cx)));
+    if show_empty || !network_empty {
+        section = section
+            .group(SandboxGroup::new("Network Access").rows(sandbox_network_rows(&policy.network)));
+    }
 
-    Some(
-        v_flex()
-            .gap_1()
-            .child(Label::new(title.to_string()))
-            .children(write_group)
-            .children(network_group)
-            .children(git_group)
-            .into_any_element(),
-    )
+    if !git_empty {
+        section = section
+            .group(SandboxGroup::new("Git Metadata Access").rows(sandbox_git_rows(&policy.git)));
+    }
+
+    section
+}
+
+/// Whether a policy grants nothing worth surfacing, used to decide whether to
+/// show the per-thread overrides section at all.
+fn sandbox_policy_grants_nothing(policy: &SandboxPolicyDisplay) -> bool {
+    fs_grants_nothing(&policy.fs)
+        && network_grants_nothing(&policy.network)
+        && git_grants_nothing(&policy.git)
 }
 
 /// Git access grants nothing to surface unless `.git` writes are allowed *and*
 /// at least one `.git` directory is known.
-fn git_grants_nothing(git: &GitSandboxPolicy) -> bool {
-    !git.allows_writes() || git.git_dirs().is_empty()
+fn git_grants_nothing(git: &SandboxGitDisplay) -> bool {
+    !git.allowed || git.git_dirs.is_empty()
 }
 
 /// Rows for the Git-access group: one row per writable `.git` directory (these
 /// may live outside the project for a linked worktree).
-fn sandbox_git_rows(git: &GitSandboxPolicy, cx: &App) -> Vec<AnyElement> {
-    match git {
-        GitSandboxPolicy::Allowed { git_dirs } if !git_dirs.is_empty() => git_dirs
-            .iter()
-            .map(|path| sandbox_git_path_row(path, cx))
-            .collect(),
-        _ => Vec::new(),
+fn sandbox_git_rows(git: &SandboxGitDisplay) -> Vec<SandboxRow> {
+    if !git.allowed {
+        return Vec::new();
     }
+    git.git_dirs
+        .iter()
+        // The display string was captured up front; reconstruct a throwaway path
+        // here purely to render a label + icon (never used as an identity).
+        .map(|dir| SandboxRow::git(PathBuf::from(dir)))
+        .collect()
 }
 
-/// A `.git` directory row, tagged with a Git icon to distinguish it from plain
-/// writable paths.
-fn sandbox_git_path_row(path: &Path, cx: &App) -> AnyElement {
-    h_flex()
-        .min_w_0()
-        .gap_1()
-        .child(
-            Icon::new(IconName::GitBranch)
-                .color(Color::Muted)
-                .size(IconSize::Small),
-        )
-        .child(
-            Label::new(path.display().to_string())
-                .size(LabelSize::XSmall)
-                .buffer_font(cx),
-        )
-        .into_any_element()
-}
-
-fn fs_grants_nothing(fs: &SandboxFsPolicy) -> bool {
-    matches!(fs, SandboxFsPolicy::Restricted { writable_paths } if writable_paths.is_empty())
+fn fs_grants_nothing(fs: &SandboxFsDisplay) -> bool {
+    matches!(fs, SandboxFsDisplay::Restricted(entries) if entries.is_empty())
 }
 
 fn network_grants_nothing(network: &SandboxNetPolicy) -> bool {
@@ -5775,93 +5801,40 @@ fn network_grants_nothing(network: &SandboxNetPolicy) -> bool {
 
 /// Rows for the write-access group: a message for the "all"/"none" cases, or one
 /// row per granted path.
-fn sandbox_fs_rows(fs: &SandboxFsPolicy, cx: &App) -> Vec<AnyElement> {
+fn sandbox_fs_rows(fs: &SandboxFsDisplay) -> Vec<SandboxRow> {
     match fs {
-        SandboxFsPolicy::Unrestricted => vec![sandbox_message_row("All paths (unrestricted)")],
-        SandboxFsPolicy::Restricted { writable_paths } if writable_paths.is_empty() => {
-            vec![sandbox_message_row("None")]
+        SandboxFsDisplay::Unrestricted => vec![SandboxRow::message("All paths (unrestricted)")],
+        SandboxFsDisplay::Restricted(entries) if entries.is_empty() => {
+            vec![SandboxRow::message("None")]
         }
-        SandboxFsPolicy::Restricted { writable_paths } => writable_paths
+        SandboxFsDisplay::Restricted(entries) => entries
             .iter()
-            .map(|path| sandbox_path_row(path, cx))
+            .map(|entry| match entry {
+                // The display string was captured up front; see `sandbox_git_rows`.
+                WritableEntryDisplay::Path(path) => SandboxRow::path(PathBuf::from(path)),
+                #[cfg(target_os = "linux")]
+                WritableEntryDisplay::IsolatedTmp => {
+                    SandboxRow::path(PathBuf::from("/tmp (isolated)"))
+                }
+            })
             .collect(),
     }
 }
 
 /// Rows for the network-access group: a message for the "all"/"none" cases, or
 /// one row per allowed domain.
-fn sandbox_network_rows(network: &SandboxNetPolicy, cx: &App) -> Vec<AnyElement> {
+fn sandbox_network_rows(network: &SandboxNetPolicy) -> Vec<SandboxRow> {
     match network {
-        SandboxNetPolicy::Unrestricted => vec![sandbox_message_row("All domains (unrestricted)")],
-        SandboxNetPolicy::Blocked => vec![sandbox_message_row("None")],
+        SandboxNetPolicy::Unrestricted => vec![SandboxRow::message("All domains (unrestricted)")],
+        SandboxNetPolicy::Blocked => vec![SandboxRow::message("None")],
         SandboxNetPolicy::Restricted { allowed_domains } if allowed_domains.is_empty() => {
-            vec![sandbox_message_row("None")]
+            vec![SandboxRow::message("None")]
         }
         SandboxNetPolicy::Restricted { allowed_domains } => allowed_domains
             .iter()
-            .map(|domain| sandbox_domain_row(domain, cx))
+            .map(|domain| SandboxRow::domain(domain.clone()))
             .collect(),
     }
-}
-
-/// A "Write access" / "Network access" group: a muted header, then the indented
-/// rows.
-fn sandbox_status_group(heading: &str, rows: Vec<AnyElement>) -> impl IntoElement {
-    v_flex()
-        .gap_0p5()
-        .child(
-            Label::new(heading.to_string())
-                .size(LabelSize::Small)
-                .color(Color::Muted),
-        )
-        .child(v_flex().pl_3().gap_0p5().children(rows))
-}
-
-/// A non-path row (e.g. "All paths (unrestricted)", "None") in a status group.
-fn sandbox_message_row(message: &str) -> AnyElement {
-    Label::new(message.to_string())
-        .size(LabelSize::XSmall)
-        .color(Color::Muted)
-        .into_any_element()
-}
-
-fn sandbox_path_row(path: &Path, cx: &App) -> AnyElement {
-    let display_path = path.display().to_string();
-    let icon = FileIcons::get_icon(path, cx)
-        .map(Icon::from_path)
-        .map(|icon| icon.color(Color::Muted).size(IconSize::Small))
-        .unwrap_or_else(|| {
-            Icon::new(IconName::Folder)
-                .color(Color::Muted)
-                .size(IconSize::Small)
-        });
-    h_flex()
-        .min_w_0()
-        .gap_1()
-        .child(icon)
-        .child(
-            Label::new(display_path)
-                .size(LabelSize::XSmall)
-                .buffer_font(cx),
-        )
-        .into_any_element()
-}
-
-fn sandbox_domain_row(domain: &str, cx: &App) -> AnyElement {
-    h_flex()
-        .min_w_0()
-        .gap_1()
-        .child(
-            Icon::new(IconName::Public)
-                .color(Color::Muted)
-                .size(IconSize::Small),
-        )
-        .child(
-            Label::new(domain.to_string())
-                .size(LabelSize::XSmall)
-                .buffer_font(cx),
-        )
-        .into_any_element()
 }
 
 impl ThreadView {
@@ -5941,7 +5914,7 @@ impl ThreadView {
 
                 let is_subagent = self.is_subagent();
                 let can_rewind = self.thread.read(cx).supports_truncate(cx);
-                let is_editable = can_rewind && message.id.is_some() && !is_subagent;
+                let is_editable = can_rewind && message.client_id.is_some() && !is_subagent;
                 let agent_name = if is_subagent {
                     "subagents".into()
                 } else {
@@ -5962,7 +5935,7 @@ impl ThreadView {
                     .gap_1p5()
                     .w_full()
                     .when(is_editable && has_checkpoint_button, |this| {
-                        this.children(message.id.clone().map(|message_id| {
+                        this.children(message.client_id.clone().map(|client_id| {
                             h_flex()
                                 .px_3()
                                 .gap_2()
@@ -5974,7 +5947,7 @@ impl ThreadView {
                                         .color(Color::Muted)
                                         .tooltip(Tooltip::text("Restores all files in the project to the content they had at this point in the conversation."))
                                         .on_click(cx.listener(move |this, _, _window, cx| {
-                                            this.restore_checkpoint(&message_id, cx);
+                                            this.restore_checkpoint(&client_id, cx);
                                         }))
                                 )
                                 .child(Divider::horizontal())
@@ -6112,7 +6085,7 @@ impl ThreadView {
                     .gap_3()
                     .children(chunks.iter().enumerate().filter_map(
                         |(chunk_ix, chunk)| match chunk {
-                            AssistantMessageChunk::Message { block } => {
+                            AssistantMessageChunk::Message { block, .. } => {
                                 block.markdown().and_then(|md| {
                                     let this_is_blank = md.read(cx).source().trim().is_empty();
                                     is_blank = is_blank && this_is_blank;
@@ -6126,7 +6099,7 @@ impl ThreadView {
                                     )
                                 })
                             }
-                            AssistantMessageChunk::Thought { block } => {
+                            AssistantMessageChunk::Thought { block, .. } => {
                                 block.markdown().and_then(|md| {
                                     let this_is_blank = md.read(cx).source().trim().is_empty();
                                     is_blank = is_blank && this_is_blank;
@@ -7098,8 +7071,12 @@ impl ThreadView {
                         .map(|chunks| {
                             chunks.iter().any(|chunk| {
                                 let md = match chunk {
-                                    AssistantMessageChunk::Message { block } => block.markdown(),
-                                    AssistantMessageChunk::Thought { block } => block.markdown(),
+                                    AssistantMessageChunk::Message { block, .. } => {
+                                        block.markdown()
+                                    }
+                                    AssistantMessageChunk::Thought { block, .. } => {
+                                        block.markdown()
+                                    }
                                 };
                                 md.map_or(false, |m| m.read(cx).selected_text().is_some())
                             })
@@ -7109,8 +7086,8 @@ impl ThreadView {
                     let context_menu_link = chunks.and_then(|chunks| {
                         chunks.iter().find_map(|chunk| {
                             let md = match chunk {
-                                AssistantMessageChunk::Message { block } => block.markdown(),
-                                AssistantMessageChunk::Thought { block } => block.markdown(),
+                                AssistantMessageChunk::Message { block, .. } => block.markdown(),
+                                AssistantMessageChunk::Thought { block, .. } => block.markdown(),
                             };
                             md.and_then(|m| m.read(cx).context_menu_link().cloned())
                         })
@@ -7216,7 +7193,7 @@ impl ThreadView {
                         .chunks
                         .iter()
                         .filter_map(|chunk| match chunk {
-                            AssistantMessageChunk::Message { block } => {
+                            AssistantMessageChunk::Message { block, .. } => {
                                 let markdown = block.to_markdown(cx);
                                 if markdown.trim().is_empty() {
                                     None
@@ -8399,27 +8376,23 @@ impl ThreadView {
                         }),
                 )
                 .when(has_host_list && is_open, |this| {
-                    this.child(
-                        v_flex()
-                            .id(("sandbox-network-hosts-list", entry_ix))
-                            .max_h_40()
-                            .overflow_y_scroll()
-                            .children(hosts.iter().enumerate().map(|(host_ix, host)| {
-                                h_flex()
-                                    .min_w_0()
-                                    .px_2()
-                                    .py_1p5()
-                                    .bg(cx.theme().colors().editor_background)
-                                    .when(host_ix < hosts.len() - 1, |this| {
-                                        this.border_b_1().border_color(cx.theme().colors().border)
-                                    })
-                                    .child(
-                                        Label::new(host.clone())
-                                            .size(LabelSize::XSmall)
-                                            .buffer_font(cx),
-                                    )
-                            })),
-                    )
+                    this.child(v_flex().children(hosts.iter().enumerate().map(
+                        |(host_ix, host)| {
+                            h_flex()
+                                .min_w_0()
+                                .px_2()
+                                .py_1p5()
+                                .bg(cx.theme().colors().editor_background)
+                                .when(host_ix < hosts.len() - 1, |this| {
+                                    this.border_b_1().border_color(cx.theme().colors().border)
+                                })
+                                .child(
+                                    Label::new(host.clone())
+                                        .size(LabelSize::XSmall)
+                                        .buffer_font(cx),
+                                )
+                        },
+                    )))
                 })
         });
 
@@ -8502,21 +8475,17 @@ impl ThreadView {
                         }),
                 )
                 .when(has_path_list && is_open, |this| {
-                    this.child(
-                        v_flex()
-                            .id(("sandbox-authorization-paths-list", entry_ix))
-                            .max_h_40()
-                            .overflow_y_scroll()
-                            .children(paths.iter().enumerate().map(|(path_ix, path)| {
-                                self.render_sandbox_authorization_path_row(
-                                    entry_ix,
-                                    path_ix,
-                                    path,
-                                    path_ix < paths.len() - 1,
-                                    cx,
-                                )
-                            })),
-                    )
+                    this.child(v_flex().children(paths.iter().enumerate().map(
+                        |(path_ix, path)| {
+                            self.render_sandbox_authorization_path_row(
+                                entry_ix,
+                                path_ix,
+                                path,
+                                path_ix < paths.len() - 1,
+                                cx,
+                            )
+                        },
+                    )))
                 })
         });
 
@@ -8573,9 +8542,9 @@ impl ThreadView {
         v_flex()
             .border_t_1()
             .border_color(self.tool_card_border_color(cx))
+            .children(git_access_section)
             .children(network_section)
             .children(write_section)
-            .children(git_access_section)
             .children(unsandboxed_section)
             .children(reason_section)
             .into_any_element()
@@ -11055,7 +11024,7 @@ impl ThreadView {
             ),
         };
 
-        let description = "To continue, start a new thread from a summary.";
+        let description = "To continue, run /compact or start a new thread and @-mention this one";
 
         Some(
             Callout::new()
