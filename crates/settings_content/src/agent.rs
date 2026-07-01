@@ -248,6 +248,11 @@ pub struct AgentSettingsContent {
     pub inline_assistant_use_streaming_tools: Option<bool>,
     /// Model to use for generating git commit messages. Defaults to default_model when not specified.
     pub commit_message_model: Option<LanguageModelSelection>,
+    /// Whether to include project rules files (AGENTS.md, CLAUDE.md, .rules, etc.)
+    /// in the prompt when generating git commit messages.
+    ///
+    /// Default: true
+    pub commit_message_include_project_rules: Option<bool>,
     /// Custom instructions to include in the prompt when generating git commit messages.
     /// Applied in addition to any project rules files (such as `.rules` or `AGENTS.md`).
     pub commit_message_instructions: Option<String>,
@@ -667,6 +672,56 @@ impl std::ops::DerefMut for AllAgentServersSettings {
     }
 }
 
+#[derive(Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum AgentConfigOptionValue {
+    ValueId(String),
+    Boolean(bool),
+}
+
+impl AgentConfigOptionValue {
+    pub fn as_value_id(&self) -> Option<&str> {
+        match self {
+            Self::ValueId(value) => Some(value),
+            Self::Boolean(_) => None,
+        }
+    }
+
+    pub fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Boolean(value) => Some(*value),
+            Self::ValueId(_) => None,
+        }
+    }
+}
+
+impl std::fmt::Display for AgentConfigOptionValue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ValueId(value) => formatter.write_str(value),
+            Self::Boolean(value) => value.fmt(formatter),
+        }
+    }
+}
+
+impl From<String> for AgentConfigOptionValue {
+    fn from(value: String) -> Self {
+        Self::ValueId(value)
+    }
+}
+
+impl From<&str> for AgentConfigOptionValue {
+    fn from(value: &str) -> Self {
+        Self::ValueId(value.to_string())
+    }
+}
+
+impl From<bool> for AgentConfigOptionValue {
+    fn from(value: bool) -> Self {
+        Self::Boolean(value)
+    }
+}
+
 #[with_fallible_options]
 #[derive(Deserialize, Serialize, Clone, JsonSchema, MergeFrom, Debug, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -687,11 +742,11 @@ pub enum CustomAgentServerSettings {
         default_mode: Option<String>,
         /// Default values for session config options.
         ///
-        /// This is a map from config option ID to value ID.
+        /// This is a map from config option ID to the default value for that option.
         ///
         /// Default: {}
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        default_config_options: HashMap<String, String>,
+        default_config_options: HashMap<String, AgentConfigOptionValue>,
         /// Favorited values for session config options.
         ///
         /// This is a map from config option ID to a list of favorited value IDs.
@@ -716,11 +771,11 @@ pub enum CustomAgentServerSettings {
         default_mode: Option<String>,
         /// Default values for session config options.
         ///
-        /// This is a map from config option ID to value ID.
+        /// This is a map from config option ID to the default value for that option.
         ///
         /// Default: {}
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-        default_config_options: HashMap<String, String>,
+        default_config_options: HashMap<String, AgentConfigOptionValue>,
         /// Favorited values for session config options.
         ///
         /// This is a map from config option ID to a list of favorited value IDs.
@@ -862,6 +917,46 @@ impl std::fmt::Display for ToolPermissionMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_config_option_value_serializes_value_id_as_string() {
+        let value = AgentConfigOptionValue::from("manual");
+
+        assert_eq!(
+            serde_json::to_value(&value).expect("serialize value id"),
+            serde_json::json!("manual")
+        );
+        assert_eq!(
+            serde_json::from_value::<AgentConfigOptionValue>(serde_json::json!("manual"))
+                .expect("deserialize value id"),
+            AgentConfigOptionValue::ValueId("manual".to_string())
+        );
+    }
+
+    #[test]
+    fn agent_config_option_value_serializes_boolean_as_boolean() {
+        let value = AgentConfigOptionValue::Boolean(true);
+
+        assert_eq!(
+            serde_json::to_value(&value).expect("serialize boolean"),
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            serde_json::from_value::<AgentConfigOptionValue>(serde_json::json!(true))
+                .expect("deserialize boolean"),
+            AgentConfigOptionValue::Boolean(true)
+        );
+    }
+
+    #[test]
+    fn agent_config_option_value_merge_replaces_existing_value() {
+        use crate::merge_from::MergeFrom as _;
+
+        let mut value = AgentConfigOptionValue::ValueId("manual".to_string());
+        value.merge_from(&AgentConfigOptionValue::Boolean(true));
+
+        assert_eq!(value, AgentConfigOptionValue::Boolean(true));
+    }
 
     #[test]
     fn test_set_tool_default_permission_creates_structure() {

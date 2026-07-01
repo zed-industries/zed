@@ -260,6 +260,9 @@ actions!(
         RemoveFirstQueuedMessage,
         /// Edits the first message in the queue (the next one to be sent).
         EditFirstQueuedMessage,
+        /// Toggles steering for the first queued message: when on, it interrupts
+        /// the agent at its next step instead of waiting for it to finish.
+        ToggleSteerFirstQueuedMessage,
         /// Clears all messages from the queue.
         ClearMessageQueue,
         /// Opens the permission granularity dropdown for the current tool call.
@@ -990,6 +993,7 @@ mod tests {
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
             commit_message_model: None,
+            commit_message_include_project_rules: true,
             commit_message_instructions: None,
             thread_summary_model: None,
             inline_alternatives: vec![],
