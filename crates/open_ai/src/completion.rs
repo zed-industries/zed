@@ -277,6 +277,7 @@ pub fn into_open_ai_response(
     let include = if reasoning
         .as_ref()
         .is_some_and(|reasoning| reasoning.effort != ReasoningEffort::None)
+        || (reasoning.is_none() && default_reasoning_effort.is_some())
         || input_items
             .iter()
             .any(|item| matches!(item, ResponseInputItem::Reasoning(_)))
@@ -462,10 +463,21 @@ fn append_reasoning_details_to_response_items(
 }
 
 fn push_replayed_reasoning_item(
-    reasoning_item: ResponseReasoningInputItem,
+    mut reasoning_item: ResponseReasoningInputItem,
     replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
     input_items: &mut Vec<ResponseInputItem>,
 ) {
+    if reasoning_item.encrypted_content.as_deref() == Some("") {
+        reasoning_item.encrypted_content = None;
+    }
+
+    if !reasoning_item_is_replayable_with_store_false(&reasoning_item) {
+        if let Some(id) = reasoning_item.id.as_ref() {
+            remove_replayed_reasoning_item(id, replayed_reasoning_item_indexes, input_items);
+        }
+        return;
+    }
+
     if let Some(id) = reasoning_item.id.as_ref() {
         if let Some(index) = replayed_reasoning_item_indexes.get(id) {
             input_items[*index] = ResponseInputItem::Reasoning(reasoning_item);
@@ -476,6 +488,39 @@ fn push_replayed_reasoning_item(
     }
 
     input_items.push(ResponseInputItem::Reasoning(reasoning_item));
+}
+
+fn remove_replayed_reasoning_item(
+    id: &str,
+    replayed_reasoning_item_indexes: &mut HashMap<String, usize>,
+    input_items: &mut Vec<ResponseInputItem>,
+) {
+    let Some(index) = replayed_reasoning_item_indexes.remove(id) else {
+        return;
+    };
+
+    if index < input_items.len() {
+        input_items.remove(index);
+        for existing_index in replayed_reasoning_item_indexes.values_mut() {
+            if *existing_index > index {
+                *existing_index -= 1;
+            }
+        }
+    }
+}
+
+fn reasoning_item_is_replayable_with_store_false(
+    reasoning_item: &ResponseReasoningInputItem,
+) -> bool {
+    if reasoning_item
+        .encrypted_content
+        .as_deref()
+        .is_some_and(|encrypted_content| !encrypted_content.is_empty())
+    {
+        return true;
+    }
+
+    reasoning_item.id.is_none() && !reasoning_item.content.is_empty()
 }
 
 fn push_response_text_part(
@@ -1645,7 +1690,7 @@ mod tests {
     }
 
     #[test]
-    fn into_open_ai_response_replays_reasoning_without_encrypted_content() {
+    fn into_open_ai_response_drops_id_only_reasoning_without_encrypted_content() {
         let request = LanguageModelRequest {
             thread_id: None,
             prompt_id: None,
@@ -1688,16 +1733,73 @@ mod tests {
             serialized["input"],
             json!([
                 {
-                    "type": "reasoning",
-                    "id": "rs_123",
-                    "summary": [],
-                    "status": "completed"
-                },
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "Done.",
+                            "annotations": []
+                        }
+                    ]
+                }
+            ])
+        );
+        assert_eq!(serialized.get("include"), None);
+    }
+
+    #[test]
+    fn into_open_ai_response_replays_self_contained_reasoning_without_id() {
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Text("Done.".into())],
+                cache: false,
+                reasoning_details: Some(Arc::new(json!({
+                    "reasoning_items": [
+                        {
+                            "summary": [],
+                            "content": [
+                                {
+                                    "type": "reasoning_text",
+                                    "text": "Complete reasoning state."
+                                }
+                            ],
+                            "encrypted_content": "",
+                            "status": "completed"
+                        }
+                    ]
+                }))),
+            }],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+            compact_at_tokens: None,
+        };
+
+        let response =
+            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+        let serialized = serde_json::to_value(&response).unwrap();
+
+        assert_eq!(
+            serialized["input"],
+            json!([
                 {
                     "type": "reasoning",
-                    "id": "rs_456",
                     "summary": [],
-                    "encrypted_content": "",
+                    "content": [
+                        {
+                            "type": "reasoning_text",
+                            "text": "Complete reasoning state."
+                        }
+                    ],
                     "status": "completed"
                 },
                 {
@@ -1712,6 +1814,10 @@ mod tests {
                     ]
                 }
             ])
+        );
+        assert_eq!(
+            serialized["include"],
+            json!(["reasoning.encrypted_content"])
         );
     }
 
@@ -1749,6 +1855,10 @@ mod tests {
 
         let serialized = serde_json::to_value(&response).unwrap();
         assert_eq!(serialized.get("reasoning"), None);
+        assert_eq!(
+            serialized["include"],
+            json!(["reasoning.encrypted_content"])
+        );
     }
 
     /// `Speed::Fast` should translate to `service_tier: "priority"` on the
@@ -2131,6 +2241,85 @@ mod tests {
                 }
             ])
         );
+    }
+
+    #[test]
+    fn into_open_ai_response_removes_previous_reasoning_when_latest_duplicate_is_not_replayable() {
+        let first_reasoning_details = json!({
+            "phase": "final_answer",
+            "reasoning_items": [
+                {
+                    "id": "rs_123",
+                    "summary": [],
+                    "encrypted_content": "ENC_OLD",
+                    "status": "in_progress"
+                }
+            ]
+        });
+        let second_reasoning_details = json!({
+            "phase": "final_answer",
+            "reasoning_items": [
+                {
+                    "id": "rs_123",
+                    "summary": [],
+                    "status": "completed"
+                }
+            ]
+        });
+        let request = LanguageModelRequest {
+            thread_id: None,
+            prompt_id: None,
+            intent: None,
+            messages: vec![
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Text("First.".into())],
+                    cache: false,
+                    reasoning_details: Some(Arc::new(first_reasoning_details)),
+                },
+                LanguageModelRequestMessage {
+                    role: Role::Assistant,
+                    content: vec![MessageContent::Text("Second.".into())],
+                    cache: false,
+                    reasoning_details: Some(Arc::new(second_reasoning_details)),
+                },
+            ],
+            tools: Vec::new(),
+            tool_choice: None,
+            stop: Vec::new(),
+            temperature: None,
+            thinking_allowed: false,
+            thinking_effort: None,
+            speed: None,
+            compact_at_tokens: None,
+        };
+
+        let response =
+            into_open_ai_response(request, "custom-model", false, false, None, None, false);
+        let serialized = serde_json::to_value(&response).unwrap();
+
+        assert_eq!(
+            serialized["input"],
+            json!([
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        { "type": "output_text", "text": "First.", "annotations": [] }
+                    ],
+                    "phase": "final_answer"
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        { "type": "output_text", "text": "Second.", "annotations": [] }
+                    ],
+                    "phase": "final_answer"
+                }
+            ])
+        );
+        assert_eq!(serialized.get("include"), None);
     }
 
     #[test]
