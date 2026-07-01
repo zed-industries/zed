@@ -1831,8 +1831,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 surface_y,
                 ..
             } => {
+                let position = point(px(surface_x as f32), px(surface_y as f32));
                 state.serial_tracker.update(SerialKind::MouseEnter, serial);
-                state.mouse_location = Some(point(px(surface_x as f32), px(surface_y as f32)));
+                state.mouse_location = Some(position);
                 state.button_pressed = None;
 
                 if let Some(window) = get_window(&mut state, &surface.id()) {
@@ -1855,8 +1856,16 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                             );
                         }
                     }
+                    let modifiers = state.modifiers;
                     drop(state);
                     window.set_hovered(true);
+                    // No Motion follows Enter unless the pointer keeps moving, so synthesize
+                    // a MouseMove to establish hover at the entry position.
+                    window.handle_input(PlatformInput::MouseMove(MouseMoveEvent {
+                        position,
+                        pressed_button: None,
+                        modifiers,
+                    }));
                 }
             }
             wl_pointer::Event::Leave { .. } => {

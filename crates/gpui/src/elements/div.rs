@@ -21,7 +21,8 @@ use crate::{
     Display, Element, ElementId, Entity, EntityId, FocusHandle, Global, GlobalElementId, Hitbox,
     HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
     KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
-    MouseClickEvent, MouseDownEvent, MouseMoveEvent, MousePressureEvent, MouseUpEvent, Overflow,
+    MouseClickEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent,
+    MouseUpEvent, Overflow,
     ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
     StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
     size,
@@ -2821,7 +2822,6 @@ impl Interactivity {
             }
 
             if let Some(hover_listener) = self.hover_listener.take() {
-                let hitbox = hitbox.clone();
                 let was_hovered = element_state
                     .hover_listener_state
                     .get_or_insert_with(Default::default)
@@ -2830,21 +2830,34 @@ impl Interactivity {
                     .pending_mouse_down
                     .get_or_insert_with(Default::default)
                     .clone();
+                let update_hover =
+                    Rc::new(move |is_hovered: bool, window: &mut Window, cx: &mut App| {
+                        let mut was_hovered = was_hovered.borrow_mut();
+                        if is_hovered != *was_hovered {
+                            *was_hovered = is_hovered;
+                            drop(was_hovered);
+                            hover_listener(&is_hovered, window, cx);
+                        }
+                    });
 
-                window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Bubble {
-                        return;
+                window.on_mouse_event({
+                    let update_hover = update_hover.clone();
+                    let hitbox = hitbox.clone();
+                    move |_: &MouseMoveEvent, phase, window, cx| {
+                        if phase == DispatchPhase::Bubble {
+                            let is_hovered = has_mouse_down.borrow().is_none()
+                                && !cx.has_active_drag()
+                                && hitbox.is_hovered(window);
+                            update_hover(is_hovered, window, cx);
+                        }
                     }
-                    let is_hovered = has_mouse_down.borrow().is_none()
-                        && !cx.has_active_drag()
-                        && hitbox.is_hovered(window);
-                    let mut was_hovered = was_hovered.borrow_mut();
+                });
 
-                    if is_hovered != *was_hovered {
-                        *was_hovered = is_hovered;
-                        drop(was_hovered);
-
-                        hover_listener(&is_hovered, window, cx);
+                // The pointer can leave the window without a final MouseMove, so also
+                // clear hover on MouseExited.
+                window.on_mouse_event(move |_: &MouseExitEvent, phase, window, cx| {
+                    if phase == DispatchPhase::Bubble {
+                        update_hover(false, window, cx);
                     }
                 });
             }
