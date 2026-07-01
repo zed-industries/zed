@@ -3165,7 +3165,7 @@ impl GitStore {
 
         let branch = repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.default_branch(false)
+                repository_handle.default_branch(envelope.payload.include_remote_name)
             })
             .await??
             .map(Into::into);
@@ -7869,6 +7869,7 @@ impl Repository {
                         .request(proto::GetDefaultBranch {
                             project_id: project_id.0,
                             repository_id: id.to_proto(),
+                            include_remote_name,
                         })
                         .await?;
 
