@@ -25,8 +25,8 @@ terminal tabs, [External Agents](./external-agents.md), or [Terminal Threads](./
 
 Zed Agent sandboxing currently applies to the `terminal` tool.
 
-| Tool       | What sandboxing limits                                                                      |
-| ---------- | ------------------------------------------------------------------------------------------- |
+| Tool       | What sandboxing limits                                                                                |
+| ---------- | ----------------------------------------------------------------------------------------------------- |
 | `terminal` | Filesystem writes and outbound network access for commands the agent runs; Git metadata is protected. |
 
 Other built-in tools, including `fetch`, are still governed by [Tool Permissions](./tool-permissions.md),
@@ -87,7 +87,7 @@ The available options are:
 | `network_hosts`      | Hosts that sandboxed tools may reach without prompting. Entries can be exact hostnames or leading-`*.` wildcards. |
 | `allow_all_hosts`    | Allow sandboxed tools to reach any host without prompting.                                                        |
 | `write_paths`        | Directory subtrees that sandboxed terminal commands may write to without prompting. Paths are absolute.           |
-| `allow_fs_write_all` | Allow sandboxed terminal commands to write anywhere except protected Git metadata without prompting.             |
+| `allow_fs_write_all` | Allow sandboxed terminal commands to write anywhere except protected Git metadata without prompting.              |
 | `allow_unsandboxed`  | Allow terminal commands to run outside the sandbox without prompting when the agent explicitly requests it.       |
 
 Prefer narrow grants, such as a specific host or write path, over `allow_all_hosts`, `allow_fs_write_all`, or
