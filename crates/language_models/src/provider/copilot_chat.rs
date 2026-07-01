@@ -225,6 +225,14 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         }
     }
 
+    fn inline_title(&self, cx: &App) -> Option<SharedString> {
+        if self.state.read(cx).is_authenticated(cx) {
+            None
+        } else {
+            Some("Configure Copilot".into())
+        }
+    }
+
     fn inline_description(&self, cx: &App) -> Option<language_model::InlineDescription> {
         if self.state.read(cx).is_authenticated(cx) {
             None

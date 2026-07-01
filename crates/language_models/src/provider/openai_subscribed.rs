@@ -279,8 +279,20 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
         }
     }
 
-    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
-        Some(InlineDescription::Text(SUBSCRIPTION_DESCRIPTION.into()))
+    fn inline_title(&self, cx: &App) -> Option<SharedString> {
+        if self.state.read(cx).is_authenticated() {
+            None
+        } else {
+            Some("Configure ChatGPT".into())
+        }
+    }
+
+    fn inline_description(&self, cx: &App) -> Option<InlineDescription> {
+        if self.state.read(cx).is_authenticated() {
+            None
+        } else {
+            Some(InlineDescription::Text(SUBSCRIPTION_DESCRIPTION.into()))
+        }
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
@@ -1093,7 +1105,7 @@ impl Render for ConfigurationView {
 
             return v_flex()
                 .child(
-                    ConfiguredApiCard::new(SharedString::from(label))
+                    ConfiguredApiCard::new("openai-subscribed-sign-out", SharedString::from(label))
                         .button_label("Sign Out")
                         .on_click(cx.listener(move |_this, _, _window, cx| {
                             do_sign_out(&weak_state, cx).detach_and_log_err(cx);

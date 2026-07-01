@@ -895,7 +895,7 @@ impl Render for ConfigurationView {
                 )
                 .into_any_element()
         } else {
-            ConfiguredApiCard::new(configured_card_label)
+            ConfiguredApiCard::new("opencode-reset-key", configured_card_label)
                 .disabled(env_var_set)
                 .when(env_var_set, |this| {
                     this.tooltip_label(format!(

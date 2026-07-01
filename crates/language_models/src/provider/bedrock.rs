@@ -1581,7 +1581,7 @@ impl Render for ConfigurationView {
         };
 
         if self.state.read(cx).is_authenticated() {
-            return ConfiguredApiCard::new(configured_label)
+            return ConfiguredApiCard::new("bedrock-reset", configured_label)
                 .disabled(env_var_set || is_settings_derived)
                 .on_click(cx.listener(|this, _, window, cx| this.reset_credentials(window, cx)))
                 .when_some(tooltip_label, |this, label| this.tooltip_label(label))

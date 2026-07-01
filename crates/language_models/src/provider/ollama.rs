@@ -887,7 +887,7 @@ impl ConfigurationView {
               )
               .into_any_element()
         } else {
-            ConfiguredApiCard::new(configured_card_label)
+            ConfiguredApiCard::new("ollama-reset-key", configured_card_label)
                 .disabled(env_var_set)
                 .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
                 .when(env_var_set, |this| {

@@ -52,12 +52,12 @@ fn render_provider_section(
     let provider_name = provider.name().0;
 
     let body = if let Some(config) = provider.api_key_configuration(cx) {
-        render_api_key_body(provider, provider_name.clone(), config)
+        render_api_key_providers_item(provider, provider_name.clone(), config)
     } else {
         match get_or_create_configuration_view(settings_window, &provider_id, provider, window, cx)
         {
             ProviderConfigurationView::Inline { view } => render_inline_body(provider, view, cx),
-            ProviderConfigurationView::SubPage(_) => render_subpage_body(provider, cx),
+            ProviderConfigurationView::SubPage(_) => render_subpage_item(provider, cx),
         }
     };
 
@@ -97,9 +97,7 @@ fn render_provider_header(
         .child(Divider::horizontal().color(DividerColor::BorderFaded))
 }
 
-/// The "API Key" item for single-API-key providers: a configured card when a key
-/// is set, otherwise an "API Key" label + dashboard link + input field.
-fn render_api_key_body(
+fn render_api_key_providers_item(
     provider: &Arc<dyn LanguageModelProvider>,
     provider_name: SharedString,
     config: ApiKeyConfiguration,
@@ -121,8 +119,7 @@ fn render_api_key_body(
         let provider = provider.clone();
         let env_var_name_for_tooltip = env_var_name;
 
-        return ConfiguredApiCard::new(configured_label)
-            .button_id(button_id)
+        return ConfiguredApiCard::new(button_id, configured_label)
             .button_label("Reset Key")
             .button_tab_index(0)
             .disabled(is_from_env_var)
@@ -152,6 +149,7 @@ fn render_api_key_body(
                 .w_full()
                 .min_w_0()
                 .max_w_1_2()
+                .gap_0p5()
                 .child(Label::new("API Key"))
                 .child(
                     h_flex()
@@ -178,9 +176,9 @@ fn render_api_key_body(
                 )
                 .child(
                     Label::new(format!(
-                        "Or set the {env_var_name} env var and restart Zed."
+                        "Or set the {env_var_name} env var and restart Zed for it to take effect."
                     ))
-                    .size(LabelSize::Small)
+                    .size(LabelSize::XSmall)
                     .color(Color::Muted),
                 ),
         )
@@ -198,8 +196,6 @@ fn render_api_key_body(
         .into_any_element()
 }
 
-/// Body for non-API-key inline providers (sign-in based): an optional
-/// description on the left and the provider's own control on the right.
 fn render_inline_body(
     provider: &Arc<dyn LanguageModelProvider>,
     view: AnyView,
@@ -209,12 +205,20 @@ fn render_inline_body(
     let title = provider.inline_title(cx);
     let description = provider.inline_description(cx);
 
+    if title.is_none() && description.is_none() {
+        return v_flex()
+            .pt_1()
+            .w_full()
+            .min_w_0()
+            .child(view)
+            .into_any_element();
+    }
+
     h_flex()
         .pt_2p5()
         .w_full()
         .min_w_0()
         .gap_4()
-        .items_center()
         .justify_between()
         .child(
             v_flex()
@@ -230,9 +234,7 @@ fn render_inline_body(
         .into_any_element()
 }
 
-/// Body for providers that configure on a dedicated sub-page: a "Configure"
-/// button that pushes that sub-page.
-fn render_subpage_body(
+fn render_subpage_item(
     provider: &Arc<dyn LanguageModelProvider>,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
@@ -245,15 +247,18 @@ fn render_subpage_body(
         .w_full()
         .min_w_0()
         .gap_4()
-        .items_center()
         .justify_between()
-        .child(v_flex().w_full().min_w_0().max_w_1_2().map(|this| {
-            if let Some(description) = description {
-                this.child(render_inline_description(provider_name, description))
-            } else {
-                this.child(Label::new("Configure Provider"))
-            }
-        }))
+        .child(
+            v_flex()
+                .w_full()
+                .min_w_0()
+                .max_w_1_2()
+                .gap_0p5()
+                .child(Label::new("Configure Provider"))
+                .when_some(description, |this, description| {
+                    this.child(render_inline_description(provider_name, description))
+                }),
+        )
         .child(
             Button::new(format!("configure-{}", provider_id.0), "Configure")
                 .style(ButtonStyle::OutlinedGhost)

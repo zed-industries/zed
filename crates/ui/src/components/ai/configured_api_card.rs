@@ -3,8 +3,8 @@ use gpui::{ClickEvent, ElementId, IntoElement, ParentElement, SharedString};
 
 #[derive(IntoElement, RegisterComponent)]
 pub struct ConfiguredApiCard {
+    id: ElementId,
     label: SharedString,
-    button_id: Option<ElementId>,
     button_label: Option<SharedString>,
     button_tab_index: Option<isize>,
     tooltip_label: Option<SharedString>,
@@ -13,10 +13,10 @@ pub struct ConfiguredApiCard {
 }
 
 impl ConfiguredApiCard {
-    pub fn new(label: impl Into<SharedString>) -> Self {
+    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
         Self {
+            id: id.into(),
             label: label.into(),
-            button_id: None,
             button_label: None,
             button_tab_index: None,
             tooltip_label: None,
@@ -38,14 +38,6 @@ impl ConfiguredApiCard {
         self
     }
 
-    /// Sets a unique id for the action button. Required when several cards are
-    /// rendered together (e.g. one per provider), since the default id is
-    /// derived from the button label and would otherwise collide.
-    pub fn button_id(mut self, id: impl Into<ElementId>) -> Self {
-        self.button_id = Some(id.into());
-        self
-    }
-
     pub fn tooltip_label(mut self, tooltip_label: impl Into<SharedString>) -> Self {
         self.tooltip_label = Some(tooltip_label.into());
         self
@@ -59,6 +51,51 @@ impl ConfiguredApiCard {
     pub fn button_tab_index(mut self, tab_index: isize) -> Self {
         self.button_tab_index = Some(tab_index);
         self
+    }
+}
+
+impl RenderOnce for ConfiguredApiCard {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let button_label = self.button_label.unwrap_or("Reset Key".into());
+        let button_id = self.id;
+
+        h_flex()
+            .min_w_0()
+            .mt_0p5()
+            .p_1()
+            .flex_wrap()
+            .justify_between()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().colors().border_variant)
+            .bg(cx.theme().colors().background.opacity(0.5))
+            .child(
+                h_flex()
+                    .min_w_0()
+                    .gap_1()
+                    .child(Icon::new(IconName::Check).color(Color::Success))
+                    .child(Label::new(self.label)),
+            )
+            .child(
+                Button::new(button_id, button_label)
+                    .when_some(self.button_tab_index, |elem, tab_index| {
+                        elem.tab_index(tab_index)
+                    })
+                    .label_size(LabelSize::Small)
+                    .start_icon(
+                        Icon::new(IconName::Undo)
+                            .size(IconSize::Small)
+                            .color(Color::Muted),
+                    )
+                    .disabled(self.disabled)
+                    .when_some(self.tooltip_label, |this, label| {
+                        this.tooltip(Tooltip::text(label))
+                    })
+                    .when_some(
+                        self.on_click.filter(|_| !self.disabled),
+                        |this, on_click| this.on_click(on_click),
+                    ),
+            )
     }
 }
 
@@ -87,14 +124,14 @@ impl Component for ConfiguredApiCard {
             single_example(
                 "Default",
                 container()
-                    .child(ConfiguredApiCard::new("API key is configured"))
+                    .child(ConfiguredApiCard::new("default", "API key is configured"))
                     .into_any_element(),
             ),
             single_example(
                 "Custom Button Label",
                 container()
                     .child(
-                        ConfiguredApiCard::new("OpenAI API key configured")
+                        ConfiguredApiCard::new("custom-button-label", "OpenAI API key configured")
                             .button_label("Remove Key"),
                     )
                     .into_any_element(),
@@ -103,7 +140,7 @@ impl Component for ConfiguredApiCard {
                 "With Tooltip",
                 container()
                     .child(
-                        ConfiguredApiCard::new("Anthropic API key configured")
+                        ConfiguredApiCard::new("with-tooltip", "Anthropic API key configured")
                             .tooltip_label("Click to reset your API key"),
                     )
                     .into_any_element(),
@@ -111,58 +148,13 @@ impl Component for ConfiguredApiCard {
             single_example(
                 "Disabled",
                 container()
-                    .child(ConfiguredApiCard::new("API key is configured").disabled(true))
+                    .child(
+                        ConfiguredApiCard::new("disabled", "API key is configured").disabled(true),
+                    )
                     .into_any_element(),
             ),
         ];
 
         example_group(examples).into_any_element()
-    }
-}
-
-impl RenderOnce for ConfiguredApiCard {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let button_label = self.button_label.unwrap_or("Reset Key".into());
-        let button_id = self
-            .button_id
-            .unwrap_or_else(|| ElementId::from(SharedString::new(format!("id-{}", button_label))));
-
-        h_flex()
-            .min_w_0()
-            .mt_0p5()
-            .p_1()
-            .justify_between()
-            .rounded_md()
-            .flex_wrap()
-            .border_1()
-            .border_color(cx.theme().colors().border)
-            .bg(cx.theme().colors().background)
-            .child(
-                h_flex()
-                    .min_w_0()
-                    .gap_1()
-                    .child(Icon::new(IconName::Check).color(Color::Success))
-                    .child(Label::new(self.label)),
-            )
-            .child(
-                Button::new(button_id, button_label)
-                    .when_some(self.button_tab_index, |elem, tab_index| {
-                        elem.tab_index(tab_index)
-                    })
-                    .label_size(LabelSize::Small)
-                    .start_icon(
-                        Icon::new(IconName::Undo)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .disabled(self.disabled)
-                    .when_some(self.tooltip_label, |this, label| {
-                        this.tooltip(Tooltip::text(label))
-                    })
-                    .when_some(
-                        self.on_click.filter(|_| !self.disabled),
-                        |this, on_click| this.on_click(on_click),
-                    ),
-            )
     }
 }

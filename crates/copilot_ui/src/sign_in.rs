@@ -565,7 +565,7 @@ impl ConfigurationView {
         let label = if edit_prediction {
             "Sign in to GitHub"
         } else {
-            "Sign in to use GitHub Copilot"
+            "Sign In"
         };
 
         Button::new("sign_in", label)
@@ -577,11 +577,6 @@ impl ConfigurationView {
                 }
             })
             .style(ButtonStyle::Outlined)
-            .start_icon(
-                Icon::new(IconName::Github)
-                    .size(IconSize::Small)
-                    .color(Color::Muted),
-            )
             .when(edit_prediction, |this| this.tab_index(0isize))
             .on_click(|_, window, cx| {
                 let app_state = AppState::global(cx);
@@ -714,40 +709,7 @@ impl Render for ConfigurationView {
                 }
             };
 
-            if self.compact {
-                // Match the compact "configured" control used by API-key
-                // providers: a reset/sign-out action plus a success check.
-                return h_flex()
-                    .gap_1p5()
-                    .child(
-                        Button::new("copilot-sign-out", "Sign Out")
-                            .style(ButtonStyle::OutlinedGhost)
-                            .label_size(LabelSize::Small)
-                            .start_icon(
-                                Icon::new(IconName::Undo)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .on_click(sign_out),
-                    )
-                    .child(
-                        h_flex()
-                            .size_7()
-                            .justify_center()
-                            .rounded_sm()
-                            .bg(cx.theme().status().success_background)
-                            .border_1()
-                            .border_color(cx.theme().status().success.opacity(0.2))
-                            .child(
-                                Icon::new(IconName::Check)
-                                    .size(IconSize::Small)
-                                    .color(Color::Success),
-                            ),
-                    )
-                    .into_any_element();
-            }
-
-            return ConfiguredApiCard::new("Authorized")
+            return ConfiguredApiCard::new("copilot-authorized", "Authorized")
                 .button_label("Sign Out")
                 .on_click(sign_out)
                 .into_any_element();
