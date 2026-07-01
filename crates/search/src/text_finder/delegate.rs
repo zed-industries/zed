@@ -32,8 +32,8 @@ use editor::{MultiBufferSnapshot, PathKey, multibuffer_context_lines};
 use file_icons::FileIcons;
 use futures::StreamExt;
 use gpui::{
-    AnyElement, AppContext, AsyncApp, DismissEvent, EntityId, HighlightStyle, StyledText, Task,
-    TextStyle, prelude::*,
+    AnyElement, AppContext, AsyncApp, ClickEvent, DismissEvent, EntityId, HighlightStyle,
+    Modifiers, StyledText, Task, TextStyle, prelude::*,
 };
 use gpui::{Entity, FocusHandle};
 use language::{Buffer, LanguageAwareStyling};
@@ -46,14 +46,14 @@ use text::Anchor;
 use theme_settings::ThemeSettings;
 use ui::{
     Disclosure, Divider, FluentBuilder, IconButtonShape, ListItem, ListItemSpacing, Toggleable,
-    Tooltip, prelude::*,
+    Tooltip, prelude::*, text_for_keystroke,
 };
 use util::ResultExt;
 use workspace::SplitDirection;
 use workspace::Workspace;
 use workspace::item::ItemSettings;
 
-use super::SearchMatch;
+use super::{SearchMatch, ToggleFold};
 use crate::project_search::{ActiveSettings, ProjectSearch};
 use crate::{ProjectSearchView, SearchOption, SearchOptions};
 
@@ -85,8 +85,6 @@ pub struct Delegate {
     /// column so every row's number right-aligns to the widest one. Recomputed in
     /// [`Delegate::rebuild_entries`].
     pub(crate) max_line_number: u32,
-    /// Paths whose match group is folded, hiding its [`Entry::Match`] rows.
-    /// The [`Entry::Header`] row stays visible so the group can be unfolded again.
     pub(crate) collapsed_paths: HashSet<ProjectPath>,
 }
 
@@ -400,13 +398,61 @@ impl Delegate {
             .position(|entry| matches!(entry, Entry::Match(_)))
     }
 
-    /// Folds or unfolds the match group for `path`, hiding or restoring its
-    /// [`Entry::Match`] rows.
     pub(crate) fn toggle_group_collapsed(&mut self, path: &ProjectPath) {
         if !self.collapsed_paths.remove(path) {
             self.collapsed_paths.insert(path.clone());
         }
         self.rebuild_entries();
+    }
+
+    pub(crate) fn toggle_selected_group_collapsed(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        let path = match self.entries.get(self.selected_index) {
+            Some(Entry::Match(match_index)) => self
+                .matches
+                .get(*match_index)
+                .map(|search_match| search_match.path.clone()),
+            Some(Entry::Header(path)) => Some(path.clone()),
+            Some(Entry::Separator) | None => None,
+        };
+        let Some(path) = path else {
+            return;
+        };
+
+        self.toggle_group_collapsed(&path);
+        let now_collapsed = self.collapsed_paths.contains(&path);
+
+        if let Some(index) = self.entries.iter().position(|entry| match entry {
+            Entry::Header(header_path) => now_collapsed && *header_path == path,
+            Entry::Match(match_index) => {
+                !now_collapsed
+                    && self
+                        .matches
+                        .get(*match_index)
+                        .is_some_and(|search_match| search_match.path == path)
+            }
+            Entry::Separator => false,
+        }) {
+            self.selected_index = index;
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_all_collapsed(&mut self, cx: &mut Context<Picker<Self>>) {
+        if self.collapsed_paths.is_empty() {
+            self.collapsed_paths = self
+                .matches
+                .iter()
+                .map(|search_match| search_match.path.clone())
+                .collect();
+        } else {
+            self.collapsed_paths.clear();
+        }
+        self.rebuild_entries();
+        cx.notify();
     }
 
     fn selected_search_match(&self) -> Option<&SearchMatch> {
@@ -641,7 +687,11 @@ impl PickerDelegate for Delegate {
     }
 
     fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
-        matches!(self.entries.get(ix), Some(Entry::Match(_)))
+        match self.entries.get(ix) {
+            Some(Entry::Match(_)) => true,
+            Some(Entry::Header(path)) => self.collapsed_paths.contains(path),
+            Some(Entry::Separator) | None => false,
+        }
     }
 
     fn selected_index(&self) -> usize {
@@ -859,6 +909,7 @@ impl PickerDelegate for Delegate {
                     });
                 let is_collapsed = self.collapsed_paths.contains(path);
                 let toggle_path = path.clone();
+                let tooltip_focus_handle = self.focus_handle.clone();
 
                 Some(
                     h_flex()
@@ -867,13 +918,34 @@ impl PickerDelegate for Delegate {
                         .px(DynamicSpacing::Base06.rems(cx))
                         .py_1()
                         .gap_1p5()
+                        .rounded_sm()
+                        .when(selected, |this| {
+                            this.bg(cx.theme().colors().ghost_element_selected)
+                        })
                         .child(
-                            Disclosure::new(("text-finder-fold", ix), !is_collapsed).on_click(
-                                cx.listener(move |this, _, _window, cx| {
-                                    this.delegate.toggle_group_collapsed(&toggle_path);
-                                    cx.notify();
-                                }),
-                            ),
+                            Disclosure::new(("text-finder-fold", ix), !is_collapsed)
+                                .tooltip(move |_window, cx| {
+                                    Tooltip::with_meta_in(
+                                        if is_collapsed { "Unfold" } else { "Fold" },
+                                        Some(&ToggleFold),
+                                        format!(
+                                            "{} to toggle all",
+                                            text_for_keystroke(&Modifiers::alt(), "click", cx)
+                                        ),
+                                        &tooltip_focus_handle,
+                                        cx,
+                                    )
+                                })
+                                .on_click(cx.listener(
+                                    move |this, event: &ClickEvent, _window, cx| {
+                                        if event.modifiers().alt {
+                                            this.delegate.toggle_all_collapsed(cx);
+                                        } else {
+                                            this.delegate.toggle_group_collapsed(&toggle_path);
+                                            cx.notify();
+                                        }
+                                    },
+                                )),
                         )
                         .children(file_icon)
                         .child(
