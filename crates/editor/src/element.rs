@@ -10411,8 +10411,8 @@ impl CursorLayout {
                 .paint(
                     self.origin + origin,
                     self.line_height,
-                    TextAlign::Left,
-                    None,
+                    TextAlign::Center,
+                    Some(self.block_width),
                     window,
                     cx,
                 )

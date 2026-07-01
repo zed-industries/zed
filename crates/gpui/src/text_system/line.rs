@@ -1012,4 +1012,35 @@ mod tests {
         assert_eq!(right.decoration_runs[1].len, 1);
         assert_eq!(right.decoration_runs[1].color, blue);
     }
+
+    #[test]
+    fn test_center_align_within_wider_cell() {
+        // A block cursor re-shapes the grapheme under it in isolation. For an
+        // East-Asian ambiguous-width glyph this yields a narrow advance, yet the
+        // cursor reserves a full (wide) cell via `align_width`. Centering must
+        // place the narrow glyph in the middle of the reserved cell instead of
+        // pinning it to the left edge, while leaving cells whose advance already
+        // fills the reserved width unaffected.
+        let layout = LineLayout {
+            font_size: px(16.0),
+            width: px(10.0),
+            ascent: px(12.0),
+            descent: px(4.0),
+            runs: Vec::new(),
+            len: 0,
+        };
+        let origin = point(px(100.0), px(0.0));
+
+        let left =
+            aligned_origin_x(origin, px(20.0), px(0.0), &TextAlign::Left, &layout, None);
+        assert_eq!(left, px(100.0));
+
+        let centered =
+            aligned_origin_x(origin, px(20.0), px(0.0), &TextAlign::Center, &layout, None);
+        assert_eq!(centered, px(105.0));
+
+        let flush =
+            aligned_origin_x(origin, px(10.0), px(0.0), &TextAlign::Center, &layout, None);
+        assert_eq!(flush, px(100.0));
+    }
 }
