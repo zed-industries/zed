@@ -1,15 +1,17 @@
 //! REPL operations on an [`Editor`].
 
 use std::ops::Range;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 use editor::{Editor, MultiBufferOffset};
 use gpui::{App, Entity, WeakEntity, Window, prelude::*};
-use language::{BufferSnapshot, Language, LanguageName, Point};
+use language::{BufferSnapshot, Language, LanguageName, Point, ToOffset as _};
 use project::{ProjectItem as _, WorktreeId};
 use workspace::{Workspace, notifications::NotificationId};
 
+use crate::jupyter_completion_provider::JupyterCompletionProvider;
 use crate::kernels::PythonEnvKernelSpecification;
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
@@ -51,15 +53,24 @@ pub fn assign_kernelspec(
         cx.new(|cx| Session::new(weak_editor.clone(), fs, kernel_specification, window, cx));
 
     weak_editor
-        .update(cx, |_editor, cx| {
+        .update(cx, |editor, cx| {
+            if let Some(project) = editor.project().cloned() {
+                let provider =
+                    Rc::new(JupyterCompletionProvider::new(project, session.downgrade()));
+                editor.set_completion_provider(Some(provider));
+            }
+
             cx.notify();
 
             cx.subscribe(&session, {
                 let store = store.clone();
-                move |_this, _session, event, cx| match event {
-                    SessionEvent::Shutdown(shutdown_event) => {
+                move |this, _session, event, cx| match event {
+                    SessionEvent::Shutdown(shutdown_editor) => {
+                        if let Some(project) = this.project().cloned() {
+                            this.set_completion_provider(Some(Rc::new(project)));
+                        }
                         store.update(cx, |store, _cx| {
-                            store.remove_session(shutdown_event.entity_id());
+                            store.remove_session(shutdown_editor.entity_id());
                         });
                     }
                 }
@@ -253,15 +264,24 @@ pub fn run(
             let session =
                 cx.new(|cx| Session::new(weak_editor, fs, kernel_specification, window, cx));
 
-            editor.update(cx, |_editor, cx| {
+            editor.update(cx, |editor, cx| {
+                if let Some(project) = editor.project().cloned() {
+                    let provider =
+                        Rc::new(JupyterCompletionProvider::new(project, session.downgrade()));
+                    editor.set_completion_provider(Some(provider));
+                }
+
                 cx.notify();
 
                 cx.subscribe(&session, {
                     let store = store.clone();
-                    move |_this, _session, event, cx| match event {
-                        SessionEvent::Shutdown(shutdown_event) => {
+                    move |this, _session, event, cx| match event {
+                        SessionEvent::Shutdown(shutdown_editor) => {
+                            if let Some(project) = this.project().cloned() {
+                                this.set_completion_provider(Some(Rc::new(project)));
+                            }
                             store.update(cx, |store, _cx| {
-                                store.remove_session(shutdown_event.entity_id());
+                                store.remove_session(shutdown_editor.entity_id());
                             });
                         }
                     }
@@ -501,6 +521,42 @@ pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakEnti
             }
         })
         .detach();
+}
+
+pub(crate) struct CompletionChunk {
+    pub code: String,
+    /// Char offset of the cursor within `code`.
+    pub cursor_pos: usize,
+    /// Byte offset within the buffer where `code` starts.
+    pub start_byte: usize,
+}
+
+/// Returns the runnable chunk surrounding `cursor` along with the cursor's char
+/// offset within that chunk. The chunk is the same unit that would be sent to
+/// the kernel if the user invoked `run` at this position, so completion and
+/// inspection requests share the kernel's mental model of "the current cell".
+pub(crate) fn completion_chunk(
+    buffer: &BufferSnapshot,
+    cursor: Point,
+    cx: &mut App,
+) -> Option<CompletionChunk> {
+    let (ranges, _) = runnable_ranges(buffer, cursor..cursor, cx);
+    // `runnable_ranges` may skip forward to the next cell when the cursor is on
+    // a blank line; that range is not useful as completion context, so only
+    // accept a chunk that actually contains the cursor.
+    let range = ranges
+        .into_iter()
+        .find(|r| r.start <= cursor && cursor <= r.end)?;
+    let start_byte = range.start.to_offset(buffer);
+    let cursor_byte = cursor.to_offset(buffer);
+    let code: String = buffer.text_for_range(range).collect();
+    let cursor_byte_in_chunk = cursor_byte.saturating_sub(start_byte).min(code.len());
+    let cursor_pos = code[..cursor_byte_in_chunk].chars().count();
+    Some(CompletionChunk {
+        code,
+        cursor_pos,
+        start_byte,
+    })
 }
 
 fn cell_range(buffer: &BufferSnapshot, start_row: u32, end_row: u32) -> Range<Point> {
@@ -1080,5 +1136,132 @@ mod tests {
 
         let (snippets, _) = runnable_ranges(&snapshot, Point::new(1, 0)..Point::new(1, 0), cx);
         assert!(snippets.is_empty());
+    }
+
+    #[gpui::test]
+    fn test_completion_chunk_basic(cx: &mut App) {
+        let test_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "TestLang".into(),
+                line_comments: vec!["# ".into()],
+                ..Default::default()
+            },
+            None,
+        ));
+
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! { r#"
+                    print(1 + 1)
+                    print(2 + 2)
+                "# },
+                cx,
+            )
+            .with_language(test_language, cx)
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        let chunk = completion_chunk(&snapshot, Point::new(0, 6), cx).unwrap();
+        assert_eq!(chunk.code, "print(1 + 1)");
+        assert_eq!(chunk.cursor_pos, 6);
+        assert_eq!(chunk.start_byte, 0);
+
+        // Second line: chunk starts after "print(1 + 1)\n" (13 bytes).
+        let chunk = completion_chunk(&snapshot, Point::new(1, 4), cx).unwrap();
+        assert_eq!(chunk.code, "print(2 + 2)");
+        assert_eq!(chunk.cursor_pos, 4);
+        assert_eq!(chunk.start_byte, 13);
+    }
+
+    #[gpui::test]
+    fn test_completion_chunk_jupytext(cx: &mut App) {
+        let test_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "TestLang".into(),
+                line_comments: vec!["# ".into()],
+                ..Default::default()
+            },
+            None,
+        ));
+
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! { r#"
+                    # %%
+                    x = 1
+                    y = 2
+                    # %%
+                    z = 3
+                "# },
+                cx,
+            )
+            .with_language(test_language, cx)
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Cursor inside the first cell.
+        let chunk = completion_chunk(&snapshot, Point::new(2, 4), cx).unwrap();
+        assert_eq!(chunk.code, "# %%\nx = 1\ny = 2");
+        assert_eq!(chunk.cursor_pos, 15);
+        assert_eq!(chunk.start_byte, 0);
+
+        // Cursor inside the second cell; chunk starts at row 3 (byte 17).
+        let chunk = completion_chunk(&snapshot, Point::new(4, 2), cx).unwrap();
+        assert_eq!(chunk.code, "# %%\nz = 3");
+        assert_eq!(chunk.cursor_pos, 7);
+        assert_eq!(chunk.start_byte, 17);
+    }
+
+    #[gpui::test]
+    fn test_completion_chunk_blank_line_returns_none(cx: &mut App) {
+        let test_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "TestLang".into(),
+                line_comments: vec!["# ".into()],
+                ..Default::default()
+            },
+            None,
+        ));
+
+        let buffer = cx.new(|cx| {
+            Buffer::local(
+                indoc! { r#"
+                    print(1 + 1)
+
+                    print(2 + 2)
+                "# },
+                cx,
+            )
+            .with_language(test_language, cx)
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        // `runnable_ranges` skips forward to the next non-blank cell, but the
+        // returned range does not contain the cursor on row 1, so
+        // `completion_chunk` rejects it.
+        assert!(completion_chunk(&snapshot, Point::new(1, 0), cx).is_none());
+    }
+
+    #[gpui::test]
+    fn test_completion_chunk_multibyte(cx: &mut App) {
+        let test_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "TestLang".into(),
+                line_comments: vec!["# ".into()],
+                ..Default::default()
+            },
+            None,
+        ));
+
+        // "π" is 2 bytes, so byte and char counts diverge inside the chunk.
+        let buffer = cx.new(|cx| Buffer::local("x = π * 2", cx).with_language(test_language, cx));
+        let snapshot = buffer.read(cx).snapshot();
+
+        // Byte column 6 = right after "π" (which occupies bytes 4..6).
+        let chunk = completion_chunk(&snapshot, Point::new(0, 6), cx).unwrap();
+        assert_eq!(chunk.code, "x = π * 2");
+        // chunk.code[..6] = "x = π" → 5 chars
+        assert_eq!(chunk.cursor_pos, 5);
+        assert_eq!(chunk.start_byte, 0);
     }
 }

@@ -1,4 +1,5 @@
 pub mod components;
+mod jupyter_completion_provider;
 mod jupyter_settings;
 pub mod kernels;
 pub mod notebook;
