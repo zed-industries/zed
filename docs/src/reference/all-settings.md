@@ -1624,7 +1624,8 @@ When trusted, project settings are synchronized automatically, language and MCP 
     "quick_actions": true,
     "selections_menu": true,
     "agent_review": true,
-    "code_actions": false
+    "code_actions": false,
+    "file_path_nav": false
   }
 }
 ```
@@ -3280,7 +3281,6 @@ Examples:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action
