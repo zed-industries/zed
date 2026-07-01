@@ -163,6 +163,15 @@ struct PushLiteral {
     prefix: Option<String>,
 }
 
+/// Starts a rewrap operation.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Action)]
+#[action(namespace = vim)]
+#[serde(deny_unknown_fields)]
+struct PushRewrap {
+    #[serde(default)]
+    keep_cursor: bool,
+}
+
 actions!(
     vim,
     [
@@ -226,8 +235,6 @@ actions!(
         PushOutdent,
         /// Starts an auto-indent operation.
         PushAutoIndent,
-        /// Starts a rewrap operation.
-        PushRewrap,
         /// Starts a shell command operation.
         PushShellCommand,
         /// Converts to lowercase.
@@ -843,8 +850,14 @@ impl Vim {
                 vim.push_operator(Operator::AutoIndent, window, cx)
             });
 
-            Vim::action(editor, cx, |vim, _: &PushRewrap, window, cx| {
-                vim.push_operator(Operator::Rewrap, window, cx)
+            Vim::action(editor, cx, |vim, action: &PushRewrap, window, cx| {
+                vim.push_operator(
+                    Operator::Rewrap {
+                        keep_cursor: action.keep_cursor,
+                    },
+                    window,
+                    cx,
+                )
             });
 
             Vim::action(editor, cx, |vim, _: &PushShellCommand, window, cx| {
