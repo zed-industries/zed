@@ -1,4 +1,4 @@
-use crate::AcpThread;
+use crate::{AcpThread, ElicitationStore};
 use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -200,6 +200,13 @@ pub trait AgentConnection {
     }
 
     fn cancel(&self, session_id: &acp::SessionId, cx: &mut App);
+
+    /// Request-scoped elicitations are connection-level because they can arrive before a session
+    /// thread exists. Session-scoped elicitations stay in the thread timeline, but use
+    /// `ElicitationStore` for shared processing.
+    fn request_elicitations(&self) -> Option<Entity<ElicitationStore>> {
+        None
+    }
 
     fn truncate(
         &self,
