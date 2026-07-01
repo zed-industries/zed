@@ -5,13 +5,14 @@ use editor::actions::{FindAllReferences, GoToDefinition, GoToImplementation};
 use editor::{Editor, EditorSettings, GotoDefinitionKind, OpenResultsIn};
 use file_icons::FileIcons;
 use gpui::{
-    AnyElement, App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity, prelude::*,
+    AnyElement, App, AppContext, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
+    prelude::*,
 };
 use language::{Buffer, HighlightId, LanguageAwareStyling};
 use picker::{Picker, PickerDelegate};
 use project::{Location, Project, ProjectPath};
-use settings::Settings as _;
+use settings::{GoToDefinitionFallback, Settings as _};
 use text::{Anchor, Point};
 use theme_settings::ThemeSettings;
 use ui::{Divider, FluentBuilder};
@@ -94,7 +95,60 @@ fn handle_nav_action(
     LspLocationsPicker::open_for_editor(kind, editor.clone(), window, cx);
 }
 
-#[derive(Clone, Copy, Debug)]
+/// Runs the LSP query for `kind` and returns the deduped locations. Returns
+/// `None` (and reports any error) when there is nothing to show, so the caller
+/// stops without an empty-results toast.
+async fn run_picker_query(
+    kind: LspPickerKind,
+    editor: &WeakEntity<Editor>,
+    workspace: &WeakEntity<Workspace>,
+    project: &Entity<Project>,
+    cx: &mut AsyncWindowContext,
+) -> Option<Vec<Location>> {
+    let query = editor
+        .update(cx, |editor, cx| kind.run_query(editor, project, cx))
+        .ok()
+        .flatten()?;
+    match query.await {
+        Ok(mut locations) => {
+            // Drop exact-duplicate locations a server may report more than once,
+            // so a single distinct result jumps directly instead of opening a
+            // one-row picker.
+            let mut seen = HashSet::default();
+            locations.retain(|location| seen.insert(location.clone()));
+            Some(locations)
+        }
+        Err(error) => {
+            log::error!("LSP {kind:?} query failed: {error:#}");
+            workspace
+                .update(cx, |workspace, cx| workspace.show_error(error, cx))
+                .log_err();
+            None
+        }
+    }
+}
+
+fn show_no_results_toast(
+    workspace: &WeakEntity<Workspace>,
+    kind: LspPickerKind,
+    cx: &mut AsyncWindowContext,
+) {
+    workspace
+        .update(cx, |workspace, cx| {
+            struct NoLspResults;
+            workspace.show_toast(
+                Toast::new(
+                    NotificationId::unique::<NoLspResults>(),
+                    kind.empty_message(),
+                )
+                .autohide(),
+                cx,
+            );
+        })
+        .log_err();
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LspPickerKind {
     References,
     Definition,
@@ -164,7 +218,9 @@ impl LspLocationsPicker {
     }
 
     /// Opens the picker for `kind`: runs a fresh LSP query and shows the
-    /// results.
+    /// results. An empty definitions query falls back to references when the
+    /// `go_to_definition_fallback` setting calls for it, matching
+    /// [`Editor::go_to_definition`].
     fn open(
         kind: LspPickerKind,
         editor: Entity<Editor>,
@@ -173,41 +229,31 @@ impl LspLocationsPicker {
         cx: &mut Context<Workspace>,
     ) {
         let project = workspace.project().clone();
-        let Some(query) = editor.update(cx, |editor, cx| kind.run_query(editor, &project, cx))
-        else {
-            return;
-        };
+        let fallback = EditorSettings::get_global(cx).go_to_definition_fallback;
         let editor = editor.downgrade();
         cx.spawn_in(window, async move |workspace, cx| {
-            let mut locations = match query.await {
-                Ok(locations) => locations,
-                Err(error) => {
-                    log::error!("LSP {kind:?} query failed: {error:#}");
-                    workspace
-                        .update(cx, |workspace, cx| workspace.show_error(error, cx))
-                        .log_err();
-                    return;
-                }
+            let mut kind = kind;
+            let Some(mut locations) =
+                run_picker_query(kind, &editor, &workspace, &project, cx).await
+            else {
+                return;
             };
-            // Drop exact-duplicate locations a server may report more than once,
-            // so a single distinct result jumps directly instead of opening a one-row picker.
-            let mut seen = HashSet::default();
-            locations.retain(|location| seen.insert(location.clone()));
+
+            if locations.is_empty()
+                && kind == LspPickerKind::Definition
+                && fallback == GoToDefinitionFallback::FindAllReferences
+            {
+                kind = LspPickerKind::References;
+                let Some(references) =
+                    run_picker_query(kind, &editor, &workspace, &project, cx).await
+                else {
+                    return;
+                };
+                locations = references;
+            }
 
             if locations.is_empty() {
-                workspace
-                    .update(cx, |workspace, cx| {
-                        struct NoLspResults;
-                        workspace.show_toast(
-                            Toast::new(
-                                NotificationId::unique::<NoLspResults>(),
-                                kind.empty_message(),
-                            )
-                            .autohide(),
-                            cx,
-                        );
-                    })
-                    .log_err();
+                show_no_results_toast(&workspace, kind, cx);
                 return;
             }
 
@@ -224,7 +270,6 @@ impl LspLocationsPicker {
 
             workspace
                 .update_in(cx, |workspace, window, cx| {
-                    let project = workspace.project().clone();
                     workspace.toggle_modal(window, cx, |window, cx| {
                         Self::new(kind, locations, project, editor, window, cx)
                     });
