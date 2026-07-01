@@ -1281,7 +1281,6 @@ mod tests {
             Vec::new(),
             Vec::new(),
             Vec::new(),
-            Vec::new(),
             SandboxPermissions::default(),
             None,
             HashMap::<String, String>::new(),
@@ -1443,7 +1442,7 @@ mod tests {
 
     #[test]
     fn split_resolved_paths_rejects_missing_required_writable_paths() {
-        let error = split_resolved_paths(false, 1, 0, vec![None]).unwrap_err();
+        let error = split_resolved_paths(false, 1, vec![None]).unwrap_err();
         assert!(
             error
                 .to_string()
