@@ -1,7 +1,7 @@
 mod image_info;
 mod image_viewer_settings;
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use anyhow::Context as _;
 use editor::{EditorSettings, RevealInFileManager, items::entry_git_aware_label_color};
@@ -10,8 +10,8 @@ use gpui::{
     AnyElement, App, Bounds, Context, DispatchPhase, Element, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable, Font, GlobalElementId, InspectorElementId, InteractiveElement,
     IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, PinchEvent, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, Style, Styled,
-    Task, WeakEntity, Window, actions, checkerboard, div, img, point, px, size,
+    ParentElement, PinchEvent, Pixels, Point, Render, RenderImage, ScrollDelta, ScrollWheelEvent,
+    Style, Styled, Task, WeakEntity, Window, actions, checkerboard, div, img, point, px, size,
 };
 use language::File as _;
 use persistence::ImageViewerDb;
@@ -19,7 +19,7 @@ use project::{ImageItem, Project, ProjectPath, image_store::ImageItemEvent};
 use settings::Settings;
 use theme_settings::ThemeSettings;
 use ui::{Tooltip, prelude::*};
-use util::paths::PathExt;
+use util::{ResultExt as _, paths::PathExt};
 use workspace::{
     ItemId, ItemSettings, Pane, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
     WorkspaceId, delete_unloaded_items,
@@ -61,11 +61,61 @@ pub struct ImageView {
     last_mouse_position: Option<Point<Pixels>>,
     container_bounds: Option<Bounds<Pixels>>,
     image_size: Option<(u32, u32)>,
+    displayed_image: Option<DisplayedImage>,
+}
+
+struct DisplayedImage {
+    source_image: Arc<gpui::Image>,
+    render_image: Arc<RenderImage>,
+}
+
+impl DisplayedImage {
+    fn drop_atlas_entry(&self, window: &mut Window) {
+        window.drop_image(self.render_image.clone()).log_err();
+    }
+
+    fn release(self, window: &mut Window, cx: &mut App) {
+        self.drop_atlas_entry(window);
+        self.source_image.remove_asset(cx);
+    }
 }
 
 impl ImageView {
     fn is_dragging(&self) -> bool {
         self.last_mouse_position.is_some()
+    }
+
+    fn update_displayed_image(
+        &mut self,
+        image: &Arc<gpui::Image>,
+        render_image: Option<Arc<RenderImage>>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let Some(render_image) = render_image else {
+            return;
+        };
+
+        if self
+            .displayed_image
+            .as_ref()
+            .is_some_and(|displayed_image| displayed_image.render_image.id == render_image.id)
+        {
+            return;
+        }
+
+        if let Some(previous) = self.displayed_image.take() {
+            if previous.source_image.id() == image.id() {
+                previous.drop_atlas_entry(window);
+            } else {
+                previous.release(window, cx);
+            }
+        }
+
+        self.displayed_image = Some(DisplayedImage {
+            source_image: image.clone(),
+            render_image,
+        });
     }
 
     pub fn new(
@@ -82,11 +132,10 @@ impl ImageView {
 
         cx.subscribe(&image_item, Self::on_image_event).detach();
         cx.on_release_in(window, |this, window, cx| {
-            let image_data = this.image_item.read(cx).image.clone();
-            if let Some(image) = image_data.clone().get_render_image(window, cx) {
-                cx.drop_image(image, None);
+            if let Some(displayed_image) = this.displayed_image.take() {
+                displayed_image.release(window, cx);
             }
-            image_data.remove_asset(cx);
+            this.image_item.read(cx).image.clone().remove_asset(cx);
         })
         .detach();
 
@@ -104,6 +153,7 @@ impl ImageView {
             last_mouse_position: None,
             container_bounds: None,
             image_size,
+            displayed_image: None,
         }
     }
 
@@ -377,7 +427,9 @@ impl Element for ImageContentElement {
             top = center_y - (scaled_height / 2.0) + pan_offset.y;
         }
 
-        self.image_view.update(cx, |this, _| {
+        self.image_view.update(cx, |this, cx| {
+            let render_image = image.clone().use_render_image(window, cx);
+            this.update_displayed_image(&image, render_image, window, cx);
             this.container_bounds = Some(bounds);
             if let Some(initial_zoom_level) = initial_zoom_level {
                 this.zoom_level = initial_zoom_level;
@@ -574,6 +626,7 @@ impl Item for ImageView {
             last_mouse_position: None,
             container_bounds: None,
             image_size: self.image_size,
+            displayed_image: None,
         })))
     }
 
