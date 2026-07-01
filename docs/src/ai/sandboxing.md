@@ -46,6 +46,7 @@ By default, sandboxed Zed Agent tool actions have these restrictions:
 | Temporary files     | Terminal commands receive a writable temporary location. The exact behavior differs by platform.                                                                    |
 | Other writes        | Writes outside the default writable locations are blocked unless you approve a broader sandbox request.                                                             |
 | Outbound networking | Network access is blocked unless you approve a host-specific or unrestricted network sandbox request. Host-specific enforcement is not available on every platform. |
+| Local IPC sockets   | Sandboxed commands cannot open Unix-domain sockets (for example, to the desktop session bus or a container daemon), which could otherwise be used to run commands outside the sandbox.                |
 
 ## Approval Prompts {#approval-prompts}
 
