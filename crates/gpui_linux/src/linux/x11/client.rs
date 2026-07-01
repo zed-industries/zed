@@ -177,6 +177,10 @@ pub struct X11ClientState {
     pub(crate) last_location: Point<Pixels>,
     pub(crate) current_count: usize,
     pub(crate) pinch_scale: f32,
+    // X11 timestamp of the most recent user input event (KeyPress / ButtonPress).
+    // Used as the _NET_ACTIVE_WINDOW timestamp so Mutter/EWMH window managers
+    // accept activation requests instead of triggering focus-stealing prevention.
+    pub(crate) last_user_event_time: xproto::Timestamp,
 
     pub(crate) gpu_context: GpuContext,
     pub(crate) compositor_gpu: Option<CompositorGpuHint>,
@@ -522,6 +526,7 @@ impl X11Client {
             last_location: Point::new(px(0.0), px(0.0)),
             current_count: 0,
             pinch_scale: 1.0,
+            last_user_event_time: x11rb::CURRENT_TIME,
             gpu_context: Rc::new(RefCell::new(None)),
             compositor_gpu,
             scale_factor,
@@ -1046,6 +1051,7 @@ impl X11Client {
                 let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
 
+                state.last_user_event_time = event.time;
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
                 state.pre_key_char_down.take();
@@ -1132,6 +1138,7 @@ impl X11Client {
                 let window = self.get_window(event.event)?;
                 let mut state = self.0.borrow_mut();
 
+                state.last_user_event_time = event.time;
                 let modifiers = modifiers_from_xinput_info(event.mods);
                 state.modifiers = modifiers;
 
