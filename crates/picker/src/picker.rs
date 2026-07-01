@@ -402,6 +402,7 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn uniform_list_with_preview(
         delegate: D,
         preview: Arc<dyn PreviewBackend>,
+        default_layout: preview::Layout,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -412,7 +413,8 @@ impl<D: PickerDelegate> Picker<D> {
             cx,
         );
 
-        let preview = Preview::new(preview);
+        let mut preview = Preview::new(preview);
+        preview.layout = default_layout;
         Self::new(
             delegate,
             ContainerKind::UniformList,
@@ -430,6 +432,7 @@ impl<D: PickerDelegate> Picker<D> {
     pub fn list_with_preview(
         delegate: D,
         preview: Arc<dyn PreviewBackend>,
+        default_layout: preview::Layout,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -440,7 +443,8 @@ impl<D: PickerDelegate> Picker<D> {
             cx,
         );
 
-        let preview = Preview::new(preview);
+        let mut preview = Preview::new(preview);
+        preview.layout = default_layout;
         Self::new(
             delegate,
             ContainerKind::List,
@@ -496,10 +500,12 @@ impl<D: PickerDelegate> Picker<D> {
     ) -> Self {
         let element_container = Self::create_element_container(container);
         if let Some(preview) = &mut preview {
+            // A persisted layout is the user's last runtime choice and wins; otherwise
+            // fall back to the caller's configured default (already set on `preview`).
             preview.layout = persistence::load_last_preview_layout(D::name(), cx)
                 .log_err()
                 .flatten()
-                .unwrap_or_default();
+                .unwrap_or(preview.layout);
         };
         let has_preview = preview.is_some();
         let persisted_shape =
@@ -1423,6 +1429,20 @@ mod tests {
         }
     }
 
+    struct NoopPreview;
+
+    impl PreviewBackend for NoopPreview {
+        fn update(&self, _update: PreviewUpdate, _window: &mut Window, _cx: &mut App) {}
+
+        fn render(&self, _layout: PreviewLayout, _cx: &mut App) -> gpui::AnyElement {
+            gpui::Empty.into_any_element()
+        }
+
+        fn adjust_to_new_size(&self, _window: &mut Window, _cx: &mut App) {}
+
+        fn clear(&self, _cx: &mut App) {}
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let store = settings::SettingsStore::test(cx);
@@ -1430,6 +1450,37 @@ mod tests {
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
         });
+    }
+
+    #[gpui::test]
+    async fn test_preview_opens_with_configured_default_layout(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        // With no layout persisted for this delegate, the finder opens with the
+        // layout the caller derived from its setting.
+        for layout in [
+            preview::Layout::Right,
+            preview::Layout::Below,
+            preview::Layout::Hidden,
+        ] {
+            let (picker, cx) = cx.add_window_view(|window, cx| {
+                Picker::list_with_preview(
+                    TestDelegate::new(vec![true]),
+                    Arc::new(NoopPreview),
+                    layout,
+                    window,
+                    cx,
+                )
+            });
+
+            picker.update(cx, |picker, _cx| {
+                assert_eq!(
+                    picker.preview_layout(),
+                    Some(layout),
+                    "preview should open with the configured default layout {layout:?}"
+                );
+            });
+        }
     }
 
     #[gpui::test]

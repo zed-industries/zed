@@ -3417,7 +3417,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
 }
 
 fn search_and_files_page() -> SettingsPage {
-    fn search_section() -> [SettingsPageItem; 9] {
+    fn search_section() -> [SettingsPageItem; 10] {
         [
             SettingsPageItem::SectionHeader("Search"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3559,6 +3559,30 @@ fn search_and_files_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
+                title: "Preview",
+                description: "Where to place the preview in the project search modal by default.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("editor.search.preview"),
+                    pick: |settings_content| {
+                        settings_content
+                            .editor
+                            .search
+                            .as_ref()
+                            .and_then(|search| search.preview.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .editor
+                            .search
+                            .get_or_insert_default()
+                            .preview = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
                 title: "Seed Search Query From Cursor",
                 description: "When to populate a new search's query based on the text under the cursor.",
                 field: Box::new(SettingField {
@@ -3580,7 +3604,7 @@ fn search_and_files_page() -> SettingsPage {
         ]
     }
 
-    fn file_finder_section() -> [SettingsPageItem; 4] {
+    fn file_finder_section() -> [SettingsPageItem; 5] {
         [
             SettingsPageItem::SectionHeader("File Finder"),
             // todo: null by default
@@ -3644,6 +3668,22 @@ fn search_and_files_page() -> SettingsPage {
                             .file_finder
                             .get_or_insert_default()
                             .skip_focus_for_active_in_search = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Preview",
+                description: "Where to place the file preview in the file finder by default.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("file_finder.preview"),
+                    pick: |settings_content| {
+                        settings_content.file_finder.as_ref()?.preview.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.file_finder.get_or_insert_default().preview = value;
                     },
                 }),
                 metadata: None,

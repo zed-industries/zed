@@ -166,13 +166,15 @@ impl FileFinder {
     }
 
     fn new(delegate: FileFinderDelegate, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let modal_max_width_setting = FileFinderSettings::get_global(cx).modal_max_width;
+        let settings = FileFinderSettings::get_global(cx);
+        let modal_max_width_setting = settings.modal_max_width;
+        let default_layout = settings.preview.into();
 
         let project = delegate.project.clone();
         let modal_max_width = Self::modal_max_width(modal_max_width_setting, window);
         let preview = picker_preview::editor_preview(project, window, cx);
         let picker = cx.new(|cx| {
-            Picker::uniform_list_with_preview(delegate, preview, window, cx)
+            Picker::uniform_list_with_preview(delegate, preview, default_layout, window, cx)
                 .initial_width(Rems::from_pixels(modal_max_width, window))
         });
         let picker_focus_handle = picker.focus_handle(cx);

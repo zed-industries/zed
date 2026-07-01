@@ -726,6 +726,9 @@
     "regex": false,
     // Whether to center the cursor on each search match when navigating.
     "center_on_match": false,
+    // Where to place the preview in the project search modal by default.
+    // One of: "hidden", "right", "below".
+    "preview": "hidden",
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:
@@ -1432,6 +1435,9 @@
     "include_ignored": "smart",
     // Whether to include text channels in file finder results.
     "include_channels": false,
+    // Where to place the file preview in the file finder by default.
+    // One of: "hidden", "right", "below".
+    "preview": "hidden",
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.

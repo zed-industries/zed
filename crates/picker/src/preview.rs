@@ -30,6 +30,16 @@ pub enum Layout {
     Right,
 }
 
+impl From<settings::PreviewLayoutContent> for Layout {
+    fn from(content: settings::PreviewLayoutContent) -> Self {
+        match content {
+            settings::PreviewLayoutContent::Hidden => Layout::Hidden,
+            settings::PreviewLayoutContent::Right => Layout::Right,
+            settings::PreviewLayoutContent::Below => Layout::Below,
+        }
+    }
+}
+
 impl Preview {
     pub fn new(content: Arc<dyn PreviewBackend>) -> Self {
         Preview {

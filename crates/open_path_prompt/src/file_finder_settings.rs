@@ -1,6 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{RegisterSetting, Settings};
+use settings::{PreviewLayoutContent, RegisterSetting, Settings};
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq, RegisterSetting)]
 pub struct FileFinderSettings {
@@ -9,6 +9,7 @@ pub struct FileFinderSettings {
     pub skip_focus_for_active_in_search: bool,
     pub include_ignored: Option<bool>,
     pub include_channels: bool,
+    pub preview: PreviewLayoutContent,
 }
 
 impl Settings for FileFinderSettings {
@@ -25,6 +26,7 @@ impl Settings for FileFinderSettings {
                 settings::IncludeIgnoredContent::Smart => None,
             },
             include_channels: file_finder.include_channels.unwrap(),
+            preview: file_finder.preview.unwrap(),
         }
     }
 }
