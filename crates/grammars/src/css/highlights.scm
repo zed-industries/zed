@@ -96,6 +96,9 @@
   (float_value)
 ] @number
 
+((plain_value) @number
+  (#match? @number "^/[0-9]+(\\.[0-9]+)?[a-zA-Z%]*$"))
+
 (unit) @type.unit
 
 [
