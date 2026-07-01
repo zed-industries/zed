@@ -9,7 +9,8 @@ use editor::{
 use gpui::{AnyElement, Context, Entity, Subscription};
 use markdown::{Markdown, MarkdownElement};
 use multi_buffer::{Event as MultiBufferEvent, MultiBufferPoint};
-use project::ProjectPath;
+use project::{ProjectPath, project_settings::ProjectSettings};
+use settings::{Settings as _, SettingsStore};
 use time::{OffsetDateTime, UtcOffset};
 use ui::prelude::*;
 
@@ -57,6 +58,9 @@ pub fn register_editor(editor: &mut Editor, cx: &mut Context<Editor>) {
             }
         }),
     );
+    subscriptions.push(cx.observe_global::<SettingsStore>(|editor, cx| {
+        refresh_blocks(editor, cx);
+    }));
 
     editor.register_addon(PullRequestCommentsAddon {
         store,
@@ -80,6 +84,14 @@ fn refresh_blocks(editor: &mut Editor, cx: &mut Context<Editor>) {
         .collect();
     if !old_block_ids.is_empty() {
         editor.remove_blocks(old_block_ids, None, cx);
+    }
+
+    if !ProjectSettings::get_global(cx)
+        .git
+        .pull_request
+        .enable_inline_comments
+    {
+        return;
     }
 
     let Some(repository) = store.read(cx).active_repository().cloned() else {

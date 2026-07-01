@@ -471,6 +471,8 @@ pub struct GitSettings {
     pub inline_blame: InlineBlameSettings,
     /// Git blame settings.
     pub blame: BlameSettings,
+    /// Settings for integration with git providers for pull requests.
+    pub pull_request: PullRequestSettings,
     /// Which information to show in the branch picker.
     ///
     /// Default: on
@@ -577,6 +579,15 @@ pub struct BlameSettings {
     ///
     /// Default: true
     pub show_avatar: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PullRequestSettings {
+    /// Whether to show pull request review comments inline in the editor, anchored to the lines
+    /// they were left on, for the current branch's pull request.
+    ///
+    /// Default: false
+    pub enable_inline_comments: bool,
 }
 
 impl GitSettings {
@@ -694,6 +705,12 @@ impl Settings for ProjectSettings {
                 let blame = git.blame.unwrap();
                 BlameSettings {
                     show_avatar: blame.show_avatar.unwrap(),
+                }
+            },
+            pull_request: {
+                let pull_request = git.pull_request.unwrap_or_default();
+                PullRequestSettings {
+                    enable_inline_comments: pull_request.enable_inline_comments.unwrap_or(false),
                 }
             },
             branch_picker: {

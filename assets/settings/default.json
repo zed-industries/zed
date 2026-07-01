@@ -1686,6 +1686,11 @@
     "blame": {
       "show_avatar": true,
     },
+    // Settings for showing pull request review comments inline in the editor,
+    // anchored to the lines they were left on, for the current branch's pull request.
+    "pull_request": {
+      "enable_inline_comments": false,
+    },
     // Control which information is shown in the branch picker.
     "branch_picker": {
       "show_author_name": true,

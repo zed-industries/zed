@@ -536,6 +536,8 @@ pub struct GitSettings {
     pub inline_blame: Option<InlineBlameSettings>,
     /// Git blame settings.
     pub blame: Option<BlameSettings>,
+    /// Settings for showing pull request review comments inline in the editor.
+    pub pull_request: Option<PullRequestSettings>,
     /// Which information to show in the branch picker.
     ///
     /// Default: on
@@ -669,6 +671,18 @@ pub struct InlineBlameSettings {
     ///
     /// Default: false
     pub show_commit_summary: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Copy, Debug, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct PullRequestSettings {
+    /// Whether to show pull request review comments inline in the editor,
+    /// anchored to the lines they were left on, for the current branch's
+    /// pull request.
+    ///
+    /// Default: false
+    pub enable_inline_comments: Option<bool>,
 }
 
 #[with_fallible_options]

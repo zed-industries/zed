@@ -7,7 +7,9 @@ use gpui::{
 use project::{
     Project,
     git_store::{GitStoreEvent, Repository, RepositoryEvent},
+    project_settings::ProjectSettings,
 };
+use settings::{Settings as _, SettingsStore};
 
 #[derive(Clone, PartialEq, Eq)]
 struct FetchKey {
@@ -22,7 +24,7 @@ pub struct PullRequestStore {
     comments_by_path: HashMap<String, Vec<PullRequestComment>>,
     fetched_key: Option<FetchKey>,
     _fetch_task: Option<Task<()>>,
-    _git_store_subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 #[derive(Default)]
@@ -50,11 +52,13 @@ impl PullRequestStore {
 
     fn new(project: Entity<Project>, cx: &mut Context<Self>) -> Self {
         let git_store = project.read(cx).git_store().clone();
-        let subscription = cx.subscribe(&git_store, |this, _git_store, event, cx| match event {
-            GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::HeadChanged, _)
-            | GitStoreEvent::ActiveRepositoryChanged(_) => this.refresh(cx),
-            _ => {}
-        });
+        let git_store_subscription =
+            cx.subscribe(&git_store, |this, _git_store, event, cx| match event {
+                GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::HeadChanged, _)
+                | GitStoreEvent::ActiveRepositoryChanged(_) => this.refresh(cx),
+                _ => {}
+            });
+        let settings_subscription = cx.observe_global::<SettingsStore>(|this, cx| this.refresh(cx));
 
         let mut this = Self {
             project: project.downgrade(),
@@ -62,7 +66,7 @@ impl PullRequestStore {
             comments_by_path: HashMap::default(),
             fetched_key: None,
             _fetch_task: None,
-            _git_store_subscription: subscription,
+            _subscriptions: vec![git_store_subscription, settings_subscription],
         };
         this.refresh(cx);
         this
@@ -82,6 +86,18 @@ impl PullRequestStore {
         let Some(project) = self.project.upgrade() else {
             return;
         };
+
+        if !ProjectSettings::get_global(cx)
+            .git
+            .pull_request
+            .enable_inline_comments
+        {
+            self.active_repository = None;
+            self._fetch_task = None;
+            self.clear(cx);
+            return;
+        }
+
         let active_repository = project.read(cx).active_repository(cx);
         self.active_repository = active_repository.clone();
 
@@ -171,10 +187,11 @@ impl PullRequestStore {
     }
 
     fn clear(&mut self, cx: &mut Context<Self>) {
-        self.fetched_key = None;
-        if !self.comments_by_path.is_empty() {
-            self.comments_by_path.clear();
+        let had_key = self.fetched_key.take().is_some();
+        let had_comments = !self.comments_by_path.is_empty();
+        self.comments_by_path.clear();
+        if had_key || had_comments {
+            cx.notify();
         }
-        cx.notify();
     }
 }

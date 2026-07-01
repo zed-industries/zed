@@ -64,8 +64,7 @@ struct User {
     pub avatar_url: String,
 }
 
-/// A pull request as returned by the GitHub REST API. Mapped into the
-/// provider-agnostic [`PullRequest`] before leaving this module.
+/// A pull request as returned by the GitHub REST API
 #[derive(Debug, Deserialize)]
 struct GithubPullRequest {
     number: u32,
@@ -74,8 +73,7 @@ struct GithubPullRequest {
     html_url: Url,
 }
 
-/// A pull request review comment as returned by the GitHub REST API. Mapped
-/// into the provider-agnostic [`PullRequestComment`] before leaving this module.
+/// A pull request review comment as returned by the GitHub REST API
 #[derive(Debug, Deserialize)]
 struct GithubPullRequestComment {
     user: GithubCommentAuthor,
@@ -153,11 +151,6 @@ impl Github {
 
     /// Sends an authenticated GET request to the given GitHub API URL and
     /// deserializes the JSON response body into `T`.
-    //
-    // TODO(pr-comments): authentication is currently limited to the
-    // `GITHUB_TOKEN` environment variable. Replace this with real auth (reuse
-    // the user's git credentials or `gh auth token`) before shipping. Responses
-    // are also not paginated yet, so only the first page of results is returned.
     async fn get_json<T: DeserializeOwned>(
         &self,
         url: &str,
