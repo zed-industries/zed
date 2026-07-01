@@ -741,6 +741,7 @@ fn main() {
         file_finder::init(cx);
         tab_switcher::init(cx);
         outline::init(cx);
+        project_bookmarks::init(cx);
         project_symbols::init(cx);
         project_panel::init(cx);
         outline_panel::init(cx);
