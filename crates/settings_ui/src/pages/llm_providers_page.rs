@@ -7,6 +7,7 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
     ProviderConfigurationView,
 };
+
 use settings::{
     AnthropicCompatibleAvailableModel, AnthropicCompatibleModelCapabilities,
     AnthropicCompatibleSettingsContent, OpenAiCompatibleAvailableModel,
@@ -72,7 +73,7 @@ impl CompatibleProviderKind {
 
 pub(crate) fn render_add_llm_provider_popover(
     settings_window: &SettingsWindow,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> impl IntoElement {
     let focus_handle = settings_window
@@ -80,68 +81,62 @@ pub(crate) fn render_add_llm_provider_popover(
         .clone()
         .tab_index(0)
         .tab_stop(true);
-    let border_color = if focus_handle.is_focused(window) {
-        cx.theme().colors().border_focused
-    } else {
-        gpui::transparent_black()
-    };
+
     let settings_window = cx.entity().downgrade();
 
-    div()
-        .rounded_md()
-        .border_1()
-        .border_color(border_color)
-        .child(
-            PopoverMenu::new("add-llm-provider-popover")
-                .trigger(
-                    Button::new("add-llm-provider", "Add Provider")
-                        .style(ButtonStyle::Outlined)
-                        .track_focus(&focus_handle)
-                        .start_icon(
-                            Icon::new(IconName::Plus)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .label_size(LabelSize::Small),
-                )
-                .anchor(gpui::Anchor::TopRight)
-                .menu(move |window, cx| {
-                    let settings_window = settings_window.clone();
-                    Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
-                        menu.header("Compatible APIs")
-                            .entry("OpenAI", None, {
-                                let settings_window = settings_window.clone();
-                                move |window, cx| {
-                                    settings_window
-                                        .update(cx, |this, cx| {
-                                            open_llm_provider_form(
-                                                this,
-                                                CompatibleProviderKind::OpenAi,
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                        .log_err();
-                                }
-                            })
-                            .entry("Anthropic", None, {
-                                let settings_window = settings_window;
-                                move |window, cx| {
-                                    settings_window
-                                        .update(cx, |this, cx| {
-                                            open_llm_provider_form(
-                                                this,
-                                                CompatibleProviderKind::Anthropic,
-                                                window,
-                                                cx,
-                                            );
-                                        })
-                                        .log_err();
-                                }
-                            })
-                    }))
-                }),
+    PopoverMenu::new("add-llm-provider-popover")
+        .trigger(
+            Button::new("add-llm-provider", "Add Provider")
+                .style(ButtonStyle::Outlined)
+                .track_focus(&focus_handle)
+                .label_size(LabelSize::Small)
+                .start_icon(
+                    Icon::new(IconName::Plus)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                ),
         )
+        .anchor(gpui::Anchor::TopRight)
+        .offset(gpui::Point {
+            x: px(0.0),
+            y: px(2.0),
+        })
+        .menu(move |window, cx| {
+            let settings_window = settings_window.clone();
+            Some(ContextMenu::build(window, cx, move |menu, _window, _cx| {
+                menu.header("Compatible APIs")
+                    .entry("OpenAI", None, {
+                        let settings_window = settings_window.clone();
+                        move |window, cx| {
+                            settings_window
+                                .update(cx, |this, cx| {
+                                    open_llm_provider_form(
+                                        this,
+                                        CompatibleProviderKind::OpenAi,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    })
+                    .entry("Anthropic", None, {
+                        let settings_window = settings_window;
+                        move |window, cx| {
+                            settings_window
+                                .update(cx, |this, cx| {
+                                    open_llm_provider_form(
+                                        this,
+                                        CompatibleProviderKind::Anthropic,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    })
+            }))
+        })
 }
 
 fn render_provider_section(
@@ -639,49 +634,57 @@ fn render_llm_provider_form_page(
     };
 
     v_flex()
-        .id("llm-provider-form-page")
         .size_full()
-        .pt_2p5()
-        .px_8()
-        .pb_16()
-        .gap_4()
-        .track_scroll(scroll_handle)
-        .overflow_y_scroll()
         .child(
-            Label::new(match form.kind {
-                CompatibleProviderKind::OpenAi => {
-                    "This provider will use an OpenAI compatible API."
-                }
-                CompatibleProviderKind::Anthropic => {
-                    "This provider will use an Anthropic Messages compatible API."
-                }
-            })
-            .size(LabelSize::Small)
-            .color(Color::Muted),
+            v_flex()
+                .id("llm-provider-form-page")
+                .track_scroll(scroll_handle)
+                .pt_2p5()
+                .px_8()
+                .pb_16()
+                .gap_4()
+                .overflow_y_scroll()
+                .child(Label::new(match form.kind {
+                    CompatibleProviderKind::OpenAi => {
+                        "This provider will use an OpenAI-compatible API."
+                    }
+                    CompatibleProviderKind::Anthropic => {
+                        "This provider will use an Anthropic Messages-compatible API."
+                    }
+                }))
+                .child(Divider::horizontal().flex_shrink_0())
+                .child(render_form_field(
+                    "Provider Name",
+                    "A unique name used to identify this provider.",
+                    &form.provider_name,
+                    cx,
+                ))
+                .child(render_form_field(
+                    "API URL",
+                    "The base URL for the compatible API.",
+                    &form.api_url,
+                    cx,
+                ))
+                .child(render_form_field(
+                    "API Key",
+                    "Stored in the system keychain, not in settings.json.",
+                    &form.api_key,
+                    cx,
+                ))
+                .child(render_models_section(form, window, cx)),
         )
-        .child(render_form_field(
-            "Provider Name",
-            "Required. A unique name used to identify this provider.",
-            &form.provider_name,
-            cx,
-        ))
-        .child(render_form_field(
-            "API URL",
-            "Required. The base URL for the compatible API.",
-            &form.api_url,
-            cx,
-        ))
-        .child(render_form_field(
-            "API Key",
-            "Required. Stored in the system keychain, not in settings.json.",
-            &form.api_key,
-            cx,
-        ))
-        .child(render_models_section(form, window, cx))
-        .when_some(form.error.clone(), |this, error| {
-            this.child(render_form_error(error))
-        })
-        .child(render_form_actions(cx))
+        .child(
+            v_flex()
+                .px_8()
+                .py_2p5()
+                .gap_1()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .when_some(form.error.clone(), |this, error| {
+                    this.child(render_form_error(error))
+                })
+                .child(render_form_actions(cx)),
+        )
         .into_any_element()
 }
 
@@ -697,18 +700,27 @@ fn render_form_field(
         .w_full()
         .gap_1p5()
         .child(
-            v_flex().gap_0p5().child(Label::new(title)).child(
-                Label::new(description)
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            ),
+            v_flex()
+                .gap_0p5()
+                .child(
+                    h_flex().gap_0p5().child(Label::new(title)).child(
+                        Label::new("*")
+                            .size(LabelSize::Small)
+                            .color(Color::Error)
+                            .mb_2(),
+                    ),
+                )
+                .child(
+                    Label::new(description)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
         )
         .child(
             h_flex()
                 .w_full()
                 .min_w_64()
                 .h_8()
-                .py_1()
                 .px_2()
                 .rounded_md()
                 .border_1()
@@ -732,7 +744,7 @@ fn render_models_section(
         .child(
             h_flex()
                 .justify_between()
-                .child(Label::new("Models").size(LabelSize::Small))
+                .child(Label::new("Models"))
                 .child(
                     Button::new("add-model", "Add Model")
                         .start_icon(
@@ -982,7 +994,6 @@ fn render_form_error(error: SharedString) -> impl IntoElement {
     h_flex()
         .w_full()
         .gap_2()
-        .items_center()
         .child(
             Icon::new(IconName::XCircle)
                 .size(IconSize::Small)
@@ -994,16 +1005,15 @@ fn render_form_error(error: SharedString) -> impl IntoElement {
 fn render_form_actions(cx: &mut Context<SettingsWindow>) -> impl IntoElement {
     h_flex()
         .w_full()
-        .gap_2()
+        .gap_1()
         .justify_end()
-        .pt_2()
         .child(
-            Button::new("llm-provider-form-cancel", "Cancel")
-                .style(ButtonStyle::Subtle)
-                .on_click(cx.listener(|this, _, window, cx| {
+            Button::new("llm-provider-form-cancel", "Cancel").on_click(cx.listener(
+                |this, _, window, cx| {
                     this.llm_provider_form = None;
                     this.pop_sub_page(window, cx);
-                })),
+                },
+            )),
         )
         .child(
             Button::new("llm-provider-form-save", "Save Provider")
