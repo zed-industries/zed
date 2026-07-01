@@ -320,20 +320,22 @@ fn build_popup_positioner(
 
     // The protocol wants the anchor rect relative to the parent's window geometry, while
     // `options.anchor_rect` is in gpui window coordinates (surface-local). A rect extending
-    // outside the geometry is a protocol error, so clamp after translating.
+    // outside the geometry or with a zero size is a protocol error, so translate, then clamp
+    // to at least one pixel inside the geometry, pulling the origin inward at the edges.
     let anchor_rect = Bounds {
         origin: options.anchor_rect.origin - parent_geometry.origin,
         size: options.anchor_rect.size,
     };
+    let one = Point::new(px(1.0), px(1.0));
     let geometry_bottom_right: Point<Pixels> = parent_geometry.size.into();
     let top_left = anchor_rect
         .origin
-        .max(&Point::default())
-        .min(&geometry_bottom_right);
+        .min(&(geometry_bottom_right - one))
+        .max(&Point::default());
     let bottom_right = anchor_rect
         .bottom_right()
-        .max(&top_left)
-        .min(&geometry_bottom_right);
+        .min(&geometry_bottom_right)
+        .max(&(top_left + one));
     let anchor_rect = Bounds::from_corners(top_left, bottom_right);
     positioner.set_anchor_rect(
         f32::from(anchor_rect.origin.x) as i32,
