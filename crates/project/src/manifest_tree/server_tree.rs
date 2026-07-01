@@ -8,6 +8,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
+    hash::{Hash, Hasher},
     sync::{Arc, Weak},
 };
 
@@ -33,7 +34,7 @@ use super::ManifestTree;
 pub(crate) struct ServersForWorktree {
     pub(crate) roots: BTreeMap<
         Arc<RelPath>,
-        BTreeMap<LanguageServerName, (Arc<InnerTreeNode>, BTreeSet<LanguageName>)>,
+        BTreeMap<ServerInstanceKey, (Arc<InnerTreeNode>, BTreeSet<LanguageName>)>,
     >,
 }
 
@@ -143,9 +144,9 @@ impl LanguageServerTree {
         delegate: &Arc<dyn ManifestDelegate>,
         cx: &mut App,
     ) -> impl Iterator<Item = LanguageServerId> + 'a {
-        let manifest_location = self.manifest_location_for_path(&path, manifest_name, delegate, cx);
-        let adapters = self.adapters_for_language(&manifest_location, &language_name, cx);
-        self.get_with_adapters(manifest_location, adapters)
+        let query_paths = self.query_paths_for_project_path(&path, manifest_name, delegate, cx);
+        let adapters = self.adapters_for_language(&query_paths, &language_name, cx);
+        self.get_with_adapters(query_paths.root_path, adapters)
     }
 
     /// Get all language server root points for a given path and language; the language servers might already be initialized at a given path.
@@ -157,9 +158,9 @@ impl LanguageServerTree {
         delegate: &Arc<dyn ManifestDelegate>,
         cx: &'a mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        let manifest_location = self.manifest_location_for_path(&path, manifest_name, delegate, cx);
-        let adapters = self.adapters_for_language(&manifest_location, &language_name, cx);
-        self.init_with_adapters(manifest_location, language_name, adapters, cx)
+        let query_paths = self.query_paths_for_project_path(&path, manifest_name, delegate, cx);
+        let adapters = self.adapters_for_language(&query_paths, &language_name, cx);
+        self.init_with_adapters(query_paths.root_path, language_name, adapters, cx)
     }
 
     fn init_with_adapters<'a>(
@@ -178,7 +179,7 @@ impl LanguageServerTree {
                 .roots
                 .entry(root_path.path.clone())
                 .or_default()
-                .entry(adapter.name());
+                .entry(ServerInstanceKey::new(adapter.name(), &settings));
             let (node, languages) = inner_node.or_insert_with(|| {
                 let toolchain = self.toolchains.read(cx).active_toolchain(
                     root_path.worktree_id,
@@ -206,41 +207,46 @@ impl LanguageServerTree {
         root_path: ProjectPath,
         adapters: IndexMap<LanguageServerName, (LspSettings, Arc<CachedLspAdapter>)>,
     ) -> impl Iterator<Item = LanguageServerId> + 'a {
-        adapters.into_iter().filter_map(move |(_, (_, adapter))| {
+        adapters.into_iter().filter_map(move |(_, (settings, adapter))| {
             let root_path = root_path.clone();
             let inner_node = self
                 .instances
                 .get(&root_path.worktree_id)?
                 .roots
                 .get(&root_path.path)?
-                .get(&adapter.name())?;
+                .get(&ServerInstanceKey::new(adapter.name(), &settings))?;
             inner_node.0.id.get().copied()
         })
     }
 
-    fn manifest_location_for_path(
+    fn query_paths_for_project_path(
         &self,
         path: &ProjectPath,
         manifest_name: Option<&ManifestName>,
         delegate: &Arc<dyn ManifestDelegate>,
         cx: &mut App,
-    ) -> ProjectPath {
-        // Find out what the root location of our subproject is.
-        // That's where we'll look for language settings (that include a set of language servers).
-        self.manifest_tree.update(cx, |this, cx| {
+    ) -> ServerQueryPaths {
+        // Keep server identity rooted at manifest/worktree root.
+        let root_path = self.manifest_tree.update(cx, |this, cx| {
             this.root_for_path_or_worktree_root(path, manifest_name, delegate, cx)
-        })
+        });
+        // Resolve language server selection with settings scoped to the current buffer path.
+        let settings_path = path.clone();
+        ServerQueryPaths {
+            root_path,
+            settings_path,
+        }
     }
 
     fn adapters_for_language(
         &self,
-        manifest_location: &ProjectPath,
+        query_paths: &ServerQueryPaths,
         language_name: &LanguageName,
         cx: &App,
     ) -> IndexMap<LanguageServerName, (LspSettings, Arc<CachedLspAdapter>)> {
         let settings_location = SettingsLocation {
-            worktree_id: manifest_location.worktree_id,
-            path: &manifest_location.path,
+            worktree_id: query_paths.settings_path.worktree_id,
+            path: &query_paths.settings_path.path,
         };
         let settings = AllLanguageSettings::get(Some(settings_location), cx).language(
             Some(settings_location),
@@ -340,7 +346,10 @@ impl LanguageServerTree {
             .roots
             .entry(RelPath::empty_arc())
             .or_default()
-            .entry(node.disposition.server_name.clone())
+            .entry(ServerInstanceKey::new(
+                node.disposition.server_name.clone(),
+                node.disposition.settings.as_ref(),
+            ))
             .or_insert_with(|| (node, BTreeSet::new()))
             .1
             .insert(language_name);
@@ -396,15 +405,15 @@ impl ServerTreeRebase {
         delegate: Arc<dyn ManifestDelegate>,
         cx: &'a mut App,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        let manifest =
+        let query_paths =
             self.new_tree
-                .manifest_location_for_path(&path, manifest_name, &delegate, cx);
+                .query_paths_for_project_path(&path, manifest_name, &delegate, cx);
         let adapters = self
             .new_tree
-            .adapters_for_language(&manifest, &language_name, cx);
+            .adapters_for_language(&query_paths, &language_name, cx);
 
         self.new_tree
-            .init_with_adapters(manifest, language_name, adapters, cx)
+            .init_with_adapters(query_paths.root_path, language_name, adapters, cx)
             .filter_map(|node| {
                 // Inspect result of the query and initialize it ourselves before
                 // handing it off to the caller.
@@ -419,15 +428,14 @@ impl ServerTreeRebase {
                     .old_contents
                     .get(&disposition.path.worktree_id)
                     .and_then(|worktree_nodes| worktree_nodes.roots.get(&disposition.path.path))
-                    .and_then(|roots| roots.get(&disposition.server_name))
+                    .and_then(|roots| {
+                        roots.get(&ServerInstanceKey::new(
+                            disposition.server_name.clone(),
+                            disposition.settings.as_ref(),
+                        ))
+                    })
                     .filter(|(old_node, _)| {
-                        // Only compare settings that require server restart.
-                        // Dynamic settings (settings.settings) can be updated via DidChangeConfiguration
-                        // without restarting the server.
                         disposition.toolchain == old_node.disposition.toolchain
-                            && disposition.settings.binary == old_node.disposition.settings.binary
-                            && disposition.settings.initialization_options
-                                == old_node.disposition.settings.initialization_options
                     })
                 else {
                     return Some(node);
@@ -459,5 +467,39 @@ impl ServerTreeRebase {
 
     pub(crate) fn server_tree(&mut self) -> &mut LanguageServerTree {
         &mut self.new_tree
+    }
+}
+
+struct ServerQueryPaths {
+    root_path: ProjectPath,
+    settings_path: ProjectPath,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct ServerInstanceKey {
+    name: LanguageServerName,
+    settings_fingerprint: u64,
+}
+
+impl ServerInstanceKey {
+    fn new(name: LanguageServerName, settings: &LspSettings) -> Self {
+        // Server identity should only split on settings that require restart.
+        // Dynamic settings are handled through DidChangeConfiguration.
+        let settings_fingerprint = serde_json::to_string(&(
+            settings.binary.clone(),
+            settings.initialization_options.clone(),
+        ))
+            .ok()
+            .map(|serialized| {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                serialized.hash(&mut hasher);
+                hasher.finish()
+            })
+            .unwrap_or_default();
+
+        Self {
+            name,
+            settings_fingerprint,
+        }
     }
 }
