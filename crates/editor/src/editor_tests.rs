@@ -30638,9 +30638,16 @@ async fn test_hide_pending_blame_popover_when_modal_opens(cx: &mut TestAppContex
     });
 
     editor.update_in(cx, |editor, _, cx| {
-        editor.blame = Some(
-            cx.new(|cx| GitBlame::new(editor.buffer.clone(), project.clone(), false, true, cx)),
-        );
+        editor.blame = Some(cx.new(|cx| {
+            GitBlame::new(
+                editor.buffer.clone(),
+                project.clone(),
+                false,
+                true,
+                crate::BlameRevisions::default(),
+                cx,
+            )
+        }));
         editor.show_blame_popover(
             buffer_id,
             &::git::blame::BlameEntry {

@@ -1628,6 +1628,31 @@ impl Editor {
         }
     }
 
+    /// Configures which revisions inline git blame uses in a diff view (project
+    /// diff or commit view): the revision used for each main buffer, and the
+    /// revision used for the diff base text so deleted lines show the commit that
+    /// last touched them.
+    ///
+    /// This respects the user's inline-blame setting: it only restarts an
+    /// already-running blame so the new revisions take effect. Toggling blame on
+    /// later will also pick these revisions up.
+    pub fn blame_revisions(&self) -> &blame::BlameRevisions {
+        &self.blame_revisions
+    }
+
+    pub fn set_blame_revisions(
+        &mut self,
+        revisions: blame::BlameRevisions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.blame_revisions = revisions;
+        if self.git_blame_inline_enabled {
+            self.start_git_blame_inline(false, window, cx);
+        }
+        cx.notify();
+    }
+
     pub(super) fn render_git_blame_gutter(&self, cx: &App) -> bool {
         !self.mode().is_minimap() && self.show_git_blame_gutter && self.has_blame_entries(cx)
     }
@@ -1637,7 +1662,6 @@ impl Editor {
             == project::project_settings::InlineBlameLocation::Inline
             && self.show_git_blame_inline
             && (self.focus_handle.is_focused(window) || self.inline_blame_popover.is_some())
-            && !self.newest_selection_head_on_empty_line(cx)
             && self.has_blame_entries(cx)
     }
 
@@ -1813,8 +1837,17 @@ impl Editor {
             let focused = self.focus_handle(cx).contains_focused(window, cx);
 
             let project = project.clone();
-            let blame = cx
-                .new(|cx| GitBlame::new(self.buffer.clone(), project, user_triggered, focused, cx));
+            let revisions = self.blame_revisions.clone();
+            let blame = cx.new(|cx| {
+                GitBlame::new(
+                    self.buffer.clone(),
+                    project,
+                    user_triggered,
+                    focused,
+                    revisions,
+                    cx,
+                )
+            });
             self.blame_subscription =
                 Some(cx.observe_in(&blame, window, |_, _, _, cx| cx.notify()));
             self.blame = Some(blame);
@@ -1991,14 +2024,6 @@ impl Editor {
             .is_some_and(|blame| blame.read(cx).has_generated_entries())
     }
 
-    fn newest_selection_head_on_empty_line(&self, cx: &App) -> bool {
-        let cursor_anchor = self.selections.newest_anchor().head();
-
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let buffer_row = MultiBufferRow(cursor_anchor.to_point(&snapshot).row);
-
-        snapshot.line_len(buffer_row) == 0
-    }
     fn hunk_after_position(
         &mut self,
         snapshot: &EditorSnapshot,
