@@ -1021,7 +1021,7 @@ pub fn into_bedrock(
                         }
                     })
                     .collect();
-                if message.cache && supports_caching {
+                if message.cache && supports_caching && !bedrock_message_content.is_empty() {
                     bedrock_message_content.push(BedrockInnerContent::CachePoint(
                         CachePointBlock::builder()
                             .r#type(CachePointType::Default)
