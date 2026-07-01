@@ -15011,11 +15011,11 @@ async fn setup_range_format_test_with_git<'a>(
         .await
         .unwrap();
 
-    // Without this, `get_uncommitted_diff` returns None and compute_format_target
+    // Without this, `get_unstaged_diff` returns None and compute_format_target
     // silently falls back to the saved_version path instead of the git diff path.
     project
         .update(cx, |project, cx| {
-            project.open_uncommitted_diff(buffer.clone(), cx)
+            project.open_unstaged_diff(buffer.clone(), cx)
         })
         .await
         .unwrap();
@@ -15551,28 +15551,31 @@ async fn test_modifications_format_multiple_hunks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_modifications_format_includes_staged_changes(cx: &mut TestAppContext) {
-    let (project, editor, cx, fake_server) = setup_range_format_test_with_git(
-        cx,
-        "line0\nline1\nline2\nline3\nline4\n",
-        "line0\nLINE1\nline2\nline3\nline4\n",
-    )
-    .await;
+async fn test_modifications_format_excludes_staged_changes(cx: &mut TestAppContext) {
+    let head_content = "line0\nline1\nline2\nline3\nline4\n";
+    let staged_content = "line0\nLINE1\nline2\nline3\nline4\n";
+    let (project, editor, cx, fake_server) =
+        setup_range_format_test_with_git(cx, head_content, staged_content).await;
 
     update_test_language_settings(cx, &|settings| {
         settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
     });
 
+    let working_content = "line0\nLINE1\nline2\nline3\nLINE4\n";
     editor.update_in(cx, |editor, window, cx| {
-        editor.set_text("line0\nLINE1\nline2\nline3\nLINE4\n", window, cx)
+        editor.set_text(working_content, window, cx)
     });
     cx.run_until_parked();
 
     let request_count = Arc::new(AtomicUsize::new(0));
     let request_count_clone = request_count.clone();
     let mut responded_rx =
-        fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_params, _| {
+        fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| {
             request_count_clone.fetch_add(1, atomic::Ordering::SeqCst);
+            assert_eq!(
+                params.range.start.line, 4,
+                "only the unstaged hunk (LINE4) should be formatted"
+            );
             async move { Ok(Some(Vec::new())) }
         });
 
@@ -15591,20 +15594,21 @@ async fn test_modifications_format_includes_staged_changes(cx: &mut TestAppConte
         })
         .unwrap();
     responded_rx.next().await;
-    responded_rx.next().await;
     save.await;
 
     assert_eq!(
         request_count.load(atomic::Ordering::SeqCst),
-        2,
-        "both staged (LINE1) and unstaged (LINE4) hunks must be formatted"
+        1,
+        "staged hunk (LINE1) must not be formatted, only the unstaged hunk (LINE4)"
     );
 }
 
 #[gpui::test]
-async fn test_modifications_format_range_covers_staged_hunk(cx: &mut TestAppContext) {
+async fn test_modifications_format_range_excludes_staged_hunk(cx: &mut TestAppContext) {
+    let head_content = "a\nb\nc\n";
+    let staged_content = "A\nb\nc\n";
     let (project, editor, cx, fake_server) =
-        setup_range_format_test_with_git(cx, "a\nb\nc\n", "A\nb\nc\n").await;
+        setup_range_format_test_with_git(cx, head_content, staged_content).await;
 
     update_test_language_settings(cx, &|settings| {
         settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
@@ -15646,8 +15650,8 @@ async fn test_modifications_format_range_covers_staged_hunk(cx: &mut TestAppCont
         "expected at least one range formatting request"
     );
     assert_eq!(
-        start_line, 0,
-        "format range must start at the staged row, not just the unstaged row"
+        start_line, 1,
+        "format range must exclude the staged row and start at the unstaged row"
     );
 }
 
@@ -15701,7 +15705,7 @@ async fn test_modifications_format_pure_unstaged_with_git(cx: &mut TestAppContex
 }
 
 #[gpui::test]
-async fn test_modifications_format_staged_changes_only(cx: &mut TestAppContext) {
+async fn test_modifications_format_no_unstaged_changes_with_git(cx: &mut TestAppContext) {
     let head_content = "line0\nline1\nline2\nline3\nline4\n";
     let staged_content = "line0\nLINE1\nline2\nline3\nLINE4\n";
     let (project, editor, cx, fake_server) =
@@ -15716,13 +15720,11 @@ async fn test_modifications_format_staged_changes_only(cx: &mut TestAppContext) 
     });
     cx.run_until_parked();
 
-    let request_count = Arc::new(AtomicUsize::new(0));
-    let request_count_clone = request_count.clone();
-    let mut responded_rx =
-        fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_params, _| {
-            request_count_clone.fetch_add(1, atomic::Ordering::SeqCst);
-            async move { Ok(Some(Vec::new())) }
-        });
+    let _no_format_handler = fake_server
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+            panic!("range formatting must not be called when all changes are staged");
+        })
+        .next();
 
     let save = editor
         .update_in(cx, |editor, window, cx| {
@@ -15738,15 +15740,8 @@ async fn test_modifications_format_staged_changes_only(cx: &mut TestAppContext) 
             )
         })
         .unwrap();
-    responded_rx.next().await;
-    responded_rx.next().await;
     save.await;
-
-    assert_eq!(
-        request_count.load(atomic::Ordering::SeqCst),
-        2,
-        "staged hunks (LINE1, LINE4) must be formatted even when working tree matches index"
-    );
+    cx.run_until_parked();
 }
 
 #[gpui::test]
@@ -15845,7 +15840,7 @@ async fn test_modifications_format_crlf_line_endings(cx: &mut TestAppContext) {
 
     project
         .update(cx, |project, cx| {
-            project.open_uncommitted_diff(buffer.clone(), cx)
+            project.open_unstaged_diff(buffer.clone(), cx)
         })
         .await
         .unwrap();

@@ -2288,7 +2288,7 @@ fn compute_format_target(
         let buffer_id = buffer.remote_id();
         let buffer_snapshot = buffer.snapshot();
         let diff_snapshot = git_store
-            .get_uncommitted_diff(buffer_id, cx)
+            .get_unstaged_diff(buffer_id, cx)
             .map(|diff| diff.read(cx).snapshot(cx));
         let saved_version = buffer.saved_version().clone();
 
