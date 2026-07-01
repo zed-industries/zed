@@ -585,7 +585,7 @@ pub fn init(
         init_language_model_settings(cx);
     }
     agent_panel::init(cx);
-    context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
+    context_server_configuration::init(language_registry, fs.clone(), cx);
     thread_metadata_store::init(cx);
     terminal_thread_metadata_store::init(cx);
 
