@@ -3,6 +3,7 @@ use collections::HashMap;
 use context_server::{ContextServerCommand, ContextServerId};
 use editor::{Editor, EditorElement, EditorStyle};
 
+use extension_host::ExtensionStore;
 use gpui::{
     AsyncWindowContext, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ScrollHandle,
     Subscription, Task, TaskExt, TextStyle, TextStyleRefinement, UnderlineStyle, WeakEntity,
@@ -402,7 +403,12 @@ fn resolve_context_server_extension(
         return Task::ready(None);
     };
 
-    let extension = crate::agent_configuration::resolve_extension_for_context_server(&id, cx);
+    let extension = ExtensionStore::global(cx)
+        .read(cx)
+        .installed_extensions()
+        .iter()
+        .find(|(_, entry)| entry.manifest.context_servers.contains_key(&id.0))
+        .map(|(id, entry)| (id.clone(), entry.manifest.clone()));
     cx.spawn(async move |cx| {
         let installation = descriptor
             .configuration(worktree_store, cx)
