@@ -26,8 +26,8 @@ use std::sync::LazyLock;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 use ui::{
-    ButtonLike, ButtonLink, ConfiguredApiCard, ElevationIndex, List, ListBulletItem, Tooltip,
-    prelude::*,
+    ButtonLike, ButtonLink, ConfiguredApiCard, Divider, ElevationIndex, List, ListBulletItem,
+    Tooltip, prelude::*,
 };
 use ui_input::InputField;
 use util::ResultExt;
@@ -1334,31 +1334,42 @@ impl ConfigurationView {
     fn render_instructions(cx: &App) -> Div {
         v_flex()
             .gap_2()
-            .child(Label::new(
-                "Run open models locally with llama.cpp's built-in server, or connect to a \
+            .child(
+                Label::new(
+                    "Run open models locally with llama.cpp's built-in server, or connect to a \
                 remote llama.cpp server.",
-            ))
-            .child(Label::new("To use a local llama.cpp server:"))
+                )
+                .color(Color::Muted),
+            )
+            .child(Label::new("To use a local llama.cpp server:").color(Color::Muted))
             .child(
                 List::new()
                     .child(
                         ListBulletItem::new("")
-                            .child(Label::new("Install llama.cpp from"))
+                            .child(Label::new("Install llama.cpp from").color(Color::Muted))
                             .child(ButtonLink::new("llama.app", LLAMA_CPP_DOWNLOAD_URL)),
                     )
                     .child(
                         ListBulletItem::new("")
-                            .child(Label::new("Start the server in router mode:"))
+                            .child(
+                                Label::new("Start the server in router mode:").color(Color::Muted),
+                            )
                             .child(Label::new("llama serve").inline_code(cx)),
                     )
-                    .child(ListBulletItem::new(
-                        "Click 'Connect' below to start using llama.cpp in Zed",
-                    )),
+                    .child(
+                        ListBulletItem::new(
+                            "Click 'Connect' below to start using llama.cpp in Zed",
+                        )
+                        .label_color(Color::Muted),
+                    ),
             )
-            .child(Label::new(
-                "Alternatively, you can connect to a remote llama.cpp server by specifying its \
+            .child(
+                Label::new(
+                    "Alternatively, you can connect to a remote llama.cpp server by specifying its \
                 URL and API key (set with --api-key, may not be required):",
-            ))
+                )
+                .color(Color::Muted),
+            )
     }
 
     fn render_api_key_editor(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -1370,18 +1381,8 @@ impl ConfigurationView {
             "API key configured".to_string()
         };
 
-        if !state.api_key_state.has_key() {
-            v_flex()
-                .on_action(cx.listener(Self::save_api_key))
-                .child(self.api_key_editor.clone())
-                .child(
-                    Label::new(format!(
-                        "You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."
-                    ))
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-                )
-                .into_any_element()
+        let api_key_control = if !state.api_key_state.has_key() {
+            self.api_key_editor.clone().into_any_element()
         } else {
             ConfiguredApiCard::new("llama-cpp-reset-key", configured_card_label)
                 .disabled(env_var_set)
@@ -1392,7 +1393,20 @@ impl ConfigurationView {
                     ))
                 })
                 .into_any_element()
-        }
+        };
+
+        v_flex()
+            .on_action(cx.listener(Self::save_api_key))
+            .child(api_key_control)
+            .gap_1p5()
+            .mb_2()
+            .child(
+                Label::new(format!(
+                    "You can also set the {API_KEY_ENV_VAR_NAME} environment variable and restart Zed."
+                ))
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+            )
     }
 
     fn render_context_window_editor(&self, cx: &Context<Self>) -> Div {
@@ -1401,26 +1415,26 @@ impl ConfigurationView {
 
         if custom_context_window_set {
             h_flex()
-                .p_3()
+                .p_1()
                 .justify_between()
                 .rounded_md()
                 .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().elevated_surface_background)
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().background.opacity(0.5))
                 .child(
                     h_flex()
-                        .gap_2()
+                        .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(v_flex().gap_1().child(Label::new(format!(
+                        .child(Label::new(format!(
                             "Context Window: {}",
                             settings.context_window.unwrap_or_default()
-                        )))),
+                        ))),
                 )
                 .child(
                     Button::new("reset-context-window", "Reset")
+                        .style(ButtonStyle::Outlined)
                         .label_size(LabelSize::Small)
                         .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
-                        .layer(ElevationIndex::ModalSurface)
                         .on_click(
                             cx.listener(|this, _, window, cx| {
                                 this.reset_context_window(window, cx)
@@ -1435,8 +1449,9 @@ impl ConfigurationView {
                     }),
                 )
                 .child(self.context_window_editor.clone())
+                .gap_1p5()
                 .child(
-                    Label::new("Default: discovered from the server")
+                    Label::new("Default: Discovered from the server")
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 )
@@ -1449,23 +1464,23 @@ impl ConfigurationView {
 
         if custom_api_url_set {
             h_flex()
-                .p_3()
+                .p_1()
                 .justify_between()
                 .rounded_md()
                 .border_1()
-                .border_color(cx.theme().colors().border)
-                .bg(cx.theme().colors().elevated_surface_background)
+                .border_color(cx.theme().colors().border_variant)
+                .bg(cx.theme().colors().background.opacity(0.5))
                 .child(
                     h_flex()
-                        .gap_2()
+                        .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
-                        .child(v_flex().gap_1().child(Label::new(api_url))),
+                        .child(Label::new(api_url)),
                 )
                 .child(
                     Button::new("reset-api-url", "Reset API URL")
+                        .style(ButtonStyle::Outlined)
                         .label_size(LabelSize::Small)
                         .start_icon(Icon::new(IconName::Undo).size(IconSize::Small))
-                        .layer(ElevationIndex::ModalSurface)
                         .on_click(
                             cx.listener(|this, _, window, cx| this.reset_api_url(window, cx)),
                         ),
@@ -1476,7 +1491,7 @@ impl ConfigurationView {
                     this.save_api_url(cx);
                     cx.notify();
                 }))
-                .gap_2()
+                .gap_1p5()
                 .child(self.api_url_editor.clone())
         }
     }
@@ -1488,12 +1503,15 @@ impl Render for ConfigurationView {
 
         v_flex()
             .gap_2()
+            .child(Headline::new("llama.cpp").size(HeadlineSize::Small))
             .child(Self::render_instructions(cx))
             .child(self.render_api_url_editor(cx))
             .child(self.render_context_window_editor(cx))
             .child(self.render_api_key_editor(cx))
+            .child(Divider::horizontal())
             .child(
                 h_flex()
+                    .pt_2()
                     .w_full()
                     .justify_between()
                     .gap_2()
@@ -1505,7 +1523,8 @@ impl Render for ConfigurationView {
                                 if is_authenticated {
                                     this.child(
                                         Button::new("llama-cpp-webui", "Open WebUI")
-                                            .style(ButtonStyle::Subtle)
+                                            .style(ButtonStyle::OutlinedGhost)
+                                            .size(ButtonSize::Medium)
                                             .end_icon(
                                                 Icon::new(IconName::ArrowUpRight)
                                                     .size(IconSize::XSmall)
@@ -1520,7 +1539,8 @@ impl Render for ConfigurationView {
                                     )
                                     .child(
                                         Button::new("llama-cpp-site", "llama.cpp")
-                                            .style(ButtonStyle::Subtle)
+                                            .style(ButtonStyle::OutlinedGhost)
+                                            .size(ButtonSize::Medium)
                                             .end_icon(
                                                 Icon::new(IconName::ArrowUpRight)
                                                     .size(IconSize::XSmall)
@@ -1534,7 +1554,8 @@ impl Render for ConfigurationView {
                                 } else {
                                     this.child(
                                         Button::new("download_llama_cpp_button", "Get llama.cpp")
-                                            .style(ButtonStyle::Subtle)
+                                            .style(ButtonStyle::OutlinedGhost)
+                                            .size(ButtonSize::Medium)
                                             .end_icon(
                                                 Icon::new(IconName::ArrowUpRight)
                                                     .size(IconSize::XSmall)
@@ -1549,7 +1570,8 @@ impl Render for ConfigurationView {
                             })
                             .child(
                                 Button::new("view-models", "Browse GGUF Models")
-                                    .style(ButtonStyle::Subtle)
+                                    .style(ButtonStyle::OutlinedGhost)
+                                    .size(ButtonSize::Medium)
                                     .end_icon(
                                         Icon::new(IconName::ArrowUpRight)
                                             .size(IconSize::XSmall)
@@ -1562,17 +1584,16 @@ impl Render for ConfigurationView {
                         if is_authenticated {
                             this.child(
                                 ButtonLike::new("connected")
-                                    .disabled(true)
-                                    .cursor_style(CursorStyle::Arrow)
+                                    .size(ButtonSize::Medium)
                                     .child(
                                         h_flex()
-                                            .gap_2()
+                                            .gap_1()
                                             .child(Icon::new(IconName::Check).color(Color::Success))
-                                            .child(Label::new("Connected"))
-                                            .into_any_element(),
+                                            .child(Label::new("Connected")),
                                     )
                                     .child(
                                         IconButton::new("refresh-models", IconName::RotateCcw)
+                                            .icon_size(IconSize::Small)
                                             .tooltip(Tooltip::text("Refresh Models"))
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 this.state.update(cx, |state, _| {
@@ -1585,6 +1606,8 @@ impl Render for ConfigurationView {
                         } else {
                             this.child(
                                 Button::new("retry_llama_cpp_models", "Connect")
+                                    .style(ButtonStyle::Outlined)
+                                    .size(ButtonSize::Medium)
                                     .start_icon(
                                         Icon::new(IconName::PlayOutlined).size(IconSize::XSmall),
                                     )
