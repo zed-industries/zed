@@ -60,7 +60,7 @@ use crate::components::{
     text_field_a11y_state, theme_picker,
 };
 use crate::pages::{
-    CustomAgentForm, McpServerForm, render_input_audio_device_dropdown,
+    CustomAgentForm, LlmProviderForm, McpServerForm, render_input_audio_device_dropdown,
     render_output_audio_device_dropdown,
 };
 
@@ -957,6 +957,12 @@ pub struct SettingsWindow {
     /// Directory path of the skill whose share link was most recently copied,
     /// used to show a transient "copied" checkmark on its share button.
     pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
+    /// State for the active "add OpenAI/Anthropic-compatible provider" form sub-page, if open.
+    pub(crate) llm_provider_form: Option<LlmProviderForm>,
+    /// Stable focus handle for the LLM "Add Provider" button, so it can show a
+    /// focus ring when the page auto-focuses it on open (which happens via mouse,
+    /// where `focus_visible` styling would otherwise be suppressed).
+    pub(crate) llm_provider_add_focus_handle: FocusHandle,
     /// State for the active "add/edit custom MCP server" form sub-page, if open.
     pub(crate) mcp_server_form: Option<McpServerForm>,
     /// Stable focus handle for the MCP "Add Server" button, so it can show a
@@ -1983,6 +1989,8 @@ impl SettingsWindow {
             provider_configuration_views: HashMap::default(),
             configuring_provider: None,
             last_copied_skill_directory_path: None,
+            llm_provider_form: None,
+            llm_provider_add_focus_handle: cx.focus_handle(),
             mcp_server_form: None,
             mcp_add_server_focus_handle: cx.focus_handle(),
             custom_agent_form: None,
@@ -3707,6 +3715,8 @@ impl SettingsWindow {
         if let Some(current_sub_page) = self.sub_page_stack.last() {
             let is_skills_page =
                 current_sub_page.link.json_path == Some(AGENT_SKILLS_SETTINGS_PATH);
+            let is_llm_providers_page = current_sub_page.link.json_path == Some("llm_providers")
+                && current_sub_page.link.title.as_ref() == "LLM Providers";
             let is_external_agents_page = current_sub_page.link.json_path == Some("agent_servers");
             let is_mcp_servers_page = current_sub_page.link.json_path == Some("context_servers");
 
@@ -3746,6 +3756,9 @@ impl SettingsWindow {
                                         this.open_current_settings_file(window, cx);
                                     })),
                             )
+                        })
+                        .when(is_llm_providers_page, |this| {
+                            this.child(pages::render_add_llm_provider_popover(self, window, cx))
                         })
                         .when(is_skills_page, |this| {
                             this.child(
@@ -4027,7 +4040,11 @@ impl SettingsWindow {
     /// This function will create a new settings file if one doesn't exist
     /// if the current file is a project settings with a valid worktree id
     /// We do this because the settings ui allows initializing project settings
-    fn open_current_settings_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_current_settings_file(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match &self.current_file {
             SettingsUiFile::User => {
                 let Some(original_window) = self.original_window else {
@@ -5267,6 +5284,8 @@ pub mod test {
                 provider_configuration_views: HashMap::default(),
                 configuring_provider: None,
                 last_copied_skill_directory_path: None,
+                llm_provider_form: None,
+                llm_provider_add_focus_handle: cx.focus_handle(),
                 mcp_server_form: None,
                 mcp_add_server_focus_handle: cx.focus_handle(),
                 custom_agent_form: None,
@@ -5404,6 +5423,8 @@ pub mod test {
             provider_configuration_views: HashMap::default(),
             configuring_provider: None,
             last_copied_skill_directory_path: None,
+            llm_provider_form: None,
+            llm_provider_add_focus_handle: cx.focus_handle(),
             mcp_server_form: None,
             mcp_add_server_focus_handle: cx.focus_handle(),
             custom_agent_form: None,
