@@ -764,3 +764,202 @@ fn render_matched_line(location_match: &LocationMatch, cx: &App) -> StyledText {
     StyledText::new(location_match.display_text.clone())
         .with_default_highlights(&text_style, highlights)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use editor::test::editor_lsp_test_context::EditorLspTestContext;
+    use gpui::TestAppContext;
+    use indoc::indoc;
+
+    async fn rust_cx(
+        capabilities: lsp::ServerCapabilities,
+        cx: &mut TestAppContext,
+    ) -> EditorLspTestContext {
+        EditorLspTestContext::new_rust(capabilities, cx).await
+    }
+
+    fn open(cx: &mut EditorLspTestContext, kind: LspPickerKind) {
+        let editor = cx.editor.clone();
+        let workspace = cx.workspace.clone();
+        cx.update(|window, cx| {
+            workspace.update(cx, |workspace, cx| {
+                LspLocationsPicker::open(kind, editor, workspace, window, cx);
+            });
+        });
+        cx.run_until_parked();
+    }
+
+    fn active_picker(cx: &mut EditorLspTestContext) -> Option<Entity<LspLocationsPicker>> {
+        let workspace = cx.workspace.clone();
+        cx.update(|_window, cx| workspace.read(cx).active_modal::<LspLocationsPicker>(cx))
+    }
+
+    fn references(uri: lsp::Uri, ranges: &[(u32, u32, u32)]) -> Vec<lsp::Location> {
+        ranges
+            .iter()
+            .map(|&(row, start, end)| lsp::Location {
+                uri: uri.clone(),
+                range: lsp::Range::new(
+                    lsp::Position::new(row, start),
+                    lsp::Position::new(row, end),
+                ),
+            })
+            .collect()
+    }
+
+    const SOURCE: &str = indoc! {r#"
+        fn main() {
+            let aˇbc = 123;
+            let xyz = abc;
+        }
+    "#};
+
+    #[gpui::test]
+    async fn test_multiple_references_open_picker(cx: &mut TestAppContext) {
+        let mut cx = rust_cx(
+            lsp::ServerCapabilities {
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        cx.set_state(SOURCE);
+        cx.lsp
+            .set_request_handler::<lsp::request::References, _, _>(async move |params, _| {
+                let uri = params.text_document_position.text_document.uri;
+                Ok(Some(references(uri, &[(1, 8, 11), (2, 14, 17)])))
+            });
+
+        open(&mut cx, LspPickerKind::References);
+
+        assert!(
+            active_picker(&mut cx).is_some(),
+            "multiple references should open the picker"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_single_result_jumps_without_picker(cx: &mut TestAppContext) {
+        let mut cx = rust_cx(
+            lsp::ServerCapabilities {
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        cx.set_state(SOURCE);
+        cx.lsp
+            .set_request_handler::<lsp::request::References, _, _>(async move |params, _| {
+                let uri = params.text_document_position.text_document.uri;
+                Ok(Some(references(uri, &[(2, 14, 17)])))
+            });
+
+        open(&mut cx, LspPickerKind::References);
+
+        assert!(
+            active_picker(&mut cx).is_none(),
+            "a single result should jump directly instead of opening the picker"
+        );
+        // The lone result at row 2 should be selected directly, moving the
+        // cursor off its starting position on row 1.
+        cx.assert_editor_state(indoc! {r#"
+            fn main() {
+                let abc = 123;
+                let xyz = «abcˇ»;
+            }
+        "#});
+    }
+
+    #[gpui::test]
+    async fn test_no_results_does_not_open_picker(cx: &mut TestAppContext) {
+        let mut cx = rust_cx(
+            lsp::ServerCapabilities {
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        cx.set_state(SOURCE);
+        cx.lsp
+            .set_request_handler::<lsp::request::References, _, _>(async move |_params, _| {
+                Ok(Some(Vec::new()))
+            });
+
+        open(&mut cx, LspPickerKind::References);
+
+        assert!(
+            active_picker(&mut cx).is_none(),
+            "an empty result should not open the picker"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_definition_falls_back_to_references_picker(cx: &mut TestAppContext) {
+        let mut cx = rust_cx(
+            lsp::ServerCapabilities {
+                definition_provider: Some(lsp::OneOf::Left(true)),
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        cx.set_state(SOURCE);
+        cx.lsp
+            .set_request_handler::<lsp::request::GotoDefinition, _, _>(async move |_params, _| {
+                Ok(None)
+            });
+        cx.lsp
+            .set_request_handler::<lsp::request::References, _, _>(async move |params, _| {
+                let uri = params.text_document_position.text_document.uri;
+                Ok(Some(references(uri, &[(1, 8, 11), (2, 14, 17)])))
+            });
+
+        open(&mut cx, LspPickerKind::Definition);
+
+        assert!(
+            active_picker(&mut cx).is_some(),
+            "an empty definition query should fall back to the references picker"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_fuzzy_filter_matches_subsequence(cx: &mut TestAppContext) {
+        let mut cx = rust_cx(
+            lsp::ServerCapabilities {
+                references_provider: Some(lsp::OneOf::Left(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+        cx.set_state(SOURCE);
+        cx.lsp
+            .set_request_handler::<lsp::request::References, _, _>(async move |params, _| {
+                let uri = params.text_document_position.text_document.uri;
+                Ok(Some(references(uri, &[(1, 8, 11), (2, 14, 17)])))
+            });
+
+        open(&mut cx, LspPickerKind::References);
+        let modal = active_picker(&mut cx).expect("multiple references should open the picker");
+        let picker = cx.update(|_window, cx| modal.read(cx).picker.clone());
+
+        let matches = |cx: &mut EditorLspTestContext, query: &str| -> usize {
+            cx.update(|window, cx| {
+                picker.update(cx, |picker, cx| picker.set_query(query, window, cx));
+            });
+            cx.run_until_parked();
+            cx.update(|_window, cx| picker.read(cx).delegate.matches.len())
+        };
+
+        // "lx" is a subsequence of "let xyz" but not a substring of either line,
+        // so it only matches with fuzzy matching.
+        assert_eq!(matches(&mut cx, "lx"), 1);
+        assert_eq!(matches(&mut cx, "zzzz"), 0);
+        assert_eq!(matches(&mut cx, ""), 2);
+    }
+}
