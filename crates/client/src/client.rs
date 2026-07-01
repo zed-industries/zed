@@ -27,7 +27,9 @@ use futures::{
     stream::BoxStream,
 };
 use gpui::{App, AsyncApp, Entity, Global, Task, TaskExt, WeakEntity, actions};
-use http_client::{HttpClient, HttpClientWithUrl, http, read_proxy_from_env};
+use http_client::{
+    HttpClient, HttpClientWithUrl, http, read_no_proxy_from_env, read_proxy_from_env,
+};
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use proxy::connect_proxy_stream;
@@ -132,6 +134,7 @@ impl Settings for ClientSettings {
 #[derive(Deserialize, Default, RegisterSetting)]
 pub struct ProxySettings {
     pub proxy: Option<String>,
+    pub no_proxy: Option<String>,
 }
 
 impl ProxySettings {
@@ -148,6 +151,15 @@ impl ProxySettings {
             })
             .or_else(read_proxy_from_env)
     }
+
+    pub fn no_proxy(&self) -> Option<String> {
+        self.no_proxy
+            .as_deref()
+            .map(str::trim)
+            .filter(|input| !input.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(read_no_proxy_from_env)
+    }
 }
 
 impl Settings for ProxySettings {
@@ -158,6 +170,12 @@ impl Settings for ProxySettings {
                 .as_deref()
                 .map(str::trim)
                 .filter(|proxy| !proxy.is_empty())
+                .map(ToOwned::to_owned),
+            no_proxy: content
+                .no_proxy
+                .as_deref()
+                .map(str::trim)
+                .filter(|no_proxy| !no_proxy.is_empty())
                 .map(ToOwned::to_owned),
         }
     }
@@ -2017,9 +2035,14 @@ mod tests {
         assert_eq!(ProxySettings::from_settings(&content).proxy, None);
 
         content.proxy = Some("http://127.0.0.1:10809".to_owned());
+        content.no_proxy = Some(" localhost,127.0.0.1 ".to_owned());
         assert_eq!(
             ProxySettings::from_settings(&content).proxy.as_deref(),
             Some("http://127.0.0.1:10809")
+        );
+        assert_eq!(
+            ProxySettings::from_settings(&content).no_proxy.as_deref(),
+            Some("localhost,127.0.0.1")
         );
     }
 

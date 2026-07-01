@@ -8499,7 +8499,7 @@ fn ai_page(cx: &App) -> SettingsPage {
 }
 
 fn network_page() -> SettingsPage {
-    fn network_section() -> [SettingsPageItem; 3] {
+    fn network_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("Network"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -8515,6 +8515,22 @@ fn network_page() -> SettingsPage {
                 }),
                 metadata: Some(Box::new(SettingsFieldMetadata {
                     placeholder: Some("socks5h://localhost:10808"),
+                    ..Default::default()
+                })),
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Proxy Bypass",
+                description: "Comma-separated hosts and IP ranges to connect to directly.",
+                field: Box::new(SettingField {
+                    json_path: Some("no_proxy"),
+                    pick: |settings_content| settings_content.no_proxy.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.no_proxy = value;
+                    },
+                }),
+                metadata: Some(Box::new(SettingsFieldMetadata {
+                    placeholder: Some("localhost,127.0.0.1,::1,.internal.company"),
                     ..Default::default()
                 })),
                 files: USER,
