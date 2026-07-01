@@ -324,6 +324,39 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_undo_redo_with_empty_history_selections_does_not_panic(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let now = Instant::now();
+    let buffer = cx.new(|cx| language::Buffer::local("123456", cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let editor = cx.add_window(|window, cx| build_editor(buffer, window, cx));
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(0)])
+        });
+        editor.start_transaction_at(now, window, cx);
+        editor.insert("a", window, cx);
+        let transaction_id = editor
+            .end_transaction_at(now, cx)
+            .expect("transaction should be created");
+        assert_eq!(editor.text(cx), "a123456");
+
+        editor.modify_transaction_selection_history(transaction_id, |selections| {
+            selections.undo = Vec::new().into();
+            selections.redo = Some(Vec::new().into());
+        });
+
+        editor.undo(&Undo, window, cx);
+        assert_eq!(editor.text(cx), "123456");
+
+        editor.redo(&Redo, window, cx);
+        assert_eq!(editor.text(cx), "a123456");
+    });
+}
+
+#[gpui::test]
 fn test_accessibility_keyboard_word_completion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
