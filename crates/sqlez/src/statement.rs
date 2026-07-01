@@ -133,10 +133,10 @@ impl<'a> Statement<'a> {
     pub fn bind_blob(&self, index: i32, blob: &[u8]) -> Result<()> {
         let index = index as c_int;
         let blob_pointer = blob.as_ptr() as *const _;
-        let len = blob.len() as c_int;
+        let len = blob.len() as u64;
 
         self.bind_index_with(index, &|raw_statement| unsafe {
-            sqlite3_bind_blob(*raw_statement, index, blob_pointer, len, SQLITE_TRANSIENT());
+            sqlite3_bind_blob64(*raw_statement, index, blob_pointer, len, SQLITE_TRANSIENT());
         })
     }
 
@@ -217,10 +217,17 @@ impl<'a> Statement<'a> {
     pub fn bind_text(&self, index: i32, text: &str) -> Result<()> {
         let index = index as c_int;
         let text_pointer = text.as_ptr() as *const _;
-        let len = text.len() as c_int;
+        let len = text.len() as u64;
 
         self.bind_index_with(index, &|raw_statement| unsafe {
-            sqlite3_bind_text(*raw_statement, index, text_pointer, len, SQLITE_TRANSIENT());
+            sqlite3_bind_text64(
+                *raw_statement,
+                index,
+                text_pointer,
+                len,
+                SQLITE_TRANSIENT(),
+                SQLITE_UTF8 as u8,
+            );
         })
     }
 
