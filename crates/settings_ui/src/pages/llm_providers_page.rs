@@ -125,7 +125,7 @@ pub(crate) fn render_add_llm_provider_popover(
                                 }
                             })
                             .entry("Anthropic", None, {
-                                let settings_window = settings_window.clone();
+                                let settings_window = settings_window;
                                 move |window, cx| {
                                     settings_window
                                         .update(cx, |this, cx| {
