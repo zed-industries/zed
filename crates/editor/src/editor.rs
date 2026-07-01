@@ -516,6 +516,8 @@ pub enum SoftWrap {
     None,
     /// Soft wrap lines that exceed the editor width.
     EditorWidth,
+    /// Soft wrap lines at a fixed column, regardless of the editor width.
+    Fixed(u32),
     /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
     Bounded(u32),
 }

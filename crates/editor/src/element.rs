@@ -10632,6 +10632,7 @@ fn calculate_wrap_width(
         SoftWrap::GitDiff => None,
         SoftWrap::None => Some(wrap_width_for(MAX_LINE_LEN as u32 / 2)),
         SoftWrap::EditorWidth => Some(editor_width),
+        SoftWrap::Fixed(column) => Some(wrap_width_for(column)),
         SoftWrap::Bounded(column) => Some(editor_width.min(wrap_width_for(column))),
     }
 }
@@ -12291,6 +12292,16 @@ mod tests {
         assert_eq!(
             calculate_wrap_width(SoftWrap::Bounded(200), px(400.0), em_width),
             Some(px(400.0)),
+        );
+
+        assert_eq!(
+            calculate_wrap_width(SoftWrap::Fixed(72), editor_width, em_width),
+            Some(px((72.0 * 8.0_f32).ceil())),
+        );
+        // Unlike Bounded, a narrower editor does not shrink the wrap width.
+        assert_eq!(
+            calculate_wrap_width(SoftWrap::Fixed(200), px(400.0), em_width),
+            Some(px((200.0 * 8.0_f32).ceil())),
         );
     }
 }

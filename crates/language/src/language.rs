@@ -118,6 +118,7 @@ pub(crate) fn to_settings_soft_wrap(value: language_core::SoftWrap) -> settings:
         language_core::SoftWrap::None => settings::SoftWrap::None,
         language_core::SoftWrap::PreferLine => settings::SoftWrap::PreferLine,
         language_core::SoftWrap::EditorWidth => settings::SoftWrap::EditorWidth,
+        language_core::SoftWrap::PreferredLineLength => settings::SoftWrap::PreferredLineLength,
         language_core::SoftWrap::Bounded => settings::SoftWrap::Bounded,
     }
 }
