@@ -43,7 +43,7 @@ impl Editor {
 
     pub fn toggle_bookmark(
         &mut self,
-        _: &ToggleBookmark,
+        action: &ToggleBookmark,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -90,10 +90,14 @@ impl Editor {
 
         if absent_targets.is_empty() {
             // All cursors are on existing bookmarks, remove all bookmarks.
-            self.toggle_bookmarks(exist_targets, String::new(), cx);
+            self.toggle_bookmarks(exist_targets, None, cx);
         } else {
             // Only add new ones and leave existing ones unchanged.
-            self.add_toggle_bookmark_blocks(absent_targets, bookmark_store, window, cx);
+            if action.prompt_for_label {
+                self.add_toggle_bookmark_blocks(absent_targets, bookmark_store, window, cx);
+            } else {
+                self.toggle_bookmarks(absent_targets, Some(String::new()), cx);
+            }
         }
 
         cx.notify();
@@ -110,12 +114,13 @@ impl Editor {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let anchor = buffer_snapshot.anchor_before(point);
 
-        self.toggle_bookmark_at_anchor(anchor, window, cx);
+        self.toggle_bookmark_at_anchor(anchor, false, window, cx);
     }
 
     pub fn toggle_bookmark_at_anchor(
         &mut self,
         anchor: Anchor,
+        prompt_for_label: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -138,10 +143,14 @@ impl Editor {
         };
         if Self::bookmark_exists_for_target(&bookmark_store, &target, cx) {
             bookmark_store.update(cx, |bookmark_store, cx| {
-                bookmark_store.toggle_bookmark(target.buffer, position, String::new(), cx);
+                bookmark_store.toggle_bookmark(target.buffer, position, None, cx);
             });
         } else {
-            self.add_toggle_bookmark_blocks(vec![target], bookmark_store, window, cx)
+            if prompt_for_label {
+                self.add_toggle_bookmark_blocks(vec![target], bookmark_store, window, cx)
+            } else {
+                self.toggle_bookmarks(vec![target], Some(String::new()), cx);
+            }
         }
 
         cx.notify();
@@ -238,7 +247,7 @@ impl Editor {
                 "Enter bookmark label (Optional)",
                 Some(Box::new(move |label: String, _, cx| {
                     bookmark_store.update(cx, |store, cx| {
-                        store.toggle_bookmark(target.buffer, target.buffer_anchor, label, cx);
+                        store.toggle_bookmark(target.buffer, target.buffer_anchor, Some(label), cx);
                     });
                 })),
                 None,
@@ -251,7 +260,7 @@ impl Editor {
     fn toggle_bookmarks(
         &mut self,
         targets: Vec<BookmarkTarget>,
-        label: String,
+        label: Option<String>,
         cx: &mut Context<Self>,
     ) {
         if let Some(bookmark_store) = self.bookmark_store.clone() {
