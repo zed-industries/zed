@@ -237,6 +237,8 @@ impl WindowInvalidator {
 }
 
 type AnyObserver = Box<dyn FnMut(&mut Window, &mut App) -> bool + 'static>;
+pub(crate) type AnyFileDropObserver =
+    Box<dyn FnMut(&FileDropEvent, &mut Window, &mut App) -> bool + 'static>;
 
 pub(crate) type AnyWindowFocusListener =
     Box<dyn FnMut(&WindowFocusEvent, &mut Window, &mut App) -> bool + 'static>;
@@ -1049,6 +1051,7 @@ pub struct Window {
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
+    pub(crate) file_drop_observers: SubscriberSet<(), AnyFileDropObserver>,
     prompt: Option<RenderablePromptHandle>,
     pub(crate) client_inset: Option<Pixels>,
     /// The hitbox that has captured the pointer, if any.
@@ -1753,6 +1756,7 @@ impl Window {
             pending_input: None,
             pending_modifier: ModifierState::default(),
             pending_input_observers: SubscriberSet::new(),
+            file_drop_observers: SubscriberSet::new(),
             prompt: None,
             client_inset: None,
             image_cache_stack: Vec::new(),
@@ -2284,6 +2288,12 @@ impl Window {
         self.button_layout_observers
             .clone()
             .retain(&(), |callback| callback(self, cx));
+    }
+
+    pub(crate) fn file_drop(&mut self, event: &FileDropEvent, cx: &mut App) {
+        self.file_drop_observers
+            .clone()
+            .retain(&(), |callback| callback(event, self, cx));
     }
 
     /// Returns the appearance of the current window.
@@ -4583,46 +4593,49 @@ impl Window {
             }
             // Translate dragging and dropping of external files from the operating system
             // to internal drag and drop events.
-            PlatformInput::FileDrop(file_drop) => match file_drop {
-                FileDropEvent::Entered { position, paths } => {
-                    self.mouse_position = position;
-                    if cx.active_drag.is_none() {
-                        cx.active_drag = Some(AnyDrag {
-                            value: Arc::new(paths.clone()),
-                            view: cx.new(|_| paths).into(),
-                            cursor_offset: position,
-                            cursor_style: None,
-                        });
+            PlatformInput::FileDrop(file_drop) => {
+                self.file_drop(&file_drop, cx);
+                match file_drop {
+                    FileDropEvent::Entered { position, paths } => {
+                        self.mouse_position = position;
+                        if cx.active_drag.is_none() {
+                            cx.active_drag = Some(AnyDrag {
+                                value: Arc::new(paths.clone()),
+                                view: cx.new(|_| paths).into(),
+                                cursor_offset: position,
+                                cursor_style: None,
+                            });
+                        }
+                        PlatformInput::MouseMove(MouseMoveEvent {
+                            position,
+                            pressed_button: Some(MouseButton::Left),
+                            modifiers: Modifiers::default(),
+                        })
                     }
-                    PlatformInput::MouseMove(MouseMoveEvent {
-                        position,
-                        pressed_button: Some(MouseButton::Left),
-                        modifiers: Modifiers::default(),
-                    })
+                    FileDropEvent::Pending { position } => {
+                        self.mouse_position = position;
+                        PlatformInput::MouseMove(MouseMoveEvent {
+                            position,
+                            pressed_button: Some(MouseButton::Left),
+                            modifiers: Modifiers::default(),
+                        })
+                    }
+                    FileDropEvent::Submit { position } => {
+                        cx.activate(true);
+                        self.mouse_position = position;
+                        PlatformInput::MouseUp(MouseUpEvent {
+                            button: MouseButton::Left,
+                            position,
+                            modifiers: Modifiers::default(),
+                            click_count: 1,
+                        })
+                    }
+                    FileDropEvent::Exited => {
+                        cx.stop_active_drag(self);
+                        PlatformInput::FileDrop(FileDropEvent::Exited)
+                    }
                 }
-                FileDropEvent::Pending { position } => {
-                    self.mouse_position = position;
-                    PlatformInput::MouseMove(MouseMoveEvent {
-                        position,
-                        pressed_button: Some(MouseButton::Left),
-                        modifiers: Modifiers::default(),
-                    })
-                }
-                FileDropEvent::Submit { position } => {
-                    cx.activate(true);
-                    self.mouse_position = position;
-                    PlatformInput::MouseUp(MouseUpEvent {
-                        button: MouseButton::Left,
-                        position,
-                        modifiers: Modifiers::default(),
-                        click_count: 1,
-                    })
-                }
-                FileDropEvent::Exited => {
-                    cx.active_drag.take();
-                    PlatformInput::FileDrop(FileDropEvent::Exited)
-                }
-            },
+            }
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
