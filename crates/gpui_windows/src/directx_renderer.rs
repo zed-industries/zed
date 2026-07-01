@@ -6,15 +6,12 @@ use std::{
 use anyhow::{Context, Result};
 use gpui_util::ResultExt;
 use windows::{
-    Win32::{
-        Foundation::HWND,
-        Graphics::{
-            Direct3D::*,
-            Direct3D11::*,
-            DirectComposition::*,
-            DirectWrite::*,
-            Dxgi::{Common::*, *},
-        },
+    Win32::Graphics::{
+        Direct3D::*,
+        Direct3D11::*,
+        DirectComposition::*,
+        DirectWrite::*,
+        Dxgi::{Common::*, *},
     },
     core::Interface,
 };
@@ -36,7 +33,7 @@ pub(crate) struct FontInfo {
 }
 
 pub(crate) struct DirectXRenderer {
-    hwnd: HWND,
+    non_null_hwnd: NonNullHwnd,
     atlas: Arc<DirectXAtlas>,
     devices: Option<DirectXRendererDevices>,
     resources: Option<DirectXResources>,
@@ -132,7 +129,7 @@ impl DirectXRendererDevices {
 
 impl DirectXRenderer {
     pub(crate) fn new(
-        hwnd: HWND,
+        non_null_hwnd: NonNullHwnd,
         directx_devices: &DirectXDevices,
         disable_direct_composition: bool,
     ) -> Result<Self> {
@@ -144,8 +141,9 @@ impl DirectXRenderer {
             .context("Creating DirectX devices")?;
         let atlas = Arc::new(DirectXAtlas::new(&devices.device, &devices.device_context));
 
-        let resources = DirectXResources::new(&devices, 1, 1, hwnd, disable_direct_composition)
-            .context("Creating DirectX resources")?;
+        let resources =
+            DirectXResources::new(&devices, 1, 1, non_null_hwnd, disable_direct_composition)
+                .context("Creating DirectX resources")?;
         let globals = DirectXGlobalElements::new(&devices.device)
             .context("Creating DirectX global elements")?;
         let pipelines = DirectXRenderPipelines::new(&devices.device)
@@ -154,8 +152,9 @@ impl DirectXRenderer {
         let direct_composition = if disable_direct_composition {
             None
         } else {
-            let composition = DirectComposition::new(devices.dxgi_device.as_ref().unwrap(), hwnd)
-                .context("Creating DirectComposition")?;
+            let composition =
+                DirectComposition::new(devices.dxgi_device.as_ref().unwrap(), non_null_hwnd)
+                    .context("Creating DirectComposition")?;
             composition
                 .set_swap_chain(&resources.swap_chain)
                 .context("Setting swap chain for DirectComposition")?;
@@ -163,7 +162,7 @@ impl DirectXRenderer {
         };
 
         Ok(DirectXRenderer {
-            hwnd,
+            non_null_hwnd,
             atlas,
             devices: Some(devices),
             resources: Some(resources),
@@ -266,7 +265,7 @@ impl DirectXRenderer {
             &devices,
             self.width,
             self.height,
-            self.hwnd,
+            self.non_null_hwnd,
             disable_direct_composition,
         )
         .context("Creating DirectX resources")?;
@@ -279,7 +278,7 @@ impl DirectXRenderer {
             None
         } else {
             let composition =
-                DirectComposition::new(devices.dxgi_device.as_ref().unwrap(), self.hwnd)?;
+                DirectComposition::new(devices.dxgi_device.as_ref().unwrap(), self.non_null_hwnd)?;
             composition.set_swap_chain(&resources.swap_chain)?;
             Some(composition)
         };
@@ -759,11 +758,17 @@ impl DirectXResources {
         devices: &DirectXRendererDevices,
         width: u32,
         height: u32,
-        hwnd: HWND,
+        non_null_hwnd: NonNullHwnd,
         disable_direct_composition: bool,
     ) -> Result<Self> {
         let swap_chain = if disable_direct_composition {
-            create_swap_chain(&devices.dxgi_factory, &devices.device, hwnd, width, height)?
+            create_swap_chain(
+                &devices.dxgi_factory,
+                &devices.device,
+                non_null_hwnd,
+                width,
+                height,
+            )?
         } else {
             create_swap_chain_for_composition(
                 &devices.dxgi_factory,
@@ -896,9 +901,9 @@ impl DirectXRenderPipelines {
 }
 
 impl DirectComposition {
-    pub fn new(dxgi_device: &IDXGIDevice, hwnd: HWND) -> Result<Self> {
+    pub fn new(dxgi_device: &IDXGIDevice, non_null_hwnd: NonNullHwnd) -> Result<Self> {
         let comp_device = get_comp_device(dxgi_device)?;
-        let comp_target = unsafe { comp_device.CreateTargetForHwnd(hwnd, true) }?;
+        let comp_target = unsafe { comp_device.CreateTargetForHwnd(non_null_hwnd.hwnd(), true) }?;
         let comp_visual = unsafe { comp_device.CreateVisual() }?;
 
         Ok(Self {
@@ -1205,7 +1210,7 @@ fn create_swap_chain_for_composition(
 fn create_swap_chain(
     dxgi_factory: &IDXGIFactory6,
     device: &ID3D11Device,
-    hwnd: HWND,
+    non_null_hwnd: NonNullHwnd,
     width: u32,
     height: u32,
 ) -> Result<IDXGISwapChain1> {
@@ -1227,6 +1232,7 @@ fn create_swap_chain(
         AlphaMode: DXGI_ALPHA_MODE_IGNORE,
         Flags: 0,
     };
+    let hwnd = non_null_hwnd.hwnd();
     let swap_chain =
         unsafe { dxgi_factory.CreateSwapChainForHwnd(device, hwnd, &desc, None, None) }?;
     unsafe { dxgi_factory.MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER) }?;
