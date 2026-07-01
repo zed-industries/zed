@@ -13259,6 +13259,28 @@ async fn test_autoclose_quotes_with_multibyte_characters(cx: &mut TestAppContext
 }
 
 #[gpui::test]
+async fn test_surround_backticks_in_rust_comment(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = languages::language("rust", tree_sitter_rust::LANGUAGE.into());
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    // Surround a selection inside a doc comment with backticks (issue #58538).
+    cx.set_state(indoc! {"
+        /// «Aˇ»
+        fn main() {}
+    "});
+    cx.update_editor(|editor, window, cx| {
+        editor.handle_input("`", window, cx);
+    });
+    cx.assert_editor_state(indoc! {"
+        /// `«Aˇ»`
+        fn main() {}
+    "});
+}
+
+#[gpui::test]
 async fn test_surround_with_pair(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
