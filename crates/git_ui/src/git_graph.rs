@@ -71,6 +71,7 @@ const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
 const COMMIT_TAG_LIST_WIDTH_IN_REMS: Rems = rems(10.);
 const CUSTOM_GIT_COMMANDS_DOCS_SLUG: &str = "tasks#custom-git-commands";
+const TABLE_COLUMN_COUNT: usize = 4;
 // Extra vertical breathing room added to the UI line height when computing
 // the git graph's row height, so commit dots and lines have space around them.
 const ROW_VERTICAL_PADDING: Pixels = px(4.0);
@@ -1318,7 +1319,7 @@ fn compute_diff_stats(diff: &CommitDiff) -> (usize, usize) {
 struct GitGraphContextMenu {
     menu: Entity<ContextMenu>,
     position: Point<Pixels>,
-    entry_idx: usize,
+    entry_idx: Option<usize>,
     _subscription: Subscription,
 }
 
@@ -1392,7 +1393,6 @@ impl GitGraph {
     }
 
     fn preview_column_fractions(&self, window: &Window, cx: &App) -> [f32; 5] {
-        // todo(git_graph): We should make a column/table api that allows removing table columns
         let fractions = self
             .column_widths
             .read(cx)
@@ -2595,14 +2595,14 @@ impl GitGraph {
                     menu
                 })
         });
-        self.set_context_menu(context_menu, position, index, window, cx);
+        self.set_context_menu(context_menu, position, Some(index), window, cx);
     }
 
     fn set_context_menu(
         &mut self,
         context_menu: Entity<ContextMenu>,
         position: Point<Pixels>,
-        entry_idx: usize,
+        entry_idx: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2631,6 +2631,60 @@ impl GitGraph {
             _subscription: subscription,
         });
         cx.notify();
+    }
+
+    fn deploy_header_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let is_path_history = matches!(self.log_source, LogSource::Path(_));
+        let columns: &[&str] = if is_path_history {
+            &["Description", "Date", "Author", "Commit"]
+        } else {
+            &["Graph", "Description", "Date", "Author", "Commit"]
+        };
+
+        let filter = self.column_widths.read(cx).column_filter().clone();
+        let visible_count = filter
+            .as_slice()
+            .iter()
+            .filter(|filtered| !**filtered)
+            .count();
+
+        let focus_handle = self.focus_handle.clone();
+        let git_graph = cx.entity();
+        let context_menu = ContextMenu::build(window, cx, |mut context_menu, _window, _cx| {
+            context_menu = context_menu.context(focus_handle).header("Columns");
+            for (col_idx, label) in columns.iter().enumerate() {
+                let is_visible = !filter.get(col_idx).copied().unwrap_or(false);
+                // Don't allow hiding the last remaining visible column.
+                let can_toggle = !is_visible || visible_count > 1;
+                let git_graph = git_graph.clone();
+                context_menu = context_menu.toggleable_entry(
+                    label.to_string(),
+                    is_visible,
+                    IconPosition::End,
+                    None,
+                    move |_window, cx| {
+                        if !can_toggle {
+                            return;
+                        }
+                        git_graph.update(cx, |this, cx| {
+                            this.column_widths.update(cx, |state, cx| {
+                                state.toggle_column_filtered(col_idx);
+                                cx.notify();
+                            });
+                            cx.notify();
+                        });
+                    },
+                );
+            }
+            context_menu
+        });
+
+        self.set_context_menu(context_menu, position, None, window, cx);
     }
 
     fn render_search_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3286,7 +3340,7 @@ impl GitGraph {
 
         let hovered_entry_idx = self.hovered_entry_idx;
         let selected_entry_idx = self.selected_entry_idx;
-        let context_menu_entry_idx = self.context_menu.as_ref().map(|menu| menu.entry_idx);
+        let context_menu_entry_idx = self.context_menu.as_ref().and_then(|menu| menu.entry_idx);
         let is_focused = self.focus_handle.is_focused(window);
         let graph_canvas_bounds = self.graph_canvas_bounds.clone();
 
@@ -3766,10 +3820,25 @@ impl Render for GitGraph {
             let is_path_history = matches!(self.log_source, LogSource::Path(_));
             let header_resize_info =
                 HeaderResizeInfo::from_redistributable(&self.column_widths, cx);
+
+            let column_filter = self.column_widths.read(cx).column_filter().clone();
+
+            // The graph column (index 0) only exists in the non-path-history layout and is
+            // rendered as a separate canvas outside the table.
+            let graph_visible =
+                is_path_history || !self.column_widths.read(cx).is_column_filtered(0);
+
+            let table_offset = if is_path_history { 0 } else { 1 };
+            let table_filter = TableRow::from_vec(
+                column_filter.as_slice()[table_offset..table_offset + TABLE_COLUMN_COUNT].to_vec(),
+                TABLE_COLUMN_COUNT,
+            );
             let header_context = TableRenderContext::for_column_widths(
                 Some(self.column_widths.read(cx).widths_to_render()),
                 true,
-            );
+            )
+            .with_column_filter(Some(column_filter));
+
             let [
                 graph_fraction,
                 description_fraction,
@@ -3781,6 +3850,9 @@ impl Render for GitGraph {
                 description_fraction + date_fraction + author_fraction + commit_fraction;
             let table_width_config = self.table_column_width_config(window, cx);
 
+            let table_collapsed = table_fraction <= f32::EPSILON;
+            let graph_content_width = self.graph_canvas_content_width();
+
             h_flex()
                 .size_full()
                 .child(
@@ -3790,47 +3862,69 @@ impl Render for GitGraph {
                         .size_full()
                         .flex()
                         .flex_col()
-                        .child(render_table_header(
-                            if !is_path_history {
-                                TableRow::from_vec(
-                                    vec![
-                                        Label::new("Graph")
-                                            .color(Color::Muted)
-                                            .truncate()
-                                            .into_any_element(),
-                                        Label::new("Description")
-                                            .color(Color::Muted)
-                                            .into_any_element(),
-                                        Label::new("Date").color(Color::Muted).into_any_element(),
-                                        Label::new("Author").color(Color::Muted).into_any_element(),
-                                        Label::new("Commit").color(Color::Muted).into_any_element(),
-                                    ],
-                                    5,
+                        .child(
+                            div()
+                                .on_mouse_down(
+                                    MouseButton::Right,
+                                    cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                                        this.deploy_header_context_menu(event.position, window, cx);
+                                        cx.stop_propagation();
+                                    }),
                                 )
-                            } else {
-                                TableRow::from_vec(
-                                    vec![
-                                        Label::new("Description")
-                                            .color(Color::Muted)
-                                            .into_any_element(),
-                                        Label::new("Date").color(Color::Muted).into_any_element(),
-                                        Label::new("Author").color(Color::Muted).into_any_element(),
-                                        Label::new("Commit").color(Color::Muted).into_any_element(),
-                                    ],
-                                    4,
-                                )
-                            },
-                            header_context,
-                            Some(header_resize_info),
-                            Some(self.column_widths.entity_id()),
-                            cx,
-                        ))
+                                .child(render_table_header(
+                                    if !is_path_history {
+                                        TableRow::from_vec(
+                                            vec![
+                                                Label::new("Graph")
+                                                    .color(Color::Muted)
+                                                    .truncate()
+                                                    .into_any_element(),
+                                                Label::new("Description")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                                Label::new("Date")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                                Label::new("Author")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                                Label::new("Commit")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                            ],
+                                            5,
+                                        )
+                                    } else {
+                                        TableRow::from_vec(
+                                            vec![
+                                                Label::new("Description")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                                Label::new("Date")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                                Label::new("Author")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                                Label::new("Commit")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                            ],
+                                            4,
+                                        )
+                                    },
+                                    header_context,
+                                    Some(header_resize_info),
+                                    Some(self.column_widths.entity_id()),
+                                    cx,
+                                )),
+                        )
                         .child({
                             let row_height = Self::row_height(window, cx);
                             let selected_entry_idx = self.selected_entry_idx;
                             let hovered_entry_idx = self.hovered_entry_idx;
                             let context_menu_entry_idx =
-                                self.context_menu.as_ref().map(|menu| menu.entry_idx);
+                                self.context_menu.as_ref().and_then(|menu| menu.entry_idx);
                             let weak_self = cx.weak_entity();
                             let focus_handle = self.focus_handle.clone();
                             let table_focus_handle =
@@ -3865,6 +3959,7 @@ impl Render for GitGraph {
                                 .hide_row_borders()
                                 .hide_row_hover()
                                 .width_config(table_width_config)
+                                .column_filter(table_filter)
                                 .map_row(move |(index, row), window, cx| {
                                     let is_selected = selected_entry_idx == Some(index);
                                     let is_hovered = hovered_entry_idx == Some(index);
@@ -3951,10 +4046,18 @@ impl Render for GitGraph {
                                     .child(
                                         h_flex()
                                             .size_full()
-                                            .when(!is_path_history, |this| {
+                                            .when(!is_path_history && graph_visible, |this| {
                                                 this.child(
                                                     div()
-                                                        .w(DefiniteLength::Fraction(graph_fraction))
+                                                        .map(|this| {
+                                                            if table_collapsed {
+                                                                this.w(graph_content_width)
+                                                            } else {
+                                                                this.w(DefiniteLength::Fraction(
+                                                                    graph_fraction,
+                                                                ))
+                                                            }
+                                                        })
                                                         .h_full()
                                                         .min_w_0()
                                                         .overflow_hidden()
@@ -3966,7 +4069,15 @@ impl Render for GitGraph {
                                                     .tab_index(2)
                                                     .tab_group()
                                                     .tab_stop(false)
-                                                    .w(DefiniteLength::Fraction(table_fraction))
+                                                    .map(|this| {
+                                                        if table_collapsed {
+                                                            this.flex_1()
+                                                        } else {
+                                                            this.w(DefiniteLength::Fraction(
+                                                                table_fraction,
+                                                            ))
+                                                        }
+                                                    })
                                                     .h_full()
                                                     .min_w_0()
                                                     .child(commits_table),

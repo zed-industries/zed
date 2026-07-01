@@ -419,3 +419,102 @@ mod pin_layout {
         assert!(is_pinned_layout(4, 5));
     }
 }
+
+mod column_filter {
+    use super::super::column_is_visible;
+    use super::*;
+    use gpui::DefiniteLength;
+
+    fn state(cols: usize) -> RedistributableColumnsState {
+        RedistributableColumnsState::new(
+            cols,
+            vec![DefiniteLength::Fraction(1.0 / cols as f32); cols],
+            vec![TableResizeBehavior::Resizable; cols],
+        )
+    }
+
+    #[test]
+    fn columns_are_visible_by_default() {
+        let s = state(4);
+        assert_eq!(s.column_filter().as_slice(), &[false, false, false, false]);
+        for idx in 0..4 {
+            assert!(!s.is_column_filtered(idx));
+        }
+    }
+
+    #[test]
+    fn set_and_toggle_column_filtered() {
+        let mut s = state(4);
+        s.set_column_filtered(1, true);
+        assert!(s.is_column_filtered(1));
+        assert!(!s.is_column_filtered(0));
+
+        let new_state = s.toggle_column_filtered(1);
+        assert!(!new_state);
+        assert!(!s.is_column_filtered(1));
+
+        let new_state = s.toggle_column_filtered(2);
+        assert!(new_state);
+        assert!(s.is_column_filtered(2));
+    }
+
+    #[test]
+    fn out_of_bounds_index_is_ignored() {
+        let mut s = state(2);
+        s.set_column_filtered(10, true);
+        assert!(!s.is_column_filtered(10));
+        assert_eq!(s.column_filter().as_slice(), &[false, false]);
+    }
+
+    #[test]
+    fn column_is_visible_respects_mask() {
+        let mask = TableRow::from_vec(vec![false, true, false], 3);
+        let filter = Some(mask);
+        assert!(column_is_visible(&filter, 0));
+        assert!(!column_is_visible(&filter, 1));
+        assert!(column_is_visible(&filter, 2));
+        // Indices outside the mask default to visible.
+        assert!(column_is_visible(&filter, 5));
+    }
+
+    #[test]
+    fn column_is_visible_without_filter_is_always_visible() {
+        let filter: Option<TableRow<bool>> = None;
+        assert!(column_is_visible(&filter, 0));
+        assert!(column_is_visible(&filter, 100));
+    }
+
+    fn fractions(widths: &TableRow<gpui::Length>) -> Vec<f32> {
+        widths
+            .as_slice()
+            .iter()
+            .map(|length| match length {
+                gpui::Length::Definite(DefiniteLength::Fraction(fraction)) => *fraction,
+                other => panic!("expected fraction, got {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn widths_to_render_keeps_visible_columns_summing_to_one() {
+        let s = state(4);
+        let widths = fractions(&s.widths_to_render());
+        assert!((widths.iter().sum::<f32>() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn widths_to_render_redistributes_filtered_column_width() {
+        let mut s = state(4);
+        s.set_column_filtered(1, true);
+        let widths = fractions(&s.widths_to_render());
+
+        // The hidden column collapses to zero width.
+        assert_eq!(widths[1], 0.0);
+        // The remaining visible columns are scaled back up to fill the container.
+        let visible_sum: f32 = widths[0] + widths[2] + widths[3];
+        assert!((visible_sum - 1.0).abs() < 1e-6);
+        // Equal initial fractions stay equal after redistribution.
+        assert!((widths[0] - widths[2]).abs() < 1e-6);
+        assert!((widths[0] - widths[3]).abs() < 1e-6);
+    }
+}
