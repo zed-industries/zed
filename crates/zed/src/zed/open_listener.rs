@@ -1389,7 +1389,7 @@ mod tests {
             cx.update(|cx| open_options_for_request(None, &SerializedWorkspaceLocation::Local, cx));
         assert_eq!(
             options.workspace_matching,
-            workspace::WorkspaceMatching::None
+            workspace::WorkspaceMatching::MatchSubpaths
         );
         assert!(!options.add_dirs_to_sidebar);
 
