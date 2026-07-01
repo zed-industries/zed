@@ -12,8 +12,7 @@ use crate::components::{SettingsInputField, SettingsSectionHeader};
 
 const DOMAINS_DESCRIPTION: &str = "Each entry is an exact domain (github.com) or a leading-*. subdomain wildcard (*.npmjs.org). IP addresses and local domains are not allowed.";
 
-const WRITE_PATHS_DESCRIPTION: &str =
-    "Each entry must be an absolute path and grants write access to the whole subtree.";
+const WRITE_PATHS_DESCRIPTION: &str = "Each entry must be an absolute path and grants write access to the whole subtree, except protected Git metadata.";
 
 pub(crate) fn render_sandbox_settings_page(
     settings_window: &SettingsWindow,
@@ -117,27 +116,7 @@ pub(crate) fn render_sandbox_settings_page(
                     empty_border,
                 )),
         )
-        .child(Divider::horizontal())
-        .child(
-            v_flex()
-                .gap_4()
-                .child(SettingsSectionHeader::new("Git").no_padding(true))
-                .child(
-                    SwitchField::new(
-                        "sandbox-allow-git-access",
-                        Some("Allow Git Metadata Access"),
-                        Some(
-                            "Let sandboxed commands access protected Git metadata, including .git directories and linked worktree metadata, without prompting."
-                                .into(),
-                        ),
-                        permissions.allow_git_access,
-                        move |state, _window, cx| {
-                            set_allow_git_access(*state == ToggleState::Selected, cx);
-                        },
-                    )
-                    .tab_index(0),
-                ),
-        )
+
         .child(Divider::horizontal())
         .child(
             v_flex()
@@ -148,7 +127,7 @@ pub(crate) fn render_sandbox_settings_page(
                         "sandbox-allow-fs-write-all",
                         Some("Allow All File System Writes"),
                         Some(
-                            "Let sandboxed commands write anywhere on the file system without prompting."
+                            "Let sandboxed commands write anywhere except protected Git metadata without prompting."
                                 .into(),
                         ),
                         permissions.allow_fs_write_all,
@@ -430,12 +409,6 @@ fn set_sandbox_enabled(value: bool, cx: &mut App) {
 fn set_allow_all_hosts(value: bool, cx: &mut App) {
     update_sandbox_permissions(cx, move |permissions| {
         permissions.allow_all_hosts = Some(value);
-    });
-}
-
-fn set_allow_git_access(value: bool, cx: &mut App) {
-    update_sandbox_permissions(cx, move |permissions| {
-        permissions.allow_git_access = Some(value);
     });
 }
 

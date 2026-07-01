@@ -221,7 +221,7 @@ fn probe_bwrap(bwrap: &Path, bwrap_args: &[String]) -> bool {
 /// the sandbox where the bridge connects to it.
 pub fn build_bwrap_args(
     writable_directories: &[&Path],
-    protected_git_dirs: &[&Path],
+    protected_paths: &[&Path],
     permissions: SandboxPermissions,
     cwd: Option<&Path>,
     proxy_socket_path: Option<&Path>,
@@ -231,7 +231,7 @@ pub fn build_bwrap_args(
         .map(|_| unique_proxy_socket_sandbox_path());
     build_bwrap_args_with_sandbox_paths(
         writable_directories,
-        protected_git_dirs,
+        protected_paths,
         permissions,
         cwd,
         proxy_socket_path,
@@ -247,7 +247,7 @@ pub fn build_bwrap_args(
 )]
 fn build_bwrap_args_with_sandbox_paths(
     writable_directories: &[&Path],
-    protected_git_dirs: &[&Path],
+    protected_paths: &[&Path],
     permissions: SandboxPermissions,
     cwd: Option<&Path>,
     proxy_socket_path: Option<&Path>,
@@ -290,24 +290,19 @@ fn build_bwrap_args_with_sandbox_paths(
             let path = directory.to_string_lossy().into_owned();
             push_bind(&mut args, "--bind", &path, &path);
         }
+    }
 
-        // Protect Git directories by re-binding them read-only *over* the rw
-        // worktree binds above (order matters: later binds win). Unlike
-        // Seatbelt, bwrap can't deny content reads while keeping metadata, so on
-        // Linux a protected `.git` is read-only — its contents stay readable but
-        // can't be written. A read-only re-bind needs no TOCTOU check: the whole
-        // root is already read-only, so re-exposing a path read-only grants
-        // nothing new even if its source was swapped. A not-yet-existing `.git`
-        // can't be bound, so it's skipped (a documented gap vs. macOS). When Git
-        // access is granted these dirs are in `writable_directories` instead and
-        // this list is empty.
-        for git_dir in protected_git_dirs {
-            if !git_dir.exists() {
-                continue;
-            }
-            let path = git_dir.to_string_lossy().into_owned();
-            push_bind(&mut args, "--ro-bind", &path, &path);
+    // Protect requested paths by re-binding them read-only *over* any broader rw
+    // bind (order matters: later binds win). Unlike Seatbelt, bwrap can't deny
+    // writes while allowing content reads with a policy rule, so a protected path
+    // is read-only — its contents stay readable but can't be written. A
+    // not-yet-existing path can't be bound, so it's skipped.
+    for protected_path in protected_paths {
+        if !protected_path.exists() {
+            continue;
         }
+        let path = protected_path.to_string_lossy().into_owned();
+        push_bind(&mut args, "--ro-bind", &path, &path);
     }
 
     for flag in [
@@ -595,7 +590,7 @@ pub fn wrap_invocation(
     bridge_program: &str,
     permissions: SandboxPermissions,
     writable_dirs: &[&Path],
-    protected_git_dirs: &[&Path],
+    protected_paths: &[&Path],
     cwd: Option<&Path>,
     program: &str,
     args: &[String],
@@ -637,7 +632,7 @@ pub fn wrap_invocation(
     };
     let mut bwrap_args = build_bwrap_args_with_sandbox_paths(
         writable_dirs,
-        protected_git_dirs,
+        protected_paths,
         permissions,
         cwd,
         proxy_socket_path,
@@ -1394,9 +1389,11 @@ mod tests {
             network: NetworkAccess::None,
             allow_fs_write: true,
         };
-        let args = build_bwrap_args(&[], &[], permissions, None, None);
+        let protected = Path::new("/tmp");
+        let args = build_bwrap_args(&[], &[protected], permissions, None, None);
         assert!(windows_contains(&args, &["--bind", "/", "/"]));
         assert!(!windows_contains(&args, &["--ro-bind", "/", "/"]));
+        assert!(windows_contains(&args, &["--ro-bind", "/tmp", "/tmp"]));
         assert!(!windows_contains(&args, &["--tmpfs", "/tmp"]));
     }
 
