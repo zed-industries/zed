@@ -2341,6 +2341,32 @@ mod test {
         );
     }
 
+    // Regression test for https://github.com/zed-industries/zed/issues/58702.
+    // Deleting a selection that ends at the last non-newline character should
+    // leave the cursor on the newline (matching Helix), not clamp it onto the
+    // character to the left of the selection.
+    #[gpui::test]
+    async fn test_delete_to_end_of_line_keeps_cursor_on_newline(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        cx.enable_helix();
+
+        cx.set_state(
+            indoc! {"
+            ab«cdefgˇ»
+            hij"},
+            Mode::HelixNormal,
+        );
+
+        cx.simulate_keystrokes("d");
+
+        cx.assert_state(
+            indoc! {"
+            abˇ
+            hij"},
+            Mode::HelixNormal,
+        );
+    }
+
     // #[gpui::test]
     // async fn test_delete_character_end_of_buffer(cx: &mut gpui::TestAppContext) {
     //     let mut cx = VimTestContext::new(cx, true).await;
@@ -2985,11 +3011,11 @@ mod test {
         cx.simulate_keystrokes("v g l d");
         cx.assert_state("ˇ\nfox jumps over", Mode::HelixNormal);
 
-        // same from the middle of a line — cursor lands on the last
-        // remaining character (the space) after delete
+        // same from the middle of a line — the cursor rests on the trailing
+        // newline, matching Helix and the whole-line case above (see #58702)
         cx.set_state("The ˇquick brown\nfox jumps over", Mode::HelixNormal);
         cx.simulate_keystrokes("v g l d");
-        cx.assert_state("Theˇ \nfox jumps over", Mode::HelixNormal);
+        cx.assert_state("The ˇ\nfox jumps over", Mode::HelixNormal);
     }
 
     #[gpui::test]
