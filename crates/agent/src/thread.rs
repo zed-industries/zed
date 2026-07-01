@@ -5602,6 +5602,24 @@ impl ToolCallEventStream {
         self.run_authorization_loop(title, options, Some(context), Some(check_settings), cx)
     }
 
+    pub(crate) fn authorize_with_settings_check(
+        &self,
+        title: impl Into<String>,
+        context: ToolPermissionContext,
+        check_settings: impl Fn(&App) -> ToolPermissionDecision + 'static,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let title = title.into();
+        let options = context.build_permission_options();
+        self.run_authorization_loop(
+            title,
+            options,
+            Some(context),
+            Some(Box::new(check_settings)),
+            cx,
+        )
+    }
+
     /// Like [`Self::authorize`], but always prompts the user without
     /// consulting settings. Use this for authorizations that must be
     /// confirmed even when the user has configured `always_allow` rules —
@@ -5636,26 +5654,12 @@ impl ToolCallEventStream {
             return Task::ready(Ok(()));
         }
 
-        let (network_hosts, network_all_hosts) = match &request.network {
-            crate::sandboxing::NetworkRequest::None => (Vec::new(), false),
-            crate::sandboxing::NetworkRequest::AnyHost => (Vec::new(), true),
-            crate::sandboxing::NetworkRequest::Hosts(hosts) => {
-                (hosts.iter().map(|host| host.to_string()).collect(), false)
-            }
-        };
-        let sandbox_authorization_details = acp_thread::SandboxAuthorizationDetails {
-            // The command stays in the tool-call title (set by the terminal
-            // tool), so the approval card keeps showing it; the details only
-            // describe the requested access and the agent's reason.
-            command: None,
-            network_hosts,
-            network_all_hosts,
-            allow_git_access: request.allow_git_access,
-            allow_fs_write_all: request.allow_fs_write_all,
-            unsandboxed: request.unsandboxed,
-            write_paths: request.write_paths.clone(),
-            reason,
-        };
+        // The command stays in the tool-call title (set by the terminal
+        // tool), so the approval card keeps showing it; pass `None` here so
+        // the details only describe the requested access and the agent's
+        // reason.
+        let sandbox_authorization_details =
+            Self::sandbox_authorization_details(None, &request, reason);
         let allow_thread_label = if self.is_subagent(cx) {
             "Allow for this subagent"
         } else {
@@ -5762,6 +5766,110 @@ impl ToolCallEventStream {
                 }
             }
         })
+    }
+
+    pub(crate) fn authorize_sandbox_once(
+        &self,
+        title: impl Into<String>,
+        command: Option<String>,
+        request: SandboxRequest,
+        reason: String,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
+        let title = title.into();
+        let sandbox_authorization_details =
+            Self::sandbox_authorization_details(command, &request, reason);
+        let options = acp_thread::PermissionOptions::Flat(vec![
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::AllowOnce.as_id()),
+                "Allow once",
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            acp::PermissionOption::new(
+                acp::PermissionOptionId::new(acp_thread::SandboxPermission::Deny.as_id()),
+                "Deny",
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+        ]);
+
+        let stream = self.stream.clone();
+        let tool_use_id = self.tool_use_id.clone();
+        cx.spawn(async move |_cx| {
+            let (response_tx, response_rx) = oneshot::channel();
+            if let Err(error) = stream
+                .0
+                .unbounded_send(Ok(ThreadEvent::ToolCallAuthorization(
+                    ToolCallAuthorization {
+                        tool_call: acp::ToolCallUpdate::new(
+                            tool_use_id.to_string(),
+                            acp::ToolCallUpdateFields::new().title(title),
+                        )
+                        .meta(acp_thread::meta_with_sandbox_authorization(
+                            sandbox_authorization_details,
+                        )),
+                        options,
+                        response: response_tx,
+                        context: None,
+                        kind: acp_thread::AuthorizationKind::PermissionGrant,
+                    },
+                )))
+            {
+                log::error!("Failed to send sandbox authorization: {error}");
+                return Err(anyhow!("Failed to send sandbox authorization: {error}"));
+            }
+
+            let outcome = response_rx
+                .await
+                .map_err(|_| anyhow!("authorization channel closed"))?;
+            debug_assert!(
+                outcome.params.is_none(),
+                "unexpected params for sandbox permission"
+            );
+
+            match acp_thread::SandboxPermission::from_id(outcome.option_id.0.as_ref()) {
+                Some(acp_thread::SandboxPermission::AllowOnce) => Ok(()),
+                Some(acp_thread::SandboxPermission::Deny) => {
+                    Err(anyhow!("Permission to run tool denied by user"))
+                }
+                Some(
+                    acp_thread::SandboxPermission::AllowThread
+                    | acp_thread::SandboxPermission::AllowAlways,
+                )
+                | None => {
+                    debug_assert!(
+                        false,
+                        "unexpected sandbox permission option_id: {}",
+                        outcome.option_id.0
+                    );
+                    Err(anyhow!("Permission to run tool denied by user"))
+                }
+            }
+        })
+    }
+
+    fn sandbox_authorization_details(
+        command: Option<String>,
+        request: &SandboxRequest,
+        reason: String,
+    ) -> acp_thread::SandboxAuthorizationDetails {
+        let (network_hosts, network_all_hosts) = match &request.network {
+            crate::sandboxing::NetworkRequest::None => (Vec::new(), false),
+            crate::sandboxing::NetworkRequest::AnyHost => (Vec::new(), true),
+            crate::sandboxing::NetworkRequest::Hosts(hosts) => {
+                (hosts.iter().map(|host| host.to_string()).collect(), false)
+            }
+        };
+
+        acp_thread::SandboxAuthorizationDetails {
+            command,
+            network_hosts,
+            network_all_hosts,
+            allow_git_access: request.allow_git_access,
+            allow_fs_write_all: request.allow_fs_write_all,
+            unsandboxed: request.unsandboxed,
+            write_paths: request.write_paths.clone(),
+            reason,
+        }
     }
 
     fn sandbox_request_covered_by_grants(
