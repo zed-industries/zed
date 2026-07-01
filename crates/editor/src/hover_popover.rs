@@ -25,12 +25,13 @@ use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
 };
-use std::{ops::Range, sync::Arc, time::Duration};
-use std::{path::PathBuf, rc::Rc};
+use std::{ops::Range, rc::Rc, sync::Arc, time::Duration};
+
 use theme_settings::ThemeSettings;
 use ui::{CopyButton, Scrollbars, WithScrollbar, prelude::*, theme_is_transparent};
 use url::Url;
 use util::TryFutureExt;
+use util::paths::{PathStyle, UrlExt};
 use workspace::{OpenOptions, OpenVisible, Workspace};
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
@@ -808,9 +809,13 @@ pub fn open_markdown_url(
         && uri.scheme() == "file"
         && let Some(workspace) = workspace
     {
+        let path_style = workspace.read(cx).path_style(cx);
+        let Ok(path) = uri.to_file_path_ext(path_style) else {
+            return;
+        };
         workspace.update(cx, |workspace, cx| {
             let task = workspace.open_abs_path(
-                PathBuf::from(uri.path()),
+                path,
                 OpenOptions {
                     visible: Some(OpenVisible::None),
                     ..Default::default()
@@ -2746,5 +2751,32 @@ mod tests {
                 "No hover info task should be scheduled when hover is disabled"
             );
         });
+    }
+
+    #[test]
+    fn test_file_url_to_path_conversion_with_pathstyle() {
+        // Verify that `UrlExt::to_file_path_ext()` correctly handles Windows paths
+        // at runtime using `PathStyle`, which is the conversion used in `open_markdown_url`.
+        // This is important for remote projects where the host and client may differ.
+
+        let url = Url::parse("file:///D:/path/to/file.rs").unwrap();
+
+        // With PathStyle::Windows, the leading slash is stripped and separators are normalized
+        let windows_path = url.to_file_path_ext(PathStyle::Windows).unwrap();
+        assert_eq!(
+            windows_path,
+            std::path::PathBuf::from("D:\\path\\to\\file.rs")
+        );
+
+        // With PathStyle::Posix, the URL path is used as-is
+        let posix_path = url.to_file_path_ext(PathStyle::Posix).unwrap();
+        assert_eq!(posix_path, std::path::PathBuf::from("/D:/path/to/file.rs"));
+
+        // Verify that `uri.path()` alone gives the wrong result for Windows
+        let raw_path = url.path();
+        assert!(
+            raw_path.starts_with("/D:"),
+            "uri.path() should start with /D: which is invalid for Windows"
+        );
     }
 }
