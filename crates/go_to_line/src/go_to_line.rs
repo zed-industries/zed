@@ -353,7 +353,7 @@ mod tests {
     use super::*;
     use cursor_position::{CursorPosition, SelectionStats, UserCaretPosition};
     use editor::actions::{MoveRight, MoveToBeginning, SelectAll};
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use indoc::indoc;
     use language::Capability;
     use multi_buffer::{MultiBuffer, PathKey};
@@ -539,7 +539,7 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
-            let cursor_position = cx.new(|_| CursorPosition::new(workspace));
+            let cursor_position = cx.new(|cx| CursorPosition::new(workspace, cx));
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_right_item(cursor_position, window, cx);
             });
@@ -571,6 +571,7 @@ mod tests {
                 &SelectionStats {
                     lines: 0,
                     characters: 0,
+                    words: 0,
                     selections: 1,
                 },
                 workspace
@@ -592,6 +593,7 @@ mod tests {
                 &SelectionStats {
                     lines: 1,
                     characters: 3,
+                    words: 0,
                     selections: 1,
                 },
                 workspace
@@ -602,6 +604,101 @@ mod tests {
                     .read(cx)
                     .selection_stats(),
                 "After selecting a text with multibyte unicode characters, the character count should be correct"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_word_count(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .status_bar
+                        .get_or_insert_default()
+                        .word_count_button = Some(true);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "a.md": "the quick brown fox\njumps over"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        workspace.update_in(cx, |workspace, window, cx| {
+            let cursor_position = cx.new(|cx| CursorPosition::new(workspace, cx));
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_right_item(cursor_position, window, cx);
+            });
+        });
+
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| {
+                project.open_local_buffer(path!("/dir/a.md"), cx)
+            })
+            .await
+            .unwrap();
+        let editor = workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.open_path((worktree_id, rel_path("a.md")), None, true, window, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        cx.executor().advance_clock(Duration::from_millis(300));
+        cx.run_until_parked();
+        workspace.update(cx, |workspace, cx| {
+            let cursor_position = workspace
+                .status_bar()
+                .read(cx)
+                .item_of_type::<CursorPosition>()
+                .expect("missing cursor position item");
+            assert_eq!(
+                cursor_position.read(cx).document_words(),
+                6,
+                "The whole document word count should be reported when nothing is selected"
+            );
+            assert_eq!(
+                cursor_position.read(cx).selection_stats().words,
+                0,
+                "No words should be counted as selected initially"
+            );
+        });
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.select_all(&SelectAll, window, cx)
+        });
+        cx.executor().advance_clock(Duration::from_millis(300));
+        cx.run_until_parked();
+        workspace.update(cx, |workspace, cx| {
+            assert_eq!(
+                workspace
+                    .status_bar()
+                    .read(cx)
+                    .item_of_type::<CursorPosition>()
+                    .expect("missing cursor position item")
+                    .read(cx)
+                    .selection_stats()
+                    .words,
+                6,
+                "Selecting the whole document should count every word in the selection"
             );
         });
     }
@@ -625,7 +722,7 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
-            let cursor_position = cx.new(|_| CursorPosition::new(workspace));
+            let cursor_position = cx.new(|cx| CursorPosition::new(workspace, cx));
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_right_item(cursor_position, window, cx);
             });
@@ -704,7 +801,7 @@ mod tests {
             cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         workspace.update_in(cx, |workspace, window, cx| {
-            let cursor_position = cx.new(|_| CursorPosition::new(workspace));
+            let cursor_position = cx.new(|cx| CursorPosition::new(workspace, cx));
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_right_item(cursor_position, window, cx);
             });
