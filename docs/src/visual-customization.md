@@ -349,6 +349,9 @@ TBD: Centered layout related settings
     // Clicking the button brings up the line-ending selector.
     // Defaults to false.
     "line_endings_button": false,
+    // Show/hide the edit predictions button.
+    // Defaults to true.
+    "edit_prediction_button": true,
     // Show/hide a button that displays the buffer's character encoding.
     // If set to "non_utf8", the button is hidden only for UTF-8 without BOM.
     // Defaults to "non_utf8".
