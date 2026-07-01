@@ -6,6 +6,7 @@ mod test;
 mod change_list;
 mod command;
 mod digraph;
+mod flash;
 mod helix;
 mod indent;
 mod insert;
@@ -53,6 +54,7 @@ use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme_settings::ThemeSettings;
 use ui::{IntoElement, SharedString, px};
+use util::ResultExt;
 use vim_mode_setting::HelixModeSetting;
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, Workspace};
@@ -599,12 +601,21 @@ impl Vim {
             running_command: None,
 
             editor: editor.downgrade(),
-            _subscriptions: vec![
-                cx.observe_keystrokes(Self::observe_keystrokes),
-                cx.subscribe_in(&editor, window, |this, _, event, window, cx| {
-                    this.handle_editor_event(event, window, cx)
-                }),
-            ],
+            _subscriptions: {
+                let this = cx.weak_entity();
+                vec![
+                    cx.intercept_keystrokes(move |event, window, cx| {
+                        this.update(cx, |vim: &mut Vim, cx| {
+                            vim.intercept_flash_jump_input(event, window, cx)
+                        })
+                        .log_err();
+                    }),
+                    cx.observe_keystrokes(Self::observe_keystrokes),
+                    cx.subscribe_in(&editor, window, |this, _, event, window, cx| {
+                        this.handle_editor_event(event, window, cx)
+                    }),
+                ]
+            },
         })
     }
 
@@ -985,6 +996,7 @@ impl Vim {
             normal::register(editor, cx);
             insert::register(editor, cx);
             helix::register(editor, cx);
+            flash::register(editor, cx);
             motion::register(editor, cx);
             command::register(editor, cx);
             replace::register(editor, cx);
@@ -1004,6 +1016,12 @@ impl Vim {
     }
 
     fn deactivate(editor: &mut Editor, cx: &mut Context<Editor>) {
+        // Jump UI is only ever cleared through the Vim entity, which is
+        // dropped with the addon below; deactivating mid-jump (e.g. a settings
+        // change with no focus change) must tear it down here or the overlays
+        // and highlights outlive vim.
+        editor.clear_navigation_overlays(HELIX_JUMP_OVERLAY_KEY, cx);
+        Vim::clear_flash_jump_editor_ui(editor, cx);
         editor.set_cursor_shape(
             EditorSettings::get_global(cx)
                 .cursor_shape
@@ -1175,7 +1193,7 @@ impl Vim {
                 | Operator::DeleteSurrounds
                 | Operator::Exchange
         ) {
-            self.operator_stack.clear();
+            self.clear_operator_stack(window, cx);
         };
         self.operator_stack.push(operator);
         self.sync_vim_settings(window, cx);
@@ -1204,7 +1222,7 @@ impl Vim {
         let prior_tx = self.current_tx;
         self.last_mode = last_mode;
         self.mode = mode;
-        self.operator_stack.clear();
+        self.clear_operator_stack(window, cx);
         self.selected_register.take();
         self.cancel_running_command(window, cx);
         if mode == Mode::Normal || mode != last_mode {
@@ -1364,7 +1382,9 @@ impl Vim {
                     match operator {
                         // Vim jump labels are transient navigation, so keep the
                         // user's normal cursor shape while waiting for the label.
-                        Operator::HelixJump { .. } => cursor_shape.normal,
+                        Operator::HelixJump { .. } | Operator::FlashJump { .. } => {
+                            cursor_shape.normal
+                        }
 
                         // Navigation operators -> Block cursor
                         Operator::FindForward { .. }
@@ -1455,7 +1475,7 @@ impl Vim {
 
         let mut operator_id = "none";
 
-        let active_operator = self.active_operator();
+        let active_operator = self.operator_stack.last();
         if active_operator.is_none() && cx.global::<VimGlobals>().pre_count.is_some()
             || active_operator.is_some() && cx.global::<VimGlobals>().post_count.is_some()
         {
@@ -1468,6 +1488,17 @@ impl Vim {
                     mode = "literal".to_string();
                 } else {
                     mode = "waiting".to_string();
+                    // Flash needs its own bindings (e.g. backspace) while
+                    // waiting for input, so expose its operator id. Other
+                    // waiting operators deliberately stay "none": exposing
+                    // them all would activate dormant keymap sections written
+                    // against waiting operator ids (like the ys/cs escape
+                    // override in vim.json) and change matching for user
+                    // keymaps that test vim_operator, so generalizing this is
+                    // a separate behavioral decision.
+                    if matches!(active_operator, Operator::FlashJump { .. }) {
+                        operator_id = active_operator.id();
+                    }
                 }
             } else if matches!(
                 active_operator,
@@ -1740,7 +1771,7 @@ impl Vim {
             self.selected_register
                 .replace(register.chars().next().unwrap());
         }
-        self.operator_stack.clear();
+        self.clear_operator_stack(window, cx);
         self.sync_vim_settings(window, cx);
     }
 
@@ -1755,14 +1786,38 @@ impl Vim {
         popped_operator
     }
 
-    fn clear_operator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.active_operator(), Some(Operator::HelixJump { .. })) {
+    /// Tears down UI owned by jump operators anywhere in the stack. Must be
+    /// called wherever the operator stack is discarded wholesale: the owning
+    /// operator may not be on top (e.g. a digraph stacked above it), and
+    /// mode switches clear the stack without going through clear_operator.
+    fn clear_stacked_operator_ui(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut has_helix_jump = false;
+        let mut has_flash_jump = false;
+        for operator in &self.operator_stack {
+            match operator {
+                Operator::HelixJump { .. } => has_helix_jump = true,
+                Operator::FlashJump { .. } => has_flash_jump = true,
+                _ => {}
+            }
+        }
+        if has_helix_jump {
             self.clear_helix_jump_ui(window, cx);
         }
+        if has_flash_jump {
+            self.clear_flash_jump_ui(cx);
+        }
+    }
+
+    fn clear_operator_stack(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_stacked_operator_ui(window, cx);
+        self.operator_stack.clear();
+    }
+
+    fn clear_operator(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         Vim::take_count(cx);
         Vim::take_forced_motion(cx);
         self.selected_register.take();
-        self.operator_stack.clear();
+        self.clear_operator_stack(window, cx);
         self.sync_vim_settings(window, cx);
     }
 
@@ -2006,6 +2061,20 @@ impl Vim {
 
     fn input_ignored(&mut self, text: Arc<str>, window: &mut Window, cx: &mut Context<Self>) {
         if text.is_empty() {
+            return;
+        }
+
+        // Handled before the operator match below so each character is fed
+        // through without cloning the pattern + labels payload: the pattern is
+        // arbitrary-length, and an IME commit can deliver several characters
+        // at once. A label hit or an exit mid-input stops the remainder.
+        if matches!(self.operator_stack.last(), Some(Operator::FlashJump { .. })) {
+            for input_char in text.chars() {
+                if !matches!(self.operator_stack.last(), Some(Operator::FlashJump { .. })) {
+                    break;
+                }
+                self.handle_flash_jump_input(input_char, window, cx);
+            }
             return;
         }
 

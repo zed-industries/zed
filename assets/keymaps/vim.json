@@ -625,6 +625,12 @@
     },
   },
   {
+    "context": "vim_mode == waiting && vim_operator == flash",
+    "bindings": {
+      "backspace": "vim::FlashBackspace",
+    },
+  },
+  {
     "context": "vim_mode == operator",
     "bindings": {
       "ctrl-c": "vim::ClearOperators",
