@@ -48,7 +48,9 @@ impl GitGraphPanel {
         workspace: WeakEntity<Workspace>,
         mut cx: AsyncWindowContext,
     ) -> anyhow::Result<Entity<Self>> {
-        workspace.update_in(&mut cx, |workspace, window, cx| Self::new(workspace, window, cx))
+        workspace.update_in(&mut cx, |workspace, window, cx| {
+            Self::new(workspace, window, cx)
+        })
     }
 
     fn new(

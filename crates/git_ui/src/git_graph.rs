@@ -1335,8 +1335,35 @@ pub(crate) enum GitGraphHost {
     Panel,
 }
 
+/// Which of the text columns are visible. The graph lane canvas and the
+/// description column are always shown; the rest are revealed as the available
+/// width grows when the graph is hosted in the sidebar panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GraphColumns {
+    date: bool,
+    author: bool,
+    commit: bool,
+}
+
+impl GraphColumns {
+    const ALL: Self = Self {
+        date: true,
+        author: true,
+        commit: true,
+    };
+
+    /// Number of text columns in the table (description is always present).
+    fn count(self) -> usize {
+        1 + [self.date, self.author, self.commit]
+            .into_iter()
+            .filter(|shown| *shown)
+            .count()
+    }
+}
+
 pub struct GitGraph {
     host: GitGraphHost,
+    content_width: Rc<Cell<Option<Pixels>>>,
     focus_handle: FocusHandle,
     search_state: SearchState,
     graph_data: GraphData,
@@ -1455,6 +1482,49 @@ impl GitGraph {
             .unwrap_or_else(|| self.graph_canvas_content_width())
     }
 
+    /// Decides which text columns are visible. In an editor tab all columns are
+    /// always shown; in the sidebar panel they are revealed progressively as the
+    /// last-measured content width grows, so a narrow dock shows only the graph
+    /// lanes and the commit subject.
+    fn graph_columns(&self) -> GraphColumns {
+        if self.host != GitGraphHost::Panel {
+            return GraphColumns::ALL;
+        }
+        match self.content_width.get() {
+            None => GraphColumns {
+                date: false,
+                author: false,
+                commit: false,
+            },
+            Some(width) => GraphColumns {
+                date: width >= px(420.),
+                author: width >= px(540.),
+                commit: width >= px(660.),
+            },
+        }
+    }
+
+    /// Column-width fractions for the panel's table, distributed across the
+    /// currently visible columns (the graph lane canvas is laid out separately).
+    fn panel_table_width_config(&self, columns: GraphColumns) -> ColumnWidthConfig {
+        let mut weights = vec![0.58_f32];
+        if columns.date {
+            weights.push(0.16);
+        }
+        if columns.author {
+            weights.push(0.16);
+        }
+        if columns.commit {
+            weights.push(0.10);
+        }
+        let total: f32 = weights.iter().sum();
+        let widths = weights
+            .into_iter()
+            .map(|weight| DefiniteLength::Fraction(weight / total))
+            .collect();
+        ColumnWidthConfig::explicit(widths)
+    }
+
     pub fn new(
         repo_id: RepositoryId,
         git_store: Entity<GitStore>,
@@ -1554,6 +1624,7 @@ impl GitGraph {
 
         let mut this = GitGraph {
             host: GitGraphHost::default(),
+            content_width: Rc::new(Cell::new(None)),
             focus_handle,
             git_store,
             search_state: SearchState {
@@ -1811,17 +1882,16 @@ impl GitGraph {
             });
         }
 
+        let columns = self.graph_columns();
+
         range
             .map(|idx| {
                 let Some((commit, repository)) =
                     self.graph_data.commits.get(idx).zip(repository.as_ref())
                 else {
-                    return vec![
-                        div().h(row_height).into_any_element(),
-                        div().h(row_height).into_any_element(),
-                        div().h(row_height).into_any_element(),
-                        div().h(row_height).into_any_element(),
-                    ];
+                    return (0..columns.count())
+                        .map(|_| div().h(row_height).into_any_element())
+                        .collect();
                 };
 
                 let data = repository.update(cx, |repository, cx| {
@@ -1898,80 +1968,280 @@ impl GitGraph {
                     column_label(subject)
                 };
 
-                vec![
-                    div()
-                        .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
-                        .overflow_hidden()
-                        .when(!has_context_menu, |this| {
-                            if let CommitDataState::Loaded(commit_data) = &data {
-                                let sha = commit.data.sha.to_string();
-                                let author_name = commit_data.author_name.clone();
-                                let author_email = commit_data.author_email.clone();
-                                let message = commit_data.message.clone();
-                                let commit_timestamp = commit_data.commit_timestamp;
-                                let workspace = self.workspace.clone();
-                                let repository = repository.clone();
-                                this.hoverable_tooltip(move |_window, cx| {
-                                    let remote_url = repository.read(cx).default_remote_url();
-                                    let provider_registry =
-                                        GitHostingProviderRegistry::default_global(cx);
-                                    let commit_details = CommitDetails {
-                                        sha: sha.clone().into(),
-                                        author_name: author_name.clone(),
-                                        author_email: author_email.clone(),
-                                        commit_time: OffsetDateTime::from_unix_timestamp(
-                                            commit_timestamp,
-                                        )
-                                        .unwrap_or_else(|_| OffsetDateTime::now_utc()),
-                                        message: Some(ParsedCommitMessage::parse(
-                                            sha.clone(),
-                                            message.to_string(),
-                                            remote_url.as_deref(),
-                                            Some(provider_registry),
-                                        )),
-                                    };
-                                    cx.new(|cx| {
-                                        CommitTooltip::new(
-                                            commit_details,
-                                            repository.clone(),
-                                            workspace.clone(),
-                                            cx,
-                                        )
-                                    })
-                                    .into()
+                let subject_cell = div()
+                    .id(ElementId::NamedInteger("commit-subject".into(), idx as u64))
+                    .overflow_hidden()
+                    .when(!has_context_menu, |this| {
+                        if let CommitDataState::Loaded(commit_data) = &data {
+                            let sha = commit.data.sha.to_string();
+                            let author_name = commit_data.author_name.clone();
+                            let author_email = commit_data.author_email.clone();
+                            let message = commit_data.message.clone();
+                            let commit_timestamp = commit_data.commit_timestamp;
+                            let workspace = self.workspace.clone();
+                            let repository = repository.clone();
+                            this.hoverable_tooltip(move |_window, cx| {
+                                let remote_url = repository.read(cx).default_remote_url();
+                                let provider_registry =
+                                    GitHostingProviderRegistry::default_global(cx);
+                                let commit_details = CommitDetails {
+                                    sha: sha.clone().into(),
+                                    author_name: author_name.clone(),
+                                    author_email: author_email.clone(),
+                                    commit_time: OffsetDateTime::from_unix_timestamp(
+                                        commit_timestamp,
+                                    )
+                                    .unwrap_or_else(|_| OffsetDateTime::now_utc()),
+                                    message: Some(ParsedCommitMessage::parse(
+                                        sha.clone(),
+                                        message.to_string(),
+                                        remote_url.as_deref(),
+                                        Some(provider_registry),
+                                    )),
+                                };
+                                cx.new(|cx| {
+                                    CommitTooltip::new(
+                                        commit_details,
+                                        repository.clone(),
+                                        workspace.clone(),
+                                        cx,
+                                    )
                                 })
-                            } else {
-                                this
-                            }
-                        })
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .overflow_hidden()
-                                .children((!commit.data.ref_names.is_empty()).then(|| {
-                                    h_flex().gap_1().children(commit.data.ref_names.iter().map(
-                                        |name| {
-                                            let is_head =
-                                                Self::is_head_ref(name.as_ref(), &head_branch_name);
-                                            self.render_ref_chip(
-                                                name,
-                                                accent_color,
-                                                is_head,
-                                                idx,
-                                                cx,
-                                            )
-                                        },
-                                    ))
-                                }))
-                                .child(subject_label),
-                        )
-                        .into_any_element(),
-                    column_label(formatted_time.into()),
-                    column_label(author_name),
-                    column_label(short_sha.into()),
-                ]
+                                .into()
+                            })
+                        } else {
+                            this
+                        }
+                    })
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .overflow_hidden()
+                            .children((!commit.data.ref_names.is_empty()).then(|| {
+                                h_flex().gap_1().children(commit.data.ref_names.iter().map(
+                                    |name| {
+                                        let is_head =
+                                            Self::is_head_ref(name.as_ref(), &head_branch_name);
+                                        self.render_ref_chip(name, accent_color, is_head, idx, cx)
+                                    },
+                                ))
+                            }))
+                            .child(subject_label),
+                    )
+                    .into_any_element();
+
+                let mut cells = Vec::with_capacity(columns.count());
+                cells.push(subject_cell);
+                if columns.date {
+                    cells.push(column_label(formatted_time.into()));
+                }
+                if columns.author {
+                    cells.push(column_label(author_name));
+                }
+                if columns.commit {
+                    cells.push(column_label(short_sha.into()));
+                }
+                cells
             })
             .collect()
+    }
+
+    /// The scrollable graph lane canvas plus its mouse/scroll interaction
+    /// handlers, shared by the tab and the panel layouts.
+    fn render_graph_canvas_interactive(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        div()
+            .id("graph-canvas")
+            .size_full()
+            .overflow_hidden()
+            .cursor_pointer()
+            .child(
+                div()
+                    .size_full()
+                    .child(self.render_graph_canvas(window, cx)),
+            )
+            .on_scroll_wheel(cx.listener(Self::handle_graph_scroll))
+            .on_mouse_move(cx.listener(Self::handle_graph_mouse_move))
+            .on_click(cx.listener(Self::handle_graph_click))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(Self::handle_graph_secondary_mouse_down),
+            )
+            .on_hover(cx.listener(|this, &is_hovered: &bool, _, cx| {
+                if !is_hovered && this.hovered_entry_idx.is_some() {
+                    this.hovered_entry_idx = None;
+                    cx.notify();
+                }
+            }))
+    }
+
+    /// The commit rows table, shared by the tab and the panel layouts. The
+    /// number of columns and their widths are supplied by the caller so the
+    /// panel can collapse columns responsively.
+    fn render_commits_table(
+        &self,
+        width_config: ColumnWidthConfig,
+        column_count: usize,
+        commit_count: usize,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let row_height = Self::row_height(window, cx);
+        let selected_entry_idx = self.selected_entry_idx;
+        let hovered_entry_idx = self.hovered_entry_idx;
+        let context_menu_entry_idx = self.context_menu.as_ref().map(|menu| menu.entry_idx);
+        let weak_self = cx.weak_entity();
+        let focus_handle = self.focus_handle.clone();
+        let table_focus_handle = self.table_interaction_state.read(cx).focus_handle.clone();
+
+        Table::new(column_count)
+            .interactable(&self.table_interaction_state)
+            .hide_row_borders()
+            .hide_row_hover()
+            .width_config(width_config)
+            .map_row(move |(index, row), window, cx| {
+                let is_selected = selected_entry_idx == Some(index);
+                let is_hovered = hovered_entry_idx == Some(index);
+                let is_context_menu_target = context_menu_entry_idx == Some(index);
+                let table_focus_handle = table_focus_handle.clone();
+                let is_focused =
+                    focus_handle.is_focused(window) || table_focus_handle.is_focused(window);
+                let weak = weak_self.clone();
+                let weak_for_hover = weak.clone();
+                let weak_for_context_menu = weak.clone();
+
+                let hover_bg = cx.theme().colors().element_hover.opacity(0.6);
+                let selected_bg = if is_focused {
+                    cx.theme().colors().element_selected
+                } else {
+                    cx.theme().colors().element_hover
+                };
+
+                row.h(row_height)
+                    .cursor_pointer()
+                    .when(is_selected || is_context_menu_target, |row| {
+                        row.bg(selected_bg)
+                    })
+                    .when(
+                        is_hovered && !is_selected && !is_context_menu_target,
+                        |row| row.bg(hover_bg),
+                    )
+                    .on_hover(move |&is_hovered, _, cx| {
+                        weak_for_hover
+                            .update(cx, |this, cx| {
+                                if is_hovered {
+                                    if this.hovered_entry_idx != Some(index) {
+                                        this.hovered_entry_idx = Some(index);
+                                        cx.notify();
+                                    }
+                                } else if this.hovered_entry_idx == Some(index) {
+                                    this.hovered_entry_idx = None;
+                                    cx.notify();
+                                }
+                            })
+                            .ok();
+                    })
+                    .on_click(move |event, window, cx| {
+                        weak.update(cx, |this, cx| {
+                            this.handle_entry_click(
+                                index,
+                                event,
+                                ScrollStrategy::Center,
+                                Some(&table_focus_handle),
+                                window,
+                                cx,
+                            );
+                        })
+                        .ok();
+                    })
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        move |event: &MouseDownEvent, window, cx| {
+                            weak_for_context_menu
+                                .update(cx, |this, cx| {
+                                    this.handle_entry_secondary_mouse_down(
+                                        index, event, window, cx,
+                                    );
+                                })
+                                .ok();
+                        },
+                    )
+                    .into_any_element()
+            })
+            .uniform_list(
+                "git-graph-commits",
+                commit_count,
+                cx.processor(Self::render_table_rows),
+            )
+    }
+
+    /// Renders the graph for the sidebar panel: a responsive layout that
+    /// collapses columns based on the available width, without the tab's
+    /// resizable column headers or inline commit-details split.
+    fn render_panel_content(
+        &self,
+        commit_count: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let is_path_history = matches!(self.log_source, LogSource::Path(_));
+        let columns = self.graph_columns();
+        let width_config = self.panel_table_width_config(columns);
+        let graph_canvas = self.render_graph_canvas_interactive(window, cx);
+        let commits_table =
+            self.render_commits_table(width_config, columns.count(), commit_count, window, cx);
+        let graph_width = self.graph_canvas_content_width().max(px(28.)).min(px(140.));
+
+        v_flex()
+            .relative()
+            .size_full()
+            .child(self.render_width_measurer(cx))
+            .child(
+                h_flex()
+                    .size_full()
+                    .when(!is_path_history, |this| {
+                        this.child(
+                            div()
+                                .w(graph_width)
+                                .h_full()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .child(graph_canvas),
+                        )
+                    })
+                    .child(
+                        div()
+                            .tab_index(2)
+                            .tab_group()
+                            .tab_stop(false)
+                            .flex_1()
+                            .h_full()
+                            .min_w_0()
+                            .child(commits_table),
+                    ),
+            )
+    }
+
+    /// A zero-cost overlay that records the last laid-out content width so the
+    /// panel can decide which columns to show on the next frame.
+    fn render_width_measurer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let content_width = self.content_width.clone();
+        let weak_self = cx.weak_entity();
+        gpui::canvas(
+            |_, _, _| {},
+            move |bounds: Bounds<Pixels>, _: (), _window: &mut Window, cx: &mut App| {
+                let width = bounds.size.width;
+                if content_width.get() != Some(width) {
+                    content_width.set(Some(width));
+                    weak_self.update(cx, |_, cx| cx.notify()).ok();
+                }
+            },
+        )
+        .absolute()
+        .size_full()
     }
 
     fn cancel(&mut self, _: &Cancel, _window: &mut Window, cx: &mut Context<Self>) {
@@ -3792,6 +4062,10 @@ impl Render for GitGraph {
                 .when(is_loading && error.is_none(), |this| {
                     this.child(self.render_loading_spinner(cx))
                 })
+                .into_any_element()
+        } else if self.host == GitGraphHost::Panel {
+            self.render_panel_content(commit_count, window, cx)
+                .into_any_element()
         } else {
             let is_path_history = matches!(self.log_source, LogSource::Path(_));
             let header_resize_info =
@@ -3856,121 +4130,14 @@ impl Render for GitGraph {
                             cx,
                         ))
                         .child({
-                            let row_height = Self::row_height(window, cx);
-                            let selected_entry_idx = self.selected_entry_idx;
-                            let hovered_entry_idx = self.hovered_entry_idx;
-                            let context_menu_entry_idx =
-                                self.context_menu.as_ref().map(|menu| menu.entry_idx);
-                            let weak_self = cx.weak_entity();
-                            let focus_handle = self.focus_handle.clone();
-                            let table_focus_handle =
-                                self.table_interaction_state.read(cx).focus_handle.clone();
-
-                            let graph_canvas = div()
-                                .id("graph-canvas")
-                                .size_full()
-                                .overflow_hidden()
-                                .cursor_pointer()
-                                .child(
-                                    div()
-                                        .size_full()
-                                        .child(self.render_graph_canvas(window, cx)),
-                                )
-                                .on_scroll_wheel(cx.listener(Self::handle_graph_scroll))
-                                .on_mouse_move(cx.listener(Self::handle_graph_mouse_move))
-                                .on_click(cx.listener(Self::handle_graph_click))
-                                .on_mouse_down(
-                                    MouseButton::Right,
-                                    cx.listener(Self::handle_graph_secondary_mouse_down),
-                                )
-                                .on_hover(cx.listener(|this, &is_hovered: &bool, _, cx| {
-                                    if !is_hovered && this.hovered_entry_idx.is_some() {
-                                        this.hovered_entry_idx = None;
-                                        cx.notify();
-                                    }
-                                }));
-
-                            let commits_table = Table::new(4)
-                                .interactable(&self.table_interaction_state)
-                                .hide_row_borders()
-                                .hide_row_hover()
-                                .width_config(table_width_config)
-                                .map_row(move |(index, row), window, cx| {
-                                    let is_selected = selected_entry_idx == Some(index);
-                                    let is_hovered = hovered_entry_idx == Some(index);
-                                    let is_context_menu_target =
-                                        context_menu_entry_idx == Some(index);
-                                    let table_focus_handle = table_focus_handle.clone();
-                                    let is_focused = focus_handle.is_focused(window)
-                                        || table_focus_handle.is_focused(window);
-                                    let weak = weak_self.clone();
-                                    let weak_for_hover = weak.clone();
-                                    let weak_for_context_menu = weak.clone();
-
-                                    let hover_bg = cx.theme().colors().element_hover.opacity(0.6);
-                                    let selected_bg = if is_focused {
-                                        cx.theme().colors().element_selected
-                                    } else {
-                                        cx.theme().colors().element_hover
-                                    };
-
-                                    row.h(row_height)
-                                        .cursor_pointer()
-                                        .when(is_selected || is_context_menu_target, |row| {
-                                            row.bg(selected_bg)
-                                        })
-                                        .when(
-                                            is_hovered && !is_selected && !is_context_menu_target,
-                                            |row| row.bg(hover_bg),
-                                        )
-                                        .on_hover(move |&is_hovered, _, cx| {
-                                            weak_for_hover
-                                                .update(cx, |this, cx| {
-                                                    if is_hovered {
-                                                        if this.hovered_entry_idx != Some(index) {
-                                                            this.hovered_entry_idx = Some(index);
-                                                            cx.notify();
-                                                        }
-                                                    } else if this.hovered_entry_idx == Some(index)
-                                                    {
-                                                        this.hovered_entry_idx = None;
-                                                        cx.notify();
-                                                    }
-                                                })
-                                                .ok();
-                                        })
-                                        .on_click(move |event, window, cx| {
-                                            weak.update(cx, |this, cx| {
-                                                this.handle_entry_click(
-                                                    index,
-                                                    event,
-                                                    ScrollStrategy::Center,
-                                                    Some(&table_focus_handle),
-                                                    window,
-                                                    cx,
-                                                );
-                                            })
-                                            .ok();
-                                        })
-                                        .on_mouse_down(
-                                            MouseButton::Right,
-                                            move |event: &MouseDownEvent, window, cx| {
-                                                weak_for_context_menu
-                                                    .update(cx, |this, cx| {
-                                                        this.handle_entry_secondary_mouse_down(
-                                                            index, event, window, cx,
-                                                        );
-                                                    })
-                                                    .ok();
-                                            },
-                                        )
-                                        .into_any_element()
-                                })
-                                .uniform_list(
-                                    "git-graph-commits",
-                                    commit_count,
-                                    cx.processor(Self::render_table_rows),
-                                );
+                            let graph_canvas = self.render_graph_canvas_interactive(window, cx);
+                            let commits_table = self.render_commits_table(
+                                table_width_config,
+                                self.graph_columns().count(),
+                                commit_count,
+                                window,
+                                cx,
+                            );
 
                             bind_redistributable_columns(
                                 div()
@@ -4028,6 +4195,7 @@ impl Render for GitGraph {
                             .child(self.render_commit_detail_panel(window, cx))
                     },
                 )
+                .into_any_element()
         };
 
         div()
