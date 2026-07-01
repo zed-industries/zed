@@ -873,6 +873,10 @@ pub struct FileFinderSettingsContent {
     ///
     /// Default: false
     pub include_channels: Option<bool>,
+    /// Where to place the file preview by default.
+    ///
+    /// Default: hidden
+    pub preview: Option<PreviewLayoutContent>,
 }
 
 #[derive(
@@ -898,6 +902,34 @@ pub enum IncludeIgnoredContent {
     /// Be smart and search for ignored when called from a gitignored worktree
     #[default]
     Smart,
+}
+
+/// Where a preview-capable picker (the project search modal, the file finder)
+/// places its preview by default. Toggling the preview at runtime persists and
+/// overrides this until it is changed again.
+#[derive(
+    Debug,
+    PartialEq,
+    Eq,
+    Clone,
+    Copy,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewLayoutContent {
+    /// Don't show the preview.
+    #[default]
+    Hidden,
+    /// Show the preview to the right of the results.
+    Right,
+    /// Show the preview below the results.
+    Below,
 }
 
 #[derive(

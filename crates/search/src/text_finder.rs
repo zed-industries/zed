@@ -14,7 +14,7 @@ use language::Buffer;
 use picker::Picker;
 
 use project::ProjectPath;
-use settings::SeedQuerySetting;
+use settings::{Settings as _, SeedQuerySetting};
 use text::Anchor;
 use ui::Window;
 use workspace::{
@@ -378,7 +378,9 @@ impl TextFinder {
     ) -> Self {
         let project = delegate.project(cx).clone();
         let preview = picker_preview::editor_preview(project, window, cx);
-        let picker = cx.new(|cx| Picker::list_with_preview(delegate, preview, window, cx));
+        let default_layout = editor::EditorSettings::get_global(cx).search.preview.into();
+        let picker =
+            cx.new(|cx| Picker::list_with_preview(delegate, preview, default_layout, window, cx));
         let picker_weak = picker.downgrade();
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, cx| {
