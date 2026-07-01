@@ -136,10 +136,12 @@ use fs::{TrashRestoreError, TrashedEntry};
 use futures::channel::mpsc;
 use gpui::{AppContext, AsyncApp, IntoElement, SharedString, Styled, Task, WeakEntity};
 use markdown::{Markdown, MarkdownElement};
+use project::Project;
 use project::{ProjectPath, WorktreeId};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::VecDeque, sync::Arc};
 use ui::{App, TextSize};
+use util::{paths::PathStyle, rel_path::RelPath};
 use workspace::{
     Workspace,
     notifications::{
@@ -305,6 +307,17 @@ impl UndoMessage {
     }
 }
 
+fn project_path_display(
+    project: &Project,
+    project_path: &ProjectPath,
+    path_style: PathStyle,
+    cx: &App,
+) -> String {
+    project
+        .short_full_path_for_project_path(project_path, cx)
+        .unwrap_or_else(|| project_path.path.display(path_style).to_string())
+}
+
 impl Inner {
     async fn manage_undo_and_redo(mut self, mut cx: AsyncApp) {
         loop {
@@ -347,9 +360,7 @@ impl Inner {
             self.can_redo.store(self.can_redo(), Ordering::Relaxed);
         }
     }
-}
 
-impl Inner {
     pub fn new(
         workspace: WeakEntity<Workspace>,
         panel: WeakEntity<ProjectPanel>,
@@ -491,11 +502,21 @@ impl Inner {
             return Err(anyhow!("Failed to obtain workspace."));
         };
 
-        let from_name = from.path.file_name().unwrap_or("file").to_string();
-        let to_name = to.path.file_name().unwrap_or("file").to_string();
-        // A rename that keeps the same parent directory reads as a "rename",
-        // otherwise it's a "move". Used purely for the user-facing message.
-        let verb = if from.path.parent() == to.path.parent() {
+        let (from_name, to_name) = workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().read(cx);
+            let path_style = project.path_style(cx);
+
+            (
+                project_path_display(project, from, path_style, cx),
+                project_path_display(project, to, path_style, cx),
+            )
+        });
+
+        // Since the Project Panel's rename operation is used for both renaming
+        // and moving files and directories, we'll assume that, if both paths
+        // share the parent folder, then it was a simple rename, otherwise it
+        // was a move.
+        let operation = if from.path.parent() == to.path.parent() {
             "rename"
         } else {
             "move"
@@ -507,7 +528,7 @@ impl Inner {
                     .entry_for_path(from, cx)
                     .map(|entry| entry.id)
                     .with_context(|| {
-                        format!("Failed to {verb} `{from_name}`. It no longer exists.")
+                        format!("Failed to {operation} `{from_name}`. It no longer exists.")
                     })?;
 
                 Ok(project.rename_entry(entry_id, to.clone(), cx))
@@ -515,11 +536,9 @@ impl Inner {
         });
 
         res?.await.map_err(|err| {
-            // `rename_entry` performs a no-overwrite rename, so a pre-existing
-            // file at the destination surfaces either as an `AlreadyExists` IO
-            // error or, on filesystems without atomic no-replace rename, as an
-            // "already exists" bail. Translate both into a clear message rather
-            // than leaking absolute paths and OS error codes to the user.
+            // It is possible for `RealFs::rename` to return an error other than
+            // `io::Error` when the file already exists, hence why we're also
+            // checking if the error contains the "already exists" string.
             let already_exists = err.chain().any(|cause| {
                 cause
                     .downcast_ref::<std::io::Error>()
@@ -528,7 +547,7 @@ impl Inner {
 
             if already_exists {
                 anyhow!(
-                    "Failed to {verb} `{to_name}`. A file or folder with that name already exists."
+                    "Failed to {verb} `{from_name}` to `{to_name}`. A file or folder already exists there."
                 )
             } else {
                 err
@@ -541,27 +560,30 @@ impl Inner {
             return Err(anyhow!("Failed to obtain workspace."));
         };
 
-        let name = project_path.path.file_name().unwrap_or("file").to_string();
+        let name = workspace.update(cx, |workspace, cx| {
+            let project = workspace.project().read(cx);
+            let path_style = project.path_style(cx);
+
+            project_path_display(project, project_path, path_style, cx)
+        });
 
         let task = workspace.update(cx, |workspace, cx| {
             workspace.project().update(cx, |project, cx| {
                 let entry_id = project
                     .entry_for_path(project_path, cx)
                     .map(|entry| entry.id)
-                    .with_context(|| {
-                        format!("Failed to move `{name}` to the Trash. It no longer exists.")
-                    })?;
+                    .with_context(|| format!("Failed to trash `{name}`. It no longer exists."))?;
 
                 project
                     .delete_entry(entry_id, true, cx)
-                    .with_context(|| format!("Failed to move `{name}` to the Trash."))
+                    .with_context(|| format!("Failed to trash `{name}`."))
             })
         })?;
 
         match task.await {
             Ok(Some(entry)) => Ok(entry),
-            Ok(None) => Err(anyhow!("Failed to move `{name}` to the Trash.")),
-            Err(err) => Err(err).context(format!("Failed to move `{name}` to the Trash.")),
+            Ok(None) => Err(anyhow!("Failed to trash `{name}`.")),
+            Err(err) => Err(err).context(format!("Failed to trash `{name}`.")),
         }
     }
 
@@ -575,7 +597,27 @@ impl Inner {
             return Err(anyhow!("Failed to obtain workspace."));
         };
 
-        let name = trashed_entry.name.to_string_lossy().into_owned();
+        // In order to be able to show an error message, if restoring the file
+        // or directory fails, in case there's another file or directory in its
+        // original path, or in case it no longer exists in trash, we'll need to
+        // reconstruct the original path.
+        let path = trashed_entry.original_parent.join(&trashed_entry.name);
+        let name = workspace
+            .update(cx, |workspace, cx| {
+                let project = workspace.project().read(cx);
+                let path_style = project.path_style(cx);
+                let worktree = project.worktree_for_id(worktree_id, cx)?;
+                let worktree_abs_path = worktree.read(cx).abs_path();
+                let rel_path = path.strip_prefix(worktree_abs_path.as_ref()).ok()?;
+                let rel_path = RelPath::new(rel_path, path_style).ok()?;
+                let project_path = ProjectPath {
+                    worktree_id,
+                    path: rel_path.into_arc(),
+                };
+
+                Some(project_path_display(project, &project_path, path_style, cx))
+            })
+            .unwrap_or_else(|| trashed_entry.name.to_string_lossy().into_owned());
 
         workspace
             .update(cx, |workspace, cx| {
