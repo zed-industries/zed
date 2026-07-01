@@ -11,7 +11,7 @@ You can also reach the same page with {#action zed::OpenSettings} and selecting 
 
 Within the AI page, LLM Providers, External Agents, and MCP Servers each open as their own sub-page under the **General** section.
 
-| Surface         | Opens with                      | Use it for                                                                   |
+| Surface         | Opens with                      | Use it for                                                                  |
 | --------------- | ------------------------------- | --------------------------------------------------------------------------- |
 | Settings Editor | {#action agent::OpenSettings}   | AI settings: LLM providers, External Agents, MCP servers, and related pages |
 | Settings file   | {#action zed::OpenSettingsFile} | Direct JSON edits and settings not exposed in UI                            |
