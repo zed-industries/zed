@@ -699,59 +699,6 @@ pub struct ResponseStreamEvent {
     pub usage: Option<Usage>,
 }
 
-// -- Responses API streaming --
-//
-// GPT-5.x are Responses-only on Mantle, and Gemma/Grok surface their reasoning
-// only on this path. We own a minimal copy of the Responses SSE event shape
-// here rather than depending on `open_ai::responses`, so that we also recognize
-// the Bedrock-hosted models' non-standard `response.reasoning.delta` events.
-// (The OpenAI types fold those into an opaque catch-all and silently drop them,
-// which makes the model appear to hang while it reasons.)
-#[derive(Deserialize, Debug)]
-#[serde(tag = "type")]
-pub enum ResponsesStreamEvent {
-    #[serde(rename = "response.output_text.delta")]
-    OutputTextDelta { delta: String },
-    /// Bedrock-hosted reasoning models (e.g. Gemma) stream plaintext reasoning here.
-    #[serde(rename = "response.reasoning.delta")]
-    ReasoningDelta { delta: String },
-    /// OpenAI-style models stream reasoning summaries here.
-    #[serde(rename = "response.reasoning_summary_text.delta")]
-    ReasoningSummaryTextDelta { delta: String },
-    #[serde(rename = "response.output_item.done")]
-    OutputItemDone { item: Value },
-    #[serde(rename = "response.completed")]
-    Completed { response: ResponsesSummary },
-    #[serde(rename = "response.incomplete")]
-    Incomplete { response: ResponsesSummary },
-    #[serde(rename = "response.failed")]
-    Failed { response: ResponsesSummary },
-    #[serde(rename = "response.error")]
-    Error { error: Value },
-    #[serde(other)]
-    Unknown,
-}
-
-#[derive(Deserialize, Debug, Default)]
-pub struct ResponsesSummary {
-    #[serde(default)]
-    pub usage: Option<ResponsesUsage>,
-    /// Populated on `response.failed`; opaque error object from the service.
-    #[serde(default)]
-    pub error: Option<Value>,
-    /// Populated on `response.incomplete` (e.g. `{ "reason": "max_output_tokens" }`).
-    #[serde(default)]
-    pub incomplete_details: Option<Value>,
-}
-
-#[derive(Deserialize, Debug, Default)]
-pub struct ResponsesUsage {
-    #[serde(default, alias = "prompt_tokens")]
-    pub input_tokens: Option<u64>,
-    #[serde(default, alias = "completion_tokens")]
-    pub output_tokens: Option<u64>,
-}
-
 /// Streams a chat completion from a Mantle model.
 pub async fn non_streaming_completion(
     client: &dyn HttpClient,
@@ -882,7 +829,7 @@ pub async fn stream_responses(
     auth: &MantleAuth,
     request: Value,
     extra_headers: &CustomHeaders,
-) -> Result<BoxStream<'static, Result<ResponsesStreamEvent>>, RequestError> {
+) -> Result<BoxStream<'static, Result<crate::mantle_responses::StreamEvent>>, RequestError> {
     let body = serde_json::to_vec(&request).map_err(|e| RequestError::Other(e.into()))?;
 
     let mut http_request = HttpRequest::builder()
@@ -909,7 +856,7 @@ pub async fn stream_responses(
                         if line == "[DONE]" || line.is_empty() {
                             None
                         } else {
-                            match serde_json::from_str::<ResponsesStreamEvent>(line) {
+                            match serde_json::from_str::<crate::mantle_responses::StreamEvent>(line) {
                                 Ok(event) => Some(Ok(event)),
                                 Err(error) => {
                                     log::error!(
