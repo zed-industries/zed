@@ -2005,6 +2005,16 @@ impl EditorElement {
         }
 
         let editor = self.editor.read(cx);
+
+        // Added/modified rows are the change being viewed; their blame is noise.
+        if editor.blame_revisions.hide_blame_on_added_rows
+            && row_info
+                .diff_status
+                .is_some_and(|status| !status.is_deleted())
+        {
+            return None;
+        }
+
         let blame = editor.blame.clone()?;
         let padding = {
             const INLINE_ACCEPT_SUGGESTION_EM_WIDTHS: f32 = 14.;

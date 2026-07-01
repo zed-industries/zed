@@ -562,6 +562,7 @@ impl ProjectDiff {
                     blame_base_text: true,
                     base_text_revision,
                     buffer_revision: None,
+                    hide_blame_on_added_rows: true,
                 },
                 window,
                 cx,

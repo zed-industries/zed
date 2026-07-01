@@ -635,6 +635,23 @@ impl SplittableEditor {
             editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx);
         });
 
+        // The left side renders the diff base content, so blame it at the right
+        // side's base revision (`None` means HEAD).
+        let rhs_blame_revisions = self.rhs_editor.read(cx).blame_revisions().clone();
+        if rhs_blame_revisions.blame_base_text {
+            let lhs_blame_revisions = crate::BlameRevisions {
+                blame_base_text: false,
+                base_text_revision: None,
+                buffer_revision: Some(rhs_blame_revisions.base_text_revision.unwrap_or(
+                    git::repository::BlameRevision::Revision("HEAD".to_string()),
+                )),
+                hide_blame_on_added_rows: false,
+            };
+            lhs_editor.update(cx, |editor, cx| {
+                editor.set_blame_revisions(lhs_blame_revisions, window, cx);
+            });
+        }
+
         let mut subscriptions = vec![cx.subscribe_in(
             &lhs_editor,
             window,

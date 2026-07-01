@@ -2243,6 +2243,16 @@ impl MultiBuffer {
         self.diffs.get(&buffer_id).map(|state| state.diff.clone())
     }
 
+    /// For an inverted diff (the left side of a split diff), returns the main
+    /// buffer paired with the given fileless base-text buffer, so callers can
+    /// resolve a repository/path for it (e.g. inline blame).
+    pub fn main_buffer_for_inverted_diff(
+        &self,
+        base_text_buffer_id: BufferId,
+    ) -> Option<Entity<language::Buffer>> {
+        self.diffs.get(&base_text_buffer_id)?.main_buffer.clone()
+    }
+
     pub fn expand_diff_hunks(&mut self, ranges: Vec<Range<Anchor>>, cx: &mut Context<Self>) {
         self.expand_or_collapse_diff_hunks(ranges, true, cx);
     }

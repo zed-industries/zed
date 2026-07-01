@@ -303,6 +303,7 @@ impl CommitView {
                         blame_base_text: true,
                         base_text_revision: Some(base_text_revision),
                         buffer_revision: Some(buffer_revision),
+                        hide_blame_on_added_rows: true,
                     },
                     window,
                     cx,

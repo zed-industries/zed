@@ -1606,6 +1606,10 @@ impl Editor {
     /// This respects the user's inline-blame setting: it only restarts an
     /// already-running blame so the new revisions take effect. Toggling blame on
     /// later will also pick these revisions up.
+    pub fn blame_revisions(&self) -> &blame::BlameRevisions {
+        &self.blame_revisions
+    }
+
     pub fn set_blame_revisions(
         &mut self,
         revisions: blame::BlameRevisions,
