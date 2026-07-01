@@ -169,6 +169,7 @@
   name: (_) @name) @item
 
 ; Add support for (node:test, bun:test and Jest) runnable
+; Also matches direct modifiers: .skip, .todo, .only, .failing (Jest, Bun, Vitest)
 ((call_expression
   function: [
     (identifier) @_name
@@ -188,7 +189,7 @@
       (identifier) @name
     ]))) @item
 
-; Add support for parameterized and conditional tests
+; Bun, Vitest (each also in Jest): parameterized and conditional tests
 ((call_expression
   function: (call_expression
     function: (member_expression
@@ -199,7 +200,27 @@
       ]
       property: (property_identifier) @_property)
     (#any-of? @_name "it" "test" "describe" "context" "suite")
-    (#any-of? @_property "each" "skipIf" "runIf" "if" "todoIf"))
+    (#any-of? @_property "each" "skipIf" "runIf"))
+  arguments: (arguments
+    .
+    [
+      (string
+        (string_fragment) @name)
+      (identifier) @name
+    ]))) @item
+
+; Bun only: if, todoIf (https://bun.sh/docs/test/writing-tests#test-modifiers)
+((call_expression
+  function: (call_expression
+    function: (member_expression
+      object: [
+        (identifier) @_name
+        (member_expression
+          object: (identifier) @_name)
+      ]
+      property: (property_identifier) @_property)
+    (#any-of? @_name "it" "test" "describe" "context" "suite")
+    (#any-of? @_property "if" "todoIf"))
   arguments: (arguments
     .
     [
