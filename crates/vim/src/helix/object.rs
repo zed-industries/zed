@@ -8,7 +8,7 @@ use editor::{DisplayPoint, display_map::DisplaySnapshot, movement};
 use text::Selection;
 
 use crate::{
-    helix::boundary::{FuzzyBoundary, ImmediateBoundary},
+    helix::boundary::{FuzzyBoundary, ImmediateBoundary, NearestPair},
     object::Object as VimObject,
 };
 
@@ -45,9 +45,13 @@ impl VimObject {
         selection: Selection<DisplayPoint>,
         around: bool,
     ) -> Result<Option<Range<DisplayPoint>>, VimToHelixError> {
-        let cursor = cursor_range(&selection, map);
+        let relative_to = if self == VimObject::AnyPair && !selection.is_empty() {
+            selection.range()
+        } else {
+            cursor_range(&selection, map)
+        };
         if let Some(helix_object) = self.to_helix_object() {
-            Ok(helix_object.range(map, cursor, around))
+            Ok(helix_object.range(map, relative_to, around))
         } else {
             Err(VimToHelixError)
         }
@@ -100,6 +104,7 @@ impl VimObject {
     fn to_helix_object(self) -> Option<Box<dyn HelixTextObject>> {
         Some(match self {
             Self::AngleBrackets => Box::new(ImmediateBoundary::AngleBrackets),
+            Self::AnyPair => Box::new(NearestPair),
             Self::BackQuotes => Box::new(ImmediateBoundary::BackQuotes),
             Self::CurlyBrackets => Box::new(ImmediateBoundary::CurlyBrackets),
             Self::DoubleQuotes => Box::new(ImmediateBoundary::DoubleQuotes),
@@ -178,5 +183,147 @@ mod test {
             },
             Mode::HelixNormal,
         );
+    }
+
+    #[gpui::test]
+    async fn test_select_any_pair_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // The innermost surrounding pair wins, regardless of its kind.
+        cx.set_state("(foo \"bar bˇaz\")", Mode::HelixNormal);
+        cx.simulate_keystrokes("m i m");
+        cx.assert_state("(foo \"«bar bazˇ»\")", Mode::HelixNormal);
+
+        cx.set_state("(foo \"bar bˇaz\")", Mode::HelixNormal);
+        cx.simulate_keystrokes("m a m");
+        cx.assert_state("(foo «\"bar baz\"ˇ»)", Mode::HelixNormal);
+
+        cx.set_state("[foo (bˇar) baz]", Mode::HelixNormal);
+        cx.simulate_keystrokes("m i m");
+        cx.assert_state("[foo («barˇ») baz]", Mode::HelixNormal);
+
+        // Between nested pairs the outer pair is the closest one.
+        cx.set_state("{foo (bar) ˇbaz}", Mode::HelixNormal);
+        cx.simulate_keystrokes("m i m");
+        cx.assert_state("{«foo (bar) bazˇ»}", Mode::HelixNormal);
+
+        // Without a surrounding pair the selection is unchanged.
+        cx.set_state("foo bˇar baz", Mode::HelixNormal);
+        cx.simulate_keystrokes("m i m");
+        cx.assert_state("foo bˇar baz", Mode::HelixNormal);
+
+        // Pairs come from the language's bracket queries: parentheses inside
+        // a string literal are plain text, so the quotes are the closest pair.
+        cx.set_state("let s = (\"a (bˇc) d\");", Mode::HelixNormal);
+        cx.simulate_keystrokes("m i m");
+        cx.assert_state("let s = (\"«a (bc) dˇ»\");", Mode::HelixNormal);
+
+        // A lifetime apostrophe is not a quote.
+        cx.set_state("fn f<'a>(x: ˇ&'a str) {}", Mode::HelixNormal);
+        cx.simulate_keystrokes("m i m");
+        cx.assert_state("fn f<'a>(«x: &'a strˇ») {}", Mode::HelixNormal);
+
+        // `|` pairs where it delimits closure parameters, but not where it is
+        // a binary operator.
+        cx.set_state("let f = |aˇ, b| a;", Mode::HelixNormal);
+        cx.simulate_keystrokes("m i m");
+        cx.assert_state("let f = |«a, bˇ»| a;", Mode::HelixNormal);
+
+        cx.set_state("let x = a | bˇ | c;", Mode::HelixNormal);
+        cx.simulate_keystrokes("m i m");
+        cx.assert_state("let x = a | bˇ | c;", Mode::HelixNormal);
+
+        // Composes with surround add.
+        cx.set_state("let a: Vec<iˇ32> = vec![];", Mode::HelixNormal);
+        cx.simulate_keystrokes("m a m m s (");
+        cx.assert_state("let a: Vec«(<i32>)ˇ» = vec![];", Mode::HelixNormal);
+
+        // Repeated `m` objects expand from the current selection, not the
+        // cursor position within that selection.
+        cx.set_state(
+            "#[cfg_attr(feature = \"arbitˇrary\", derive(arbitrary::Arbitrary))]",
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("m a m");
+        cx.assert_state(
+            "#[cfg_attr(feature = «\"arbitrary\"ˇ», derive(arbitrary::Arbitrary))]",
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("m i m");
+        cx.assert_state(
+            "#[cfg_attr(«feature = \"arbitrary\", derive(arbitrary::Arbitrary)ˇ»)]",
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("m i m");
+        cx.assert_state(
+            "#[«cfg_attr(feature = \"arbitrary\", derive(arbitrary::Arbitrary))ˇ»]",
+            Mode::HelixNormal,
+        );
+
+        // Like other text objects, `m` also works with `]` and `[`.
+        cx.set_state("foo ˇbar (baz)", Mode::HelixNormal);
+        cx.simulate_keystrokes("] m");
+        cx.assert_state("foo bar «(baz)ˇ»", Mode::HelixNormal);
+
+        cx.set_state("(baz) foˇo", Mode::HelixNormal);
+        cx.simulate_keystrokes("[ m");
+        cx.assert_state("«ˇ(baz)» foo", Mode::HelixNormal);
+    }
+
+    #[gpui::test]
+    async fn test_helix_treesitter_object_keys(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // In Helix, `t` is the type text object, not an HTML tag.
+        cx.set_state(
+            indoc! {"
+            const A: usize = 1;
+            struct Foo {
+                barˇ: usize,
+            }"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("m a t");
+        cx.assert_state(
+            indoc! {"
+            const A: usize = 1;
+            «struct Foo {
+                bar: usize,
+            }ˇ»"},
+            Mode::HelixNormal,
+        );
+
+        // In Helix, `c` is the comment text object, not a class.
+        cx.set_state(
+            indoc! {"
+            fn foo() {
+                // some coˇmment
+                bar();
+            }"},
+            Mode::HelixNormal,
+        );
+        cx.simulate_keystrokes("m a c");
+        cx.assert_state(
+            indoc! {"
+            fn foo() {
+                «// some commentˇ»
+                bar();
+            }"},
+            Mode::HelixNormal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_helix_xml_element_object_key(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new_html(cx).await;
+
+        // In Helix, `x` is the (X)HTML element text object.
+        cx.set_state("<div>heˇllo</div>", Mode::HelixNormal);
+        cx.simulate_keystrokes("m i x");
+        cx.assert_state("<div>«helloˇ»</div>", Mode::HelixNormal);
+
+        cx.set_state("<div>heˇllo</div>", Mode::HelixNormal);
+        cx.simulate_keystrokes("m a x");
+        cx.assert_state("«<div>hello</div>ˇ»", Mode::HelixNormal);
     }
 }

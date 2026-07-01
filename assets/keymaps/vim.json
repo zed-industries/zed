@@ -672,6 +672,18 @@
     },
   },
   {
+    // Helix textobject keys that differ from vim's: `mim`/`mam` select the
+    // closest surrounding pair, and `t`/`c`/`x` follow Helix's meanings
+    // (type, comment, xml element) instead of vim's (tag, class, unbound).
+    "context": "(vim_operator == a || vim_operator == i || vim_operator == helix_next || vim_operator == helix_previous) && helix_mode",
+    "bindings": {
+      "m": "vim::AnyPair",
+      "t": "vim::Class",
+      "c": "vim::Comment",
+      "x": "vim::Tag",
+    },
+  },
+  {
     "context": "vim_operator == helix_m",
     "bindings": {
       "m": ["vim::Matching", { "match_quotes": true }],

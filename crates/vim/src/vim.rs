@@ -1499,6 +1499,12 @@ impl Vim {
         {
             context.add("VimControl");
         }
+        // `vim_mode` is replaced by "operator"/"waiting" while an operator is
+        // pending, so expose helix-ness separately to allow Helix-specific
+        // bindings in those states (e.g. text objects after `mi`/`ma`).
+        if self.mode.is_helix() {
+            context.add("helix_mode");
+        }
         context.set("vim_mode", mode);
         context.set("vim_operator", operator_id);
     }
