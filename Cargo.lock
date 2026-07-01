@@ -535,6 +535,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "shlex",
  "streaming_diff",
  "task",
  "telemetry",
