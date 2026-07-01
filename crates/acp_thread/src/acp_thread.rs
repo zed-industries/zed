@@ -4675,7 +4675,9 @@ impl AcpThread {
                 status,
             } => {
                 if let Some(entity) = self.terminals.get(&terminal_id) {
-                    entity.update(cx, |_term, cx| {
+                    entity.update(cx, |term, cx| {
+                        term.inner()
+                            .update(cx, |inner, _| inner.shrink_to_used());
                         cx.notify();
                     });
                 } else {
