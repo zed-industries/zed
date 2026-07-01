@@ -233,6 +233,7 @@ pub enum InlayHintRefreshReason {
     SettingsChange(InlayHintSettings),
     NewLinesShown,
     BufferEdited(BufferId),
+    ServerRegistered(BufferId),
     ServerRemoved,
     RefreshRequested {
         server_id: LanguageServerId,
@@ -323,6 +324,7 @@ impl Editor {
             InlayHintRefreshReason::ModifiersChanged(_)
             | InlayHintRefreshReason::Toggle(_)
             | InlayHintRefreshReason::SettingsChange(_)
+            | InlayHintRefreshReason::ServerRegistered(_)
             | InlayHintRefreshReason::ServerRemoved => true,
             InlayHintRefreshReason::NewLinesShown
             | InlayHintRefreshReason::RefreshRequested { .. }
@@ -359,6 +361,13 @@ impl Editor {
                 false
             }
         };
+
+        if let InlayHintRefreshReason::ServerRegistered(buffer_id) = reason {
+            invalidate_hints_for_buffers.insert(buffer_id);
+            semantics_provider.invalidate_inlay_hints(&invalidate_hints_for_buffers, cx);
+            visible_excerpts
+                .retain(|(buffer_snapshot, _, _)| buffer_snapshot.remote_id() == buffer_id);
+        }
 
         let multi_buffer = self.buffer().clone();
 
@@ -539,6 +548,7 @@ impl Editor {
                 return None;
             }
             InlayHintRefreshReason::ServerRemoved => InvalidationStrategy::BufferEdited,
+            InlayHintRefreshReason::ServerRegistered(_) => InvalidationStrategy::BufferEdited,
             InlayHintRefreshReason::NewLinesShown => InvalidationStrategy::None,
             InlayHintRefreshReason::BufferEdited(_) => InvalidationStrategy::BufferEdited,
             InlayHintRefreshReason::RefreshRequested {
@@ -3633,6 +3643,93 @@ let c = 3;"#
                     visible_hint_labels(editor, cx),
                     "Nothing changes on consequent modifiers change of the same kind (3)"
                 );
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_server_registered_requeries_cached_inlay_hints(cx: &mut gpui::TestAppContext) {
+        init_test(cx, &|settings| {
+            settings.defaults.inlay_hints = Some(InlayHintSettingsContent {
+                show_value_hints: Some(true),
+                enabled: Some(true),
+                edit_debounce_ms: Some(0),
+                scroll_debounce_ms: Some(0),
+                show_type_hints: Some(true),
+                show_parameter_hints: Some(true),
+                show_other_hints: Some(true),
+                show_background: Some(false),
+                toggle_on_modifiers_press: None,
+            })
+        });
+
+        let lsp_request_count = Arc::new(AtomicU32::new(0));
+        let (_, editor, _) = prepare_test_objects(cx, {
+            let lsp_request_count = lsp_request_count.clone();
+            move |fake_server, file_with_hints| {
+                let lsp_request_count = lsp_request_count.clone();
+                fake_server.set_request_handler::<lsp::request::InlayHintRequest, _, _>(
+                    move |params, _| {
+                        let lsp_request_count = lsp_request_count.clone();
+                        async move {
+                            let request_count =
+                                lsp_request_count.fetch_add(1, Ordering::SeqCst) + 1;
+                            assert_eq!(
+                                params.text_document.uri,
+                                lsp::Uri::from_file_path(file_with_hints).unwrap(),
+                            );
+                            Ok(Some(vec![lsp::InlayHint {
+                                position: lsp::Position::new(0, request_count),
+                                label: lsp::InlayHintLabel::String(format!("hint_{request_count}")),
+                                kind: None,
+                                text_edits: None,
+                                tooltip: None,
+                                padding_left: None,
+                                padding_right: None,
+                                data: None,
+                            }]))
+                        }
+                    },
+                );
+            }
+        })
+        .await;
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert_eq!(vec!["hint_1".to_string()], cached_hint_labels(editor, cx));
+                assert_eq!(vec!["hint_1".to_string()], visible_hint_labels(editor, cx));
+                editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert_eq!(
+                    1,
+                    lsp_request_count.load(Ordering::SeqCst),
+                    "NewLinesShown should reuse cached hints for already fetched chunks"
+                );
+                let Some(buffer) = editor.buffer().read(cx).as_singleton() else {
+                    panic!("expected a singleton buffer");
+                };
+                let buffer_id = buffer.read(cx).remote_id();
+                editor.refresh_inlay_hints(InlayHintRefreshReason::ServerRegistered(buffer_id), cx);
+            })
+            .unwrap();
+        cx.executor().run_until_parked();
+
+        editor
+            .update(cx, |editor, _window, cx| {
+                assert_eq!(
+                    2,
+                    lsp_request_count.load(Ordering::SeqCst),
+                    "Server registration should invalidate cached chunks for the registered buffer"
+                );
+                assert_eq!(vec!["hint_2".to_string()], cached_hint_labels(editor, cx));
+                assert_eq!(vec!["hint_2".to_string()], visible_hint_labels(editor, cx));
             })
             .unwrap();
     }
