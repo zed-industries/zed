@@ -7943,7 +7943,7 @@ fn collaboration_page() -> SettingsPage {
 }
 
 fn ai_page(cx: &App) -> SettingsPage {
-    fn general_section() -> [SettingsPageItem; 5] {
+    fn general_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("General"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7978,7 +7978,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                 title: "LLM Providers".into(),
                 r#type: Default::default(),
                 json_path: Some("llm_providers"),
-                description: Some("Configure API keys and settings for LLM providers.".into()),
+                description: Some("Configure natively-included model providers.".into()),
                 search_aliases: &[
                     "ai",
                     "amazon",
@@ -8037,6 +8037,18 @@ fn ai_page(cx: &App) -> SettingsPage {
                 files: USER,
                 render: render_external_agents_page,
             }),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "MCP Servers".into(),
+                r#type: Default::default(),
+                json_path: Some("context_servers"),
+                description: Some(
+                    "View, add, configure, and remove Model Context Protocol servers.".into(),
+                ),
+                search_aliases: &["context server", "mcp", "model context protocol"],
+                in_json: false,
+                files: USER,
+                render: render_mcp_servers_page,
+            }),
         ]
     }
 
@@ -8086,19 +8098,6 @@ fn ai_page(cx: &App) -> SettingsPage {
                 render: render_tool_permissions_setup_page,
             }),
         ]);
-
-        items.push(SettingsPageItem::SubPageLink(SubPageLink {
-            title: "MCP Servers".into(),
-            r#type: Default::default(),
-            json_path: Some("context_servers"),
-            description: Some(
-                "View, add, configure, and remove Model Context Protocol servers.".into(),
-            ),
-            search_aliases: &["context server", "mcp", "model context protocol"],
-            in_json: false,
-            files: USER,
-            render: render_mcp_servers_page,
-        }));
 
         items.extend([
             SettingsPageItem::SettingItem(SettingItem {

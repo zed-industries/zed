@@ -25,7 +25,7 @@ use crate::SettingsWindow;
 pub(crate) fn render_external_agents_page(
     settings_window: &SettingsWindow,
     scroll_handle: &ScrollHandle,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let agent_server_store = get_agent_server_store(settings_window, cx);
@@ -41,8 +41,6 @@ pub(crate) fn render_external_agents_page(
         render_no_project_state(cx)
     };
 
-    let add_agent_popover = render_add_agent_popover(settings_window, window, cx);
-
     v_flex()
         .id("external-agents-page")
         .size_full()
@@ -51,7 +49,12 @@ pub(crate) fn render_external_agents_page(
         .pb_16()
         .track_scroll(scroll_handle)
         .overflow_y_scroll()
-        .child(add_agent_popover)
+        .child(Label::new("External Agents"))
+        .child(
+            Label::new("Agents connected through the Agent Client Protocol.")
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+        )
         .child(agent_list)
         .into_any_element()
 }
@@ -249,7 +252,7 @@ fn remove_agent(id: &AgentId, source: ExternalAgentSource, cx: &mut App) {
     });
 }
 
-fn render_add_agent_popover(
+pub(crate) fn render_add_agent_popover(
     settings_window: &SettingsWindow,
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,

@@ -3707,6 +3707,9 @@ impl SettingsWindow {
         if let Some(current_sub_page) = self.sub_page_stack.last() {
             let is_skills_page =
                 current_sub_page.link.json_path == Some(AGENT_SKILLS_SETTINGS_PATH);
+            let is_external_agents_page = current_sub_page.link.json_path == Some("agent_servers");
+            let is_mcp_servers_page = current_sub_page.link.json_path == Some("context_servers");
+
             page_header = h_flex()
                 .w_full()
                 .min_w_0()
@@ -3757,6 +3760,12 @@ impl SettingsWindow {
                                         );
                                     })),
                             )
+                        })
+                        .when(is_external_agents_page, |this| {
+                            this.child(pages::render_add_agent_popover(self, window, cx))
+                        })
+                        .when(is_mcp_servers_page, |this| {
+                            this.child(pages::render_add_server_popover(self, window, cx))
                         }),
                 )
                 .into_any_element();

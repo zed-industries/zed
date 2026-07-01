@@ -29,22 +29,19 @@ pub(crate) fn render_llm_providers_page(
         .children(
             providers
                 .iter()
-                .map(|provider| render_provider_section(settings_window, provider, window, cx))
+                .enumerate()
+                .map(|(index, provider)| {
+                    render_provider_section(settings_window, provider, index == 0, window, cx)
+                })
                 .collect::<Vec<_>>(),
         )
         .into_any_element()
 }
 
-/// Renders a single provider as a section: an icon + name header, then a body
-/// whose shape depends on the provider:
-/// - single-API-key providers get the uniform "API Key" item (input or a
-///   configured card),
-/// - other inline providers (sign-in based) render their own control,
-/// - providers that need a richer surface render a "Configure" button that opens
-///   a dedicated sub-page.
 fn render_provider_section(
     settings_window: &SettingsWindow,
     provider: &Arc<dyn LanguageModelProvider>,
+    is_first: bool,
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
@@ -63,7 +60,7 @@ fn render_provider_section(
 
     v_flex()
         .min_w_0()
-        .pt_8()
+        .map(|s| if is_first { s.pt_4() } else { s.pt_8() })
         .gap_1p5()
         .child(render_provider_header(provider_name, provider.icon(), cx))
         .child(body)

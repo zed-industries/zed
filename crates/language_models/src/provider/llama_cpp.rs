@@ -4,7 +4,7 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, CursorStyle, Entity, Task, TaskExt};
+use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::util::parse_tool_arguments;
 use language_model::{
@@ -26,8 +26,7 @@ use std::sync::LazyLock;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 use ui::{
-    ButtonLike, ButtonLink, ConfiguredApiCard, Divider, ElevationIndex, List, ListBulletItem,
-    Tooltip, prelude::*,
+    ButtonLike, ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, Tooltip, prelude::*,
 };
 use ui_input::InputField;
 use util::ResultExt;
