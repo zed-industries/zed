@@ -718,19 +718,41 @@ impl X11Client {
     }
 
     pub fn enable_ime(&self) {
-        let mut state = self.0.borrow_mut();
+        let state = self.0.borrow_mut();
         if !state.has_xim() {
             return;
         }
 
-        let Some((mut ximc, xim_handler)) = state.take_xim() else {
+        let xim_handler = match state.xim_handler.as_ref() {
+            Some(xim_handler) => xim_handler,
+            None => return,
+        };
+
+        if !xim_handler.connected {
+            // XIM protocol negotiation hasn't completed yet.
+            // The IC creation will happen in `handle_get_im_values`
+            // as part of the proper XIM protocol flow.
+            // Attempting to create an IC here would use an
+            // uninitialized input_method_id (0), which causes
+            // a protocol state mismatch with Fcitx5.
+            return;
+        }
+
+        let im_id = xim_handler.im_id;
+        let ic_id = xim_handler.ic_id;
+        let window = xim_handler.window;
+        drop(state);
+
+        let mut state = self.0.borrow_mut();
+        let Some((mut ximc, _)) = state.take_xim() else {
             return;
         };
+
         let mut ic_attributes = ximc
             .build_ic_attributes()
             .push(AttributeName::InputStyle, InputStyle::PREEDIT_CALLBACKS)
-            .push(AttributeName::ClientWindow, xim_handler.window)
-            .push(AttributeName::FocusWindow, xim_handler.window);
+            .push(AttributeName::ClientWindow, window)
+            .push(AttributeName::FocusWindow, window);
 
         let window_id = state.keyboard_focused_window;
         drop(state);
@@ -739,7 +761,6 @@ impl X11Client {
                 log::error!("Failed to get window for IME positioning");
                 let mut state = self.0.borrow_mut();
                 state.ximc = Some(ximc);
-                state.xim_handler = Some(xim_handler);
                 return;
             };
             if let Some(scaled_area) = window.get_ime_area() {
@@ -755,10 +776,9 @@ impl X11Client {
                     });
             }
         }
-        ximc.create_ic(xim_handler.im_id, ic_attributes.build())
-            .ok();
+        ximc.set_ic_values(im_id, ic_id, ic_attributes.build()).ok();
         let mut state = self.0.borrow_mut();
-        state.restore_xim(ximc, xim_handler);
+        state.ximc = Some(ximc);
     }
 
     pub fn reset_ime(&self) {
