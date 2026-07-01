@@ -255,6 +255,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             max_line_length = 120
         [*.js]
             tab_width = 10
+            trim_trailing_whitespace = false
             max_line_length = off
         "#,
         ".zed": {
@@ -330,7 +331,9 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     assert_eq!(Some(settings_a.tab_size), NonZeroU32::new(3));
     assert_eq!(settings_a.hard_tabs, true);
     assert_eq!(settings_a.ensure_final_newline_on_save, true);
-    assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
+    // .editorconfig can disable trailing whitespace removal, but should not
+    // re-enable it when Zed settings have disabled it.
+    assert_eq!(settings_a.remove_trailing_whitespace_on_save, false);
     assert_eq!(settings_a.line_ending, LineEndingSetting::EnforceLf);
     assert_eq!(settings_a.preferred_line_length, 120);
 
@@ -349,6 +352,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
     // "indent_size" is not set, so "tab_width" is used
     assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
+    assert_eq!(settings_c.remove_trailing_whitespace_on_save, false);
 
     // When max_line_length is "off", default to .zed/settings.json
     assert_eq!(settings_b.preferred_line_length, 64);

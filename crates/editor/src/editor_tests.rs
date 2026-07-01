@@ -15620,6 +15620,62 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_markdown_save_respects_disabled_trailing_whitespace_removal(cx: &mut TestAppContext) {
+    init_test(cx, |settings| {
+        settings.defaults.remove_trailing_whitespace_on_save = Some(false);
+        settings.defaults.ensure_final_newline_on_save = Some(false);
+    });
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file(
+        path!("/.editorconfig"),
+        "root = true\n[*]\ntrim_trailing_whitespace = true\n".into(),
+    )
+    .await;
+    fs.insert_file(path!("/README.md"), "".into()).await;
+
+    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(markdown_lang());
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/README.md"), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("line with spaces  \n", window, cx)
+    });
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    force_format: false,
+                    autosave: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "line with spaces  \n"
+    );
+}
+
+#[gpui::test]
 async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(FormatterList::Vec(vec![Formatter::LanguageServer(
