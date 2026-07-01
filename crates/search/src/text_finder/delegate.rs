@@ -28,14 +28,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{ops::Range, time::Duration};
 
 use collections::{HashMap, HashSet};
-use editor::{MultiBufferSnapshot, PathKey, multibuffer_context_lines};
+use editor::{
+    Editor, EditorElement, EditorStyle, MultiBufferSnapshot, PathKey, multibuffer_context_lines,
+};
 use file_icons::FileIcons;
 use futures::StreamExt;
 use gpui::{
     AnyElement, AppContext, AsyncApp, DismissEvent, EntityId, HighlightStyle, StyledText, Task,
     TextStyle, prelude::*,
 };
-use gpui::{Entity, FocusHandle};
+use gpui::{Entity, FocusHandle, Focusable};
 use language::{Buffer, LanguageAwareStyling};
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath};
@@ -55,6 +57,7 @@ use workspace::item::ItemSettings;
 
 use super::SearchMatch;
 use crate::project_search::{ActiveSettings, ProjectSearch};
+use crate::search_bar::input_base_styles;
 use crate::{ProjectSearchView, SearchOption, SearchOptions};
 
 pub struct Delegate {
@@ -91,6 +94,17 @@ pub(crate) enum Entry {
     Header(ProjectPath),
     Match(usize),
     Separator,
+}
+
+/// Filter state copied from an active project search when opening the text
+/// finder, so the modal starts out with the same include/exclude globs and
+/// open-files / filters-shown configuration.
+#[derive(Default)]
+pub struct FilterSeed {
+    pub include: String,
+    pub exclude: String,
+    pub opened_only: bool,
+    pub filters_enabled: bool,
 }
 
 async fn get_ongoing_search(
@@ -324,6 +338,7 @@ impl Delegate {
 
     pub fn new(
         workspace: &mut Workspace,
+        filter_seed: Option<FilterSeed>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<Self> {
@@ -338,6 +353,15 @@ impl Delegate {
         let search = cx.new(|cx| ProjectSearch::new(project, cx));
         let project_search =
             cx.new(|cx| ProjectSearchView::new(weak_workspace, search, window, cx, settings));
+        if let Some(seed) = filter_seed {
+            project_search.update(cx, |view, cx| {
+                let (included, excluded) = view.filter_editors();
+                included.update(cx, |editor, cx| editor.set_text(seed.include, window, cx));
+                excluded.update(cx, |editor, cx| editor.set_text(seed.exclude, window, cx));
+                view.set_opened_only(seed.opened_only);
+                view.set_filters_enabled(seed.filters_enabled);
+            });
+        }
         cx.spawn(async move |_, cx| Self::new_from_project_search(project_search, cx).await)
     }
 
@@ -548,43 +572,44 @@ impl PickerDelegate for Delegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Option<AnyElement> {
-        let active = self.search_options;
         let focus_handle = self.focus_handle.clone();
         let picker = cx.entity();
+
+        let filters_enabled = self.project_search_view.read(cx).filters_enabled();
+        let filter_toggle = {
+            let picker = picker.clone();
+            IconButton::new("text-finder-filter-button", IconName::Filter)
+                .icon_size(IconSize::Small)
+                .shape(IconButtonShape::Square)
+                .toggle_state(filters_enabled)
+                .tooltip(Tooltip::text("Toggle Filters"))
+                .on_click(move |_, window, cx| {
+                    picker.update(cx, |picker, cx| {
+                        let view = picker.delegate.project_search_view.clone();
+                        let now_enabled = !view.read(cx).filters_enabled();
+                        view.update(cx, |view, _| view.set_filters_enabled(now_enabled));
+                        if now_enabled {
+                            let (included, _) = view.read(cx).filter_editors();
+                            included.focus_handle(cx).focus(window, cx);
+                        }
+                        picker.refresh(window, cx);
+                    });
+                })
+        };
 
         let filter_buttons = [
             SearchOption::CaseSensitive,
             SearchOption::WholeWord,
             SearchOption::Regex,
-            SearchOption::IncludeIgnored,
         ]
         .into_iter()
-        .map(|option| {
-            let options = option.as_options();
-            let action = option.to_toggle_action();
-            let label = option.label();
-            let focus_handle = focus_handle.clone();
-            let picker = picker.clone();
-            IconButton::new(
-                ("text-finder-search-option", option as usize),
-                option.icon(),
-            )
-            .icon_size(IconSize::Small)
-            .shape(IconButtonShape::Square)
-            .toggle_state(active.contains(options))
-            .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
-            .on_click(move |_, window, cx| {
-                picker.update(cx, |picker, cx| {
-                    picker.delegate.search_options.toggle(options);
-                    picker.refresh(window, cx);
-                });
-            })
-        });
+        .map(|option| self.search_option_button(option, picker.clone(), focus_handle.clone()));
 
         Some(
             h_flex()
                 .gap_1()
                 .children(filter_buttons)
+                .child(filter_toggle)
                 .children(picker::parts::project_scan_indicator(
                     self.active_query.is_some(),
                     self.project(cx),
@@ -592,6 +617,79 @@ impl PickerDelegate for Delegate {
                 ))
                 .into_any_element(),
         )
+    }
+
+    fn render_editor(
+        &self,
+        editor: &Arc<dyn picker::ErasedEditor>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Div {
+        let border_color = cx.theme().colors().border;
+        let picker = cx.entity();
+        let focus_handle = self.focus_handle.clone();
+
+        let filter_line =
+            self.project_search_view
+                .read(cx)
+                .filters_enabled()
+                .then(|| {
+                    let (included, excluded) = self.project_search_view.read(cx).filter_editors();
+                    let include = input_base_styles(border_color, |div| div.flex_grow_1())
+                        .child(render_filter_input(&included, cx));
+                    let exclude = input_base_styles(border_color, |div| div.flex_grow_1())
+                        .child(render_filter_input(&excluded, cx));
+
+                    let opened_only_button = {
+                        let picker = picker.clone();
+                        IconButton::new("text-finder-opened-only", IconName::FolderSearch)
+                            .icon_size(IconSize::Small)
+                            .shape(IconButtonShape::Square)
+                            .toggle_state(self.project_search_view.read(cx).opened_only_enabled())
+                            .tooltip(Tooltip::text("Only Search Open Files"))
+                            .on_click(move |_, window, cx| {
+                                picker.update(cx, |picker, cx| {
+                                    let view = picker.delegate.project_search_view.clone();
+                                    let enabled = !view.read(cx).opened_only_enabled();
+                                    view.update(cx, |view, _| view.set_opened_only(enabled));
+                                    picker.refresh(window, cx);
+                                });
+                            })
+                    };
+                    let mode_column = h_flex().gap_1().child(opened_only_button).child(
+                        self.search_option_button(
+                            SearchOption::IncludeIgnored,
+                            picker.clone(),
+                            focus_handle.clone(),
+                        ),
+                    );
+
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .px_2p5()
+                        .pb_1p5()
+                        .child(include)
+                        .child(exclude)
+                        .child(mode_column)
+                });
+
+        v_flex()
+            .child(
+                h_flex()
+                    .overflow_hidden()
+                    .flex_none()
+                    .px_2p5()
+                    .py_1p5()
+                    .gap_2()
+                    .child(
+                        input_base_styles(border_color, |div| div.flex_1())
+                            .child(div().flex_1().py_1().child(editor.render(window, cx))),
+                    )
+                    .children(self.searchbar_trailer(window, cx)),
+            )
+            .children(filter_line)
+            .child(Divider::horizontal())
     }
 
     fn actions_menu(
@@ -623,6 +721,14 @@ impl PickerDelegate for Delegate {
 
     fn match_count(&self) -> usize {
         self.entries.len()
+    }
+
+    // The filter inputs live in the picker's own element tree but have their own
+    // focus handles. Without this, focusing one would blur the query editor and
+    // dismiss the modal.
+    fn has_another_open_menu(&self, window: &Window, cx: &App) -> bool {
+        let (included, excluded) = self.project_search_view.read(cx).filter_editors();
+        included.focus_handle(cx).is_focused(window) || excluded.focus_handle(cx).is_focused(window)
     }
 
     fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
@@ -987,7 +1093,49 @@ async fn stream_results_to_picker(
 
         smol::future::yield_now().await;
     }
+
+    // The search finished without ever producing a batch (e.g. the include
+    // filter matched no files), so the first-batch clear above never ran and the
+    // previous results would linger. Clear them now — unless a newer search has
+    // already superseded this one (cancel_flag set), in which case it owns the
+    // results and clearing here would wipe its output.
+    if clear_existing && !cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+        picker
+            .update(cx, |picker, cx| {
+                let delegate = &mut picker.delegate;
+                delegate.matches.clear();
+                delegate.entries.clear();
+                delegate.unique_files.clear();
+                delegate.selected_index = 0;
+                cx.notify();
+            })
+            .log_err();
+    }
     None
+}
+
+/// Like `search_bar::render_text_input`, but with a transparent background so
+/// the bordered input box blends with the modal surface (the shared helper
+/// hardcodes `toolbar_background`, which reads as a dark fill on the modal).
+fn render_filter_input(editor: &Entity<Editor>, cx: &App) -> impl IntoElement {
+    let settings = ThemeSettings::get_global(cx);
+    let text_style = TextStyle {
+        color: cx.theme().colors().text,
+        font_family: settings.buffer_font.family.clone(),
+        font_features: settings.buffer_font.features.clone(),
+        font_fallbacks: settings.buffer_font.fallbacks.clone(),
+        font_size: rems(0.875).into(),
+        font_weight: settings.buffer_font.weight,
+        line_height: relative(1.3),
+        ..TextStyle::default()
+    };
+    let editor_style = EditorStyle {
+        background: gpui::transparent_black(),
+        local_player: cx.theme().players().local(),
+        text: text_style,
+        ..EditorStyle::default()
+    };
+    EditorElement::new(editor, editor_style)
 }
 
 /// Renders the matched source line with syntax highlighting, overlaying the
@@ -1081,7 +1229,7 @@ impl Delegate {
         // disambiguated. For single worktree projects we use worktree relative
         // paths for convenience.
         let match_full_paths = self.project(cx).read(cx).visible_worktrees(cx).count() > 1;
-        let open_buffers = None;
+        let open_buffers = self.project_search_view.read(cx).opened_only_buffers(cx);
 
         self.search_options
             .build_query(
@@ -1092,6 +1240,31 @@ impl Delegate {
                 open_buffers,
             )
             .log_err()
+    }
+
+    fn search_option_button(
+        &self,
+        option: SearchOption,
+        picker: Entity<Picker<Self>>,
+        focus_handle: FocusHandle,
+    ) -> IconButton {
+        let options = option.as_options();
+        let action = option.to_toggle_action();
+        let label = option.label();
+        IconButton::new(
+            ("text-finder-search-option", option as usize),
+            option.icon(),
+        )
+        .icon_size(IconSize::Small)
+        .shape(IconButtonShape::Square)
+        .toggle_state(self.search_options.contains(options))
+        .tooltip(move |_window, cx| Tooltip::for_action_in(label, action, &focus_handle, cx))
+        .on_click(move |_, window, cx| {
+            picker.update(cx, |picker, cx| {
+                picker.delegate.search_options.toggle(options);
+                picker.refresh(window, cx);
+            });
+        })
     }
 
     /// Create things from MB

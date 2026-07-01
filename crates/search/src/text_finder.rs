@@ -1,6 +1,6 @@
 use std::{ops::Range, sync::atomic::Ordering};
 
-use editor::Editor;
+use editor::{Editor, EditorEvent};
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Modifiers, Subscription, Task, WeakEntity, actions,
@@ -15,7 +15,7 @@ use workspace::{DismissDecision, ModalView, Workspace, searchable::SearchableIte
 
 mod delegate;
 mod render;
-use delegate::{Delegate, matches_to_multibuffer};
+use delegate::{Delegate, FilterSeed, matches_to_multibuffer};
 use util::ResultExt as _;
 
 use crate::{ProjectSearchView, text_finder::delegate::PopulateProjectSearch};
@@ -25,7 +25,7 @@ actions!(text_finder, [ToProjectSearch,]);
 pub struct TextFinder {
     picker: Entity<Picker<Delegate>>,
     init_modifiers: Option<Modifiers>,
-    _subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 pub fn init(cx: &mut App) {
@@ -42,7 +42,8 @@ impl TextFinder {
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
             let Some(text_picker) = workspace.active_modal::<Self>(cx) else {
                 let seed_query = Self::seed_query(workspace, window, cx);
-                Self::open(seed_query, window, cx).detach();
+                let filter_seed = Self::filter_seed(workspace, cx);
+                Self::open(seed_query, filter_seed, window, cx).detach();
                 return;
             };
 
@@ -235,14 +236,30 @@ impl TextFinder {
         (!query.is_empty()).then_some(query)
     }
 
+    /// When opening over an active project search, copy its include/exclude
+    /// globs and open-files / filters-shown state so the text finder starts
+    /// from the same filter setup (the query and search options seed separately).
+    fn filter_seed(workspace: &mut Workspace, cx: &mut Context<Workspace>) -> Option<FilterSeed> {
+        let project_search = workspace.active_item(cx)?.downcast::<ProjectSearchView>()?;
+        let view = project_search.read(cx);
+        let (included, excluded) = view.filter_editors();
+        Some(FilterSeed {
+            include: included.read(cx).text(cx),
+            exclude: excluded.read(cx).text(cx),
+            opened_only: view.opened_only_enabled(),
+            filters_enabled: view.filters_enabled(),
+        })
+    }
+
     pub fn open(
         seed_query: Option<String>,
+        filter_seed: Option<FilterSeed>,
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Task<()> {
         cx.spawn_in(window, async move |workspace, cx| {
             let Ok(delegate_task) = workspace.update_in(cx, |workspace, window, cx| {
-                Delegate::new(workspace, window, cx)
+                Delegate::new(workspace, filter_seed, window, cx)
             }) else {
                 return;
             };
@@ -277,14 +294,31 @@ impl TextFinder {
                 picker.select_query(window, cx);
             }
         });
-        let subscription = cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
+        let mut subscriptions = vec![cx.subscribe(&picker, |_, _, _: &DismissEvent, cx| {
             cx.emit(DismissEvent);
-        });
+        })];
+
+        let (included_editor, excluded_editor) = picker
+            .read(cx)
+            .delegate
+            .project_search_view
+            .read(cx)
+            .filter_editors();
+        for editor in [included_editor, excluded_editor] {
+            subscriptions.push(cx.subscribe_in(&editor, window, {
+                let picker = picker.clone();
+                move |_, _, event: &EditorEvent, window, cx| {
+                    if let EditorEvent::Edited { .. } = event {
+                        picker.update(cx, |picker, cx| picker.refresh(window, cx));
+                    }
+                }
+            }));
+        }
 
         Self {
             picker,
             init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
-            _subscription: subscription,
+            _subscriptions: subscriptions,
         }
     }
 

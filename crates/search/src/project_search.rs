@@ -1578,6 +1578,37 @@ impl ProjectSearchView {
         buffers
     }
 
+    pub(crate) fn filters_enabled(&self) -> bool {
+        self.filters_enabled
+    }
+
+    pub(crate) fn set_filters_enabled(&mut self, enabled: bool) {
+        self.filters_enabled = enabled;
+    }
+
+    pub(crate) fn filter_editors(&self) -> (Entity<Editor>, Entity<Editor>) {
+        (
+            self.included_files_editor.clone(),
+            self.excluded_files_editor.clone(),
+        )
+    }
+
+    pub(crate) fn opened_only_enabled(&self) -> bool {
+        self.included_opened_only
+    }
+
+    pub(crate) fn set_opened_only(&mut self, enabled: bool) {
+        self.included_opened_only = enabled;
+    }
+
+    pub(crate) fn opened_only_buffers(&self, cx: &App) -> Option<Vec<Entity<Buffer>>> {
+        if !self.included_opened_only {
+            return None;
+        }
+        let workspace = self.workspace.upgrade()?;
+        Some(self.open_buffers(cx, workspace.read(cx)))
+    }
+
     /// The include/exclude path matchers currently configured on this view,
     /// honoring `filters_enabled`. Read-only (unlike `build_search_query` it does
     /// not record parse errors in `panels_with_errors`); invalid globs fall back
