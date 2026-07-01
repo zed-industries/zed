@@ -1481,6 +1481,7 @@ impl EditorElement {
             minimap_line_height,
             minimap_scroll_top,
             max_scroll_top: total_editor_lines,
+            visible_lines: visible_editor_lines,
         })
     }
 
@@ -6339,8 +6340,19 @@ impl EditorElement {
             }
 
             let minimap_axis = ScrollbarAxis::Vertical;
-            let pixels_per_line = Pixels::from(
-                ScrollPixelOffset::from(minimap_hitbox.size.height) / layout.max_scroll_top,
+
+            // The thumb itself also has its height, which should be subtracted when calculating
+            // the maximum moving distance. When no thumb is shown (e.g. hover mode before
+            // hovering), fall back to 0 so the mouse handlers below are still registered.
+            let max_thumb_moving_distance = minimap_hitbox.size.height
+                - layout
+                    .thumb_layout
+                    .thumb_bounds
+                    .map_or(Pixels::ZERO, |bounds| bounds.size.height);
+            let non_visible_lines = (layout.max_scroll_top - layout.visible_lines).max(1.);
+
+            let thumb_moving_ratio = Pixels::from(
+                ScrollPixelOffset::from(max_thumb_moving_distance) / non_visible_lines,
             )
             .min(layout.minimap_line_height);
 
@@ -6369,7 +6381,7 @@ impl EditorElement {
                                 let position =
                                     editor.scroll_position(cx).apply_along(minimap_axis, |p| {
                                         (p + ScrollPixelOffset::from(
-                                            (new_position - old_position) / pixels_per_line,
+                                            (new_position - old_position) / thumb_moving_ratio,
                                         ))
                                         .max(0.)
                                     });
@@ -10013,6 +10025,7 @@ struct MinimapLayout {
     pub minimap_line_height: Pixels,
     pub thumb_border_style: MinimapThumbBorder,
     pub max_scroll_top: ScrollOffset,
+    pub visible_lines: f64,
 }
 
 impl MinimapLayout {
