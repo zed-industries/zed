@@ -8325,7 +8325,7 @@ impl Element for EditorElement {
                                     selected_buffer_ids
                                 };
 
-                                let mut selections = editor.selections.disjoint_in_range(
+                                let mut selections = editor.selections.disjoint_in_row_range(
                                     start_anchor..end_anchor,
                                     &snapshot.display_snapshot,
                                 );
