@@ -255,8 +255,8 @@ use theme::{
 use theme_settings::{ThemeSettings, observe_buffer_font_size_adjustment};
 use ui::{
     Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
-    IconName, IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
-    utils::WithRemSize,
+    IconName, IconSize, Indicator, Key, KeyBinding, Tooltip, h_flex, prelude::*,
+    scrollbars::ScrollbarAutoHide, tooltip_container, utils::WithRemSize,
 };
 use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
@@ -1631,6 +1631,96 @@ pub struct RewrapOptions {
     pub override_language_settings: bool,
     pub preserve_existing_whitespace: bool,
     pub line_length: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GutterButtonIntent {
+    SetBookmark,
+    SetBreakpoint,
+}
+
+impl GutterButtonIntent {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::SetBookmark => "Set bookmark",
+            Self::SetBreakpoint => "Set breakpoint",
+        }
+    }
+
+    fn icon(&self) -> ui::IconName {
+        match self {
+            Self::SetBookmark => ui::IconName::Bookmark,
+            Self::SetBreakpoint => ui::IconName::DebugBreakpoint,
+        }
+    }
+
+    fn color(&self) -> Color {
+        match self {
+            Self::SetBookmark => Color::Info,
+            Self::SetBreakpoint => Color::Hint,
+        }
+    }
+
+    fn action(&self) -> &'static dyn Action {
+        match self {
+            Self::SetBookmark => &ToggleBookmark,
+            Self::SetBreakpoint => &ToggleBreakpoint,
+        }
+    }
+
+    fn secondary_and_options(&self) -> String {
+        let alt_as_text = gpui::Keystroke {
+            modifiers: Modifiers::secondary_key(),
+            ..Default::default()
+        };
+        match self {
+            Self::SetBookmark => {
+                format!("{alt_as_text}-click to add a breakpoint\nright-click for more options")
+            }
+            Self::SetBreakpoint => {
+                format!("{alt_as_text}-click to add a bookmark\nright-click for more options")
+            }
+        }
+    }
+}
+
+struct GutterButtonTooltip {
+    primary: GutterButtonIntent,
+    secondary: GutterButtonIntent,
+    focus_handle: FocusHandle,
+}
+
+impl GutterButtonTooltip {
+    fn active_intent(&self, modifiers: Modifiers) -> GutterButtonIntent {
+        if modifiers.secondary() {
+            self.secondary
+        } else {
+            self.primary
+        }
+    }
+}
+
+impl Render for GutterButtonTooltip {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let intent = self.active_intent(window.modifiers());
+        let key_binding = KeyBinding::for_action_in(intent.action(), &self.focus_handle, cx);
+        tooltip_container(cx, move |el, _| {
+            el.child(
+                h_flex()
+                    .gap_4()
+                    .justify_between()
+                    .child(div().max_w_72().child(intent.as_str()))
+                    .child(key_binding),
+            )
+            .child(
+                div().max_w_72().child(
+                    Label::new(intent.secondary_and_options())
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
+            )
+        })
+    }
 }
 
 impl Editor {
@@ -4400,61 +4490,20 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> IconButton {
-        #[derive(Clone, Copy)]
-        enum Intent {
-            SetBookmark,
-            SetBreakpoint,
-        }
-
-        impl Intent {
-            fn as_str(&self) -> &'static str {
-                match self {
-                    Intent::SetBookmark => "Set bookmark",
-                    Intent::SetBreakpoint => "Set breakpoint",
-                }
-            }
-
-            fn icon(&self) -> ui::IconName {
-                match self {
-                    Intent::SetBookmark => ui::IconName::Bookmark,
-                    Intent::SetBreakpoint => ui::IconName::DebugBreakpoint,
-                }
-            }
-
-            fn color(&self) -> Color {
-                match self {
-                    Intent::SetBookmark => Color::Info,
-                    Intent::SetBreakpoint => Color::Hint,
-                }
-            }
-
-            fn secondary_and_options(&self) -> String {
-                let alt_as_text = gpui::Keystroke {
-                    modifiers: Modifiers::secondary_key(),
-                    ..Default::default()
-                };
-                match self {
-                    Intent::SetBookmark => format!(
-                        "{alt_as_text}-click to add a breakpoint\nright-click for more options"
-                    ),
-                    Intent::SetBreakpoint => format!(
-                        "{alt_as_text}-click to add a bookmark\nright-click for more options"
-                    ),
-                }
-            }
-        }
-
         let gutter_settings = EditorSettings::get_global(cx).gutter;
         let show_bookmarks = self.show_bookmarks.unwrap_or(gutter_settings.bookmarks);
         let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
 
         let [primary, secondary] = match [show_breakpoints, show_bookmarks] {
-            [true, true] => [Intent::SetBreakpoint, Intent::SetBookmark],
-            [true, false] => [Intent::SetBreakpoint; 2],
-            [false, true] => [Intent::SetBookmark; 2],
+            [true, true] => [
+                GutterButtonIntent::SetBreakpoint,
+                GutterButtonIntent::SetBookmark,
+            ],
+            [true, false] => [GutterButtonIntent::SetBreakpoint; 2],
+            [false, true] => [GutterButtonIntent::SetBookmark; 2],
             [false, false] => {
                 log::error!("Trying to place gutter_hover without anything enabled!!");
-                [Intent::SetBookmark; 2]
+                [GutterButtonIntent::SetBookmark; 2]
             }
         };
 
@@ -4481,8 +4530,8 @@ impl Editor {
                     };
 
                     match intent {
-                        Intent::SetBookmark => editor.toggle_bookmark_at_row(row, cx),
-                        Intent::SetBreakpoint => editor.edit_breakpoint_at_anchor(
+                        GutterButtonIntent::SetBookmark => editor.toggle_bookmark_at_row(row, cx),
+                        GutterButtonIntent::SetBreakpoint => editor.edit_breakpoint_at_anchor(
                             position,
                             Breakpoint::new_standard(),
                             BreakpointEditAction::Toggle,
@@ -4496,13 +4545,12 @@ impl Editor {
             }))
             .when(!has_context_menu, |button| {
                 button.tooltip(move |_window, cx| {
-                    Tooltip::with_meta_in(
-                        intent.as_str(),
-                        Some(&ToggleBreakpoint),
-                        intent.secondary_and_options(),
-                        &focus_handle,
-                        cx,
-                    )
+                    cx.new(|_| GutterButtonTooltip {
+                        primary,
+                        secondary,
+                        focus_handle: focus_handle.clone(),
+                    })
+                    .into()
                 })
             })
     }
