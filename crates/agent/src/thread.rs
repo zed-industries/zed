@@ -5832,6 +5832,20 @@ impl ToolCallEventStream {
         self.sandbox_grants.borrow().unsandboxed_granted()
     }
 
+    /// Whether unsandboxed access is currently in effect: granted for this
+    /// thread (a model-requested `unsandboxed` escape or a sandbox-creation
+    /// fallback) or configured persistently via `allow_unsandboxed`. When true,
+    /// commands already run without any OS sandbox, so per-host network grants
+    /// no longer provide isolation and callers may skip host authorization
+    /// entirely.
+    pub(crate) fn unsandboxed_access_granted(&self, cx: &App) -> bool {
+        self.unsandboxed_granted_for_thread()
+            || self.sandbox_fallback_granted_for_thread()
+            || AgentSettings::get_global(cx)
+                .sandbox_permissions
+                .allow_unsandboxed
+    }
+
     /// Ask the user how to proceed when the OS sandbox could not be created
     /// for a command (for example, `bwrap` is missing or user namespaces are
     /// disabled).
