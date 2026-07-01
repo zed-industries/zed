@@ -144,41 +144,6 @@ pub(crate) fn render_add_llm_provider_popover(
         )
 }
 
-fn is_compatible_provider(provider: &Arc<dyn LanguageModelProvider>) -> bool {
-    matches!(
-        provider.icon(),
-        IconOrSvg::Icon(IconName::AiOpenAiCompat | IconName::AiAnthropicCompat)
-    )
-}
-
-fn remove_compatible_provider(provider_id: &LanguageModelProviderId, cx: &mut App) {
-    let fs = <dyn fs::Fs>::global(cx);
-    let provider_id = provider_id.clone();
-
-    settings::update_settings_file(fs, cx, {
-        let provider_id = provider_id.clone();
-        move |settings, _| {
-            let Some(language_models) = settings.language_models.as_mut() else {
-                return;
-            };
-            let removed_from_openai = language_models
-                .openai_compatible
-                .as_mut()
-                .and_then(|providers| providers.remove(provider_id.0.as_ref()))
-                .is_some();
-            if !removed_from_openai
-                && let Some(providers) = language_models.anthropic_compatible.as_mut()
-            {
-                providers.remove(provider_id.0.as_ref());
-            }
-        }
-    });
-
-    LanguageModelRegistry::global(cx).update(cx, move |registry, cx| {
-        registry.unregister_provider(provider_id, cx);
-    });
-}
-
 fn render_provider_section(
     settings_window: &SettingsWindow,
     provider: &Arc<dyn LanguageModelProvider>,
@@ -240,7 +205,7 @@ fn render_api_key_providers_item(
     provider: &Arc<dyn LanguageModelProvider>,
     provider_name: SharedString,
     config: ApiKeyConfiguration,
-    cx: &mut Context<SettingsWindow>,
+    _cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let ApiKeyConfiguration {
         has_key,
@@ -256,9 +221,6 @@ fn render_api_key_providers_item(
             "API Key Configured"
         };
         let button_id = format!("reset-api-key-{}", provider.id().0);
-        let provider_for_reset = provider.clone();
-        let provider_for_actions = provider.clone();
-        let env_var_name_for_tooltip = env_var_name;
 
         let card = ConfiguredApiCard::new(button_id, configured_label)
             .button_label("Reset Key")
@@ -266,29 +228,22 @@ fn render_api_key_providers_item(
             .disabled(is_from_env_var)
             .when(is_from_env_var, |this| {
                 this.tooltip_label(format!(
-                    "To reset your API key, unset the {env_var_name_for_tooltip} environment variable."
+                    "To reset your API key, unset the {env_var_name} environment variable."
                 ))
             })
-            .on_click(move |_, _, cx| {
-                provider_for_reset.reset_credentials(cx).detach_and_log_err(cx);
+            .on_click({
+                let provider = provider.clone();
+                move |_, _, cx| {
+                    provider.reset_credentials(cx).detach_and_log_err(cx);
+                }
             })
             .into_any_element();
 
-        return v_flex()
-            .gap_2()
-            .child(card)
-            .when(is_compatible_provider(&provider_for_actions), |this| {
-                this.child(render_compatible_provider_actions(
-                    &provider_for_actions.id(),
-                    cx,
-                ))
-            })
-            .into_any_element();
+        return v_flex().gap_2().child(card).into_any_element();
     }
 
     let input_id = format!("{}-api-key-input", provider.id().0);
     let aria_label = format!("{provider_name} API Key");
-    let provider_for_input = provider.clone();
 
     v_flex()
         .gap_2()
@@ -345,45 +300,17 @@ fn render_api_key_providers_item(
                         .tab_index(0)
                         .with_placeholder("xxxxxxxxxxxxxxxxxxxx")
                         .aria_label(aria_label)
-                        .on_confirm(move |api_key, _window, cx| {
-                            if let Some(key) = api_key.filter(|key| !key.is_empty()) {
-                                provider_for_input.set_api_key(key, cx).detach_and_log_err(cx);
+                        .on_confirm({
+                            let provider = provider.clone();
+                            move |api_key, _window, cx| {
+                                if let Some(key) = api_key.filter(|key| !key.is_empty()) {
+                                    provider.set_api_key(key, cx).detach_and_log_err(cx);
+                                }
                             }
                         }),
                 ),
         )
-        .when(is_compatible_provider(provider), |this| {
-            this.child(render_compatible_provider_actions(&provider.id(), cx))
-        })
         .into_any_element()
-}
-
-fn render_compatible_provider_actions(
-    provider_id: &LanguageModelProviderId,
-    cx: &mut Context<SettingsWindow>,
-) -> impl IntoElement {
-    let provider_id = provider_id.clone();
-
-    h_flex().w_full().justify_end().child(
-        Button::new(
-            format!("remove-compatible-provider-{}", provider_id.0),
-            "Remove Provider",
-        )
-        .style(ButtonStyle::OutlinedGhost)
-        .label_size(LabelSize::Small)
-        .start_icon(
-            Icon::new(IconName::Trash)
-                .size(IconSize::Small)
-                .color(Color::Muted),
-        )
-        .on_click(cx.listener(move |this, _event, window, cx| {
-            remove_compatible_provider(&provider_id, cx);
-            if this.configuring_provider.as_ref() == Some(&provider_id) {
-                this.configuring_provider = None;
-                this.pop_sub_page(window, cx);
-            }
-        })),
-    )
 }
 
 fn render_inline_body(
@@ -549,9 +476,6 @@ fn render_provider_config_sub_page(
         .track_scroll(scroll_handle)
         .overflow_y_scroll()
         .child(view)
-        .when(is_compatible_provider(&provider), |this| {
-            this.child(render_compatible_provider_actions(&provider_id, cx))
-        })
         .into_any_element()
 }
 
