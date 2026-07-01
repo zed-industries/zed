@@ -14,7 +14,7 @@ use language::{
 use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use language::{LanguageName, ManifestName, ManifestProvider, ManifestQuery};
 use language::{Toolchain, ToolchainList, ToolchainLister, ToolchainMetadata};
-use lsp::{LanguageServerBinary, Uri};
+use lsp::{CompletionItemKind, LanguageServerBinary, Uri};
 use lsp::{LanguageServerBinaryOptions, LanguageServerName};
 use node_runtime::{NodeRuntime, VersionStrategy};
 use pet_core::Configuration;
@@ -193,16 +193,8 @@ fn label_for_pyright_completion(
     let label = &item.label;
     let label_len = label.len();
     let grammar = language.grammar()?;
-    let highlight_id = match item.kind? {
-        lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
-        lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
-        lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
-        lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
-        lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
-        _ => {
-            return None;
-        }
-    };
+    let highlight_id = highlight_id_for_completion(item.kind?, grammar)?;
+
     let mut text = label.clone();
     if let Some(completion_details) = item
         .label_details
@@ -253,6 +245,24 @@ fn label_for_python_symbol(
         filter_range,
         language.highlight_text(&text.as_str().into(), display_range),
     ))
+}
+
+/// Returns the highlight ID for the given completion item kind, if it is supported.
+///
+/// The outer `Option` is `None` if the item kind returned by the language server is not covered.
+/// The inner `Option` is `None` if the item kind is covered, but the highlight name is not present in the grammar.
+fn highlight_id_for_completion(
+    item_kind: CompletionItemKind,
+    grammar: &Arc<language::Grammar>,
+) -> Option<Option<language::HighlightId>> {
+    match item_kind {
+        CompletionItemKind::METHOD => Some(grammar.highlight_id_for_name("function.method.call")),
+        CompletionItemKind::FUNCTION => Some(grammar.highlight_id_for_name("function.call")),
+        CompletionItemKind::CLASS => Some(grammar.highlight_id_for_name("type")),
+        CompletionItemKind::CONSTANT => Some(grammar.highlight_id_for_name("constant")),
+        CompletionItemKind::VARIABLE => Some(grammar.highlight_id_for_name("variable")),
+        _ => None,
+    }
 }
 
 pub struct TyLspAdapter {
@@ -320,16 +330,7 @@ impl LspAdapter for TyLspAdapter {
         let label = &item.label;
         let label_len = label.len();
         let grammar = language.grammar()?;
-        let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method"),
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function"),
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type"),
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant"),
-            lsp::CompletionItemKind::VARIABLE => grammar.highlight_id_for_name("variable"),
-            _ => {
-                return None;
-            }
-        };
+        let highlight_id = highlight_id_for_completion(item.kind?, grammar)?;
 
         let mut text = label.clone();
         if let Some(completion_details) = item
@@ -889,7 +890,7 @@ impl ContextProvider for PythonContextProvider {
                     .as_ref()
                     .and_then(|f| f.path().parent())
                     .map(Arc::from)
-                    .unwrap_or_else(|| RelPath::empty().into());
+                    .unwrap_or_else(|| RelPath::empty_arc());
 
                 toolchains
                     .active_toolchain(worktree_id, file_path, "Python".into(), cx)
@@ -1495,18 +1496,23 @@ impl ToolchainLister for PythonToolchainProvider {
                         }
                     }
 
+                    // Only inject `{manager} activate <name>` when we have a
+                    // safely-quotable name. Never silently fall back to
+                    // `activate base`: a user with miniforge installed but a
+                    // local uv/venv project should not have their terminal
+                    // hijacked just because we couldn't resolve a name.
                     if let Some(name) = &toolchain.environment.name {
                         if let Some(quoted_name) = shell.try_quote(name) {
                             activation_script.push(format!("{manager} activate {quoted_name}"));
                         } else {
                             log::warn!(
-                                "Could not safely quote environment name {:?}, falling back to base",
+                                "Conda environment name {:?} could not be safely quoted; \
+                                 skipping terminal activation",
                                 name
                             );
-                            activation_script.push(format!("{manager} activate base"));
                         }
                     } else {
-                        activation_script.push(format!("{manager} activate base"));
+                        log::warn!("Conda toolchain has no name; skipping terminal activation");
                     }
                 }
                 Some(
@@ -1809,13 +1815,7 @@ impl LspAdapter for PyLspAdapter {
         let label = &item.label;
         let label_len = label.len();
         let grammar = language.grammar()?;
-        let highlight_id = match item.kind? {
-            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
-            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function")?,
-            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type")?,
-            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
-            _ => return None,
-        };
+        let highlight_id = highlight_id_for_completion(item.kind?, grammar)??;
         Some(language::CodeLabel::filtered(
             label.clone(),
             label_len,
@@ -2789,6 +2789,143 @@ mod tests {
                 .iter()
                 .any(|s| s.contains("conda activate 'foo; rm -rf /'")),
             "Script should contain quoted malicious name, actual: {:?}",
+            script
+        );
+    }
+
+    #[gpui::test]
+    async fn test_conda_activation_skips_when_name_missing(cx: &mut TestAppContext) {
+        use language::{LanguageName, Toolchain, ToolchainLister};
+        use settings::{CondaManager, VenvSettings};
+        use task::ShellKind;
+
+        use crate::python::PythonToolchainProvider;
+
+        cx.executor().allow_parking();
+
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.terminal
+                        .get_or_insert_with(Default::default)
+                        .project
+                        .detect_venv = Some(VenvSettings::On {
+                        activate_script: None,
+                        venv_name: None,
+                        directories: None,
+                        conda_manager: Some(CondaManager::Conda),
+                    });
+                });
+            });
+        });
+
+        let fs = project::FakeFs::new(cx.executor());
+        let provider = PythonToolchainProvider::new(fs);
+        let manager_executable = std::env::current_exe().unwrap();
+
+        let data = serde_json::json!({
+            "name": serde_json::Value::Null,
+            "kind": "Conda",
+            "executable": "/tmp/conda/bin/python",
+            "version": serde_json::Value::Null,
+            "prefix": serde_json::Value::Null,
+            "arch": serde_json::Value::Null,
+            "displayName": serde_json::Value::Null,
+            "project": serde_json::Value::Null,
+            "symlinks": serde_json::Value::Null,
+            "manager": {
+                "executable": manager_executable,
+                "version": serde_json::Value::Null,
+                "tool": "Conda",
+            },
+        });
+
+        let toolchain = Toolchain {
+            name: "test".into(),
+            path: "/tmp/conda".into(),
+            language_name: LanguageName::new_static("Python"),
+            as_json: data,
+        };
+
+        let script = cx
+            .update(|cx| provider.activation_script(&toolchain, ShellKind::Posix, cx))
+            .await;
+
+        assert!(
+            script.is_empty(),
+            "Nameless conda toolchains must not fall back to `conda activate base`, actual: {:?}",
+            script
+        );
+    }
+
+    #[gpui::test]
+    async fn test_conda_activation_skips_unquotable_name(cx: &mut TestAppContext) {
+        use language::{LanguageName, Toolchain, ToolchainLister};
+        use settings::{CondaManager, VenvSettings};
+        use task::ShellKind;
+
+        use crate::python::PythonToolchainProvider;
+
+        cx.executor().allow_parking();
+
+        cx.update(|cx| {
+            let test_settings = SettingsStore::test(cx);
+            cx.set_global(test_settings);
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |s| {
+                    s.terminal
+                        .get_or_insert_with(Default::default)
+                        .project
+                        .detect_venv = Some(VenvSettings::On {
+                        activate_script: None,
+                        venv_name: None,
+                        directories: None,
+                        conda_manager: Some(CondaManager::Conda),
+                    });
+                });
+            });
+        });
+
+        let fs = project::FakeFs::new(cx.executor());
+        let provider = PythonToolchainProvider::new(fs);
+        // shlex::try_quote rejects strings containing a NUL byte, so this name
+        // is guaranteed to fail the Posix quoting path.
+        let unquotable_name = "foo\0bar";
+        let manager_executable = std::env::current_exe().unwrap();
+
+        let data = serde_json::json!({
+            "name": unquotable_name,
+            "kind": "Conda",
+            "executable": "/tmp/conda/bin/python",
+            "version": serde_json::Value::Null,
+            "prefix": serde_json::Value::Null,
+            "arch": serde_json::Value::Null,
+            "displayName": serde_json::Value::Null,
+            "project": serde_json::Value::Null,
+            "symlinks": serde_json::Value::Null,
+            "manager": {
+                "executable": manager_executable,
+                "version": serde_json::Value::Null,
+                "tool": "Conda",
+            },
+        });
+
+        let toolchain = Toolchain {
+            name: "test".into(),
+            path: "/tmp/conda".into(),
+            language_name: LanguageName::new_static("Python"),
+            as_json: data,
+        };
+
+        let script = cx
+            .update(|cx| provider.activation_script(&toolchain, ShellKind::Posix, cx))
+            .await;
+
+        assert!(
+            !script.iter().any(|s| s.contains("conda activate")),
+            "Unquotable conda env names must not emit any `conda activate` line, actual: {:?}",
             script
         );
     }

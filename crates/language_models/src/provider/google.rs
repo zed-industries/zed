@@ -5,10 +5,11 @@ use futures::{FutureExt, StreamExt, future::BoxFuture};
 use google_ai::GenerateContentResponse;
 pub use google_ai::completion::{GoogleEventMapper, into_google};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
-use http_client::HttpClient;
+use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    AuthenticateError, ConfigurationViewTargetAgent, EnvVar, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
+    ApiKeyConfiguration, AuthenticateError, ConfigurationViewTargetAgent, EnvVar,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelToolChoice,
+    LanguageModelToolSchemaFormat,
 };
 use language_model::{
     GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, IconOrSvg, LanguageModel, LanguageModelEffortLevel,
@@ -34,6 +35,7 @@ const PROVIDER_NAME: LanguageModelProviderName = GOOGLE_PROVIDER_NAME;
 pub struct GoogleSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
+    pub custom_headers: CustomHeaders,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -234,6 +236,21 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         self.state
             .update(cx, |state, cx| state.set_api_key(None, cx))
     }
+
+    fn api_key_configuration(&self, cx: &App) -> Option<ApiKeyConfiguration> {
+        let state = self.state.read(cx);
+        Some(ApiKeyConfiguration {
+            has_key: state.api_key_state.has_key(),
+            is_from_env_var: state.api_key_state.is_from_env_var(),
+            env_var_name: state.api_key_state.env_var_name().clone(),
+            api_key_url: "https://aistudio.google.com/app/apikey".into(),
+        })
+    }
+
+    fn set_api_key(&self, key: String, cx: &mut App) -> Task<Result<()>> {
+        self.state
+            .update(cx, |state, cx| state.set_api_key(Some(key), cx))
+    }
 }
 
 pub struct GoogleLanguageModel {
@@ -255,9 +272,12 @@ impl GoogleLanguageModel {
     > {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = GoogleLanguageModelProvider::api_url(cx);
-            (state.api_key_state.key(&api_url), api_url)
+            let extra_headers = GoogleLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
         async move {
@@ -267,6 +287,7 @@ impl GoogleLanguageModel {
                 &api_url,
                 &api_key,
                 request,
+                &extra_headers,
             );
             request.await.context("failed to stream completion")
         }
@@ -496,7 +517,7 @@ impl Render for ConfigurationView {
                 )
                 .into_any_element()
         } else {
-            ConfiguredApiCard::new(configured_card_label)
+            ConfiguredApiCard::new("google-reset-key", configured_card_label)
                 .disabled(env_var_set)
                 .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
                 .when(env_var_set, |this| {

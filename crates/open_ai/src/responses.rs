@@ -1,8 +1,11 @@
 use anyhow::{Result, anyhow};
 use futures::{AsyncBufReadExt, AsyncReadExt, StreamExt, io::BufReader, stream::BoxStream};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 
 use crate::{ReasoningEffort, RequestError, Role, ServiceTier, ToolChoice};
 
@@ -37,6 +40,17 @@ pub struct Request {
     pub store: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<ServiceTier>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_management: Option<Vec<ContextManagement>>,
+}
+
+/// Server-side context management configuration.
+///
+/// <https://developers.openai.com/api/docs/guides/compaction>
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContextManagement {
+    Compaction { compact_threshold: u64 },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -53,6 +67,14 @@ pub enum ResponseInputItem {
     FunctionCall(ResponseFunctionCallItem),
     FunctionCallOutput(ResponseFunctionCallOutputItem),
     Reasoning(ResponseReasoningInputItem),
+    Compaction(ResponseCompactionItem),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ResponseCompactionItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<Arc<str>>,
+    pub encrypted_content: Arc<str>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -377,6 +399,7 @@ pub enum ResponseOutputItem {
     Message(ResponseOutputMessage),
     FunctionCall(ResponseFunctionToolCall),
     Reasoning(ResponseReasoningItem),
+    Compaction(ResponseCompactionItem),
     #[serde(other)]
     Unknown,
 }
@@ -439,20 +462,16 @@ pub async fn stream_response(
     api_url: &str,
     api_key: &str,
     request: Request,
-    extra_headers: Vec<(String, String)>,
+    extra_headers: &CustomHeaders,
 ) -> Result<BoxStream<'static, Result<StreamEvent>>, RequestError> {
     let uri = format!("{api_url}/responses");
-    let mut request_builder = HttpRequest::builder()
+    let is_streaming = request.stream;
+    let request = HttpRequest::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", api_key.trim()));
-    for (name, value) in &extra_headers {
-        request_builder = request_builder.header(name.as_str(), value.as_str());
-    }
-
-    let is_streaming = request.stream;
-    let request = request_builder
+        .header("Authorization", format!("Bearer {}", api_key.trim()))
+        .extra_headers(extra_headers)
         .body(AsyncBody::from(
             serde_json::to_string(&request).map_err(|e| RequestError::Other(e.into()))?,
         ))
@@ -559,6 +578,9 @@ pub async fn stream_response(
                                     }
                                 }
                             }
+                            // No synthesized deltas; the `OutputItemDone`
+                            // event pushed below carries the full item.
+                            ResponseOutputItem::Compaction(_) => {}
                             ResponseOutputItem::Unknown => {}
                         }
 

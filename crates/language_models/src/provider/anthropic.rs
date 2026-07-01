@@ -6,12 +6,12 @@ use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt};
-use http_client::HttpClient;
+use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyState, AuthenticateError,
-    ConfigurationViewTargetAgent, EnvVar, FastModeConfirmation, IconOrSvg, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
+    ANTHROPIC_PROVIDER_ID, ANTHROPIC_PROVIDER_NAME, ApiKeyConfiguration, ApiKeyState,
+    AuthenticateError, ConfigurationViewTargetAgent, EnvVar, FastModeConfirmation, IconOrSvg,
+    LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId,
+    LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
     env_var,
 };
@@ -32,6 +32,8 @@ pub struct AnthropicSettings {
     pub api_url: String,
     /// Extend Zed's list of Anthropic models.
     pub available_models: Vec<AvailableModel>,
+    /// User-configured headers added to every Anthropic request.
+    pub custom_headers: CustomHeaders,
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -41,6 +43,9 @@ pub struct AnthropicLanguageModelProvider {
 
 const API_KEY_ENV_VAR_NAME: &str = "ANTHROPIC_API_KEY";
 static API_KEY_ENV_VAR: LazyLock<EnvVar> = env_var!(API_KEY_ENV_VAR_NAME);
+
+pub(crate) const RESERVED_HEADER_NAMES: &[&str] =
+    &["X-Api-Key", "Anthropic-Version", "Anthropic-Beta"];
 
 pub struct State {
     api_key_state: ApiKeyState,
@@ -105,10 +110,18 @@ impl State {
                 "cannot fetch Anthropic models without an API key"
             )));
         };
+        let extra_headers = AnthropicLanguageModelProvider::settings(cx)
+            .custom_headers
+            .clone();
 
         cx.spawn(async move |this, cx| {
-            let models =
-                anthropic::list_models(http_client.as_ref(), &api_url, api_key.as_ref()).await?;
+            let models = anthropic::list_models(
+                http_client.as_ref(),
+                &api_url,
+                api_key.as_ref(),
+                &extra_headers,
+            )
+            .await?;
 
             this.update(cx, |this, cx| {
                 this.fetched_models = models;
@@ -277,6 +290,21 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
             .update(cx, |state, cx| state.set_api_key(None, cx))
     }
 
+    fn api_key_configuration(&self, cx: &App) -> Option<ApiKeyConfiguration> {
+        let state = self.state.read(cx);
+        Some(ApiKeyConfiguration {
+            has_key: state.api_key_state.has_key(),
+            is_from_env_var: state.api_key_state.is_from_env_var(),
+            env_var_name: state.api_key_state.env_var_name().clone(),
+            api_key_url: "https://console.anthropic.com/settings/keys".into(),
+        })
+    }
+
+    fn set_api_key(&self, key: String, cx: &mut App) -> Task<Result<()>> {
+        self.state
+            .update(cx, |state, cx| state.set_api_key(Some(key), cx))
+    }
+
     fn fast_mode_confirmation(&self, _cx: &App) -> Option<FastModeConfirmation> {
         Some(FastModeConfirmation {
             title: "Enable Fast Mode for Anthropic?".into(),
@@ -337,6 +365,7 @@ fn available_model_to_anthropic_model(available: &AvailableModel) -> anthropic::
         supports_adaptive_thinking,
         supports_images: true,
         supports_speed: false,
+        supports_compaction: false,
         supported_effort_levels: if supports_adaptive_thinking {
             vec![
                 anthropic::Effort::Low,
@@ -375,9 +404,12 @@ impl AnthropicModel {
     > {
         let http_client = self.http_client.clone();
 
-        let (api_key, api_url) = self.state.read_with(cx, |state, cx| {
+        let (api_key, api_url, extra_headers) = self.state.read_with(cx, |state, cx| {
             let api_url = AnthropicLanguageModelProvider::api_url(cx);
-            (state.api_key_state.key(&api_url), api_url)
+            let extra_headers = AnthropicLanguageModelProvider::settings(cx)
+                .custom_headers
+                .clone();
+            (state.api_key_state.key(&api_url), api_url, extra_headers)
         });
 
         let beta_headers = self.model.beta_headers();
@@ -394,6 +426,7 @@ impl AnthropicModel {
                 &api_key,
                 request,
                 beta_headers,
+                &extra_headers,
             );
             request.await.map_err(Into::into)
         }
@@ -444,6 +477,18 @@ impl LanguageModel for AnthropicModel {
 
     fn supports_fast_mode(&self) -> bool {
         self.model.supports_speed
+    }
+
+    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
+        if self.model.id.starts_with(anthropic::FABLE_MODEL_ID_PREFIX) {
+            Some(anthropic::FABLE_FALLBACK_MODEL_ID)
+        } else {
+            None
+        }
+    }
+
+    fn supports_server_side_compaction(&self) -> bool {
+        self.model.supports_compaction
     }
 
     fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
@@ -514,7 +559,7 @@ impl LanguageModel for AnthropicModel {
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await?;
-            Ok(AnthropicEventMapper::new().map_stream(response))
+            Ok(AnthropicEventMapper::new(PROVIDER_NAME).map_stream(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
     }
@@ -648,7 +693,7 @@ impl Render for ConfigurationView {
                 )
                 .into_any_element()
         } else {
-            ConfiguredApiCard::new(configured_card_label)
+            ConfiguredApiCard::new("anthropic-reset-key", configured_card_label)
                 .disabled(env_var_set)
                 .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx)))
                 .when(env_var_set, |this| {

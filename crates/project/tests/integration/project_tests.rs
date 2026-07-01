@@ -33,7 +33,6 @@ use git::{
     repository::{RepoPath, repo_path},
     status::{DiffStat, FileStatus, StatusCode, TrackedStatus},
 };
-use git2::RepositoryInitOptions;
 use gpui::{
     App, AppContext, BackgroundExecutor, BorrowAppContext, Entity, FutureExt, SharedString, Task,
     TestAppContext, UpdateGlobal,
@@ -69,6 +68,8 @@ use project::{
 use rand::{Rng as _, rngs::StdRng};
 use serde_json::json;
 use settings::SettingsStore;
+#[cfg(target_os = "linux")]
+use settings::{LocalSettingsKind, LocalSettingsPath};
 #[cfg(not(windows))]
 use std::os;
 use std::{
@@ -77,6 +78,7 @@ use std::{
     num::NonZeroU32,
     ops::Range,
     path::{Path, PathBuf},
+    process::Command,
     rc::Rc,
     str::FromStr,
     sync::{Arc, OnceLock, atomic},
@@ -282,6 +284,15 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             "#,
             "d.rs": "fn d() {\n    D\n}",
         },
+        "e": {
+            ".editorconfig": r#"
+            [*.rs]
+                indent_size = 5
+                indent_style = space
+                max_line_length =
+            "#,
+            "e.rs": "fn e() {\n    E\n}",
+        },
         "README.json": "tabs are better\n",
     }));
 
@@ -313,6 +324,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     let settings_b = settings_for("b/b.rs", cx).await;
     let settings_c = settings_for("c.js", cx).await;
     let settings_d = settings_for("d/d.rs", cx).await;
+    let settings_e = settings_for("e/e.rs", cx).await;
     let settings_readme = settings_for("README.json", cx).await;
     // .editorconfig overrides .zed/settings
     assert_eq!(Some(settings_a.tab_size), NonZeroU32::new(3));
@@ -327,6 +339,13 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
     // .editorconfig in subdirectory overrides .editorconfig in root
     assert_eq!(Some(settings_d.tab_size), NonZeroU32::new(1));
+
+    // Non-empty values in e/ are parsed and applied as usual.
+    assert_eq!(Some(settings_e.tab_size), NonZeroU32::new(5));
+    assert_eq!(settings_e.hard_tabs, false);
+    // An empty value opts out of the inherited `max_line_length = 120`,
+    // falling back to .zed/settings.json instead of rejecting the whole file.
+    assert_eq!(settings_e.preferred_line_length, 64);
 
     // "indent_size" is not set, so "tab_width" is used
     assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
@@ -1864,6 +1883,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         project.restart_language_servers_for_buffers(
             vec![rust_buffer.clone(), json_buffer.clone()],
             HashSet::default(),
+            true,
             cx,
         );
     });
@@ -2249,6 +2269,131 @@ async fn test_rescan_fs_change_is_reported_to_language_servers_as_changed(
 }
 
 #[gpui::test]
+async fn test_dynamic_semantic_tokens_registration(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            "a.rs": "fn main() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            // Crucially, no `semantic_tokens_provider` is advertised statically; the
+            // server only offers it through dynamic registration (as Roslyn does).
+            ..Default::default()
+        },
+    );
+
+    let _buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    let server_id = fake_server.server.server_id();
+    cx.executor().run_until_parked();
+
+    let semantic_tokens_provider = |cx: &mut gpui::TestAppContext| {
+        project.read_with(cx, |project, cx| {
+            project
+                .lsp_store()
+                .read(cx)
+                .lsp_server_capabilities
+                .get(&server_id)
+                .and_then(|capabilities| capabilities.semantic_tokens_provider.clone())
+        })
+    };
+
+    assert!(
+        semantic_tokens_provider(cx).is_none(),
+        "server should not advertise semantic tokens before dynamic registration"
+    );
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "semantic-tokens".to_string(),
+                    method: "textDocument/semanticTokens".to_string(),
+                    register_options: serde_json::to_value(
+                        lsp::SemanticTokensRegistrationOptions {
+                            text_document_registration_options:
+                                lsp::TextDocumentRegistrationOptions {
+                                    document_selector: None,
+                                },
+                            semantic_tokens_options: lsp::SemanticTokensOptions {
+                                legend: lsp::SemanticTokensLegend {
+                                    token_types: vec!["keyword".into(), "variable".into()],
+                                    token_modifiers: vec![],
+                                },
+                                full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                                ..Default::default()
+                            },
+                            static_registration_options: lsp::StaticRegistrationOptions {
+                                id: None,
+                            },
+                        },
+                    )
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let provider = semantic_tokens_provider(cx)
+        .expect("semantic tokens provider should be set after dynamic registration");
+    // The capability round-trips through capability-sync serialization, which may
+    // normalize the registration options into plain options; either shape is fine
+    // as long as the legend survives.
+    let legend = match provider {
+        lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(options) => options.legend,
+        lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(options) => {
+            options.semantic_tokens_options.legend
+        }
+    };
+    assert_eq!(
+        legend.token_types,
+        vec!["keyword".into(), "variable".into()],
+    );
+
+    fake_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "semantic-tokens".to_string(),
+                    method: "textDocument/semanticTokens".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert!(
+        semantic_tokens_provider(cx).is_none(),
+        "semantic tokens provider should be cleared after unregistration"
+    );
+}
+
+#[gpui::test]
 async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -2552,6 +2697,170 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 typ: lsp::FileChangeType::CHANGED,
             },
         ]
+    );
+}
+
+#[gpui::test]
+async fn test_multiple_did_change_watched_files_registrations(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "src": {
+                "a.rs": "",
+                "b.rs": "",
+            },
+            "docs": {
+                "readme.md": "",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            ..Default::default()
+        },
+    );
+
+    cx.executor().run_until_parked();
+
+    project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/root/src/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let file_changes = Arc::new(Mutex::new(Vec::new()));
+
+    // Register two separate watched file registrations.
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "reg-1".to_string(),
+                    method: "workspace/didChangeWatchedFiles".to_string(),
+                    register_options: serde_json::to_value(
+                        lsp::DidChangeWatchedFilesRegistrationOptions {
+                            watchers: vec![lsp::FileSystemWatcher {
+                                glob_pattern: lsp::GlobPattern::String(
+                                    path!("/root/src/*.rs").to_string(),
+                                ),
+                                kind: None,
+                            }],
+                        },
+                    )
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "reg-2".to_string(),
+                    method: "workspace/didChangeWatchedFiles".to_string(),
+                    register_options: serde_json::to_value(
+                        lsp::DidChangeWatchedFilesRegistrationOptions {
+                            watchers: vec![lsp::FileSystemWatcher {
+                                glob_pattern: lsp::GlobPattern::String(
+                                    path!("/root/docs/*.md").to_string(),
+                                ),
+                                kind: None,
+                            }],
+                        },
+                    )
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+
+    fake_server.handle_notification::<lsp::notification::DidChangeWatchedFiles, _>({
+        let file_changes = file_changes.clone();
+        move |params, _| {
+            let mut file_changes = file_changes.lock();
+            file_changes.extend(params.changes);
+            file_changes.sort_by(|a, b| a.uri.cmp(&b.uri));
+        }
+    });
+
+    cx.executor().run_until_parked();
+
+    // Both registrations should match their respective patterns.
+    fs.create_file(path!("/root/src/c.rs").as_ref(), Default::default())
+        .await
+        .unwrap();
+    fs.create_file(path!("/root/docs/guide.md").as_ref(), Default::default())
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        &*file_changes.lock(),
+        &[
+            lsp::FileEvent {
+                uri: lsp::Uri::from_file_path(path!("/root/docs/guide.md")).unwrap(),
+                typ: lsp::FileChangeType::CREATED,
+            },
+            lsp::FileEvent {
+                uri: lsp::Uri::from_file_path(path!("/root/src/c.rs")).unwrap(),
+                typ: lsp::FileChangeType::CREATED,
+            },
+        ]
+    );
+    file_changes.lock().clear();
+
+    // Unregister the first registration.
+    fake_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "reg-1".to_string(),
+                    method: "workspace/didChangeWatchedFiles".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    // Only the second registration should still match.
+    fs.create_file(path!("/root/src/d.rs").as_ref(), Default::default())
+        .await
+        .unwrap();
+    fs.create_file(path!("/root/docs/notes.md").as_ref(), Default::default())
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert_eq!(
+        &*file_changes.lock(),
+        &[lsp::FileEvent {
+            uri: lsp::Uri::from_file_path(path!("/root/docs/notes.md")).unwrap(),
+            typ: lsp::FileChangeType::CREATED,
+        }]
     );
 }
 
@@ -2981,7 +3290,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
 
     // Restart the server before the diagnostics finish updating.
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), cx);
+        project.restart_language_servers_for_buffers(vec![buffer], HashSet::default(), true, cx);
     });
     let mut events = cx.events(&project);
 
@@ -3099,7 +3408,12 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     });
 
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
+        project.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::default(),
+            true,
+            cx,
+        );
     });
 
     // The diagnostics are cleared.
@@ -3154,7 +3468,12 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     });
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
+        project.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::default(),
+            true,
+            cx,
+        );
     });
 
     let mut fake_server = fake_servers.next().await.unwrap();
@@ -3972,7 +4291,12 @@ async fn test_diagnostic_summaries_cleared_on_server_restart(cx: &mut gpui::Test
     let mut events = cx.events(&project);
 
     project.update(cx, |project, cx| {
-        project.restart_language_servers_for_buffers(vec![buffer.clone()], HashSet::default(), cx);
+        project.restart_language_servers_for_buffers(
+            vec![buffer.clone()],
+            HashSet::default(),
+            true,
+            cx,
+        );
     });
     cx.executor().run_until_parked();
 
@@ -7428,6 +7752,74 @@ async fn test_search(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_search_multiline_crlf(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "crlf.rs": "alpha\r\nbeta\r\ngamma",
+            "lf.rs": "alpha\nbeta\ngamma",
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+
+    // A query with CRLF line endings should match buffers regardless of their
+    // on-disk line endings (buffers always store normalized `\n`).
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "alpha\r\nbeta",
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            (path!("dir/crlf.rs").to_string(), vec![0..10]),
+            (path!("dir/lf.rs").to_string(), vec![0..10]),
+        ])
+    );
+
+    // The reverse: a query with LF line endings should match a file that is
+    // stored with CRLF line endings on disk.
+    assert_eq!(
+        search(
+            &project,
+            SearchQuery::text(
+                "alpha\nbeta",
+                false,
+                true,
+                false,
+                Default::default(),
+                Default::default(),
+                false,
+                None,
+            )
+            .unwrap(),
+            cx
+        )
+        .await
+        .unwrap(),
+        HashMap::from_iter([
+            (path!("dir/crlf.rs").to_string(), vec![0..10]),
+            (path!("dir/lf.rs").to_string(), vec![0..10]),
+        ])
+    );
+}
+
+#[gpui::test]
 async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -9115,6 +9507,412 @@ async fn test_unstaged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_reopening_unstaged_diff_after_drop(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let staged_contents = r#"
+        fn main() {
+            println!("hello world");
+        }
+    "#
+    .unindent();
+    let file_contents = r#"
+        // print goodbye
+        fn main() {
+            println!("goodbye world");
+        }
+    "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+           "src": {
+               "main.rs": file_contents,
+           }
+        }),
+    )
+    .await;
+    fs.set_index_for_repo(Path::new("/dir/.git"), &[("src/main.rs", staged_contents)]);
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/src/main.rs", cx)
+        })
+        .await
+        .unwrap();
+    let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+
+    let unstaged_diff = project
+        .update(cx, |project, cx| {
+            project.open_unstaged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    // Drop the diff while the buffer (and its git state) stays alive.
+    drop(unstaged_diff);
+    cx.run_until_parked();
+    project.read_with(cx, |project, cx| {
+        assert!(
+            project
+                .git_store()
+                .read(cx)
+                .get_unstaged_diff(buffer_id, cx)
+                .is_none(),
+            "unstaged diff should have been released"
+        );
+    });
+
+    // Reopen the diff. The new entity must be registered in the git store,
+    // and its hunks must be recalculated.
+    let unstaged_diff = project
+        .update(cx, |project, cx| {
+            project.open_unstaged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    project.read_with(cx, |project, cx| {
+        let registered = project
+            .git_store()
+            .read(cx)
+            .get_unstaged_diff(buffer_id, cx);
+        assert_eq!(
+            registered.as_ref(),
+            Some(&unstaged_diff),
+            "reopened unstaged diff should be registered in the git store"
+        );
+    });
+
+    unstaged_diff.update(cx, |unstaged_diff, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            unstaged_diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &unstaged_diff.base_text_string(cx).unwrap(),
+            &[
+                (0..1, "", "// print goodbye\n", DiffHunkStatus::added_none()),
+                (
+                    2..3,
+                    "    println!(\"hello world\");\n",
+                    "    println!(\"goodbye world\");\n",
+                    DiffHunkStatus::modified_none(),
+                ),
+            ],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_staged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let committed_contents = r#"
+        fn main() {
+            println!("hello world");
+        }
+    "#
+    .unindent();
+    let staged_contents = r#"
+        // print goodbye
+        fn main() {
+            println!("goodbye world");
+        }
+    "#
+    .unindent();
+    let file_contents = r#"
+        // print goodbye
+        fn main() {
+            println!("working copy only");
+        }
+    "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+           "src": {
+               "main.rs": file_contents,
+           }
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs", committed_contents)],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(Path::new("/dir/.git"), &[("src/main.rs", staged_contents)]);
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let language = rust_lang();
+    language_registry.add(language.clone());
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/src/main.rs", cx)
+        })
+        .await
+        .unwrap();
+    let unstaged_diff = project
+        .update(cx, |project, cx| {
+            project.open_unstaged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    unstaged_diff.read_with(cx, |diff, cx| {
+        assert_eq!(diff.base_text(cx).language().cloned(), None);
+    });
+
+    let staged_diff = project
+        .update(cx, |project, cx| {
+            project.open_staged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+    unstaged_diff.read_with(cx, |diff, cx| {
+        assert_eq!(
+            diff.base_text(cx).language().cloned(),
+            Some(language.clone())
+        );
+    });
+    staged_diff.update(cx, |staged_diff, cx| {
+        let snapshot = staged_diff.snapshot(cx);
+        let buffer_snapshot = snapshot.buffer_snapshot();
+        assert_hunks(
+            snapshot.hunks(buffer_snapshot),
+            buffer_snapshot,
+            &staged_diff.base_text_string(cx).unwrap(),
+            &[
+                (0..1, "", "// print goodbye\n", DiffHunkStatus::added_none()),
+                (
+                    2..3,
+                    "    println!(\"hello world\");\n",
+                    "    println!(\"goodbye world\");\n",
+                    DiffHunkStatus::modified_none(),
+                ),
+            ],
+        );
+    });
+
+    let staged_contents = r#"
+        // print goodbye
+        fn main() {
+        }
+    "#
+    .unindent();
+    fs.set_index_for_repo(Path::new("/dir/.git"), &[("src/main.rs", staged_contents)]);
+
+    cx.run_until_parked();
+    staged_diff.update(cx, |staged_diff, cx| {
+        let snapshot = staged_diff.snapshot(cx);
+        let buffer_snapshot = snapshot.buffer_snapshot();
+        assert_hunks(
+            snapshot.hunks(buffer_snapshot),
+            buffer_snapshot,
+            &staged_diff.base_text_string(cx).unwrap(),
+            &[
+                (0..1, "", "// print goodbye\n", DiffHunkStatus::added_none()),
+                (
+                    2..2,
+                    "    println!(\"hello world\");\n",
+                    "",
+                    DiffHunkStatus::deleted_none(),
+                ),
+            ],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_base_text_buffers_released_when_diffs_dropped(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let committed_contents = "one\ntwo\nthree\n";
+    let staged_contents = "one\nTWO\nthree\n";
+    let file_contents = "one\nTWO\nTHREE\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "src": {
+                "main.rs": file_contents,
+            }
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs", committed_contents.to_owned())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs", staged_contents.to_owned())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/src/main.rs", cx)
+        })
+        .await
+        .unwrap();
+
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let unstaged_diff = project
+        .update(cx, |project, cx| {
+            project.open_unstaged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let weak_head_text_buffer =
+        uncommitted_diff.read_with(cx, |diff, _| diff.base_text_buffer().downgrade());
+    let weak_index_text_buffer =
+        unstaged_diff.read_with(cx, |diff, _| diff.base_text_buffer().downgrade());
+
+    drop(uncommitted_diff);
+    cx.run_until_parked();
+    cx.update(|_| {});
+    weak_head_text_buffer.assert_released();
+    assert!(
+        weak_index_text_buffer.upgrade().is_some(),
+        "index text buffer should stay alive while the unstaged diff is open"
+    );
+
+    drop(unstaged_diff);
+    cx.run_until_parked();
+    cx.update(|_| {});
+    weak_index_text_buffer.assert_released();
+
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+    uncommitted_diff.update(cx, |uncommitted_diff, cx| {
+        assert_eq!(
+            uncommitted_diff.base_text_string(cx).as_deref(),
+            Some(committed_contents),
+        );
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            uncommitted_diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &uncommitted_diff.base_text_string(cx).unwrap(),
+            &[(
+                1..3,
+                "two\nthree\n",
+                "TWO\nTHREE\n",
+                DiffHunkStatus::modified(DiffHunkSecondaryStatus::OverlapsWithSecondaryHunk),
+            )],
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_staged_diff_without_unstaged_diff(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let committed_contents = "one\ntwo\nthree\n";
+    let staged_contents = "one\nTWO\nthree\n";
+    let file_contents = "one\nTWO\nthree\n";
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+            "src": {
+                "main.rs": file_contents,
+            }
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs", committed_contents.to_owned())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs", staged_contents.to_owned())],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/src/main.rs", cx)
+        })
+        .await
+        .unwrap();
+
+    let staged_diff = project
+        .update(cx, |project, cx| {
+            project.open_staged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    staged_diff.update(cx, |staged_diff, cx| {
+        let snapshot = staged_diff.snapshot(cx);
+        let buffer_snapshot = snapshot.buffer_snapshot();
+        assert_hunks(
+            snapshot.hunks(buffer_snapshot),
+            buffer_snapshot,
+            &staged_diff.base_text_string(cx).unwrap(),
+            &[(1..2, "two\n", "TWO\n", DiffHunkStatus::modified_none())],
+        );
+    });
+
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[("src/main.rs", "one\nTWO\nTHREE\n".to_owned())],
+    );
+    cx.run_until_parked();
+
+    staged_diff.update(cx, |staged_diff, cx| {
+        let snapshot = staged_diff.snapshot(cx);
+        let buffer_snapshot = snapshot.buffer_snapshot();
+        assert_hunks(
+            snapshot.hunks(buffer_snapshot),
+            buffer_snapshot,
+            &staged_diff.base_text_string(cx).unwrap(),
+            &[(
+                1..3,
+                "two\nthree\n",
+                "TWO\nTHREE\n",
+                DiffHunkStatus::modified_none(),
+            )],
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_uncommitted_diff_for_buffer(cx: &mut gpui::TestAppContext) {
     init_test(cx);
 
@@ -9437,6 +10235,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
         extended_range: _,
+        base_text_changed: _,
     }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -9481,10 +10280,11 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
         extended_range: _,
+        base_text_changed: _,
     }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(0, 0)..Point::new(4, 0));
+        assert_eq!(changed_range, Point::new(1, 0)..Point::new(2, 0));
     } else {
         panic!("Unexpected event {event:?}");
     }
@@ -9540,6 +10340,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
         extended_range: _,
+        base_text_changed: _,
     }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -9583,6 +10384,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         changed_range: Some(changed_range),
         base_text_changed_range: _,
         extended_range: _,
+        base_text_changed: _,
     }) = event
     {
         let changed_range = changed_range.to_point(&snapshot);
@@ -9692,12 +10494,31 @@ async fn test_uncommitted_diff_opened_before_unstaged_diff(cx: &mut gpui::TestAp
     let unstaged_diff_task = project.update(cx, |project, cx| {
         project.open_unstaged_diff(buffer.clone(), cx)
     });
-    let (uncommitted_diff, _unstaged_diff) =
+    let (uncommitted_diff, unstaged_diff) =
         futures::future::join(uncommitted_diff_task, unstaged_diff_task).await;
     let uncommitted_diff = uncommitted_diff.unwrap();
-    let _unstaged_diff = _unstaged_diff.unwrap();
+    let unstaged_diff = unstaged_diff.unwrap();
 
     cx.run_until_parked();
+
+    uncommitted_diff.read_with(cx, |diff, _| {
+        assert_eq!(
+            diff.secondary_diff(),
+            Some(unstaged_diff.clone()),
+            "the unstaged diff returned to callers should be the uncommitted diff's secondary"
+        );
+    });
+    project.read_with(cx, |project, cx| {
+        let buffer_id = buffer.read(cx).remote_id();
+        assert_eq!(
+            project
+                .git_store()
+                .read(cx)
+                .get_unstaged_diff(buffer_id, cx),
+            Some(unstaged_diff.clone()),
+            "the unstaged diff returned to callers should be the registered one"
+        );
+    });
 
     uncommitted_diff.read_with(cx, |diff, cx| {
         let snapshot = buffer.read(cx).snapshot();
@@ -10496,6 +11317,192 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_git_repository_status_removes_directory_descendants(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "project": {
+                ".git": {},
+                "ci2": {
+                    "Dockerfile.namespace": "untracked",
+                },
+            },
+        }),
+    )
+    .await;
+    fs.set_status_for_repo(
+        path!("/root/project/.git").as_ref(),
+        &[("ci2/Dockerfile.namespace", FileStatus::Untracked)],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    repository.read_with(cx, |repository, _| {
+        assert_eq!(
+            repository.cached_status().collect::<Vec<_>>(),
+            [StatusEntry {
+                repo_path: repo_path("ci2/Dockerfile.namespace"),
+                status: FileStatus::Untracked,
+                diff_stat: None,
+            }]
+        );
+    });
+
+    fs.pause_events();
+    fs.create_dir(path!("/root/project/ci3").as_ref())
+        .await
+        .unwrap();
+    fs.copy_file(
+        path!("/root/project/ci2/Dockerfile.namespace").as_ref(),
+        path!("/root/project/ci3/Dockerfile.namespace").as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fs.remove_dir(
+        path!("/root/project/ci2").as_ref(),
+        RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    fs.clear_buffered_events();
+    fs.unpause_events_and_flush();
+    fs.emit_fs_event(path!("/root/project/ci2"), Some(PathEventKind::Removed));
+    fs.emit_fs_event(path!("/root/project/ci3"), Some(PathEventKind::Created));
+
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    repository.read_with(cx, |repository, _| {
+        assert_eq!(
+            repository.cached_status().collect::<Vec<_>>(),
+            [StatusEntry {
+                repo_path: repo_path("ci3/Dockerfile.namespace"),
+                status: FileStatus::Untracked,
+                diff_stat: None,
+            }]
+        );
+    });
+}
+
+#[cfg(target_os = "linux")]
+#[gpui::test(retries = 5)]
+async fn test_git_events_after_project_excludes_dot_git(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    cx.update(|cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.project.worktree.file_scan_exclusions = Some(vec!["foo".to_string()]);
+            });
+        });
+    });
+
+    let root = TempTree::new(json!({
+        "project": {
+            "a.txt": "a",
+        },
+    }));
+
+    let work_dir = root.path().join("project");
+    let repo = git_init(&work_dir);
+    git_add("a.txt", &repo);
+    git_commit("Initial commit", &repo);
+    git_branch("other-branch", &repo);
+
+    let project = Project::test(
+        Arc::new(RealFs::new(None, cx.executor())),
+        [work_dir.as_path()],
+        cx,
+    )
+    .await;
+
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+    let branch = repository.read_with(cx, |repository, _| {
+        repository
+            .snapshot()
+            .branch
+            .as_ref()
+            .map(|branch| branch.ref_name.to_string())
+    });
+    assert_eq!(branch.as_deref(), Some("refs/heads/main"));
+
+    let worktree_id = tree.read_with(cx, |tree, _| tree.id());
+    cx.update_global::<SettingsStore, _>(|store, cx| {
+        store
+            .set_local_settings(
+                worktree_id,
+                LocalSettingsPath::InWorktree(Arc::from(RelPath::empty())),
+                LocalSettingsKind::Settings,
+                Some(r#"{ "file_scan_exclusions": ["**/.git"] }"#),
+                cx,
+            )
+            .unwrap();
+    });
+    cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
+        .await;
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        assert!(tree.read(cx).entry_for_path(rel_path(".git")).is_none());
+    });
+
+    git_checkout("other-branch", &repo);
+
+    let mut events = cx.events::<RepositoryEvent, _>(&repository);
+    let timeout = futures::FutureExt::fuse(cx.background_executor.timer(Duration::from_secs(5)));
+    futures::pin_mut!(timeout);
+    loop {
+        let branch = repository.read_with(cx, |repository, _| {
+            repository
+                .snapshot()
+                .branch
+                .as_ref()
+                .map(|branch| branch.ref_name.to_string())
+        });
+        if branch.as_deref() == Some("refs/heads/other-branch") {
+            break;
+        }
+
+        futures::select_biased! {
+            _ = events.next() => {}
+            _ = timeout => panic!("timed out waiting for repository HEAD update after .git was excluded"),
+        }
+    }
+}
+
+#[gpui::test]
 #[ignore]
 async fn test_git_status_postprocessing(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -11008,6 +12015,62 @@ async fn test_repository_pending_ops_stage_all(
 }
 
 #[gpui::test]
+async fn test_project_group_keys_remain_distinct_for_sibling_repo_subdirectories(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "my-repo": {
+                ".git": {},
+                "packages": {
+                    "a": { "file.txt": "a" },
+                    "b": { "file.txt": "b" },
+                },
+            },
+        }),
+    )
+    .await;
+
+    let project_a =
+        Project::test(fs.clone(), [path!("/root/my-repo/packages/a").as_ref()], cx).await;
+    let project_b = Project::test(fs, [path!("/root/my-repo/packages/b").as_ref()], cx).await;
+
+    project_a
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    project_b
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    let key_a = project_a.read_with(cx, |project, cx| ProjectGroupKey::from_project(project, cx));
+    let key_b = project_b.read_with(cx, |project, cx| ProjectGroupKey::from_project(project, cx));
+
+    assert_ne!(key_a, key_b);
+    assert_eq!(
+        key_a
+            .path_list()
+            .ordered_paths()
+            .map(|path| path.as_path())
+            .collect::<Vec<_>>(),
+        vec![Path::new(path!("/root/my-repo/packages/a"))]
+    );
+    assert_eq!(
+        key_b
+            .path_list()
+            .ordered_paths()
+            .map(|path| path.as_path())
+            .collect::<Vec<_>>(),
+        vec![Path::new(path!("/root/my-repo/packages/b"))]
+    );
+}
+
+#[gpui::test]
 async fn test_repository_subfolder_git_status(
     executor: gpui::BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
@@ -11058,6 +12121,16 @@ async fn test_repository_subfolder_git_status(
         project.repositories(cx).values().next().unwrap().clone()
     });
 
+    let worktree_paths = project.read_with(cx, |project, cx| project.worktree_paths(cx));
+    assert_eq!(
+        worktree_paths
+            .main_worktree_path_list()
+            .ordered_paths()
+            .map(|path| path.as_path())
+            .collect::<Vec<_>>(),
+        vec![Path::new(path!("/root/my-repo/sub-folder-1/sub-folder-2"))]
+    );
+
     // Ensure that the git status is loaded correctly
     repository.read_with(cx, |repository, _cx| {
         assert_eq!(
@@ -11101,7 +12174,8 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
     }));
     let root_path = root.path();
 
-    let repo = git_init(&root_path.join("project"));
+    let work_dir = &root_path.join("project");
+    let repo = git_init(work_dir);
     git_add("a.txt", &repo);
     git_commit("init", &repo);
 
@@ -11119,25 +12193,21 @@ async fn test_conflicted_cherry_pick(cx: &mut gpui::TestAppContext) {
     });
 
     git_branch("other-branch", &repo);
-    git_checkout("refs/heads/other-branch", &repo);
+    git_checkout("other-branch", &repo);
     std::fs::write(root_path.join("project/a.txt"), "A").unwrap();
     git_add("a.txt", &repo);
     git_commit("capitalize", &repo);
-    let commit = repo
-        .head()
-        .expect("Failed to get HEAD")
-        .peel_to_commit()
-        .expect("HEAD is not a commit");
-    git_checkout("refs/heads/main", &repo);
+    let commit = git_rev_parse("HEAD", &repo);
+    git_checkout("main", &repo);
     std::fs::write(root_path.join("project/a.txt"), "b").unwrap();
     git_add("a.txt", &repo);
     git_commit("improve letter", &repo);
-    git_cherry_pick(&commit, &repo);
+    git_cherry_pick_expect_conflict(&commit, &repo);
     std::fs::read_to_string(root_path.join("project/.git/CHERRY_PICK_HEAD"))
         .expect("No CHERRY_PICK_HEAD");
     pretty_assertions::assert_eq!(
         git_status(&repo),
-        collections::HashMap::from_iter([("a.txt".to_owned(), git2::Status::CONFLICTED)])
+        collections::HashMap::from_iter([("a.txt".to_owned(), GIT_STATUS_CONFLICTED.to_owned())])
     );
     tree.flush_fs_events(cx).await;
     project
@@ -11364,8 +12434,7 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
 
     // Set up git repository before creating the worktree.
     let work_dir = root.path().join("project");
-    let mut repo = git_init(work_dir.as_path());
-    repo.add_ignore_rule(IGNORE_RULE).unwrap();
+    let repo = git_init(work_dir.as_path());
     git_add(A_TXT, &repo);
     git_add(E_TXT, &repo);
     git_add(DOTGITIGNORE, &repo);
@@ -11452,7 +12521,7 @@ async fn test_file_status(cx: &mut gpui::TestAppContext) {
     // Modify files in the working copy and perform git operations on other files.
     git_reset(0, &repo);
     git_remove_index(Path::new(B_TXT), &repo);
-    git_stash(&mut repo);
+    git_stash(&repo);
     std::fs::write(work_dir.join(E_TXT), "eeee").unwrap();
     std::fs::write(work_dir.join(BUILD_FILE), "this should be ignored").unwrap();
     tree.flush_fs_events(cx).await;
@@ -11576,7 +12645,6 @@ async fn test_ignored_dirs_events(cx: &mut gpui::TestAppContext) {
     // Set up git repository before creating the worktree.
     let work_dir = root.path().join("project");
     let repo = git_init(work_dir.as_path());
-    repo.add_ignore_rule(IGNORE_RULE).unwrap();
     git_add("src/main.rs", &repo);
     git_add(".gitignore", &repo);
     git_commit("Initial commit", &repo);
@@ -12740,111 +13808,192 @@ fn assert_entry_git_state(
     );
 }
 
-#[track_caller]
-fn git_init(path: &Path) -> git2::Repository {
-    let mut init_opts = RepositoryInitOptions::new();
-    init_opts.initial_head("main");
-    git2::Repository::init_opts(path, &init_opts).expect("Failed to initialize git repository")
+#[cfg(any())]
+const GIT_STATUS_CONFLICTED: &str = "UU";
+
+#[allow(clippy::disallowed_methods)]
+fn git_cmd(work_dir: &Path) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.current_dir(work_dir)
+        .env("GIT_CONFIG_GLOBAL", "")
+        .env("GIT_CONFIG_SYSTEM", "")
+        .env("GIT_AUTHOR_NAME", "test")
+        .env("GIT_AUTHOR_EMAIL", "test@zed.dev")
+        .env("GIT_COMMITTER_NAME", "test")
+        .env("GIT_COMMITTER_EMAIL", "test@zed.dev");
+    cmd
 }
 
+#[allow(clippy::disallowed_methods)]
 #[track_caller]
-fn git_add<P: AsRef<Path>>(path: P, repo: &git2::Repository) {
-    let path = path.as_ref();
-    let mut index = repo.index().expect("Failed to get index");
-    index.add_path(path).expect("Failed to add file");
-    index.write().expect("Failed to write index");
+fn git_init(path: &Path) -> PathBuf {
+    let output = git_cmd(path)
+        .args(["init", "-b", "main"])
+        .output()
+        .expect("Failed to run git init");
+    assert!(
+        output.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    path.to_path_buf()
 }
 
+#[allow(clippy::disallowed_methods)]
 #[track_caller]
-fn git_remove_index(path: &Path, repo: &git2::Repository) {
-    let mut index = repo.index().expect("Failed to get index");
-    index.remove_path(path).expect("Failed to add file");
-    index.write().expect("Failed to write index");
+fn git_add<P: AsRef<Path>>(path: P, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["add"])
+        .arg(path.as_ref())
+        .output()
+        .expect("Failed to run git add");
+    assert!(
+        output.status.success(),
+        "git add failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
+#[allow(clippy::disallowed_methods)]
 #[track_caller]
-fn git_commit(msg: &'static str, repo: &git2::Repository) {
-    use git2::Signature;
+fn git_remove_index(path: &Path, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["rm", "--cached"])
+        .arg(path)
+        .output()
+        .expect("Failed to run git rm");
+    assert!(
+        output.status.success(),
+        "git rm --cached failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
-    let signature = Signature::now("test", "test@zed.dev").unwrap();
-    let oid = repo.index().unwrap().write_tree().unwrap();
-    let tree = repo.find_tree(oid).unwrap();
-    if let Ok(head) = repo.head() {
-        let parent_obj = head.peel(git2::ObjectType::Commit).unwrap();
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_commit(msg: &str, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["commit", "-m", msg])
+        .output()
+        .expect("Failed to run git commit");
+    assert!(
+        output.status.success(),
+        "git commit failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
-        let parent_commit = parent_obj.as_commit().unwrap();
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_stash(work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["stash"])
+        .output()
+        .expect("Failed to run git stash");
+    assert!(
+        output.status.success(),
+        "git stash failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
-        repo.commit(
-            Some("HEAD"),
-            &signature,
-            &signature,
-            msg,
-            &tree,
-            &[parent_commit],
-        )
-        .expect("Failed to commit with parent");
-    } else {
-        repo.commit(Some("HEAD"), &signature, &signature, msg, &tree, &[])
-            .expect("Failed to commit");
-    }
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_reset(offset: usize, work_dir: &Path) {
+    let target = format!("HEAD~{}", offset + 1);
+    let output = git_cmd(work_dir)
+        .args(["reset", "--soft", &target])
+        .output()
+        .expect("Failed to run git reset");
+    assert!(
+        output.status.success(),
+        "git reset failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_branch(name: &str, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["branch", name])
+        .output()
+        .expect("Failed to run git branch");
+    assert!(
+        output.status.success(),
+        "git branch failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[allow(clippy::disallowed_methods)]
+#[track_caller]
+fn git_checkout(name: &str, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["checkout", name])
+        .output()
+        .expect("Failed to run git checkout");
+    assert!(
+        output.status.success(),
+        "git checkout failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[cfg(any())]
+#[allow(clippy::disallowed_methods)]
 #[track_caller]
-fn git_cherry_pick(commit: &git2::Commit<'_>, repo: &git2::Repository) {
-    repo.cherrypick(commit, None).expect("Failed to cherrypick");
+fn git_rev_parse(rev: &str, work_dir: &Path) -> String {
+    let output = git_cmd(work_dir)
+        .args(["rev-parse", rev])
+        .output()
+        .expect("Failed to run git rev-parse");
+    assert!(
+        output.status.success(),
+        "git rev-parse failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
+#[cfg(any())]
+#[allow(clippy::disallowed_methods)]
 #[track_caller]
-fn git_stash(repo: &mut git2::Repository) {
-    use git2::Signature;
-
-    let signature = Signature::now("test", "test@zed.dev").unwrap();
-    repo.stash_save(&signature, "N/A", None)
-        .expect("Failed to stash");
+fn git_cherry_pick_expect_conflict(commit: &str, work_dir: &Path) {
+    let output = git_cmd(work_dir)
+        .args(["cherry-pick", "--no-commit", commit])
+        .output()
+        .expect("Failed to run git cherry-pick");
+    assert!(
+        !output.status.success(),
+        "git cherry-pick unexpectedly succeeded"
+    );
 }
 
+#[cfg(any())]
+#[allow(clippy::disallowed_methods)]
 #[track_caller]
-fn git_reset(offset: usize, repo: &git2::Repository) {
-    let head = repo.head().expect("Couldn't get repo head");
-    let object = head.peel(git2::ObjectType::Commit).unwrap();
-    let commit = object.as_commit().unwrap();
-    let new_head = commit
-        .parents()
-        .inspect(|parnet| {
-            let _ = parnet.message();
+fn git_status(work_dir: &Path) -> collections::HashMap<String, String> {
+    let output = git_cmd(work_dir)
+        .args(["status", "--porcelain=v1"])
+        .output()
+        .expect("Failed to run git status");
+    assert!(
+        output.status.success(),
+        "git status failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    stdout
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            let status = line[..2].to_string();
+            let path = line[3..].to_string();
+            (path, status)
         })
-        .nth(offset)
-        .expect("Not enough history");
-    repo.reset(new_head.as_object(), git2::ResetType::Soft, None)
-        .expect("Could not reset");
-}
-
-#[cfg(any())]
-#[track_caller]
-fn git_branch(name: &str, repo: &git2::Repository) {
-    let head = repo
-        .head()
-        .expect("Couldn't get repo head")
-        .peel_to_commit()
-        .expect("HEAD is not a commit");
-    repo.branch(name, &head, false).expect("Failed to commit");
-}
-
-#[cfg(any())]
-#[track_caller]
-fn git_checkout(name: &str, repo: &git2::Repository) {
-    repo.set_head(name).expect("Failed to set head");
-    repo.checkout_head(None).expect("Failed to check out head");
-}
-
-#[cfg(any())]
-#[track_caller]
-fn git_status(repo: &git2::Repository) -> collections::HashMap<String, git2::Status> {
-    repo.statuses(None)
-        .unwrap()
-        .iter()
-        .map(|status| (status.path().unwrap().to_string(), status.status()))
         .collect()
 }
 

@@ -94,6 +94,12 @@
     },
   },
   {
+    "context": "AcpThreadSearchBar > Editor",
+    "bindings": {
+      "shift-enter": "agent::SelectPreviousThreadMatch",
+    },
+  },
+  {
     "context": "BufferSearchBar || ProjectSearchBar",
     "bindings": {
       "alt-c": "search::ToggleCaseSensitive",

@@ -194,6 +194,7 @@ impl VsCodeSettings {
             helix_mode: None,
             hide_mouse: None,
             image_viewer: None,
+            markdown_preview: None,
             journal: None,
             language_models: None,
             line_indicator_format: None,
@@ -862,6 +863,7 @@ impl VsCodeSettings {
             Some(TelemetrySettingsContent {
                 metrics: Some(metrics),
                 diagnostics: Some(diagnostics),
+                anthropic_retention: None,
             })
         })
     }
@@ -980,6 +982,7 @@ impl VsCodeSettings {
             git_commit_buffer_font_size: None,
             markdown_preview_font_family: None,
             markdown_preview_code_font_family: None,
+            markdown_preview_font_size: None,
             markdown_preview_theme: None,
             theme: None,
             icon_theme: None,
@@ -1010,6 +1013,7 @@ impl VsCodeSettings {
             bottom_dock_layout: None,
             centered_layout: None,
             cli_default_open_behavior: None,
+            default_open_behavior: None,
             close_on_file_delete: None,
             close_panel_on_toggle: None,
             command_aliases: Default::default(),
@@ -1085,6 +1089,7 @@ impl VsCodeSettings {
                         .collect::<Vec<_>>()
                 })
                 .filter(|r| !r.is_empty()),
+            scan_symlinks: None,
             private_files: None,
             hidden_files: None,
             read_only_files: self

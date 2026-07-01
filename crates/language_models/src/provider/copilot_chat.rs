@@ -25,7 +25,8 @@ use language_model::{
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelToolUse, MessageContent, ProviderConfigurationView, RateLimiter, Role, StopReason,
+    TokenUsage,
 };
 use settings::SettingsStore;
 use ui::prelude::*;
@@ -194,6 +195,52 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             )
         })
         .into()
+    }
+
+    fn configuration_view_v2(
+        &self,
+        _target_agent: language_model::ConfigurationViewTargetAgent,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> ProviderConfigurationView {
+        // GitHub Copilot's control is just a sign-in/out button, so render it
+        // inline rather than behind a sub-page. The explanatory copy is surfaced
+        // via `inline_description` (the row's left column), so the view itself
+        // renders compactly.
+        ProviderConfigurationView::Inline {
+            view: cx
+                .new(|cx| {
+                    copilot_ui::ConfigurationView::new(
+                        |cx| {
+                            CopilotChat::global(cx)
+                                .map(|m| m.read(cx).is_authenticated())
+                                .unwrap_or(false)
+                        },
+                        copilot_ui::ConfigurationMode::Chat,
+                        cx,
+                    )
+                    .compact()
+                })
+                .into(),
+        }
+    }
+
+    fn inline_title(&self, cx: &App) -> Option<SharedString> {
+        if self.state.read(cx).is_authenticated(cx) {
+            None
+        } else {
+            Some("Configure Copilot".into())
+        }
+    }
+
+    fn inline_description(&self, cx: &App) -> Option<language_model::InlineDescription> {
+        if self.state.read(cx).is_authenticated(cx) {
+            None
+        } else {
+            Some(language_model::InlineDescription::Text(
+                "Requires an active GitHub Copilot subscription.".into(),
+            ))
+        }
     }
 
     fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
@@ -400,7 +447,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                 request_limiter
                     .stream(async move {
                         let events = stream.await?;
-                        let mapper = AnthropicEventMapper::new();
+                        let mapper = AnthropicEventMapper::new(PROVIDER_NAME);
                         Ok(mapper.map_stream(events).boxed())
                     })
                     .await
@@ -1062,7 +1109,8 @@ fn into_copilot_chat(
                         | MessageContent::ToolUse(_)
                         | MessageContent::RedactedThinking(_)
                         | MessageContent::ToolResult(_)
-                        | MessageContent::Image(_) => None,
+                        | MessageContent::Image(_)
+                        | MessageContent::Compaction(_) => None,
                     }) {
                         buffer.push_str(string);
                     }
@@ -1189,6 +1237,7 @@ fn into_copilot_responses(
         thinking_allowed,
         thinking_effort,
         speed: _,
+        compact_at_tokens: _,
     } = request;
 
     let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();
