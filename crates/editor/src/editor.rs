@@ -3039,6 +3039,35 @@ impl Editor {
         self.cursor_offset_on_selection = set_cursor_offset_on_selection;
     }
 
+    /// Returns the anchor to use as the rename target for a selection.
+    ///
+    /// In selection-based modes, like vim's visual mode and helix, the rendered
+    /// block cursor sits one position to the left of the selection's head,
+    /// since the head is the exclusive end of a forward selection. Using the
+    /// head
+    /// directly would place the rename one character past the symbol, for
+    /// example, trailing whitespace, so for a non-empty forward selection we
+    /// shift one point left to land back on the symbol under the cursor.
+    fn rename_target_anchor(&self, selection: &Selection<Anchor>, cx: &mut App) -> Anchor {
+        let head = selection.head();
+
+        if self.cursor_offset_on_selection
+            && !selection.reversed
+            && selection.start != selection.end
+        {
+            let display_map = self.display_snapshot(cx);
+            let display_head = head.to_display_point(&display_map);
+
+            if display_head.column() > 0 {
+                return display_map.display_point_to_anchor(
+                    movement::left(&display_map, display_head),
+                    Bias::Left,
+                );
+            }
+        }
+        head
+    }
+
     pub fn set_current_line_highlight(
         &mut self,
         current_line_highlight: Option<CurrentLineHighlight>,
@@ -3961,8 +3990,8 @@ impl Editor {
             .size(ui::ButtonSize::None)
             .icon_color(Color::Info)
             .style(ButtonStyle::Transparent)
-            .on_click(cx.listener(move |editor, _, window, cx| {
-                editor.toggle_bookmark_at_row(row, window, cx);
+            .on_click(cx.listener(move |editor, _, _window, cx| {
+                editor.toggle_bookmark_at_row(row, cx);
             }))
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
                 editor.set_gutter_context_menu(row, None, event.position(), window, cx);
@@ -4253,10 +4282,10 @@ impl Editor {
                 .separator()
                 .entry(set_bookmark_msg, Some(ToggleBookmark.boxed_clone()), {
                     let weak_editor = weak_editor.clone();
-                    move |window, cx| {
+                    move |_window, cx| {
                         weak_editor
                             .update(cx, |this, cx| {
-                                this.toggle_bookmark_at_anchor(anchor, window, cx);
+                                this.toggle_bookmark_at_anchor(anchor, cx);
                             })
                             .log_err();
                     }
@@ -4452,7 +4481,7 @@ impl Editor {
                     };
 
                     match intent {
-                        Intent::SetBookmark => editor.toggle_bookmark_at_row(row, window, cx),
+                        Intent::SetBookmark => editor.toggle_bookmark_at_row(row, cx),
                         Intent::SetBreakpoint => editor.edit_breakpoint_at_anchor(
                             position,
                             Breakpoint::new_standard(),
@@ -7632,10 +7661,9 @@ impl Editor {
         }
         let provider = self.semantics_provider.clone()?;
         let selection = self.selections.newest_anchor().clone();
-        let (cursor_buffer, cursor_buffer_position) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(selection.head(), cx)?;
+        let cursor = self.rename_target_anchor(&selection, cx);
+        let (cursor_buffer, cursor_buffer_position) =
+            self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         let (tail_buffer, cursor_buffer_position_end) = self
             .buffer
             .read(cx)
@@ -7663,7 +7691,7 @@ impl Editor {
 
                     this.take_rename(false, window, cx);
                     let buffer = this.buffer.read(cx).read(cx);
-                    let cursor_offset = selection.head().to_offset(&buffer);
+                    let cursor_offset = cursor.to_offset(&buffer);
                     let rename_start =
                         cursor_offset.saturating_sub_usize(cursor_offset_in_rename_range);
                     let rename_end = rename_start + rename_buffer_range.len();

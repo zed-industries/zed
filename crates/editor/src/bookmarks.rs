@@ -13,7 +13,7 @@ use workspace::{Workspace, searchable::Direction};
 use crate::display_map::DisplayRow;
 use crate::{
     EditBookmark, Editor, GoToNextBookmark, GoToPreviousBookmark, MultibufferSelectionMode,
-    SelectionEffects, ToggleBookmark, ViewBookmarks, scroll::Autoscroll,
+    SelectionEffects, ToggleBookmark, ToggleBookmarkWithLabel, ViewBookmarks, scroll::Autoscroll,
 };
 
 #[derive(Clone, Debug)]
@@ -44,6 +44,24 @@ impl Editor {
     pub fn toggle_bookmark(
         &mut self,
         _: &ToggleBookmark,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_bookmark_impl(false, window, cx);
+    }
+
+    pub fn toggle_bookmark_with_label(
+        &mut self,
+        _: &ToggleBookmarkWithLabel,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_bookmark_impl(true, window, cx);
+    }
+
+    fn toggle_bookmark_impl(
+        &mut self,
+        with_label: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -91,34 +109,27 @@ impl Editor {
         if absent_targets.is_empty() {
             // All cursors are on existing bookmarks, remove all bookmarks.
             self.toggle_bookmarks(exist_targets, String::new(), cx);
-        } else {
-            // Only add new ones and leave existing ones unchanged.
+        } else if with_label {
+            // Only add new ones (prompting for a label) and leave existing ones unchanged.
             self.add_toggle_bookmark_blocks(absent_targets, bookmark_store, window, cx);
+        } else {
+            // Only add new (unnamed) bookmarks and leave existing ones unchanged.
+            self.toggle_bookmarks(absent_targets, String::new(), cx);
         }
 
         cx.notify();
     }
 
-    pub fn toggle_bookmark_at_row(
-        &mut self,
-        row: DisplayRow,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn toggle_bookmark_at_row(&mut self, row: DisplayRow, cx: &mut Context<Self>) {
         let display_snapshot = self.display_snapshot(cx);
         let point = display_snapshot.display_point_to_point(row.as_display_point(), Bias::Left);
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let anchor = buffer_snapshot.anchor_before(point);
 
-        self.toggle_bookmark_at_anchor(anchor, window, cx);
+        self.toggle_bookmark_at_anchor(anchor, cx);
     }
 
-    pub fn toggle_bookmark_at_anchor(
-        &mut self,
-        anchor: Anchor,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn toggle_bookmark_at_anchor(&mut self, anchor: Anchor, cx: &mut Context<Self>) {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let Some((position, _)) = buffer_snapshot.anchor_to_buffer_anchor(anchor) else {
             return;
@@ -131,18 +142,9 @@ impl Editor {
             return;
         };
 
-        let target = BookmarkTarget {
-            buffer,
-            anchor,
-            buffer_anchor: position,
-        };
-        if Self::bookmark_exists_for_target(&bookmark_store, &target, cx) {
-            bookmark_store.update(cx, |bookmark_store, cx| {
-                bookmark_store.toggle_bookmark(target.buffer, position, String::new(), cx);
-            });
-        } else {
-            self.add_toggle_bookmark_blocks(vec![target], bookmark_store, window, cx)
-        }
+        bookmark_store.update(cx, |bookmark_store, cx| {
+            bookmark_store.toggle_bookmark(buffer, position, String::new(), cx);
+        });
 
         cx.notify();
     }
