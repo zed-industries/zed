@@ -427,11 +427,6 @@ pub struct ElicitationStore {
 
 impl EventEmitter<ElicitationStoreEvent> for ElicitationStore {}
 
-enum ExpectedElicitationScope<'a> {
-    Request,
-    Session(&'a acp::SessionId),
-}
-
 impl ElicitationStore {
     pub fn elicitations(&self) -> &[Elicitation] {
         &self.elicitations
@@ -439,41 +434,12 @@ impl ElicitationStore {
 
     fn validate_request(
         request: &acp::CreateElicitationRequest,
-        expected_scope: ExpectedElicitationScope<'_>,
         cx: &App,
     ) -> Result<(), acp::Error> {
         if !cx.has_flag::<AcpBetaFeatureFlag>() {
             return Err(
                 acp::Error::invalid_params().data("elicitation support requires the ACP beta flag")
             );
-        }
-
-        match (request.scope(), expected_scope) {
-            (acp::ElicitationScope::Request(_), ExpectedElicitationScope::Request) => {}
-            (
-                acp::ElicitationScope::Session(scope),
-                ExpectedElicitationScope::Session(session_id),
-            ) if &scope.session_id == session_id => {}
-            (acp::ElicitationScope::Session(_), ExpectedElicitationScope::Request) => {
-                return Err(acp::Error::invalid_params()
-                    .data("session-scoped elicitations must be routed through a session thread"));
-            }
-            (acp::ElicitationScope::Request(_), ExpectedElicitationScope::Session(_)) => {
-                return Err(acp::Error::invalid_params()
-                    .data("request-scoped elicitations must be routed through the connection"));
-            }
-            (
-                acp::ElicitationScope::Session(scope),
-                ExpectedElicitationScope::Session(session_id),
-            ) => {
-                return Err(acp::Error::invalid_params().data(format!(
-                    "elicitation targets session {}, but this thread is {}",
-                    scope.session_id, session_id
-                )));
-            }
-            _ => {
-                return Err(acp::Error::invalid_params().data("unknown elicitation scope"));
-            }
         }
 
         if let acp::ElicitationMode::Url(mode) = &request.mode {
@@ -626,7 +592,7 @@ impl ElicitationStore {
         request: acp::CreateElicitationRequest,
         cx: &mut Context<Self>,
     ) -> Result<(ElicitationEntryId, Task<acp::CreateElicitationResponse>), acp::Error> {
-        Self::validate_request(&request, ExpectedElicitationScope::Request, cx)?;
+        Self::validate_request(&request, cx)?;
         let (id, response_rx) = self.insert_pending_elicitation(request);
         cx.emit(ElicitationStoreEvent::ElicitationRequested(id.clone()));
         cx.notify();
@@ -3521,11 +3487,7 @@ impl AcpThread {
         request: acp::CreateElicitationRequest,
         cx: &mut Context<Self>,
     ) -> Result<(ElicitationEntryId, Task<acp::CreateElicitationResponse>), acp::Error> {
-        ElicitationStore::validate_request(
-            &request,
-            ExpectedElicitationScope::Session(&self.session_id),
-            cx,
-        )?;
+        ElicitationStore::validate_request(&request, cx)?;
 
         let (id, response_rx) = self.elicitations.insert_pending_elicitation(request);
         self.push_entry(AgentThreadEntry::Elicitation(id.clone()), cx);
