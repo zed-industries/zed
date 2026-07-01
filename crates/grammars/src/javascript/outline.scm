@@ -199,7 +199,7 @@
       ]
       property: (property_identifier) @_property)
     (#any-of? @_name "it" "test" "describe" "context" "suite")
-    (#any-of? @_property "each" "skipIf" "runIf"))
+    (#any-of? @_property "each" "skipIf" "runIf" "if" "todoIf"))
   arguments: (arguments
     .
     [

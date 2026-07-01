@@ -1471,6 +1471,42 @@ mod tests {
                         true;
                     });
                 });
+
+                it.todoIf(false)("todoIf test", () => {
+                    true;
+                });
+
+                it.if(true)("if test", () => {
+                    true;
+                });
+
+                test.todoIf(false)("todoIf test 2", () => {
+                    true;
+                });
+
+                test.if(true)("if test 2", () => {
+                    true;
+                });
+
+                describe.todoIf(false)("todoIf describe", () => {
+                    it("inner todoIf", () => {
+                        true;
+                    });
+                });
+
+                describe.if(true)("if describe", () => {
+                    it("inner if", () => {
+                        true;
+                    });
+                });
+
+                test.failing("failing test", () => {
+                    true;
+                });
+
+                it.failing("failing it", () => {
+                    true;
+                });
             "#
             .unindent();
 
@@ -1493,6 +1529,14 @@ mod tests {
                 "skipIf test 2",
                 "runIf describe",
                 "skipIf describe",
+                "todoIf test",
+                "if test",
+                "todoIf test 2",
+                "if test 2",
+                "todoIf describe",
+                "if describe",
+                "test.failing failing test",
+                "it.failing failing it",
             ] {
                 assert!(
                     outline_names.contains(&expected),
@@ -1513,8 +1557,8 @@ mod tests {
                 .collect();
             let js_test_count = tag_strings.iter().filter(|t| t.as_str() == "js-test").count();
             assert!(
-                js_test_count >= 6,
-                "Should find at least 6 js-test runnables for conditional wrappers, found {}: {:?}",
+                js_test_count >= 11,
+                "Should find at least 11 js-test runnables for conditional + failing wrappers, found {}: {:?}",
                 js_test_count,
                 tag_strings
             );
