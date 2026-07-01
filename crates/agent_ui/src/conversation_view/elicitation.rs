@@ -343,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn should_render_only_pending_elicitations() {
+    fn should_render_pending_and_accepted_url_elicitations() {
         let pending = Elicitation {
             id: ElicitationEntryId("pending".into()),
             request: acp::CreateElicitationRequest::new(
@@ -369,7 +369,7 @@ mod tests {
             ),
             status: ElicitationStatus::Accepted,
         };
-        assert!(!should_render_elicitation(&accepted_url));
+        assert!(should_render_elicitation(&accepted_url));
 
         let accepted_form = Elicitation {
             id: ElicitationEntryId("accepted-form".into()),
@@ -963,7 +963,11 @@ impl ElicitationCardHandlers {
 }
 
 pub(crate) fn should_render_elicitation(elicitation: &Elicitation) -> bool {
-    matches!(elicitation.status, ElicitationStatus::Pending { .. })
+    matches!(
+        (&elicitation.status, &elicitation.request.mode),
+        (ElicitationStatus::Pending { .. }, _)
+            | (ElicitationStatus::Accepted, acp::ElicitationMode::Url(_))
+    )
 }
 
 pub(crate) struct ElicitationCard<'a> {
@@ -997,8 +1001,15 @@ impl<'a> ElicitationCard<'a> {
             .blend(cx.theme().colors().editor_foreground.opacity(0.025));
         let tool_name_font_size = rems_from_px(13.);
         let is_pending = matches!(&self.elicitation.status, ElicitationStatus::Pending { .. });
+        let is_accepted_url = matches!(
+            (&self.elicitation.status, &self.elicitation.request.mode),
+            (ElicitationStatus::Accepted, acp::ElicitationMode::Url(_))
+        );
         let (status_label, status_icon, status_color) = match &self.elicitation.status {
             ElicitationStatus::Pending { .. } => ("Waiting for input", IconName::Info, Color::Info),
+            ElicitationStatus::Accepted if is_accepted_url => {
+                ("Waiting for completion", IconName::Info, Color::Info)
+            }
             ElicitationStatus::Accepted => ("Submitted", IconName::Check, Color::Success),
             ElicitationStatus::Declined => ("Declined", IconName::Close, Color::Muted),
             ElicitationStatus::Canceled => ("Canceled", IconName::Circle, Color::Muted),
@@ -1013,7 +1024,7 @@ impl<'a> ElicitationCard<'a> {
             acp::ElicitationMode::Form(mode) if is_pending => {
                 body.child(self.render_form(mode, cx))
             }
-            acp::ElicitationMode::Url(mode) if is_pending => {
+            acp::ElicitationMode::Url(mode) if is_pending || is_accepted_url => {
                 body.child(self.render_url_elicitation(mode))
             }
             _ => body,
