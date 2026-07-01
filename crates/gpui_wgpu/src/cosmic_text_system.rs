@@ -537,6 +537,7 @@ impl CosmicTextSystemState {
             &attrs_list,
             cosmic_text::Shaping::Advanced,
             4,
+            cosmic_text::Direction::LeftToRight,
         );
         let mut layout_lines = Vec::with_capacity(1);
         line.layout_to_buffer(
