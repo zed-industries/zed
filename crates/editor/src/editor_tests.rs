@@ -14997,6 +14997,7 @@ async fn setup_range_format_test_with_git<'a>(
         FakeLspAdapter {
             capabilities: lsp::ServerCapabilities {
                 document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+                document_formatting_provider: Some(lsp::OneOf::Left(true)),
                 ..lsp::ServerCapabilities::default()
             },
             ..FakeLspAdapter::default()
@@ -15745,6 +15746,260 @@ async fn test_modifications_format_staged_changes_only(cx: &mut TestAppContext) 
         request_count.load(atomic::Ordering::SeqCst),
         2,
         "staged hunks (LINE1, LINE4) must be formatted even when working tree matches index"
+    );
+}
+
+#[gpui::test]
+async fn test_modifications_format_no_changes_with_git(cx: &mut TestAppContext) {
+    let head_content = "line0\nline1\nline2\n";
+    let (project, editor, cx, fake_server) =
+        setup_range_format_test_with_git(cx, head_content, head_content).await;
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text(head_content, window, cx)
+    });
+    cx.run_until_parked();
+
+    let _no_format_handler = fake_server
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+            panic!("range formatting must not be called when buffer matches HEAD");
+        })
+        .next();
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                    force_format: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+async fn test_modifications_format_crlf_line_endings(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {},
+            "file.rs": "line0\r\nline1\r\nline2\r\nline3\r\nline4\r\n",
+        }),
+    )
+    .await;
+
+    let head_content = "line0\nline1\nline2\nline3\nline4\n";
+    fs.set_head_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", head_content.to_string())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", head_content.to_string())],
+    );
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/project/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.line_ending(),
+            language::LineEnding::Windows,
+            "buffer should detect CRLF line endings from the working tree file"
+        );
+    });
+
+    project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project.clone(), buffer, window, cx)
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        window.focus(&editor.focus_handle(cx), cx);
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("line0\nLINE1\nline2\nline3\nLINE4\n", window, cx)
+    });
+    cx.run_until_parked();
+
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let request_count_clone = request_count.clone();
+    let mut responded_rx =
+        fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_params, _| {
+            request_count_clone.fetch_add(1, atomic::Ordering::SeqCst);
+            async move { Ok(Some(Vec::new())) }
+        });
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                    force_format: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    responded_rx.next().await;
+    responded_rx.next().await;
+    save.await;
+
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        2,
+        "CRLF line endings must not cause spurious diff hunks"
+    );
+}
+
+#[gpui::test]
+async fn test_modifications_format_merge_boundary_one_row_gap(cx: &mut TestAppContext) {
+    let head_content = "line0\nline1\nline2\nline3\nline4\n";
+    let (project, editor, cx, fake_server) =
+        setup_range_format_test_with_git(cx, head_content, head_content).await;
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
+    });
+
+    let working_content = "line0\nLINE1\nline2\nLINE3\nline4\n";
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text(working_content, window, cx)
+    });
+    cx.run_until_parked();
+
+    let request_count = Arc::new(AtomicUsize::new(0));
+    let request_count_clone = request_count.clone();
+    let mut responded_rx =
+        fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_params, _| {
+            request_count_clone.fetch_add(1, atomic::Ordering::SeqCst);
+            async move { Ok(Some(Vec::new())) }
+        });
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                    force_format: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    responded_rx.next().await;
+    responded_rx.next().await;
+    save.await;
+
+    assert_eq!(
+        request_count.load(atomic::Ordering::SeqCst),
+        2,
+        "hunks separated by exactly one unchanged row must not merge"
+    );
+}
+
+#[gpui::test]
+async fn test_modifications_if_available_fallback_with_git(cx: &mut TestAppContext) {
+    let head_content = "line0\nline1\nline2\n";
+    let (project, editor, cx, fake_server) =
+        setup_range_format_test_with_git(cx, head_content, head_content).await;
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.format_on_save = Some(FormatOnSave::ModificationsIfAvailable);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text(head_content, window, cx)
+    });
+    cx.run_until_parked();
+
+    let _no_range_format = fake_server
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+            panic!("range formatting must not be called when diff is empty");
+        })
+        .next();
+
+    let formatting_called = Arc::new(AtomicBool::new(false));
+    let formatting_called_clone = formatting_called.clone();
+    let mut formatting_rx =
+        fake_server.set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| {
+            formatting_called_clone.store(true, atomic::Ordering::SeqCst);
+            async move { Ok(Some(Vec::new())) }
+        });
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                    force_format: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    formatting_rx.next().await;
+    save.await;
+
+    assert!(
+        formatting_called.load(atomic::Ordering::SeqCst),
+        "ModificationsIfAvailable must fall back to full-buffer formatting when diff is empty"
     );
 }
 
