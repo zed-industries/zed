@@ -28,6 +28,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-p": "file_finder::SelectPrevious",
+      "tab": "picker::ToggleMultiSelectItem",
       "cmd-j": "pane::SplitDown",
       "cmd-k": "pane::SplitUp",
       "cmd-h": "pane::SplitLeft",

@@ -136,6 +136,7 @@ impl<D: PickerDelegate> Picker<D> {
             .on_action(cx.listener(Self::set_preview_below))
             .on_action(cx.listener(Self::set_preview_hidden))
             .on_action(cx.listener(Self::toggle_actions_menu))
+            .on_action(cx.listener(Self::toggle_multi_select_item))
             .children(match &self.head {
                 Head::Editor(editor) => {
                     if editor_position == PickerEditorPosition::Start {

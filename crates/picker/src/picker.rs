@@ -9,7 +9,8 @@ use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
-    cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
+    cell::Cell, cell::RefCell, collections::HashMap, collections::HashSet, ops::Range, rc::Rc,
+    sync::Arc, time::Duration,
 };
 use ui::{ContextMenu, Divider, DocumentationAside, PopoverMenuHandle, prelude::*, v_flex};
 use ui_input::ErasedEditorEvent;
@@ -75,6 +76,7 @@ actions!(
         ToggleActionsMenu,
         /// Take the picker's content and open it in a multibuffer
         ToMultiBuffer,
+        ToggleMultiSelectItem,
     ]
 );
 
@@ -123,6 +125,7 @@ pub struct Picker<D: PickerDelegate> {
     preview: Option<Preview>,
     pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
+    selected_indices: HashSet<usize>,
     shape: shape::Shape,
     /// The size the picker opens at (and resets to). Defaults depend on whether
     /// the picker has a preview; see [`Picker::initial_width`] / [`Picker::max_height`].
@@ -236,6 +239,25 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>);
+    fn supports_multi_select(&self) -> bool {
+        false
+    }
+    fn save_selected_matches(&mut self, _indices: &[usize]) {}
+    fn pinned_match_count(&self) -> usize {
+        0
+    }
+    fn confirm_multi(
+        &mut self,
+        secondary: bool,
+        indices: Vec<usize>,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) {
+        if let Some(&first) = indices.first() {
+            self.set_selected_index(first, window, cx);
+            self.confirm(secondary, window, cx);
+        }
+    }
     /// Instead of interacting with currently selected entry, treats editor input literally,
     /// performing some kind of action on it.
     fn confirm_input(
@@ -347,6 +369,7 @@ pub trait PickerDelegate: Sized + 'static {
         &self,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
+        _selected_count: usize,
     ) -> Vec<footer::PickerAction> {
         Vec::new()
     }
@@ -528,6 +551,7 @@ impl<D: PickerDelegate> Picker<D> {
             element_container,
             pending_update_matches: None,
             confirm_on_update: None,
+            selected_indices: HashSet::default(),
             preview,
             shape_loaded_from_persistence: persisted_shape.is_some(),
             shape: persisted_shape.unwrap_or_else(|| {
@@ -861,9 +885,29 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.delegate.should_dismiss() {
+            self.selected_indices.clear();
             self.delegate.dismissed(window, cx);
             cx.emit(DismissEvent);
         }
+    }
+
+    fn toggle_multi_select_item(
+        &mut self,
+        _: &ToggleMultiSelectItem,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.delegate.supports_multi_select() {
+            return;
+        }
+        let ix = self.delegate.selected_index();
+        if self.selected_indices.contains(&ix) {
+            self.selected_indices.remove(&ix);
+        } else {
+            self.selected_indices.insert(ix);
+        }
+        self.select_next(&menu::SelectNext, window, cx);
+        cx.notify();
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut Context<Self>) {
@@ -968,11 +1012,27 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         }
         self.set_selected_index(ix, None, false, window, cx);
-        self.do_confirm(secondary, window, cx)
+        if self.delegate.supports_multi_select()
+            && (secondary || !self.selected_indices.is_empty())
+        {
+            if self.selected_indices.contains(&ix) {
+                self.selected_indices.remove(&ix);
+            } else {
+                self.selected_indices.insert(ix);
+            }
+            cx.notify();
+        } else {
+            self.do_confirm(false, window, cx);
+        }
     }
 
     fn do_confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(update_query) = self.delegate.confirm_update_query(window, cx) {
+        if !self.selected_indices.is_empty() {
+            let mut indices: Vec<usize> = self.selected_indices.iter().copied().collect();
+            indices.sort();
+            self.selected_indices.clear();
+            self.delegate.confirm_multi(secondary, indices, window, cx);
+        } else if let Some(update_query) = self.delegate.confirm_update_query(window, cx) {
             self.set_query(&update_query, window, cx);
             self.set_selected_index(0, Some(Direction::Down), false, window, cx);
         } else {
@@ -1034,6 +1094,12 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.delegate.supports_multi_select() && !self.selected_indices.is_empty() {
+            let mut indices: Vec<usize> = self.selected_indices.iter().copied().collect();
+            indices.sort();
+            self.delegate.save_selected_matches(&indices);
+        }
+        self.selected_indices.clear();
         self.update_matches_with_options(query, ScrollBehavior::RevealSelected, window, cx);
     }
 
@@ -1107,6 +1173,10 @@ impl<D: PickerDelegate> Picker<D> {
             },
         }
         self.pending_update_matches = None;
+        let pinned = self.delegate.pinned_match_count();
+        if pinned > 0 {
+            self.selected_indices = (0..pinned).collect();
+        }
         if let Some(update) = self.delegate.try_get_preview_data_for_match(cx)
             && let Some(preview) = &mut self.preview
         {
@@ -1166,9 +1236,16 @@ impl<D: PickerDelegate> Picker<D> {
         let selectable =
             ix < self.delegate.match_count() && self.delegate.can_select(ix, window, cx);
 
+        let supports_multi_select = self.delegate.supports_multi_select();
+        let is_multi_selected = supports_multi_select && self.selected_indices.contains(&ix);
+        let multi_select_active = supports_multi_select && !self.selected_indices.is_empty();
+
         div()
             .id(("item", ix))
             .when(selectable, |this| this.cursor_pointer())
+            .when(selectable && multi_select_active, |this| {
+                this.hover(|s| s.bg(cx.theme().colors().ghost_element_hover))
+            })
             .child(
                 canvas(
                     move |bounds, _window, _cx| {
@@ -1209,12 +1286,18 @@ impl<D: PickerDelegate> Picker<D> {
                     }
                 }))
             })
-            .children(self.delegate.render_match(
-                ix,
-                ix == self.delegate.selected_index(),
-                window,
-                cx,
-            ))
+            .child(
+                h_flex()
+                    .when(multi_select_active, |this| {
+                        this.child(self.render_multi_select_indicator(is_multi_selected, cx))
+                    })
+                    .children(self.delegate.render_match(
+                        ix,
+                        ix == self.delegate.selected_index(),
+                        window,
+                        cx,
+                    )),
+            )
             .when(
                 self.delegate.separators_after_indices().contains(&ix),
                 |picker| {
@@ -1223,6 +1306,40 @@ impl<D: PickerDelegate> Picker<D> {
                         .border_b_1()
                         .py(px(-1.0))
                 },
+            )
+    }
+
+    fn render_multi_select_indicator(
+        &self,
+        is_selected: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        h_flex()
+            .w_6()
+            .flex_none()
+            .justify_center()
+            .items_center()
+            .child(
+                div()
+                    .size_4()
+                    .flex_none()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(if is_selected {
+                        cx.theme().colors().border_focused
+                    } else {
+                        cx.theme().colors().border
+                    })
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .when(is_selected, |this| {
+                        this.bg(cx.theme().colors().element_selected).child(
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Small)
+                                .color(Color::Accent),
+                        )
+                    }),
             )
     }
 
