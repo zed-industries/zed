@@ -2812,6 +2812,24 @@ impl Session {
         })
     }
 
+    pub fn evaluate_silent(
+        &mut self,
+        expression: String,
+        context: Option<EvaluateArgumentsContext>,
+        frame_id: Option<u64>,
+        source: Option<Source>,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<dap::EvaluateResponse>> {
+        let request = self.state.request_dap(EvaluateCommand {
+            expression,
+            context,
+            frame_id,
+            source,
+        });
+
+        cx.spawn(async move |_, _| request.await.map_err(Into::into))
+    }
+
     pub fn location(
         &mut self,
         reference: u64,
