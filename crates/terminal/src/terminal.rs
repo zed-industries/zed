@@ -2448,10 +2448,8 @@ impl Terminal {
             self.last_content.display_offset,
         );
 
-        if e.button == MouseButton::Left
-            && e.modifiers.secondary()
-            && !self.mouse_mode(e.modifiers.shift)
-        {
+        // Secondary is Cmd on macOS and Ctrl elsewhere: treat it as link-open intent.
+        if e.button == MouseButton::Left && e.modifiers.secondary() {
             self.mouse_down_hyperlink = self.find_hyperlink_at_point(point);
 
             if self.mouse_down_hyperlink.is_some() {
@@ -2514,6 +2512,26 @@ impl Terminal {
         let setting = TerminalSettings::get_global(cx);
 
         let position = e.position - self.last_content.terminal_bounds.bounds.origin;
+        // Complete a link-open click before mouse reporting so the foreground app never sees
+        // one half of a consumed click.
+        if let Some(mouse_down_hyperlink) = self.mouse_down_hyperlink.take() {
+            let point = grid_point(
+                position,
+                self.last_content.terminal_bounds,
+                self.last_content.display_offset,
+            );
+
+            if let Some(mouse_up_hyperlink) = self.find_hyperlink_at_point(point) {
+                if mouse_down_hyperlink == mouse_up_hyperlink {
+                    self.events
+                        .push_back(InternalEvent::ProcessHyperlink(mouse_up_hyperlink, true));
+                    self.selection_phase = SelectionPhase::Ended;
+                    self.last_mouse = None;
+                    return;
+                }
+            }
+        }
+
         if self.mouse_mode(e.modifiers.shift) {
             let point = grid_point(
                 position,
@@ -2530,24 +2548,6 @@ impl Terminal {
         } else {
             if e.button == MouseButton::Left && setting.copy_on_select {
                 self.copy(Some(true));
-            }
-
-            if let Some(mouse_down_hyperlink) = self.mouse_down_hyperlink.take() {
-                let point = grid_point(
-                    position,
-                    self.last_content.terminal_bounds,
-                    self.last_content.display_offset,
-                );
-
-                if let Some(mouse_up_hyperlink) = self.find_hyperlink_at_point(point) {
-                    if mouse_down_hyperlink == mouse_up_hyperlink {
-                        self.events
-                            .push_back(InternalEvent::ProcessHyperlink(mouse_up_hyperlink, true));
-                        self.selection_phase = SelectionPhase::Ended;
-                        self.last_mouse = None;
-                        return;
-                    }
-                }
             }
 
             //Hyperlinks
@@ -4400,6 +4400,27 @@ mod tests {
                     .iter()
                     .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, true))),
                 "Should have ProcessHyperlink event when ctrl+clicking on same hyperlink position"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_hyperlink_ctrl_click_same_position_in_mouse_mode(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"Visit https://zed.dev/ for more\r\n");
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.last_content.mode = Modes::MOUSE_MODE;
+
+            let click_position = point(px(80.0), px(10.0));
+            ctrl_mouse_down_at(terminal, click_position, cx);
+            ctrl_mouse_up_at(terminal, click_position, cx);
+
+            assert!(
+                terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::ProcessHyperlink(_, true))),
+                "Should have ProcessHyperlink event when ctrl+clicking on same hyperlink position in mouse mode"
             );
         });
     }
