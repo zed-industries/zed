@@ -914,6 +914,136 @@ async fn test_remote_context_server(cx: &mut TestAppContext) {
     cx.run_until_parked();
 }
 
+// A server may accept `initialize` unauthenticated (returns 200) yet only send
+// `WWW-Authenticate` on a later request such as `tools/list` / `tools/call`.
+// That post-initialize 401 must still initiate the OAuth flow, not surface as an
+// opaque request failure while the server stays "Running".
+#[gpui::test]
+async fn test_http_server_authenticates_on_post_init_401(cx: &mut TestAppContext) {
+    use context_server::oauth::WwwAuthenticate;
+    use context_server::transport::TransportError;
+    use http_client::AsyncBody;
+
+    const SERVER_ID: &str = "auth-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    // One fake client serves both the MCP endpoint (200 on initialize) and the
+    // OAuth discovery well-known documents (CIMD, so no DCR is needed).
+    let client = FakeHttpClient::create(|req| async move {
+        let uri = req.uri().to_string();
+        let body = if uri.contains("oauth-protected-resource") {
+            json!({
+                "resource": "https://mcp.example.com",
+                "authorization_servers": ["https://auth.example.com"],
+                "scopes_supported": ["mcp:read"]
+            })
+        } else if uri.contains("oauth-authorization-server") {
+            json!({
+                "issuer": "https://auth.example.com",
+                "authorization_endpoint": "https://auth.example.com/authorize",
+                "token_endpoint": "https://auth.example.com/token",
+                "code_challenge_methods_supported": ["S256"],
+                "client_id_metadata_document_supported": true
+            })
+        } else {
+            json!({
+                "jsonrpc": "2.0",
+                "id": 0,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "serverInfo": { "name": "test-server", "version": "1.0.0" }
+                }
+            })
+        };
+        Ok(Response::builder()
+            .status(200)
+            .header("Content-Type", "application/json")
+            .body(AsyncBody::from(serde_json::to_string(&body).unwrap()))
+            .unwrap())
+    });
+    cx.update(|cx| cx.set_http_client(client));
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_context_server_configuration(
+        vec![(
+            server_id.0.clone(),
+            settings::ContextServerSettingsContent::Http {
+                enabled: true,
+                url: "https://mcp.example.com/mcp".to_string(),
+                headers: Default::default(),
+                timeout: None,
+                oauth: None,
+            },
+        )],
+        cx,
+    );
+
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+            ],
+            cx,
+        );
+        cx.run_until_parked();
+    }
+
+    // A non-auth request failure must be ignored: the server stays running.
+    {
+        let non_auth = anyhow::anyhow!("some transient request failure");
+        let handled = store.update(cx, |store, cx| {
+            store.handle_request_error(&server_id, &non_auth, cx)
+        });
+        assert!(!handled, "non-auth errors should not be handled");
+        cx.update(|cx| {
+            assert_eq!(
+                store.read(cx).status_for_server(&server_id),
+                Some(ContextServerStatus::Running)
+            );
+        });
+    }
+
+    // A 401 with a `WWW-Authenticate` challenge from a post-initialize request is
+    // surfaced by the transport as `TransportError::AuthRequired`. The store
+    // should run discovery and move the server into `AuthRequired`.
+    let err = anyhow::Error::new(TransportError::AuthRequired {
+        www_authenticate: WwwAuthenticate {
+            resource_metadata: None,
+            scope: None,
+            error: None,
+            error_description: None,
+        },
+    });
+
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::AuthRequired),
+            ],
+            cx,
+        );
+        let handled =
+            store.update(cx, |store, cx| store.handle_request_error(&server_id, &err, cx));
+        assert!(handled, "AuthRequired error should be handled");
+        cx.run_until_parked();
+    }
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::AuthRequired),
+            "server should require authentication after a post-initialize 401"
+        );
+    });
+}
+
 struct ServerEvents {
     received_event_count: Rc<RefCell<usize>>,
     expected_event_count: usize,
