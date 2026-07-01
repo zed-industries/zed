@@ -382,6 +382,28 @@ mod tests {
         assert!(!should_render_elicitation(&accepted_form));
     }
 
+    #[test]
+    fn display_url_never_elides_url_characters() {
+        let url = format!(
+            "https://auth.example.com/oauth/authorize?state={}",
+            "a".repeat(MAX_URL_DISPLAY_LINE_CHARS * 2)
+        );
+
+        let display_url = display_url(&url).to_string();
+        assert!(display_url.contains('\n'));
+        assert!(!display_url.contains('…'));
+        assert_eq!(display_url.replace('\n', ""), url);
+    }
+
+    #[test]
+    fn display_url_uses_visible_breaks_after_url_separators() {
+        let url = "https://auth.example.com/oauth/authorize?client_id=zed-desktop&scope=repository";
+
+        let display_url = display_url(url).to_string();
+        assert!(display_url.contains('\n'));
+        assert_eq!(display_url.replace('\n', ""), url);
+    }
+
     #[gpui::test]
     fn form_state_preserves_string_whitespace(cx: &mut TestAppContext) {
         crate::conversation_view::tests::init_test(cx);
@@ -569,15 +591,19 @@ impl Component for ElicitationCardPreview {
                     vec![
                         single_example(
                             "Pending Form",
-                            render_form_preview(0, pending_status(), None, window, cx),
+                            render_form_preview(0, pending_status(), &[], window, cx),
                         )
                         .width(px(640.)),
                         single_example(
-                            "Validation Error",
+                            "Validation Errors",
                             render_form_preview(
                                 1,
                                 pending_status(),
-                                Some("Account name is required"),
+                                &[
+                                    ("account_name", "Account name is required"),
+                                    ("environment", "Choose an environment"),
+                                    ("scopes", "Choose at least one access scope"),
+                                ],
                                 window,
                                 cx,
                             ),
@@ -604,12 +630,12 @@ impl Component for ElicitationCardPreview {
                     vec![
                         single_example(
                             "Declined",
-                            render_form_preview(6, ElicitationStatus::Declined, None, window, cx),
+                            render_form_preview(6, ElicitationStatus::Declined, &[], window, cx),
                         )
                         .width(px(640.)),
                         single_example(
                             "Canceled",
-                            render_form_preview(7, ElicitationStatus::Canceled, None, window, cx),
+                            render_form_preview(7, ElicitationStatus::Canceled, &[], window, cx),
                         )
                         .width(px(640.)),
                     ],
@@ -624,7 +650,7 @@ impl Component for ElicitationCardPreview {
 fn render_form_preview(
     entry_ix: usize,
     status: ElicitationStatus,
-    error: Option<&'static str>,
+    field_errors: &[(&'static str, &'static str)],
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -638,13 +664,17 @@ fn render_form_preview(
         };
         ElicitationFormState::new(&mode.requested_schema, window, cx)
     });
-    if let Some(error) = error
-        && let Some(form_state) = &mut form_state
-    {
-        form_state.set_field_error("account", error);
+    if let Some(form_state) = &mut form_state {
+        for (field_name, error) in field_errors {
+            form_state.set_field_error(*field_name, *error);
+        }
     }
 
     render_preview_card(entry_ix, request, status, form_state.as_ref(), cx)
+}
+
+fn preview_url() -> &'static str {
+    "https://auth.example.com/oauth/authorize?client_id=zed-desktop&redirect_uri=zed%3A%2F%2Fagent%2Facp%2Fcallback&scope=profile%20repository%20terminal&state=9b8b0a873a1e4b57b7f9f7b6d2d3d0f4"
 }
 
 fn render_url_preview(
@@ -657,7 +687,7 @@ fn render_url_preview(
         acp::ElicitationUrlMode::new(
             preview_request_scope(entry_ix),
             acp::ElicitationId::new(format!("preview-url-{entry_ix}")),
-            "https://auth.example.com/device",
+            preview_url(),
         ),
         "Authorize Zed in your browser to finish signing in.",
     );
@@ -1046,6 +1076,48 @@ pub(crate) fn should_render_elicitation(elicitation: &Elicitation) -> bool {
     )
 }
 
+const MIN_URL_DISPLAY_BREAK_CHARS: usize = 24;
+const MAX_URL_DISPLAY_LINE_CHARS: usize = 40;
+
+fn display_url(url: &str) -> SharedString {
+    let mut display_url = String::with_capacity(url.len());
+    let mut line_chars = 0;
+    let mut characters = url.chars().peekable();
+
+    while let Some(character) = characters.next() {
+        if line_chars >= MAX_URL_DISPLAY_LINE_CHARS {
+            display_url.push('\n');
+            line_chars = 0;
+        }
+
+        display_url.push(character);
+
+        if character == '\n' {
+            line_chars = 0;
+            continue;
+        }
+
+        line_chars += 1;
+
+        if characters.peek().is_some()
+            && line_chars >= MIN_URL_DISPLAY_BREAK_CHARS
+            && is_url_display_break_character(character)
+        {
+            display_url.push('\n');
+            line_chars = 0;
+        }
+    }
+
+    display_url.into()
+}
+
+fn is_url_display_break_character(character: char) -> bool {
+    matches!(
+        character,
+        '/' | '?' | '&' | '#' | '=' | '.' | '-' | '_' | ':' | ';' | ','
+    )
+}
+
 pub(crate) struct ElicitationCard<'a> {
     entry_ix: usize,
     elicitation: &'a Elicitation,
@@ -1185,6 +1257,62 @@ impl<'a> ElicitationCard<'a> {
             border_color
         };
         let editor_background = cx.theme().colors().editor_background;
+        let label_color = if error.is_some() {
+            Color::Error
+        } else {
+            Color::Default
+        };
+
+        if let ElicitationFieldState::Boolean(value) = field {
+            let checkbox_state = if *value {
+                ToggleState::Selected
+            } else {
+                ToggleState::Unselected
+            };
+            let next_value = !*value;
+            let on_boolean_change = self.handlers.on_boolean_change.clone();
+            let elicitation_id = self.elicitation.id.clone();
+            let field_name = field_name.to_string();
+            let row_id = format!("elicitation-bool-row-{}-{field_name}", self.entry_ix);
+            let checkbox_id = format!("elicitation-bool-{}-{field_name}", self.entry_ix);
+
+            return v_flex()
+                .gap_1()
+                .child(
+                    h_flex()
+                        .id(row_id)
+                        .w_full()
+                        .items_start()
+                        .gap_1()
+                        .cursor_pointer()
+                        .on_click(move |_, _window, cx| {
+                            on_boolean_change(
+                                elicitation_id.clone(),
+                                field_name.clone(),
+                                next_value,
+                                cx,
+                            );
+                        })
+                        .child(Checkbox::new(checkbox_id, checkbox_state))
+                        .child(
+                            v_flex()
+                                .gap_0p5()
+                                .child(Label::new(label).size(LabelSize::Small).color(label_color))
+                                .when_some(description, |this, description| {
+                                    this.child(
+                                        Label::new(description)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                }),
+                        ),
+                )
+                .when_some(error.cloned(), |this, error| {
+                    this.child(Label::new(error).size(LabelSize::Small).color(Color::Error))
+                })
+                .into_any_element();
+        }
+
         let label = if error.is_some() {
             Label::new(label).size(LabelSize::Small).color(Color::Error)
         } else {
@@ -1212,38 +1340,7 @@ impl<'a> ElicitationCard<'a> {
                     .text_xs()
                     .child(editor.clone().into_any_element())
                     .into_any_element(),
-                ElicitationFieldState::Boolean(value) => {
-                    let checkbox_state = if *value {
-                        ToggleState::Selected
-                    } else {
-                        ToggleState::Unselected
-                    };
-                    let on_boolean_change = self.handlers.on_boolean_change.clone();
-                    let elicitation_id = self.elicitation.id.clone();
-                    let field_name = field_name.to_string();
-                    div()
-                        .rounded_sm()
-                        .border_1()
-                        .border_color(field_border_color)
-                        .px_1()
-                        .py_0p5()
-                        .child(
-                            Checkbox::new(
-                                format!("elicitation-bool-{}-{field_name}", self.entry_ix),
-                                checkbox_state,
-                            )
-                            .on_click(move |state, _window, cx| {
-                                let value = matches!(state, ToggleState::Selected);
-                                on_boolean_change(
-                                    elicitation_id.clone(),
-                                    field_name.clone(),
-                                    value,
-                                    cx,
-                                );
-                            }),
-                        )
-                        .into_any_element()
-                }
+                ElicitationFieldState::Boolean(_) => Empty.into_any_element(),
                 ElicitationFieldState::SingleSelect { value } => {
                     let options = match property {
                         acp::ElicitationPropertySchema::String(schema) => {
@@ -1410,53 +1507,45 @@ impl<'a> ElicitationCard<'a> {
     }
 
     fn render_url_elicitation(&self, mode: &acp::ElicitationUrlMode) -> AnyElement {
-        let url = mode.url.clone();
-        let on_open_url = self.handlers.on_open_url.clone();
-        let elicitation_id = self.elicitation.id.clone();
-
         v_flex()
             .gap_2()
-            .child(Self::render_url_summary(&url))
-            .child(
-                Button::new(("open-elicit-url", self.entry_ix), "Open")
-                    .start_icon(
-                        Icon::new(IconName::ArrowUpRight)
-                            .size(IconSize::XSmall)
-                            .color(Color::Muted),
-                    )
-                    .label_size(LabelSize::Small)
-                    .on_click(move |_, window, cx| {
-                        on_open_url(elicitation_id.clone(), url.clone(), window, cx);
-                    }),
-            )
+            .child(Self::render_url_summary(&mode.url))
             .into_any_element()
     }
 
     fn render_url_summary(url: &str) -> AnyElement {
         h_flex()
             .gap_1()
+            .w_full()
             .min_w_0()
+            .items_start()
             .child(
                 Icon::new(IconName::Link)
                     .size(IconSize::XSmall)
                     .color(Color::Muted),
             )
             .child(
-                Label::new(url.to_string())
+                Label::new(display_url(url))
                     .size(LabelSize::Small)
                     .color(Color::Muted)
-                    .truncate(),
+                    .flex_1(),
             )
             .into_any_element()
     }
 
     fn render_actions(&self, cx: &App) -> AnyElement {
-        let accept_label = match &self.elicitation.request.mode {
-            acp::ElicitationMode::Url(_) => "Done",
-            _ => "Submit",
+        let open_url = match &self.elicitation.request.mode {
+            acp::ElicitationMode::Url(mode) => Some(mode.url.clone()),
+            _ => None,
+        };
+        let (accept_label, accept_icon, accept_icon_color) = if open_url.is_some() {
+            ("Open", IconName::ArrowUpRight, Color::Muted)
+        } else {
+            ("Submit", IconName::Check, Color::Success)
         };
         let border_color = cx.theme().colors().border.opacity(0.8);
         let on_submit = self.handlers.on_submit.clone();
+        let on_open_url = self.handlers.on_open_url.clone();
         let on_decline = self.handlers.on_decline.clone();
         let on_cancel = self.handlers.on_cancel.clone();
         let submit_id = self.elicitation.id.clone();
@@ -1473,13 +1562,17 @@ impl<'a> ElicitationCard<'a> {
             .child(
                 Button::new(("elicitation-accept", self.entry_ix), accept_label)
                     .start_icon(
-                        Icon::new(IconName::Check)
+                        Icon::new(accept_icon)
                             .size(IconSize::XSmall)
-                            .color(Color::Success),
+                            .color(accept_icon_color),
                     )
                     .label_size(LabelSize::Small)
                     .on_click(move |_, window, cx| {
-                        on_submit(submit_id.clone(), window, cx);
+                        if let Some(url) = &open_url {
+                            on_open_url(submit_id.clone(), url.clone(), window, cx);
+                        } else {
+                            on_submit(submit_id.clone(), window, cx);
+                        }
                     }),
             )
             .child(
