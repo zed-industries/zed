@@ -9711,6 +9711,7 @@ impl Editor {
         {
             let editor_settings = EditorSettings::get_global(cx);
             self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
+            self.scroll_manager.smooth_scroll = editor_settings.smooth_scroll.enabled;
             if self.breadcrumbs_visibility.settings_visibility()
                 != editor_settings.toolbar.breadcrumbs
             {

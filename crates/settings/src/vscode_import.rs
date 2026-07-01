@@ -297,6 +297,7 @@ impl VsCodeSettings {
             scroll_beyond_last_line: None,
             mouse_wheel_zoom: self.read_bool("editor.mouseWheelZoom"),
             scroll_sensitivity: self.read_f32("editor.mouseWheelScrollSensitivity"),
+            smooth_scroll: self.smooth_scroll_content(),
             scrollbar: self.scrollbar_content(),
             search: self.search_content(),
             search_wrap: None,
@@ -321,6 +322,12 @@ impl VsCodeSettings {
             diff_view_style: None,
             minimum_split_diff_width: None,
         }
+    }
+
+    fn smooth_scroll_content(&self) -> Option<SmoothScrollContent> {
+        skip_default(SmoothScrollContent {
+            enabled: self.read_bool("editor.smoothScrolling"),
+        })
     }
 
     fn sticky_scroll_content(&self) -> Option<StickyScrollContent> {
