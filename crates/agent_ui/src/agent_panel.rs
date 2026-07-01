@@ -44,18 +44,18 @@ use crate::terminal_thread_metadata_store::{
 };
 use crate::thread_metadata_store::{ThreadId, ThreadMetadataStore, ThreadMetadataStoreEvent};
 use crate::{
-    AddContextServer, AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow,
-    LoadThreadFromClipboard, NewTerminalThread, NewThread, OpenActiveThreadAsMarkdown,
-    OpenAgentDiff, ResetFastModeWarnings, ResetTrialEndUpsell, ResetTrialUpsell,
-    ShowAllSidebarThreadMetadata, ShowThreadMetadata, ToggleNewThreadMenu, ToggleOptionsMenu,
+    Agent, AgentInitialContent, AgentThreadSource, ExternalSourcePrompt, NewExternalAgentThread,
+    NewNativeAgentThreadFromSummary,
+};
+use crate::{
+    AgentDiffPane, ConversationView, CopyThreadToClipboard, Follow, LoadThreadFromClipboard,
+    NewTerminalThread, NewThread, OpenActiveThreadAsMarkdown, OpenAgentDiff, ResetFastModeWarnings,
+    ResetTrialEndUpsell, ResetTrialUpsell, ShowAllSidebarThreadMetadata, ShowThreadMetadata,
+    ToggleNewThreadMenu, ToggleOptionsMenu,
     conversation_view::{
         AcpThreadViewEvent, RootThreadUpdated, ThreadView, reset_fast_mode_warnings,
     },
     ui::{AgentNotification, AgentNotificationEvent, EndTrialUpsell},
-};
-use crate::{
-    Agent, AgentInitialContent, AgentThreadSource, ExternalSourcePrompt, NewExternalAgentThread,
-    NewNativeAgentThreadFromSummary,
 };
 use agent_settings::AgentSettings;
 use ai_onboarding::AgentPanelOnboarding;
@@ -5560,7 +5560,13 @@ impl AgentPanel {
                         if !showing_terminal {
                             menu = menu
                                 .header("MCP Servers")
-                                .action("Add Server…", Box::new(AddContextServer::local()))
+                                .action(
+                                    "Add Server…",
+                                    Box::new(zed_actions::OpenSettingsAt {
+                                        path: "context_servers".to_string(),
+                                        target: None,
+                                    }),
+                                )
                                 .action(
                                     "Install New Servers…",
                                     Box::new(zed_actions::Extensions {

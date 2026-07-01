@@ -16246,6 +16246,7 @@ dependencies = [
  "anyhow",
  "bitflags 2.10.0",
  "collections",
+ "db",
  "editor",
  "file_icons",
  "fs",
