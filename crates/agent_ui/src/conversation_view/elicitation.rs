@@ -383,25 +383,50 @@ mod tests {
     }
 
     #[test]
-    fn display_url_never_elides_url_characters() {
+    fn display_url_segments_never_elide_url_characters() {
         let url = format!(
             "https://auth.example.com/oauth/authorize?state={}",
-            "a".repeat(MAX_URL_DISPLAY_LINE_CHARS * 2)
+            "a".repeat(MAX_URL_DISPLAY_SEGMENT_CHARS * 2)
         );
 
-        let display_url = display_url(&url).to_string();
-        assert!(display_url.contains('\n'));
-        assert!(!display_url.contains('…'));
-        assert_eq!(display_url.replace('\n', ""), url);
+        let display_url_segments = display_url_segments(&url)
+            .into_iter()
+            .map(|segment| segment.to_string())
+            .collect::<Vec<_>>();
+        assert!(display_url_segments.len() > 1);
+        assert!(
+            !display_url_segments
+                .iter()
+                .any(|segment| segment.contains('…'))
+        );
+        assert!(
+            display_url_segments
+                .iter()
+                .all(|segment| segment.chars().count() <= MAX_URL_DISPLAY_SEGMENT_CHARS)
+        );
+        assert_eq!(display_url_segments.concat(), url);
     }
 
     #[test]
-    fn display_url_uses_visible_breaks_after_url_separators() {
+    fn display_url_segments_use_larger_url_boundaries() {
         let url = "https://auth.example.com/oauth/authorize?client_id=zed-desktop&scope=repository";
 
-        let display_url = display_url(url).to_string();
-        assert!(display_url.contains('\n'));
-        assert_eq!(display_url.replace('\n', ""), url);
+        let display_url_segments = display_url_segments(url)
+            .into_iter()
+            .map(|segment| segment.to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(display_url_segments.concat(), url);
+        assert_eq!(display_url_segments[0], "https://auth.example.com/");
+        assert!(
+            display_url_segments
+                .iter()
+                .any(|segment| segment.ends_with('?'))
+        );
+        assert!(
+            display_url_segments
+                .iter()
+                .any(|segment| segment.ends_with('&'))
+        );
     }
 
     #[gpui::test]
@@ -1076,46 +1101,38 @@ pub(crate) fn should_render_elicitation(elicitation: &Elicitation) -> bool {
     )
 }
 
-const MIN_URL_DISPLAY_BREAK_CHARS: usize = 24;
-const MAX_URL_DISPLAY_LINE_CHARS: usize = 40;
+const MIN_URL_DISPLAY_SEGMENT_CHARS: usize = 16;
+const MAX_URL_DISPLAY_SEGMENT_CHARS: usize = 64;
 
-fn display_url(url: &str) -> SharedString {
-    let mut display_url = String::with_capacity(url.len());
-    let mut line_chars = 0;
+fn display_url_segments(url: &str) -> Vec<SharedString> {
+    let mut segments = Vec::new();
+    let mut segment = String::new();
+    let mut segment_chars = 0;
     let mut characters = url.chars().peekable();
 
     while let Some(character) = characters.next() {
-        if line_chars >= MAX_URL_DISPLAY_LINE_CHARS {
-            display_url.push('\n');
-            line_chars = 0;
-        }
+        segment.push(character);
+        segment_chars += 1;
 
-        display_url.push(character);
+        let should_split_at_boundary = segment_chars >= MIN_URL_DISPLAY_SEGMENT_CHARS
+            && is_url_display_segment_boundary(character);
+        let should_split_at_length = segment_chars >= MAX_URL_DISPLAY_SEGMENT_CHARS;
 
-        if character == '\n' {
-            line_chars = 0;
-            continue;
-        }
-
-        line_chars += 1;
-
-        if characters.peek().is_some()
-            && line_chars >= MIN_URL_DISPLAY_BREAK_CHARS
-            && is_url_display_break_character(character)
-        {
-            display_url.push('\n');
-            line_chars = 0;
+        if characters.peek().is_some() && (should_split_at_boundary || should_split_at_length) {
+            segments.push(std::mem::take(&mut segment).into());
+            segment_chars = 0;
         }
     }
 
-    display_url.into()
+    if !segment.is_empty() {
+        segments.push(segment.into());
+    }
+
+    segments
 }
 
-fn is_url_display_break_character(character: char) -> bool {
-    matches!(
-        character,
-        '/' | '?' | '&' | '#' | '=' | '.' | '-' | '_' | ':' | ';' | ','
-    )
+fn is_url_display_segment_boundary(character: char) -> bool {
+    matches!(character, '/' | '?' | '&' | '#')
 }
 
 pub(crate) struct ElicitationCard<'a> {
@@ -1520,16 +1537,19 @@ impl<'a> ElicitationCard<'a> {
             .min_w_0()
             .items_start()
             .child(
-                Icon::new(IconName::Link)
-                    .size(IconSize::XSmall)
-                    .color(Color::Muted),
+                div().h(rems_from_px(16.)).flex().items_center().child(
+                    Icon::new(IconName::Link)
+                        .size(IconSize::XSmall)
+                        .color(Color::Muted),
+                ),
             )
-            .child(
-                Label::new(display_url(url))
-                    .size(LabelSize::Small)
-                    .color(Color::Muted)
-                    .flex_1(),
-            )
+            .child(h_flex().min_w_0().flex_1().flex_wrap().children(
+                display_url_segments(url).into_iter().map(|segment| {
+                    Label::new(segment)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                }),
+            ))
             .into_any_element()
     }
 
