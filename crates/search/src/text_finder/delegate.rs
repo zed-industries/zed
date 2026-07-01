@@ -45,8 +45,8 @@ use smol::future::yield_now;
 use text::Anchor;
 use theme_settings::ThemeSettings;
 use ui::{
-    Divider, FluentBuilder, IconButtonShape, ListItem, ListItemSpacing, Toggleable, Tooltip,
-    prelude::*,
+    Disclosure, Divider, FluentBuilder, IconButtonShape, ListItem, ListItemSpacing, Toggleable,
+    Tooltip, prelude::*,
 };
 use util::ResultExt;
 use workspace::SplitDirection;
@@ -85,6 +85,9 @@ pub struct Delegate {
     /// column so every row's number right-aligns to the widest one. Recomputed in
     /// [`Delegate::rebuild_entries`].
     pub(crate) max_line_number: u32,
+    /// Paths whose match group is folded, hiding its [`Entry::Match`] rows.
+    /// The [`Entry::Header`] row stays visible so the group can be unfolded again.
+    pub(crate) collapsed_paths: HashSet<ProjectPath>,
 }
 
 pub(crate) enum Entry {
@@ -316,6 +319,7 @@ impl Delegate {
                 in_progress_search,
                 unique_files: HashSet::default(),
                 max_line_number: 0,
+                collapsed_paths: HashSet::default(),
             });
 
             this
@@ -368,7 +372,9 @@ impl Delegate {
                 entries.push(Entry::Header(search_match.path.clone()));
                 last_path = Some(&search_match.path);
             }
-            entries.push(Entry::Match(match_index));
+            if !self.collapsed_paths.contains(&search_match.path) {
+                entries.push(Entry::Match(match_index));
+            }
         }
         self.entries = entries;
         self.max_line_number = self
@@ -392,6 +398,15 @@ impl Delegate {
         self.entries
             .iter()
             .position(|entry| matches!(entry, Entry::Match(_)))
+    }
+
+    /// Folds or unfolds the match group for `path`, hiding or restoring its
+    /// [`Entry::Match`] rows.
+    pub(crate) fn toggle_group_collapsed(&mut self, path: &ProjectPath) {
+        if !self.collapsed_paths.remove(path) {
+            self.collapsed_paths.insert(path.clone());
+        }
+        self.rebuild_entries();
     }
 
     fn selected_search_match(&self) -> Option<&SearchMatch> {
@@ -674,6 +689,7 @@ impl PickerDelegate for Delegate {
             self.matches.clear();
             self.entries.clear();
             self.unique_files.clear();
+            self.collapsed_paths.clear();
             self.selected_index = 0;
             self.active_query = None;
             cx.notify();
@@ -841,6 +857,8 @@ impl PickerDelegate for Delegate {
                             .color(Color::Muted)
                             .size(IconSize::Small)
                     });
+                let is_collapsed = self.collapsed_paths.contains(path);
+                let toggle_path = path.clone();
 
                 Some(
                     h_flex()
@@ -849,6 +867,14 @@ impl PickerDelegate for Delegate {
                         .px(DynamicSpacing::Base06.rems(cx))
                         .py_1()
                         .gap_1p5()
+                        .child(
+                            Disclosure::new(("text-finder-fold", ix), !is_collapsed).on_click(
+                                cx.listener(move |this, _, _window, cx| {
+                                    this.delegate.toggle_group_collapsed(&toggle_path);
+                                    cx.notify();
+                                }),
+                            ),
+                        )
                         .children(file_icon)
                         .child(
                             h_flex()
@@ -958,6 +984,7 @@ async fn stream_results_to_picker(
                     delegate.matches.clear();
                     delegate.entries.clear();
                     delegate.unique_files.clear();
+                    delegate.collapsed_paths.clear();
                     delegate.selected_index = 0;
                     clear_existing = false;
                 }
