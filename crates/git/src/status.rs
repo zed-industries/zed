@@ -3,8 +3,17 @@ use anyhow::{Result, anyhow};
 use collections::HashMap;
 use gpui::SharedString;
 use serde::{Deserialize, Serialize};
-use std::{str::FromStr, sync::Arc};
+use smol::io::{AsyncReadExt, BufReader};
+use std::{path::Path, str::FromStr, sync::Arc};
 use util::{ResultExt, rel_path::RelPath};
+
+const BINARY_CHECK_LEN: usize = 8000;
+const READ_CHUNK_SIZE: usize = 8192;
+
+fn is_binary_content(content: &[u8]) -> bool {
+    let check_len = content.len().min(BINARY_CHECK_LEN);
+    content[..check_len].contains(&0)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FileStatus {
@@ -628,6 +637,62 @@ pub fn parse_numstat(output: &str) -> GitDiffStat {
     }
 }
 
+/// Counts lines in a text file without loading it entirely into memory.
+///
+/// Returns `Ok(None)` for binary files, directories, and other non-text entries.
+pub async fn count_text_file_lines(path: &Path) -> Result<Option<u32>> {
+    let file = smol::fs::File::open(path).await?;
+    let metadata = file.metadata().await?;
+    if !metadata.is_file() {
+        return Ok(None);
+    }
+
+    let mut reader = BufReader::new(file);
+    let mut buffer = [0u8; READ_CHUNK_SIZE];
+    let mut newline_count = 0u32;
+    let mut total_bytes = 0u64;
+    let mut last_byte: Option<u8> = None;
+    let mut pending_binary_check = Vec::with_capacity(BINARY_CHECK_LEN);
+
+    loop {
+        let chunk_size = reader.read(&mut buffer).await?;
+        if chunk_size == 0 {
+            if !pending_binary_check.is_empty() && is_binary_content(&pending_binary_check) {
+                return Ok(None);
+            }
+            break;
+        }
+
+        if pending_binary_check.len() < BINARY_CHECK_LEN {
+            let take = chunk_size.min(BINARY_CHECK_LEN - pending_binary_check.len());
+            pending_binary_check.extend_from_slice(&buffer[..take]);
+            if pending_binary_check.len() == BINARY_CHECK_LEN
+                && is_binary_content(&pending_binary_check)
+            {
+                return Ok(None);
+            }
+        }
+
+        newline_count += buffer[..chunk_size]
+            .iter()
+            .filter(|&&byte| byte == b'\n')
+            .count() as u32;
+        last_byte = Some(buffer[chunk_size - 1]);
+        total_bytes += chunk_size as u64;
+    }
+
+    if total_bytes == 0 {
+        return Ok(Some(0));
+    }
+
+    let mut line_count = newline_count;
+    if last_byte != Some(b'\n') {
+        line_count += 1;
+    }
+
+    Ok(Some(line_count))
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -636,7 +701,7 @@ mod tests {
         status::{FileStatus, GitStatus, TreeDiff, TreeDiffStatus},
     };
 
-    use super::{DiffStat, parse_numstat};
+    use super::{DiffStat, count_text_file_lines, parse_numstat};
 
     fn lookup<'a>(entries: &'a [(RepoPath, DiffStat)], path: &str) -> Option<&'a DiffStat> {
         let path = RepoPath::new(path).unwrap();
@@ -727,6 +792,43 @@ mod tests {
                 deleted: 0
             })
         );
+    }
+
+    #[gpui::test]
+    async fn test_count_text_file_lines(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let empty_path = temp_dir.path().join("empty.txt");
+        smol::fs::write(&empty_path, "").await.unwrap();
+        assert_eq!(count_text_file_lines(&empty_path).await.unwrap(), Some(0));
+
+        let trailing_newline_path = temp_dir.path().join("trailing.txt");
+        smol::fs::write(&trailing_newline_path, "a\nb\n")
+            .await
+            .unwrap();
+        assert_eq!(
+            count_text_file_lines(&trailing_newline_path).await.unwrap(),
+            Some(2)
+        );
+
+        let no_trailing_newline_path = temp_dir.path().join("no_trailing.txt");
+        smol::fs::write(&no_trailing_newline_path, "a\nb")
+            .await
+            .unwrap();
+        assert_eq!(
+            count_text_file_lines(&no_trailing_newline_path)
+                .await
+                .unwrap(),
+            Some(2)
+        );
+
+        let binary_path = temp_dir.path().join("binary.bin");
+        smol::fs::write(&binary_path, b"hello\0world")
+            .await
+            .unwrap();
+        assert_eq!(count_text_file_lines(&binary_path).await.unwrap(), None);
     }
 
     #[test]
