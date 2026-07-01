@@ -288,6 +288,7 @@ dependencies = [
  "quick-xml 0.38.3",
  "rand 0.9.4",
  "regex",
+ "release_channel",
  "reqwest_client",
  "rust-embed",
  "sandbox",
@@ -321,9 +322,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "1.0.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e981a7d0207a0e9eb67d0faafc04e8c6601dea572d67a3163798897c0024521d"
+checksum = "16302d16c7531355db16593d99c38c8297db0c4653aa7dd80c3556bb17f4cd8c"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
@@ -343,9 +344,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "1.0.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d589c28cbe2978c76f8714cc304bc08355ee2f05d120806717725d9ffa12143"
+checksum = "88b37d552feb6981a0109febda6b71fc723678cd065974c2d76279c19c407095"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -6597,6 +6598,7 @@ dependencies = [
  "menu",
  "open_path_prompt",
  "picker",
+ "picker_preview",
  "pretty_assertions",
  "project",
  "project_panel",
@@ -9823,6 +9825,7 @@ dependencies = [
  "language",
  "language_model",
  "language_models_cloud",
+ "llama_cpp",
  "lmstudio",
  "log",
  "menu",
@@ -10352,6 +10355,19 @@ dependencies = [
  "util",
  "webrtc-sys",
  "zed-scap",
+]
+
+[[package]]
+name = "llama_cpp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.32",
+ "http_client",
+ "schemars 1.0.4",
+ "serde",
+ "serde_json",
+ "url",
 ]
 
 [[package]]
@@ -11426,6 +11442,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases 0.2.1",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -13441,9 +13458,7 @@ dependencies = [
  "gpui",
  "language",
  "menu",
- "multi_buffer",
  "project",
- "rope",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -13455,6 +13470,23 @@ dependencies = [
  "util",
  "workspace",
  "zed_actions",
+]
+
+[[package]]
+name = "picker_preview"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "editor",
+ "gpui",
+ "language",
+ "multi_buffer",
+ "picker",
+ "project",
+ "rope",
+ "settings",
+ "ui",
+ "util",
 ]
 
 [[package]]
@@ -15942,6 +15974,7 @@ dependencies = [
  "http_proxy",
  "libc",
  "log",
+ "nix 0.29.0",
  "serde",
  "serde_json",
  "smol",
@@ -16224,6 +16257,7 @@ dependencies = [
  "menu",
  "multi_buffer",
  "picker",
+ "picker_preview",
  "pretty_assertions",
  "project",
  "serde",

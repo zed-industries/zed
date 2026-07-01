@@ -31,7 +31,7 @@ use task::{HideStrategy, Shell, ShellKind, SpawnInTerminal};
 use terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use urlencoding;
-use util::{paths::PathStyle, truncate_and_trailoff};
+use util::{ResultExt as _, paths::PathStyle, truncate_and_trailoff};
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -73,6 +73,23 @@ use crate::alacritty::{
 };
 use crate::mappings::colors::to_vte_rgb;
 use crate::mappings::keys::to_esc_str;
+
+/// Process-wide flag set by headless hosts (e.g. the eval CLI) that have no
+/// controlling TTY. In such sandboxes PTY allocation and acquiring a
+/// controlling terminal fail with `ENOTTY`, so when this is set terminals run
+/// their command as a plain subprocess with piped output instead of through a
+/// PTY. The normal editor leaves it unset to preserve the interactive PTY
+/// experience.
+#[derive(Clone, Copy, Default)]
+pub struct HeadlessTerminal(pub bool);
+
+impl gpui::Global for HeadlessTerminal {}
+
+impl HeadlessTerminal {
+    pub fn is_enabled(cx: &App) -> bool {
+        cx.try_global::<Self>().is_some_and(|headless| headless.0)
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 enum Scroll {
@@ -939,6 +956,7 @@ impl TerminalBuilder {
         let terminal = Terminal {
             task: None,
             terminal_type: TerminalType::DisplayOnly,
+            subprocess: None,
             completion_tx: None,
             term,
             term_config: config,
@@ -1013,6 +1031,10 @@ impl TerminalBuilder {
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
         let background_executor = cx.background_executor().clone();
+        // Headless hosts (e.g. the eval CLI) have no controlling TTY, so PTY
+        // allocation / acquiring a controlling terminal fails with `ENOTTY`.
+        // When set, run the command as a plain subprocess instead.
+        let no_pty = HeadlessTerminal::is_enabled(cx);
         #[cfg(not(windows))]
         let child_signal_mask = match current_child_signal_mask()
             .context("failed to capture terminal child signal mask")
@@ -1096,26 +1118,6 @@ impl TerminalBuilder {
             // supported remoting into windows.
             let shell_kind = shell.shell_kind(cfg!(windows));
 
-            let alacritty_shell = shell_params.as_ref().map(|params| {
-                (
-                    params.program.clone(),
-                    params.args.clone().unwrap_or_default(),
-                )
-            });
-            let pty_options = pty_options(
-                alacritty_shell,
-                working_directory.clone(),
-                env.clone(),
-                // We pass in the foreground thread's signal mask to the child process via pty_options,
-                // so terminal construction can run on a background thread without breaking Ctrl-C and other signals
-                // otherwise the terminal would inherit the background executor's signal mask which blocks
-                // some terminal signals
-                #[cfg(not(windows))]
-                child_signal_mask,
-                #[cfg(windows)]
-                shell_kind.tty_escape_args(),
-            );
-
             let scrolling_history = if task.is_some() {
                 // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
                 // After the task finishes, we do not allow appending to that terminal, so small tasks output should not
@@ -1128,21 +1130,7 @@ impl TerminalBuilder {
             };
             let config = pty_term_config(scrolling_history, cursor_shape);
 
-            //Setup the pty...
-            let pty = match open_pty(&pty_options, TerminalBounds::default(), window_id) {
-                Ok(pty) => pty,
-                Err(error) => {
-                    bail!(TerminalError {
-                        directory: working_directory,
-                        program: shell_params.as_ref().map(|params| params.program.clone()),
-                        args: shell_params.as_ref().and_then(|params| params.args.clone()),
-                        title_override: terminal_title_override,
-                        source: error,
-                    });
-                }
-            };
-
-            //Spawn a task so the Alacritty EventLoop can communicate with us
+            //Spawn a task so the Alacritty EventLoop (or the subprocess reader) can communicate with us
             //TODO: Remove with a bounded sender which can be dispatched on &self
             let (events_tx, events_rx) = unbounded();
             //Set up the terminal...
@@ -1153,18 +1141,93 @@ impl TerminalBuilder {
                 alternate_scroll,
             );
 
-            let pty_info = PtyProcessInfo::new(ProcessIdGetter::from(&pty));
+            // When `no_pty` is set (headless hosts), run the task as a plain
+            // subprocess and pump its piped output into the same emulator the
+            // PTY path would feed.
+            let (terminal_type, subprocess) = if no_pty {
+                let (program, args) = match &shell_params {
+                    Some(params) => (
+                        params.program.clone(),
+                        params.args.clone().unwrap_or_default(),
+                    ),
+                    None => (util::shell::get_system_shell(), Vec::new()),
+                };
+                let subprocess = match spawn_task_subprocess(
+                    program,
+                    args,
+                    env.clone(),
+                    working_directory.clone(),
+                    term.clone(),
+                    events_tx,
+                    &background_executor,
+                ) {
+                    Ok(subprocess) => subprocess,
+                    Err(error) => {
+                        bail!(TerminalError {
+                            directory: working_directory,
+                            program: shell_params.as_ref().map(|params| params.program.clone()),
+                            args: shell_params.as_ref().and_then(|params| params.args.clone()),
+                            title_override: terminal_title_override,
+                            source: std::io::Error::other(format!("{error:#}")),
+                        });
+                    }
+                };
+                (TerminalType::DisplayOnly, Some(subprocess))
+            } else {
+                let alacritty_shell = shell_params.as_ref().map(|params| {
+                    (
+                        params.program.clone(),
+                        params.args.clone().unwrap_or_default(),
+                    )
+                });
+                let pty_options = pty_options(
+                    alacritty_shell,
+                    working_directory.clone(),
+                    env.clone(),
+                    // We pass in the foreground thread's signal mask to the child process via pty_options,
+                    // so terminal construction can run on a background thread without breaking Ctrl-C and other signals
+                    // otherwise the terminal would inherit the background executor's signal mask which blocks
+                    // some terminal signals
+                    #[cfg(not(windows))]
+                    child_signal_mask,
+                    #[cfg(windows)]
+                    shell_kind.tty_escape_args(),
+                );
 
-            //And connect them together
-            let pty_tx = spawn_event_loop(term.clone(), events_tx, pty, pty_options.drain_on_exit)?;
+                //Setup the pty...
+                let pty = match open_pty(&pty_options, TerminalBounds::default(), window_id) {
+                    Ok(pty) => pty,
+                    Err(error) => {
+                        bail!(TerminalError {
+                            directory: working_directory,
+                            program: shell_params.as_ref().map(|params| params.program.clone()),
+                            args: shell_params.as_ref().and_then(|params| params.args.clone()),
+                            title_override: terminal_title_override,
+                            source: error,
+                        });
+                    }
+                };
+
+                let pty_info = PtyProcessInfo::new(ProcessIdGetter::from(&pty));
+
+                //And connect them together
+                let pty_tx =
+                    spawn_event_loop(term.clone(), events_tx, pty, pty_options.drain_on_exit)?;
+
+                (
+                    TerminalType::Pty {
+                        pty_tx,
+                        info: Arc::new(pty_info),
+                    },
+                    None,
+                )
+            };
 
             let no_task = task.is_none();
             let terminal = Terminal {
                 task,
-                terminal_type: TerminalType::Pty {
-                    pty_tx,
-                    info: Arc::new(pty_info),
-                },
+                terminal_type,
+                subprocess,
                 completion_tx,
                 term,
                 term_config: config,
@@ -1337,6 +1400,9 @@ enum TerminalType {
 
 pub struct Terminal {
     terminal_type: TerminalType,
+    /// Set for non-PTY terminals (see [`HeadlessTerminal`]); owns the spawned
+    /// subprocess and the task pumping its output into the grid.
+    subprocess: Option<SubprocessHandle>,
     completion_tx: Option<Sender<Option<ExitStatus>>>,
     term: Arc<AlacrittyTermLock>,
     term_config: AlacrittyTermConfig,
@@ -1755,23 +1821,8 @@ impl Terminal {
     pub fn write_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         // Inject bytes directly into the terminal emulator and refresh the UI.
         // This bypasses the PTY/event loop for display-only terminals.
-        //
-        // We first convert LF to CRLF, to get the expected line wrapping in Alacritty.
-        // When output comes from piped commands (not a PTY) such as codex-acp, and that
-        // output only contains LF (\n) without a CR (\r) after it, such as the output
-        // of the `ls` command when running outside a PTY, Alacritty moves the cursor
-        // cursor down a line but does not move it back to the initial column. This makes
-        // the rendered output look ridiculous. To prevent this, we insert a CR (\r) before
-        // each LF that didn't already have one. (Alacritty doesn't have a setting for this.)
-        let mut converted = Vec::with_capacity(bytes.len());
-        let mut prev_byte = 0u8;
-        for &byte in bytes {
-            if byte == b'\n' && prev_byte != b'\r' {
-                converted.push(b'\r');
-            }
-            converted.push(byte);
-            prev_byte = byte;
-        }
+        let mut previous_byte_was_cr = false;
+        let converted = convert_lf_to_crlf(bytes, &mut previous_byte_was_cr);
 
         let mut term = self.term.lock();
         self.output_processor.advance(&mut *term, &converted);
@@ -2695,12 +2746,20 @@ impl Terminal {
         if let Some(task) = self.task()
             && task.status == TaskStatus::Running
         {
-            if let TerminalType::Pty { info, .. } = &self.terminal_type {
-                // First kill the foreground process group (the command running in the shell)
-                info.kill_current_process();
-                // Then kill the shell itself so that the terminal exits properly
-                // and wait_for_completed_task can complete
-                info.kill_child_process();
+            match &self.terminal_type {
+                TerminalType::Pty { info, .. } => {
+                    // First kill the foreground process group (the command running in the shell)
+                    info.kill_current_process();
+                    // Then kill the shell itself so that the terminal exits properly
+                    // and wait_for_completed_task can complete
+                    info.kill_child_process();
+                }
+                TerminalType::DisplayOnly => {
+                    // Non-PTY task terminals own their subprocess directly.
+                    if let Some(subprocess) = &self.subprocess {
+                        subprocess.kill();
+                    }
+                }
             }
         }
     }
@@ -2875,8 +2934,147 @@ fn task_summary(task: &TaskState, exit_status: Option<ExitStatus>) -> (bool, Str
     (success, task_line, command_line)
 }
 
+/// Converts bare LFs into CRLFs so output captured from a pipe (rather than a
+/// PTY) wraps correctly in Alacritty. A PTY's line discipline performs this
+/// `ONLCR` translation for us; piped output (e.g. `ls` run outside a PTY) only
+/// emits `\n`, which moves Alacritty's cursor down without returning it to
+/// column zero and makes the rendered output look misaligned. Alacritty has no
+/// setting for this, so we insert a `\r` before each `\n` that lacks one.
+fn convert_lf_to_crlf(bytes: &[u8], previous_byte_was_cr: &mut bool) -> Vec<u8> {
+    let mut converted = Vec::with_capacity(bytes.len());
+    for &byte in bytes {
+        if byte == b'\n' && !*previous_byte_was_cr {
+            converted.push(b'\r');
+        }
+        converted.push(byte);
+        *previous_byte_was_cr = byte == b'\r';
+    }
+    converted
+}
+
+/// Owns a non-PTY task subprocess and the background task pumping its output
+/// into the terminal emulator. Used by headless hosts (e.g. the eval CLI) where
+/// PTY allocation fails with `ENOTTY`. Dropping this kills the child.
+struct SubprocessHandle {
+    child: Arc<parking_lot::Mutex<Option<util::process::Child>>>,
+    _reader: Task<()>,
+}
+
+impl SubprocessHandle {
+    fn kill(&self) {
+        if let Some(child) = self.child.lock().as_mut() {
+            child.kill().log_err();
+        }
+    }
+}
+
+/// Spawns `program`/`args` as a plain subprocess with piped stdout/stderr and
+/// drives its output into `term`, mirroring what the Alacritty event loop does
+/// for a PTY but without one. Used when [`HeadlessTerminal`] is enabled.
+fn spawn_task_subprocess(
+    program: String,
+    args: Vec<String>,
+    env: HashMap<String, String>,
+    working_directory: Option<PathBuf>,
+    term: Arc<AlacrittyTermLock>,
+    events_tx: futures::channel::mpsc::UnboundedSender<PtyEvent>,
+    executor: &BackgroundExecutor,
+) -> Result<SubprocessHandle> {
+    use futures::io::AsyncReadExt as _;
+    use std::process::Stdio;
+
+    let mut command = util::command::new_std_command(&program);
+    command.args(&args);
+    command.envs(&env);
+    if let Some(directory) = &working_directory {
+        command.current_dir(directory);
+    }
+
+    let mut child =
+        util::process::Child::spawn(command, Stdio::null(), Stdio::piped(), Stdio::piped())?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let child = Arc::new(parking_lot::Mutex::new(Some(child)));
+
+    let reader = executor.spawn({
+        let child = child.clone();
+        let executor = executor.clone();
+        async move {
+            // stdout and stderr are pumped concurrently, each through its own
+            // parser; the shared term mutex serializes grid mutation.
+            type BoxedReader = Box<dyn futures::io::AsyncRead + Unpin + Send>;
+            let pump = |reader: Option<BoxedReader>| {
+                let term = term.clone();
+                let events_tx = events_tx.clone();
+                async move {
+                    let Some(mut reader) = reader else { return };
+                    let mut processor = Processor::<StdSyncHandler>::new();
+                    let mut buffer = [0u8; 8192];
+                    let mut previous_byte_was_cr = false;
+                    loop {
+                        match reader.read(&mut buffer).await {
+                            Ok(0) => return,
+                            Err(error) => {
+                                log::warn!("failed to read subprocess output: {error}");
+                                return;
+                            }
+                            Ok(count) => {
+                                let converted =
+                                    convert_lf_to_crlf(&buffer[..count], &mut previous_byte_was_cr);
+                                {
+                                    let mut term = term.lock();
+                                    processor.advance(&mut *term, &converted);
+                                }
+                                events_tx
+                                    .unbounded_send(PtyEvent::Event(TerminalBackendEvent::Wakeup))
+                                    .ok();
+                            }
+                        }
+                    }
+                }
+            };
+            let stdout = stdout.map(|reader| Box::new(reader) as BoxedReader);
+            let stderr = stderr.map(|reader| Box::new(reader) as BoxedReader);
+            futures::future::join(pump(stdout), pump(stderr)).await;
+
+            // Both pipes are closed, so the child has exited or is about to.
+            // Poll for its status without holding the lock across an await.
+            let status = loop {
+                let status = match child.lock().as_mut() {
+                    Some(child) => match child.try_status() {
+                        Ok(status) => status,
+                        Err(error) => {
+                            log::warn!("failed to get subprocess exit status: {error}");
+                            break None;
+                        }
+                    },
+                    None => Some(ExitStatus::default()),
+                };
+                match status {
+                    Some(status) => break Some(status),
+                    None => executor.timer(Duration::from_millis(20)).await,
+                }
+            };
+            child.lock().take();
+            let event = match status {
+                Some(status) => TerminalBackendEvent::ChildExit(status),
+                None => TerminalBackendEvent::Exit,
+            };
+            events_tx.unbounded_send(PtyEvent::Event(event)).ok();
+        }
+    });
+
+    Ok(SubprocessHandle {
+        child,
+        _reader: reader,
+    })
+}
+
 impl Drop for Terminal {
     fn drop(&mut self) {
+        if let Some(subprocess) = self.subprocess.take() {
+            subprocess.kill();
+        }
         if let TerminalType::Pty { pty_tx, info } =
             std::mem::replace(&mut self.terminal_type, TerminalType::DisplayOnly)
         {
@@ -3249,6 +3447,103 @@ mod tests {
             .unwrap();
         let terminal = cx.new(|cx| builder.subscribe(cx));
         (terminal, completion_rx)
+    }
+
+    /// Builds a non-PTY (`no_pty`) task terminal, exercising the path used by
+    /// headless hosts (e.g. the eval CLI) where PTY allocation fails with
+    /// `ENOTTY`. The command runs as a plain subprocess whose piped output is
+    /// pumped into the emulator.
+    #[cfg(not(target_os = "windows"))]
+    async fn build_test_subprocess_terminal(
+        cx: &mut TestAppContext,
+        program: String,
+        args: Vec<String>,
+    ) -> (Entity<Terminal>, Receiver<Option<ExitStatus>>) {
+        let (completion_tx, completion_rx) = async_channel::unbounded();
+        let task_state = TaskState {
+            status: TaskStatus::Running,
+            completion_rx: completion_rx.clone(),
+            spawned_task: SpawnInTerminal {
+                command: Some(program.clone()),
+                args: args.clone(),
+                ..Default::default()
+            },
+        };
+        let builder = cx
+            .update(|cx| {
+                cx.set_global(HeadlessTerminal(true));
+                TerminalBuilder::new(
+                    None,
+                    Some(task_state),
+                    task::Shell::WithArguments {
+                        program,
+                        args,
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    SettingsCursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    Some(completion_tx),
+                    cx,
+                    vec![],
+                    PathStyle::local(),
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+        (terminal, completion_rx)
+    }
+
+    #[test]
+    fn test_convert_lf_to_crlf_preserves_split_crlf() {
+        let mut previous_byte_was_cr = false;
+        assert_eq!(
+            convert_lf_to_crlf(b"one\n", &mut previous_byte_was_cr),
+            b"one\r\n"
+        );
+        assert!(!previous_byte_was_cr);
+
+        let mut previous_byte_was_cr = false;
+        assert_eq!(
+            convert_lf_to_crlf(b"two\r", &mut previous_byte_was_cr),
+            b"two\r"
+        );
+        assert!(previous_byte_was_cr);
+        assert_eq!(
+            convert_lf_to_crlf(b"\nthree", &mut previous_byte_was_cr),
+            b"\nthree"
+        );
+        assert!(!previous_byte_was_cr);
+    }
+
+    /// Regression test for the agent terminal failing with `Not a tty (os error
+    /// 25)` in headless/eval sandboxes: a `no_pty` task terminal must run
+    /// without a PTY, capture stdout, and report its exit status.
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test]
+    async fn test_no_pty_task_terminal_captures_output(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (program, args) = ShellBuilder::new(&Shell::System, false)
+            .non_interactive()
+            .build(Some("echo hello-from-subprocess".to_owned()), &[]);
+        let (terminal, completion_rx) = build_test_subprocess_terminal(cx, program, args).await;
+
+        assert!(
+            !terminal.update(cx, |term, _| term.is_pty()),
+            "no_pty terminal should not be PTY-backed"
+        );
+        assert_eq!(
+            completion_rx.recv().await.unwrap(),
+            Some(ExitStatus::default())
+        );
+        assert_content_eventually(&terminal, "hello-from-subprocess", cx).await;
     }
 
     fn init_ctrl_click_hyperlink_test(cx: &mut TestAppContext, output: &[u8]) -> Entity<Terminal> {
