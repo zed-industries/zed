@@ -924,7 +924,10 @@ impl ConversationView {
         cx: &mut Context<Self>,
     ) -> Option<Subscription> {
         let store = connection.request_elicitations()?;
-        Some(cx.observe(&store, |_this, _store, cx| {
+        Some(cx.observe(&store, |this, _store, cx| {
+            if let Some(active_thread) = this.active_thread().cloned() {
+                active_thread.update(cx, |_thread, cx| cx.notify());
+            }
             cx.notify();
         }))
     }
@@ -2429,7 +2432,8 @@ impl ConversationView {
     fn render_request_elicitations(
         &self,
         connection: &Rc<dyn AgentConnection>,
-        cx: &Context<Self>,
+        view: WeakEntity<Self>,
+        cx: &App,
     ) -> Vec<AnyElement> {
         if !cx.has_flag::<AcpBetaFeatureFlag>() {
             return Vec::new();
@@ -2439,7 +2443,7 @@ impl ConversationView {
             return Vec::new();
         };
 
-        let handlers = self.request_elicitation_card_handlers(cx);
+        let handlers = Self::request_elicitation_card_handlers(view);
 
         store
             .read(cx)
@@ -2460,9 +2464,7 @@ impl ConversationView {
             .collect()
     }
 
-    fn request_elicitation_card_handlers(&self, cx: &Context<Self>) -> ElicitationCardHandlers {
-        let view = cx.entity().downgrade();
-
+    fn request_elicitation_card_handlers(view: WeakEntity<Self>) -> ElicitationCardHandlers {
         ElicitationCardHandlers::new(
             {
                 let view = view.clone();
@@ -3362,6 +3364,7 @@ impl Render for ConversationView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_request_elicitation_states(window, cx);
         let request_elicitation_connection = self.request_elicitation_connection();
+        let active_thread_renders_request_elicitations = self.active_thread().is_some();
         let content = match &self.server_state {
             ServerState::Loading { .. } => {
                 let label_text = self
@@ -3429,13 +3432,14 @@ impl Render for ConversationView {
             .size_full()
             .bg(cx.theme().colors().panel_background)
             .child(v_flex().flex_1().min_h_0().child(content))
-            .children(
-                request_elicitation_connection
-                    .as_ref()
-                    .map_or_else(Vec::new, |connection| {
-                        self.render_request_elicitations(connection, cx)
-                    }),
-            )
+            .when(!active_thread_renders_request_elicitations, |this| {
+                this.children(request_elicitation_connection.as_ref().map_or_else(
+                    Vec::new,
+                    |connection| {
+                        self.render_request_elicitations(connection, cx.entity().downgrade(), cx)
+                    },
+                ))
+            })
     }
 }
 

@@ -6684,6 +6684,19 @@ impl ThreadView {
             .into_any_element()
     }
 
+    fn render_request_elicitations(&self, cx: &Context<Self>) -> Vec<AnyElement> {
+        let server_view = self.server_view.clone();
+        let handlers_view = server_view.clone();
+        server_view
+            .read_with(cx, |server_view, cx| {
+                let Some(connection) = server_view.request_elicitation_connection() else {
+                    return Vec::new();
+                };
+                server_view.render_request_elicitations(&connection, handlers_view, cx)
+            })
+            .unwrap_or_default()
+    }
+
     pub(crate) fn scroll_to_most_recent_user_prompt(&mut self, cx: &mut Context<Self>) {
         let entries = self.thread.read(cx).entries();
         if entries.is_empty() {
@@ -11829,6 +11842,7 @@ impl Render for ThreadView {
                 |this, version| this.child(self.render_new_version_callout(&version, cx)),
             )
             .children(self.render_token_limit_callout(cx))
+            .children(self.render_request_elicitations(cx))
             .child(self.render_message_editor(window, cx))
     }
 }
