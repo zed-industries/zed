@@ -21,7 +21,10 @@
     ])) @_js-test
   (#set! tag js-test))
 
-; Bun, Vitest (each also in Jest): parameterized and conditional tests
+; Parameterized and conditional tests. Docs per runner:
+;   Jest:   https://jestjs.io/docs/api#testeachtablename-fn-timeout
+;   Vitest: https://vitest.dev/api/
+;   Bun:    https://bun.sh/docs/test/writing-tests#test-modifiers
 ((call_expression
   function: (call_expression
     function: (member_expression
@@ -32,28 +35,13 @@
       ]
       property: (property_identifier) @_property)
     (#any-of? @_name "it" "test" "describe" "context" "suite")
-    (#any-of? @_property "each" "skipIf" "runIf"))
-  arguments: (arguments
-    .
-    [
-      (string
-        (string_fragment) @run)
-      (identifier) @run
-    ])) @_js-test
-  (#set! tag js-test))
-
-; Bun only: if, todoIf (https://bun.sh/docs/test/writing-tests#test-modifiers)
-((call_expression
-  function: (call_expression
-    function: (member_expression
-      object: [
-        (identifier) @_name
-        (member_expression
-          object: (identifier) @_name)
-      ]
-      property: (property_identifier) @_property)
-    (#any-of? @_name "it" "test" "describe" "context" "suite")
-    (#any-of? @_property "if" "todoIf"))
+    (#any-of? @_property
+      ; Jest, Bun, Vitest
+      "each"
+      ; Vitest
+      "skipIf" "runIf"
+      ; Bun
+      "if" "todoIf"))
   arguments: (arguments
     .
     [

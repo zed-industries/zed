@@ -1507,60 +1507,106 @@ mod tests {
                 it.failing("failing it", () => {
                     true;
                 });
+
+                it.each([1, 2, 3])("each test", () => {
+                    true;
+                });
+
+                describe.each([1, 2])("each describe", () => {
+                    it("inner each", () => {
+                        true;
+                    });
+                });
+
+                it.skip("skip test", () => {
+                    true;
+                });
+
+                it.only("only test", () => {
+                    true;
+                });
+
+                it.todo("todo test");
             "#
             .unindent();
 
             let text_len = text.len();
-            let buffer = cx.new(|cx| {
-                language::Buffer::local(text, cx).with_language(language, cx)
-            });
+            let buffer = cx.new(|cx| language::Buffer::local(text, cx).with_language(language, cx));
             cx.executor().run_until_parked();
 
             let outline = buffer.update(cx, |buffer, _cx| buffer.snapshot().outline(None));
-            let outline_names: Vec<_> = outline
+            let outline_names = outline
                 .items
                 .iter()
                 .map(|item| item.text.as_str())
-                .collect();
-            for expected in [
-                "runIf test",
-                "skipIf test",
-                "runIf test 2",
-                "skipIf test 2",
-                "runIf describe",
-                "skipIf describe",
-                "todoIf test",
-                "if test",
-                "todoIf test 2",
-                "if test 2",
-                "todoIf describe",
-                "if describe",
-                "test.failing failing test",
-                "it.failing failing it",
-            ] {
-                assert!(
-                    outline_names.contains(&expected),
-                    "Should find '{}' in outline, found: {:?}",
-                    expected,
-                    outline_names
-                );
-            }
+                .collect::<Vec<_>>();
+            assert_eq!(
+                outline_names,
+                [
+                    "runIf test",
+                    "skipIf test",
+                    "runIf test 2",
+                    "skipIf test 2",
+                    "runIf describe",
+                    "it inner test",
+                    "skipIf describe",
+                    "it inner test 2",
+                    "todoIf test",
+                    "if test",
+                    "todoIf test 2",
+                    "if test 2",
+                    "todoIf describe",
+                    "it inner todoIf",
+                    "if describe",
+                    "it inner if",
+                    "test.failing failing test",
+                    "it.failing failing it",
+                    "each test",
+                    "each describe",
+                    "it inner each",
+                    "it.skip skip test",
+                    "it.only only test",
+                    "it.todo todo test",
+                ]
+            );
 
-            let runnables: Vec<_> = buffer.update(cx, |buffer, _| {
-                let snapshot = buffer.snapshot();
-                snapshot.runnable_ranges(0..text_len).collect()
-            });
-            let tag_strings: Vec<String> = runnables
-                .iter()
-                .flat_map(|r| &r.runnable.tags)
-                .map(|tag| tag.0.to_string())
-                .collect();
-            let js_test_count = tag_strings.iter().filter(|t| t.as_str() == "js-test").count();
-            assert!(
-                js_test_count >= 11,
-                "Should find at least 11 js-test runnables for conditional + failing wrappers, found {}: {:?}",
-                js_test_count,
-                tag_strings
+            let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+            let runnable_names = snapshot
+                .runnable_ranges(0..text_len)
+                .map(|runnable| {
+                    snapshot
+                        .text_for_range(runnable.run_range)
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                runnable_names,
+                [
+                    "runIf test",
+                    "skipIf test",
+                    "runIf test 2",
+                    "skipIf test 2",
+                    "runIf describe",
+                    "inner test",
+                    "skipIf describe",
+                    "inner test 2",
+                    "todoIf test",
+                    "if test",
+                    "todoIf test 2",
+                    "if test 2",
+                    "todoIf describe",
+                    "inner todoIf",
+                    "if describe",
+                    "inner if",
+                    "failing test",
+                    "failing it",
+                    "each test",
+                    "each describe",
+                    "inner each",
+                    "skip test",
+                    "only test",
+                    "todo test",
+                ]
             );
         }
     }
