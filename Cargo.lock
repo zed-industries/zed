@@ -10525,6 +10525,7 @@ dependencies = [
  "collections",
  "editor",
  "file_icons",
+ "fuzzy",
  "gpui",
  "language",
  "log",

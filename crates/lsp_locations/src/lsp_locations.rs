@@ -1,9 +1,10 @@
 use std::ops::Range;
 
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use editor::actions::{FindAllReferences, GoToDefinition, GoToImplementation};
 use editor::{Editor, EditorSettings, GotoDefinitionKind, OpenResultsIn};
 use file_icons::FileIcons;
+use fuzzy::StringMatchCandidate;
 use gpui::{
     AnyElement, App, AppContext, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter,
     FocusHandle, Focusable, HighlightStyle, StyledText, Subscription, Task, TextStyle, WeakEntity,
@@ -95,9 +96,10 @@ fn handle_nav_action(
     LspLocationsPicker::open_for_editor(kind, editor.clone(), window, cx);
 }
 
-/// Runs the LSP query for `kind` and returns the deduped locations. Returns
-/// `None` (and reports any error) when there is nothing to show, so the caller
-/// stops without an empty-results toast.
+/// Runs the LSP query for `kind` and returns the raw locations. Returns `None`
+/// (and reports any error) when there is nothing to query, so the caller stops
+/// without an empty-results toast. Deduplication and dropping fileless results
+/// happen later in [`build_location_matches`].
 async fn run_picker_query(
     kind: LspPickerKind,
     editor: &WeakEntity<Editor>,
@@ -110,14 +112,7 @@ async fn run_picker_query(
         .ok()
         .flatten()?;
     match query.await {
-        Ok(mut locations) => {
-            // Drop exact-duplicate locations a server may report more than once,
-            // so a single distinct result jumps directly instead of opening a
-            // one-row picker.
-            let mut seen = HashSet::default();
-            locations.retain(|location| seen.insert(location.clone()));
-            Some(locations)
-        }
+        Ok(locations) => Some(locations),
         Err(error) => {
             log::error!("LSP {kind:?} query failed: {error:#}");
             workspace
@@ -126,6 +121,20 @@ async fn run_picker_query(
             None
         }
     }
+}
+
+/// Runs the query for `kind` and builds the displayable, deduped matches.
+async fn run_picker_matches(
+    kind: LspPickerKind,
+    editor: &WeakEntity<Editor>,
+    workspace: &WeakEntity<Workspace>,
+    project: &Entity<Project>,
+    cx: &mut AsyncWindowContext,
+) -> Option<Vec<LocationMatch>> {
+    let locations = run_picker_query(kind, editor, workspace, project, cx).await?;
+    editor
+        .update(cx, |_, cx| build_location_matches(&locations, cx))
+        .ok()
 }
 
 fn show_no_results_toast(
@@ -232,38 +241,50 @@ impl LspLocationsPicker {
         let fallback = EditorSettings::get_global(cx).go_to_definition_fallback;
         let editor = editor.downgrade();
         cx.spawn_in(window, async move |workspace, cx| {
+            // The kind the user invoked, kept for user-facing messages even if
+            // the query below falls back to references.
+            let invoked_kind = kind;
             let mut kind = kind;
-            let Some(mut locations) =
-                run_picker_query(kind, &editor, &workspace, &project, cx).await
+
+            // Count on the built matches (not raw locations): they are deduped by
+            // range and exclude fileless results, so a single distinct result
+            // jumps directly and a fileless-only result reports "no results"
+            // instead of opening a blank picker.
+            let Some(mut matches) =
+                run_picker_matches(kind, &editor, &workspace, &project, cx).await
             else {
                 return;
             };
 
-            if locations.is_empty()
+            if matches.is_empty()
                 && kind == LspPickerKind::Definition
                 && fallback == GoToDefinitionFallback::FindAllReferences
             {
                 kind = LspPickerKind::References;
                 let Some(references) =
-                    run_picker_query(kind, &editor, &workspace, &project, cx).await
+                    run_picker_matches(kind, &editor, &workspace, &project, cx).await
                 else {
                     return;
                 };
-                locations = references;
+                matches = references;
             }
 
-            if locations.is_empty() {
-                show_no_results_toast(&workspace, kind, cx);
+            if matches.is_empty() {
+                show_no_results_toast(&workspace, invoked_kind, cx);
                 return;
             }
 
-            if locations.len() == 1 {
-                if let Some(location) = locations.into_iter().next()
-                    && let Ok(task) = editor.update_in(cx, |editor, window, cx| {
+            if matches.len() == 1 {
+                if let Some(location_match) = matches.into_iter().next() {
+                    let location = Location {
+                        buffer: location_match.buffer,
+                        range: location_match.anchor_range,
+                    };
+                    if let Ok(task) = editor.update_in(cx, |editor, window, cx| {
                         editor.open_location(location, false, window, cx)
-                    })
-                {
-                    task.await.log_err();
+                    }) {
+                        task.await.log_err();
+                    }
                 }
                 return;
             }
@@ -271,7 +292,7 @@ impl LspLocationsPicker {
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     workspace.toggle_modal(window, cx, |window, cx| {
-                        Self::new(kind, locations, project, editor, window, cx)
+                        Self::new(kind, matches, project, editor, window, cx)
                     });
                 })
                 .log_err();
@@ -281,13 +302,13 @@ impl LspLocationsPicker {
 
     fn new(
         kind: LspPickerKind,
-        locations: Vec<Location>,
+        matches: Vec<LocationMatch>,
         project: Entity<Project>,
         editor: WeakEntity<Editor>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let delegate = LspLocationsDelegate::new(kind, locations, project.clone(), editor, cx);
+        let delegate = LspLocationsDelegate::new(kind, matches, project.clone(), editor);
         let picker = cx.new(|cx| {
             Picker::list_with_preview(delegate, project, window, cx)
                 .minimum_results_width(Rems(20.0))
@@ -324,8 +345,6 @@ struct LocationMatch {
     anchor_range: Range<Anchor>,
     range: Range<usize>,
     display_text: String,
-    display_text_lowercase: String,
-    path_lowercase: String,
     syntax_highlights: Vec<(Range<usize>, HighlightId)>,
     match_range: Range<usize>,
     line_number: u32,
@@ -344,6 +363,7 @@ struct LspLocationsDelegate {
     project: Entity<Project>,
     editor: WeakEntity<Editor>,
     all_matches: Vec<LocationMatch>,
+    candidates: Vec<StringMatchCandidate>,
     matches: Vec<usize>,
     entries: Vec<Entry>,
     selected_index: usize,
@@ -353,18 +373,33 @@ struct LspLocationsDelegate {
 impl LspLocationsDelegate {
     fn new(
         kind: LspPickerKind,
-        locations: Vec<Location>,
+        all_matches: Vec<LocationMatch>,
         project: Entity<Project>,
         editor: WeakEntity<Editor>,
-        cx: &App,
     ) -> Self {
-        let all_matches = build_location_matches(&locations, cx);
+        // Match against the line text and the file path, mirroring the fuzzy
+        // matching every other Zed picker uses.
+        let candidates = all_matches
+            .iter()
+            .enumerate()
+            .map(|(index, location_match)| {
+                StringMatchCandidate::new(
+                    index,
+                    &format!(
+                        "{} {}",
+                        location_match.display_text,
+                        location_match.path.path.as_unix_str()
+                    ),
+                )
+            })
+            .collect();
         let matches = (0..all_matches.len()).collect();
         let mut this = Self {
             kind,
             project,
             editor,
             all_matches,
+            candidates,
             matches,
             entries: Vec::new(),
             selected_index: 0,
@@ -488,17 +523,12 @@ fn build_location_matches(locations: &[Location], cx: &App) -> Vec<LocationMatch
         let clamped_end = end_offset.clamp(visible_start, visible_end) - visible_start;
         let match_range = clamped_start.min(clamped_end)..clamped_start.max(clamped_end);
 
-        let display_text_lowercase = display_text.to_lowercase();
-        let path_lowercase = path.path.as_unix_str().to_lowercase();
-
         matches.push(LocationMatch {
             path,
             buffer: location.buffer.clone(),
             anchor_range: location.range.clone(),
             range: start_offset..end_offset,
             display_text,
-            display_text_lowercase,
-            path_lowercase,
             syntax_highlights,
             match_range,
             line_number: row + 1,
@@ -554,20 +584,27 @@ impl PickerDelegate for LspLocationsDelegate {
         _window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) -> Task<()> {
-        let query = query.trim().to_lowercase();
-        self.matches = self
-            .all_matches
-            .iter()
-            .enumerate()
-            .filter(|(_, location_match)| {
-                if query.is_empty() {
-                    return true;
-                }
-                location_match.display_text_lowercase.contains(&query)
-                    || location_match.path_lowercase.contains(&query)
-            })
-            .map(|(index, _)| index)
-            .collect();
+        let query = query.trim();
+        self.matches = if query.is_empty() {
+            (0..self.all_matches.len()).collect()
+        } else {
+            let string_matches = cx.foreground_executor().block_on(fuzzy::match_strings(
+                &self.candidates,
+                query,
+                false,
+                true,
+                self.candidates.len(),
+                &Default::default(),
+                cx.background_executor().clone(),
+            ));
+            let mut indices = string_matches
+                .into_iter()
+                .map(|string_match| string_match.candidate_id)
+                .collect::<Vec<_>>();
+            // Restore the file-grouped, positional order (fuzzy returns by score).
+            indices.sort_unstable();
+            indices
+        };
         self.rebuild_entries();
         cx.notify();
         Task::ready(())
