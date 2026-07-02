@@ -28679,6 +28679,45 @@ fn add_log_breakpoint_at_cursor(
 }
 
 #[gpui::test]
+fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let focus_handle = cx.update(|cx| cx.focus_handle());
+    let tooltip = GutterButtonTooltip {
+        primary: GutterButtonIntent::SetBreakpoint,
+        secondary: GutterButtonIntent::SetBookmark,
+        focus_handle,
+    };
+
+    let primary_intent = tooltip.active_intent(Modifiers::none());
+    assert_eq!(primary_intent, GutterButtonIntent::SetBreakpoint);
+    assert!(primary_intent.action().as_any().is::<ToggleBreakpoint>());
+
+    let secondary_intent = tooltip.active_intent(Modifiers::secondary_key());
+    assert_eq!(secondary_intent, GutterButtonIntent::SetBookmark);
+    assert!(secondary_intent.action().as_any().is::<ToggleBookmark>());
+
+    // When both features are enabled, the meta text advertises the
+    // modifier-click alternative.
+    let meta = tooltip.meta_text(primary_intent);
+    assert!(meta.contains("-click to add a bookmark"), "got: {meta}");
+    assert!(meta.contains("right-click for more options"));
+    let meta = tooltip.meta_text(secondary_intent);
+    assert!(meta.contains("-click to add a breakpoint"), "got: {meta}");
+
+    // When only one feature is enabled (primary == secondary), a
+    // modifier-click repeats the primary action, so the tooltip must not
+    // advertise it.
+    let single_feature_tooltip = GutterButtonTooltip {
+        primary: GutterButtonIntent::SetBreakpoint,
+        secondary: GutterButtonIntent::SetBreakpoint,
+        focus_handle: tooltip.focus_handle,
+    };
+    let meta = single_feature_tooltip.meta_text(GutterButtonIntent::SetBreakpoint);
+    assert_eq!(meta, "right-click for more options");
+}
+
+#[gpui::test]
 async fn test_breakpoint_toggling(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
