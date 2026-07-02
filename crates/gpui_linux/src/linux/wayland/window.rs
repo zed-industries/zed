@@ -118,6 +118,11 @@ pub struct WaylandWindowState {
     hovered: bool,
     pub(crate) force_render_after_recovery: bool,
     renderer_presented: bool,
+    // A commit armed the pending wl_surface.frame request, so the compositor
+    // will send a frame callback once the surface is visible.
+    awaiting_frame_callback: bool,
+    frame_in_progress: bool,
+    redraw_requested: bool,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
     in_progress_window_controls: Option<WindowControls>,
@@ -401,6 +406,9 @@ impl WaylandWindowState {
             hovered: false,
             force_render_after_recovery: false,
             renderer_presented: false,
+            awaiting_frame_callback: false,
+            frame_in_progress: false,
+            redraw_requested: false,
             in_progress_window_controls: None,
             window_controls: WindowControls::default(),
             client_inset: None,
@@ -591,6 +599,9 @@ impl WaylandWindowStatePtr {
 
     pub fn frame(&self) {
         let mut state = self.state.borrow_mut();
+        state.awaiting_frame_callback = false;
+        state.frame_in_progress = true;
+        state.redraw_requested = false;
         state.surface.frame(&state.globals.qh, state.surface.id());
         state.resize_throttle = false;
         let force_render = state.force_render_after_recovery;
@@ -604,6 +615,38 @@ impl WaylandWindowStatePtr {
                 ..Default::default()
             });
             self.update_ime_enabled();
+        }
+        drop(cb);
+
+        let mut state = self.state.borrow_mut();
+        state.frame_in_progress = false;
+        if force_render && !state.renderer_presented {
+            // The forced render was throttled, force it again on the next frame.
+            state.force_render_after_recovery = true;
+        }
+        if state.renderer_presented {
+            // The renderer's present committed the frame request from above.
+            // Never commit on top of it, a bare commit racing Mesa's
+            // attach+commit causes flickering (#54214).
+            state.awaiting_frame_callback = true;
+        } else if state.redraw_requested || state.force_render_after_recovery {
+            state.surface.commit();
+            state.awaiting_frame_callback = true;
+        }
+        // Otherwise the frame loop parks, costing no wake-ups until
+        // request_redraw arms the still pending frame request.
+        state.redraw_requested = false;
+        state.renderer_presented = false;
+    }
+
+    pub fn request_redraw(&self) {
+        let mut state = self.state.borrow_mut();
+        if state.frame_in_progress {
+            state.redraw_requested = true;
+        } else if !state.awaiting_frame_callback && state.acknowledged_first_configure {
+            // Arm the frame callback requested by the last frame().
+            state.surface.commit();
+            state.awaiting_frame_callback = true;
         }
     }
 
@@ -1440,16 +1483,8 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
-    fn completed_frame(&self) {
-        let mut state = self.borrow_mut();
-
-        // Work around a bug in old versions of wlroots where committing without a buffer attached
-        // can cause invalid synchronization that leads to graphical corruption.
-        if !state.renderer_presented {
-            state.surface.commit();
-        }
-
-        state.renderer_presented = false;
+    fn request_redraw(&self) {
+        self.0.request_redraw();
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
