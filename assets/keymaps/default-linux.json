@@ -1104,6 +1104,13 @@
     },
   },
   {
+    "context": "SqlQueryEditor > Editor",
+    "bindings": {
+      "ctrl-enter": "database::RunQuery",
+      "enter": "editor::Newline",
+    },
+  },
+  {
     "context": "DebugPanel",
     "bindings": {
       "ctrl-t": "debugger::ToggleThreadPicker",

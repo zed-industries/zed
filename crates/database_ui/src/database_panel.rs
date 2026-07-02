@@ -96,6 +96,10 @@ pub struct DatabasePanel {
     context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
     /// The connection the currently-open context menu (and its actions) target.
     menu_target: Option<String>,
+    /// The database the currently-open context menu targets, when it was opened
+    /// on a database node. `None` means the menu was opened on a connection, in
+    /// which case `NewSqlQuery` uses the connection's starting database.
+    menu_target_database: Option<String>,
     scroll_handle: UniformListScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -130,6 +134,7 @@ impl DatabasePanel {
                 expanded: HashSet::new(),
                 context_menu: None,
                 menu_target: None,
+                menu_target_database: None,
                 scroll_handle: UniformListScrollHandle::new(),
                 _subscriptions: subscriptions,
             }
@@ -349,6 +354,30 @@ impl DatabasePanel {
         });
         self.context_menu = Some((context_menu, position, subscription));
         self.menu_target = Some(connection_name);
+        self.menu_target_database = None;
+        cx.notify();
+    }
+
+    fn deploy_database_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        connection_name: String,
+        database: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
+            menu.context(self.focus_handle.clone())
+                .action("New SQL Query", Box::new(NewSqlQuery))
+        });
+        window.focus(&context_menu.focus_handle(cx), cx);
+        let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+            this.context_menu.take();
+            cx.notify();
+        });
+        self.context_menu = Some((context_menu, position, subscription));
+        self.menu_target = Some(connection_name);
+        self.menu_target_database = Some(database);
         cx.notify();
     }
 
@@ -411,11 +440,45 @@ impl DatabasePanel {
             .log_err();
     }
 
-    fn new_sql_query(&mut self, _: &NewSqlQuery, _window: &mut Window, _cx: &mut Context<Self>) {
-        // Task 9 will open a SQL editor here.
-        if let Some(connection) = &self.menu_target {
-            log::debug!("new SQL query for {connection}");
-        }
+    fn new_sql_query(&mut self, _: &NewSqlQuery, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(connection) = self.menu_target.clone() else {
+            return;
+        };
+        let Some(client) = self.store.read(cx).client_for(&connection) else {
+            return;
+        };
+        // A menu opened on a database node targets that database; one opened on
+        // the connection uses the connection's starting database.
+        let database = self.menu_target_database.clone().or_else(|| {
+            self.store
+                .read(cx)
+                .connections()
+                .iter()
+                .find(|state| state.config.name == connection)
+                .map(|state| state.config.database.clone())
+        });
+        let Some(database) = database else {
+            return;
+        };
+
+        let Some(project) = self
+            .workspace
+            .read_with(cx, |workspace, _| workspace.project().clone())
+            .log_err()
+        else {
+            return;
+        };
+        let language_registry = project.read(cx).languages().clone();
+
+        crate::open_sql_query_tab(
+            &self.workspace,
+            client,
+            connection,
+            database,
+            language_registry,
+            window,
+            cx,
+        );
     }
 
     fn remove_connection(
@@ -566,6 +629,8 @@ impl DatabasePanel {
         } else {
             IconName::Folder
         };
+        let connection_name = connection.to_string();
+        let database_name = name.to_string();
         ListItem::new(index)
             .indent_level(1)
             .toggle(Some(expanded))
@@ -583,6 +648,18 @@ impl DatabasePanel {
                     }),
             )
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_node(node.clone(), cx)))
+            .on_secondary_mouse_down(cx.listener(
+                move |this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.deploy_database_context_menu(
+                        event.position,
+                        connection_name.clone(),
+                        database_name.clone(),
+                        window,
+                        cx,
+                    );
+                },
+            ))
             .into_any_element()
     }
 
