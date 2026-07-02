@@ -16,32 +16,47 @@ use crate::{
     SelectSpec, TableInfo, TableRef, TableStructure,
 };
 
+/// Whether a [`PostgresClient`] may execute writes. MCP-driven sessions must
+/// stay `ReadOnly` so an agent can never mutate data through the tool.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionMode {
+    ReadWrite,
+    ReadOnly,
+}
+
 /// A [`DatabaseClient`] backed by `tokio-postgres`.
 ///
 /// Connections are opened lazily per database and cached. Every session is
-/// configured `default_transaction_read_only=on` and with a `statement_timeout`
-/// so the tool cannot mutate data or hang the server indefinitely.
+/// configured with a `statement_timeout` so the tool cannot hang the server
+/// indefinitely, and `ReadOnly` sessions additionally set
+/// `default_transaction_read_only=on` so the tool cannot mutate data.
 pub struct PostgresClient {
     config: ConnectionConfig,
     password: String,
     statement_timeout: Duration,
+    mode: SessionMode,
     clients: AsyncMutex<HashMap<String, Arc<Client>>>,
     cancel_tokens: Mutex<Vec<CancelToken>>,
 }
 
 impl PostgresClient {
-    pub fn new(config: ConnectionConfig, password: String, statement_timeout: Duration) -> Self {
+    pub fn new(
+        config: ConnectionConfig,
+        password: String,
+        statement_timeout: Duration,
+        mode: SessionMode,
+    ) -> Self {
         Self {
             config,
             password,
             statement_timeout,
+            mode,
             clients: AsyncMutex::new(HashMap::new()),
             cancel_tokens: Mutex::new(Vec::new()),
         }
     }
 
     fn build_config(&self, database: &str) -> tokio_postgres::Config {
-        let timeout_ms = self.statement_timeout.as_millis();
         let mut config = tokio_postgres::Config::new();
         config
             .host(&self.config.host)
@@ -50,9 +65,7 @@ impl PostgresClient {
             .password(&self.password)
             .dbname(database)
             .application_name("zed-database")
-            .options(format!(
-                "-c default_transaction_read_only=on -c statement_timeout={timeout_ms}"
-            ));
+            .options(session_options(self.statement_timeout, self.mode));
         config
     }
 
@@ -323,6 +336,18 @@ impl DatabaseClient for PostgresClient {
     }
 }
 
+/// Builds the `-c` options string for a session's `statement_timeout` and,
+/// for [`SessionMode::ReadOnly`], `default_transaction_read_only`.
+fn session_options(statement_timeout: Duration, mode: SessionMode) -> String {
+    let timeout_ms = statement_timeout.as_millis();
+    match mode {
+        SessionMode::ReadOnly => {
+            format!("-c default_transaction_read_only=on -c statement_timeout={timeout_ms}")
+        }
+        SessionMode::ReadWrite => format!("-c statement_timeout={timeout_ms}"),
+    }
+}
+
 /// Extracts the leading SQL verb (uppercased) to reconstruct a command tag,
 /// since `simple_query` only reports the affected row count.
 fn command_verb(sql: &str) -> String {
@@ -344,6 +369,20 @@ mod tests {
         assert_eq!(command_verb(""), "");
     }
 
+    #[test]
+    fn session_options_read_only_disables_writes() {
+        let options = session_options(Duration::from_secs(30), SessionMode::ReadOnly);
+        assert!(options.contains("default_transaction_read_only=on"));
+        assert!(options.contains("statement_timeout=30000"));
+    }
+
+    #[test]
+    fn session_options_read_write_allows_writes() {
+        let options = session_options(Duration::from_secs(30), SessionMode::ReadWrite);
+        assert!(!options.contains("default_transaction_read_only=on"));
+        assert!(options.contains("statement_timeout=30000"));
+    }
+
     #[tokio::test]
     #[ignore = "requires live postgres: ZED_DB_TEST_HOST/PORT/USER/PASSWORD"]
     async fn postgres_client_smoke() {
@@ -356,13 +395,34 @@ mod tests {
             user: "postgres".into(),
         };
         let password = std::env::var("ZED_DB_TEST_PASSWORD").unwrap_or_else(|_| "postgres".into());
-        let client = PostgresClient::new(config, password, Duration::from_secs(30));
-        client.test_connection().await.unwrap();
-        assert!(!client.list_databases().await.unwrap().is_empty());
+        let read_only_client = PostgresClient::new(
+            config.clone(),
+            password.clone(),
+            Duration::from_secs(30),
+            SessionMode::ReadOnly,
+        );
+        read_only_client.test_connection().await.unwrap();
+        assert!(!read_only_client.list_databases().await.unwrap().is_empty());
         // read-only session: a write must be rejected by the server.
-        let error = client
+        let error = read_only_client
             .run_query("postgres", "CREATE TABLE zed_should_fail(id int)", 10)
             .await;
         assert!(error.is_err(), "write must be rejected");
+
+        let read_write_client = PostgresClient::new(
+            config,
+            password,
+            Duration::from_secs(30),
+            SessionMode::ReadWrite,
+        );
+        // read-write session: a write must succeed.
+        read_write_client
+            .run_query(
+                "postgres",
+                "CREATE TEMPORARY TABLE zed_rw_check(id int)",
+                10,
+            )
+            .await
+            .unwrap();
     }
 }

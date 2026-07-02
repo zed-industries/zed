@@ -450,6 +450,7 @@ pub fn default_client_factory(cx: &App) -> ClientFactory {
             config.clone(),
             password.to_string(),
             timeout,
+            database_client::SessionMode::ReadWrite,
         )) as Arc<dyn DatabaseClient>
     })
 }

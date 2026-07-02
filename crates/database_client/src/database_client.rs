@@ -4,6 +4,8 @@ pub mod sql;
 pub mod fake;
 pub mod postgres;
 
+pub use postgres::SessionMode;
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
