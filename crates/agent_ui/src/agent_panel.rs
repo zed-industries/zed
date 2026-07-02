@@ -992,6 +992,7 @@ struct AgentTerminal {
     working_directory: Option<PathBuf>,
     created_at: DateTime<Utc>,
     has_notification: bool,
+    search_bar: Option<Entity<BufferSearchBar>>,
     notification_windows: Vec<WindowHandle<AgentNotification>>,
     notification_subscriptions: Vec<Subscription>,
     _subscriptions: Vec<Subscription>,
@@ -1158,7 +1159,6 @@ pub struct AgentPanel {
     draft_thread: Option<Entity<ConversationView>>,
     retained_threads: HashMap<ThreadId, Entity<ConversationView>>,
     terminals: HashMap<TerminalId, AgentTerminal>,
-    terminal_search_bar: Option<Entity<BufferSearchBar>>,
     pending_terminal_spawn: Option<TerminalId>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -1561,7 +1561,6 @@ impl AgentPanel {
             draft_thread: None,
             retained_threads: HashMap::default(),
             terminals: HashMap::default(),
-            terminal_search_bar: None,
             pending_terminal_spawn: None,
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
@@ -2177,6 +2176,7 @@ impl AgentPanel {
             working_directory,
             created_at: created_at.unwrap_or_else(Utc::now),
             has_notification: false,
+            search_bar: None,
             notification_windows: Vec::new(),
             notification_subscriptions: Vec::new(),
             _subscriptions: vec![view_subscription, terminal_subscription],
@@ -3958,13 +3958,17 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(terminal_view) = self.visible_terminal_view().cloned() else {
+        let Some(terminal) = self
+            .active_terminal_id()
+            .and_then(|terminal_id| self.terminals.get_mut(&terminal_id))
+        else {
             cx.propagate();
             return;
         };
 
-        let search_bar = self
-            .terminal_search_bar
+        let terminal_view = terminal.view.clone();
+        let search_bar = terminal
+            .search_bar
             .get_or_insert_with(|| cx.new(|cx| BufferSearchBar::new(None, window, cx)))
             .clone();
         let deployed = search_bar.update(cx, |search_bar, cx| {
@@ -6471,10 +6475,14 @@ impl Render for AgentPanel {
                     .child(conversation_view.clone())
                     .child(self.render_drag_target(cx)),
                 VisibleSurface::Terminal(terminal_view) => {
+                    let search_bar = self
+                        .active_terminal_id()
+                        .and_then(|terminal_id| self.terminals.get(&terminal_id))
+                        .and_then(|terminal| terminal.search_bar.clone());
                     let terminal_content = v_flex()
                         .key_context("AgentTerminalThread")
                         .size_full()
-                        .when_some(self.terminal_search_bar.clone(), |this, search_bar| {
+                        .when_some(search_bar, |this, search_bar| {
                             this.when(!search_bar.read(cx).is_dismissed(), |this| {
                                 this.child(
                                     v_flex()
