@@ -1,0 +1,226 @@
+# Generated from xtask::workflows::bump_zed_version
+# Rebuild with `cargo xtask workflows`.
+name: bump_zed_version
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Which channels to bump: all, main, preview, or stable'
+        type: string
+        default: all
+jobs:
+  resolve_versions:
+    if: github.repository_owner == 'zed-industries'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - id: generate-token
+      name: steps::authenticate_as_zippy
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        ref: main
+        token: ${{ steps.generate-token.outputs.token }}
+    - id: versions
+      name: bump_zed_version::resolve_versions::extract_versions
+      run: |
+        version=$(script/get-crate-version zed)
+        major=$(echo "$version" | cut -d. -f1)
+        minor=$(echo "$version" | cut -d. -f2)
+
+        channel=$(cat crates/zed/RELEASE_CHANNEL)
+        if [[ "$channel" != "dev" && "$channel" != "nightly" ]]; then
+            echo "::error::release channel on main should be dev or nightly, found: $channel"
+            exit 1
+        fi
+
+        # Next main version after bump
+        next_version="${major}.$((minor + 1)).0"
+        next_major=$(echo "$next_version" | cut -d. -f1)
+        next_minor=$(echo "$next_version" | cut -d. -f2)
+        pr_branch="bump-zed-to-v${next_major}.${next_minor}.0"
+
+        # New preview branch from current main
+        preview_branch="v${major}.${minor}.x"
+        preview_tag="v${version}-pre"
+
+        # Current preview to promote to stable — derive branch from released preview version
+        released_preview=$(script/get-released-version preview)
+        if [[ -z "$released_preview" ]]; then
+            echo "::error::could not determine released preview version"
+            exit 1
+        fi
+        stable_major=$(echo "$released_preview" | cut -d. -f1)
+        stable_minor=$(echo "$released_preview" | cut -d. -f2)
+        stable_branch="v${stable_major}.${stable_minor}.x"
+
+        # Final validation
+        for var in next_version pr_branch preview_branch preview_tag stable_branch; do
+            if [[ -z "${!var}" ]]; then
+                echo "::error::failed to compute $var"
+                exit 1
+            fi
+        done
+
+        {
+            echo "next_version=$next_version"
+            echo "pr_branch=$pr_branch"
+            echo "preview_branch=$preview_branch"
+            echo "preview_tag=$preview_tag"
+            echo "stable_branch=$stable_branch"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "Resolved: next=$next_version preview=$preview_branch($preview_tag) stable=$stable_branch pr=$pr_branch"
+    outputs:
+      next_version: ${{ steps.versions.outputs.next_version }}
+      pr_branch: ${{ steps.versions.outputs.pr_branch }}
+      preview_branch: ${{ steps.versions.outputs.preview_branch }}
+      preview_tag: ${{ steps.versions.outputs.preview_tag }}
+      stable_branch: ${{ steps.versions.outputs.stable_branch }}
+  bump_main:
+    needs:
+    - resolve_versions
+    if: inputs.target == 'all' || inputs.target == 'main'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - id: generate-token
+      name: steps::authenticate_as_zippy
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        ref: main
+        token: ${{ steps.generate-token.outputs.token }}
+    - name: steps::install_cargo_edit
+      uses: taiki-e/install-action@02cc5f8ca9f2301050c0c099055816a41ee05507
+      with:
+        tool: cargo-edit
+    - name: bump_zed_version::bump_main::bump_version
+      run: cargo set-version -p zed --bump minor
+    - name: steps::create_pull_request
+      uses: peter-evans/create-pull-request@98357b18bf14b5342f975ff684046ec3b2a07725
+      with:
+        title: Bump Zed to v${{ needs.resolve_versions.outputs.next_version }}
+        body: |-
+          Release Notes:
+
+          - N/A
+        commit-message: Bump Zed to v${{ needs.resolve_versions.outputs.next_version }}
+        branch: ${{ needs.resolve_versions.outputs.pr_branch }}
+        committer: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        author: zed-zippy[bot] <234243425+zed-zippy[bot]@users.noreply.github.com>
+        base: main
+        delete-branch: true
+        token: ${{ steps.generate-token.outputs.token }}
+        sign-commits: true
+        assignees: ${{ github.actor }}
+  create_preview_branch:
+    needs:
+    - resolve_versions
+    if: inputs.target == 'all' || inputs.target == 'preview'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - id: generate-token
+      name: steps::authenticate_as_zippy
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        ref: main
+        token: ${{ steps.generate-token.outputs.token }}
+    - id: main-sha
+      name: bump_zed_version::create_preview_branch::get_main_sha
+      run: echo "main_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+    - name: bump_zed_version::create_preview_branch::promote_to_preview
+      run: echo -n preview > crates/zed/RELEASE_CHANNEL
+    - name: steps::create_branch
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+      with:
+        script: |
+          github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/heads/${{ needs.resolve_versions.outputs.preview_branch }}',
+              sha: '${{ steps.main-sha.outputs.main_sha }}'
+          })
+        github-token: ${{ steps.generate-token.outputs.token }}
+    - id: commit
+      name: steps::bot_commit
+      uses: IAreKyleW00t/verified-bot-commit@126a6a11889ab05bcff72ec2403c326cd249b84c
+      with:
+        message: ${{ needs.resolve_versions.outputs.preview_branch }} preview for @${{ github.actor }}
+        ref: refs/heads/${{ needs.resolve_versions.outputs.preview_branch }}
+        files: crates/zed/RELEASE_CHANNEL
+        token: ${{ steps.generate-token.outputs.token }}
+    - name: steps::create_tag
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+      with:
+        script: |
+          github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/${{ needs.resolve_versions.outputs.preview_tag }}',
+              sha: '${{ steps.commit.outputs.commit }}'
+          })
+        github-token: ${{ steps.generate-token.outputs.token }}
+  promote_to_stable:
+    needs:
+    - resolve_versions
+    if: inputs.target == 'all' || inputs.target == 'stable'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - id: generate-token
+      name: steps::authenticate_as_zippy
+      uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859
+      with:
+        app-id: ${{ secrets.ZED_ZIPPY_APP_ID }}
+        private-key: ${{ secrets.ZED_ZIPPY_APP_PRIVATE_KEY }}
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+        ref: ${{ needs.resolve_versions.outputs.stable_branch }}
+        token: ${{ steps.generate-token.outputs.token }}
+    - id: stable-info
+      name: bump_zed_version::promote_to_stable
+      run: |
+        stable_version=$(script/get-crate-version zed)
+        {
+            echo "stable_tag=v${stable_version}"
+        } >> "$GITHUB_OUTPUT"
+    - name: bump_zed_version::promote_to_stable
+      run: echo -n stable > crates/zed/RELEASE_CHANNEL
+    - id: commit
+      name: steps::bot_commit
+      uses: IAreKyleW00t/verified-bot-commit@126a6a11889ab05bcff72ec2403c326cd249b84c
+      with:
+        message: ${{ needs.resolve_versions.outputs.stable_branch }} stable for @${{ github.actor }}
+        ref: refs/heads/${{ needs.resolve_versions.outputs.stable_branch }}
+        files: crates/zed/RELEASE_CHANNEL
+        token: ${{ steps.generate-token.outputs.token }}
+    - name: steps::create_tag
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+      with:
+        script: |
+          github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'refs/tags/${{ steps.stable-info.outputs.stable_tag }}',
+              sha: '${{ steps.commit.outputs.commit }}'
+          })
+        github-token: ${{ steps.generate-token.outputs.token }}
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}

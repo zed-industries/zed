@@ -19,7 +19,7 @@ use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_
 use gpui::{
     Action, Anchor, App, AsyncWindowContext, ClipboardItem, Context, DismissEvent, Entity,
     EntityId, EventEmitter, FocusHandle, Focusable, MouseButton, MouseDownEvent, Point,
-    Subscription, Task, WeakEntity, anchored, deferred,
+    Subscription, Task, TaskExt, WeakEntity, anchored, deferred,
 };
 
 use itertools::Itertools as _;
@@ -1604,6 +1604,12 @@ impl Panel for DebugPanel {
 
     fn activation_priority(&self) -> u32 {
         7
+    }
+
+    fn hide_button_setting(&self, _: &App) -> Option<workspace::HideStatusItem> {
+        Some(workspace::HideStatusItem::new(|settings| {
+            settings.debugger.get_or_insert_default().button = Some(false);
+        }))
     }
 
     fn set_active(&mut self, _: bool, _: &mut Window, _: &mut Context<Self>) {}

@@ -1,5 +1,6 @@
 use crate::merge_from::MergeFrom;
 use collections::HashMap;
+use language_model_core::ReasoningEffort;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings_macros::{MergeFrom, with_fallible_options};
@@ -10,9 +11,12 @@ use std::sync::Arc;
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
+    pub anthropic_compatible: Option<HashMap<Arc<str>, AnthropicCompatibleSettingsContent>>,
     pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
+    #[serde(rename = "llama.cpp")]
+    pub llama_cpp: Option<LlamaCppSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
@@ -20,7 +24,6 @@ pub struct AllLanguageModelSettingsContent {
     pub open_router: Option<OpenRouterSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
     pub openai_compatible: Option<HashMap<Arc<str>, OpenAiCompatibleSettingsContent>>,
-    pub vercel: Option<VercelSettingsContent>,
     pub vercel_ai_gateway: Option<VercelAiGatewaySettingsContent>,
     pub x_ai: Option<XAiSettingsContent>,
     #[serde(rename = "zed.dev")]
@@ -32,6 +35,57 @@ pub struct AllLanguageModelSettingsContent {
 pub struct AnthropicSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<AnthropicAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct AnthropicCompatibleSettingsContent {
+    pub api_url: String,
+    pub available_models: Vec<AnthropicCompatibleAvailableModel>,
+    pub custom_headers: Option<HashMap<String, String>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct AnthropicCompatibleAvailableModel {
+    /// The model's name in the provider's API. e.g. claude-3-5-sonnet-latest
+    pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
+    pub display_name: Option<String>,
+    /// The model's context window size.
+    pub max_tokens: u64,
+    /// A model `name` to substitute when calling tools, in case the primary model doesn't support tool calling.
+    pub tool_override: Option<String>,
+    pub max_output_tokens: Option<u64>,
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub default_temperature: Option<f32>,
+    #[serde(default)]
+    pub extra_beta_headers: Vec<String>,
+    /// The model's mode (e.g. thinking)
+    pub mode: Option<ModelMode>,
+    #[serde(default)]
+    pub capabilities: AnthropicCompatibleModelCapabilities,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct AnthropicCompatibleModelCapabilities {
+    pub tools: bool,
+    pub images: bool,
+    /// Whether to send explicit `cache_control` breakpoints for prompt caching.
+    /// Leave disabled if the provider rejects requests containing them.
+    pub prompt_caching: bool,
+}
+
+impl Default for AnthropicCompatibleModelCapabilities {
+    fn default() -> Self {
+        Self {
+            tools: true,
+            images: false,
+            prompt_caching: false,
+        }
+    }
 }
 
 #[with_fallible_options]
@@ -60,13 +114,16 @@ pub struct AnthropicAvailableModel {
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct AmazonBedrockSettingsContent {
     pub available_models: Option<Vec<BedrockAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
     pub endpoint_url: Option<String>,
     pub region: Option<String>,
     pub profile: Option<String>,
     pub authentication_method: Option<BedrockAuthMethodContent>,
     pub allow_global: Option<bool>,
-    /// Enable the 1M token extended context window beta for supported Anthropic models.
-    pub allow_extended_context: Option<bool>,
+    /// The guardrail identifier (ARN or ID) to apply to Bedrock API requests.
+    pub guardrail_identifier: Option<String>,
+    /// The guardrail version to use. Defaults to "DRAFT" if not specified.
+    pub guardrail_version: Option<String>,
 }
 
 #[with_fallible_options]
@@ -102,6 +159,7 @@ pub struct OllamaSettingsContent {
     pub auto_discover: Option<bool>,
     pub available_models: Option<Vec<OllamaAvailableModel>>,
     pub context_window: Option<u64>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -150,6 +208,21 @@ impl Default for KeepAlive {
 pub struct OpenCodeSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OpenCodeAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
+    /// Whether to show OpenCode Zen models. Defaults to true.
+    pub show_zen_models: Option<bool>,
+    /// Whether to show OpenCode Go models. Defaults to true.
+    pub show_go_models: Option<bool>,
+    /// Whether to show OpenCode Free models. Defaults to true.
+    pub show_free_models: Option<bool>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub enum OpenCodeModelSubscription {
+    Zen,
+    Go,
+    Free,
 }
 
 #[with_fallible_options]
@@ -161,6 +234,15 @@ pub struct OpenCodeAvailableModel {
     pub max_output_tokens: Option<u64>,
     /// The API protocol to use for this model: "anthropic", "openai_responses", "openai_chat", or "google".
     pub protocol: String,
+    /// The subscription for this model: "zen", "go", or "free". Defaults to Zen.
+    pub subscription: Option<OpenCodeModelSubscription>,
+    /// Custom Model API URL to use for this model.
+    pub custom_model_api_url: Option<String>,
+    /// Supported reasoning effort levels, for example `["low", "medium", "high"].
+    pub reasoning_effort_levels: Option<Vec<ReasoningEffort>>,
+    /// When using OpenAiChat protocol, whether thinking tokens are sent as a dedicated `reasoning_content` field or inline in message text.
+    #[serde(default)]
+    pub interleaved_reasoning: bool,
 }
 
 #[with_fallible_options]
@@ -169,6 +251,7 @@ pub struct LmStudioSettingsContent {
     pub api_url: Option<String>,
     pub api_key: Option<String>,
     pub available_models: Option<Vec<LmStudioAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -183,9 +266,40 @@ pub struct LmStudioAvailableModel {
 
 #[with_fallible_options]
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct LlamaCppSettingsContent {
+    pub api_url: Option<String>,
+    /// Whether to automatically discover models served by the llama.cpp server.
+    /// Defaults to true.
+    pub auto_discover: Option<bool>,
+    pub available_models: Option<Vec<LlamaCppAvailableModel>>,
+    /// Overrides the context length reported for every llama.cpp model.
+    pub context_window: Option<u64>,
+    pub custom_headers: Option<HashMap<String, String>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct LlamaCppAvailableModel {
+    /// The model id reported by the llama.cpp server (its `--alias` or the model file path).
+    pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the agent panel.
+    pub display_name: Option<String>,
+    /// The Context Length parameter to the model (aka n_ctx).
+    pub max_tokens: u64,
+    /// Whether the model supports tools.
+    pub supports_tools: Option<bool>,
+    /// Whether the model supports vision.
+    pub supports_images: Option<bool>,
+    /// Whether the model emits reasoning/thinking content.
+    pub supports_thinking: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct DeepseekSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<DeepseekAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -202,6 +316,7 @@ pub struct DeepseekAvailableModel {
 pub struct MistralSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<MistralAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -222,6 +337,7 @@ pub struct MistralAvailableModel {
 pub struct OpenAiSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OpenAiAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -250,6 +366,7 @@ impl MergeFrom for OpenAiReasoningEffort {
 pub struct OpenAiCompatibleSettingsContent {
     pub api_url: String,
     pub available_models: Vec<OpenAiCompatibleAvailableModel>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -257,12 +374,15 @@ pub struct OpenAiCompatibleSettingsContent {
 pub struct OpenAiModelCapabilities {
     #[serde(default = "default_true")]
     pub chat_completions: bool,
+    #[serde(default = "default_true")]
+    pub images: bool,
 }
 
 impl Default for OpenAiModelCapabilities {
     fn default() -> Self {
         Self {
             chat_completions: default_true(),
+            images: default_true(),
         }
     }
 }
@@ -291,6 +411,8 @@ pub struct OpenAiCompatibleModelCapabilities {
     pub chat_completions: bool,
     #[serde(default)]
     pub interleaved_reasoning: bool,
+    #[serde(default)]
+    pub max_tokens_parameter: bool,
 }
 
 impl Default for OpenAiCompatibleModelCapabilities {
@@ -302,25 +424,9 @@ impl Default for OpenAiCompatibleModelCapabilities {
             prompt_cache_key: false,
             chat_completions: default_true(),
             interleaved_reasoning: false,
+            max_tokens_parameter: false,
         }
     }
-}
-
-#[with_fallible_options]
-#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
-pub struct VercelSettingsContent {
-    pub api_url: Option<String>,
-    pub available_models: Option<Vec<VercelAvailableModel>>,
-}
-
-#[with_fallible_options]
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
-pub struct VercelAvailableModel {
-    pub name: String,
-    pub display_name: Option<String>,
-    pub max_tokens: u64,
-    pub max_output_tokens: Option<u64>,
-    pub max_completion_tokens: Option<u64>,
 }
 
 #[with_fallible_options]
@@ -328,6 +434,7 @@ pub struct VercelAvailableModel {
 pub struct VercelAiGatewaySettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<VercelAiGatewayAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -347,6 +454,7 @@ pub struct VercelAiGatewayAvailableModel {
 pub struct GoogleSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<GoogleAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -363,6 +471,7 @@ pub struct GoogleAvailableModel {
 pub struct XAiSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<XaiAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]
@@ -426,6 +535,7 @@ pub enum ZedDotDevAvailableProvider {
 pub struct OpenRouterSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<OpenRouterAvailableModel>>,
+    pub custom_headers: Option<HashMap<String, String>>,
 }
 
 #[with_fallible_options]

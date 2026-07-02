@@ -192,7 +192,7 @@ pub struct SelectDownByLines {
     pub(super) lines: u32,
 }
 
-/// Expands all excerpts in the editor.
+/// Expands all excerpts with selections.
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -323,7 +323,8 @@ pub struct SplitSelectionIntoLines {
     pub keep_selections: bool,
 }
 
-/// Goes to the next diagnostic in the file.
+/// Expands the diagnostic under the cursor, if any, in case diagnostics are not
+/// yet active. Otherwise, goes to the next diagnostic in the file.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -332,7 +333,8 @@ pub struct GoToDiagnostic {
     pub severity: GoToDiagnosticSeverityFilter,
 }
 
-/// Goes to the previous diagnostic in the file.
+/// Expands the diagnostic under the cursor, if any, in case diagnostics are not
+/// yet active. Otherwise, goes to the previous diagnostic in the file.
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
 #[action(namespace = editor)]
 #[serde(deny_unknown_fields)]
@@ -392,6 +394,15 @@ actions!(
         /// Toggles the go to line dialog.
         #[action(name = "Toggle")]
         ToggleGoToLine
+    ]
+);
+
+actions!(
+    markdown,
+    [
+        /// Toggles a block quote (`> `) prefix on the selected lines (or the
+        /// current line) while in Markdown files.
+        ToggleBlockQuote,
     ]
 );
 
@@ -460,6 +471,10 @@ actions!(
         ConvertToRot13,
         /// Applies ROT47 cipher to selected text.
         ConvertToRot47,
+        /// Base64-encodes the selected text or word under cursor.
+        ConvertToBase64,
+        /// Base64-decodes the selected text or word under cursor.
+        ConvertFromBase64,
         /// Copies selected text to the clipboard.
         Copy,
         /// Copies selected text to the clipboard with leading/trailing whitespace trimmed.
@@ -497,6 +512,9 @@ actions!(
         ExpandAllDiffHunks,
         /// Collapses all diff hunks in the editor.
         CollapseAllDiffHunks,
+        /// Toggles all diff hunks in the editor. Collapses all hunks if any are
+        /// currently expanded, otherwise expands all hunks.
+        ToggleAllDiffHunks,
         /// Expands macros recursively at cursor position.
         ExpandMacroRecursively,
         /// Finds the next match in the search.
@@ -636,6 +654,17 @@ actions!(
         MoveToBeginning,
         /// Moves cursor to the enclosing bracket.
         MoveToEnclosingBracket,
+        /// Selects the content within the nearest enclosing delimiters
+        /// (brackets, braces, parentheses, or quotes), excluding the
+        /// delimiters.
+        /// Repeating the action expands the selection to the next enclosing
+        /// pair.
+        SelectInsideDelimiters,
+        /// Selects the nearest enclosing delimiters (brackets, braces,
+        /// parentheses, or quotes) together with the content between them.
+        /// Repeating the action expands the selection to the next enclosing
+        /// pair.
+        SelectAroundDelimiters,
         /// Moves cursor to the end of the document.
         MoveToEnd,
         /// Moves cursor to the end of the paragraph.
@@ -827,6 +856,10 @@ actions!(
         Backtab,
         /// Toggles a bookmark at the current line.
         ToggleBookmark,
+        /// Toggles a bookmark at the current line, prompting for a label when adding one.
+        ToggleBookmarkWithLabel,
+        /// Edits the bookmark's label at the current line.
+        EditBookmark,
         /// Toggles a breakpoint at the current line.
         ToggleBreakpoint,
         /// Toggles the case of selected text.
@@ -907,6 +940,10 @@ actions!(
         WrapSelectionsInTag,
         /// Aligns selections from different rows into the same column
         AlignSelections,
+        /// Saves the current location to navigation history.
+        SaveLocation,
+        /// Toggles breadcrumbs display.
+        ToggleBreadcrumb,
     ]
 );
 
