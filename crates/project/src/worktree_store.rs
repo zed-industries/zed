@@ -1156,7 +1156,6 @@ impl WorktreeStore {
                     root_repo_common_dir: worktree
                         .root_repo_common_dir()
                         .map(|p| p.to_string_lossy().into_owned()),
-                    // todo(git): We should wire this field to work in collab as well
                     root_repo_is_linked_worktree: worktree.root_repo_is_linked_worktree(),
                 }
             })
