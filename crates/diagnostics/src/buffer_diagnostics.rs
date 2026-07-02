@@ -375,10 +375,14 @@ impl BufferDiagnosticsEditor {
                     .read_with(cx, |b, cx| b.project.read(cx).languages().clone())
                     .ok();
 
+                let file_path = buffer_snapshot
+                    .file()
+                    .map(|file| file.path().as_unix_str().to_string());
                 let diagnostic_blocks = cx.update(|_window, cx| {
                     DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
+                        file_path.as_deref(),
                         Some(Arc::new(buffer_diagnostics_editor.clone())),
                         languages,
                         cx,

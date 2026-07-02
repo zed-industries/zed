@@ -95,7 +95,7 @@ use util::rel_path::RelPath;
 
 pub use buffer::Operation;
 pub use buffer::*;
-pub use diagnostic::{Diagnostic, DiagnosticSourceKind};
+pub use diagnostic::{Diagnostic, DiagnosticSourceKind, format_diagnostic_for_clipboard};
 pub use diagnostic_set::{DiagnosticEntry, DiagnosticEntryRef, DiagnosticGroup};
 pub use file_content::{ByteContent, FILE_ANALYSIS_BYTES, analyze_byte_content};
 pub use language_registry::{

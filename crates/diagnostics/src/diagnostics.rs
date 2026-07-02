@@ -550,10 +550,14 @@ impl ProjectDiagnosticsEditor {
                 let languages = this
                     .read_with(cx, |t, cx| t.project.read(cx).languages().clone())
                     .ok();
+                let file_path = buffer_snapshot
+                    .file()
+                    .map(|file| file.path().as_unix_str().to_string());
                 let more = cx.update(|_, cx| {
                     crate::diagnostic_renderer::DiagnosticRenderer::diagnostic_blocks_for_group(
                         group,
                         buffer_snapshot.remote_id(),
+                        file_path.as_deref(),
                         Some(diagnostics_toolbar_editor.clone()),
                         languages,
                         cx,

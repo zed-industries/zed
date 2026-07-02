@@ -6,7 +6,9 @@ use editor::{
     hover_popover::diagnostics_markdown_style,
 };
 use gpui::{AppContext, Entity, Focusable, WeakEntity};
-use language::{BufferId, Diagnostic, DiagnosticEntryRef, LanguageRegistry};
+use language::{
+    BufferId, Diagnostic, DiagnosticEntryRef, LanguageRegistry, format_diagnostic_for_clipboard,
+};
 use lsp::DiagnosticSeverity;
 use markdown::{CopyButtonVisibility, Markdown, MarkdownElement};
 use settings::Settings;
@@ -23,6 +25,7 @@ impl DiagnosticRenderer {
     pub fn diagnostic_blocks_for_group(
         diagnostic_group: Vec<DiagnosticEntryRef<'_, Point>>,
         buffer_id: BufferId,
+        file_path: Option<&str>,
         diagnostics_editor: Option<Arc<dyn DiagnosticsToolbarEditor>>,
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
@@ -56,7 +59,13 @@ impl DiagnosticRenderer {
                     initial_range: primary.range.clone(),
                     severity: primary.diagnostic.severity,
                     diagnostics_editor: diagnostics_editor.clone(),
-                    copy_message: primary.diagnostic.message.clone().into(),
+                    copy_message: format_diagnostic_for_clipboard(
+                        primary.diagnostic,
+                        file_path,
+                        primary.range.start.row + 1,
+                        primary.range.start.column + 1,
+                    )
+                    .into(),
                     markdown: cx.new(|cx| {
                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
                     }),
@@ -73,7 +82,13 @@ impl DiagnosticRenderer {
                     initial_range: entry.range.clone(),
                     severity: entry.diagnostic.severity,
                     diagnostics_editor: diagnostics_editor.clone(),
-                    copy_message: entry.diagnostic.message.clone().into(),
+                    copy_message: format_diagnostic_for_clipboard(
+                        entry.diagnostic,
+                        file_path,
+                        entry.range.start.row + 1,
+                        entry.range.start.column + 1,
+                    )
+                    .into(),
                     markdown: cx.new(|cx| {
                         Markdown::new(markdown.into(), language_registry.clone(), None, cx)
                     }),
@@ -131,9 +146,15 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
         language_registry: Option<Arc<LanguageRegistry>>,
         cx: &mut App,
     ) -> Vec<BlockProperties<Anchor>> {
+        let file_path = snapshot
+            .buffer_snapshot()
+            .buffer_for_id(buffer_id)
+            .and_then(|buffer| buffer.file())
+            .map(|file| file.path().as_unix_str().to_string());
         let blocks = Self::diagnostic_blocks_for_group(
             diagnostic_group,
             buffer_id,
+            file_path.as_deref(),
             None,
             language_registry,
             cx,
@@ -169,6 +190,7 @@ impl editor::DiagnosticRenderer for DiagnosticRenderer {
         let blocks = Self::diagnostic_blocks_for_group(
             diagnostic_group,
             buffer_id,
+            None,
             None,
             language_registry,
             cx,
