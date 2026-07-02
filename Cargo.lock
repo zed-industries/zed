@@ -4988,12 +4988,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "database_client",
+ "fs",
+ "futures 0.3.32",
  "gpui",
+ "gpui_tokio",
+ "log",
  "settings",
  "theme",
  "theme_settings",
  "ui",
+ "util",
  "workspace",
+ "zed_credentials_provider",
 ]
 
 [[package]]

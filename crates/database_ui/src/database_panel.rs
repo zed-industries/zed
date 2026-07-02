@@ -1,11 +1,26 @@
+use std::collections::HashSet;
+use std::ops::Range;
+use std::sync::Arc;
+
+use database_client::TableInfo;
+use fs::Fs;
 use gpui::{
-    Action, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle, Focusable, Pixels,
-    WeakEntity, Window, actions, px,
+    Action, AnyElement, App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, ListSizingBehavior, MouseDownEvent, ParentElement, Pixels, Point,
+    Render, Styled, Subscription, UniformListScrollHandle, WeakEntity, Window, actions, anchored,
+    deferred, px, uniform_list,
 };
-use ui::prelude::*;
+use settings::update_settings_file;
+use ui::{ContextMenu, IconName, ListItem, Tooltip, prelude::*};
+use util::ResultExt as _;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
+};
+
+use crate::connection_store::{
+    ClientFactory, ConnectionStatus, ConnectionStore, ConnectionStoreEvent, credentials_url,
+    default_client_factory,
 };
 
 actions!(
@@ -17,13 +32,71 @@ actions!(
         ToggleFocus,
         /// Opens the new connection dialog.
         AddConnection,
+        /// Reconnects the selected connection and reloads its tree.
+        RefreshConnection,
+        /// Opens the edit dialog for the selected connection.
+        EditConnection,
+        /// Removes the selected connection and deletes its saved password.
+        RemoveConnection,
+        /// Opens a new SQL query editor for the selected connection.
+        NewSqlQuery,
     ]
 );
 
+/// Identifies an expandable node in the connections tree.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum TreeNodeId {
+    Connection(String),
+    Database(String, String),
+    Schema(String, String, String),
+}
+
+/// A single visible row in the flattened tree, fed to `uniform_list`.
+enum TreeRow {
+    Connection {
+        name: String,
+        status: ConnectionStatus,
+        expanded: bool,
+    },
+    Database {
+        connection: String,
+        name: String,
+        expanded: bool,
+        loading: bool,
+    },
+    Schema {
+        connection: String,
+        database: String,
+        name: String,
+        expanded: bool,
+        loading: bool,
+    },
+    Table {
+        connection: String,
+        database: String,
+        schema: String,
+        info: TableInfo,
+    },
+    Loading {
+        depth: usize,
+    },
+    Error {
+        depth: usize,
+        message: String,
+    },
+}
+
 pub struct DatabasePanel {
+    workspace: WeakEntity<Workspace>,
+    fs: Arc<dyn Fs>,
+    store: Entity<ConnectionStore>,
     focus_handle: FocusHandle,
-    // Fields workspace: WeakEntity<Workspace>, fs: Arc<dyn Fs>, store: Entity<ConnectionStore>
-    // are added by Task 5; they are intentionally omitted here to avoid dead_code warnings.
+    expanded: HashSet<TreeNodeId>,
+    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    /// The connection the currently-open context menu (and its actions) target.
+    menu_target: Option<String>,
+    scroll_handle: UniformListScrollHandle,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl DatabasePanel {
@@ -37,38 +110,574 @@ impl DatabasePanel {
     }
 
     fn new(
-        _workspace: &mut Workspace,
+        workspace: &mut Workspace,
         _window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
-        cx.new(|cx| DatabasePanel {
-            focus_handle: cx.focus_handle(),
+        let fs = workspace.app_state().fs.clone();
+        let workspace_handle = cx.entity().downgrade();
+        cx.new(|cx| {
+            let client_factory: ClientFactory = default_client_factory(cx);
+            let store = cx.new(|cx| ConnectionStore::new(client_factory, cx));
+            let mut subscriptions = vec![cx.observe(&store, |_, _, cx| cx.notify())];
+            subscriptions.push(cx.subscribe(&store, Self::on_store_event));
+            DatabasePanel {
+                workspace: workspace_handle,
+                fs,
+                store,
+                focus_handle: cx.focus_handle(),
+                expanded: HashSet::new(),
+                context_menu: None,
+                menu_target: None,
+                scroll_handle: UniformListScrollHandle::new(),
+                _subscriptions: subscriptions,
+            }
         })
+    }
+
+    fn on_store_event(
+        &mut self,
+        _store: Entity<ConnectionStore>,
+        event: &ConnectionStoreEvent,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            ConnectionStoreEvent::ConnectionError { name, message } => {
+                let message = format!("{name}: {message}");
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        workspace.show_error(message, cx);
+                    })
+                    .log_err();
+            }
+        }
+    }
+
+    fn is_expanded(&self, node: &TreeNodeId) -> bool {
+        self.expanded.contains(node)
+    }
+
+    /// Walks the store's tree, emitting only the rows that are currently
+    /// visible given the set of expanded nodes.
+    fn build_rows(&self, cx: &App) -> Vec<TreeRow> {
+        let store = self.store.read(cx);
+        let mut rows = Vec::new();
+
+        for connection in store.connections() {
+            let connection_name = connection.config.name.clone();
+            let connection_id = TreeNodeId::Connection(connection_name.clone());
+            let connection_expanded = self.is_expanded(&connection_id);
+            rows.push(TreeRow::Connection {
+                name: connection_name.clone(),
+                status: connection.status.clone(),
+                expanded: connection_expanded,
+            });
+
+            if !connection_expanded {
+                continue;
+            }
+
+            match &connection.databases {
+                None => {
+                    if connection.status == ConnectionStatus::Connecting {
+                        rows.push(TreeRow::Loading { depth: 1 });
+                    } else if let ConnectionStatus::Error(message) = &connection.status {
+                        rows.push(TreeRow::Error {
+                            depth: 1,
+                            message: message.clone(),
+                        });
+                    }
+                }
+                Some(databases) => {
+                    for database in databases {
+                        let database_id =
+                            TreeNodeId::Database(connection_name.clone(), database.name.clone());
+                        let database_expanded = self.is_expanded(&database_id);
+                        rows.push(TreeRow::Database {
+                            connection: connection_name.clone(),
+                            name: database.name.clone(),
+                            expanded: database_expanded,
+                            loading: database.loading,
+                        });
+
+                        if !database_expanded {
+                            continue;
+                        }
+
+                        if let Some(message) = &database.error {
+                            rows.push(TreeRow::Error {
+                                depth: 2,
+                                message: message.clone(),
+                            });
+                        }
+
+                        match &database.schemas {
+                            None => {
+                                if database.loading {
+                                    rows.push(TreeRow::Loading { depth: 2 });
+                                }
+                            }
+                            Some(schemas) => {
+                                for schema in schemas {
+                                    let schema_id = TreeNodeId::Schema(
+                                        connection_name.clone(),
+                                        database.name.clone(),
+                                        schema.name.clone(),
+                                    );
+                                    let schema_expanded = self.is_expanded(&schema_id);
+                                    rows.push(TreeRow::Schema {
+                                        connection: connection_name.clone(),
+                                        database: database.name.clone(),
+                                        name: schema.name.clone(),
+                                        expanded: schema_expanded,
+                                        loading: schema.loading,
+                                    });
+
+                                    if !schema_expanded {
+                                        continue;
+                                    }
+
+                                    if let Some(message) = &schema.error {
+                                        rows.push(TreeRow::Error {
+                                            depth: 3,
+                                            message: message.clone(),
+                                        });
+                                    }
+
+                                    match &schema.tables {
+                                        None => {
+                                            if schema.loading {
+                                                rows.push(TreeRow::Loading { depth: 3 });
+                                            }
+                                        }
+                                        Some(tables) => {
+                                            for info in tables {
+                                                rows.push(TreeRow::Table {
+                                                    connection: connection_name.clone(),
+                                                    database: database.name.clone(),
+                                                    schema: schema.name.clone(),
+                                                    info: info.clone(),
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        rows
+    }
+
+    fn toggle_node(&mut self, node: TreeNodeId, cx: &mut Context<Self>) {
+        if self.expanded.remove(&node) {
+            cx.notify();
+            return;
+        }
+        self.expanded.insert(node.clone());
+
+        // Trigger lazy loading for the newly-expanded node.
+        match node {
+            TreeNodeId::Connection(connection) => {
+                let needs_connect = self.store.read(cx).connections().iter().any(|state| {
+                    state.config.name == connection
+                        && state.databases.is_none()
+                        && state.status != ConnectionStatus::Connecting
+                });
+                if needs_connect {
+                    self.store
+                        .update(cx, |store, cx| store.connect(&connection, cx));
+                }
+            }
+            TreeNodeId::Database(connection, database) => {
+                self.store.update(cx, |store, cx| {
+                    store.load_schemas(&connection, &database, cx)
+                });
+            }
+            TreeNodeId::Schema(connection, database, schema) => {
+                self.store.update(cx, |store, cx| {
+                    store.load_tables(&connection, &database, &schema, cx)
+                });
+            }
+        }
+        cx.notify();
+    }
+
+    fn open_table(
+        &mut self,
+        connection: &str,
+        database: &str,
+        schema: &str,
+        info: &TableInfo,
+        _cx: &mut Context<Self>,
+    ) {
+        // Task 7 will open a table data tab here.
+        log::debug!(
+            "open table {connection}/{database}/{schema}/{} (view={})",
+            info.name,
+            info.is_view
+        );
+    }
+
+    fn deploy_connection_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        connection_name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
+            menu.context(self.focus_handle.clone())
+                .action("Refresh", Box::new(RefreshConnection))
+                .action("Edit Connection…", Box::new(EditConnection))
+                .action("New SQL Query", Box::new(NewSqlQuery))
+                .separator()
+                .action("Remove Connection", Box::new(RemoveConnection))
+        });
+        window.focus(&context_menu.focus_handle(cx), cx);
+        let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+            this.context_menu.take();
+            cx.notify();
+        });
+        self.context_menu = Some((context_menu, position, subscription));
+        self.menu_target = Some(connection_name);
+        cx.notify();
+    }
+
+    fn refresh_connection(
+        &mut self,
+        _: &RefreshConnection,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(connection) = self.menu_target.clone() {
+            self.store
+                .update(cx, |store, cx| store.refresh(&connection, cx));
+        }
+    }
+
+    fn edit_connection(
+        &mut self,
+        _: &EditConnection,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        // Task 6 will open the edit-connection modal here.
+        if let Some(connection) = &self.menu_target {
+            log::debug!("edit connection {connection}");
+        }
+    }
+
+    fn new_sql_query(&mut self, _: &NewSqlQuery, _window: &mut Window, _cx: &mut Context<Self>) {
+        // Task 9 will open a SQL editor here.
+        if let Some(connection) = &self.menu_target {
+            log::debug!("new SQL query for {connection}");
+        }
+    }
+
+    fn remove_connection(
+        &mut self,
+        _: &RemoveConnection,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(connection) = self.menu_target.clone() else {
+            return;
+        };
+
+        let removed = connection.clone();
+        update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            if let Some(connections) = settings
+                .database
+                .as_mut()
+                .and_then(|database| database.connections.as_mut())
+            {
+                connections.retain(|entry| entry.name != removed);
+            }
+        });
+
+        let url = credentials_url(&connection);
+        let provider = zed_credentials_provider::global(cx);
+        cx.spawn(async move |_, cx| {
+            provider
+                .delete_credentials(&url, cx)
+                .await
+                .log_err();
+        })
+        .detach();
+    }
+
+    fn render_row(&self, row: &TreeRow, index: usize, cx: &Context<Self>) -> AnyElement {
+        match row {
+            TreeRow::Connection {
+                name,
+                status,
+                expanded,
+            } => self.render_connection_row(index, name, status, *expanded, cx),
+            TreeRow::Database {
+                connection,
+                name,
+                expanded,
+                loading,
+            } => self.render_database_row(index, connection, name, *expanded, *loading, cx),
+            TreeRow::Schema {
+                connection,
+                database,
+                name,
+                expanded,
+                loading,
+            } => self
+                .render_schema_row(index, connection, database, name, *expanded, *loading, cx),
+            TreeRow::Table {
+                connection,
+                database,
+                schema,
+                info,
+            } => self.render_table_row(index, connection, database, schema, info, cx),
+            TreeRow::Loading { depth } => ListItem::new(index)
+                .indent_level(*depth)
+                .child(Label::new("Loading…").color(Color::Muted).size(LabelSize::Small))
+                .into_any_element(),
+            TreeRow::Error { depth, message } => ListItem::new(index)
+                .indent_level(*depth)
+                .child(
+                    Label::new(message.clone())
+                        .color(Color::Error)
+                        .size(LabelSize::Small),
+                )
+                .tooltip({
+                    let message = message.clone();
+                    move |_, cx| Tooltip::simple(message.clone(), cx)
+                })
+                .into_any_element(),
+        }
+    }
+
+    fn render_connection_row(
+        &self,
+        index: usize,
+        name: &str,
+        status: &ConnectionStatus,
+        expanded: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let node = TreeNodeId::Connection(name.to_string());
+        let is_error = matches!(status, ConnectionStatus::Error(_));
+        let icon_color = if is_error { Color::Error } else { Color::Default };
+        let connection_name = name.to_string();
+
+        let mut item = ListItem::new(index)
+            .indent_level(0)
+            .toggle(Some(expanded))
+            .on_toggle(cx.listener({
+                let node = node.clone();
+                move |this, _, _, cx| this.toggle_node(node.clone(), cx)
+            }))
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::DatabaseZap).color(icon_color).size(IconSize::Small))
+                    .child(Label::new(connection_name.clone())),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_node(node.clone(), cx)))
+            .on_secondary_mouse_down(cx.listener(
+                move |this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.deploy_connection_context_menu(
+                        event.position,
+                        connection_name.clone(),
+                        window,
+                        cx,
+                    );
+                },
+            ));
+
+        if let ConnectionStatus::Error(message) = status {
+            let message = message.clone();
+            item = item.tooltip(move |_, cx| Tooltip::simple(message.clone(), cx));
+        }
+
+        item.into_any_element()
+    }
+
+    fn render_database_row(
+        &self,
+        index: usize,
+        connection: &str,
+        name: &str,
+        expanded: bool,
+        loading: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let node = TreeNodeId::Database(connection.to_string(), name.to_string());
+        let icon = if expanded { IconName::FolderOpen } else { IconName::Folder };
+        ListItem::new(index)
+            .indent_level(1)
+            .toggle(Some(expanded))
+            .on_toggle(cx.listener({
+                let node = node.clone();
+                move |this, _, _, cx| this.toggle_node(node.clone(), cx)
+            }))
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(Icon::new(icon).color(Color::Muted).size(IconSize::Small))
+                    .child(Label::new(name.to_string()))
+                    .when(loading, |this| {
+                        this.child(
+                            Label::new("…").color(Color::Muted).size(LabelSize::Small),
+                        )
+                    }),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_node(node.clone(), cx)))
+            .into_any_element()
+    }
+
+    fn render_schema_row(
+        &self,
+        index: usize,
+        connection: &str,
+        database: &str,
+        name: &str,
+        expanded: bool,
+        loading: bool,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let node =
+            TreeNodeId::Schema(connection.to_string(), database.to_string(), name.to_string());
+        ListItem::new(index)
+            .indent_level(2)
+            .toggle(Some(expanded))
+            .on_toggle(cx.listener({
+                let node = node.clone();
+                move |this, _, _, cx| this.toggle_node(node.clone(), cx)
+            }))
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::Book).color(Color::Muted).size(IconSize::Small))
+                    .child(Label::new(name.to_string()))
+                    .when(loading, |this| {
+                        this.child(
+                            Label::new("…").color(Color::Muted).size(LabelSize::Small),
+                        )
+                    }),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_node(node.clone(), cx)))
+            .into_any_element()
+    }
+
+    fn render_table_row(
+        &self,
+        index: usize,
+        connection: &str,
+        database: &str,
+        schema: &str,
+        info: &TableInfo,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let icon = if info.is_view { IconName::Eye } else { IconName::FileTree };
+        let label = if info.is_view {
+            format!("{} (view)", info.name)
+        } else {
+            info.name.clone()
+        };
+        let connection = connection.to_string();
+        let database = database.to_string();
+        let schema = schema.to_string();
+        let info = info.clone();
+        ListItem::new(index)
+            .indent_level(3)
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .child(Icon::new(icon).color(Color::Muted).size(IconSize::Small))
+                    .child(Label::new(label)),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.open_table(&connection, &database, &schema, &info, cx)
+            }))
+            .into_any_element()
     }
 }
 
 impl Render for DatabasePanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let rows = self.build_rows(cx);
+
+        let content = if rows.is_empty() {
+            v_flex()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_2()
+                .child(Label::new("No connections").color(Color::Muted))
+                .child(
+                    Button::new("add-connection-empty", "Add Connection").on_click(
+                        |_, window, cx| {
+                            window.dispatch_action(AddConnection.boxed_clone(), cx);
+                        },
+                    ),
+                )
+                .into_any_element()
+        } else {
+            let rows = Arc::new(rows);
+            uniform_list(
+                "database-tree",
+                rows.len(),
+                cx.processor(move |this, range: Range<usize>, _window, cx| {
+                    range
+                        .filter_map(|index| {
+                            rows.get(index).map(|row| this.render_row(row, index, cx))
+                        })
+                        .collect::<Vec<_>>()
+                }),
+            )
+            .size_full()
+            .with_sizing_behavior(ListSizingBehavior::Infer)
+            .track_scroll(&self.scroll_handle)
+            .into_any_element()
+        };
+
         v_flex()
             .key_context("DatabasePanel")
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::refresh_connection))
+            .on_action(cx.listener(Self::edit_connection))
+            .on_action(cx.listener(Self::remove_connection))
+            .on_action(cx.listener(Self::new_sql_query))
             .size_full()
             .bg(cx.theme().colors().panel_background)
             .child(
-                v_flex()
-                    .size_full()
-                    .items_center()
-                    .justify_center()
-                    .gap_2()
-                    .child(Label::new("No connections").color(Color::Muted))
+                h_flex()
+                    .px_2()
+                    .py_1()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border)
+                    .child(Label::new("Databases"))
                     .child(
-                        Button::new("add-connection", "Add Connection").on_click(
-                            |_, window, cx| {
+                        IconButton::new("add-connection", IconName::Plus)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Add Connection"))
+                            .on_click(|_, window, cx| {
                                 window.dispatch_action(AddConnection.boxed_clone(), cx);
-                            },
-                        ),
+                            }),
                     ),
             )
+            .child(v_flex().flex_1().size_full().overflow_hidden().child(content))
+            .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+                deferred(
+                    anchored()
+                        .position(*position)
+                        .anchor(gpui::Anchor::TopLeft)
+                        .child(menu.clone()),
+                )
+                .with_priority(3)
+            }))
     }
 }
 

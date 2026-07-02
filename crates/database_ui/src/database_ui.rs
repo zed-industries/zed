@@ -1,6 +1,8 @@
+mod connection_store;
 mod database_panel;
 mod database_settings;
 
+pub use connection_store::*;
 pub use database_panel::{DatabasePanel, Toggle, ToggleFocus};
 pub use database_settings::DatabaseSettings;
 
