@@ -4,8 +4,9 @@ use core_foundation::{
     array::{CFArray, CFArrayRef},
     attributed_string::CFMutableAttributedString,
     base::{CFRange, CFType, TCFType},
+    boolean::CFBoolean,
     number::CFNumber,
-    string::CFString,
+    string::{CFString, CFStringRef},
 };
 use core_graphics::{
     base::{CGFloat, CGGlyph, kCGImageAlphaPremultipliedLast},
@@ -17,8 +18,8 @@ use core_text::{
     font::CTFont,
     font_collection::CTFontCollectionRef,
     font_descriptor::{
-        CTFontDescriptor, kCTFontSlantTrait, kCTFontSymbolicTrait, kCTFontWeightTrait,
-        kCTFontWidthTrait,
+        CTFontDescriptor, CTFontTraits, kCTFontItalicTrait, kCTFontSlantTrait,
+        kCTFontSymbolicTrait, kCTFontWeightTrait, kCTFontWidthTrait,
     },
     line::CTLine,
     string_attributes::kCTFontAttributeName,
@@ -28,7 +29,10 @@ use font_kit::{
     handle::Handle,
     hinting::HintingOptions,
     metrics::Metrics,
-    properties::{Style as FontkitStyle, Weight as FontkitWeight},
+    properties::{
+        Properties as FontkitProperties, Stretch as FontkitStretch, Style as FontkitStyle,
+        Weight as FontkitWeight,
+    },
     source::SystemSource,
     sources::mem::MemSource,
 };
@@ -155,7 +159,7 @@ impl PlatformTextSystem for CoreTextSystem {
 
             let candidate_properties = candidates
                 .iter()
-                .map(|font_id| lock.fonts[font_id.0].properties())
+                .map(|font_id| lenient_font_properties(&lock.fonts[font_id.0]).unwrap_or_default())
                 .collect::<SmallVec<[_; 4]>>();
 
             let ix = font_kit::matching::find_best_match(
@@ -318,27 +322,9 @@ impl CoreTextSystemState {
             }
 
             // We've seen a number of panics in production caused by calling font.properties()
-            // which unwraps a downcast to CFNumber. This is an attempt to avoid the panic,
-            // and to try and identify the incalcitrant font.
-            let traits = font.native_font().all_traits();
-            if unsafe {
-                !(traits
-                    .get(kCTFontSymbolicTrait)
-                    .downcast::<CFNumber>()
-                    .is_some()
-                    && traits
-                        .get(kCTFontWidthTrait)
-                        .downcast::<CFNumber>()
-                        .is_some()
-                    && traits
-                        .get(kCTFontWeightTrait)
-                        .downcast::<CFNumber>()
-                        .is_some()
-                    && traits
-                        .get(kCTFontSlantTrait)
-                        .downcast::<CFNumber>()
-                        .is_some())
-            } {
+            // which unwraps a downcast to CFNumber. Reading the traits leniently up front
+            // both avoids the panic and identifies the incalcitrant font.
+            if lenient_font_properties(&font).is_none() {
                 log::error!(
                     "Failed to read traits for font {:?}",
                     font.postscript_name().unwrap()
@@ -697,6 +683,88 @@ fn fontkit_style(style: FontStyle) -> FontkitStyle {
         FontStyle::Italic => FontkitStyle::Italic,
         FontStyle::Oblique => FontkitStyle::Oblique,
     }
+}
+
+/// Computes CSS font properties the same way as `font_kit::Font::properties`,
+/// but tolerates traits stored as CFBoolean rather than CFNumber. CoreText on
+/// iOS represents zero-valued width and slant traits as CFBoolean `false`,
+/// which makes font-kit's CFNumber downcast panic for every system font.
+fn lenient_font_properties(font: &FontKitFont) -> Option<FontkitProperties> {
+    let traits = font.native_font().all_traits();
+    let (symbolic_traits, weight, width, slant) = unsafe {
+        (
+            trait_value(&traits, kCTFontSymbolicTrait)? as u32,
+            trait_value(&traits, kCTFontWeightTrait)? as f32,
+            trait_value(&traits, kCTFontWidthTrait)? as f32,
+            trait_value(&traits, kCTFontSlantTrait)?,
+        )
+    };
+
+    let style = if symbolic_traits & kCTFontItalicTrait != 0 {
+        FontkitStyle::Italic
+    } else if slant > 0.0 {
+        FontkitStyle::Oblique
+    } else {
+        FontkitStyle::Normal
+    };
+
+    Some(FontkitProperties {
+        style,
+        weight: core_text_to_css_font_weight(weight),
+        stretch: core_text_width_to_css_stretchiness(width),
+    })
+}
+
+unsafe fn trait_value(traits: &CTFontTraits, key: CFStringRef) -> Option<f64> {
+    let value = traits.find(key)?;
+    if let Some(number) = value.downcast::<CFNumber>() {
+        number.to_f64()
+    } else {
+        let boolean = value.downcast::<CFBoolean>()?;
+        Some(if boolean.into() { 1.0 } else { 0.0 })
+    }
+}
+
+// Mapping tables and interpolation copied from font-kit's Core Text loader,
+// where they are crate-private.
+const FONT_WEIGHT_MAPPING: [f32; 9] = [-0.7, -0.5, -0.23, 0.0, 0.2, 0.3, 0.4, 0.6, 0.8];
+const STRETCH_MAPPING: [f32; 9] = [0.5, 0.625, 0.75, 0.875, 1.0, 1.125, 1.25, 1.5, 2.0];
+
+fn core_text_to_css_font_weight(core_text_weight: f32) -> FontkitWeight {
+    FontkitWeight(
+        piecewise_linear_find_index(core_text_weight, &FONT_WEIGHT_MAPPING) * 100.0 + 100.0,
+    )
+}
+
+fn core_text_width_to_css_stretchiness(core_text_width: f32) -> FontkitStretch {
+    FontkitStretch(piecewise_linear_lookup(
+        (core_text_width + 1.0) * 4.0,
+        &STRETCH_MAPPING,
+    ))
+}
+
+fn piecewise_linear_lookup(index: f32, mapping: &[f32]) -> f32 {
+    let lower_value = mapping[index.floor() as usize];
+    let upper_value = mapping[index.ceil() as usize];
+    lower_value + (upper_value - lower_value) * index.fract()
+}
+
+fn piecewise_linear_find_index(query_value: f32, mapping: &[f32]) -> f32 {
+    let upper_index = match mapping.binary_search_by(|value| {
+        value
+            .partial_cmp(&query_value)
+            .unwrap_or(std::cmp::Ordering::Less)
+    }) {
+        Ok(index) => return index as f32,
+        Err(upper_index) => upper_index,
+    };
+    if upper_index == 0 || upper_index >= mapping.len() {
+        return upper_index as f32;
+    }
+    let lower_index = upper_index - 1;
+    let (upper_value, lower_value) = (mapping[upper_index], mapping[lower_index]);
+    let t = (query_value - lower_value) / (upper_value - lower_value);
+    lower_index as f32 + t
 }
 
 // Some fonts may have no attributes despite `core_text` requiring them (and panicking).
