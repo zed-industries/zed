@@ -295,19 +295,28 @@ pub(crate) fn with_element_arena<R>(f: impl FnOnce(&mut Arena) -> R) -> R {
 
 /// RAII guard that sets CURRENT_ELEMENT_ARENA for the duration of a draw operation.
 /// When dropped, restores the previous arena (supporting nested draws).
+///
+/// It also tracks scope depth on the arena itself, so that a nested draw's
+/// `ArenaClearNeeded::clear` is deferred rather than freeing memory the outer
+/// draw still references (see `Arena::clear`).
 pub(crate) struct ElementArenaScope {
+    entered: *const RefCell<Arena>,
     previous: Option<*const RefCell<Arena>>,
 }
 
 impl ElementArenaScope {
     /// Enter a scope where element allocations use the given arena.
     pub(crate) fn enter(arena: &RefCell<Arena>) -> Self {
+        arena.borrow_mut().begin_scope();
         let previous = CURRENT_ELEMENT_ARENA.with(|current| {
             let prev = current.get();
             current.set(Some(arena as *const RefCell<Arena>));
             prev
         });
-        Self { previous }
+        Self {
+            entered: arena as *const RefCell<Arena>,
+            previous,
+        }
     }
 }
 
@@ -316,6 +325,10 @@ impl Drop for ElementArenaScope {
         CURRENT_ELEMENT_ARENA.with(|current| {
             current.set(self.previous);
         });
+        // SAFETY: The pointer is valid because the arena is owned by the App,
+        // which outlives the draw operation that entered this scope.
+        let arena_cell = unsafe { &*self.entered };
+        arena_cell.borrow_mut().end_scope();
     }
 }
 
@@ -333,7 +346,9 @@ impl ArenaClearNeeded {
         }
     }
 
-    /// Clear the element arena.
+    /// Clear the element arena. If an enclosing draw is still in progress (this
+    /// draw was nested inside it), the clear is deferred to the enclosing draw's
+    /// own `ArenaClearNeeded` so that its live allocations aren't freed.
     pub fn clear(self) {
         // SAFETY: The arena pointer is valid because ArenaClearNeeded is created
         // at the end of draw() and must be cleared before the next draw.

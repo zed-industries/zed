@@ -1,4 +1,4 @@
-use std::{rc::Rc, sync::atomic::Ordering};
+use std::{cell::Cell, rc::Rc, sync::atomic::Ordering};
 
 use anyhow::Context as _;
 use gpui_util::ResultExt;
@@ -30,6 +30,34 @@ pub(crate) const WM_GPUI_GPU_DEVICE_LOST: u32 = WM_USER + 7;
 pub(crate) const WM_GPUI_KEYDOWN: u32 = WM_USER + 8;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
+
+thread_local! {
+    /// Whether a window on this thread is currently inside `draw_window`. Win32 can
+    /// re-enter the window procedure while a draw is in progress (e.g. cross-thread
+    /// `SendMessage` dispatch during message pumping, or modal message loops entered
+    /// by COM calls), and drawing re-entrantly would nest GPUI draws. Nested draws
+    /// are wasted work whose output is immediately redrawn, so we defer them instead.
+    static DRAWING_WINDOW: Cell<bool> = const { Cell::new(false) };
+}
+
+struct DrawWindowGuard;
+
+impl DrawWindowGuard {
+    fn try_acquire() -> Option<Self> {
+        if DRAWING_WINDOW.get() {
+            None
+        } else {
+            DRAWING_WINDOW.set(true);
+            Some(Self)
+        }
+    }
+}
+
+impl Drop for DrawWindowGuard {
+    fn drop(&mut self) {
+        DRAWING_WINDOW.set(false);
+    }
+}
 
 impl WindowsWindowInner {
     pub(crate) fn handle_msg(
@@ -1215,6 +1243,19 @@ impl WindowsWindowInner {
 
     #[inline]
     fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
+        let Some(_guard) = DrawWindowGuard::try_acquire() else {
+            // Defer this re-entrant draw: leave the window invalidated so a fresh
+            // WM_PAINT arrives once the in-progress draw has unwound.
+            if force_render {
+                self.state.force_render_after_recovery.set(true);
+            }
+            unsafe {
+                RedrawWindow(Some(handle), None, None, RDW_INVALIDATE)
+                    .ok()
+                    .log_err();
+            }
+            return Some(0);
+        };
         let mut request_frame = self.state.callbacks.request_frame.take()?;
 
         self.state.direct_manipulation.update();
