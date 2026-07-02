@@ -1490,13 +1490,11 @@ impl ThreadView {
 
                 let connection = self.thread.read(cx).connection().clone();
                 window.defer(cx, {
-                    let agent_id = self.agent_id.clone();
                     let server_view = self.server_view.clone();
                     move |window, cx| {
                         ConversationView::handle_auth_required(
                             server_view.clone(),
                             AuthRequired::new(),
-                            agent_id,
                             connection,
                             window,
                             cx,
@@ -10836,7 +10834,6 @@ impl ThreadView {
             .on_click(cx.listener({
                 move |this, _, window, cx| {
                     let server_view = this.server_view.clone();
-                    let agent_name = this.agent_id.clone();
 
                     this.clear_thread_error(cx);
                     if let Some(message) = this.in_flight_prompt.take() {
@@ -10849,7 +10846,6 @@ impl ThreadView {
                         ConversationView::handle_auth_required(
                             server_view,
                             AuthRequired::new(),
-                            agent_name,
                             connection,
                             window,
                             cx,

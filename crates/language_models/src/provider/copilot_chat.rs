@@ -16,7 +16,7 @@ use copilot_chat::{
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
-use gpui::{AnyView, App, AsyncApp, Entity, Subscription, Task};
+use gpui::{App, AsyncApp, Entity, Subscription, Task};
 use http_client::StatusCode;
 use language::language_settings::all_language_settings;
 use language_model::{
@@ -25,7 +25,7 @@ use language_model::{
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, ProviderConfigurationView, RateLimiter, Role, StopReason,
+    LanguageModelToolUse, MessageContent, ProviderSettingsView, RateLimiter, Role, StopReason,
     TokenUsage,
 };
 use settings::SettingsStore;
@@ -177,76 +177,42 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         Task::ready(Err(err.into()))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| {
-            copilot_ui::ConfigurationView::new(
-                |cx| {
-                    CopilotChat::global(cx)
-                        .map(|m| m.read(cx).is_authenticated())
-                        .unwrap_or(false)
-                },
-                copilot_ui::ConfigurationMode::Chat,
-                cx,
-            )
-        })
-        .into()
-    }
-
-    fn configuration_view_v2(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> ProviderConfigurationView {
-        // GitHub Copilot's control is just a sign-in/out button, so render it
-        // inline rather than behind a sub-page. The explanatory copy is surfaced
-        // via `inline_description` (the row's left column), so the view itself
-        // renders compactly.
-        ProviderConfigurationView::Inline {
-            view: cx
-                .new(|cx| {
-                    copilot_ui::ConfigurationView::new(
-                        |cx| {
-                            CopilotChat::global(cx)
-                                .map(|m| m.read(cx).is_authenticated())
-                                .unwrap_or(false)
-                        },
-                        copilot_ui::ConfigurationMode::Chat,
-                        cx,
-                    )
-                    .compact()
-                })
-                .into(),
-        }
-    }
-
-    fn inline_title(&self, cx: &App) -> Option<SharedString> {
-        if self.state.read(cx).is_authenticated(cx) {
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
+        let is_authenticated = self.state.read(cx).is_authenticated(cx);
+        let title = if is_authenticated {
             None
         } else {
             Some("Configure Copilot".into())
-        }
-    }
-
-    fn inline_description(&self, cx: &App) -> Option<language_model::InlineDescription> {
-        if self.state.read(cx).is_authenticated(cx) {
+        };
+        let description = if is_authenticated {
             None
         } else {
             Some(language_model::InlineDescription::Text(
                 "Requires an active GitHub Copilot subscription.".into(),
             ))
-        }
-    }
+        };
 
-    fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
-        Task::ready(Err(anyhow!(
-            "Signing out of GitHub Copilot Chat is currently not supported."
-        )))
+        Some(ProviderSettingsView::Inline(
+            language_model::InlineProviderSettings {
+                title,
+                description,
+                create_view: Arc::new(|_window, cx| {
+                    cx.new(|cx| {
+                        copilot_ui::ConfigurationView::new(
+                            |cx| {
+                                CopilotChat::global(cx)
+                                    .map(|m| m.read(cx).is_authenticated())
+                                    .unwrap_or(false)
+                            },
+                            copilot_ui::ConfigurationMode::Chat,
+                            cx,
+                        )
+                        .compact()
+                    })
+                    .into()
+                }),
+            },
+        ))
     }
 }
 
