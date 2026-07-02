@@ -13,7 +13,7 @@ use objc::{
     class,
     declare::ClassDecl,
     msg_send,
-    runtime::{BOOL, Class, NO, Object, Sel, YES},
+    runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES},
     sel, sel_impl,
 };
 use raw_window_handle as rwh;
@@ -21,6 +21,7 @@ use std::{
     cell::RefCell,
     ffi::{CStr, c_void},
     mem,
+    ops::Range,
     os::raw::c_char,
     ptr,
     rc::Rc,
@@ -43,6 +44,10 @@ unsafe extern "C" {
 }
 
 pub(crate) const WINDOW_STATE_IVAR: &str = "windowState";
+
+/// `UITextInteractionMode` value for editable text (caret, selection handles,
+/// loupe, and edit-menu gestures).
+const UI_TEXT_INTERACTION_MODE_EDITABLE: i64 = 0;
 
 const UI_GESTURE_RECOGNIZER_STATE_BEGAN: i64 = 1;
 const UI_GESTURE_RECOGNIZER_STATE_CHANGED: i64 = 2;
@@ -120,6 +125,14 @@ pub(crate) struct IosWindowState {
     /// Whether the text-input view was made first responder by the last
     /// responder poll (see `update_text_input_responder`).
     text_input_is_first_responder: bool,
+    /// The `UITextInteraction` attached to the text-input view while it is
+    /// first responder (retained), `nil` otherwise.
+    text_interaction: id,
+    /// The selection (UTF-16) and document length last reported to (or
+    /// observed on behalf of) UIKit's text system; diffed each tick to drive
+    /// `UITextInputDelegate` notifications (see
+    /// `synchronize_text_interaction`).
+    reported_text_input_state: Option<(Range<usize>, usize)>,
     scale_factor: f32,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
@@ -181,6 +194,10 @@ impl IosWindow {
             // arbitration: sub-slop touches stay taps, movement becomes a
             // scroll and the pending press is released off-window.
             let _: () = msg_send![pan_recognizer, setMaximumNumberOfTouches: 1usize];
+            // The delegate's `shouldReceiveTouch:` keeps touches on the
+            // text-input overlay away from the pan/pinch recognizers, so
+            // dragging a selection handle doesn't also scroll the app.
+            let _: () = msg_send![pan_recognizer, setDelegate: native_view];
             let _: () = msg_send![native_view, addGestureRecognizer: pan_recognizer];
             let _: () = msg_send![pan_recognizer, release];
 
@@ -190,12 +207,16 @@ impl IosWindow {
                 initWithTarget: native_view
                 action: sel!(handlePinch:)
             ];
+            let _: () = msg_send![pinch_recognizer, setDelegate: native_view];
             let _: () = msg_send![native_view, addGestureRecognizer: pinch_recognizer];
             let _: () = msg_send![pinch_recognizer, release];
 
             let text_input_view: id = msg_send![text_input::text_input_view_class(), alloc];
             let text_input_view: id = msg_send![text_input_view, initWithFrame: CGRect::default()];
-            let _: () = msg_send![native_view, addSubview: text_input_view];
+            // Interactive only while editing (see
+            // `update_text_input_responder`), so it never intercepts touches
+            // meant for gpui elements.
+            let _: () = msg_send![text_input_view, setUserInteractionEnabled: NO];
 
             let _: () = msg_send![native_window, setRootViewController: view_controller];
             let _: () = msg_send![native_window, makeKeyAndVisible];
@@ -224,6 +245,9 @@ impl IosWindow {
             let _: () = msg_send![metal_layer, setFrame: screen_bounds];
             let _: () = msg_send![metal_layer, setContentsScale: scale_factor as CGFloat];
             let _: () = msg_send![view_layer, addSublayer: metal_layer];
+            // Added after the Metal layer so UIKit's selection chrome (caret,
+            // highlight, handles) draws above gpui's rendering.
+            let _: () = msg_send![native_view, addSubview: text_input_view];
             renderer.update_drawable_size(bounds.size.to_device_pixels(scale_factor));
 
             let window = Self(Rc::new(RefCell::new(IosWindowState {
@@ -238,6 +262,8 @@ impl IosWindow {
                 screen_size: bounds.size,
                 keyboard_overlap: px(0.),
                 text_input_is_first_responder: false,
+                text_interaction: nil,
+                reported_text_input_state: None,
                 scale_factor,
                 request_frame_callback: None,
                 active_status_change_callback: None,
@@ -527,6 +553,10 @@ fn gpui_view_class() -> &'static Class {
         let mut decl = ClassDecl::new("GPUIView", class!(UIView))
             .expect("GPUIView class is already registered");
         decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
+        decl.add_protocol(
+            Protocol::get("UIGestureRecognizerDelegate")
+                .expect("UIGestureRecognizerDelegate protocol is registered by UIKit"),
+        );
         unsafe {
             decl.add_method(
                 sel!(touchesBegan:withEvent:),
@@ -551,6 +581,11 @@ fn gpui_view_class() -> &'static Class {
             decl.add_method(
                 sel!(handlePinch:),
                 handle_pinch as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(gestureRecognizer:shouldReceiveTouch:),
+                gesture_recognizer_should_receive_touch
+                    as extern "C" fn(&Object, Sel, id, id) -> BOOL,
             );
             decl.add_method(
                 sel!(canBecomeFirstResponder),
@@ -625,6 +660,7 @@ extern "C" fn step(this: &Object, _: Sel, _display_link: id) {
         window_state.borrow_mut().request_frame_callback = Some(callback);
     }
     update_text_input_responder(&window_state);
+    synchronize_text_interaction(&window_state);
 }
 
 /// Moves first-responder status between the text-input view and `GPUIView`
@@ -652,14 +688,168 @@ fn update_text_input_responder(window_state: &Rc<RefCell<IosWindowState>>) {
         state.text_input_is_first_responder = accepts_text_input;
         (state.text_input_view, state.native_view)
     };
-    unsafe {
-        if accepts_text_input {
+    if accepts_text_input {
+        // Frame the overlay over the focused element before UIKit first
+        // computes any selection geometry (`synchronize_text_interaction`
+        // keeps it tracking from here on).
+        update_text_input_frame(window_state);
+        unsafe {
+            let _: () = msg_send![text_input_view, setUserInteractionEnabled: YES];
+            // Attached only while editing so UIKit's text gesture recognizers
+            // can't interfere with app touch handling the rest of the time.
+            // Attached before becoming first responder so the interaction
+            // observes the responder transition and activates its selection
+            // display (caret) immediately.
+            let interaction: id = msg_send![
+                class!(UITextInteraction),
+                textInteractionForMode: UI_TEXT_INTERACTION_MODE_EDITABLE
+            ];
+            let _: () = msg_send![interaction, setTextInput: text_input_view];
+            let _: () = msg_send![text_input_view, addInteraction: interaction];
+            let _: id = msg_send![interaction, retain];
+            window_state.borrow_mut().text_interaction = interaction;
             let _: BOOL = msg_send![text_input_view, becomeFirstResponder];
-        } else {
+            // UIKit only activates the interaction's selection display (the
+            // caret) once it hears about a selection; the selection gpui
+            // focused with predates the responder change, so announce it.
+            let delegate: id = msg_send![text_input_view, inputDelegate];
+            if !delegate.is_null() {
+                let _: () = msg_send![delegate, selectionWillChange: text_input_view];
+                let _: () = msg_send![delegate, selectionDidChange: text_input_view];
+            }
+            // UITextInteraction only activates its selection display (the
+            // caret) from its own gestures, not from a programmatic
+            // becomeFirstResponder, so activate it explicitly.
+            let interactions: id = msg_send![text_input_view, interactions];
+            let interaction_count: usize = msg_send![interactions, count];
+            for index in 0..interaction_count {
+                let candidate: id = msg_send![interactions, objectAtIndex: index];
+                let is_selection_display: BOOL = msg_send![
+                    candidate,
+                    isKindOfClass: class!(UITextSelectionDisplayInteraction)
+                ];
+                if is_selection_display == YES {
+                    let _: () = msg_send![candidate, setActivated: YES];
+                }
+            }
+        }
+    } else {
+        let interaction = {
+            let mut state = window_state.borrow_mut();
+            state.reported_text_input_state = None;
+            mem::replace(&mut state.text_interaction, nil)
+        };
+        unsafe {
+            if !interaction.is_null() {
+                let _: () = msg_send![text_input_view, removeInteraction: interaction];
+                let _: () = msg_send![interaction, release];
+            }
+            let _: () = msg_send![text_input_view, setUserInteractionEnabled: NO];
+            let _: () = msg_send![text_input_view, setFrame: CGRect::default()];
             let _: BOOL = msg_send![text_input_view, resignFirstResponder];
             // Hardware key presses are only delivered along the responder
             // chain, so first-responder status must return to the main view.
             let _: BOOL = msg_send![native_view, becomeFirstResponder];
+        }
+    }
+}
+
+/// Frames the text-input view exactly over the focused text element so
+/// UIKit's selection chrome and text gestures are scoped to the element.
+/// The `UITextInput` geometry methods answer in this frame's local
+/// coordinates (see `text_input.rs`).
+fn update_text_input_frame(window_state: &Rc<RefCell<IosWindowState>>) {
+    let input_handler = window_state.borrow_mut().input_handler.take();
+    let Some(mut input_handler) = input_handler else {
+        return;
+    };
+    let element_bounds = input_handler.element_bounds();
+    window_state.borrow_mut().input_handler = Some(input_handler);
+    let Some(element_bounds) = element_bounds else {
+        return;
+    };
+    let frame = CGRect {
+        origin: CGPoint {
+            x: element_bounds.origin.x.as_f32() as CGFloat,
+            y: element_bounds.origin.y.as_f32() as CGFloat,
+        },
+        size: CGSize {
+            width: element_bounds.size.width.as_f32() as CGFloat,
+            height: element_bounds.size.height.as_f32() as CGFloat,
+        },
+    };
+    let text_input_view = window_state.borrow().text_input_view;
+    unsafe {
+        let current: CGRect = msg_send![text_input_view, frame];
+        if current.origin.x != frame.origin.x
+            || current.origin.y != frame.origin.y
+            || current.size.width != frame.size.width
+            || current.size.height != frame.size.height
+        {
+            let _: () = msg_send![text_input_view, setFrame: frame];
+        }
+    }
+}
+
+/// Keeps UIKit's text system in sync with gpui-side editing while the
+/// text-input view is first responder: tracks the focused element's frame
+/// and reports selection/text changes through the `UITextInputDelegate`, so
+/// the caret, selection handles, and edit menu follow typing and editor
+/// commands UIKit didn't itself initiate.
+fn synchronize_text_interaction(window_state: &Rc<RefCell<IosWindowState>>) {
+    let (text_input_view, is_editing) = {
+        let state = window_state.borrow();
+        (state.text_input_view, state.text_input_is_first_responder)
+    };
+    if !is_editing {
+        return;
+    }
+    update_text_input_frame(window_state);
+
+    let input_handler = window_state.borrow_mut().input_handler.take();
+    let Some(mut input_handler) = input_handler else {
+        return;
+    };
+    let selection = input_handler
+        .selected_text_range(false)
+        .map(|selection| selection.range);
+    let marked_range = input_handler.marked_text_range();
+    let document_length = text_input::document_length_utf16(&mut input_handler);
+    window_state.borrow_mut().input_handler = Some(input_handler);
+
+    let Some(selection) = selection else {
+        return;
+    };
+    let current = (selection, document_length);
+    let previous = window_state
+        .borrow_mut()
+        .reported_text_input_state
+        .replace(current.clone());
+    let Some(previous) = previous else {
+        return;
+    };
+    if previous == current {
+        return;
+    }
+    // During IME composition UIKit already knows the document is changing
+    // (it drives it through `setMarkedText:`); notifying the delegate then
+    // can cancel the composition.
+    if marked_range.is_some() {
+        return;
+    }
+    eprintln!("[ti] tick diff: {previous:?} -> {current:?}");
+    unsafe {
+        let delegate: id = msg_send![text_input_view, inputDelegate];
+        if delegate.is_null() {
+            return;
+        }
+        if previous.1 != current.1 {
+            let _: () = msg_send![delegate, textWillChange: text_input_view];
+            let _: () = msg_send![delegate, textDidChange: text_input_view];
+        }
+        if previous.0 != current.0 {
+            let _: () = msg_send![delegate, selectionWillChange: text_input_view];
+            let _: () = msg_send![delegate, selectionDidChange: text_input_view];
         }
     }
 }
@@ -909,6 +1099,14 @@ extern "C" fn touches_began(this: &Object, _: Sel, touches: id, _event: id) {
         }
     }
     let touch: id = unsafe { msg_send![touches, anyObject] };
+    // Touches that hit-test to the text-input overlay (interactive while
+    // editing) belong to UIKit's text gestures; they still reach this
+    // override through responder-chain forwarding, but must not drive the
+    // pointer shim.
+    let touch_view: id = unsafe { msg_send![touch, view] };
+    if touch_view != this as *const Object as id {
+        return;
+    }
     let (position, tap_count) = unsafe { touch_position_and_tap_count(this, touch) };
     {
         let mut state = window_state.borrow_mut();
@@ -1005,6 +1203,23 @@ extern "C" fn touches_cancelled(this: &Object, _: Sel, touches: id, _event: id) 
         }),
     );
     clear_hover(&window_state);
+}
+
+/// Keeps the window's pan/pinch recognizers away from touches that land on
+/// the text-input overlay (or UIKit's selection chrome inside it), so
+/// dragging a selection handle doesn't simultaneously scroll the app.
+extern "C" fn gesture_recognizer_should_receive_touch(
+    this: &Object,
+    _: Sel,
+    _recognizer: id,
+    touch: id,
+) -> BOOL {
+    let touch_view: id = unsafe { msg_send![touch, view] };
+    if touch_view == this as *const Object as id {
+        YES
+    } else {
+        NO
+    }
 }
 
 extern "C" fn handle_pan(this: &Object, _: Sel, recognizer: id) {

@@ -20,7 +20,8 @@ use crate::{
     },
 };
 use gpui::{
-    Bounds, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, Pixels, PlatformInput, point, px,
+    Bounds, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, Pixels, PlatformInput,
+    PlatformInputHandler, point, px,
 };
 use objc::{
     class,
@@ -53,6 +54,7 @@ const NS_ORDERED_SAME: i64 = 0;
 const NS_ORDERED_DESCENDING: i64 = 1;
 
 const NS_WRITING_DIRECTION_NATURAL: i64 = -1;
+const NS_WRITING_DIRECTION_LEFT_TO_RIGHT: i64 = 0;
 
 const NS_NOT_FOUND: u64 = i64::MAX as u64;
 
@@ -61,6 +63,9 @@ const RANGE_START_IVAR: &str = "rangeStart";
 const RANGE_END_IVAR: &str = "rangeEnd";
 const INPUT_DELEGATE_IVAR: &str = "inputDelegate";
 const TOKENIZER_IVAR: &str = "tokenizer";
+const SELECTION_RECT_IVAR: &str = "selectionRect";
+const CONTAINS_START_IVAR: &str = "containsStart";
+const CONTAINS_END_IVAR: &str = "containsEnd";
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -242,6 +247,28 @@ pub(crate) fn text_input_view_class() -> &'static Class {
                 sel!(characterRangeAtPoint:),
                 character_range_at_point as extern "C" fn(&Object, Sel, CGPoint) -> id,
             );
+            decl.add_method(
+                sel!(textInputView),
+                text_input_view_property as extern "C" fn(&Object, Sel) -> id,
+            );
+            decl.add_method(
+                sel!(canPerformAction:withSender:),
+                can_perform_action as extern "C" fn(&Object, Sel, Sel, id) -> BOOL,
+            );
+            decl.add_method(sel!(cut:), perform_cut as extern "C" fn(&Object, Sel, id));
+            decl.add_method(sel!(copy:), perform_copy as extern "C" fn(&Object, Sel, id));
+            decl.add_method(
+                sel!(paste:),
+                perform_paste as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(selectAll:),
+                perform_select_all as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(respondsToSelector:),
+                responds_to_selector as extern "C" fn(&Object, Sel, Sel) -> BOOL,
+            );
         }
         decl.register();
     });
@@ -356,14 +383,16 @@ unsafe fn range_offsets(range: id) -> Option<Range<usize>> {
 /// report the clamped result through `adjusted`. The probe uses `i32::MAX`
 /// rather than `usize::MAX` so handlers doing arithmetic on the endpoint
 /// can't overflow.
-fn document_length_utf16(this: &Object) -> usize {
-    with_input_handler(this, |input_handler| {
-        let mut adjusted = None;
-        let text = input_handler.text_for_range(0..i32::MAX as usize, &mut adjusted)?;
-        Some(adjusted.map_or_else(|| text.encode_utf16().count(), |range| range.end))
-    })
-    .flatten()
-    .unwrap_or(0)
+pub(crate) fn document_length_utf16(input_handler: &mut PlatformInputHandler) -> usize {
+    let mut adjusted = None;
+    let Some(text) = input_handler.text_for_range(0..i32::MAX as usize, &mut adjusted) else {
+        return 0;
+    };
+    adjusted.map_or_else(|| text.encode_utf16().count(), |range| range.end)
+}
+
+fn view_document_length_utf16(this: &Object) -> usize {
+    with_input_handler(this, document_length_utf16).unwrap_or(0)
 }
 
 extern "C" fn dealloc(this: &Object, _: Sel) {
@@ -392,6 +421,7 @@ extern "C" fn has_text(this: &Object, _: Sel) -> BOOL {
 
 extern "C" fn insert_text(this: &Object, _: Sel, text: id) {
     let text = unsafe { string_from_ns_string(text) };
+    eprintln!("[ti] insertText: {text:?}");
     if text == "\n" {
         // The software keyboard's return key arrives here rather than as a
         // press event, but gpui elements handle enter through key bindings
@@ -451,6 +481,7 @@ extern "C" fn replace_range_with_text(this: &Object, _: Sel, range: id, text: id
         return;
     };
     let text = unsafe { string_from_ns_string(text) };
+    eprintln!("[ti] replaceRange:{range:?} withText: {text:?}");
     with_input_handler(this, |input_handler| {
         input_handler.replace_text_in_range(Some(range), &text)
     });
@@ -464,13 +495,31 @@ extern "C" fn selected_text_range(this: &Object, _: Sel) -> id {
     .map_or(nil, |selection| unsafe { text_range(selection.range) })
 }
 
-/// gpui's `InputHandler` has no way to set the selection: on macOS,
-/// `NSTextInputClient` has no selection setter either, so gpui never needed
-/// one—selection only moves through the editor's own commands or through
-/// `setMarkedText`'s relative selection. Accepted as a no-op: UIKit calls
-/// this to reposition the caret after autocorrections and dictation, which
-/// are disabled on this view.
-extern "C" fn set_selected_text_range(_this: &Object, _: Sel, _range: id) {}
+extern "C" fn set_selected_text_range(this: &Object, _: Sel, range: id) {
+    eprintln!("[ti] setSelectedTextRange: {:?}", unsafe {
+        range_offsets(range)
+    });
+    let range = if range.is_null() {
+        // UIKit passes nil to clear the selection. gpui has no "no selection"
+        // state for a focused editable, so collapse to a caret at the
+        // selection's end.
+        let Some(selection) = with_input_handler(this, |input_handler| {
+            input_handler.selected_text_range(false)
+        })
+        .flatten() else {
+            return;
+        };
+        selection.range.end..selection.range.end
+    } else {
+        let Some(range) = (unsafe { range_offsets(range) }) else {
+            return;
+        };
+        range
+    };
+    with_input_handler(this, |input_handler| {
+        input_handler.set_selected_text_range(range)
+    });
+}
 
 extern "C" fn marked_text_range(this: &Object, _: Sel) -> id {
     with_input_handler(this, |input_handler| input_handler.marked_text_range())
@@ -486,6 +535,7 @@ extern "C" fn set_marked_text_style(_this: &Object, _: Sel, _style: id) {}
 
 extern "C" fn set_marked_text(this: &Object, _: Sel, text: id, selected_range: NSRange) {
     let text = unsafe { string_from_ns_string(text) };
+    eprintln!("[ti] setMarkedText: {text:?}");
     // The selection is relative to the marked text, matching what
     // `replace_and_mark_text_in_range` expects.
     let new_selected_range = if selected_range.location == NS_NOT_FOUND {
@@ -508,7 +558,7 @@ extern "C" fn beginning_of_document(_this: &Object, _: Sel) -> id {
 }
 
 extern "C" fn end_of_document(this: &Object, _: Sel) -> id {
-    unsafe { text_position(document_length_utf16(this)) }
+    unsafe { text_position(view_document_length_utf16(this)) }
 }
 
 extern "C" fn text_range_from_positions(
@@ -531,7 +581,7 @@ extern "C" fn position_from_position(this: &Object, _: Sel, position: id, offset
     };
     let new_offset = from as i64 + offset;
     // UIKit probes document edges by stepping past them and expects nil back.
-    if new_offset < 0 || new_offset > document_length_utf16(this) as i64 {
+    if new_offset < 0 || new_offset > view_document_length_utf16(this) as i64 {
         return nil;
     }
     unsafe { text_position(new_offset as usize) }
@@ -628,7 +678,7 @@ extern "C" fn character_range_by_extending_position(
     let range = match direction {
         UI_TEXT_LAYOUT_DIRECTION_LEFT | UI_TEXT_LAYOUT_DIRECTION_UP => 0..offset,
         UI_TEXT_LAYOUT_DIRECTION_RIGHT | UI_TEXT_LAYOUT_DIRECTION_DOWN => {
-            offset..document_length_utf16(this)
+            offset..view_document_length_utf16(this)
         }
         _ => return nil,
     };
@@ -650,7 +700,8 @@ extern "C" fn first_rect_for_range(this: &Object, _: Sel, range: id) -> CGRect {
     let Some(range) = (unsafe { range_offsets(range) }) else {
         return CGRect::default();
     };
-    bounds_to_rect(
+    bounds_to_local_rect(
+        this,
         with_input_handler(this, |input_handler| input_handler.bounds_for_range(range)).flatten(),
     )
 }
@@ -659,25 +710,42 @@ extern "C" fn caret_rect_for_position(this: &Object, _: Sel, position: id) -> CG
     let Some(offset) = (unsafe { position_offset(position) }) else {
         return CGRect::default();
     };
-    bounds_to_rect(
+    let mut rect = bounds_to_local_rect(
+        this,
         with_input_handler(this, |input_handler| {
             input_handler.bounds_for_range(offset..offset)
         })
         .flatten(),
-    )
+    );
+    // An empty range has zero-width bounds, but UIKit expects a caret rect
+    // with the caret's drawn width (it hit-tests taps against it to decide
+    // when a tap lands on the caret).
+    if rect.size.width == 0. {
+        rect.size.width = 2.;
+    }
+    rect
 }
 
-/// gpui reports bounds in window coordinates, which coincide with this
-/// view's coordinate space: the view sits at the origin of the full-screen
-/// `GPUIView`, and UIKit points map 1:1 onto gpui's logical pixels.
-fn bounds_to_rect(bounds: Option<Bounds<Pixels>>) -> CGRect {
+/// This view is `textInputView`, so UIKit exchanges all `UITextInput`
+/// geometry in its local coordinates, while gpui reports bounds in window
+/// coordinates. The view is framed over the focused element within the
+/// full-screen `GPUIView` (whose coordinates coincide with the window's, one
+/// UIKit point per gpui logical pixel), so converting is a translation by
+/// the view's frame origin.
+fn view_origin_in_window(this: &Object) -> CGPoint {
+    let frame: CGRect = unsafe { msg_send![this, frame] };
+    frame.origin
+}
+
+fn bounds_to_local_rect(this: &Object, bounds: Option<Bounds<Pixels>>) -> CGRect {
     let Some(bounds) = bounds else {
         return CGRect::default();
     };
+    let origin = view_origin_in_window(this);
     CGRect {
         origin: CGPoint {
-            x: bounds.origin.x.as_f32() as f64,
-            y: bounds.origin.y.as_f32() as f64,
+            x: bounds.origin.x.as_f32() as f64 - origin.x,
+            y: bounds.origin.y.as_f32() as f64 - origin.y,
         },
         size: CGSize {
             width: bounds.size.width.as_f32() as f64,
@@ -686,18 +754,104 @@ fn bounds_to_rect(bounds: Option<Bounds<Pixels>>) -> CGRect {
     }
 }
 
-extern "C" fn selection_rects_for_range(_this: &Object, _: Sel, _range: id) -> id {
-    // Selection isn't drawn by UIKit here—gpui paints its own selection—so
-    // an empty array satisfies the protocol.
-    unsafe { msg_send![class!(NSArray), array] }
+extern "C" fn selection_rects_for_range(this: &Object, _: Sel, range: id) -> id {
+    let rect = unsafe { range_offsets(range) }.and_then(|range| {
+        // An empty (caret) range still gets its zero-width rect: UIKit
+        // anchors the edit menu to these rects, and an empty array would
+        // leave the menu positioned off a null rectangle (invisible).
+        let is_empty = range.is_empty();
+        let bounds =
+            with_input_handler(this, |input_handler| input_handler.bounds_for_range(range))
+                .flatten()?;
+        Some((bounds, is_empty))
+    });
+    let Some((rect, is_empty)) = rect else {
+        return unsafe { msg_send![class!(NSArray), array] };
+    };
+    let rect = bounds_to_local_rect(this, Some(rect));
+    unsafe {
+        let selection_rect: id = msg_send![text_selection_rect_class(), alloc];
+        let selection_rect: id = msg_send![selection_rect, init];
+        (*selection_rect).set_ivar::<CGRect>(SELECTION_RECT_IVAR, rect);
+        // The field is single-line, so this one rect spans the whole
+        // selection and carries both endpoints (where UIKit anchors the
+        // selection handles). A caret rect carries neither, so no handles
+        // appear on it.
+        let contains_endpoints = if is_empty { NO } else { YES };
+        (*selection_rect).set_ivar::<BOOL>(CONTAINS_START_IVAR, contains_endpoints);
+        (*selection_rect).set_ivar::<BOOL>(CONTAINS_END_IVAR, contains_endpoints);
+        let selection_rect: id = msg_send![selection_rect, autorelease];
+        msg_send![class!(NSArray), arrayWithObject: selection_rect]
+    }
+}
+
+/// `UITextSelectionRect` subclass describing one rectangle of the selection
+/// highlight. The base class is abstract: every accessor must be overridden.
+fn text_selection_rect_class() -> &'static Class {
+    static REGISTER: Once = Once::new();
+    REGISTER.call_once(|| {
+        let mut decl = ClassDecl::new("GPUITextSelectionRect", class!(UITextSelectionRect))
+            .expect("GPUITextSelectionRect class is already registered");
+        decl.add_ivar::<CGRect>(SELECTION_RECT_IVAR);
+        decl.add_ivar::<BOOL>(CONTAINS_START_IVAR);
+        decl.add_ivar::<BOOL>(CONTAINS_END_IVAR);
+        unsafe {
+            decl.add_method(
+                sel!(rect),
+                selection_rect_rect as extern "C" fn(&Object, Sel) -> CGRect,
+            );
+            decl.add_method(
+                sel!(writingDirection),
+                selection_rect_writing_direction as extern "C" fn(&Object, Sel) -> i64,
+            );
+            decl.add_method(
+                sel!(containsStart),
+                selection_rect_contains_start as extern "C" fn(&Object, Sel) -> BOOL,
+            );
+            decl.add_method(
+                sel!(containsEnd),
+                selection_rect_contains_end as extern "C" fn(&Object, Sel) -> BOOL,
+            );
+            decl.add_method(
+                sel!(isVertical),
+                selection_rect_is_vertical as extern "C" fn(&Object, Sel) -> BOOL,
+            );
+        }
+        decl.register();
+    });
+    Class::get("GPUITextSelectionRect").expect("GPUITextSelectionRect was just registered")
+}
+
+extern "C" fn selection_rect_rect(this: &Object, _: Sel) -> CGRect {
+    unsafe { *this.get_ivar::<CGRect>(SELECTION_RECT_IVAR) }
+}
+
+extern "C" fn selection_rect_writing_direction(_this: &Object, _: Sel) -> i64 {
+    NS_WRITING_DIRECTION_LEFT_TO_RIGHT
+}
+
+extern "C" fn selection_rect_contains_start(this: &Object, _: Sel) -> BOOL {
+    unsafe { *this.get_ivar::<BOOL>(CONTAINS_START_IVAR) }
+}
+
+extern "C" fn selection_rect_contains_end(this: &Object, _: Sel) -> BOOL {
+    unsafe { *this.get_ivar::<BOOL>(CONTAINS_END_IVAR) }
+}
+
+extern "C" fn selection_rect_is_vertical(_this: &Object, _: Sel) -> BOOL {
+    NO
 }
 
 extern "C" fn closest_position_to_point(this: &Object, _: Sel, position: CGPoint) -> id {
     let index = character_index_for_point(this, position).unwrap_or_else(|| {
         // Past the end of the text (where the handler reports no character),
         // the closest position is the document end.
-        document_length_utf16(this)
+        view_document_length_utf16(this)
     });
+    eprintln!(
+        "[ti] closestPositionToPoint: ({}, {}) -> {index}",
+        position.x, position.y
+    );
     unsafe { text_position(index) }
 }
 
@@ -713,6 +867,10 @@ extern "C" fn closest_position_to_point_within_range(
     let index = character_index_for_point(this, position)
         .unwrap_or(range.end)
         .clamp(range.start, range.end);
+    eprintln!(
+        "[ti] closestPositionToPoint:withinRange: ({}, {}) {range:?} -> {index}",
+        position.x, position.y
+    );
     unsafe { text_position(index) }
 }
 
@@ -720,14 +878,142 @@ extern "C" fn character_range_at_point(this: &Object, _: Sel, position: CGPoint)
     let Some(index) = character_index_for_point(this, position) else {
         return nil;
     };
-    unsafe { text_range(index..index) }
+    // The range must span the character under the point, not collapse to a
+    // caret: UIKit reconciles this range with `closestPositionToPoint:` when
+    // placing the caret, and an inconsistent answer makes repeated taps at
+    // one spot oscillate between offsets (defeating, for example, the
+    // tap-on-caret edit-menu gesture). The character's UTF-16 length is
+    // recovered from the text itself to keep surrogate pairs intact.
+    let character_utf16_length = with_input_handler(this, |input_handler| {
+        let text = input_handler.text_for_range(index..index + 2, &mut None)?;
+        Some(
+            text.chars()
+                .next()
+                .map_or(0, |character| character.len_utf16()),
+        )
+    })
+    .flatten()
+    .unwrap_or(0);
+    eprintln!(
+        "[ti] characterRangeAtPoint -> {index}..{}",
+        index + character_utf16_length
+    );
+    unsafe { text_range(index..index + character_utf16_length) }
 }
 
 fn character_index_for_point(this: &Object, position: CGPoint) -> Option<usize> {
+    let origin = view_origin_in_window(this);
     with_input_handler(this, |input_handler| {
-        input_handler.character_index_for_point(point(px(position.x as f32), px(position.y as f32)))
+        input_handler.character_index_for_point(point(
+            px((position.x + origin.x) as f32),
+            px((position.y + origin.y) as f32),
+        ))
     })
     .flatten()
+}
+
+extern "C" fn text_input_view_property(this: &Object, _: Sel) -> id {
+    this as *const Object as id
+}
+
+fn selected_range(this: &Object) -> Option<Range<usize>> {
+    with_input_handler(this, |input_handler| {
+        input_handler.selected_text_range(false)
+    })
+    .flatten()
+    .map(|selection| selection.range)
+}
+
+fn write_to_pasteboard(text: &str) {
+    unsafe {
+        let pasteboard: id = msg_send![class!(UIPasteboard), generalPasteboard];
+        let _: () = msg_send![pasteboard, setString: ns_string(text)];
+    }
+}
+
+extern "C" fn responds_to_selector(this: &Object, _: Sel, selector: Sel) -> BOOL {
+    let responds: BOOL =
+        unsafe { msg_send![super(this, class!(UIView)), respondsToSelector: selector] };
+    eprintln!(
+        "[ti] respondsToSelector: {} -> {}",
+        selector.name(),
+        responds == YES
+    );
+    responds
+}
+
+extern "C" fn can_perform_action(this: &Object, _: Sel, action: Sel, sender: id) -> BOOL {
+    eprintln!("[ti] canPerformAction: {}", action.name());
+    if action == sel!(cut:) || action == sel!(copy:) {
+        return selected_range(this).is_some_and(|range| !range.is_empty()) as BOOL;
+    }
+    if action == sel!(paste:) {
+        let has_strings: BOOL = unsafe {
+            let pasteboard: id = msg_send![class!(UIPasteboard), generalPasteboard];
+            msg_send![pasteboard, hasStrings]
+        };
+        return has_strings;
+    }
+    if action == sel!(selectAll:) {
+        let length = view_document_length_utf16(this);
+        return (length > 0 && selected_range(this) != Some(0..length)) as BOOL;
+    }
+    unsafe { msg_send![super(this, class!(UIView)), canPerformAction: action withSender: sender] }
+}
+
+extern "C" fn perform_copy(this: &Object, _: Sel, _sender: id) {
+    let Some(range) = selected_range(this).filter(|range| !range.is_empty()) else {
+        return;
+    };
+    let text = with_input_handler(this, |input_handler| {
+        input_handler.text_for_range(range, &mut None)
+    })
+    .flatten();
+    if let Some(text) = text {
+        write_to_pasteboard(&text);
+    }
+}
+
+extern "C" fn perform_cut(this: &Object, _: Sel, _sender: id) {
+    let Some(range) = selected_range(this).filter(|range| !range.is_empty()) else {
+        return;
+    };
+    let text = with_input_handler(this, |input_handler| {
+        input_handler.text_for_range(range.clone(), &mut None)
+    })
+    .flatten();
+    let Some(text) = text else {
+        return;
+    };
+    write_to_pasteboard(&text);
+    with_input_handler(this, |input_handler| {
+        input_handler.replace_text_in_range(Some(range), "")
+    });
+}
+
+extern "C" fn perform_paste(this: &Object, _: Sel, _sender: id) {
+    let text = unsafe {
+        let pasteboard: id = msg_send![class!(UIPasteboard), generalPasteboard];
+        let string: id = msg_send![pasteboard, string];
+        if string.is_null() {
+            return;
+        }
+        string_from_ns_string(string)
+    };
+    let selection = selected_range(this);
+    with_input_handler(this, |input_handler| {
+        input_handler.replace_text_in_range(selection, &text)
+    });
+}
+
+extern "C" fn perform_select_all(this: &Object, _: Sel, _sender: id) {
+    let length = view_document_length_utf16(this);
+    if length == 0 {
+        return;
+    }
+    with_input_handler(this, |input_handler| {
+        input_handler.set_selected_text_range(0..length)
+    });
 }
 
 /// Routes a software-keyboard action through gpui's key-event path. The

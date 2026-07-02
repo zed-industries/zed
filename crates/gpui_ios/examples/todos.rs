@@ -8,9 +8,8 @@ mod example {
     use gpui::{
         App, Application, Bounds, ClickEvent, ElementInputHandler, Entity, EntityInputHandler,
         EventEmitter, FocusHandle, Font, FontWeight, GlobalElementId, InspectorElementId,
-        KeyBinding, LayoutId, MouseButton, PaintQuad, Point, ShapedLine, Style, Subscription,
-        TextRun, UTF16Selection, UnderlineStyle, WindowOptions, actions, fill, font, point,
-        relative, size,
+        KeyBinding, LayoutId, MouseButton, Point, ShapedLine, Style, Subscription, TextRun,
+        UTF16Selection, UnderlineStyle, WindowOptions, actions, font, point, relative,
     };
     use std::{ops::Range, rc::Rc};
     use theme::{LoadThemes, ThemeSettingsProvider, UiDensity};
@@ -139,6 +138,12 @@ mod example {
 
         fn on_tap(&mut self, event: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
             window.focus(&self.focus_handle, cx);
+            // gpui also synthesizes keyboard clicks (e.g. space on the
+            // focused element); those carry no meaningful position and must
+            // not move the caret.
+            let ClickEvent::Mouse(_) = event else {
+                return;
+            };
             let offset = self.index_for_position(event.position());
             self.selected_range = offset..offset;
             cx.notify();
@@ -325,10 +330,28 @@ mod example {
         ) -> Option<usize> {
             let bounds = self.last_bounds.as_ref()?;
             let layout = self.last_layout.as_ref()?;
+            if position.x < bounds.left() || position.x > bounds.left() + layout.width {
+                return None;
+            }
+            // Rounds to the closest character boundary rather than flooring
+            // to the character under the point: the platform places the
+            // caret at the returned offset, and iOS expects taps on the
+            // right half of a glyph to land after it (an inconsistent
+            // answer also breaks UIKit's tap-on-caret edit-menu gesture).
             let utf8_index = layout
-                .index_for_x(position.x - bounds.left())?
+                .closest_index_for_x(position.x - bounds.left())
                 .min(self.content.len());
             Some(self.offset_to_utf16(utf8_index))
+        }
+
+        fn set_selected_text_range(
+            &mut self,
+            range_utf16: Range<usize>,
+            _window: &mut Window,
+            cx: &mut Context<Self>,
+        ) {
+            self.selected_range = self.range_from_utf16(&range_utf16);
+            cx.notify();
         }
     }
 
@@ -363,15 +386,15 @@ mod example {
     }
 
     /// Custom element so painting can register the field as the window's
-    /// input handler and draw the caret and marked-text underline.
+    /// input handler and draw the text with its marked-text underline. The
+    /// caret and selection highlight are not painted here: on iOS, UIKit's
+    /// text interaction draws them (plus the selection handles) natively.
     struct TextFieldElement {
         field: Entity<TextField>,
     }
 
     struct TextFieldPrepaintState {
         line: ShapedLine,
-        cursor: Option<PaintQuad>,
-        selection: Option<PaintQuad>,
     }
 
     impl IntoElement for TextFieldElement {
@@ -411,7 +434,7 @@ mod example {
             &mut self,
             _id: Option<&GlobalElementId>,
             _inspector_id: Option<&InspectorElementId>,
-            bounds: Bounds<Pixels>,
+            _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
             window: &mut Window,
             cx: &mut App,
@@ -420,7 +443,6 @@ mod example {
             let field = self.field.read(cx);
             let content = field.content.clone();
             let placeholder = field.placeholder.clone();
-            let selected_range = field.selected_range.clone();
             let marked_range = field.marked_range.clone();
             let style = window.text_style();
 
@@ -471,43 +493,7 @@ mod example {
             let line = window
                 .text_system()
                 .shape_line(display_text, font_size, &runs, None);
-
-            let cursor_color = theme.players().local().cursor;
-            let (selection, cursor) = if selected_range.is_empty() {
-                let cursor_x = line.x_for_index(selected_range.start);
-                (
-                    None,
-                    Some(fill(
-                        Bounds::new(
-                            point(bounds.left() + cursor_x, bounds.top()),
-                            size(px(2.), bounds.size.height),
-                        ),
-                        cursor_color,
-                    )),
-                )
-            } else {
-                (
-                    Some(fill(
-                        Bounds::from_corners(
-                            point(
-                                bounds.left() + line.x_for_index(selected_range.start),
-                                bounds.top(),
-                            ),
-                            point(
-                                bounds.left() + line.x_for_index(selected_range.end),
-                                bounds.bottom(),
-                            ),
-                        ),
-                        theme.players().local().selection,
-                    )),
-                    None,
-                )
-            };
-            TextFieldPrepaintState {
-                line,
-                cursor,
-                selection,
-            }
+            TextFieldPrepaintState { line }
         }
 
         fn paint(
@@ -526,9 +512,6 @@ mod example {
                 ElementInputHandler::new(bounds, self.field.clone()),
                 cx,
             );
-            if let Some(selection) = prepaint.selection.take() {
-                window.paint_quad(selection);
-            }
             let line = std::mem::take(&mut prepaint.line);
             let line_paint = line.paint(
                 bounds.origin,
@@ -540,11 +523,6 @@ mod example {
             );
             if let Err(error) = line_paint {
                 eprintln!("failed to paint text field line: {error}");
-            }
-            if focus_handle.is_focused(window)
-                && let Some(cursor) = prepaint.cursor.take()
-            {
-                window.paint_quad(cursor);
             }
             self.field.update(cx, |field, _cx| {
                 field.last_layout = Some(line);
