@@ -2,11 +2,13 @@ mod connection_modal;
 mod connection_store;
 mod database_panel;
 mod database_settings;
+mod table_data_view;
 
 pub use connection_modal::ConnectionModal;
 pub use connection_store::*;
 pub use database_panel::{DatabasePanel, Toggle, ToggleFocus};
 pub use database_settings::DatabaseSettings;
+pub use table_data_view::{TableDataView, open_table_tab};
 
 use gpui::App;
 use workspace::Workspace;

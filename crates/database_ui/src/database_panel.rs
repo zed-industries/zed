@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;
 
-use database_client::TableInfo;
+use database_client::{TableInfo, TableRef};
 use fs::Fs;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter,
@@ -313,14 +313,18 @@ impl DatabasePanel {
         database: &str,
         schema: &str,
         info: &TableInfo,
-        _cx: &mut Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
-        // Task 7 will open a table data tab here.
-        log::debug!(
-            "open table {connection}/{database}/{schema}/{} (view={})",
-            info.name,
-            info.is_view
-        );
+        let Some(client) = self.store.read(cx).client_for(connection) else {
+            return;
+        };
+        let table = TableRef {
+            database: database.to_string(),
+            schema: schema.to_string(),
+            name: info.name.clone(),
+        };
+        crate::open_table_tab(&self.workspace, client, table, window, cx);
     }
 
     fn deploy_connection_context_menu(
@@ -643,8 +647,8 @@ impl DatabasePanel {
                     .child(Icon::new(icon).color(Color::Muted).size(IconSize::Small))
                     .child(Label::new(label)),
             )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_table(&connection, &database, &schema, &info, cx)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.open_table(&connection, &database, &schema, &info, window, cx)
             }))
             .into_any_element()
     }
