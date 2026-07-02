@@ -153,6 +153,7 @@ members = [
     "crates/panel",
     "crates/paths",
     "crates/picker",
+    "crates/picker_preview",
     "crates/platform_title_bar",
     "crates/prettier",
     "crates/project",
@@ -415,6 +416,7 @@ panel = { path = "crates/panel" }
 paths = { path = "crates/paths" }
 perf = { path = "tooling/perf" }
 picker = { path = "crates/picker" }
+picker_preview = { path = "crates/picker_preview" }
 prettier = { path = "crates/prettier" }
 settings_profile_selector = { path = "crates/settings_profile_selector" }
 project = { path = "crates/project" }
@@ -506,7 +508,7 @@ accesskit = "0.24.0"
 accesskit_macos = "0.26.0"
 accesskit_unix = "0.21.0"
 accesskit_windows = "0.33.1"
-agent-client-protocol = { version = "=1.0.0", features = ["unstable"] }
+agent-client-protocol = { version = "=1.0.1", features = ["unstable"] }
 aho-corasick = "1.1"
 alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "4c129667ce56611becdc82de6e28218c80e2e88f" }
 any_vec = "0.14"

@@ -299,6 +299,8 @@ actions!(
         OpenComponentPreview,
         /// Reloads the active item.
         ReloadActiveItem,
+        /// Reopens the most recently dismissed picker in the current window.
+        ReopenLastPicker,
         /// Resets the active dock to its default size.
         ResetActiveDockSize,
         /// Resets all open docks to their default sizes.
@@ -7446,6 +7448,7 @@ impl Workspace {
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
+            .on_action(cx.listener(Self::reopen_last_picker))
             .on_action(cx.listener(Self::toggle_edit_predictions_all_files))
             .on_action(cx.listener(Self::toggle_theme_mode))
             .on_action(cx.listener(|workspace, _: &Unfollow, window, cx| {
@@ -7913,6 +7916,22 @@ impl Workspace {
     pub fn hide_modal(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.modal_layer
             .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx))
+    }
+
+    fn reopen_last_picker(
+        &mut self,
+        _: &ReopenLastPicker,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // When triggered from within another modal (e.g. the command palette), that
+        // modal's dismissal is asynchronous, so defer the reveal until it has closed;
+        // otherwise a modal would still be active and the reveal would be a no-op.
+        cx.defer_in(window, |workspace, window, cx| {
+            workspace.modal_layer.update(cx, |modal_layer, cx| {
+                modal_layer.reveal_stashed_modal(window, cx);
+            });
+        });
     }
 
     pub fn toggle_status_toast<V: ToastView>(&mut self, entity: Entity<V>, cx: &mut App) {
@@ -9775,11 +9794,18 @@ pub async fn find_existing_workspace(
                 if let Ok(multi_workspace) = window.read(cx) {
                     for workspace in multi_workspace.workspaces() {
                         let project = workspace.read(cx).project.read(cx);
-                        let m = project.visibility_for_paths(
-                            abs_paths,
-                            open_options.workspace_matching != WorkspaceMatching::MatchSubdirectory,
-                            cx,
-                        );
+                        let m = match open_options.workspace_matching {
+                            WorkspaceMatching::None => None,
+                            WorkspaceMatching::MatchExact => {
+                                project.visibility_for_paths(abs_paths, true, cx)
+                            }
+                            WorkspaceMatching::MatchSubpaths => {
+                                project.visibility_for_subpaths(abs_paths, cx)
+                            }
+                            WorkspaceMatching::MatchSubdirectory => {
+                                project.visibility_for_paths(abs_paths, false, cx)
+                            }
+                        };
                         if m > best_match {
                             existing = Some((window, workspace.clone()));
                             best_match = m;
@@ -9846,6 +9872,9 @@ pub enum WorkspaceMatching {
     /// Match paths against existing worktree roots and files within them.
     #[default]
     MatchExact,
+    /// Match files and directories inside existing worktrees, excluding the
+    /// worktree roots themselves.
+    MatchSubpaths,
     /// Match paths against existing worktrees including subdirectories, and
     /// fall back to any existing window if no worktree matched.
     ///
@@ -9888,7 +9917,10 @@ impl Default for OpenOptions {
 
 impl OpenOptions {
     fn should_reuse_existing_window(&self) -> bool {
-        self.workspace_matching != WorkspaceMatching::None && self.open_mode != OpenMode::NewWindow
+        !matches!(
+            self.workspace_matching,
+            WorkspaceMatching::None | WorkspaceMatching::MatchSubpaths
+        ) && self.open_mode != OpenMode::NewWindow
     }
 }
 
@@ -14089,6 +14121,155 @@ mod tests {
         ) -> impl IntoElement {
             div().track_focus(&self.0)
         }
+    }
+
+    // Registers its focus handle as a reopenable picker on construction, like a real
+    // `Picker` does, so the modal layer recognizes it by focus identity.
+    struct ReopenableTestModal(FocusHandle);
+
+    impl ReopenableTestModal {
+        fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
+            let focus_handle = cx.focus_handle();
+            register_reopenable_picker(&focus_handle, cx);
+            Self(focus_handle)
+        }
+    }
+
+    impl EventEmitter<DismissEvent> for ReopenableTestModal {}
+
+    impl Focusable for ReopenableTestModal {
+        fn focus_handle(&self, _cx: &App) -> FocusHandle {
+            self.0.clone()
+        }
+    }
+
+    impl ModalView for ReopenableTestModal {}
+
+    impl Render for ReopenableTestModal {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut Context<ReopenableTestModal>,
+        ) -> impl IntoElement {
+            div().track_focus(&self.0)
+        }
+    }
+
+    #[gpui::test]
+    async fn test_reopen_last_picker(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // A non-reopenable modal is dropped on dismissal and cannot be revealed.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, TestModal::new);
+        });
+        cx.executor().run_until_parked();
+        assert!(workspace.read_with(cx, |workspace, cx| {
+            workspace.active_modal::<TestModal>(cx).is_some()
+        }));
+        workspace.update_in(cx, |workspace, window, cx| {
+            let revealed = workspace.modal_layer.update(cx, |modal_layer, cx| {
+                modal_layer.hide_modal(window, cx);
+                modal_layer.reveal_stashed_modal(window, cx)
+            });
+            assert!(!revealed, "a non-reopenable modal should not be revealable");
+        });
+
+        // A reopenable modal is stashed on dismissal and revealed as the *same*
+        // entity, so its prior state is preserved exactly.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, ReopenableTestModal::new);
+        });
+        cx.executor().run_until_parked();
+        let original_id = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_modal::<ReopenableTestModal>(cx)
+                .unwrap()
+                .entity_id()
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace
+                .modal_layer
+                .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx));
+        });
+        cx.executor().run_until_parked();
+        assert!(workspace.read_with(cx, |workspace, cx| {
+            workspace.active_modal::<ReopenableTestModal>(cx).is_none()
+        }));
+        workspace.update_in(cx, |workspace, window, cx| {
+            let revealed = workspace.modal_layer.update(cx, |modal_layer, cx| {
+                modal_layer.reveal_stashed_modal(window, cx)
+            });
+            assert!(revealed, "a reopenable modal should be revealable");
+        });
+        cx.executor().run_until_parked();
+        let revealed_id = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_modal::<ReopenableTestModal>(cx)
+                .unwrap()
+                .entity_id()
+        });
+        assert_eq!(
+            original_id, revealed_id,
+            "reveal should restore the same modal entity rather than building a new one"
+        );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let revealed = workspace.modal_layer.update(cx, |modal_layer, cx| {
+                modal_layer.reveal_stashed_modal(window, cx)
+            });
+            assert!(!revealed, "reveal should be a no-op while a modal is open");
+        });
+
+        // A non-reopenable modal must not discard the stash, which is what lets the
+        // command palette be used to trigger the reopen.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace
+                .modal_layer
+                .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx));
+            workspace.toggle_modal(window, cx, TestModal::new);
+        });
+        cx.executor().run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            let revealed = workspace.modal_layer.update(cx, |modal_layer, cx| {
+                modal_layer.hide_modal(window, cx);
+                modal_layer.reveal_stashed_modal(window, cx)
+            });
+            assert!(
+                revealed,
+                "a non-reopenable modal must not discard the stash"
+            );
+        });
+        cx.executor().run_until_parked();
+
+        // Reopen triggered from within a modal that dismisses asynchronously and
+        // dispatches the action in the same cycle, as the command palette does.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace
+                .modal_layer
+                .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx));
+            workspace.toggle_modal(window, cx, TestModal::new);
+        });
+        cx.executor().run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            // Mirror the command palette's confirm: emit DismissEvent on itself and
+            // dispatch the reopen action within the same update.
+            let palette = workspace.active_modal::<TestModal>(cx).unwrap();
+            palette.update(cx, |_, cx| cx.emit(DismissEvent));
+            workspace.reopen_last_picker(&ReopenLastPicker, window, cx);
+        });
+        cx.executor().run_until_parked();
+        assert!(
+            workspace.read_with(cx, |workspace, cx| workspace
+                .active_modal::<ReopenableTestModal>(cx)
+                .is_some()),
+            "reopen triggered from within a dismissing modal should reveal the stash"
+        );
     }
 
     #[gpui::test]
