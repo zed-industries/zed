@@ -254,9 +254,8 @@ use theme::{
 };
 use theme_settings::{ThemeSettings, observe_buffer_font_size_adjustment};
 use ui::{
-    Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
-    IconName, IconSize, Indicator, Key, KeyBinding, Tooltip, h_flex, prelude::*,
-    scrollbars::ScrollbarAutoHide, tooltip_container, utils::WithRemSize,
+    Avatar, ContextMenu, Disclosure, IconButtonShape, Indicator, Key, KeyBinding, Tooltip,
+    prelude::*, scrollbars::ScrollbarAutoHide, tooltip_container, utils::WithRemSize,
 };
 use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
@@ -1629,8 +1628,8 @@ enum GutterButtonIntent {
 impl GutterButtonIntent {
     fn as_str(&self) -> &'static str {
         match self {
-            Self::SetBookmark => "Set bookmark",
-            Self::SetBreakpoint => "Set breakpoint",
+            Self::SetBookmark => "Set Bookmark",
+            Self::SetBreakpoint => "Set Breakpoint",
         }
     }
 
@@ -1654,21 +1653,6 @@ impl GutterButtonIntent {
             Self::SetBreakpoint => &ToggleBreakpoint,
         }
     }
-
-    fn secondary_and_options(&self) -> String {
-        let alt_as_text = gpui::Keystroke {
-            modifiers: Modifiers::secondary_key(),
-            ..Default::default()
-        };
-        match self {
-            Self::SetBookmark => {
-                format!("{alt_as_text}-click to add a breakpoint\nright-click for more options")
-            }
-            Self::SetBreakpoint => {
-                format!("{alt_as_text}-click to add a bookmark\nright-click for more options")
-            }
-        }
-    }
 }
 
 struct GutterButtonTooltip {
@@ -1685,26 +1669,42 @@ impl GutterButtonTooltip {
             self.primary
         }
     }
+
+    fn meta_text(&self, intent: GutterButtonIntent) -> String {
+        const RIGHT_CLICK_HINT: &str = "right-click for more options";
+
+        if self.primary == self.secondary {
+            return RIGHT_CLICK_HINT.to_string();
+        }
+        let modifier_as_text = gpui::Keystroke {
+            modifiers: Modifiers::secondary_key(),
+            ..Default::default()
+        };
+        let other = match intent {
+            GutterButtonIntent::SetBookmark => "breakpoint",
+            GutterButtonIntent::SetBreakpoint => "bookmark",
+        };
+        format!("{modifier_as_text}-click to add a {other}\n{RIGHT_CLICK_HINT}")
+    }
 }
 
 impl Render for GutterButtonTooltip {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let intent = self.active_intent(window.modifiers());
         let key_binding = KeyBinding::for_action_in(intent.action(), &self.focus_handle, cx);
-        tooltip_container(cx, move |el, _| {
-            el.child(
+        let meta_text = self.meta_text(intent);
+
+        tooltip_container(cx, move |this, _| {
+            this.child(
                 h_flex()
-                    .gap_4()
                     .justify_between()
-                    .child(div().max_w_72().child(intent.as_str()))
+                    .child(intent.as_str())
                     .child(key_binding),
             )
             .child(
-                div().max_w_72().child(
-                    Label::new(intent.secondary_and_options())
-                        .size(LabelSize::Small)
-                        .color(Color::Muted),
-                ),
+                Label::new(meta_text)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
             )
         })
     }
