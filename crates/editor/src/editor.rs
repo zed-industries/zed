@@ -11626,30 +11626,50 @@ impl EditorSnapshot {
         current_selection_head: DisplayRow,
         count_wrapped_lines: bool,
     ) -> HashMap<DisplayRow, u32> {
-        let initial_offset =
-            self.relative_line_delta(current_selection_head, rows.start, count_wrapped_lines);
-
-        self.row_infos(rows.start)
+        let mut row_infos = self
+            .row_infos(rows.start)
             .take(rows.len())
             .enumerate()
-            .map(|(i, row_info)| (DisplayRow(rows.start.0 + i as u32), row_info))
+            .map(|(index, row_info)| (DisplayRow(rows.start.0 + index as u32), row_info))
             .filter(|(_row, row_info)| {
                 row_info.buffer_row.is_some()
                     || (count_wrapped_lines && row_info.wrapped_buffer_row.is_some())
             })
-            .enumerate()
-            .filter_map(|(i, (row, row_info))| {
+            .peekable();
+
+        // We find the first row that actually passes the filter and calculate its
+        // delta independently. This ensures accuracy when scrolling, as the first
+        // visible row in `rows` might be a wrap part that is filtered out, which
+        // would otherwise offset the counter for subsequent lines if we used
+        // `rows.start` as the base for enumeration.
+        let Some((first_row, _)) = row_infos.peek() else {
+            return HashMap::default();
+        };
+
+        let mut current_delta =
+            self.relative_line_delta(current_selection_head, *first_row, count_wrapped_lines);
+
+        row_infos
+            .filter_map(|(row, row_info)| {
+                let is_deleted = row_info
+                    .diff_status
+                    .is_some_and(|status| status.is_deleted());
+
+                if !self.number_deleted_lines && is_deleted {
+                    // Even if we don't number this line, it still counts as a unit
+                    // of distance for the relative numbers of lines below it.
+                    current_delta += 1;
+                    return None;
+                }
+
                 // We want to ensure here that the current line has absolute
                 // numbering, even if we are in a soft-wrapped line. With the
                 // exception that if we are in a deleted line, we should number this
                 // relative with 0, as otherwise it would have no line number at all
-                let relative_line_number = (initial_offset + i as i64).unsigned_abs() as u32;
+                let relative_line_number = current_delta.unsigned_abs() as u32;
+                current_delta += 1;
 
-                (relative_line_number != 0
-                    || row_info
-                        .diff_status
-                        .is_some_and(|status| status.is_deleted()))
-                .then_some((row, relative_line_number))
+                (relative_line_number != 0 || is_deleted).then_some((row, relative_line_number))
             })
             .collect()
     }

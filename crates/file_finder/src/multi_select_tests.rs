@@ -3,7 +3,7 @@
 //! changes, and the various ways of opening the whole selection.
 
 use gpui::{BorrowAppContext, Entity, TestAppContext, VisualTestContext};
-use picker::{Picker, PickerDelegate as _, ToggleMultiSelectItem, ToggleMultiSelectMode};
+use picker::{MultiSelectNext, Picker, PickerDelegate as _};
 use pretty_assertions::assert_eq;
 use project::Project;
 use serde_json::json;
@@ -75,19 +75,20 @@ impl TestContext {
         self.cx.run_until_parked();
     }
 
-    fn toggle_multi_select_mode(&mut self) {
-        self.cx.dispatch_action(ToggleMultiSelectMode);
-        self.cx.run_until_parked();
-    }
-
-    /// Toggles the file in or out of the multi-selection, like clicking its
-    /// row (or tabbing onto it) while multi-select mode is on.
-    fn toggle(&mut self, file_name: &str) {
+    fn select(&mut self, file_name: &str) {
         let index = self.index_of(file_name);
         self.picker.update_in(&mut self.cx, |picker, window, cx| {
             picker.delegate.set_selected_index(index, window, cx);
         });
-        self.cx.dispatch_action(ToggleMultiSelectItem);
+        self.cx.dispatch_action(MultiSelectNext);
+        self.cx.run_until_parked();
+    }
+
+    fn deselect(&mut self, file_name: &str) {
+        let index = self.index_of(file_name);
+        self.picker.update_in(&mut self.cx, |picker, window, cx| {
+            picker.delegate.toggle_item_selected(index, window, cx);
+        });
         self.cx.run_until_parked();
     }
 
@@ -186,9 +187,8 @@ async fn open_selection_as_tabs(cx: &mut TestAppContext) {
     let mut cx = TestContext::new(cx).await;
 
     cx.search("rs");
-    cx.toggle_multi_select_mode();
-    cx.toggle("b.rs");
-    cx.toggle("c.rs");
+    cx.select("b.rs");
+    cx.select("c.rs");
     cx.assert_selected(&["b.rs", "c.rs"]);
 
     cx.confirm();
@@ -199,14 +199,13 @@ async fn open_selection_as_tabs(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn toggling_twice_deselects(cx: &mut TestAppContext) {
+async fn tabbing_a_selected_row_deselects_it(cx: &mut TestAppContext) {
     let mut cx = TestContext::new(cx).await;
 
     cx.search("rs");
-    cx.toggle_multi_select_mode();
-    cx.toggle("b.rs");
-    cx.toggle("c.rs");
-    cx.toggle("b.rs");
+    cx.select("b.rs");
+    cx.select("c.rs");
+    cx.select("b.rs");
     cx.assert_selected(&["c.rs"]);
 }
 
@@ -215,8 +214,7 @@ async fn selection_pins_to_top_across_queries(cx: &mut TestAppContext) {
     let mut cx = TestContext::new(cx).await;
 
     cx.search("c");
-    cx.toggle_multi_select_mode();
-    cx.toggle("c.rs");
+    cx.select("c.rs");
 
     // `c.rs` doesn't match the new query, but stays selected and pinned to
     // the top of the results.
@@ -230,11 +228,10 @@ async fn deselecting_survives_queries(cx: &mut TestAppContext) {
     let mut cx = TestContext::new(cx).await;
 
     cx.search("c");
-    cx.toggle_multi_select_mode();
-    cx.toggle("c.rs");
+    cx.select("c.rs");
 
     cx.search("b");
-    cx.toggle("c.rs");
+    cx.deselect("c.rs");
     cx.assert_selected(&[]);
 
     // A deselected file must not come back selected or pinned on requery.
@@ -249,11 +246,10 @@ async fn create_new_file_row_is_not_selectable(cx: &mut TestAppContext) {
 
     // A query matching nothing produces only the "create new" row.
     cx.search("zzz");
-    cx.toggle_multi_select_mode();
     cx.picker.update_in(&mut cx.cx, |picker, window, cx| {
         picker.delegate.set_selected_index(0, window, cx);
     });
-    cx.cx.dispatch_action(ToggleMultiSelectItem);
+    cx.cx.dispatch_action(MultiSelectNext);
     cx.cx.run_until_parked();
     cx.assert_selected(&[]);
 }
@@ -263,9 +259,8 @@ async fn open_selection_in_one_split(cx: &mut TestAppContext) {
     let mut cx = TestContext::new(cx).await;
 
     cx.search("rs");
-    cx.toggle_multi_select_mode();
-    cx.toggle("b.rs");
-    cx.toggle("c.rs");
+    cx.select("b.rs");
+    cx.select("c.rs");
 
     cx.split_right();
     cx.assert_finder_closed();
@@ -286,9 +281,8 @@ async fn secondary_confirm_opens_one_split_per_file(cx: &mut TestAppContext) {
 
     cx.reopen_finder();
     cx.search("rs");
-    cx.toggle_multi_select_mode();
-    cx.toggle("b.rs");
-    cx.toggle("c.rs");
+    cx.select("b.rs");
+    cx.select("c.rs");
 
     cx.secondary_confirm();
     cx.assert_finder_closed();

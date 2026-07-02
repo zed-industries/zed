@@ -77,10 +77,11 @@ actions!(
         ToMultiBuffer,
         /// Toggles multi-select mode, in which clicking items adds them to
         /// the selection instead of opening them
-        ToggleMultiSelectMode,
-        /// Toggles whether the current item is in the multi-selection and
-        /// advances to the next item
-        ToggleMultiSelectItem,
+        ToggleMultiSelect,
+        /// Toggles the current item in the multi-selection and advances to
+        /// the next item, starting multi-select mode if it isn't already
+        /// active
+        MultiSelectNext,
     ]
 );
 
@@ -911,9 +912,9 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    fn toggle_multi_select_mode(
+    fn toggle_multi_select(
         &mut self,
-        _: &ToggleMultiSelectMode,
+        _: &ToggleMultiSelect,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -927,16 +928,19 @@ impl<D: PickerDelegate> Picker<D> {
         cx.notify();
     }
 
-    fn toggle_multi_select_item(
+    fn multi_select_next(
         &mut self,
-        _: &ToggleMultiSelectItem,
+        _: &MultiSelectNext,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.delegate.supports_multi_select() || !self.select_instead_of_open {
+        // Propagate so `tab` retains its other meanings (e.g.
+        // `ConfirmCompletion`) in pickers without multi-select.
+        if !self.delegate.supports_multi_select() {
             cx.propagate();
             return;
         }
+        self.select_instead_of_open = true;
         let ix = self.delegate.selected_index();
         self.delegate.toggle_item_selected(ix, window, cx);
         self.select_next(&menu::SelectNext, window, cx);
@@ -1729,7 +1733,7 @@ mod tests {
 
         // While the mode is on, clicks toggle items instead of confirming.
         picker.update_in(cx, |picker, window, cx| {
-            picker.toggle_multi_select_mode(&ToggleMultiSelectMode, window, cx);
+            picker.toggle_multi_select(&ToggleMultiSelect, window, cx);
             picker.handle_click(0, false, window, cx);
             picker.handle_click(2, false, window, cx);
         });
@@ -1756,7 +1760,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_toggle_item_action_requires_multi_select_mode(cx: &mut TestAppContext) {
+    async fn test_multi_select_next_starts_multi_select_mode(cx: &mut TestAppContext) {
         init_test(cx);
 
         let (picker, cx) = cx.add_window_view(|window, cx| {
@@ -1768,27 +1772,31 @@ mod tests {
         });
 
         picker.update_in(cx, |picker, window, cx| {
-            picker.toggle_multi_select_item(&ToggleMultiSelectItem, window, cx);
+            picker.multi_select_next(&MultiSelectNext, window, cx);
         });
         picker.update(cx, |picker, _cx| {
-            assert_eq!(
-                picker.delegate.selected_item_count(),
-                0,
-                "toggling an item while the mode is off should do nothing"
+            assert!(
+                picker.select_instead_of_open,
+                "selecting an item should start multi-select mode"
             );
-        });
-
-        picker.update_in(cx, |picker, window, cx| {
-            picker.toggle_multi_select_mode(&ToggleMultiSelectMode, window, cx);
-            picker.toggle_multi_select_item(&ToggleMultiSelectItem, window, cx);
-        });
-        picker.update(cx, |picker, _cx| {
             assert!(picker.delegate.is_item_selected(0));
             assert_eq!(
                 picker.delegate.selected_index(),
                 1,
-                "toggling should advance the cursor to the next item"
+                "selecting should advance the cursor to the next item"
             );
+        });
+
+        // In pickers without multi-select the action does nothing.
+        let (plain_picker, cx) = cx.add_window_view(|window, cx| {
+            Picker::uniform_list(TestDelegate::new(vec![true, true]), window, cx)
+        });
+        plain_picker.update_in(cx, |picker, window, cx| {
+            picker.multi_select_next(&MultiSelectNext, window, cx);
+        });
+        plain_picker.update(cx, |picker, _cx| {
+            assert!(!picker.select_instead_of_open);
+            assert_eq!(picker.delegate.selected_item_count(), 0);
         });
     }
 
@@ -1805,9 +1813,9 @@ mod tests {
         });
 
         picker.update_in(cx, |picker, window, cx| {
-            picker.toggle_multi_select_mode(&ToggleMultiSelectMode, window, cx);
+            picker.toggle_multi_select(&ToggleMultiSelect, window, cx);
             picker.handle_click(0, false, window, cx);
-            picker.toggle_multi_select_mode(&ToggleMultiSelectMode, window, cx);
+            picker.toggle_multi_select(&ToggleMultiSelect, window, cx);
         });
         picker.update(cx, |picker, _cx| {
             assert_eq!(

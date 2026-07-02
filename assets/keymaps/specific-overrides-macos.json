@@ -28,7 +28,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-p": "file_finder::SelectPrevious",
-      "tab": "picker::ToggleMultiSelectItem",
+      "tab": "picker::MultiSelectNext",
       "cmd-j": "pane::SplitDown",
       "cmd-k": "pane::SplitUp",
       "cmd-h": "pane::SplitLeft",
@@ -40,7 +40,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "alt-cmd-f": "text_finder::ToProjectSearch",
-      "tab": "picker::ToggleMultiSelectItem",
+      "tab": "picker::MultiSelectNext",
       "cmd-j": "pane::SplitDown",
       "cmd-k": "pane::SplitUp",
       "cmd-h": "pane::SplitLeft",

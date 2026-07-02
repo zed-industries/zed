@@ -8,7 +8,7 @@ use crate::PickerDelegate;
 use crate::SetPreviewBelow;
 use crate::SetPreviewRight;
 use crate::ToggleActionsMenu;
-use crate::ToggleMultiSelectMode;
+use crate::ToggleMultiSelect;
 use crate::TogglePreview;
 use crate::preview;
 
@@ -106,7 +106,7 @@ impl<D: PickerDelegate> Picker<D> {
                 actions.push(PickerAction::separator());
             }
             actions.push(
-                PickerAction::button("Multi Select", ToggleMultiSelectMode.boxed_clone())
+                PickerAction::button("Multi Select", ToggleMultiSelect.boxed_clone())
                     .toggled(self.select_instead_of_open),
             );
         }
