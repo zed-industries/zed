@@ -97,15 +97,15 @@ can span multiple roots, and each Git root keeps its own Git state.
 
 Zed shows project, worktree, and branch context in different places:
 
-| Surface | What it shows or controls |
-| --- | --- |
-| Project picker | The current project or recent project you are opening. |
-| Worktree picker | The linked Git worktree checkout for the current project. |
-| Branch picker | The branch or detached commit checked out in the active Git worktree. |
-| Project Panel | The roots in the current project, including multi-root folders and linked Git worktrees. |
-| Git Panel | The active Git repository. In multi-root projects, use the repository selector before staging, committing, fetching, pulling, or pushing. |
-| Threads Sidebar | Threads grouped by project. Threads in linked Git worktrees appear with the main checkout's project group. |
-| Terminal Threads | Terminal-backed threads with their own terminal working directory and shell environment. |
+| Surface          | What it shows or controls                                                                                                                 |
+| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Project picker   | The current project or recent project you are opening.                                                                                    |
+| Worktree picker  | The linked Git worktree checkout for the current project.                                                                                 |
+| Branch picker    | The branch or detached commit checked out in the active Git worktree.                                                                     |
+| Project Panel    | The roots in the current project, including multi-root folders and linked Git worktrees.                                                  |
+| Git Panel        | The active Git repository. In multi-root projects, use the repository selector before staging, committing, fetching, pulling, or pushing. |
+| Threads Sidebar  | Threads grouped by project. Threads in linked Git worktrees appear with the main checkout's project group.                                |
+| Terminal Threads | Terminal-backed threads with their own terminal working directory and shell environment.                                                  |
 
 When you are choosing where an operation runs, use these rules:
 
