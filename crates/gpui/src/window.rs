@@ -360,12 +360,14 @@ impl ElementArenaScope {
     }
 
     /// End the scope: restores the previously-current arena and ends the
-    /// arena's clear-deferral scope.
+    /// arena's clear-deferral scope. Returns the token for the arena clear the
+    /// draw now owes; producing it here makes it impossible to request a clear
+    /// before the scope has ended (which would be silently deferred forever).
     ///
     /// Panics if passed a different arena than was entered: ending the scope
     /// of the wrong arena would unbalance two arenas' scope depths, allowing
     /// one of them to clear while a draw still references its memory.
-    pub(crate) fn exit(mut self, arena: &RefCell<Arena>) {
+    pub(crate) fn exit(mut self, arena: &RefCell<Arena>) -> ArenaClearNeeded {
         assert!(
             std::ptr::eq(self.entered, arena),
             "ElementArenaScope::exit called with a different arena than was entered"
@@ -375,6 +377,7 @@ impl ElementArenaScope {
             current.set(self.previous);
         });
         arena.borrow_mut().end_scope();
+        ArenaClearNeeded::new(arena)
     }
 }
 
@@ -404,8 +407,9 @@ pub struct ArenaClearNeeded {
 }
 
 impl ArenaClearNeeded {
-    /// Create a new ArenaClearNeeded token for the App whose arena was drawn into.
-    pub(crate) fn new(arena: &RefCell<Arena>) -> Self {
+    /// Create a new ArenaClearNeeded token for the App whose arena was drawn
+    /// into. Private: the only way to obtain one is [`ElementArenaScope::exit`].
+    fn new(arena: &RefCell<Arena>) -> Self {
         Self {
             arena: arena as *const RefCell<Arena>,
         }
@@ -2822,9 +2826,7 @@ impl Window {
 
         // End the arena scope explicitly: `ElementArenaScope::drop` can't do it
         // because it has no access to `cx` (see its docs).
-        arena_scope.exit(&cx.element_arena);
-
-        ArenaClearNeeded::new(&cx.element_arena)
+        arena_scope.exit(&cx.element_arena)
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
