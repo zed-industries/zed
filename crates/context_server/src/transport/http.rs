@@ -58,6 +58,9 @@ pub struct HttpTransport {
     /// When set, the transport attaches `Authorization: Bearer` headers and
     /// handles 401 responses with token refresh + retry.
     token_provider: Option<Arc<dyn OAuthTokenProvider>>,
+    /// The challenge from the last 401 this transport gave up on. See
+    /// [`Transport::auth_challenge`].
+    auth_challenge: SyncMutex<Option<WwwAuthenticate>>,
 }
 
 impl HttpTransport {
@@ -92,6 +95,7 @@ impl HttpTransport {
             error_rx,
             headers,
             token_provider,
+            auth_challenge: SyncMutex::new(None),
         }
     }
 
@@ -131,6 +135,14 @@ impl HttpTransport {
         }
 
         Ok(request_builder.body(AsyncBody::from(message.to_vec()))?)
+    }
+
+    /// Record the challenge so it remains observable after the failed send
+    /// tears down the client (see [`Transport::auth_challenge`]), and build
+    /// the typed error for the send itself.
+    fn auth_required(&self, www_authenticate: WwwAuthenticate) -> anyhow::Error {
+        *self.auth_challenge.lock() = Some(www_authenticate.clone());
+        TransportError::AuthRequired { www_authenticate }.into()
     }
 
     /// Send a message and handle the response based on content type.
@@ -174,13 +186,13 @@ impl HttpTransport {
 
                     // If still 401 after refresh, give up.
                     if response.status().as_u16() == 401 {
-                        return Err(TransportError::AuthRequired { www_authenticate }.into());
+                        return Err(self.auth_required(www_authenticate));
                     }
                 } else {
-                    return Err(TransportError::AuthRequired { www_authenticate }.into());
+                    return Err(self.auth_required(www_authenticate));
                 }
             } else {
-                return Err(TransportError::AuthRequired { www_authenticate }.into());
+                return Err(self.auth_required(www_authenticate));
             }
         }
 
@@ -334,6 +346,10 @@ impl Transport for HttpTransport {
 
     fn set_protocol_version(&self, version: &str) {
         *self.protocol_version.lock() = Some(version.to_string());
+    }
+
+    fn auth_challenge(&self) -> Option<WwwAuthenticate> {
+        self.auth_challenge.lock().clone()
     }
 }
 

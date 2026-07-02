@@ -93,6 +93,9 @@ enum ContextServerState {
     Running {
         server: Arc<ContextServer>,
         configuration: Arc<ContextServerConfiguration>,
+        /// Initiates the OAuth flow if the transport shuts down on an
+        /// authentication challenge; cancelled by any state transition.
+        _transport_watch: Task<()>,
     },
     Stopped {
         server: Arc<ContextServer>,
@@ -708,9 +711,12 @@ impl ContextServerStore {
                 let new_state = match server.clone().start(cx).await {
                     Ok(_) => {
                         debug_assert!(server.client().is_some());
+                        let _transport_watch =
+                            Self::watch_transport_shutdown(this.clone(), server.clone(), cx);
                         ContextServerState::Running {
                             server,
                             configuration,
+                            _transport_watch,
                         }
                     }
                     Err(err) => resolve_start_failure(&id, err, server, configuration, cx).await,
@@ -733,48 +739,70 @@ impl ContextServerStore {
         );
     }
 
-    /// Handle an error returned by a request to a running context server.
+    /// Watches a running server's transport and initiates the OAuth flow if it
+    /// shuts down on an authentication challenge.
     ///
-    /// If the error is a `401` carrying a `WWW-Authenticate` challenge (surfaced
-    /// as [`TransportError::AuthRequired`]), this initiates the OAuth flow the
-    /// same way a 401 during startup would: it runs discovery and transitions
-    /// the server into `AuthRequired`, so the UI can offer an "Authenticate"
-    /// affordance. This is what lets servers that only challenge on
-    /// `tools/list` / `tools/call` (rather than on `initialize`) trigger auth.
-    ///
-    /// Returns `true` when the error was an authentication error (whether or not
-    /// a transition happened), so callers can distinguish it from ordinary
-    /// request failures.
-    pub fn handle_request_error(
-        &mut self,
-        id: &ContextServerId,
-        err: &anyhow::Error,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let www_authenticate = match err.downcast_ref::<TransportError>() {
-            Some(TransportError::AuthRequired { www_authenticate }) => www_authenticate.clone(),
-            None => return false,
-        };
-
-        // Only act on a server we currently believe is running. If it is already
-        // starting/authenticating/errored, another path is handling it and a
-        // concurrent 401 (e.g. from a second in-flight tool call) is a no-op.
-        let Some(ContextServerState::Running {
-            server,
-            configuration,
-        }) = self.servers.get(id)
+    /// MCP servers may accept `initialize` unauthenticated and only send a 401
+    /// with a `WWW-Authenticate` challenge on a later request or notification.
+    /// The HTTP transport records the challenge, and the failed send tears
+    /// down the client's output loop. Observing that shutdown — rather than
+    /// relying on some request to carry a typed error back to a caller — is
+    /// what lets any post-initialize 401 move the server into `AuthRequired`
+    /// instead of leaving it `Running` with a dead client.
+    fn watch_transport_shutdown(
+        this: WeakEntity<Self>,
+        server: Arc<ContextServer>,
+        cx: &mut AsyncApp,
+    ) -> Task<()> {
+        let Some(shutdown) = server
+            .client()
+            .and_then(|client| client.wait_for_shutdown())
         else {
-            return true;
+            return Task::ready(());
         };
-        let server = server.clone();
+        cx.spawn(async move |cx| {
+            let Some(www_authenticate) = shutdown.await else {
+                // Non-auth transport deaths leave the server state untouched,
+                // as they did before this watch existed.
+                return;
+            };
+            this.update(cx, |this, cx| {
+                this.handle_auth_challenge(server, www_authenticate, cx);
+            })
+            .log_err();
+        })
+    }
+
+    fn handle_auth_challenge(
+        &mut self,
+        server: Arc<ContextServer>,
+        www_authenticate: oauth::WwwAuthenticate,
+        cx: &mut Context<Self>,
+    ) {
+        let id = server.id();
+
+        // Act only if this exact server is still the one we consider running.
+        // If the state has changed since the challenge was recorded, whoever
+        // changed it owns the lifecycle now.
+        let Some(ContextServerState::Running {
+            server: running_server,
+            configuration,
+            ..
+        }) = self.servers.get(&id)
+        else {
+            return;
+        };
+        if !Arc::ptr_eq(running_server, &server) {
+            return;
+        }
         let configuration = configuration.clone();
 
         log::info!("{id} received 401 after initialization; initiating OAuth authorization");
 
-        // The transport tears down the client's output loop on the first 401, so
-        // the running client is already dead. Stop it, then re-resolve auth using
-        // the captured `WWW-Authenticate` — do not restart via `run_server`, as a
-        // fresh `initialize` would succeed and lose the challenge.
+        // The 401 already tore down the client's output loop. Stop the dead
+        // client, then resolve auth using the captured `WWW-Authenticate` — do
+        // not restart via `run_server`, as a fresh `initialize` would succeed
+        // and lose the challenge.
         server.stop().log_err();
 
         let task = cx.spawn({
@@ -792,7 +820,7 @@ impl ContextServerStore {
         });
 
         self.update_server_state(
-            id.clone(),
+            id,
             ContextServerState::Starting {
                 configuration,
                 _task: task,
@@ -800,8 +828,6 @@ impl ContextServerStore {
             },
             cx,
         );
-
-        true
     }
 
     fn remove_server(&mut self, id: &ContextServerId, cx: &mut Context<Self>) -> Result<()> {
@@ -1819,8 +1845,9 @@ async fn resolve_start_failure(
 /// appropriate state (`AuthRequired`, `ClientSecretRequired`, or `Error`).
 ///
 /// Shared by the startup path ([`resolve_start_failure`]) and the
-/// post-initialize path ([`ContextServerStore::handle_request_error`]) so that
-/// a 401 on any request — not only `initialize` — can initiate the OAuth flow.
+/// post-initialize path ([`ContextServerStore::handle_auth_challenge`]) so
+/// that a 401 at any point — not only during `initialize` — can initiate the
+/// OAuth flow.
 async fn resolve_auth_required(
     id: &ContextServerId,
     www_authenticate: &oauth::WwwAuthenticate,

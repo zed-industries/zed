@@ -182,12 +182,6 @@ impl ContextServerRegistry {
                 .await;
 
             this.update(cx, |this, cx| {
-                if let Err(err) = &response {
-                    this.server_store.update(cx, |store, cx| {
-                        store.handle_request_error(&server_id, err, cx);
-                    });
-                }
-
                 let Some(registered_server) = this.registered_servers.get_mut(&server_id) else {
                     return;
                 };
@@ -228,12 +222,6 @@ impl ContextServerRegistry {
                 .await;
 
             this.update(cx, |this, cx| {
-                if let Err(err) = &response {
-                    this.server_store.update(cx, |store, cx| {
-                        store.handle_request_error(&server_id, err, cx);
-                    });
-                }
-
                 let Some(registered_server) = this.registered_servers.get_mut(&server_id) else {
                     return;
                 };
@@ -353,8 +341,6 @@ impl AnyAgentTool for ContextServerTool {
             return Task::ready(Err(anyhow::anyhow!("Context server not found").into()));
         };
         let tool_name = self.tool.name.clone();
-        let store = self.store.clone();
-        let server_id = self.server_id.clone();
         let tool_id = mcp_tool_id(&self.server_id.0, &self.tool.name);
         let display_name = self.tool.name.clone();
         let initial_title = self.initial_title(serde_json::Value::Null, cx);
@@ -396,21 +382,9 @@ impl AnyAgentTool for ContextServerTool {
             );
 
             let response = futures::select! {
-                response = request.fuse() => response,
+                response = request.fuse() => response?,
                 _ = event_stream.cancelled_by_user().fuse() => {
                     return Err(anyhow::anyhow!("MCP tool cancelled by user").into());
-                }
-            };
-            let response = match response {
-                Ok(response) => response,
-                Err(err) => {
-                    // A 401 here (e.g. the server only challenges on tools/call)
-                    // should initiate the OAuth flow rather than surface as an
-                    // opaque tool failure.
-                    store.update(cx, |store, cx| {
-                        store.handle_request_error(&server_id, &err, cx);
-                    });
-                    return Err(err.into());
                 }
             };
 
@@ -517,10 +491,8 @@ pub fn get_prompt(
     };
 
     let prompt_name = prompt_name.to_string();
-    let server_store = server_store.clone();
-    let server_id = server_id.clone();
 
-    cx.spawn(async move |cx| {
+    cx.background_spawn(async move {
         let response = protocol
             .request::<context_server::types::requests::PromptsGet>(
                 context_server::types::PromptsGetParams {
@@ -529,19 +501,9 @@ pub fn get_prompt(
                     meta: None,
                 },
             )
-            .await;
+            .await?;
 
-        match response {
-            Ok(response) => Ok(response),
-            Err(err) => {
-                // A 401 here should initiate the OAuth flow rather than surface
-                // as an opaque prompt failure.
-                server_store.update(cx, |store, cx| {
-                    store.handle_request_error(&server_id, &err, cx);
-                });
-                Err(err)
-            }
-        }
+        Ok(response)
     })
 }
 
