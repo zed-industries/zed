@@ -18,6 +18,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
 };
 
+use crate::connection_modal::ConnectionModal;
 use crate::connection_store::{
     ClientFactory, ConnectionStatus, ConnectionStore, ConnectionStoreEvent, credentials_url,
     default_client_factory,
@@ -359,16 +360,61 @@ impl DatabasePanel {
         }
     }
 
+    fn add_connection(
+        &mut self,
+        _: &AddConnection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_connection_modal(None, window, cx);
+    }
+
     fn edit_connection(
         &mut self,
         _: &EditConnection,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
     ) {
-        // Task 6 will open the edit-connection modal here.
-        if let Some(connection) = &self.menu_target {
-            log::debug!("edit connection {connection}");
-        }
+        let Some(connection_name) = self.menu_target.clone() else {
+            return;
+        };
+        let Some(config) = self
+            .store
+            .read(cx)
+            .connections()
+            .iter()
+            .find(|connection| connection.config.name == connection_name)
+            .map(|connection| connection.config.clone())
+        else {
+            return;
+        };
+        self.open_connection_modal(Some(config), window, cx);
+    }
+
+    /// Opens the add/edit connection modal, seeding it with the current set of
+    /// connection names for the duplicate-name check.
+    fn open_connection_modal(
+        &mut self,
+        existing: Option<database_client::ConnectionConfig>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let existing_names: Vec<String> = self
+            .store
+            .read(cx)
+            .connections()
+            .iter()
+            .map(|connection| connection.config.name.clone())
+            .collect();
+        let client_factory = default_client_factory(cx);
+        let fs = self.fs.clone();
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    ConnectionModal::new(existing, existing_names, client_factory, fs, window, cx)
+                });
+            })
+            .log_err();
     }
 
     fn new_sql_query(&mut self, _: &NewSqlQuery, _window: &mut Window, _cx: &mut Context<Self>) {
@@ -645,6 +691,7 @@ impl Render for DatabasePanel {
         v_flex()
             .key_context("DatabasePanel")
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::add_connection))
             .on_action(cx.listener(Self::refresh_connection))
             .on_action(cx.listener(Self::edit_connection))
             .on_action(cx.listener(Self::remove_connection))
