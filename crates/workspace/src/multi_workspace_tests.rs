@@ -846,6 +846,7 @@ async fn test_remote_project_root_dir_changes_update_groups(cx: &mut TestAppCont
                 updated_repositories: vec![],
                 removed_repositories: vec![],
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             });
     });
     cx.run_until_parked();
