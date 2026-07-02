@@ -2,17 +2,19 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use database_client::{
-    DatabaseClient, RowsPage, SelectSpec, Sort, SortDirection, TableRef, TableStructure,
+    DatabaseClient, Filter, FilterOp, RowsPage, SelectSpec, Sort, SortDirection, TableRef,
+    TableStructure,
 };
 use gpui::{
-    AnyElement, App, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable, Task,
-    WeakEntity, Window, actions,
+    Anchor, AnyElement, App, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
+    Task, WeakEntity, Window, actions,
 };
 use settings::Settings as _;
 use ui::{
-    AbsoluteLength, ColumnWidthConfig, ResizableColumnsState, Table, TableInteractionState,
-    TableResizeBehavior, Tooltip, prelude::*,
+    AbsoluteLength, ColumnWidthConfig, ContextMenu, PopoverMenu, ResizableColumnsState, Table,
+    TableInteractionState, TableResizeBehavior, Tooltip, prelude::*,
 };
+use ui_input::InputField;
 use util::ResultExt as _;
 use workspace::{Workspace, item::Item};
 
@@ -34,6 +36,30 @@ actions!(
 
 /// The default column width for the resizable data grid.
 const COLUMN_WIDTH: f32 = 180.;
+
+/// The short symbol shown in the UI for each filter operator.
+fn filter_op_label(op: FilterOp) -> &'static str {
+    match op {
+        FilterOp::Eq => "=",
+        FilterOp::NotEq => "≠",
+        FilterOp::Gt => ">",
+        FilterOp::Lt => "<",
+        FilterOp::Contains => "contains",
+        FilterOp::IsNull => "is null",
+    }
+}
+
+/// Every filter operator, in the order they appear in the operator dropdown.
+fn all_filter_ops() -> [FilterOp; 6] {
+    [
+        FilterOp::Eq,
+        FilterOp::NotEq,
+        FilterOp::Gt,
+        FilterOp::Lt,
+        FilterOp::Contains,
+        FilterOp::IsNull,
+    ]
+}
 
 /// Which of the two tabs of a table view is currently shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +94,14 @@ pub struct TableDataView {
     /// Recreated whenever the rendered column set changes so the grid keeps the
     /// right number of resize handles.
     column_widths: Option<Entity<ResizableColumnsState>>,
+    /// Whether the inline filter-builder row is expanded under the header.
+    filter_builder_open: bool,
+    /// The column selected in the filter builder, if any.
+    draft_column: Option<String>,
+    /// The operator selected in the filter builder.
+    draft_op: FilterOp,
+    /// The value input for the filter builder (ignored for `IsNull`).
+    draft_value: Entity<InputField>,
     _load_task: Option<Task<()>>,
 }
 
@@ -75,12 +109,13 @@ impl TableDataView {
     pub fn new(
         client: Arc<dyn DatabaseClient>,
         table: TableRef,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
         let limit = DatabaseSettings::get_global(cx).page_size.max(1) as usize;
         cx.new(|cx| {
             let interaction = cx.new(|cx| TableInteractionState::new(cx));
+            let draft_value = cx.new(|cx| InputField::new(window, cx, "Value"));
             let mut view = Self {
                 focus_handle: cx.focus_handle(),
                 client,
@@ -95,6 +130,10 @@ impl TableDataView {
                 load_state: LoadState::Idle,
                 interaction,
                 column_widths: None,
+                filter_builder_open: false,
+                draft_column: None,
+                draft_op: FilterOp::Eq,
+                draft_value,
                 _load_task: None,
             };
             view.reload_data(cx);
@@ -143,6 +182,29 @@ impl TableDataView {
             }),
         };
         self.spec.sort = next;
+        self.spec.offset = 0;
+        self.reload_data(cx);
+    }
+
+    /// Appends `filter` to the active filter set, resets the page offset, and
+    /// reloads the current page.
+    pub fn add_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
+        self.spec.filters.push(filter);
+        self.spec.offset = 0;
+        self.reload_data(cx);
+    }
+
+    /// Removes the filter at `index`, resets the page offset, and reloads. An
+    /// out-of-bounds index is a no-op.
+    pub fn remove_filter(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.spec.filters.len() {
+            log::debug!(
+                "remove_filter: index {index} out of bounds ({} filters)",
+                self.spec.filters.len()
+            );
+            return;
+        }
+        self.spec.filters.remove(index);
         self.spec.offset = 0;
         self.reload_data(cx);
     }
@@ -451,6 +513,208 @@ impl TableDataView {
             .into_any_element()
     }
 
+    /// The column names offered in the filter builder, taken from the current
+    /// page's header row (empty until the first page loads).
+    fn available_columns(&self) -> Vec<String> {
+        self.page
+            .as_ref()
+            .map(|page| page.columns.clone())
+            .unwrap_or_default()
+    }
+
+    /// Whether the current draft is complete enough to apply: a column must be
+    /// chosen, and non-`IsNull` operators additionally require a value.
+    fn draft_apply_enabled(&self, cx: &App) -> bool {
+        let has_column = self.draft_column.is_some();
+        let needs_value = self.draft_op != FilterOp::IsNull;
+        let has_value = !self.draft_value.read(cx).text(cx).trim().is_empty();
+        has_column && (!needs_value || has_value)
+    }
+
+    /// Commits the current draft as a new filter, closing and clearing the
+    /// builder. No-op if the draft is incomplete.
+    fn apply_draft_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.draft_apply_enabled(cx) {
+            return;
+        }
+        let Some(column) = self.draft_column.clone() else {
+            return;
+        };
+        let value = if self.draft_op == FilterOp::IsNull {
+            String::new()
+        } else {
+            self.draft_value.read(cx).text(cx)
+        };
+        self.add_filter(
+            Filter {
+                column,
+                op: self.draft_op,
+                value,
+            },
+            cx,
+        );
+        self.filter_builder_open = false;
+        self.draft_column = None;
+        self.draft_op = FilterOp::Eq;
+        self.draft_value
+            .update(cx, |field, cx| field.clear(window, cx));
+    }
+
+    fn render_filter_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let chips = self
+            .spec
+            .filters
+            .iter()
+            .enumerate()
+            .map(|(index, filter)| self.render_filter_chip(index, filter, cx));
+
+        let mut bar = h_flex()
+            .w_full()
+            .px_2()
+            .py_1()
+            .gap_1()
+            .flex_wrap()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .children(chips)
+            .child(
+                Button::new("db-add-filter", "+ Filter")
+                    .size(ButtonSize::Compact)
+                    .style(ButtonStyle::Subtle)
+                    .toggle_state(self.filter_builder_open)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.filter_builder_open = !this.filter_builder_open;
+                        cx.notify();
+                    })),
+            );
+
+        if self.filter_builder_open {
+            bar = bar.child(self.render_filter_builder(window, cx));
+        }
+
+        bar.into_any_element()
+    }
+
+    fn render_filter_chip(&self, index: usize, filter: &Filter, cx: &Context<Self>) -> AnyElement {
+        let text = if filter.op == FilterOp::IsNull {
+            format!("{} {}", filter.column, filter_op_label(filter.op))
+        } else {
+            format!(
+                "{} {} '{}'",
+                filter.column,
+                filter_op_label(filter.op),
+                filter.value
+            )
+        };
+
+        h_flex()
+            .gap_1()
+            .px_1p5()
+            .py_0p5()
+            .rounded_sm()
+            .bg(cx.theme().colors().element_background)
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .child(Label::new(text).size(LabelSize::Small))
+            .child(
+                IconButton::new(
+                    ElementId::NamedInteger("db-filter-remove".into(), index as u64),
+                    IconName::Close,
+                )
+                .icon_size(IconSize::XSmall)
+                .tooltip(Tooltip::text("Remove filter"))
+                .on_click(cx.listener(move |this, _, _, cx| this.remove_filter(index, cx))),
+            )
+            .into_any_element()
+    }
+
+    fn render_filter_builder(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let columns = self.available_columns();
+        let column_label = self
+            .draft_column
+            .clone()
+            .unwrap_or_else(|| "Column".to_string());
+
+        let column_dropdown = PopoverMenu::new("db-filter-column")
+            .trigger(
+                Button::new("db-filter-column-trigger", column_label).size(ButtonSize::Compact),
+            )
+            .anchor(Anchor::TopLeft)
+            .menu({
+                let this = cx.weak_entity();
+                move |window, cx| {
+                    let this = this.clone();
+                    let columns = columns.clone();
+                    Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                        for column in &columns {
+                            let column = column.clone();
+                            let this = this.clone();
+                            menu = menu.entry(column.clone(), None, move |_, cx| {
+                                this.update(cx, |this, cx| {
+                                    this.draft_column = Some(column.clone());
+                                    cx.notify();
+                                })
+                                .log_err();
+                            });
+                        }
+                        menu
+                    }))
+                }
+            });
+
+        let op_dropdown = PopoverMenu::new("db-filter-op")
+            .trigger(
+                Button::new(
+                    "db-filter-op-trigger",
+                    filter_op_label(self.draft_op).to_string(),
+                )
+                .size(ButtonSize::Compact),
+            )
+            .anchor(Anchor::TopLeft)
+            .menu({
+                let this = cx.weak_entity();
+                move |window, cx| {
+                    let this = this.clone();
+                    Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                        for op in all_filter_ops() {
+                            let this = this.clone();
+                            menu = menu.entry(filter_op_label(op), None, move |_, cx| {
+                                this.update(cx, |this, cx| {
+                                    this.draft_op = op;
+                                    cx.notify();
+                                })
+                                .log_err();
+                            });
+                        }
+                        menu
+                    }))
+                }
+            });
+
+        let apply_enabled = self.draft_apply_enabled(cx);
+        let show_value = self.draft_op != FilterOp::IsNull;
+
+        h_flex()
+            .gap_1()
+            .items_center()
+            .child(column_dropdown)
+            .child(op_dropdown)
+            .when(show_value, |this| {
+                this.child(div().w_40().child(self.draft_value.clone()))
+            })
+            .child(
+                Button::new("db-filter-apply", "Apply")
+                    .size(ButtonSize::Compact)
+                    .style(ButtonStyle::Filled)
+                    .disabled(!apply_enabled)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.apply_draft_filter(window, cx);
+                        cx.notify();
+                    })),
+            )
+            .into_any_element()
+    }
+
     fn render_footer(&self, cx: &Context<Self>) -> AnyElement {
         let (summary, has_more) = match &self.page {
             Some(page) if page.rows.is_empty() => ("No rows".to_string(), false),
@@ -519,14 +783,15 @@ impl TableDataView {
 }
 
 impl Render for TableDataView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match (&self.load_state, self.mode) {
             (LoadState::Error(message), _) => self.render_error(&message.clone(), cx),
             (_, ViewMode::Structure) => self.render_structure(),
             (_, ViewMode::Data) => self.render_data(cx),
         };
-        let show_footer =
+        let in_data =
             self.mode == ViewMode::Data && !matches!(self.load_state, LoadState::Error(_));
+        let filter_bar = in_data.then(|| self.render_filter_bar(window, cx));
 
         v_flex()
             .key_context("TableDataView")
@@ -551,8 +816,9 @@ impl Render for TableDataView {
                     )))
                     .child(self.render_toggle(cx)),
             )
+            .children(filter_bar)
             .child(v_flex().flex_1().size_full().overflow_hidden().child(body))
-            .when(show_footer, |this| this.child(self.render_footer(cx)))
+            .when(in_data, |this| this.child(self.render_footer(cx)))
     }
 }
 
@@ -635,16 +901,17 @@ mod tests {
     use std::sync::Arc;
 
     use database_client::fake::FakeDatabaseClient;
-    use database_client::{DatabaseClient, SortDirection, TableRef};
+    use database_client::{DatabaseClient, Filter, FilterOp, SortDirection, TableRef};
     use gpui::{TestAppContext, VisualTestContext};
 
-    use super::{LoadState, TableDataView, ViewMode};
+    use super::{LoadState, TableDataView, ViewMode, all_filter_ops, filter_op_label};
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
             cx.set_global(settings_store);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
+            editor::init(cx);
             gpui_tokio::init(cx);
             crate::init(cx);
         });
@@ -876,5 +1143,139 @@ mod tests {
                 "unexpected error message: {message}"
             );
         });
+    }
+
+    #[gpui::test]
+    async fn add_filter_resets_offset_and_reloads(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| TableDataView::new(client, table_ref(), window, cx));
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        // Advance to a non-zero offset so the reset is observable, letting the
+        // load settle before we add a filter.
+        view.update(cx, |view, cx| view.next_page(cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.spec().offset == 100 && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        view.update(cx, |view, cx| {
+            view.add_filter(
+                Filter {
+                    column: "name".into(),
+                    op: FilterOp::Contains,
+                    value: "ali".into(),
+                },
+                cx,
+            )
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.spec().filters.len() == 1 && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.spec().filters.len(), 1, "filter should be stored");
+            assert_eq!(view.spec().offset, 0, "adding a filter resets the offset");
+        });
+
+        assert!(
+            fake.calls().iter().any(|call| call.contains("filters=1")),
+            "adding a filter should trigger a fetch with filters=1: {:?}",
+            fake.calls()
+        );
+    }
+
+    #[gpui::test]
+    async fn remove_filter_reloads_without_filters(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| TableDataView::new(client, table_ref(), window, cx));
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        view.update(cx, |view, cx| {
+            view.add_filter(
+                Filter {
+                    column: "name".into(),
+                    op: FilterOp::Eq,
+                    value: "Alice".into(),
+                },
+                cx,
+            )
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.spec().filters.len() == 1 && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        // Removing an out-of-bounds index is a no-op and does not refetch.
+        let before = fake
+            .calls()
+            .into_iter()
+            .filter(|call| call.starts_with("fetch_rows"))
+            .count();
+        view.update(cx, |view, cx| view.remove_filter(5, cx));
+        cx.run_until_parked();
+        let after = fake
+            .calls()
+            .into_iter()
+            .filter(|call| call.starts_with("fetch_rows"))
+            .count();
+        assert_eq!(
+            before, after,
+            "out-of-bounds remove_filter should not refetch"
+        );
+        view.read_with(cx, |view, _| assert_eq!(view.spec().filters.len(), 1));
+
+        view.update(cx, |view, cx| view.remove_filter(0, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.spec().filters.is_empty() && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert!(view.spec().filters.is_empty(), "filter should be removed");
+        });
+        assert!(
+            fake.calls().iter().any(|call| call.contains("filters=0")),
+            "removing the filter should trigger a fetch with filters=0: {:?}",
+            fake.calls()
+        );
+    }
+
+    #[gpui::test]
+    fn filter_op_labels_cover_all_ops(_cx: &mut TestAppContext) {
+        assert_eq!(filter_op_label(FilterOp::Eq), "=");
+        assert_eq!(filter_op_label(FilterOp::NotEq), "≠");
+        assert_eq!(filter_op_label(FilterOp::Gt), ">");
+        assert_eq!(filter_op_label(FilterOp::Lt), "<");
+        assert_eq!(filter_op_label(FilterOp::Contains), "contains");
+        assert_eq!(filter_op_label(FilterOp::IsNull), "is null");
+
+        let ops = all_filter_ops();
+        assert_eq!(ops.len(), 6, "there should be six filter operators");
+        for op in ops {
+            assert!(
+                !filter_op_label(op).is_empty(),
+                "every operator needs a label"
+            );
+        }
     }
 }

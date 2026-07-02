@@ -30,6 +30,7 @@ zed_credentials_provider.workspace = true
 
 [dev-dependencies]
 database_client = { workspace = true, features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui_tokio.workspace = true
 settings = { workspace = true, features = ["test-support"] }

@@ -4988,6 +4988,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "database_client",
+ "editor",
  "fs",
  "futures 0.3.32",
  "gpui",
