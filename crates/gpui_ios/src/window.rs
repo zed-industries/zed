@@ -1,4 +1,4 @@
-use crate::{CGFloat, CGPoint, CGRect, IosDisplay, id, nil};
+use crate::{CGFloat, CGPoint, CGRect, CGSize, IosDisplay, id, nil, text_input};
 use futures::channel::oneshot;
 use gpui::{
     Bounds, Capslock, DispatchEventResult, GpuSpecs, KeyDownEvent, KeyUpEvent, Keystroke,
@@ -37,9 +37,12 @@ unsafe extern "C" {
 unsafe extern "C" {
     static UIApplicationWillResignActiveNotification: id;
     static UIApplicationDidBecomeActiveNotification: id;
+    static UIKeyboardWillShowNotification: id;
+    static UIKeyboardWillHideNotification: id;
+    static UIKeyboardFrameEndUserInfoKey: id;
 }
 
-const WINDOW_STATE_IVAR: &str = "windowState";
+pub(crate) const WINDOW_STATE_IVAR: &str = "windowState";
 
 const UI_GESTURE_RECOGNIZER_STATE_BEGAN: i64 = 1;
 const UI_GESTURE_RECOGNIZER_STATE_CHANGED: i64 = 2;
@@ -100,17 +103,27 @@ struct ScrollMomentum {
     last_tick: Instant,
 }
 
-struct IosWindowState {
+pub(crate) struct IosWindowState {
     native_window: id,
     view_controller: id,
     native_view: id,
+    text_input_view: id,
     display_link: id,
     display_link_target: id,
     renderer: Renderer,
     bounds: Bounds<Pixels>,
+    /// The full screen size; `bounds` shrinks below it while the software
+    /// keyboard is up (see `apply_keyboard_overlap`).
+    screen_size: Size<Pixels>,
+    /// How much of the window the software keyboard currently covers.
+    keyboard_overlap: Pixels,
+    /// Whether the text-input view was made first responder by the last
+    /// responder poll (see `update_text_input_responder`).
+    text_input_is_first_responder: bool,
     scale_factor: f32,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
+    resize_callback: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     input_handler: Option<PlatformInputHandler>,
     mouse_position: Point<Pixels>,
@@ -180,6 +193,10 @@ impl IosWindow {
             let _: () = msg_send![native_view, addGestureRecognizer: pinch_recognizer];
             let _: () = msg_send![pinch_recognizer, release];
 
+            let text_input_view: id = msg_send![text_input::text_input_view_class(), alloc];
+            let text_input_view: id = msg_send![text_input_view, initWithFrame: CGRect::default()];
+            let _: () = msg_send![native_view, addSubview: text_input_view];
+
             let _: () = msg_send![native_window, setRootViewController: view_controller];
             let _: () = msg_send![native_window, makeKeyAndVisible];
             // Hardware key presses are only delivered along the responder
@@ -213,13 +230,18 @@ impl IosWindow {
                 native_window,
                 view_controller,
                 native_view,
+                text_input_view,
                 display_link: nil,
                 display_link_target: nil,
                 renderer,
                 bounds,
+                screen_size: bounds.size,
+                keyboard_overlap: px(0.),
+                text_input_is_first_responder: false,
                 scale_factor,
                 request_frame_callback: None,
                 active_status_change_callback: None,
+                resize_callback: None,
                 input_callback: None,
                 input_handler: None,
                 mouse_position: Point::default(),
@@ -233,9 +255,13 @@ impl IosWindow {
                 active_touch: None,
             })));
 
-            // The view and the display-link target each keep a strong `Rc`
+            // The views and the display-link target each keep a strong `Rc`
             // reference to the window state in an ivar; `Drop` reclaims them.
             (*native_view).set_ivar(
+                WINDOW_STATE_IVAR,
+                Rc::into_raw(window.0.clone()) as *mut c_void,
+            );
+            (*text_input_view).set_ivar(
                 WINDOW_STATE_IVAR,
                 Rc::into_raw(window.0.clone()) as *mut c_void,
             );
@@ -270,6 +296,20 @@ impl IosWindow {
                 name: UIApplicationDidBecomeActiveNotification
                 object: nil
             ];
+            let _: () = msg_send![
+                notification_center,
+                addObserver: display_link_target
+                selector: sel!(keyboardWillShow:)
+                name: UIKeyboardWillShowNotification
+                object: nil
+            ];
+            let _: () = msg_send![
+                notification_center,
+                addObserver: display_link_target
+                selector: sel!(keyboardWillHide:)
+                name: UIKeyboardWillHideNotification
+                object: nil
+            ];
 
             {
                 let mut state = window.0.borrow_mut();
@@ -284,13 +324,21 @@ impl IosWindow {
 
 impl Drop for IosWindow {
     fn drop(&mut self) {
-        let (display_link, display_link_target, view_controller, native_view, native_window) = {
+        let (
+            display_link,
+            display_link_target,
+            view_controller,
+            native_view,
+            text_input_view,
+            native_window,
+        ) = {
             let state = self.0.borrow();
             (
                 state.display_link,
                 state.display_link_target,
                 state.view_controller,
                 state.native_view,
+                state.text_input_view,
                 state.native_window,
             )
         };
@@ -299,12 +347,15 @@ impl Drop for IosWindow {
             let _: () = msg_send![notification_center, removeObserver: display_link_target];
             let _: () = msg_send![display_link, invalidate];
             // Reclaim the strong references the display-link target and the
-            // view hold so the window state can actually be freed.
+            // views hold so the window state can actually be freed.
             let raw: *mut c_void = *(*display_link_target).get_ivar(WINDOW_STATE_IVAR);
             drop(Rc::from_raw(raw as *const RefCell<IosWindowState>));
             let raw: *mut c_void = *(*native_view).get_ivar(WINDOW_STATE_IVAR);
             drop(Rc::from_raw(raw as *const RefCell<IosWindowState>));
+            let raw: *mut c_void = *(*text_input_view).get_ivar(WINDOW_STATE_IVAR);
+            drop(Rc::from_raw(raw as *const RefCell<IosWindowState>));
             let _: () = msg_send![display_link_target, release];
+            let _: () = msg_send![text_input_view, release];
             let _: () = msg_send![native_view, release];
             let _: () = msg_send![view_controller, release];
             let _: () = msg_send![native_window, release];
@@ -415,7 +466,9 @@ impl PlatformWindow for IosWindow {
 
     fn on_hover_status_change(&self, _callback: Box<dyn FnMut(bool)>) {}
 
-    fn on_resize(&self, _callback: Box<dyn FnMut(Size<Pixels>, f32)>) {}
+    fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
+        self.0.borrow_mut().resize_callback = Some(callback);
+    }
 
     fn on_moved(&self, _callback: Box<dyn FnMut()>) {}
 
@@ -537,13 +590,21 @@ fn display_link_target_class() -> &'static Class {
                 sel!(applicationDidBecomeActive:),
                 application_did_become_active as extern "C" fn(&Object, Sel, id),
             );
+            decl.add_method(
+                sel!(keyboardWillShow:),
+                keyboard_will_show as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(keyboardWillHide:),
+                keyboard_will_hide as extern "C" fn(&Object, Sel, id),
+            );
         }
         decl.register();
     });
     Class::get("GPUIDisplayLinkTarget").expect("GPUIDisplayLinkTarget was just registered")
 }
 
-unsafe fn get_window_state(object: &Object) -> Rc<RefCell<IosWindowState>> {
+pub(crate) unsafe fn get_window_state(object: &Object) -> Rc<RefCell<IosWindowState>> {
     unsafe {
         let raw: *mut c_void = *object.get_ivar(WINDOW_STATE_IVAR);
         let state = Rc::from_raw(raw as *const RefCell<IosWindowState>);
@@ -562,6 +623,115 @@ extern "C" fn step(this: &Object, _: Sel, _display_link: id) {
     if let Some(mut callback) = callback {
         callback(RequestFrameOptions::default());
         window_state.borrow_mut().request_frame_callback = Some(callback);
+    }
+    update_text_input_responder(&window_state);
+}
+
+/// Moves first-responder status between the text-input view and `GPUIView`
+/// to track gpui focus. gpui has no push signal for "an editable element
+/// gained or lost focus", so this polls the input handler after each frame:
+/// the handler is (re)installed during `draw`, making post-frame the earliest
+/// point the new focus state is observable.
+fn update_text_input_responder(window_state: &Rc<RefCell<IosWindowState>>) {
+    let input_handler = window_state.borrow_mut().input_handler.take();
+    let accepts_text_input = match input_handler {
+        Some(mut input_handler) => {
+            // Queries gpui synchronously; the RefCell borrow must be released
+            // first because gpui may reenter the window.
+            let accepts = input_handler.query_accepts_text_input();
+            window_state.borrow_mut().input_handler = Some(input_handler);
+            accepts
+        }
+        None => false,
+    };
+    let (text_input_view, native_view) = {
+        let mut state = window_state.borrow_mut();
+        if state.text_input_is_first_responder == accepts_text_input {
+            return;
+        }
+        state.text_input_is_first_responder = accepts_text_input;
+        (state.text_input_view, state.native_view)
+    };
+    unsafe {
+        if accepts_text_input {
+            let _: BOOL = msg_send![text_input_view, becomeFirstResponder];
+        } else {
+            let _: BOOL = msg_send![text_input_view, resignFirstResponder];
+            // Hardware key presses are only delivered along the responder
+            // chain, so first-responder status must return to the main view.
+            let _: BOOL = msg_send![native_view, becomeFirstResponder];
+        }
+    }
+}
+
+extern "C" fn keyboard_will_show(this: &Object, _: Sel, notification: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let keyboard_frame: CGRect = unsafe {
+        let user_info: id = msg_send![notification, userInfo];
+        if user_info.is_null() {
+            return;
+        }
+        let frame_value: id = msg_send![user_info, objectForKey: UIKeyboardFrameEndUserInfoKey];
+        if frame_value.is_null() {
+            return;
+        }
+        msg_send![frame_value, CGRectValue]
+    };
+    // The window is full-screen, so the keyboard's screen-coordinate frame
+    // needs no conversion: everything below its top edge is covered.
+    let overlap = {
+        let state = window_state.borrow();
+        (state.screen_size.height - px(keyboard_frame.origin.y as f32)).max(px(0.))
+    };
+    apply_keyboard_overlap(&window_state, overlap);
+}
+
+extern "C" fn keyboard_will_hide(this: &Object, _: Sel, _notification: id) {
+    let window_state = unsafe { get_window_state(this) };
+    apply_keyboard_overlap(&window_state, px(0.));
+}
+
+/// Shrinks the window (bounds, Metal layer, drawable) by the height the
+/// software keyboard covers and reports the new size to gpui, so the focused
+/// editable relayouts above the keyboard. gpui has no viewport-inset concept
+/// a platform could set instead, so keyboard avoidance is expressed as a
+/// window resize; hiding the keyboard restores the full screen size.
+fn apply_keyboard_overlap(window_state: &Rc<RefCell<IosWindowState>>, overlap: Pixels) {
+    let (new_size, scale_factor) = {
+        let mut state = window_state.borrow_mut();
+        if state.keyboard_overlap == overlap {
+            return;
+        }
+        state.keyboard_overlap = overlap;
+        let new_size = size(state.screen_size.width, state.screen_size.height - overlap);
+        state.bounds.size = new_size;
+        unsafe {
+            let metal_layer = state.renderer.layer_ptr() as id;
+            let frame = CGRect {
+                origin: CGPoint::default(),
+                size: CGSize {
+                    width: new_size.width.as_f32() as CGFloat,
+                    height: new_size.height.as_f32() as CGFloat,
+                },
+            };
+            // Without this, Core Animation would animate the layer-frame
+            // change while the drawable size snaps, stretching the content
+            // for the transition's duration.
+            let _: () = msg_send![class!(CATransaction), begin];
+            let _: () = msg_send![class!(CATransaction), setDisableActions: YES];
+            let _: () = msg_send![metal_layer, setFrame: frame];
+            let _: () = msg_send![class!(CATransaction), commit];
+        }
+        let scale_factor = state.scale_factor;
+        state
+            .renderer
+            .update_drawable_size(new_size.to_device_pixels(scale_factor));
+        (new_size, scale_factor)
+    };
+    let callback = window_state.borrow_mut().resize_callback.take();
+    if let Some(mut callback) = callback {
+        callback(new_size, scale_factor);
+        window_state.borrow_mut().resize_callback = Some(callback);
     }
 }
 
@@ -665,11 +835,27 @@ fn tracked_touch_in_set(window_state: &Rc<RefCell<IosWindowState>>, touches: id)
     is_member.then_some(tracked_touch)
 }
 
+/// Runs a closure against the window's input handler with the handler taken
+/// out of the state and the `RefCell` borrow released: every handler method
+/// calls into gpui synchronously, which may reenter the window. Returns
+/// `None` when no input handler is installed (no editable element focused).
+pub(crate) fn with_input_handler<R>(
+    object: &Object,
+    f: impl FnOnce(&mut PlatformInputHandler) -> R,
+) -> Option<R> {
+    let window_state = unsafe { get_window_state(object) };
+    let input_handler = window_state.borrow_mut().input_handler.take();
+    let mut input_handler = input_handler?;
+    let result = f(&mut input_handler);
+    window_state.borrow_mut().input_handler = Some(input_handler);
+    Some(result)
+}
+
 /// Invokes the gpui input callback with the `RefCell` borrow released: gpui
 /// may reenter the window (e.g. to read `mouse_position` or request a frame)
 /// while handling the event. Without a registered callback the event is
 /// reported as propagating, so it falls through to UIKit's default handling.
-fn dispatch_input(
+pub(crate) fn dispatch_input(
     window_state: &Rc<RefCell<IosWindowState>>,
     input: PlatformInput,
 ) -> DispatchEventResult {
@@ -1075,7 +1261,7 @@ unsafe fn keystroke_for_ui_key(ui_key: id, modifiers: Modifiers) -> Option<Keyst
     }
 }
 
-unsafe fn string_from_ns_string(ns_string: id) -> String {
+pub(crate) unsafe fn string_from_ns_string(ns_string: id) -> String {
     if ns_string.is_null() {
         return String::new();
     }

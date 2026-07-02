@@ -5,6 +5,7 @@
 
 mod display;
 mod platform;
+mod text_input;
 mod window;
 
 pub use platform::IosPlatform;
