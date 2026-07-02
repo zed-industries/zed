@@ -3967,16 +3967,10 @@ impl AgentPanel {
             .terminal_search_bar
             .get_or_insert_with(|| cx.new(|cx| BufferSearchBar::new(None, window, cx)))
             .clone();
-        let action = DeployBufferSearch {
-            focus: true,
-            replace_enabled: false,
-            selection_search_enabled: false,
-        };
-
         let deployed = search_bar.update(cx, |search_bar, cx| {
             let terminal_item: &dyn ItemHandle = &terminal_view;
             search_bar.set_active_pane_item(Some(terminal_item), window, cx);
-            search_bar.deploy(&action, None, window, cx)
+            search_bar.deploy(&DeployBufferSearch::find(), None, window, cx)
         });
         if deployed {
             cx.stop_propagation();
