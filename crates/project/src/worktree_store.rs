@@ -1097,7 +1097,7 @@ impl WorktreeStore {
 
         let update = proto::UpdateProject {
             project_id,
-            worktrees: self.worktree_metadata_protos_for_project(project_id, cx),
+            worktrees: self.worktree_metadata_protos(cx),
         };
 
         // collab has bad concurrency guarantees, so we send requests in serial.
@@ -1145,15 +1145,6 @@ impl WorktreeStore {
     }
 
     pub fn worktree_metadata_protos(&self, cx: &App) -> Vec<proto::WorktreeMetadata> {
-        self.worktree_metadata_protos_for_project(u64::MAX, cx)
-    }
-
-    fn worktree_metadata_protos_for_project(
-        &self,
-        project_id: u64,
-        cx: &App,
-    ) -> Vec<proto::WorktreeMetadata> {
-        let include_linked_worktree_metadata = project_id == REMOTE_SERVER_PROJECT_ID;
         self.worktrees()
             .map(|worktree| {
                 let worktree = worktree.read(cx);
@@ -1165,8 +1156,8 @@ impl WorktreeStore {
                     root_repo_common_dir: worktree
                         .root_repo_common_dir()
                         .map(|p| p.to_string_lossy().into_owned()),
-                    root_repo_is_linked_worktree: include_linked_worktree_metadata
-                        && worktree.root_repo_is_linked_worktree(),
+                    // todo(git): We should wire this field to work in collab as well
+                    root_repo_is_linked_worktree: worktree.root_repo_is_linked_worktree(),
                 }
             })
             .collect()

@@ -2442,8 +2442,7 @@ impl Snapshot {
             root_repo_common_dir: self
                 .root_repo_common_dir()
                 .map(|p| p.to_string_lossy().into_owned()),
-            root_repo_is_linked_worktree: project_id == proto::REMOTE_SERVER_PROJECT_ID
-                && self.root_repo_is_linked_worktree,
+            root_repo_is_linked_worktree: self.root_repo_is_linked_worktree,
             updated_entries,
             removed_entries: Vec::new(),
             scan_id: self.scan_id as u64,
@@ -2589,13 +2588,22 @@ impl Snapshot {
         self.entries_by_path.edit(entries_by_path_edits, ());
         self.entries_by_id.edit(entries_by_id_edits, ());
 
-        if let Some(dir) = update
+        // A `None` from a completed scan is a real repo removal, whereas a `None`
+        // mid-scan may just mean the sender hasn't registered the root repo yet.
+        match update
             .root_repo_common_dir
             .map(|p| SanitizedPath::new_arc(Path::new(&p)))
         {
-            self.root_repo_common_dir = Some(dir);
+            Some(dir) => {
+                self.root_repo_common_dir = Some(dir);
+                self.root_repo_is_linked_worktree = update.root_repo_is_linked_worktree;
+            }
+            None if update.is_last_update => {
+                self.root_repo_common_dir = None;
+                self.root_repo_is_linked_worktree = false;
+            }
+            None => {}
         }
-        self.root_repo_is_linked_worktree = update.root_repo_is_linked_worktree;
 
         self.scan_id = update.scan_id as usize;
         if update.is_last_update {
@@ -2827,8 +2835,7 @@ impl LocalSnapshot {
             root_repo_common_dir: self
                 .root_repo_common_dir()
                 .map(|p| p.to_string_lossy().into_owned()),
-            root_repo_is_linked_worktree: project_id == proto::REMOTE_SERVER_PROJECT_ID
-                && self.root_repo_is_linked_worktree,
+            root_repo_is_linked_worktree: self.root_repo_is_linked_worktree,
             updated_entries,
             removed_entries,
             scan_id: self.scan_id as u64,
