@@ -1,20 +1,25 @@
 //! Touch-input demo for GPUI on iOS: tap counters, move tracking, hover
-//! lifecycle, pan-to-scroll with momentum, and pinch-to-zoom, all driven by
-//! the touch → pointer compatibility shim and drawn by the Metal renderer.
+//! lifecycle, pan-to-scroll with momentum, pinch-to-zoom, and hardware
+//! keyboard input, all driven by the touch → pointer compatibility shim and
+//! drawn by the Metal renderer.
 
 #[cfg(target_os = "ios")]
 mod example {
     use gpui::{
-        App, Application, ClickEvent, Context, MouseMoveEvent, PinchEvent, Pixels, Point, Rgba,
-        Window, WindowOptions, div, prelude::*, px, rgb,
+        App, Application, ClickEvent, Context, FocusHandle, KeyDownEvent, Keystroke,
+        MouseMoveEvent, PinchEvent, Pixels, Point, Rgba, Window, WindowOptions, div, prelude::*,
+        px, rgb,
     };
     use std::rc::Rc;
 
     struct HelloIos {
+        focus_handle: FocusHandle,
         tap_counts: [usize; 3],
         row_taps: usize,
         pinch_scale: f32,
         last_touch: Option<Point<Pixels>>,
+        last_keystroke: Option<Keystroke>,
+        key_down_count: usize,
     }
 
     impl HelloIos {
@@ -98,6 +103,25 @@ mod example {
                 },
             );
 
+            let last_key = self.last_keystroke.as_ref().map_or_else(
+                || "Last key: none".to_string(),
+                |keystroke| {
+                    // `Keystroke::unparse` emits no platform-modifier prefix
+                    // on iOS, so render cmd- ourselves.
+                    let command_prefix = if keystroke.modifiers.platform {
+                        "cmd-"
+                    } else {
+                        ""
+                    };
+                    format!(
+                        "Last key: {}{} ({} downs)",
+                        command_prefix,
+                        keystroke.unparse(),
+                        self.key_down_count
+                    )
+                },
+            );
+
             div()
                 .size_full()
                 .bg(rgb(0x1f2937))
@@ -109,6 +133,12 @@ mod example {
                 .font_family("Helvetica")
                 .text_color(rgb(0xffffff))
                 .text_2xl()
+                .track_focus(&self.focus_handle)
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                    this.last_keystroke = Some(event.keystroke.clone());
+                    this.key_down_count += 1;
+                    cx.notify();
+                }))
                 .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _, cx| {
                     // The platform parks the pointer just off-window after a
                     // touch ends to clear hover; don't display that position.
@@ -123,6 +153,7 @@ mod example {
                 }))
                 .child("Hello, iOS!")
                 .child(div().text_lg().child(last_touch))
+                .child(div().text_lg().child(last_key))
                 .child(
                     div()
                         .flex()
@@ -159,13 +190,19 @@ mod example {
 
     pub fn run() {
         Application::with_platform(Rc::new(gpui_ios::IosPlatform::new())).run(|cx: &mut App| {
-            cx.open_window(WindowOptions::default(), |_, cx| {
-                cx.new(|_| HelloIos {
+            cx.open_window(WindowOptions::default(), |window, cx| {
+                let view = cx.new(|cx| HelloIos {
+                    focus_handle: cx.focus_handle(),
                     tap_counts: [0; 3],
                     row_taps: 0,
                     pinch_scale: 1.,
                     last_touch: None,
-                })
+                    last_keystroke: None,
+                    key_down_count: 0,
+                });
+                let focus_handle = view.read(cx).focus_handle.clone();
+                window.focus(&focus_handle, cx);
+                view
             })
             .unwrap();
         });
