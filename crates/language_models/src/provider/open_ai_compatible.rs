@@ -1,14 +1,14 @@
 use anyhow::Result;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
-use gpui::{App, AppContext, AsyncApp, Entity, Task, Window};
+use gpui::{App, AppContext, AsyncApp, Entity, Task};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelEffortLevel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, ProviderConfigurationView, RateLimiter,
+    LanguageModelToolSchemaFormat, ProviderSettingsView, RateLimiter, SubPageProviderSettings,
 };
 use open_ai::{
     ResponseStreamEvent,
@@ -144,11 +144,16 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> ProviderConfigurationView {
-        ProviderConfigurationView::SubPage(
+    fn settings_view(
+        &self,
+        window: &mut gpui::Window,
+        cx: &mut App,
+    ) -> Option<ProviderSettingsView> {
+        let state = self.state.clone();
+        Some(ProviderSettingsView::SubPage(SubPageProviderSettings::new(
             cx.new(|cx| {
                 ApiCompatibleProviderConfigurationView::new(
-                    self.state.clone(),
+                    state,
                     "OpenAI",
                     API_KEY_PLACEHOLDER,
                     window,
@@ -156,17 +161,12 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
                 )
             })
             .into(),
-        )
+        )))
     }
 
-    fn set_api_key(&self, key: String, cx: &mut App) -> Task<Result<()>> {
+    fn set_api_key(&self, api_key: Option<String>, cx: &mut App) -> Task<Result<()>> {
         self.state
-            .update(cx, |state, cx| state.set_api_key(Some(key), cx))
-    }
-
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state
-            .update(cx, |state, cx| state.set_api_key(None, cx))
+            .update(cx, |state, cx| state.set_api_key(api_key, cx))
     }
 }
 

@@ -320,8 +320,11 @@ pub trait LanguageModelProvider: 'static {
     }
     fn is_authenticated(&self, cx: &App) -> bool;
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> ProviderConfigurationView;
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>>;
+    fn settings_view(&self, window: &mut Window, cx: &mut App) -> Option<ProviderSettingsView>;
+
+    fn set_api_key(&self, _key: Option<String>, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
 
     /// Copy shown when this provider rejects a request as unauthenticated
     /// (HTTP 401). The default assumes API-key authentication; providers using
@@ -349,22 +352,6 @@ pub trait LanguageModelProvider: 'static {
         .into()
     }
 
-    fn inline_title(&self, _cx: &App) -> Option<SharedString> {
-        None
-    }
-
-    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
-        None
-    }
-
-    fn api_key_configuration(&self, _cx: &App) -> Option<ApiKeyConfiguration> {
-        None
-    }
-
-    fn set_api_key(&self, _key: String, _cx: &mut App) -> Task<Result<()>> {
-        Task::ready(Ok(()))
-    }
-
     /// Copy shown the first time a user enables fast mode for a model from
     /// this provider. Returning `None` skips the confirmation prompt and lets
     /// the toggle apply silently.
@@ -373,17 +360,63 @@ pub trait LanguageModelProvider: 'static {
     }
 }
 
-/// How a provider's configuration UI prefers to be presented by the settings UI.
+/// A provider's settings UI, modeled as mutually exclusive presentation modes.
 #[derive(Clone)]
-pub enum ProviderConfigurationView {
-    Inline { view: AnyView },
-    SubPage(AnyView),
+pub enum ProviderSettingsView {
+    ApiKey(ApiKeyConfiguration),
+    Inline(InlineProviderSettings),
+    SubPage(SubPageProviderSettings),
 }
 
-impl ProviderConfigurationView {
-    pub fn into_any_view(self) -> AnyView {
+impl ProviderSettingsView {
+    pub fn into_any_view(self) -> Option<AnyView> {
         match self {
-            Self::Inline { view } | Self::SubPage(view) => view,
+            Self::Inline(settings) => Some(settings.view),
+            Self::SubPage(settings) => Some(settings.view),
+            Self::ApiKey(_) => None,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct InlineProviderSettings {
+    pub title: Option<SharedString>,
+    pub description: Option<InlineDescription>,
+    pub view: AnyView,
+}
+
+#[derive(Clone)]
+pub struct SubPageProviderSettings {
+    pub description: Option<InlineDescription>,
+    pub view: AnyView,
+}
+
+impl SubPageProviderSettings {
+    pub fn new(view: AnyView) -> Self {
+        Self {
+            description: None,
+            view,
+        }
+    }
+
+    pub fn description(mut self, description: InlineDescription) -> Self {
+        self.description = Some(description);
+        self
+    }
+}
+
+impl ApiKeyConfiguration {
+    pub fn new(
+        has_key: bool,
+        is_from_env_var: bool,
+        env_var_name: SharedString,
+        api_key_url: SharedString,
+    ) -> Self {
+        Self {
+            has_key,
+            is_from_env_var,
+            env_var_name,
+            api_key_url,
         }
     }
 }

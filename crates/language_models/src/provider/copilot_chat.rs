@@ -25,7 +25,7 @@ use language_model::{
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, ProviderConfigurationView, RateLimiter, Role, StopReason,
+    LanguageModelToolUse, MessageContent, ProviderSettingsView, RateLimiter, Role, StopReason,
     TokenUsage,
 };
 use settings::SettingsStore;
@@ -177,47 +177,45 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         Task::ready(Err(err.into()))
     }
 
-    fn configuration_view(&self, _: &mut Window, cx: &mut App) -> ProviderConfigurationView {
-        let view = cx
-            .new(|cx| {
-                copilot_ui::ConfigurationView::new(
-                    |cx| {
-                        CopilotChat::global(cx)
-                            .map(|m| m.read(cx).is_authenticated())
-                            .unwrap_or(false)
-                    },
-                    copilot_ui::ConfigurationMode::Chat,
-                    cx,
-                )
-                .compact()
-            })
-            .into();
-
-        ProviderConfigurationView::Inline { view }
-    }
-
-    fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
-        Task::ready(Err(anyhow!(
-            "Signing out of GitHub Copilot Chat is currently not supported."
-        )))
-    }
-
-    fn inline_title(&self, cx: &App) -> Option<SharedString> {
-        if self.state.read(cx).is_authenticated(cx) {
+    fn settings_view(
+        &self,
+        _window: &mut gpui::Window,
+        cx: &mut App,
+    ) -> Option<ProviderSettingsView> {
+        let is_authenticated = self.state.read(cx).is_authenticated(cx);
+        let title = if is_authenticated {
             None
         } else {
             Some("Configure Copilot".into())
-        }
-    }
-
-    fn inline_description(&self, cx: &App) -> Option<language_model::InlineDescription> {
-        if self.state.read(cx).is_authenticated(cx) {
+        };
+        let description = if is_authenticated {
             None
         } else {
             Some(language_model::InlineDescription::Text(
                 "Requires an active GitHub Copilot subscription.".into(),
             ))
-        }
+        };
+
+        Some(ProviderSettingsView::Inline(
+            language_model::InlineProviderSettings {
+                title,
+                description,
+                view: cx
+                    .new(|cx| {
+                        copilot_ui::ConfigurationView::new(
+                            |cx| {
+                                CopilotChat::global(cx)
+                                    .map(|m| m.read(cx).is_authenticated())
+                                    .unwrap_or(false)
+                            },
+                            copilot_ui::ConfigurationMode::Chat,
+                            cx,
+                        )
+                        .compact()
+                    })
+                    .into(),
+            },
+        ))
     }
 }
 

@@ -13,7 +13,7 @@ use language_model::{
 use language_model::{
     InlineDescription, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, ProviderConfigurationView, RateLimiter, Role,
+    LanguageModelRequest, ProviderSettingsView, RateLimiter, Role, SubPageProviderSettings,
 };
 use lmstudio::{LMSTUDIO_API_URL, ModelType, get_models};
 
@@ -252,12 +252,6 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiLmStudio)
     }
 
-    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
-        Some(InlineDescription::Text(
-            "Run local LLMs like Llama, Phi, and Qwen with LM Studio.".into(),
-        ))
-    }
-
     fn default_model(&self, _: &App) -> Option<Arc<dyn LanguageModel>> {
         // We shouldn't try to select default model, because it might lead to a load call for an unloaded model.
         // In a constrained environment where user might not have enough resources it'll be a bad UX to select something
@@ -318,16 +312,17 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, _window: &mut Window, cx: &mut App) -> ProviderConfigurationView {
-        ProviderConfigurationView::SubPage(
-            cx.new(|cx| ConfigurationView::new(self.state.clone(), _window, cx))
-                .into(),
-        )
-    }
-
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state
-            .update(cx, |state, cx| state.set_api_key(None, cx))
+    fn settings_view(&self, window: &mut Window, cx: &mut App) -> Option<ProviderSettingsView> {
+        let state = self.state.clone();
+        Some(ProviderSettingsView::SubPage(
+            SubPageProviderSettings::new(
+                cx.new(|cx| ConfigurationView::new(state, window, cx))
+                    .into(),
+            )
+            .description(InlineDescription::Text(
+                "Run local LLMs like Llama, Phi, and Qwen with LM Studio.".into(),
+            )),
+        ))
     }
 }
 

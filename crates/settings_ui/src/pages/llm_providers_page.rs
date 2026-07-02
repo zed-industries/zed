@@ -4,7 +4,7 @@ use editor::Editor;
 use gpui::{AnyView, Entity, Focusable as _, ScrollHandle, prelude::*};
 use language_model::{
     ApiKeyConfiguration, IconOrSvg, InlineDescription, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelRegistry, ProviderConfigurationView,
+    LanguageModelProviderId, LanguageModelRegistry, ProviderSettingsView,
 };
 
 use settings::{
@@ -148,14 +148,29 @@ fn render_provider_section(
     let provider_id = provider.id();
     let provider_name = provider.name().0;
 
-    let body = if let Some(config) = provider.api_key_configuration(cx) {
-        render_api_key_providers_item(settings_window, provider, provider_name.clone(), config, cx)
-    } else {
-        match get_or_create_configuration_view(settings_window, &provider_id, provider, window, cx)
-        {
-            ProviderConfigurationView::Inline { view } => render_inline_body(provider, view, cx),
-            ProviderConfigurationView::SubPage(_) => render_subpage_item(provider, cx),
+    let body = match provider.settings_view(window, cx) {
+        Some(ProviderSettingsView::ApiKey(config)) => {
+            render_api_key_providers_item(provider, provider_name.clone(), config, cx)
         }
+        Some(ProviderSettingsView::Inline(settings)) => {
+            let view = get_or_create_configuration_view(
+                settings_window,
+                &provider_id,
+                settings.view,
+                window,
+                cx,
+            );
+            render_inline_body(
+                provider_name.clone(),
+                settings.title,
+                settings.description,
+                view,
+            )
+        }
+        Some(ProviderSettingsView::SubPage(settings)) => {
+            render_subpage_item(provider, settings.description, cx)
+        }
+        None => div().into_any_element(),
     };
 
     v_flex()
@@ -195,18 +210,16 @@ fn render_provider_header(
 }
 
 fn render_api_key_providers_item(
-    _settings_window: &SettingsWindow,
     provider: &Arc<dyn LanguageModelProvider>,
     provider_name: SharedString,
     config: ApiKeyConfiguration,
     _cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    let ApiKeyConfiguration {
-        has_key,
-        is_from_env_var,
-        env_var_name,
-        api_key_url,
-    } = config;
+    let provider_id = provider.id();
+    let has_key = config.has_key;
+    let is_from_env_var = config.is_from_env_var;
+    let env_var_name = config.env_var_name.clone();
+    let api_key_url = config.api_key_url.clone();
 
     if has_key {
         let configured_label = if is_from_env_var {
@@ -214,7 +227,7 @@ fn render_api_key_providers_item(
         } else {
             "API Key Configured"
         };
-        let button_id = format!("reset-api-key-{}", provider.id().0);
+        let button_id = format!("reset-api-key-{}", provider_id.0);
 
         let card = ConfiguredApiCard::new(button_id, configured_label)
             .button_label("Reset Key")
@@ -228,7 +241,7 @@ fn render_api_key_providers_item(
             .on_click({
                 let provider = provider.clone();
                 move |_, _, cx| {
-                    provider.reset_credentials(cx).detach_and_log_err(cx);
+                    provider.set_api_key(None, cx).detach_and_log_err(cx);
                 }
             })
             .into_any_element();
@@ -236,7 +249,7 @@ fn render_api_key_providers_item(
         return v_flex().gap_2().child(card).into_any_element();
     }
 
-    let input_id = format!("{}-api-key-input", provider.id().0);
+    let input_id = format!("{}-api-key-input", provider_id.0);
     let aria_label = format!("{provider_name} API Key");
 
     v_flex()
@@ -298,7 +311,7 @@ fn render_api_key_providers_item(
                             let provider = provider.clone();
                             move |api_key, _window, cx| {
                                 if let Some(key) = api_key.filter(|key| !key.is_empty()) {
-                                    provider.set_api_key(key, cx).detach_and_log_err(cx);
+                                    provider.set_api_key(Some(key), cx).detach_and_log_err(cx);
                                 }
                             }
                         }),
@@ -308,14 +321,11 @@ fn render_api_key_providers_item(
 }
 
 fn render_inline_body(
-    provider: &Arc<dyn LanguageModelProvider>,
+    provider_name: SharedString,
+    title: Option<SharedString>,
+    description: Option<InlineDescription>,
     view: AnyView,
-    cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
-    let provider_name = provider.name().0;
-    let title = provider.inline_title(cx);
-    let description = provider.inline_description(cx);
-
     if title.is_none() && description.is_none() {
         return v_flex()
             .pt_1()
@@ -347,11 +357,11 @@ fn render_inline_body(
 
 fn render_subpage_item(
     provider: &Arc<dyn LanguageModelProvider>,
+    description: Option<InlineDescription>,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let provider_id = provider.id();
     let provider_name = provider.name().0;
-    let description = provider.inline_description(cx);
 
     h_flex()
         .pt_2p5()
@@ -448,11 +458,13 @@ fn render_provider_config_sub_page(
         return div().into_any_element();
     };
 
-    // A provider routed to a sub-page always provides a `SubPage` view; fall
-    // back to whatever view it returns otherwise.
-    let view =
-        get_or_create_configuration_view(settings_window, &provider_id, &provider, window, cx)
-            .into_any_view();
+    let Some(view) = provider
+        .settings_view(window, cx)
+        .and_then(ProviderSettingsView::into_any_view)
+    else {
+        return div().into_any_element();
+    };
+    let view = get_or_create_configuration_view(settings_window, &provider_id, view, window, cx);
 
     v_flex()
         .id("provider-config-sub-page")
@@ -469,18 +481,16 @@ fn render_provider_config_sub_page(
 fn get_or_create_configuration_view(
     settings_window: &SettingsWindow,
     provider_id: &LanguageModelProviderId,
-    provider: &Arc<dyn LanguageModelProvider>,
+    view: AnyView,
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,
-) -> ProviderConfigurationView {
+) -> AnyView {
     if let Some(view) = settings_window
         .provider_configuration_views
         .get(provider_id)
     {
         return view.clone();
     }
-
-    let view = provider.configuration_view(window, cx);
 
     // Store the view for future renders by deferring a mutation
     let provider_id = provider_id.clone();
@@ -1138,7 +1148,7 @@ fn save_llm_provider_form(
                 let provider = LanguageModelRegistry::read_global(cx)
                     .provider(&provider_id)
                     .ok_or_else(|| anyhow::anyhow!("Provider was not registered"))?;
-                anyhow::Ok(provider.set_api_key(api_key, cx))
+                anyhow::Ok(provider.set_api_key(Some(api_key), cx))
             })??;
             set_api_key.await?;
 

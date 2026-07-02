@@ -12,8 +12,8 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
-    ProviderConfigurationView, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, ProviderSettingsView,
+    RateLimiter, Role, StopReason, SubPageProviderSettings, TokenUsage, env_var,
 };
 use llama_cpp::{
     LLAMA_CPP_API_URL, ModelEntry, Props, get_models, get_props, stream_chat_completion,
@@ -562,12 +562,6 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
         None
     }
 
-    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
-        Some(InlineDescription::Text(
-            "Run local models on your machine with LlamaCpp.".into(),
-        ))
-    }
-
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let settings = LlamaCppLanguageModelProvider::settings(cx);
         let effective = compute_effective_models(&self.state.read(cx).fetched_models, settings);
@@ -603,17 +597,17 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> ProviderConfigurationView {
+    fn settings_view(&self, window: &mut Window, cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.clone();
-        ProviderConfigurationView::SubPage(
-            cx.new(|cx| ConfigurationView::new(state, window, cx))
-                .into(),
-        )
-    }
-
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state
-            .update(cx, |state, cx| state.set_api_key(None, cx))
+        Some(ProviderSettingsView::SubPage(
+            SubPageProviderSettings::new(
+                cx.new(|cx| ConfigurationView::new(state, window, cx))
+                    .into(),
+            )
+            .description(InlineDescription::Text(
+                "Run local models on your machine with LlamaCpp.".into(),
+            )),
+        ))
     }
 }
 
