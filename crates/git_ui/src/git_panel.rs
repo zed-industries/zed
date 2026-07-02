@@ -2014,7 +2014,7 @@ impl GitPanel {
             1 => return self.revert_entry(&to_delete[0], window, cx),
             _ => {}
         };
-        let total = to_delete.len();
+        let total_untracked = to_delete.len();
 
         let mut details = to_delete
             .iter()
@@ -2052,7 +2052,7 @@ impl GitPanel {
                     })
                     .collect::<Vec<_>>();
                 let status_toast = StatusToast::new(
-                    format!("Trashing 0/{total} untracked files…"),
+                    format!("Trashing 0/{total_untracked} untracked files…"),
                     cx,
                     |this, _cx| {
                         this.icon(
@@ -2077,8 +2077,10 @@ impl GitPanel {
                     task.await?;
                     completed += 1;
                     status_toast.update(cx, |toast, cx| {
-                        toast
-                            .set_text(format!("Trashing {completed}/{total} untracked files…"), cx);
+                        toast.set_text(
+                            format!("Trashing {completed}/{total_untracked} untracked files…"),
+                            cx,
+                        );
                     });
                 }
                 Ok(())
