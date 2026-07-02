@@ -4983,6 +4983,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "database_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "database_client",
+ "gpui",
+ "settings",
+ "theme",
+ "theme_settings",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "db"
 version = "0.1.0"
 dependencies = [
@@ -23219,6 +23233,7 @@ dependencies = [
  "crashes",
  "csv_preview",
  "dap_adapters",
+ "database_ui",
  "db",
  "debug_adapter_extension",
  "debugger_tools",

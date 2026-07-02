@@ -180,6 +180,7 @@ impl VsCodeSettings {
             calls: None,
             collaboration_panel: None,
             credentials_url: None,
+            database: None,
             debugger: None,
             diagnostics: None,
             editor: self.editor_settings_content(),

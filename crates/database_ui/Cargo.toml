@@ -1,0 +1,30 @@
+[package]
+name = "database_ui"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "src/database_ui.rs"
+doctest = false
+
+[features]
+test-support = ["database_client/test-support"]
+
+[dependencies]
+anyhow.workspace = true
+database_client.workspace = true
+gpui.workspace = true
+settings.workspace = true
+ui.workspace = true
+workspace.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+settings = { workspace = true, features = ["test-support"] }
+theme_settings.workspace = true
+theme = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

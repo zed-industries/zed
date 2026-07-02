@@ -2720,6 +2720,16 @@
   "context_servers": {},
   // Configures agent servers available in the agent panel.
   "agent_servers": {},
+  "database": {
+    // Number of rows per page in the database table data view.
+    "page_size": 100,
+    // Statement timeout for database queries, in seconds.
+    "query_timeout_seconds": 30,
+    // Maximum number of rows the MCP run_query tool returns.
+    "mcp_max_rows": 200,
+    // Database connections (passwords live in the system keychain).
+    "connections": []
+  },
   "debugger": {
     "stepping_granularity": "line",
     "save_breakpoints": true,

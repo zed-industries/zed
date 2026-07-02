@@ -1,5 +1,6 @@
 mod action;
 mod agent;
+mod database;
 mod editor;
 mod extension;
 mod fallible_options;
@@ -15,6 +16,7 @@ mod workspace;
 
 pub use action::{ActionName, ActionWithArguments, CommandAliasTarget};
 pub use agent::*;
+pub use database::*;
 pub use editor::*;
 pub use extension::*;
 pub use fallible_options::*;
@@ -163,6 +165,9 @@ pub struct SettingsContent {
 
     /// Configuration for the collab panel visual settings.
     pub collaboration_panel: Option<PanelSettingsContent>,
+
+    /// Configuration for the database viewer.
+    pub database: Option<DatabaseSettingsContent>,
 
     pub debugger: Option<DebuggerSettingsContent>,
 

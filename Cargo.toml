@@ -48,6 +48,7 @@ members = [
     "crates/dap",
     "crates/dap_adapters",
     "crates/database_client",
+    "crates/database_ui",
     "crates/db",
     "crates/debug_adapter_extension",
     "crates/debugger_tools",
@@ -317,6 +318,7 @@ csv_preview = { path = "crates/csv_preview"}
 dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
 database_client = { path = "crates/database_client" }
+database_ui = { path = "crates/database_ui" }
 db = { path = "crates/db" }
 debug_adapter_extension = { path = "crates/debug_adapter_extension" }
 debugger_tools = { path = "crates/debugger_tools" }
