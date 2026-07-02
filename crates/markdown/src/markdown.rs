@@ -866,11 +866,7 @@ impl Markdown {
             return;
         }
         let plain_text = text.text_for_range(self.selection.start..self.selection.end);
-        let selected_source = &self.source[self.selection.start..self.selection.end];
-
-        let mut html = String::new();
-        let parser = pulldown_cmark::Parser::new(selected_source);
-        pulldown_cmark::html::push_html(&mut html, parser);
+        let html = selection_html(&self.source, self.selection.start..self.selection.end);
 
         let mut item = ClipboardItem::new_string(plain_text);
         item.entries.push(ClipboardEntry::Html(html));
@@ -4081,6 +4077,24 @@ impl RenderedText {
     }
 }
 
+/// Render the markdown `selection` (source byte offsets) of `source` to HTML.
+///
+/// The whole document is parsed with the preview's [`parser::PARSE_OPTIONS`] and
+/// only events whose source range intersects the selection are emitted. Slicing
+/// `source` directly would cut through syntax markers (`# `, ` ``` `, `~~`) and
+/// drop out-of-range reference definitions, leaving pulldown to mis-parse the
+/// fragment. pulldown event ranges nest, so an intersecting container keeps both
+/// its `Start` and matching `End`, yielding a balanced stream for `push_html`.
+fn selection_html(source: &str, selection: Range<usize>) -> String {
+    let mut html = String::new();
+    let events = pulldown_cmark::Parser::new_ext(source, parser::PARSE_OPTIONS)
+        .into_offset_iter()
+        .filter(|(_, range)| range.start < selection.end && range.end > selection.start)
+        .map(|(event, _)| event);
+    pulldown_cmark::html::push_html(&mut html, events);
+    html
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5630,5 +5644,68 @@ mod tests {
                 px(24.0)
             );
         });
+    }
+
+    #[test]
+    fn test_selection_html_table() {
+        let source = "| a | b |\n|---|---|\n| 1 | 2 |\n";
+        let html = selection_html(source, 0..source.len());
+        assert!(html.contains("<table>"), "expected a table element: {html}");
+        assert!(html.contains("<td>1</td>"), "expected table cell: {html}");
+    }
+
+    #[test]
+    fn test_selection_html_strikethrough() {
+        let source = "hello ~~struck~~ world";
+        let html = selection_html(source, 0..source.len());
+        assert!(html.contains("<del>struck</del>"), "expected <del>: {html}");
+    }
+
+    #[test]
+    fn test_selection_html_heading_at_selection_start() {
+        // Selection begins after the `# ` marker; the full-document parse still
+        // emits a heading rather than a paragraph because the marker is intact.
+        let source = "# Title\n\nbody";
+        let start = source.find("Title").unwrap();
+        let html = selection_html(source, start..source.len());
+        assert!(html.contains("<h1"), "expected a heading element: {html}");
+        assert!(html.contains("Title"), "expected heading text: {html}");
+    }
+
+    #[test]
+    fn test_selection_html_partial_code_fence() {
+        // Selection starts inside the fenced block, after the opening ``` line.
+        let source = "```\nlet x = 1;\n```\n";
+        let start = source.find("let").unwrap();
+        let html = selection_html(source, start..source.len());
+        assert!(html.contains("<pre><code>"), "expected a code block: {html}");
+        assert!(html.contains("let x = 1;"), "expected code text: {html}");
+        assert!(!html.contains("```"), "fence markers should not leak: {html}");
+    }
+
+    #[test]
+    fn test_selection_html_reference_link_definition_outside_selection() {
+        // The `[ref]: url` definition lives after the selection but must still
+        // resolve because the whole document is parsed.
+        let source = "see [the docs][ref] now\n\n[ref]: https://example.com\n";
+        let end = source.find("\n\n").unwrap();
+        let html = selection_html(source, 0..end);
+        assert!(
+            html.contains("href=\"https://example.com\""),
+            "reference link should resolve: {html}"
+        );
+    }
+
+    #[test]
+    fn test_selection_html_balanced_across_list_items() {
+        let source = "- one\n- two\n- three\n";
+        let start = source.find("two").unwrap();
+        let html = selection_html(source, start..source.len());
+        assert!(html.contains("<ul>") && html.contains("</ul>"), "balanced list: {html}");
+        assert_eq!(
+            html.matches("<li>").count(),
+            html.matches("</li>").count(),
+            "list items must be balanced: {html}"
+        );
     }
 }
