@@ -1,33 +1,45 @@
 use crate::metal_atlas::MetalAtlas;
 use anyhow::Result;
 use block::ConcreteBlock;
-use cocoa::{
-    base::{NO, YES},
-    foundation::{NSSize, NSUInteger},
-    quartzcore::AutoresizingMask,
-};
+use core_graphics::geometry::CGSize;
 use gpui::{
-    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, PaintSurface,
-    Path, Point, PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size,
-    Surface, Underline, point, size,
+    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, MonochromeSprite, Path, Point,
+    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, Underline, point,
+    size,
 };
+#[cfg(target_os = "macos")]
+use gpui::{PaintSurface, Surface};
 #[cfg(any(test, feature = "test-support"))]
 use image::RgbaImage;
 
+#[cfg(target_os = "macos")]
 use core_foundation::base::TCFType;
+#[cfg(target_os = "macos")]
 use core_video::{
     metal_texture::CVMetalTextureGetTexture, metal_texture_cache::CVMetalTextureCache,
     pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
 };
-use foreign_types::{ForeignType, ForeignTypeRef};
+use foreign_types::ForeignType;
+#[cfg(target_os = "macos")]
+use foreign_types::ForeignTypeRef;
 use metal::{
     CAMetalLayer, CommandQueue, MTLGPUFamily, MTLPixelFormat, MTLResourceOptions, NSRange,
-    RenderPassColorAttachmentDescriptorRef,
+    NSUInteger, RenderPassColorAttachmentDescriptorRef,
 };
-use objc::{self, msg_send, sel, sel_impl};
+use objc::{
+    self, msg_send,
+    runtime::{NO, YES},
+    sel, sel_impl,
+};
 use parking_lot::Mutex;
 
 use std::{cell::Cell, ffi::c_void, mem, ptr, sync::Arc};
+
+// kCALayerWidthSizable and kCALayerHeightSizable from CALayer's
+// CAAutoresizingMask, defined locally because the cocoa crate that exports
+// them doesn't build on iOS.
+const CA_LAYER_WIDTH_SIZABLE: u32 = 1 << 1;
+const CA_LAYER_HEIGHT_SIZABLE: u32 = 1 << 4;
 
 // Exported to metal
 pub(crate) type PointF = gpui::Point<f32>;
@@ -40,10 +52,10 @@ const SHADERS_SOURCE_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/stitch
 // https://developer.apple.com/documentation/metal/mtldevice/1433355-supportstexturesamplecount
 const PATH_SAMPLE_COUNT: u32 = 4;
 
-pub(crate) type Context = Arc<Mutex<InstanceBufferPool>>;
-pub(crate) type Renderer = MetalRenderer;
+pub type Context = Arc<Mutex<InstanceBufferPool>>;
+pub type Renderer = MetalRenderer;
 
-pub(crate) unsafe fn new_renderer(
+pub unsafe fn new_renderer(
     context: self::Context,
     _native_window: *mut c_void,
     _native_view: *mut c_void,
@@ -53,7 +65,7 @@ pub(crate) unsafe fn new_renderer(
     MetalRenderer::new(context, transparent)
 }
 
-pub(crate) struct InstanceBufferPool {
+pub struct InstanceBufferPool {
     buffer_size: usize,
     buffers: Vec<metal::Buffer>,
 }
@@ -108,7 +120,7 @@ impl InstanceBufferPool {
     }
 }
 
-pub(crate) struct MetalRenderer {
+pub struct MetalRenderer {
     device: metal::Device,
     layer: Option<metal::MetalLayer>,
     is_apple_gpu: bool,
@@ -124,12 +136,14 @@ pub(crate) struct MetalRenderer {
     underlines_pipeline_state: metal::RenderPipelineState,
     monochrome_sprites_pipeline_state: metal::RenderPipelineState,
     polychrome_sprites_pipeline_state: metal::RenderPipelineState,
+    #[cfg(target_os = "macos")]
     surfaces_pipeline_state: metal::RenderPipelineState,
     unit_vertices: metal::Buffer,
     #[allow(clippy::arc_with_non_send_sync)]
     instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
     sprite_atlas: Arc<MetalAtlas>,
-    core_video_texture_cache: core_video::metal_texture_cache::CVMetalTextureCache,
+    #[cfg(target_os = "macos")]
+    core_video_texture_cache: CVMetalTextureCache,
     path_intermediate_texture: Option<metal::Texture>,
     path_intermediate_msaa_texture: Option<metal::Texture>,
     path_sample_count: u32,
@@ -167,8 +181,7 @@ impl MetalRenderer {
             let _: () = msg_send![&*layer, setNeedsDisplayOnBoundsChange: YES];
             let _: () = msg_send![
                 &*layer,
-                setAutoresizingMask: AutoresizingMask::WIDTH_SIZABLE
-                    | AutoresizingMask::HEIGHT_SIZABLE
+                setAutoresizingMask: CA_LAYER_WIDTH_SIZABLE | CA_LAYER_HEIGHT_SIZABLE
             ];
         }
 
@@ -314,6 +327,7 @@ impl MetalRenderer {
             "polychrome_sprite_fragment",
             MTLPixelFormat::BGRA8Unorm,
         );
+        #[cfg(target_os = "macos")]
         let surfaces_pipeline_state = build_pipeline_state(
             &device,
             &library,
@@ -325,6 +339,7 @@ impl MetalRenderer {
 
         let command_queue = device.new_command_queue();
         let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), is_apple_gpu));
+        #[cfg(target_os = "macos")]
         let core_video_texture_cache =
             CVMetalTextureCache::new(None, device.clone(), None).unwrap();
 
@@ -343,10 +358,12 @@ impl MetalRenderer {
             underlines_pipeline_state,
             monochrome_sprites_pipeline_state,
             polychrome_sprites_pipeline_state,
+            #[cfg(target_os = "macos")]
             surfaces_pipeline_state,
             unit_vertices,
             instance_buffer_pool,
             sprite_atlas,
+            #[cfg(target_os = "macos")]
             core_video_texture_cache,
             path_intermediate_texture: None,
             path_intermediate_msaa_texture: None,
@@ -380,16 +397,7 @@ impl MetalRenderer {
 
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
         if let Some(layer) = &self.layer {
-            let ns_size = NSSize {
-                width: size.width.0 as f64,
-                height: size.height.0 as f64,
-            };
-            unsafe {
-                let _: () = msg_send![
-                    layer.as_ref(),
-                    setDrawableSize: ns_size
-                ];
-            }
+            layer.set_drawable_size(CGSize::new(size.width.0 as f64, size.height.0 as f64));
         }
         self.update_path_intermediate_textures(size);
     }
@@ -921,6 +929,7 @@ impl MetalRenderer {
                         viewport_size,
                         command_encoder,
                     ),
+                #[cfg(target_os = "macos")]
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(
                     &scene.surfaces[range],
                     instance_buffer,
@@ -928,6 +937,14 @@ impl MetalRenderer {
                     viewport_size,
                     command_encoder,
                 ),
+                #[cfg(target_os = "ios")]
+                PrimitiveBatch::Surfaces(range) => {
+                    log::error!(
+                        "skipping {} surfaces: surface rendering is not implemented on iOS",
+                        range.len()
+                    );
+                    true
+                }
                 PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
             };
             if !ok {
@@ -1467,6 +1484,7 @@ impl MetalRenderer {
         true
     }
 
+    #[cfg(target_os = "macos")]
     fn draw_surfaces(
         &mut self,
         surfaces: &[PaintSurface],
@@ -1737,6 +1755,7 @@ enum SpriteInputIndex {
 }
 
 #[repr(C)]
+#[cfg(target_os = "macos")]
 enum SurfaceInputIndex {
     Vertices = 0,
     Surfaces = 1,

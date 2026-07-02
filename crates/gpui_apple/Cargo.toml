@@ -1,0 +1,52 @@
+[package]
+name = "gpui_apple"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/gpui_apple.rs"
+
+[features]
+default = ["gpui/default"]
+test-support = ["gpui/test-support", "dep:image"]
+runtime_shaders = []
+
+[dependencies]
+gpui.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+anyhow.workspace = true
+block = "0.1"
+collections.workspace = true
+core-graphics = "0.24"
+derive_more.workspace = true
+etagere = "0.2"
+foreign-types = "0.5"
+image = { workspace = true, optional = true }
+log.workspace = true
+metal.workspace = true
+objc.workspace = true
+parking_lot.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation.workspace = true
+core-video.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.build-dependencies]
+cbindgen = { version = "0.28.0", default-features = false }
+gpui.workspace = true
+
+# When this crate is itself being tested (cargo test -p gpui_apple), its own
+# cfg(test) flag enables impls of test-only traits like PlatformHeadlessRenderer.
+# Those traits only exist in gpui when gpui's `test-support` feature is on, so
+# we have to turn that feature on as a dev-dependency. The `cfg(test)` flag of a
+# dependent crate doesn't propagate to its dependencies, but dev-dependencies
+# do, so this is the correct way to enable the feature exactly when needed.
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+image.workspace = true

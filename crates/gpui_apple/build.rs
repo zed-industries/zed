@@ -1,12 +1,13 @@
 #![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
 
 fn main() {
+    // Shader compilation requires Xcode tooling, which only exists on macOS hosts.
     #[cfg(target_os = "macos")]
-    macos_build::run();
+    apple_build::run();
 }
 
 #[cfg(target_os = "macos")]
-mod macos_build {
+mod apple_build {
     use std::{
         env,
         path::{Path, PathBuf},
@@ -15,6 +16,11 @@ mod macos_build {
     use cbindgen::Config;
 
     pub fn run() {
+        let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+        if target_os != "macos" && target_os != "ios" {
+            return;
+        }
+
         let header_path = generate_shader_bindings();
 
         #[cfg(feature = "runtime_shaders")]
@@ -101,6 +107,20 @@ mod macos_build {
         gpui::GPUI_MANIFEST_DIR.into()
     }
 
+    /// The Metal SDK name and minimum OS version flag for the platform being
+    /// compiled for, based on `CARGO_CFG_TARGET_OS`/`CARGO_CFG_TARGET_ABI`.
+    #[cfg(not(feature = "runtime_shaders"))]
+    fn metal_sdk_flags() -> (&'static str, &'static str) {
+        let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+        let target_abi = env::var("CARGO_CFG_TARGET_ABI").unwrap_or_default();
+        match target_os.as_str() {
+            "macos" => ("macosx", "-mmacosx-version-min=10.15.7"),
+            "ios" if target_abi == "sim" => ("iphonesimulator", "-mios-simulator-version-min=17.0"),
+            "ios" => ("iphoneos", "-mios-version-min=17.0"),
+            other => panic!("unsupported target OS for Metal shaders: {other}"),
+        }
+    }
+
     /// To enable runtime compilation, we need to "stitch" the shaders file with the generated header
     /// so that it is self-contained.
     #[cfg(feature = "runtime_shaders")]
@@ -129,13 +149,15 @@ mod macos_build {
             PathBuf::from(env::var("OUT_DIR").unwrap()).join("shaders.metallib");
         println!("cargo:rerun-if-changed={}", shader_path);
 
+        let (sdk, min_version_flag) = metal_sdk_flags();
+
         let output = Command::new("xcrun")
             .args([
                 "-sdk",
-                "macosx",
+                sdk,
                 "metal",
                 "-gline-tables-only",
-                "-mmacosx-version-min=10.15.7",
+                min_version_flag,
                 "-MO",
                 "-c",
                 shader_path,
@@ -156,7 +178,7 @@ mod macos_build {
         }
 
         let output = Command::new("xcrun")
-            .args(["-sdk", "macosx", "metallib"])
+            .args(["-sdk", sdk, "metallib"])
             .arg(air_output_path)
             .arg("-o")
             .arg(metallib_output_path)

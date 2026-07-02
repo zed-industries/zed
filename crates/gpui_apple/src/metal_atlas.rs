@@ -10,10 +10,10 @@ use metal::Device;
 use parking_lot::Mutex;
 use std::borrow::Cow;
 
-pub(crate) struct MetalAtlas(Mutex<MetalAtlasState>);
+pub struct MetalAtlas(Mutex<MetalAtlasState>);
 
 impl MetalAtlas {
-    pub(crate) fn new(device: Device, is_apple_gpu: bool) -> Self {
+    pub fn new(device: Device, is_apple_gpu: bool) -> Self {
         MetalAtlas(Mutex::new(MetalAtlasState {
             device: AssertSend(device),
             is_apple_gpu,
