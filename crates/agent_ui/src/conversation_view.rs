@@ -28,14 +28,14 @@ use file_icons::FileIcons;
 use fs::Fs;
 use futures::FutureExt as _;
 use gpui::{
-    Action, Animation, AnimationExt, AnyView, App, ClickEvent, ClipboardItem, CursorStyle,
-    ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState,
-    ObjectFit, PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription, Task,
-    TextRun, TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop,
+    Action, Animation, AnimationExt, App, ClickEvent, ClipboardItem, CursorStyle, ElementId, Empty,
+    Entity, EventEmitter, FocusHandle, Focusable, Hsla, ListOffset, ListState, ObjectFit,
+    PlatformDisplay, ScrollHandle, SharedString, StyledText, Subscription, Task, TextRun,
+    TextStyle, WeakEntity, Window, WindowHandle, div, ease_in_out, img, linear_color_stop,
     linear_gradient, list, pulsating_between,
 };
 use language::{Buffer, Language, Rope};
-use language_model::{LanguageModelCompletionError, LanguageModelRegistry};
+use language_model::LanguageModelCompletionError;
 use markdown::{
     CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont, MarkdownStyle,
 };
@@ -758,9 +758,7 @@ enum AuthState {
     Ok,
     Unauthenticated {
         description: Option<Entity<Markdown>>,
-        configuration_view: Option<AnyView>,
         pending_auth_method: Option<acp::AuthMethodId>,
-        _subscription: Option<Subscription>,
     },
 }
 
@@ -1160,14 +1158,7 @@ impl ConversationView {
                 Err(e) => match e.downcast::<acp_thread::AuthRequired>() {
                     Ok(err) => {
                         cx.update(|window, cx| {
-                            Self::handle_auth_required(
-                                this,
-                                err,
-                                agent.agent_id(),
-                                connection,
-                                window,
-                                cx,
-                            )
+                            Self::handle_auth_required(this, err, connection, window, cx)
                         })
                         .log_err();
                         return;
@@ -1449,55 +1440,17 @@ impl ConversationView {
     fn handle_auth_required(
         this: WeakEntity<Self>,
         err: AuthRequired,
-        agent_id: AgentId,
         connection: Rc<dyn AgentConnection>,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let (configuration_view, subscription) = if let Some(provider_id) = &err.provider_id {
-            let registry = LanguageModelRegistry::global(cx);
-
-            let sub = window.subscribe(&registry, cx, {
-                let provider_id = provider_id.clone();
-                let this = this.clone();
-                move |_, ev, window, cx| {
-                    if let language_model::Event::ProviderStateChanged(updated_provider_id) = &ev
-                        && &provider_id == updated_provider_id
-                        && LanguageModelRegistry::global(cx)
-                            .read(cx)
-                            .provider(&provider_id)
-                            .map_or(false, |provider| provider.is_authenticated(cx))
-                    {
-                        this.update(cx, |this, cx| {
-                            this.reset(window, cx);
-                        })
-                        .ok();
-                    }
-                }
-            });
-
-            let view = registry.read(cx).provider(&provider_id).map(|provider| {
-                provider.configuration_view(
-                    language_model::ConfigurationViewTargetAgent::Other(agent_id.0),
-                    window,
-                    cx,
-                )
-            });
-
-            (view, Some(sub))
-        } else {
-            (None, None)
-        };
-
         this.update(cx, |this, cx| {
             let description = err
                 .description
                 .map(|desc| cx.new(|cx| Markdown::new(desc.into(), None, None, cx)));
             let auth_state = AuthState::Unauthenticated {
                 pending_auth_method: None,
-                configuration_view,
                 description,
-                _subscription: subscription,
             };
             if let Some(connected) = this.as_connected_mut() {
                 connected.auth_state = auth_state;
@@ -1963,7 +1916,6 @@ impl ConversationView {
         let connection = connected.connection.clone();
 
         let AuthState::Unauthenticated {
-            configuration_view,
             pending_auth_method,
             ..
         } = &mut connected.auth_state
@@ -1974,7 +1926,6 @@ impl ConversationView {
         let agent_telemetry_id = connection.telemetry_id();
 
         if let Some(login_task) = connection.terminal_auth_task(&method, cx) {
-            configuration_view.take();
             pending_auth_method.replace(method.clone());
 
             let project = self.project.clone();
@@ -2043,7 +1994,6 @@ impl ConversationView {
             return;
         }
 
-        configuration_view.take();
         pending_auth_method.replace(method.clone());
 
         let authenticate = connection.authenticate(method, cx);
@@ -2292,7 +2242,6 @@ impl ConversationView {
         &self,
         connection: &Rc<dyn AgentConnection>,
         description: Option<&Entity<Markdown>>,
-        configuration_view: Option<&AnyView>,
         pending_auth_method: Option<&acp::AuthMethodId>,
         window: &mut Window,
         cx: &Context<Self>,
@@ -2305,10 +2254,8 @@ impl ConversationView {
             .agent_display_name(&self.agent.agent_id())
             .unwrap_or_else(|| self.agent.agent_id().0);
 
-        let show_fallback_description = auth_methods.len() > 1
-            && configuration_view.is_none()
-            && description.is_none()
-            && pending_auth_method.is_none();
+        let show_fallback_description =
+            auth_methods.len() > 1 && description.is_none() && pending_auth_method.is_none();
 
         let auth_buttons = || {
             h_flex().justify_end().flex_wrap().gap_1().children(
@@ -2383,12 +2330,7 @@ impl ConversationView {
                                     .color(Color::Muted),
                             )
                         } else {
-                            this.children(
-                                configuration_view
-                                    .cloned()
-                                    .map(|view| div().w_full().child(view)),
-                            )
-                            .children(description.map(|desc| {
+                            this.children(description.map(|desc| {
                                 self.render_markdown(
                                     desc.clone(),
                                     MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
@@ -3245,7 +3187,6 @@ impl ConversationView {
     }
 
     pub(crate) fn reauthenticate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let agent_id = self.agent.agent_id();
         self.cancel_request_elicitations(cx);
         if let Some(active) = self.root_thread_view() {
             active.update(cx, |active, cx| active.clear_thread_error(cx));
@@ -3256,7 +3197,7 @@ impl ConversationView {
             return;
         };
         window.defer(cx, |window, cx| {
-            Self::handle_auth_required(this, AuthRequired::new(), agent_id, connection, window, cx);
+            Self::handle_auth_required(this, AuthRequired::new(), connection, window, cx);
         })
     }
 
@@ -3288,9 +3229,7 @@ impl ConversationView {
                         if let Some(connected) = this.as_connected_mut() {
                             connected.auth_state = AuthState::Unauthenticated {
                                 description: None,
-                                configuration_view: None,
                                 pending_auth_method: None,
-                                _subscription: None,
                             };
                             cx.emit(StateChange);
                             if let Some(view) = connected.active_view()
@@ -3431,9 +3370,7 @@ impl Render for ConversationView {
                 auth_state:
                     AuthState::Unauthenticated {
                         description,
-                        configuration_view,
                         pending_auth_method,
-                        _subscription,
                     },
                 ..
             }) => v_flex()
@@ -3443,7 +3380,6 @@ impl Render for ConversationView {
                 .child(self.render_auth_required_state(
                     connection,
                     description.as_ref(),
-                    configuration_view.as_ref(),
                     pending_auth_method.as_ref(),
                     window,
                     cx,
