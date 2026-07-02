@@ -20,15 +20,23 @@ use objc::{
 };
 use std::{ffi::c_void, ptr::NonNull, time::Duration};
 
-pub(crate) struct MacDispatcher;
+/// [`PlatformDispatcher`] implementation backed by Grand Central Dispatch,
+/// shared by the macOS and iOS platforms.
+pub struct AppleDispatcher;
 
-impl MacDispatcher {
+impl AppleDispatcher {
     pub fn new() -> Self {
         Self
     }
 }
 
-impl PlatformDispatcher for MacDispatcher {
+impl Default for AppleDispatcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PlatformDispatcher for AppleDispatcher {
     fn is_main_thread(&self) -> bool {
         let is_main_thread: BOOL = unsafe { msg_send![class!(NSThread), isMainThread] };
         is_main_thread == YES

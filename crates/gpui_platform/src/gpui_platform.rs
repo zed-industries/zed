@@ -97,7 +97,7 @@ mod tests {
         let task_ran = Rc::new(RefCell::new(false));
 
         // Spawn a foreground task via the App's spawn method
-        // This should use our TestDispatcher, not the MacDispatcher
+        // This should use our TestDispatcher, not the AppleDispatcher
         {
             let task_ran = task_ran.clone();
             cx.update(|cx| {

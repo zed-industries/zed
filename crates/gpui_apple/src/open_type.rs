@@ -1,6 +1,5 @@
 #![allow(unused, non_upper_case_globals)]
 
-use cocoa::appkit::CGFloat;
 use core_foundation::{
     array::{
         CFArray, CFArrayAppendArray, CFArrayAppendValue, CFArrayCreateMutable, CFArrayGetCount,
@@ -14,7 +13,7 @@ use core_foundation::{
     string::{CFString, CFStringRef},
 };
 use core_foundation_sys::locale::CFLocaleCopyPreferredLanguages;
-use core_graphics::{display::CFDictionary, geometry::CGAffineTransform};
+use core_graphics::{base::CGFloat, geometry::CGAffineTransform};
 use core_text::font_descriptor::{
     TraitAccessors, kCTFontFamilyNameAttribute, kCTFontItalicTrait, kCTFontSlantTrait,
     kCTFontTraitsAttribute, kCTFontWeightTrait, kCTFontWidthTrait,

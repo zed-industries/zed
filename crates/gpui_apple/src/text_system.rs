@@ -1,5 +1,4 @@
 use anyhow::anyhow;
-use cocoa::appkit::CGFloat;
 use collections::HashMap;
 use core_foundation::{
     array::{CFArray, CFArrayRef},
@@ -9,10 +8,10 @@ use core_foundation::{
     string::CFString,
 };
 use core_graphics::{
-    base::{CGGlyph, kCGImageAlphaPremultipliedLast},
+    base::{CGFloat, CGGlyph, kCGImageAlphaPremultipliedLast},
     color_space::CGColorSpace,
     context::{CGContext, CGTextDrawingMode},
-    display::CGPoint,
+    geometry::CGPoint,
 };
 use core_text::{
     font::CTFont,
@@ -53,8 +52,9 @@ use crate::open_type::apply_features_and_fallbacks;
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
 
-/// macOS text system using CoreText for font shaping.
-pub struct MacTextSystem(RwLock<MacTextSystemState>);
+/// Text system shared by the macOS and iOS platforms, using Core Text for
+/// font shaping.
+pub struct CoreTextSystem(RwLock<CoreTextSystemState>);
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct FontKey {
@@ -63,7 +63,7 @@ struct FontKey {
     font_fallbacks: Option<FontFallbacks>,
 }
 
-struct MacTextSystemState {
+struct CoreTextSystemState {
     memory_source: MemSource,
     system_source: SystemSource,
     fonts: Vec<FontKitFont>,
@@ -73,10 +73,10 @@ struct MacTextSystemState {
     postscript_names_by_font_id: HashMap<FontId, String>,
 }
 
-impl MacTextSystem {
-    /// Create a new MacTextSystem.
+impl CoreTextSystem {
+    /// Create a new CoreTextSystem.
     pub fn new() -> Self {
-        Self(RwLock::new(MacTextSystemState {
+        Self(RwLock::new(CoreTextSystemState {
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
@@ -88,13 +88,13 @@ impl MacTextSystem {
     }
 }
 
-impl Default for MacTextSystem {
+impl Default for CoreTextSystem {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl PlatformTextSystem for MacTextSystem {
+impl PlatformTextSystem for CoreTextSystem {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         self.0.write().add_fonts(fonts)
     }
@@ -252,7 +252,7 @@ fn font_smoothing_allowed_by_user() -> bool {
     })
 }
 
-impl MacTextSystemState {
+impl CoreTextSystemState {
     fn add_fonts(&mut self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
         let fonts = fonts
             .into_iter()
@@ -742,12 +742,12 @@ mod lenient_font_attributes {
 
 #[cfg(test)]
 mod tests {
-    use crate::MacTextSystem;
+    use crate::CoreTextSystem;
     use gpui::{FontRun, GlyphId, PlatformTextSystem, font, px};
 
     #[test]
     fn test_layout_line_bom_char() {
-        let fonts = MacTextSystem::new();
+        let fonts = CoreTextSystem::new();
         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
         let line = "\u{feff}";
         let mut style = FontRun {
@@ -791,7 +791,7 @@ mod tests {
 
     #[test]
     fn test_layout_line_zwnj_insertion() {
-        let fonts = MacTextSystem::new();
+        let fonts = CoreTextSystem::new();
         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
 
         let text = "hello world";
@@ -842,7 +842,7 @@ mod tests {
 
     #[test]
     fn test_layout_line_zwnj_edge_cases() {
-        let fonts = MacTextSystem::new();
+        let fonts = CoreTextSystem::new();
         let font_id = fonts.font_id(&font("Helvetica")).unwrap();
 
         let text = "hello";
