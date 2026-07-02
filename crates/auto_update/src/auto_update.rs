@@ -13,7 +13,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings, SettingsStore};
 use smol::fs::File;
-use smol::{fs, io::AsyncReadExt};
+use smol::{fs, io::AsyncReadExt, io::AsyncWriteExt};
 use std::mem;
 use std::{
     env::{
@@ -126,10 +126,21 @@ pub struct AssetQuery<'a> {
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
-    Downloading { version: VersionCheckType },
-    Installing { version: VersionCheckType },
-    Updated { version: VersionCheckType },
-    Errored { error: Arc<anyhow::Error> },
+    Downloading {
+        version: VersionCheckType,
+        /// Download progress as a fraction in the range `0.0..=1.0`, or `None`
+        /// when the total download size is not yet known.
+        progress: Option<f32>,
+    },
+    Installing {
+        version: VersionCheckType,
+    },
+    Updated {
+        version: VersionCheckType,
+    },
+    Errored {
+        error: Arc<anyhow::Error>,
+    },
 }
 
 impl PartialEq for AutoUpdateStatus {
@@ -138,8 +149,8 @@ impl PartialEq for AutoUpdateStatus {
             (AutoUpdateStatus::Idle, AutoUpdateStatus::Idle) => true,
             (AutoUpdateStatus::Checking, AutoUpdateStatus::Checking) => true,
             (
-                AutoUpdateStatus::Downloading { version: v1 },
-                AutoUpdateStatus::Downloading { version: v2 },
+                AutoUpdateStatus::Downloading { version: v1, .. },
+                AutoUpdateStatus::Downloading { version: v2, .. },
             ) => v1 == v2,
             (
                 AutoUpdateStatus::Installing { version: v1 },
@@ -700,6 +711,7 @@ impl AutoUpdater {
         this.update(cx, |this, cx| {
             this.status = AutoUpdateStatus::Downloading {
                 version: newer_version.clone(),
+                progress: None,
             };
             cx.notify();
         });
@@ -708,9 +720,27 @@ impl AutoUpdater {
             .await
             .context("Failed to create installer dir")?;
         let target_path = Self::target_path(&installer_dir).await?;
-        download_release(&target_path, fetched_release_data, client)
-            .await
-            .with_context(|| format!("Failed to download update to {}", target_path.display()))?;
+        let progress_entity = this.clone();
+        let mut progress_cx = cx.clone();
+        download_release(
+            &target_path,
+            fetched_release_data,
+            client,
+            move |progress| {
+                progress_entity.update(&mut progress_cx, |this, cx| {
+                    if let AutoUpdateStatus::Downloading {
+                        progress: current_progress,
+                        ..
+                    } = &mut this.status
+                    {
+                        *current_progress = progress;
+                        cx.notify();
+                    }
+                });
+            },
+        )
+        .await
+        .with_context(|| format!("Failed to download update to {}", target_path.display()))?;
 
         this.update(cx, |this, cx| {
             this.status = AutoUpdateStatus::Installing {
@@ -989,6 +1019,7 @@ async fn download_release(
     target_path: &Path,
     release: ReleaseAsset,
     client: Arc<HttpClientWithUrl>,
+    mut on_progress: impl FnMut(Option<f32>),
 ) -> Result<()> {
     let mut target_file = File::create(&target_path).await?;
 
@@ -998,7 +1029,39 @@ async fn download_release(
         "failed to download update: {:?}",
         response.status()
     );
-    smol::io::copy(response.body_mut(), &mut target_file).await?;
+
+    let total_bytes = response
+        .headers()
+        .get(http_client::http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|total_bytes| *total_bytes > 0);
+
+    let mut downloaded_bytes: u64 = 0;
+    let mut last_reported_percent: Option<u8> = None;
+    let mut buffer = [0u8; 8192];
+    let body = response.body_mut();
+    loop {
+        let bytes_read = body.read(&mut buffer).await?;
+        if bytes_read == 0 {
+            break;
+        }
+        target_file.write_all(&buffer[..bytes_read]).await?;
+        downloaded_bytes += bytes_read as u64;
+
+        if let Some(total_bytes) = total_bytes {
+            let fraction = (downloaded_bytes as f32 / total_bytes as f32).clamp(0.0, 1.0);
+            // Only report when the whole-number percentage changes to avoid
+            // notifying the UI on every chunk.
+            let percent = (fraction * 100.0) as u8;
+            if last_reported_percent != Some(percent) {
+                last_reported_percent = Some(percent);
+                on_progress(Some(fraction));
+            }
+        }
+    }
+    target_file.flush().await?;
+    on_progress(Some(1.0));
     log::info!("downloaded update. path:{:?}", target_path);
 
     Ok(())
@@ -1297,7 +1360,8 @@ mod tests {
         assert_eq!(
             status,
             AutoUpdateStatus::Downloading {
-                version: VersionCheckType::Semantic(semver::Version::new(0, 100, 1))
+                version: VersionCheckType::Semantic(semver::Version::new(0, 100, 1)),
+                progress: None,
             }
         );
 

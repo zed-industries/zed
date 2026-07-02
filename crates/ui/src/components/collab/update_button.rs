@@ -12,6 +12,7 @@ pub struct UpdateButton {
     tooltip: Option<SharedString>,
     disabled: bool,
     show_dismiss: bool,
+    progress: Option<f32>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_dismiss: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
@@ -26,6 +27,7 @@ impl UpdateButton {
             tooltip: None,
             disabled: false,
             show_dismiss: false,
+            progress: None,
             on_click: None,
             on_dismiss: None,
         }
@@ -78,15 +80,23 @@ impl UpdateButton {
         self
     }
 
+    /// Sets the download progress (a fraction in the range `0.0..=1.0`) to
+    /// display as a progress bar beneath the label.
+    pub fn progress(mut self, progress: impl Into<Option<f32>>) -> Self {
+        self.progress = progress.into();
+        self
+    }
+
     pub fn checking() -> Self {
         Self::new(IconName::LoadCircle, "Checking for Zed Updates…")
             .icon_animate(true)
             .disabled(true)
     }
 
-    pub fn downloading(version: impl Into<SharedString>) -> Self {
+    pub fn downloading(version: impl Into<SharedString>, progress: Option<f32>) -> Self {
         Self::new(IconName::Download, "Downloading Zed Update…")
             .tooltip(version)
+            .progress(progress)
             .disabled(true)
     }
 
@@ -129,27 +139,43 @@ impl RenderOnce for UpdateButton {
         };
 
         let tooltip = self.tooltip.clone();
+        let progress = self.progress;
+
+        let label_row = h_flex()
+            .h_full()
+            .gap_1()
+            .child(icon_element)
+            .child(Label::new(self.message).size(LabelSize::Small));
 
         h_flex()
+            .relative()
+            .overflow_hidden()
             .mr_2()
             .rounded_sm()
             .border_1()
             .border_color(border_color)
             .child(
                 ButtonLike::new("update-button")
-                    .child(
-                        h_flex()
-                            .h_full()
-                            .gap_1()
-                            .child(icon_element)
-                            .child(Label::new(self.message).size(LabelSize::Small)),
-                    )
+                    .child(label_row)
                     .when_some(tooltip, |this, tooltip| {
                         this.tooltip(Tooltip::text(tooltip))
                     })
                     .disabled(self.disabled)
                     .when_some(self.on_click, |this, handler| this.on_click(handler)),
             )
+            .when_some(progress, |this, progress| {
+                // Render the progress as a thin bar pinned to the bottom edge so
+                // it doesn't change the button's height or shift the label.
+                this.child(
+                    div()
+                        .absolute()
+                        .bottom_0()
+                        .left_0()
+                        .h(px(2.))
+                        .w(relative(progress.clamp(0.0, 1.0)))
+                        .bg(cx.theme().status().info),
+                )
+            })
             .when(self.show_dismiss, |this| {
                 this.child(
                     div().border_l_1().border_color(border_color).child(
@@ -189,7 +215,7 @@ impl Component for UpdateButton {
                         single_example("Checking", UpdateButton::checking().into_any_element()),
                         single_example(
                             "Downloading",
-                            UpdateButton::downloading(version).into_any_element(),
+                            UpdateButton::downloading(version, Some(0.45)).into_any_element(),
                         ),
                         single_example(
                             "Installing",
