@@ -2073,18 +2073,13 @@ impl GitPanel {
             this.update(cx, |this, cx| this.change_file_stage(false, to_unstage, cx))?;
             let result: anyhow::Result<()> = async {
                 let mut completed = 0;
-                let update_every = (total / 100).max(1);
                 for task in tasks {
                     task.await?;
                     completed += 1;
-                    if completed % update_every == 0 || completed == total {
-                        status_toast.update(cx, |toast, cx| {
-                            toast.set_text(
-                                format!("Trashing {completed}/{total} untracked files…"),
-                                cx,
-                            );
-                        });
-                    }
+                    status_toast.update(cx, |toast, cx| {
+                        toast
+                            .set_text(format!("Trashing {completed}/{total} untracked files…"), cx);
+                    });
                 }
                 Ok(())
             }
