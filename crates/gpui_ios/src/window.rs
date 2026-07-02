@@ -11,7 +11,7 @@ use objc::{
     class,
     declare::ClassDecl,
     msg_send,
-    runtime::{Class, Object, Sel},
+    runtime::{Class, NO, Object, Sel, YES},
     sel, sel_impl,
 };
 use raw_window_handle as rwh;
@@ -28,6 +28,12 @@ unsafe extern "C" {
     static NSDefaultRunLoopMode: id;
 }
 
+#[link(name = "UIKit", kind = "framework")]
+unsafe extern "C" {
+    static UIApplicationWillResignActiveNotification: id;
+    static UIApplicationDidBecomeActiveNotification: id;
+}
+
 const WINDOW_STATE_IVAR: &str = "windowState";
 
 struct IosWindowState {
@@ -40,7 +46,9 @@ struct IosWindowState {
     bounds: Bounds<Pixels>,
     scale_factor: f32,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
+    active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
     input_handler: Option<PlatformInputHandler>,
+    is_active: bool,
 }
 
 pub(crate) struct IosWindow(Rc<RefCell<IosWindowState>>);
@@ -99,7 +107,11 @@ impl IosWindow {
                 bounds,
                 scale_factor,
                 request_frame_callback: None,
+                active_status_change_callback: None,
                 input_handler: None,
+                // The app launches foreground-active; UIKit only notifies on
+                // transitions.
+                is_active: true,
             })));
 
             // The display-link target keeps a strong `Rc` reference to the
@@ -118,6 +130,22 @@ impl IosWindow {
             let run_loop: id = msg_send![class!(NSRunLoop), mainRunLoop];
             let _: () =
                 msg_send![display_link, addToRunLoop: run_loop forMode: NSDefaultRunLoopMode];
+
+            let notification_center: id = msg_send![class!(NSNotificationCenter), defaultCenter];
+            let _: () = msg_send![
+                notification_center,
+                addObserver: display_link_target
+                selector: sel!(applicationWillResignActive:)
+                name: UIApplicationWillResignActiveNotification
+                object: nil
+            ];
+            let _: () = msg_send![
+                notification_center,
+                addObserver: display_link_target
+                selector: sel!(applicationDidBecomeActive:)
+                name: UIApplicationDidBecomeActiveNotification
+                object: nil
+            ];
 
             {
                 let mut state = window.0.borrow_mut();
@@ -142,6 +170,8 @@ impl Drop for IosWindow {
             )
         };
         unsafe {
+            let notification_center: id = msg_send![class!(NSNotificationCenter), defaultCenter];
+            let _: () = msg_send![notification_center, removeObserver: display_link_target];
             let _: () = msg_send![display_link, invalidate];
             // Reclaim the strong reference the display-link target holds so
             // the window state can actually be freed.
@@ -218,7 +248,7 @@ impl PlatformWindow for IosWindow {
     fn activate(&self) {}
 
     fn is_active(&self) -> bool {
-        true
+        self.0.borrow().is_active
     }
 
     fn is_hovered(&self) -> bool {
@@ -249,7 +279,9 @@ impl PlatformWindow for IosWindow {
 
     fn on_input(&self, _callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {}
 
-    fn on_active_status_change(&self, _callback: Box<dyn FnMut(bool)>) {}
+    fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.borrow_mut().active_status_change_callback = Some(callback);
+    }
 
     fn on_hover_status_change(&self, _callback: Box<dyn FnMut(bool)>) {}
 
@@ -314,6 +346,14 @@ fn display_link_target_class() -> &'static Class {
         decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
         unsafe {
             decl.add_method(sel!(step:), step as extern "C" fn(&Object, Sel, id));
+            decl.add_method(
+                sel!(applicationWillResignActive:),
+                application_will_resign_active as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(applicationDidBecomeActive:),
+                application_did_become_active as extern "C" fn(&Object, Sel, id),
+            );
         }
         decl.register();
     });
@@ -338,5 +378,41 @@ extern "C" fn step(this: &Object, _: Sel, _display_link: id) {
     if let Some(mut callback) = callback {
         callback(RequestFrameOptions::default());
         window_state.borrow_mut().request_frame_callback = Some(callback);
+    }
+}
+
+extern "C" fn application_will_resign_active(this: &Object, _: Sel, _notification: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let callback = {
+        let mut state = window_state.borrow_mut();
+        state.is_active = false;
+        unsafe {
+            let _: () = msg_send![state.display_link, setPaused: YES];
+        }
+        state.active_status_change_callback.take()
+    };
+    // Invoke only after dropping the borrow: gpui may reenter the window
+    // (e.g. to query `is_active`) from inside the callback.
+    if let Some(mut callback) = callback {
+        callback(false);
+        window_state.borrow_mut().active_status_change_callback = Some(callback);
+    }
+}
+
+extern "C" fn application_did_become_active(this: &Object, _: Sel, _notification: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let callback = {
+        let mut state = window_state.borrow_mut();
+        state.is_active = true;
+        unsafe {
+            let _: () = msg_send![state.display_link, setPaused: NO];
+        }
+        state.active_status_change_callback.take()
+    };
+    // Invoke only after dropping the borrow: gpui may reenter the window
+    // (e.g. to query `is_active`) from inside the callback.
+    if let Some(mut callback) = callback {
+        callback(true);
+        window_state.borrow_mut().active_status_change_callback = Some(callback);
     }
 }
