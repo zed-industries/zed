@@ -53,7 +53,7 @@ use workspace::SplitDirection;
 use workspace::Workspace;
 use workspace::item::ItemSettings;
 
-use super::{SearchMatch, ToggleFold};
+use super::{Fold, SearchMatch, Unfold};
 use crate::project_search::{ActiveSettings, ProjectSearch};
 use crate::{ProjectSearchView, SearchOption, SearchOptions};
 
@@ -405,9 +405,9 @@ impl Delegate {
         self.rebuild_entries();
     }
 
-    pub(crate) fn toggle_selected_group_collapsed(
+    pub(crate) fn set_selected_group_collapsed(
         &mut self,
-        _window: &mut Window,
+        collapsed: bool,
         cx: &mut Context<Picker<Self>>,
     ) {
         let path = match self.entries.get(self.selected_index) {
@@ -421,14 +421,16 @@ impl Delegate {
         let Some(path) = path else {
             return;
         };
+        if collapsed == self.collapsed_paths.contains(&path) {
+            return;
+        }
 
         self.toggle_group_collapsed(&path);
-        let now_collapsed = self.collapsed_paths.contains(&path);
 
         if let Some(index) = self.entries.iter().position(|entry| match entry {
-            Entry::Header(header_path) => now_collapsed && *header_path == path,
+            Entry::Header(header_path) => collapsed && *header_path == path,
             Entry::Match(match_index) => {
-                !now_collapsed
+                !collapsed
                     && self
                         .matches
                         .get(*match_index)

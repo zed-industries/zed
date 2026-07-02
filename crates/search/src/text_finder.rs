@@ -29,7 +29,7 @@ use util::ResultExt as _;
 
 use crate::{ProjectSearchView, SearchOptions, text_finder::delegate::PopulateProjectSearch};
 
-actions!(text_finder, [ToProjectSearch, ToggleFold, ToggleFoldAll]);
+actions!(text_finder, [ToProjectSearch, Fold, Unfold, ToggleFoldAll]);
 
 pub struct TextFinder {
     picker: Entity<Picker<Delegate>>,
@@ -259,9 +259,15 @@ impl TextFinder {
         self.open_in_split(workspace::SplitDirection::Down, window, cx);
     }
 
-    fn toggle_fold(&mut self, _: &ToggleFold, window: &mut Window, cx: &mut Context<Self>) {
+    fn fold(&mut self, _: &Fold, _window: &mut Window, cx: &mut Context<Self>) {
         self.picker.update(cx, |picker, cx| {
-            picker.delegate.toggle_selected_group_collapsed(window, cx);
+            picker.delegate.set_selected_group_collapsed(true, cx);
+        });
+    }
+
+    fn unfold(&mut self, _: &Unfold, _window: &mut Window, cx: &mut Context<Self>) {
+        self.picker.update(cx, |picker, cx| {
+            picker.delegate.set_selected_group_collapsed(false, cx);
         });
     }
 
