@@ -6422,6 +6422,8 @@ impl GitPanel {
         let toggle_state = self.header_state(header.header);
         let section = header.header;
         let weak = cx.weak_entity();
+        let restore_tracked_files = weak.clone();
+        let trash_untracked_files = weak.clone();
 
         h_flex()
             .id(id)
@@ -6442,10 +6444,60 @@ impl GitPanel {
                     .size(LabelSize::Small),
             )
             .child(
-                Checkbox::new(checkbox_id, toggle_state)
-                    .disabled(!has_write_access)
-                    .fill()
-                    .elevation(ElevationIndex::Surface),
+                h_flex()
+                    .gap_1()
+                    .when(section == Section::Tracked, |this| {
+                        this.child(
+                            IconButton::new(("restore-tracked-files", ix), IconName::Undo)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .aria_label("Discard Tracked Changes")
+                                .disabled(!has_write_access)
+                                .tooltip(Tooltip::for_action_title(
+                                    "Discard Tracked Changes",
+                                    &RestoreTrackedFiles,
+                                ))
+                                .on_click(move |_, window, cx| {
+                                    restore_tracked_files
+                                        .update(cx, |this, cx| {
+                                            this.restore_tracked_files(
+                                                &RestoreTrackedFiles,
+                                                window,
+                                                cx,
+                                            );
+                                            cx.stop_propagation();
+                                        })
+                                        .log_err();
+                                }),
+                        )
+                    })
+                    .when(section == Section::New, |this| {
+                        this.child(
+                            IconButton::new(("trash-untracked-files", ix), IconName::Undo)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Muted)
+                                .aria_label("Trash Untracked Files")
+                                .disabled(!has_write_access)
+                                .tooltip(Tooltip::for_action_title(
+                                    "Trash Untracked Files",
+                                    &TrashUntrackedFiles,
+                                ))
+                                .on_click(move |_, window, cx| {
+                                    trash_untracked_files
+                                        .update(cx, |this, cx| {
+                                            this.clean_all(&TrashUntrackedFiles, window, cx);
+                                            cx.stop_propagation();
+                                        })
+                                        .log_err();
+                                }),
+                        )
+                    })
+                    .child(
+                        Checkbox::new(checkbox_id, toggle_state)
+                            .disabled(!has_write_access)
+                            .fill()
+                            .elevation(ElevationIndex::Surface),
+                    ),
             )
             .on_click(move |_, window, cx| {
                 if !has_write_access {
