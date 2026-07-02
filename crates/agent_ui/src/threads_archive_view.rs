@@ -10,7 +10,7 @@ use crate::thread_metadata_store::{
 use crate::{Agent, ArchiveSelectedThread, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
 
 use agent::ThreadStore;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use collections::HashMap;
@@ -102,24 +102,30 @@ impl TimeBucket {
     }
 }
 
-fn fuzzy_match_positions(query: &str, text: &str) -> Option<Vec<usize>> {
-    let mut positions = Vec::new();
-    let mut query_chars = query.chars().peekable();
-    for (byte_idx, candidate_char) in text.char_indices() {
-        if let Some(&query_char) = query_chars.peek() {
-            if candidate_char.eq_ignore_ascii_case(&query_char) {
-                positions.push(byte_idx);
-                query_chars.next();
+pub fn fuzzy_match_positions(query: &str, candidate: &str) -> Option<Vec<usize>> {
+    let query_chars: Vec<char> = query.chars().collect();
+    if query_chars.is_empty() {
+        return Some(Vec::new());
+    }
+
+    let candidate_chars: Vec<(usize, char)> = candidate.char_indices().collect();
+    let window_count = candidate_chars.len().checked_sub(query_chars.len() - 1)?;
+
+    'outer: for window_start in 0..window_count {
+        for (qi, &query_char) in query_chars.iter().enumerate() {
+            let (_, cand_char) = candidate_chars[window_start + qi];
+            if !cand_char.eq_ignore_ascii_case(&query_char) {
+                continue 'outer;
             }
-        } else {
-            break;
         }
+        return Some(
+            (0..query_chars.len())
+                .map(|qi| candidate_chars[window_start + qi].0)
+                .collect(),
+        );
     }
-    if query_chars.peek().is_none() {
-        Some(positions)
-    } else {
-        None
-    }
+
+    None
 }
 
 pub enum ThreadsArchiveViewEvent {
@@ -127,6 +133,7 @@ pub enum ThreadsArchiveViewEvent {
     Activate { thread: ThreadMetadata },
     CancelRestore { thread_id: ThreadId },
     Import,
+    NewThread,
 }
 
 impl EventEmitter<ThreadsArchiveViewEvent> for ThreadsArchiveView {}
@@ -293,16 +300,27 @@ impl ThreadsArchiveView {
 
         for session in sessions {
             let highlight_positions = if !query.is_empty() {
-                match fuzzy_match_positions(
-                    &query,
-                    session
-                        .title
-                        .as_ref()
-                        .map(|t| t.as_ref())
-                        .unwrap_or(DEFAULT_THREAD_TITLE),
-                ) {
-                    Some(positions) => positions,
-                    None => continue,
+                let title = session
+                    .title
+                    .as_ref()
+                    .map(|t| t.as_ref())
+                    .unwrap_or(DEFAULT_THREAD_TITLE);
+                if let Some(positions) = fuzzy_match_positions(&query, title) {
+                    positions
+                } else {
+                    // If title didn't match, also try matching the project name
+                    // (the basename of any of the thread's worktree paths), so
+                    // typing a project name surfaces its threads here too.
+                    let worktree_matched = session.folder_paths().paths().iter().any(|p| {
+                        p.as_path()
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| fuzzy_match_positions(&query, name).is_some())
+                    });
+                    if !worktree_matched {
+                        continue;
+                    }
+                    Vec::new()
                 }
             } else {
                 Vec::new()
@@ -753,14 +771,10 @@ impl ThreadsArchiveView {
                     .on_click({
                         let thread = thread.clone();
                         cx.listener(move |this, _, window, cx| {
-                            let side = match AgentSettings::get_global(cx).sidebar_side() {
-                                settings::SidebarSide::Left => "left",
-                                settings::SidebarSide::Right => "right",
-                            };
                             telemetry::event!(
                                 "Archived Thread Opened",
                                 agent = thread.agent_id.as_ref(),
-                                side = side
+                                side = crate::agent_sidebar_side(cx)
                             );
                             this.unarchive_thread(thread.clone(), window, cx);
                         })
@@ -819,7 +833,11 @@ impl ThreadsArchiveView {
             let state = task.await?;
             let task = cx.update(|cx| {
                 if let Some(session_id) = &session_id {
-                    if let Some(list) = state.connection.session_list(cx) {
+                    if let Some(list) = state
+                        .connection
+                        .session_list(cx)
+                        .filter(|list| list.supports_delete())
+                    {
                         list.delete_session(session_id, cx)
                     } else {
                         Task::ready(Ok(()))
@@ -955,6 +973,14 @@ impl ThreadsArchiveView {
             .child(
                 h_flex()
                     .gap_1()
+                    .child(
+                        IconButton::new("new-thread", IconName::Plus)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Start New Agent Thread"))
+                            .on_click(cx.listener(|_this, _, _, cx| {
+                                cx.emit(ThreadsArchiveViewEvent::NewThread);
+                            })),
+                    )
                     .child(
                         IconButton::new("thread-import", IconName::Download)
                             .icon_size(IconSize::Small)
@@ -1108,7 +1134,7 @@ impl ProjectPickerModal {
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
-                .modal(false)
+                .embedded()
         });
 
         let picker_focus_handle = picker.focus_handle(cx);
@@ -1162,7 +1188,6 @@ impl Render for ProjectPickerModal {
         v_flex()
             .key_context("ProjectPickerModal")
             .elevation_3(cx)
-            .w(rems(34.))
             .on_action(cx.listener(|this, _: &workspace::Open, window, cx| {
                 this.picker.update(cx, |picker, cx| {
                     picker.delegate.open_local_folder(window, cx)
@@ -1261,6 +1286,10 @@ impl EventEmitter<DismissEvent> for ProjectPickerDelegate {}
 impl PickerDelegate for ProjectPickerDelegate {
     type ListItem = AnyElement;
 
+    fn name() -> &'static str {
+        "thread archive project picker"
+    }
+
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         format!(
             "Associate the \"{}\" thread with...",
@@ -1334,7 +1363,7 @@ impl PickerDelegate for ProjectPickerDelegate {
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
-                    .join("");
+                    .concat();
                 StringMatchCandidate::new(id, &combined_string)
             })
             .collect();
@@ -1370,7 +1399,7 @@ impl PickerDelegate for ProjectPickerDelegate {
                     .ordered_paths()
                     .map(|path| path.compact().to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
-                    .join("");
+                    .concat();
                 StringMatchCandidate::new(id, &combined_string)
             })
             .collect();
@@ -1574,7 +1603,7 @@ impl PickerDelegate for ProjectPickerDelegate {
                         .child(
                             h_flex()
                                 .gap_3()
-                                .flex_grow()
+                                .flex_grow_1()
                                 .child(highlighted_match.render(window, cx)),
                         )
                         .tooltip(Tooltip::text(tooltip_path))

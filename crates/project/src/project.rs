@@ -89,9 +89,9 @@ use gpui::{
     Task, TaskExt, WeakEntity, Window,
 };
 use language::{
-    Buffer, BufferEvent, Capability, CodeLabel, CursorShape, DiskState, Language, LanguageName,
-    LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain, ToolchainMetadata,
-    ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
+    Buffer, BufferEditSource, BufferEvent, Capability, CodeLabel, CursorShape, DiskState, Language,
+    LanguageName, LanguageRegistry, PointUtf16, ToOffset, ToPointUtf16, Toolchain,
+    ToolchainMetadata, ToolchainScope, Transaction, Unclipped, language_settings::InlayHintKind,
     proto::split_operations,
 };
 use lsp::{
@@ -157,8 +157,8 @@ pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::RANGE_FORMAT_SUFFIX as TEST_PRETTIER_RANGE_FORMAT_SUFFIX;
 pub use task_inventory::{
-    BasicContextProvider, ContextProviderWithTasks, DebugScenarioContext, Inventory, TaskContexts,
-    TaskSourceKind,
+    BasicContextProvider, ContextProviderWithTasks, DebugScenarioContext, GIT_COMMAND_TASK_TAG,
+    Inventory, TaskContexts, TaskSourceKind,
 };
 
 pub use buffer_store::ProjectTransaction;
@@ -410,7 +410,9 @@ pub enum Event {
     EntryRenamed(ProjectTransaction, ProjectPath, PathBuf),
     WorkspaceEditApplied(ProjectTransaction),
     AgentLocationChanged,
-    BufferEdited,
+    BufferEdited {
+        source: BufferEditSource,
+    },
 }
 
 pub struct AgentLocationChanged;
@@ -451,7 +453,7 @@ impl ProjectPath {
     pub fn root_path(worktree_id: WorktreeId) -> Self {
         Self {
             worktree_id,
-            path: RelPath::empty().into(),
+            path: RelPath::empty_arc(),
         }
     }
 
@@ -529,6 +531,17 @@ impl CompletionIntent {
     }
 }
 
+/// Describes a visual group for a completion item in the menu.
+/// When the group changes between consecutive completions, the menu inserts a divider.
+/// If a label is provided, a non-selectable header row is also rendered.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CompletionGroup {
+    /// Identity of this group, used to detect transitions between consecutive items.
+    pub key: SharedString,
+    /// When set, a non-selectable header with this text is rendered below the divider.
+    pub label: Option<SharedString>,
+}
+
 /// Similar to `CoreCompletion`, but with extra metadata attached.
 #[derive(Clone)]
 pub struct Completion {
@@ -544,6 +557,9 @@ pub struct Completion {
     pub source: CompletionSource,
     /// A path to an icon for this completion that is shown in the menu.
     pub icon_path: Option<SharedString>,
+    /// An optional color to tint this completion's icon with in the menu.
+    /// When `None`, the menu's default muted color is used.
+    pub icon_color: Option<Hsla>,
     /// Text starting here and ending at the cursor will be used as the query for filtering this completion.
     ///
     /// If None, the start of the surrounding word is used.
@@ -557,6 +573,10 @@ pub struct Completion {
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
     /// if no confirmation is provided or `false` is returned, the completion will be committed.
     pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut Window, &mut App) -> bool>>,
+    /// An optional group for this completion. When the group changes between consecutive
+    /// items, the completion menu inserts a divider. If the group also carries a label,
+    /// a non-selectable header row is rendered below the divider.
+    pub group: Option<CompletionGroup>,
 }
 
 #[derive(Debug, Clone)]
@@ -1613,6 +1633,7 @@ impl Project {
             remote_proto.add_entity_message_handler(Self::handle_update_worktree);
             remote_proto.add_entity_message_handler(Self::handle_update_project);
             remote_proto.add_entity_message_handler(Self::handle_toast);
+            remote_proto.add_entity_message_handler(Self::handle_telemetry_event);
             remote_proto.add_entity_request_handler(Self::handle_language_server_prompt_request);
             remote_proto.add_entity_message_handler(Self::handle_hide_toast);
             remote_proto.add_entity_request_handler(Self::handle_update_buffer_from_remote_server);
@@ -2264,14 +2285,7 @@ impl Project {
 
     #[inline]
     pub fn supports_terminal(&self, _cx: &App) -> bool {
-        if self.is_local() {
-            return true;
-        }
-        if self.is_via_remote_server() {
-            return true;
-        }
-
-        false
+        self.is_local() || self.is_via_remote_server()
     }
 
     #[inline]
@@ -2517,6 +2531,30 @@ impl Project {
                 let contains =
                     relative_path.is_some() && (!exclude_sub_dirs || !is_dir || !is_subdir);
                 contains.then(|| worktree.is_visible())
+            })
+            .max()
+    }
+
+    pub fn visibility_for_subpaths(&self, paths: &[PathBuf], cx: &App) -> Option<bool> {
+        paths
+            .iter()
+            .map(|path| self.visibility_for_subpath(path, cx))
+            .max()
+            .flatten()
+    }
+
+    fn visibility_for_subpath(&self, path: &Path, cx: &App) -> Option<bool> {
+        let path = SanitizedPath::new(path).as_path();
+        let path_style = self.path_style(cx);
+        self.worktrees(cx)
+            .filter_map(|worktree| {
+                let worktree = worktree.read(cx);
+                let abs_path = worktree.abs_path();
+                let relative_path = path_style.strip_prefix(path, abs_path.as_ref());
+                let is_subpath = relative_path
+                    .as_ref()
+                    .is_some_and(|p| !p.as_ref().as_unix_str().is_empty());
+                is_subpath.then(|| worktree.is_visible())
             })
             .max()
     }
@@ -3207,6 +3245,19 @@ impl Project {
     }
 
     #[ztracing::instrument(skip_all)]
+    pub fn open_staged_diff(
+        &mut self,
+        buffer: Entity<Buffer>,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Entity<BufferDiff>>> {
+        if self.is_disconnected(cx) {
+            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
+        }
+        self.git_store
+            .update(cx, |git_store, cx| git_store.open_staged_diff(buffer, cx))
+    }
+
+    #[ztracing::instrument(skip_all)]
     pub fn open_uncommitted_diff(
         &mut self,
         buffer: Entity<Buffer>,
@@ -3802,8 +3853,8 @@ impl Project {
             self.request_buffer_diff_recalculation(&buffer, cx);
         }
 
-        if matches!(event, BufferEvent::Edited { .. }) {
-            cx.emit(Event::BufferEdited);
+        if let BufferEvent::Edited { source } = event {
+            cx.emit(Event::BufferEdited { source: *source });
         }
 
         let buffer_id = buffer.read(cx).remote_id();
@@ -3941,10 +3992,16 @@ impl Project {
         &mut self,
         buffers: Vec<Entity<Buffer>>,
         only_restart_servers: HashSet<LanguageServerSelector>,
+        clear_stopped: bool,
         cx: &mut Context<Self>,
     ) {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.restart_language_servers_for_buffers(buffers, only_restart_servers, cx)
+            lsp_store.restart_language_servers_for_buffers(
+                buffers,
+                only_restart_servers,
+                clear_stopped,
+                cx,
+            )
         })
     }
 
@@ -4172,6 +4229,24 @@ impl Project {
         })
     }
 
+    pub fn workspace_definitions<T: ToPointUtf16>(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: T,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.workspace_definitions(buffer, position, cx)
+        });
+        cx.background_spawn(async move {
+            let result = task.await;
+            drop(guard);
+            result
+        })
+    }
+
     pub fn declarations<T: ToPointUtf16>(
         &mut self,
         buffer: &Entity<Buffer>,
@@ -4200,6 +4275,24 @@ impl Project {
         let guard = self.retain_remotely_created_models(cx);
         let task = self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.type_definitions(buffer, position, cx)
+        });
+        cx.background_spawn(async move {
+            let result = task.await;
+            drop(guard);
+            result
+        })
+    }
+
+    pub fn workspace_type_definitions<T: ToPointUtf16>(
+        &mut self,
+        buffer: &Entity<Buffer>,
+        position: T,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<Option<Vec<LocationLink>>>> {
+        let position = position.to_point_utf16(buffer.read(cx));
+        let guard = self.retain_remotely_created_models(cx);
+        let task = self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.workspace_type_definitions(buffer, position, cx)
         });
         cx.background_spawn(async move {
             let result = task.await;
@@ -4984,18 +5077,33 @@ impl Project {
                 }
             }
         } else {
+            // First pass: for each worktree, try two interpretations of the path and
+            // return whichever finds an existing entry first:
+            //   (a) Strip the worktree root name as a prefix.
+            //   (b) Treat the path as a literal worktree-relative path.
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree = worktree.read(cx);
-                if let Ok(rel_path) = RelPath::new(path, path_style) {
-                    if let Some(entry) = worktree.entry_for_path(&rel_path) {
-                        return Some(ProjectPath {
-                            worktree_id: worktree.id(),
-                            path: entry.path.clone(),
-                        });
-                    }
+                if let Ok(relative_path) = path.strip_prefix(worktree.root_name().as_std_path())
+                    && let Ok(rel_path) = RelPath::new(relative_path, path_style)
+                    && let Some(entry) = worktree.entry_for_path(&rel_path)
+                {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: entry.path.clone(),
+                    });
+                }
+                if let Ok(rel_path) = RelPath::new(path, path_style)
+                    && let Some(entry) = worktree.entry_for_path(&rel_path)
+                {
+                    return Some(ProjectPath {
+                        worktree_id: worktree.id(),
+                        path: entry.path.clone(),
+                    });
                 }
             }
 
+            // Second pass: strip the worktree root name prefix without requiring the
+            // entry to exist, to allow resolving paths that don't exist yet.
             for worktree in worktree_store.visible_worktrees(cx) {
                 let worktree_root_name = worktree.read(cx).root_name();
                 if let Ok(relative_path) = path.strip_prefix(worktree_root_name.as_std_path())
@@ -5217,6 +5325,42 @@ impl Project {
             });
             Ok(())
         })
+    }
+
+    async fn handle_telemetry_event(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::TelemetryEvent>,
+        mut cx: AsyncApp,
+    ) -> Result<()> {
+        let payload = envelope.payload;
+        this.update(&mut cx, |this, cx| {
+            // The remote connection type, OS, version, and architecture are all
+            // already known from connection setup, so they don't need to be sent
+            // with each event.
+            let Some((connection_type, platform, os_version)) =
+                this.remote_client.as_ref().map(|client| {
+                    let client = client.read(cx);
+                    (
+                        client.connection_type(),
+                        client.remote_platform(),
+                        client.remote_os_version(),
+                    )
+                })
+            else {
+                return;
+            };
+            this.client()
+                .telemetry()
+                .report_remote_event(
+                    &payload.event_json,
+                    connection_type,
+                    platform.os.display_name().to_string(),
+                    os_version,
+                    platform.arch.as_str().to_string(),
+                )
+                .log_err();
+        });
+        Ok(())
     }
 
     async fn handle_language_server_prompt_request(
@@ -5537,7 +5681,7 @@ impl Project {
                 }
             });
 
-            while let Some(buffer) = new_matches.next().await {
+            while let Some((buffer, _)) = new_matches.next().await {
                 let buffer_id = this.update(cx, |this, cx| {
                     this.create_buffer_for_peer(&buffer, peer_id, cx).to_proto()
                 });
@@ -6302,7 +6446,7 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
         if self.snapshot.root_entry().is_some_and(|e| e.is_file()) || self.include_root_name {
             self.snapshot.root_name().into()
         } else {
-            RelPath::empty().into()
+            RelPath::empty_arc()
         }
     }
 
@@ -6377,7 +6521,7 @@ impl<'a> fuzzy_nucleo::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
         if self.snapshot.root_entry().is_some_and(|e| e.is_file()) || self.include_root_name {
             self.snapshot.root_name().into()
         } else {
-            RelPath::empty().into()
+            RelPath::empty_arc()
         }
     }
     fn root_is_file(&self) -> bool {

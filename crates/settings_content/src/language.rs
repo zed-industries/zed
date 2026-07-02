@@ -1,4 +1,4 @@
-use std::{num::NonZeroU32, path::Path};
+use std::num::NonZeroU32;
 
 use collections::{HashMap, HashSet};
 use schemars::JsonSchema;
@@ -137,8 +137,6 @@ pub struct EditPredictionSettingsContent {
     pub ollama: Option<OllamaEditPredictionSettingsContent>,
     /// Settings specific to using custom OpenAI-compatible servers for edit prediction.
     pub open_ai_compatible_api: Option<CustomEditPredictionProviderSettingsContent>,
-    /// The directory where manually captured edit prediction examples are stored.
-    pub examples_dir: Option<Arc<Path>>,
     /// Controls whether Zed may collect training data when using Zed's Edit Predictions.
     /// Data is only ever captured for files in projects that are detected as open source.
     ///
@@ -159,7 +157,7 @@ pub struct CustomEditPredictionProviderSettingsContent {
     /// The prompt format to use for completions. Set to `""` to have the format be derived from the model name.
     ///
     /// Default: ""
-    pub prompt_format: Option<EditPredictionPromptFormat>,
+    pub prompt_format: Option<EditPredictionPromptFormatContent>,
     /// The name of the model.
     ///
     /// Default: ""
@@ -185,11 +183,12 @@ pub struct CustomEditPredictionProviderSettingsContent {
     strum::VariantNames,
 )]
 #[serde(rename_all = "snake_case")]
-pub enum EditPredictionPromptFormat {
+pub enum EditPredictionPromptFormatContent {
     #[default]
     Infer,
     Zeta,
     Zeta2,
+    Zeta2_1,
     CodeLlama,
     StarCoder,
     DeepseekCoder,
@@ -280,7 +279,7 @@ pub struct OllamaEditPredictionSettingsContent {
     /// The prompt format to use for completions. Set to `""` to have the format be derived from the model name.
     ///
     /// Default: ""
-    pub prompt_format: Option<EditPredictionPromptFormat>,
+    pub prompt_format: Option<EditPredictionPromptFormatContent>,
 }
 
 /// Controls whether Zed collects training data when using Zed's Edit Predictions.

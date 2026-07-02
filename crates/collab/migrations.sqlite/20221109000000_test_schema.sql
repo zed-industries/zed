@@ -1,28 +1,24 @@
+-- WARNING: If you are modifying this file you MUST open a PR to the Cloud repository prior to merging any changes.
+-- If you are not Zed staff you MUST coordinate with a staff member to apply the schema migrations before this PR is merged.
+
 CREATE TABLE "users" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "github_login" VARCHAR,
     "admin" BOOLEAN,
     "email_address" VARCHAR(255) DEFAULT NULL,
     "name" TEXT,
     "connected_once" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "metrics_id" TEXT,
-    "github_user_id" INTEGER NOT NULL,
     "accepted_tos_at" TIMESTAMP WITHOUT TIME ZONE,
-    "github_user_created_at" TIMESTAMP WITHOUT TIME ZONE,
     "custom_llm_monthly_allowance_in_cents" INTEGER
 );
 
-CREATE UNIQUE INDEX "index_users_github_login" ON "users" ("github_login");
-
 CREATE INDEX "index_users_on_email_address" ON "users" ("email_address");
-
-CREATE UNIQUE INDEX "index_users_on_github_user_id" ON "users" ("github_user_id");
 
 CREATE TABLE "contacts" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "user_id_a" INTEGER REFERENCES users (id) NOT NULL,
-    "user_id_b" INTEGER REFERENCES users (id) NOT NULL,
+    "user_id_a" INTEGER NOT NULL,
+    "user_id_b" INTEGER NOT NULL,
     "a_to_b" BOOLEAN NOT NULL,
     "should_notify" BOOLEAN NOT NULL,
     "accepted" BOOLEAN NOT NULL
@@ -44,7 +40,7 @@ CREATE UNIQUE INDEX "index_rooms_on_channel_id" ON "rooms" ("channel_id");
 CREATE TABLE "projects" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "room_id" INTEGER REFERENCES rooms (id) ON DELETE CASCADE,
-    "host_user_id" INTEGER REFERENCES users (id),
+    "host_user_id" INTEGER,
     "host_connection_id" INTEGER,
     "host_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE CASCADE,
     "unregistered" BOOLEAN NOT NULL DEFAULT FALSE,
@@ -160,6 +156,7 @@ CREATE TABLE "worktree_diagnostic_summaries" (
     "language_server_id" INTEGER NOT NULL,
     "error_count" INTEGER NOT NULL,
     "warning_count" INTEGER NOT NULL,
+    "info_count" INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (project_id, worktree_id, path),
     FOREIGN KEY (project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE
 );
@@ -172,6 +169,7 @@ CREATE TABLE "language_servers" (
     "id" INTEGER NOT NULL,
     "project_id" INTEGER NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
     "name" VARCHAR NOT NULL,
+    "language_name" VARCHAR,
     "capabilities" TEXT NOT NULL,
     "worktree_id" BIGINT,
     PRIMARY KEY (project_id, id)
@@ -208,14 +206,14 @@ CREATE UNIQUE INDEX "index_project_collaborators_on_project_id_connection_id_and
 CREATE TABLE "room_participants" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "room_id" INTEGER NOT NULL REFERENCES rooms (id),
-    "user_id" INTEGER NOT NULL REFERENCES users (id),
+    "user_id" INTEGER NOT NULL,
     "answering_connection_id" INTEGER,
     "answering_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE CASCADE,
     "answering_connection_lost" BOOLEAN NOT NULL,
     "location_kind" INTEGER,
     "location_project_id" INTEGER,
     "initial_project_id" INTEGER,
-    "calling_user_id" INTEGER NOT NULL REFERENCES users (id),
+    "calling_user_id" INTEGER NOT NULL,
     "calling_connection_id" INTEGER NOT NULL,
     "calling_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE SET NULL,
     "participant_index" INTEGER,
@@ -279,7 +277,7 @@ CREATE INDEX "index_channels_on_parent_path_and_order" ON "channels" ("parent_pa
 
 CREATE TABLE IF NOT EXISTS "channel_chat_participants" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-    "user_id" INTEGER NOT NULL REFERENCES users (id),
+    "user_id" INTEGER NOT NULL,
     "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
     "connection_id" INTEGER NOT NULL,
     "connection_server_id" INTEGER NOT NULL REFERENCES servers (id) ON DELETE CASCADE
@@ -290,7 +288,7 @@ CREATE INDEX "index_channel_chat_participants_on_channel_id" ON "channel_chat_pa
 CREATE TABLE "channel_members" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "channel_id" INTEGER NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
-    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "user_id" INTEGER NOT NULL,
     "role" VARCHAR NOT NULL,
     "accepted" BOOLEAN NOT NULL DEFAULT false,
     "updated_at" TIMESTAMP NOT NULL DEFAULT now
@@ -332,7 +330,7 @@ CREATE TABLE "channel_buffer_collaborators" (
     "connection_id" INTEGER NOT NULL,
     "connection_server_id" INTEGER NOT NULL REFERENCES servers (id) ON DELETE CASCADE,
     "connection_lost" BOOLEAN NOT NULL DEFAULT false,
-    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "user_id" INTEGER NOT NULL,
     "replica_id" INTEGER NOT NULL
 );
 
@@ -351,7 +349,7 @@ CREATE UNIQUE INDEX "index_channel_buffer_collaborators_on_channel_id_connection
 );
 
 CREATE TABLE "observed_buffer_edits" (
-    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "user_id" INTEGER NOT NULL,
     "buffer_id" INTEGER NOT NULL REFERENCES buffers (id) ON DELETE CASCADE,
     "epoch" INTEGER NOT NULL,
     "lamport_timestamp" INTEGER NOT NULL,
@@ -371,7 +369,7 @@ CREATE UNIQUE INDEX "index_notification_kinds_on_name" ON "notification_kinds" (
 CREATE TABLE "notifications" (
     "id" INTEGER PRIMARY KEY AUTOINCREMENT,
     "created_at" TIMESTAMP NOT NULL default CURRENT_TIMESTAMP,
-    "recipient_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    "recipient_id" INTEGER NOT NULL,
     "kind" INTEGER NOT NULL REFERENCES notification_kinds (id),
     "entity_id" INTEGER,
     "content" TEXT,
@@ -382,7 +380,7 @@ CREATE TABLE "notifications" (
 CREATE INDEX "index_notifications_on_recipient_id_is_read_kind_entity_id" ON "notifications" ("recipient_id", "is_read", "kind", "entity_id");
 
 CREATE TABLE contributors (
-    user_id INTEGER REFERENCES users (id),
+    user_id INTEGER,
     signed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id)
 );
@@ -434,14 +432,3 @@ CREATE TABLE IF NOT EXISTS "breakpoints" (
 );
 
 CREATE INDEX "index_breakpoints_on_project_id" ON "breakpoints" ("project_id");
-
-CREATE TABLE IF NOT EXISTS "shared_threads" (
-    "id" TEXT PRIMARY KEY NOT NULL,
-    "user_id" INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
-    "title" VARCHAR(512) NOT NULL,
-    "data" BLOB NOT NULL,
-    "created_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "updated_at" TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX "index_shared_threads_user_id" ON "shared_threads" ("user_id");

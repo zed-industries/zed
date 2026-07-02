@@ -113,6 +113,17 @@ impl TrustedWorktrees {
     pub fn try_get_global(cx: &App) -> Option<Entity<TrustedWorktreesStore>> {
         cx.try_global::<Self>().map(|this| this.0.clone())
     }
+
+    /// Whether the given project store has any restricted worktrees.
+    pub fn has_restricted_worktrees(worktree_store: &Entity<WorktreeStore>, cx: &App) -> bool {
+        Self::try_get_global(cx)
+            .map(|trusted| {
+                trusted
+                    .read(cx)
+                    .has_restricted_worktrees(worktree_store, cx)
+            })
+            .unwrap_or(false)
+    }
 }
 
 /// A collection of worktrees that are considered trusted and not trusted.

@@ -13,9 +13,10 @@ pub mod pane_group;
 pub mod path_list {
     pub use util::path_list::{PathList, SerializedPathList};
 }
+pub mod path_link;
 mod persistence;
 pub mod searchable;
-mod security_modal;
+pub mod security_modal;
 pub mod shared_screen;
 pub use shared_screen::SharedScreen;
 pub mod focus_follows_mouse;
@@ -25,9 +26,9 @@ mod theme_preview;
 mod toast_layer;
 mod toolbar;
 pub mod welcome;
+pub mod workspace_error;
 mod workspace_settings;
 
-pub use crate::notifications::NotificationFrame;
 pub use dock::Panel;
 pub use multi_workspace::{
     CloseWorkspaceSidebar, DraggedSidebar, FocusWorkspaceSidebar, MoveProjectToNewWindow,
@@ -47,7 +48,7 @@ use client::{
     ChannelId, Client, ErrorExt, ParticipantIndex, Status, TypedEnvelope, User, UserStore,
     proto::{self, ErrorCode, PanelId, PeerId},
 };
-use collections::{HashMap, HashSet, hash_map};
+use collections::{HashMap, HashSet, TypeIdHashMap, hash_map};
 use dock::{Dock, DockPosition, PanelButtons, PanelHandle, RESIZE_HANDLE_SIZE};
 use fs::Fs;
 use futures::{
@@ -110,7 +111,8 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
 use settings::{
-    CenteredPaddingSettings, Settings, SettingsLocation, SettingsStore, update_settings_file,
+    CenteredPaddingSettings, DefaultOpenBehavior, Settings, SettingsLocation, SettingsStore,
+    update_settings_file,
 };
 
 use sqlez::{
@@ -118,11 +120,11 @@ use sqlez::{
     statement::Statement,
 };
 use status_bar::StatusBar;
-pub use status_bar::StatusItemView;
+pub use status_bar::{HideStatusItem, StatusItemView, add_hide_button_entry};
 use std::{
     any::TypeId,
     borrow::Cow,
-    cell::RefCell,
+    cell::{Cell, RefCell},
     cmp,
     collections::VecDeque,
     env,
@@ -137,13 +139,14 @@ use std::{
     time::Duration,
 };
 use task::{DebugScenario, SharedTaskContext, SpawnInTerminal};
-use theme::{ActiveTheme, SystemAppearance};
+use theme::{ActiveTheme, ClientDecorationsExt, SystemAppearance};
 use theme_settings::ThemeSettings;
 pub use toolbar::{
     PaneSearchBarCallbacks, Toolbar, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
 };
 pub use ui;
 use ui::{Window, prelude::*};
+use url::Url;
 use util::{
     ResultExt, TryFutureExt,
     paths::{PathStyle, SanitizedPath},
@@ -152,8 +155,8 @@ use util::{
 };
 use uuid::Uuid;
 pub use workspace_settings::{
-    AutosaveSetting, BottomDockLayout, FocusFollowsMouse, RestoreOnStartupBehavior,
-    StatusBarSettings, TabBarSettings, WorkspaceSettings,
+    AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, FocusFollowsMouse,
+    RestoreOnStartupBehavior, StatusBarSettings, TabBarSettings, WorkspaceSettings,
 };
 use zed_actions::{Spawn, feedback::FileBugReport, theme::ToggleMode};
 
@@ -223,21 +226,16 @@ pub trait DebuggerProvider {
 #[action(namespace = workspace)]
 pub struct Open {
     /// When true, opens in a new window. When false, adds to the current
-    /// window as a new workspace (multi-workspace).
-    #[serde(default = "Open::default_create_new_window")]
-    pub create_new_window: bool,
+    /// window as a new workspace (multi-workspace). When omitted, uses
+    /// `default_open_behavior`.
+    #[serde(default)]
+    pub create_new_window: Option<bool>,
 }
 
 impl Open {
     pub const DEFAULT: Self = Self {
-        create_new_window: false,
+        create_new_window: None,
     };
-
-    /// Used by `#[serde(default)]` on the `create_new_window` field so that
-    /// the serde default and `Open::DEFAULT` stay in sync.
-    fn default_create_new_window() -> bool {
-        Self::DEFAULT.create_new_window
-    }
 }
 
 impl Default for Open {
@@ -301,10 +299,14 @@ actions!(
         OpenComponentPreview,
         /// Reloads the active item.
         ReloadActiveItem,
+        /// Reopens the most recently dismissed picker in the current window.
+        ReopenLastPicker,
         /// Resets the active dock to its default size.
         ResetActiveDockSize,
         /// Resets all open docks to their default sizes.
         ResetOpenDocksSize,
+        /// Resets all panes in the center group to equal sizes, preserving the split layout.
+        ResetPaneSizes,
         /// Reloads the application
         Reload,
         /// Formats and saves the current file, regardless of the format_on_save setting.
@@ -575,16 +577,16 @@ pub enum CloseIntent {
 #[derive(Clone)]
 pub struct Toast {
     id: NotificationId,
-    msg: Cow<'static, str>,
+    message: Cow<'static, str>,
     autohide: bool,
     on_click: Option<(Cow<'static, str>, Arc<dyn Fn(&mut Window, &mut App)>)>,
 }
 
 impl Toast {
-    pub fn new<I: Into<Cow<'static, str>>>(id: NotificationId, msg: I) -> Self {
+    pub fn new<I: Into<Cow<'static, str>>>(id: NotificationId, message: I) -> Self {
         Toast {
             id,
-            msg: msg.into(),
+            message: message.into(),
             on_click: None,
             autohide: false,
         }
@@ -608,7 +610,7 @@ impl Toast {
 impl PartialEq for Toast {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
-            && self.msg == other.msg
+            && self.message == other.message
             && self.on_click.is_some() == other.on_click.is_some()
     }
 }
@@ -670,7 +672,11 @@ fn prompt_and_open_paths(
     create_new_window: bool,
     cx: &mut App,
 ) {
-    if let Some(workspace_window) = local_workspace_windows(cx).into_iter().next() {
+    if let Some(workspace_window) =
+        workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx)
+            .into_iter()
+            .next()
+    {
         workspace_window
             .update(cx, |multi_workspace, window, cx| {
                 let workspace = multi_workspace.workspace().clone();
@@ -780,7 +786,12 @@ pub fn init(app_state: Arc<AppState>, cx: &mut App) {
                     multiple: true,
                     prompt: None,
                 },
-                action.create_new_window,
+                action.create_new_window.unwrap_or_else(|| {
+                    matches!(
+                        WorkspaceSettings::get_global(cx).default_open_behavior,
+                        DefaultOpenBehavior::NewWindow
+                    )
+                }),
                 cx,
             );
         })
@@ -814,7 +825,7 @@ type BuildProjectItemForPathFn =
 
 #[derive(Clone, Default)]
 struct ProjectItemRegistry {
-    build_project_item_fns_by_type: HashMap<TypeId, BuildProjectItemFn>,
+    build_project_item_fns_by_type: TypeIdHashMap<BuildProjectItemFn>,
     build_project_item_for_path_fns: Vec<BuildProjectItemForPathFn>,
 }
 
@@ -942,7 +953,7 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut App) {
 }
 
 #[derive(Default)]
-pub struct FollowableViewRegistry(HashMap<TypeId, FollowableViewDescriptor>);
+pub struct FollowableViewRegistry(TypeIdHashMap<FollowableViewDescriptor>);
 
 struct FollowableViewDescriptor {
     from_state_proto: fn(
@@ -1015,7 +1026,7 @@ struct SerializableItemDescriptor {
 #[derive(Default)]
 struct SerializableItemRegistry {
     descriptors_by_kind: HashMap<Arc<str>, SerializableItemDescriptor>,
-    descriptors_by_type: HashMap<TypeId, SerializableItemDescriptor>,
+    descriptors_by_type: TypeIdHashMap<SerializableItemDescriptor>,
 }
 
 impl Global for SerializableItemRegistry {}
@@ -1290,11 +1301,17 @@ pub enum Event {
     WorktreeCreationChanged,
 }
 
+/// Controls which types of items should be made visible in the project panel
+/// when opened.
 #[derive(Debug, Clone)]
 pub enum OpenVisible {
+    /// Make all opened items visible (both files and directories).
     All,
+    /// Don't make any opened items visible.
     None,
+    /// Only make opened files visible, not directories.
     OnlyFiles,
+    /// Only make opened directories visible, not files.
     OnlyDirectories,
 }
 
@@ -1397,6 +1414,13 @@ pub struct Workspace {
     _panels_task: Option<Task<Result<()>>>,
     sidebar_focus_handle: Option<FocusHandle>,
     multi_workspace: Option<WeakEntity<MultiWorkspace>>,
+    /// Shared with the parent `MultiWorkspace` and any sibling workspaces: holds
+    /// the id of the single workspace currently presented in this OS window.
+    /// `MultiWorkspace` is the only writer; workspaces only read it to decide
+    /// whether they may write the shared window's title and edited indicator. We
+    /// use this instead of going through the `multi_workspace` field to avoid
+    /// reading it as we might end up in a double lease otherwise.
+    active_workspace_id: Option<Rc<Cell<EntityId>>>,
     active_worktree_creation: ActiveWorktreeCreation,
     deferred_save_items: Vec<Box<dyn WeakItemHandle>>,
 }
@@ -1841,6 +1865,7 @@ impl Workspace {
             removing: false,
             sidebar_focus_handle: None,
             multi_workspace,
+            active_workspace_id: None,
             active_worktree_creation: ActiveWorktreeCreation::default(),
             open_in_dev_container: false,
             _dev_container_task: None,
@@ -2104,13 +2129,22 @@ impl Workspace {
                 })
                 .log_err();
 
-            if open_mode == OpenMode::NewWindow {
+            if open_mode == OpenMode::NewWindow || open_mode == OpenMode::Activate {
                 window
                     .update(cx, |_, window, _cx| {
                         window.activate_window();
                     })
                     .log_err();
             }
+
+            // Auto-show the security modal if the project has restricted worktrees
+            window
+                .update(cx, |_, window, cx| {
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_worktree_trust_security_modal(false, window, cx);
+                    });
+                })
+                .log_err();
 
             Ok(OpenResult {
                 window,
@@ -2562,12 +2596,14 @@ impl Workspace {
     pub fn set_multi_workspace(
         &mut self,
         multi_workspace: WeakEntity<MultiWorkspace>,
+        active_workspace_id: Rc<Cell<EntityId>>,
         cx: &mut App,
     ) {
         self.status_bar.update(cx, |status_bar, cx| {
             status_bar.set_multi_workspace(multi_workspace.clone(), cx);
         });
         self.multi_workspace = Some(multi_workspace);
+        self.active_workspace_id = Some(active_workspace_id);
     }
 
     pub fn app_state(&self) -> &Arc<AppState> {
@@ -2981,7 +3017,8 @@ impl Workspace {
                     }
                     Err(err) => {
                         let rx = workspace.update_in(cx, |workspace, window, cx| {
-                            workspace.show_portal_error(err.to_string(), cx);
+                            workspace
+                                .show_error(workspace_error::PortalError::new(err.to_string()), cx);
                             let prompt = workspace.on_prompt_for_open_path.take().unwrap();
                             let rx = prompt(workspace, lister, window, cx);
                             workspace.on_prompt_for_open_path = Some(prompt);
@@ -3037,7 +3074,8 @@ impl Workspace {
                 Ok(path) => path,
                 Err(err) => {
                     let rx = workspace.update_in(cx, |workspace, window, cx| {
-                        workspace.show_portal_error(err.to_string(), cx);
+                        workspace
+                            .show_error(workspace_error::PortalError::new(err.to_string()), cx);
 
                         let prompt = workspace.on_prompt_for_new_path.take().unwrap();
                         let rx = prompt(workspace, lister, suggested_name, window, cx);
@@ -3305,9 +3343,30 @@ impl Workspace {
                 }
             }
 
+            // Hot-exit silently writes dirty buffers to the DB; only allow it
+            // if the workspace will be reachable again, either via session
+            // restore or by reopening its folder paths. Otherwise prompt, so
+            // we don't orphan the buffers.
+            let allow_hot_exit_serialization = close_intent == CloseIntent::Quit
+                || save_last_workspace
+                || this
+                    .read_with(cx, |workspace, cx| {
+                        workspace
+                            .project
+                            .read(cx)
+                            .visible_worktrees(cx)
+                            .next()
+                            .is_some()
+                    })
+                    .unwrap_or(false);
             let save_result = this
                 .update_in(cx, |this, window, cx| {
-                    this.save_all_internal(SaveIntent::Close, window, cx)
+                    this.save_all_internal(
+                        SaveIntent::Close,
+                        allow_hot_exit_serialization,
+                        window,
+                        cx,
+                    )
                 })?
                 .await;
 
@@ -3328,6 +3387,7 @@ impl Workspace {
     fn save_all(&mut self, action: &SaveAll, window: &mut Window, cx: &mut Context<Self>) {
         self.save_all_internal(
             action.save_intent.unwrap_or(SaveIntent::SaveAll),
+            true,
             window,
             cx,
         )
@@ -3425,12 +3485,13 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
-        self.save_all_internal(SaveIntent::Close, window, cx)
+        self.save_all_internal(SaveIntent::Close, true, window, cx)
     }
 
     fn save_all_internal(
         &mut self,
         mut save_intent: SaveIntent,
+        allow_hot_exit_serialization: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<bool>> {
@@ -3457,23 +3518,27 @@ impl Workspace {
             let dirty_items = if save_intent == SaveIntent::Close && !dirty_items.is_empty() {
                 let mut serialize_tasks = Vec::new();
                 let mut remaining_dirty_items = Vec::new();
-                workspace.update_in(cx, |workspace, window, cx| {
-                    for (pane, item) in dirty_items {
-                        if let Some(task) = item
-                            .to_serializable_item_handle(cx)
-                            .and_then(|handle| handle.serialize(workspace, true, window, cx))
-                        {
-                            serialize_tasks.push((pane, item, task));
-                        } else {
+                if allow_hot_exit_serialization {
+                    workspace.update_in(cx, |workspace, window, cx| {
+                        for (pane, item) in dirty_items {
+                            if let Some(task) = item
+                                .to_serializable_item_handle(cx)
+                                .and_then(|handle| handle.serialize(workspace, true, window, cx))
+                            {
+                                serialize_tasks.push((pane, item, task));
+                            } else {
+                                remaining_dirty_items.push((pane, item));
+                            }
+                        }
+                    })?;
+
+                    for (pane, item, task) in serialize_tasks {
+                        if task.await.log_err().is_none() {
                             remaining_dirty_items.push((pane, item));
                         }
                     }
-                })?;
-
-                for (pane, item, task) in serialize_tasks {
-                    if task.await.log_err().is_none() {
-                        remaining_dirty_items.push((pane, item));
-                    }
+                } else {
+                    remaining_dirty_items = dirty_items;
                 }
 
                 if !remaining_dirty_items.is_empty() {
@@ -3625,8 +3690,23 @@ impl Workspace {
                 let fs = fs.clone();
                 let pane = pane.clone();
                 let task = cx.spawn(async move |cx| {
-                    let (_worktree, project_path) = project_path?;
-                    if fs.is_dir(&abs_path).await {
+                    let (worktree, project_path) = project_path?;
+                    let (entry_is_directory, worktree_is_local) =
+                        worktree.read_with(cx, |worktree, _| {
+                            let entry = if project_path.path.as_unix_str().is_empty() {
+                                worktree.root_entry()
+                            } else {
+                                worktree.entry_for_path(&project_path.path)
+                            };
+                            (entry.map(|entry| entry.is_dir()), worktree.is_local())
+                        });
+                    let is_directory = match entry_is_directory {
+                        Some(is_directory) => is_directory,
+                        None if worktree_is_local => fs.is_dir(&abs_path).await,
+                        None => false,
+                    };
+
+                    if is_directory {
                         // Opening a directory should not race to update the active entry.
                         // We'll select/reveal a deterministic final entry after all paths finish opening.
                         None
@@ -3778,10 +3858,7 @@ impl Workspace {
     ) {
         let project = self.project.read(cx);
         if project.is_via_collab() {
-            self.show_error(
-                &anyhow!("You cannot add folders to someone else's project"),
-                cx,
-            );
+            self.show_error("You cannot add folders to someone else's project", cx);
             return;
         }
         let paths = self.prompt_for_open_path(
@@ -4608,6 +4685,108 @@ impl Workspace {
                 )
             })
         })
+    }
+
+    /// Opens a URL or file path, intelligently routing to the appropriate handler:
+    ///
+    /// - `http://` and `https://` URLs are opened in the system's default browser
+    /// - `file://` URIs are opened as files in the editor
+    /// - Paths without a URL scheme are treated as file paths:
+    ///   - Absolute paths are opened directly
+    ///   - Relative paths are first resolved against `base_path` (if provided),
+    ///     then against visible project worktrees
+    /// - Other URI schemes (e.g., `mailto:`, `vscode:`) are passed to the system handler
+    ///
+    /// # Arguments
+    /// * `url_or_path` - The URL or file path to open
+    /// * `base_path` - Optional base directory for resolving relative paths (e.g., the
+    ///   directory containing a markdown file). If not provided, relative paths are
+    ///   resolved against project worktrees.
+    ///
+    /// This method provides a unified way to handle links that may be either URLs
+    /// or file paths, such as those found in markdown documents, terminal output,
+    /// or LSP responses.
+    pub fn open_url_or_file(
+        &mut self,
+        url_or_path: &str,
+        base_path: Option<&Path>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut open_abs_path = |this: &mut Self, path, cx: &mut _| {
+            let url_or_path = url_or_path.to_owned();
+            let task = this.open_abs_path(
+                path,
+                OpenOptions {
+                    visible: Some(OpenVisible::None),
+                    ..Default::default()
+                },
+                window,
+                cx,
+            );
+            (**cx)
+                .spawn(async move |cx| {
+                    if let Err(_) = task.await {
+                        cx.update(|cx| cx.open_url(&url_or_path));
+                    }
+                })
+                .detach();
+        };
+
+        if let Ok(url) = Url::parse(url_or_path) {
+            match url.scheme() {
+                "http" | "https" => cx.open_url(url_or_path),
+                "file" => open_abs_path(self, PathBuf::from(url.path()), cx),
+                _ => cx.open_url(url_or_path),
+            }
+            return;
+        }
+
+        // Not a valid URL - treat as a file path
+        let project = self.project();
+        let path_style = project.read(cx).path_style(cx);
+
+        // If it's an absolute path, open it directly
+        if path_style.is_absolute(url_or_path) {
+            open_abs_path(self, PathBuf::from(url_or_path), cx);
+            return;
+        }
+
+        let path = Path::new(url_or_path);
+        // Try to resolve relative path against base_path first
+        if let Some(base) = base_path
+            // TODO: remotes, the exists check below hits the local FS, unsure
+            // if this runs on the remote or not
+            && project.read(cx).is_local()
+        {
+            let resolved = path_style.join(base, path).map(PathBuf::from);
+            if let Some(resolved) = resolved
+                && resolved.exists()
+            {
+                open_abs_path(self, resolved, cx);
+                return;
+            }
+        }
+
+        // Try to resolve against project worktrees
+        if let Some(project_path) =
+            project.update(cx, |project, cx| project.find_project_path(url_or_path, cx))
+        {
+            let url_or_path = url_or_path.to_owned();
+            let task = self.open_path(project_path, None, true, window, cx);
+            (**cx)
+                .spawn(async move |cx| {
+                    if let Err(_) = task.await {
+                        cx.update(|cx| cx.open_url(&url_or_path));
+                    }
+                })
+                .detach();
+            return;
+        }
+
+        // Couldn't resolve as a file path - try opening as URL anyway
+        // (the OS might be able to handle it)
+        cx.open_url(url_or_path);
     }
 
     pub fn split_path(
@@ -5715,6 +5894,7 @@ impl Workspace {
             .insert(pane.downgrade(), leader_id);
         self.unfollow(leader_id, window, cx);
         self.unfollow_in_pane(&pane, window, cx);
+        self.auto_watch = AutoWatch::Off;
         self.follower_states.insert(
             leader_id,
             FollowerState {
@@ -5848,10 +6028,18 @@ impl Workspace {
             // if they are active in another project, follow there.
             if let Some(project_id) = other_project_id {
                 let app_state = self.app_state.clone();
-                crate::join_in_room_project(project_id, remote_participant.user.id, app_state, cx)
-                    .detach_and_prompt_err("Failed to join project", window, cx, |error, _, _| {
-                        Some(format!("{error:#}"))
-                    });
+                crate::join_in_room_project(
+                    project_id,
+                    remote_participant.user.legacy_id,
+                    app_state,
+                    cx,
+                )
+                .detach_and_prompt_err(
+                    "Failed to join project",
+                    window,
+                    cx,
+                    |error, _, _| Some(format!("{error:#}")),
+                );
             }
         }
 
@@ -5902,7 +6090,7 @@ impl Workspace {
         self.follower_states.contains_key(&id.into())
     }
 
-    fn active_item_path_changed(
+    pub(crate) fn active_item_path_changed(
         &mut self,
         focus_changed: bool,
         window: &mut Window,
@@ -5924,7 +6112,31 @@ impl Workspace {
         self.update_window_title(window, cx);
     }
 
+    /// Whether this workspace may write the platform window's title and edited
+    /// indicator.
+    ///
+    /// In a multi-workspace window several workspaces share one platform
+    /// window, so only the active one is allowed to write that chrome —
+    /// otherwise a background workspace's project/item events would clobber the
+    /// active workspace's title. `MultiWorkspace` publishes the active
+    /// workspace's id into the shared `active_workspace_id` cell, which we
+    /// simply compare against our own id. A workspace with no shared cell (e.g.
+    /// a plain test window) owns its window unconditionally.
+    fn owns_window_chrome(&self) -> bool {
+        match &self.active_workspace_id {
+            Some(active_workspace_id) => active_workspace_id.get() == self.weak_self.entity_id(),
+            None => true,
+        }
+    }
+
     fn update_window_title(&mut self, window: &mut Window, cx: &mut App) {
+        if !self.owns_window_chrome() {
+            return;
+        }
+        self.apply_window_title(window, cx);
+    }
+
+    fn apply_window_title(&mut self, window: &mut Window, cx: &mut App) {
         let project = self.project().read(cx);
         let mut title = String::new();
 
@@ -5984,12 +6196,43 @@ impl Workspace {
         self.last_window_title = Some(title);
     }
 
+    fn is_window_edited(&self, cx: &App) -> bool {
+        !self.project.read(cx).is_disconnected(cx) && !self.dirty_items.is_empty()
+    }
+
     fn update_window_edited(&mut self, window: &mut Window, cx: &mut App) {
-        let is_edited = !self.project.read(cx).is_disconnected(cx) && !self.dirty_items.is_empty();
+        if !self.owns_window_chrome() {
+            return;
+        }
+        let is_edited = self.is_window_edited(cx);
         if is_edited != self.window_edited {
             self.window_edited = is_edited;
             window.set_window_edited(self.window_edited)
         }
+    }
+
+    /// Re-applies this workspace's title and edited indicator to the platform
+    /// window, bypassing the change-detection caches.
+    ///
+    /// Several workspaces can share a single platform window (a multi-workspace
+    /// window). The `last_window_title`/`window_edited` caches assume the
+    /// window's title and edited state reflect *this* workspace, but after the
+    /// active workspace changes those values may have been set by a different
+    /// workspace. Clearing the caches forces the values to be re-applied so the
+    /// window reflects the newly-active workspace.
+    ///
+    /// This is only ever invoked for the workspace that just became active, so
+    /// it writes directly rather than going through `update_window_title` /
+    /// `update_window_edited`, whose change-detection caches would otherwise
+    /// suppress the write when this workspace's computed title/edited state
+    /// matches what *it* last set (even though the shared window currently
+    /// shows a different workspace's state).
+    pub fn refresh_window_state(&mut self, window: &mut Window, cx: &mut App) {
+        self.last_window_title = None;
+        self.apply_window_title(window, cx);
+
+        self.window_edited = self.is_window_edited(cx);
+        window.set_window_edited(self.window_edited);
     }
 
     fn update_item_dirty_state(
@@ -6630,6 +6873,12 @@ impl Workspace {
             ActiveCallEvent::LocalScreenShareStopped => {
                 self.handle_auto_watch_local_share_stopped(window, cx);
             }
+            ActiveCallEvent::RoomLeft => {
+                if self.auto_watch.enabled() {
+                    self.auto_watch = AutoWatch::Off;
+                    cx.notify();
+                }
+            }
         }
     }
 
@@ -6732,14 +6981,17 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
+        let removing_active_pane = self.active_pane() == pane;
         self.panes.retain(|p| p != pane);
         if let Some(focus_on) = focus_on {
+            if removing_active_pane {
+                self.set_active_pane(focus_on, window, cx);
+            }
             focus_on.update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx));
-        } else if self.active_pane() == pane {
+        } else if removing_active_pane {
             let fallback_pane = self.panes.last().unwrap().clone();
-            if self.has_active_modal(window, cx) {
-                self.set_active_pane(&fallback_pane, window, cx);
-            } else {
+            self.set_active_pane(&fallback_pane, window, cx);
+            if !self.has_active_modal(window, cx) {
                 fallback_pane.update(cx, |pane, cx| window.focus(&pane.focus_handle(cx), cx));
             }
         }
@@ -7196,6 +7448,7 @@ impl Workspace {
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
             .on_action(cx.listener(Self::move_focused_panel_to_next_position))
+            .on_action(cx.listener(Self::reopen_last_picker))
             .on_action(cx.listener(Self::toggle_edit_predictions_all_files))
             .on_action(cx.listener(Self::toggle_theme_mode))
             .on_action(cx.listener(|workspace, _: &Unfollow, window, cx| {
@@ -7401,6 +7654,11 @@ impl Workspace {
                             });
                         }
                     }
+                },
+            ))
+            .on_action(cx.listener(
+                |workspace: &mut Workspace, _: &ResetPaneSizes, _window, cx| {
+                    workspace.reset_pane_sizes(cx);
                 },
             ))
             .on_action(cx.listener(
@@ -7660,6 +7918,22 @@ impl Workspace {
             .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx))
     }
 
+    fn reopen_last_picker(
+        &mut self,
+        _: &ReopenLastPicker,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // When triggered from within another modal (e.g. the command palette), that
+        // modal's dismissal is asynchronous, so defer the reveal until it has closed;
+        // otherwise a modal would still be active and the reveal would be a no-op.
+        cx.defer_in(window, |workspace, window, cx| {
+            workspace.modal_layer.update(cx, |modal_layer, cx| {
+                modal_layer.reveal_stashed_modal(window, cx);
+            });
+        });
+    }
+
     pub fn toggle_status_toast<V: ToastView>(&mut self, entity: Entity<V>, cx: &mut App) {
         self.toast_layer
             .update(cx, |toast_layer, cx| toast_layer.toggle_toast(cx, entity))
@@ -7752,6 +8026,12 @@ impl Workspace {
                         .and_then(|state| state.size)
                         .unwrap_or_else(|| panel.default_size(window, cx));
                     container = container.w(size);
+                    // Allow the fixed-width dock to shrink when there isn't
+                    // enough space (e.g. when the sidebar is open). The
+                    // stored size is preserved so the dock expands back
+                    // when space becomes available.
+                    let style = container.style();
+                    style.flex_shrink = Some(1.0);
                 }
                 if let Some(min) = min_size {
                     container = container.min_w(min);
@@ -7965,21 +8245,18 @@ impl Workspace {
                 });
             }
         } else {
-            let has_restricted_worktrees = TrustedWorktrees::try_get_global(cx)
-                .map(|trusted_worktrees| {
-                    trusted_worktrees
-                        .read(cx)
-                        .has_restricted_worktrees(&self.project().read(cx).worktree_store(), cx)
-                })
-                .unwrap_or(false);
+            let has_restricted_worktrees = TrustedWorktrees::has_restricted_worktrees(
+                &self.project().read(cx).worktree_store(),
+                cx,
+            );
             if has_restricted_worktrees {
                 let project = self.project().read(cx);
                 let remote_host = project
                     .remote_connection_options(cx)
                     .map(RemoteHostLocation::from);
                 let worktree_store = project.worktree_store().downgrade();
-                self.toggle_modal(window, cx, |_, cx| {
-                    SecurityModal::new(worktree_store, remote_host, cx)
+                self.toggle_modal(window, cx, |window, cx| {
+                    SecurityModal::new(worktree_store, remote_host, window, cx)
                 });
             }
         }
@@ -8081,6 +8358,7 @@ pub enum ActiveCallEvent {
     RemoteVideoTracksChanged { participant_id: PeerId },
     LocalScreenShareStarted,
     LocalScreenShareStopped,
+    RoomLeft,
 }
 
 fn leader_border_for_pane(
@@ -9389,7 +9667,7 @@ pub fn join_channel(
                             PromptLevel::Critical,
                             "Failed to join channel",
                             Some(&detail),
-                            &["Ok"],
+                            &["OK"],
                             cx,
                         )
                     })?
@@ -9426,7 +9704,7 @@ pub async fn get_any_active_multi_workspace(
     activate_any_workspace_window(&mut cx).context("could not open zed")
 }
 
-fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<MultiWorkspace>> {
+pub fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<MultiWorkspace>> {
     cx.update(|cx| {
         if let Some(workspace_window) = cx
             .active_window()
@@ -9445,10 +9723,6 @@ fn activate_any_workspace_window(cx: &mut AsyncApp) -> Option<WindowHandle<Multi
         }
         None
     })
-}
-
-pub fn local_workspace_windows(cx: &App) -> Vec<WindowHandle<MultiWorkspace>> {
-    workspace_windows_for_location(&SerializedWorkspaceLocation::Local, cx)
 }
 
 pub fn workspace_windows_for_location(
@@ -9520,11 +9794,18 @@ pub async fn find_existing_workspace(
                 if let Ok(multi_workspace) = window.read(cx) {
                     for workspace in multi_workspace.workspaces() {
                         let project = workspace.read(cx).project.read(cx);
-                        let m = project.visibility_for_paths(
-                            abs_paths,
-                            open_options.workspace_matching != WorkspaceMatching::MatchSubdirectory,
-                            cx,
-                        );
+                        let m = match open_options.workspace_matching {
+                            WorkspaceMatching::None => None,
+                            WorkspaceMatching::MatchExact => {
+                                project.visibility_for_paths(abs_paths, true, cx)
+                            }
+                            WorkspaceMatching::MatchSubpaths => {
+                                project.visibility_for_subpaths(abs_paths, cx)
+                            }
+                            WorkspaceMatching::MatchSubdirectory => {
+                                project.visibility_for_paths(abs_paths, false, cx)
+                            }
+                        };
                         if m > best_match {
                             existing = Some((window, workspace.clone()));
                             best_match = m;
@@ -9591,6 +9872,9 @@ pub enum WorkspaceMatching {
     /// Match paths against existing worktree roots and files within them.
     #[default]
     MatchExact,
+    /// Match files and directories inside existing worktrees, excluding the
+    /// worktree roots themselves.
+    MatchSubpaths,
     /// Match paths against existing worktrees including subdirectories, and
     /// fall back to any existing window if no worktree matched.
     ///
@@ -9633,7 +9917,10 @@ impl Default for OpenOptions {
 
 impl OpenOptions {
     fn should_reuse_existing_window(&self) -> bool {
-        self.workspace_matching != WorkspaceMatching::None && self.open_mode != OpenMode::NewWindow
+        !matches!(
+            self.workspace_matching,
+            WorkspaceMatching::None | WorkspaceMatching::MatchSubpaths
+        ) && self.open_mode != OpenMode::NewWindow
     }
 }
 
@@ -9885,7 +10172,7 @@ pub fn open_paths(
                 workspace.update(cx, |workspace, cx| {
                     for item in open_task.iter().flatten() {
                         if let Err(e) = item {
-                            workspace.show_error(&e, cx);
+                            workspace.show_error(format!("Error: {e}"), cx);
                         }
                     }
                 });
@@ -10180,8 +10467,6 @@ async fn open_remote_project_inner(
     }
 
     let workspace = window.update(cx, |multi_workspace, window, cx| {
-        telemetry::event!("SSH Project Opened");
-
         let new_workspace = cx.new(|cx| {
             let mut workspace =
                 Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
@@ -10220,10 +10505,10 @@ async fn open_remote_project_inner(
         for error in project_path_errors {
             if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
                 if let Some(path) = error.error_tag("path") {
-                    workspace.show_error(&anyhow!("'{path}' does not exist"), cx)
+                    workspace.show_error(format!("'{path}' does not exist"), cx)
                 }
             } else {
-                workspace.show_error(&error, cx)
+                workspace.show_error(format!("{error}"), cx)
             }
         }
     });
@@ -10439,6 +10724,12 @@ pub fn client_side_decorations(
         Decorations::Server => Tiling::default(),
         Decorations::Client { tiling } => tiling,
     };
+    let corner_tiling = Tiling {
+        top: tiling.top || border_radius_tiling.top,
+        bottom: tiling.bottom || border_radius_tiling.bottom,
+        left: tiling.left || border_radius_tiling.left,
+        right: tiling.right || border_radius_tiling.right,
+    };
 
     match decorations {
         Decorations::Client { .. } => window.set_client_inset(theme::CLIENT_SIDE_DECORATION_SHADOW),
@@ -10454,34 +10745,7 @@ pub fn client_side_decorations(
         .map(|div| match decorations {
             Decorations::Server => div,
             Decorations::Client { .. } => div
-                .when(
-                    !(tiling.top
-                        || tiling.right
-                        || border_radius_tiling.top
-                        || border_radius_tiling.right),
-                    |div| div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                )
-                .when(
-                    !(tiling.top
-                        || tiling.left
-                        || border_radius_tiling.top
-                        || border_radius_tiling.left),
-                    |div| div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                )
-                .when(
-                    !(tiling.bottom
-                        || tiling.right
-                        || border_radius_tiling.bottom
-                        || border_radius_tiling.right),
-                    |div| div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                )
-                .when(
-                    !(tiling.bottom
-                        || tiling.left
-                        || border_radius_tiling.bottom
-                        || border_radius_tiling.left),
-                    |div| div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                )
+                .rounded_client_corners(corner_tiling)
                 .when(!tiling.top, |div| {
                     div.pt(theme::CLIENT_SIDE_DECORATION_SHADOW)
                 })
@@ -10536,50 +10800,25 @@ pub fn client_side_decorations(
                     Decorations::Server => div,
                     Decorations::Client { .. } => div
                         .border_color(cx.theme().colors().border)
-                        .when(
-                            !(tiling.top
-                                || tiling.right
-                                || border_radius_tiling.top
-                                || border_radius_tiling.right),
-                            |div| div.rounded_tr(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                        )
-                        .when(
-                            !(tiling.top
-                                || tiling.left
-                                || border_radius_tiling.top
-                                || border_radius_tiling.left),
-                            |div| div.rounded_tl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                        )
-                        .when(
-                            !(tiling.bottom
-                                || tiling.right
-                                || border_radius_tiling.bottom
-                                || border_radius_tiling.right),
-                            |div| div.rounded_br(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                        )
-                        .when(
-                            !(tiling.bottom
-                                || tiling.left
-                                || border_radius_tiling.bottom
-                                || border_radius_tiling.left),
-                            |div| div.rounded_bl(theme::CLIENT_SIDE_DECORATION_ROUNDING),
-                        )
+                        .rounded_client_corners(corner_tiling)
                         .when(!tiling.top, |div| div.border_t(BORDER_SIZE))
                         .when(!tiling.bottom, |div| div.border_b(BORDER_SIZE))
                         .when(!tiling.left, |div| div.border_l(BORDER_SIZE))
                         .when(!tiling.right, |div| div.border_r(BORDER_SIZE))
                         .when(!tiling.is_tiled(), |div| {
-                            div.shadow(vec![gpui::BoxShadow {
-                                color: Hsla {
-                                    h: 0.,
-                                    s: 0.,
-                                    l: 0.,
-                                    a: 0.4,
-                                },
-                                blur_radius: theme::CLIENT_SIDE_DECORATION_SHADOW / 2.,
-                                spread_radius: px(0.),
-                                offset: point(px(0.0), px(0.0)),
-                            }])
+                            div.shadow(vec![
+                                gpui::BoxShadow::new(
+                                    px(0.),
+                                    px(0.),
+                                    Hsla {
+                                        h: 0.,
+                                        s: 0.,
+                                        l: 0.,
+                                        a: 0.4,
+                                    },
+                                )
+                                .blur_radius(theme::CLIENT_SIDE_DECORATION_SHADOW / 2.),
+                            ])
                         }),
                 })
                 .on_mouse_move(|_e, _, cx| {
@@ -11473,7 +11712,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_close_window_with_serializable_items(cx: &mut TestAppContext) {
+    async fn test_close_window_with_worktrees_hot_exits(cx: &mut TestAppContext) {
         init_test(cx);
 
         // Register TestItem as a serializable item
@@ -11510,8 +11749,163 @@ mod tests {
         assert!(task.await.unwrap());
     }
 
+    // See https://github.com/zed-industries/zed/issues/55726.
+    //
+    // macOS only: on Linux/Windows, closing the last window sets
+    // `save_last_workspace`, which preserves the session (same as `Quit`),
+    // so hot-exit is safe there.
+    #[cfg(target_os = "macos")]
     #[gpui::test]
-    async fn test_close_window_with_failing_serialization(cx: &mut TestAppContext) {
+    async fn test_close_window_without_worktrees_prompts(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::CloseWindow, window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        assert!(
+            cx.has_pending_prompt(),
+            "closing a no-folder workspace with a dirty serializable item should prompt, \
+             since the workspace will not be reachable after close"
+        );
+        cx.simulate_prompt_answer("Don't Save");
+        cx.executor().run_until_parked();
+
+        assert!(task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_quit_without_worktrees_hot_exits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::Quit, window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        assert!(
+            !cx.has_pending_prompt(),
+            "quitting should hot-exit silently; the session restore on next \
+             launch will bring the dirty buffer back"
+        );
+        assert!(task.await.unwrap());
+    }
+
+    // See https://github.com/zed-industries/zed/issues/55726.
+    #[gpui::test]
+    async fn test_replace_window_without_worktrees_prompts(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        assert!(
+            cx.has_pending_prompt(),
+            "replacing a workspace with a dirty serializable item should prompt, \
+             since the workspace will be detached afterwards"
+        );
+        cx.simulate_prompt_answer("Don't Save");
+        cx.executor().run_until_parked();
+
+        assert!(task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_replace_window_with_worktrees_hot_exits(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            register_serializable_item::<TestItem>(cx);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/root", json!({ "one": "" })).await;
+
+        let project = Project::test(fs, ["root".as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        let item = cx.new(|cx| {
+            TestItem::new(cx)
+                .with_dirty(true)
+                .with_serialize(|| Some(Task::ready(Ok(()))))
+        });
+        workspace.update_in(cx, |w, window, cx| {
+            w.add_item_to_active_pane(Box::new(item.clone()), None, true, window, cx);
+        });
+
+        let task = workspace.update_in(cx, |w, window, cx| {
+            w.prepare_to_close(CloseIntent::ReplaceWindow, window, cx)
+        });
+        cx.executor().run_until_parked();
+
+        assert!(
+            !cx.has_pending_prompt(),
+            "replacing a workspace with folder paths should hot-exit silently; \
+             the buffer is recoverable by reopening the project"
+        );
+        assert!(task.await.unwrap());
+    }
+
+    #[gpui::test]
+    async fn test_close_window_with_failing_serialize_prompts(cx: &mut TestAppContext) {
         init_test(cx);
 
         cx.update(|cx| {
@@ -12412,6 +12806,74 @@ mod tests {
 
         workspace.update(cx, |workspace, _| {
             assert_eq!(workspace.active_pane().entity_id(), target_last_pane_id);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_reset_pane_sizes(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        // A horizontal split of three panes whose last child is itself a vertical
+        // split, so equalizing has to recurse into the nested axis.
+        workspace.update_in(cx, |workspace, window, cx| {
+            let item = cx.new(|cx| {
+                TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+            });
+            workspace.add_item_to_active_pane(Box::new(item), None, true, window, cx);
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Right,
+                window,
+                cx,
+            );
+            workspace.split_pane(
+                workspace.active_pane().clone(),
+                SplitDirection::Down,
+                window,
+                cx,
+            );
+        });
+
+        let nested_axis = |workspace: &Workspace| {
+            let Member::Axis(top) = &workspace.center.root else {
+                panic!("expected the center to be a split axis");
+            };
+            let nested = top
+                .members
+                .iter()
+                .find_map(|member| match member {
+                    Member::Axis(axis) => Some(axis.clone()),
+                    Member::Pane(_) => None,
+                })
+                .expect("expected a nested split axis");
+            (top.clone(), nested)
+        };
+
+        // Skew every axis away from uniform sizes.
+        workspace.update(cx, |workspace, _| {
+            let (top, nested) = nested_axis(workspace);
+            *top.flexes.lock() = vec![1.6, 0.7, 0.7];
+            *nested.flexes.lock() = vec![1.3, 0.7];
+        });
+
+        cx.run_until_parked();
+        cx.dispatch_action(ResetPaneSizes);
+
+        workspace.update(cx, |workspace, _| {
+            let (top, nested) = nested_axis(workspace);
+            assert_eq!(*top.flexes.lock(), vec![1.0; top.members.len()]);
+            assert_eq!(*nested.flexes.lock(), vec![1.0; nested.members.len()]);
         });
     }
 
@@ -13661,6 +14123,155 @@ mod tests {
         }
     }
 
+    // Registers its focus handle as a reopenable picker on construction, like a real
+    // `Picker` does, so the modal layer recognizes it by focus identity.
+    struct ReopenableTestModal(FocusHandle);
+
+    impl ReopenableTestModal {
+        fn new(_: &mut Window, cx: &mut Context<Self>) -> Self {
+            let focus_handle = cx.focus_handle();
+            register_reopenable_picker(&focus_handle, cx);
+            Self(focus_handle)
+        }
+    }
+
+    impl EventEmitter<DismissEvent> for ReopenableTestModal {}
+
+    impl Focusable for ReopenableTestModal {
+        fn focus_handle(&self, _cx: &App) -> FocusHandle {
+            self.0.clone()
+        }
+    }
+
+    impl ModalView for ReopenableTestModal {}
+
+    impl Render for ReopenableTestModal {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut Context<ReopenableTestModal>,
+        ) -> impl IntoElement {
+            div().track_focus(&self.0)
+        }
+    }
+
+    #[gpui::test]
+    async fn test_reopen_last_picker(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        // A non-reopenable modal is dropped on dismissal and cannot be revealed.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, TestModal::new);
+        });
+        cx.executor().run_until_parked();
+        assert!(workspace.read_with(cx, |workspace, cx| {
+            workspace.active_modal::<TestModal>(cx).is_some()
+        }));
+        workspace.update_in(cx, |workspace, window, cx| {
+            let revealed = workspace.modal_layer.update(cx, |modal_layer, cx| {
+                modal_layer.hide_modal(window, cx);
+                modal_layer.reveal_stashed_modal(window, cx)
+            });
+            assert!(!revealed, "a non-reopenable modal should not be revealable");
+        });
+
+        // A reopenable modal is stashed on dismissal and revealed as the *same*
+        // entity, so its prior state is preserved exactly.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.toggle_modal(window, cx, ReopenableTestModal::new);
+        });
+        cx.executor().run_until_parked();
+        let original_id = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_modal::<ReopenableTestModal>(cx)
+                .unwrap()
+                .entity_id()
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace
+                .modal_layer
+                .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx));
+        });
+        cx.executor().run_until_parked();
+        assert!(workspace.read_with(cx, |workspace, cx| {
+            workspace.active_modal::<ReopenableTestModal>(cx).is_none()
+        }));
+        workspace.update_in(cx, |workspace, window, cx| {
+            let revealed = workspace.modal_layer.update(cx, |modal_layer, cx| {
+                modal_layer.reveal_stashed_modal(window, cx)
+            });
+            assert!(revealed, "a reopenable modal should be revealable");
+        });
+        cx.executor().run_until_parked();
+        let revealed_id = workspace.read_with(cx, |workspace, cx| {
+            workspace
+                .active_modal::<ReopenableTestModal>(cx)
+                .unwrap()
+                .entity_id()
+        });
+        assert_eq!(
+            original_id, revealed_id,
+            "reveal should restore the same modal entity rather than building a new one"
+        );
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let revealed = workspace.modal_layer.update(cx, |modal_layer, cx| {
+                modal_layer.reveal_stashed_modal(window, cx)
+            });
+            assert!(!revealed, "reveal should be a no-op while a modal is open");
+        });
+
+        // A non-reopenable modal must not discard the stash, which is what lets the
+        // command palette be used to trigger the reopen.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace
+                .modal_layer
+                .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx));
+            workspace.toggle_modal(window, cx, TestModal::new);
+        });
+        cx.executor().run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            let revealed = workspace.modal_layer.update(cx, |modal_layer, cx| {
+                modal_layer.hide_modal(window, cx);
+                modal_layer.reveal_stashed_modal(window, cx)
+            });
+            assert!(
+                revealed,
+                "a non-reopenable modal must not discard the stash"
+            );
+        });
+        cx.executor().run_until_parked();
+
+        // Reopen triggered from within a modal that dismisses asynchronously and
+        // dispatches the action in the same cycle, as the command palette does.
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace
+                .modal_layer
+                .update(cx, |modal_layer, cx| modal_layer.hide_modal(window, cx));
+            workspace.toggle_modal(window, cx, TestModal::new);
+        });
+        cx.executor().run_until_parked();
+        workspace.update_in(cx, |workspace, window, cx| {
+            // Mirror the command palette's confirm: emit DismissEvent on itself and
+            // dispatch the reopen action within the same update.
+            let palette = workspace.active_modal::<TestModal>(cx).unwrap();
+            palette.update(cx, |_, cx| cx.emit(DismissEvent));
+            workspace.reopen_last_picker(&ReopenLastPicker, window, cx);
+        });
+        cx.executor().run_until_parked();
+        assert!(
+            workspace.read_with(cx, |workspace, cx| workspace
+                .active_modal::<ReopenableTestModal>(cx)
+                .is_some()),
+            "reopen triggered from within a dismissing modal should reveal the stash"
+        );
+    }
+
     #[gpui::test]
     async fn test_panels(cx: &mut gpui::TestAppContext) {
         init_test(cx);
@@ -14639,6 +15250,47 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_active_pane_updates_to_focus_target_on_removal(cx: &mut TestAppContext) {
+        assert_active_pane_is_replaced_after_removal(cx, true).await;
+    }
+
+    #[gpui::test]
+    async fn test_active_pane_updates_to_fallback_on_removal(cx: &mut TestAppContext) {
+        assert_active_pane_is_replaced_after_removal(cx, false).await;
+    }
+
+    async fn assert_active_pane_is_replaced_after_removal(
+        cx: &mut TestAppContext,
+        use_focus_target: bool,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            let first_pane = workspace.active_pane().clone();
+            let second_pane =
+                workspace.split_pane(first_pane.clone(), SplitDirection::Right, window, cx);
+            workspace.set_active_pane(&second_pane, window, cx);
+
+            let focus_target = use_focus_target.then(|| first_pane.clone());
+            workspace.remove_pane(second_pane, focus_target, window, cx);
+
+            assert_eq!(workspace.active_pane(), &first_pane);
+            assert!(
+                workspace
+                    .panes()
+                    .iter()
+                    .any(|pane| pane == workspace.active_pane()),
+                "active pane should be one of the remaining workspace panes"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn test_moving_items_create_panes(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -15431,6 +16083,93 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_window_title_follows_active_workspace(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root1"), json!({ "a.txt": "" }))
+            .await;
+        fs.insert_tree(path!("/root2"), json!({ "b.txt": "" }))
+            .await;
+
+        let project_a = Project::test(fs.clone(), [path!("/root1").as_ref()], cx).await;
+        let project_b = Project::test(fs, [path!("/root2").as_ref()], cx).await;
+
+        let multi_workspace_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+        let workspace_a = multi_workspace_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+        cx.run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some("root1"));
+
+        // Activating a second workspace must update the shared window's title.
+        multi_workspace_handle
+            .update(cx, |mw, window, cx| {
+                mw.test_add_workspace(project_b.clone(), window, cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some("root2"));
+
+        // Switching back must update the title again, even though workspace A's
+        // own computed title hasn't changed since it was last active. This is
+        // the regression: the per-workspace title cache was stale relative to
+        // the shared window title.
+        multi_workspace_handle
+            .update(cx, |mw, window, cx| {
+                mw.activate(workspace_a.clone(), None, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some("root1"));
+    }
+
+    #[gpui::test]
+    async fn test_background_workspace_does_not_clobber_window_title(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/root1"), json!({ "a.txt": "" }))
+            .await;
+        fs.insert_tree(path!("/root2"), json!({ "b.txt": "" }))
+            .await;
+        fs.insert_tree(path!("/root3"), json!({ "c.txt": "" }))
+            .await;
+
+        let project_a = Project::test(fs.clone(), [path!("/root1").as_ref()], cx).await;
+        let project_b = Project::test(fs.clone(), [path!("/root2").as_ref()], cx).await;
+
+        let multi_workspace_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+
+        let cx = &mut VisualTestContext::from_window(multi_workspace_handle.into(), cx);
+        cx.run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some("root1"));
+
+        // Switch to workspace B; workspace A becomes a background workspace whose
+        // event subscriptions are still live.
+        multi_workspace_handle
+            .update(cx, |mw, window, cx| {
+                mw.test_add_workspace(project_b.clone(), window, cx)
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some("root2"));
+
+        // A title-affecting change in the background workspace A must not touch
+        // the shared window's title, which belongs to the active workspace B.
+        project_a
+            .update(cx, |project, cx| {
+                project.find_or_create_worktree(path!("/root3"), true, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.window_title().as_deref(), Some("root2"));
+    }
+
     fn pane_items_paths(pane: &Entity<Pane>, cx: &App) -> Vec<String> {
         pane.read(cx)
             .items()
@@ -15718,5 +16457,50 @@ mod tests {
         });
         let path = workspace.read_with(cx, |workspace, cx| workspace.most_recent_active_path(cx));
         assert_eq!(path, None);
+    }
+
+    #[gpui::test]
+    async fn test_open_url_or_file_routes_urls(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "file.txt": "content",
+                "subdir": {
+                    "nested.txt": "nested content"
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
+
+        // Test opening an HTTPS URL - should go to open_url
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.open_url_or_file("https://example.com", None, window, cx);
+        });
+        assert_eq!(cx.opened_url(), Some("https://example.com".to_string()));
+
+        // Test opening an HTTP URL - should go to open_url
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.open_url_or_file("http://example.com", None, window, cx);
+        });
+        assert_eq!(cx.opened_url(), Some("http://example.com".to_string()));
+
+        // Test opening other URI schemes - should go to open_url
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.open_url_or_file("mailto:test@example.com", None, window, cx);
+        });
+        assert_eq!(cx.opened_url(), Some("mailto:test@example.com".to_string()));
+
+        // Test opening a path that doesn't exist and doesn't match project - should fallback to open_url
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.open_url_or_file("nonexistent.txt", None, window, cx);
+        });
+        assert_eq!(cx.opened_url(), Some("nonexistent.txt".to_string()));
     }
 }

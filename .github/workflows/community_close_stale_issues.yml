@@ -26,7 +26,8 @@ jobs:
             If you can reproduce this bug on the latest stable Zed, please let us know by leaving a comment with the Zed version,
             it helps us focus on the right issues.
             If the bug doesn't appear for you anymore, feel free to close the issue yourself; otherwise, the bot will close it in a couple of weeks.
-            But even after it's closed by the bot, you can leave a comment with the version where the bug is reproducible and we'll reopen the issue.
+            But even after it's closed by the bot, you can leave a comment **with the version where the bug is reproducible** and we'll reopen the issue.
+            (This bot will only ask about this issue once)
             Thanks!
           close-issue-message: "This issue was closed due to inactivity. If you're still experiencing this problem, please leave a comment with your Zed version so that we can reopen the issue."
           days-before-stale: 90
@@ -38,3 +39,4 @@ jobs:
           debug-only: ${{ inputs.debug-only }}
           stale-issue-label: "stale"
           exempt-issue-labels: "never stale"
+          labels-to-add-when-unstale: "never stale"
