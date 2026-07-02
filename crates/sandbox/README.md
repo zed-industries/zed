@@ -282,6 +282,27 @@ To work around this, we launch `zed --wsl-sandbox-helper` in WSL, which is a
 shim that captures the FDs and sets up the socket. We download this to
 `~/.local/libexec/zed`, so that it does not conflict with the Windows `zed.exe`
 binary that WSL will inject into the Linux `$PATH` (yes the `.exe` is stripped).
+
+### MacOS
+
+MacOS uses seatbelt, which enforces a rules file. This generally makes
+enforcement more straightforward. Unlike Linux, paths are resolved and checked
+at *syscall time*, meaning the symlink swap attack will not succeed. 
+
+However, care has to be taken with various parts of the rules file, specifically
+when it comes to `mach-lookup`. This controls access to, among other things,
+Launch Services, which allows unsandboxed code execution. 
+
+The exact policy is defined in `src/macos_seatbelt.rs`, and is inspired by a
+mixture of Codex and Chromium's rules. 
+
+Some of the denied services are somewhat questionable (i.e.
+`com.apple.FontObjectsServer`) - there are legitimate uses for an application to
+use this, but on the other hand, fonts can contain executable code, and have
+historically been exploited to achieve RCE. Given that, in the Zed agent, it is
+easy to opt-out of the sandbox, denying seems like a good choice. But we may
+want to revisit this.
+
 ## Code design
 
 ### `HostFilesystemLocation`
