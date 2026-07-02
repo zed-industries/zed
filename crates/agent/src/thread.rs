@@ -12,10 +12,10 @@ use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 
 use crate::sandboxing::{
-    SandboxRequest, ThreadSandbox, ThreadSandboxGrants, sandboxing_available_for_project,
+    SandboxRequest, ThreadSandbox, ThreadSandboxGrants, sandbox_git_dirs,
+    sandbox_worktree_writable_paths, sandboxing_available_for_project,
     sandboxing_enabled_for_project,
 };
-use crate::tools::{SandboxGitPathCandidates, sandbox_git_paths};
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{
     AgentProfileId, AgentProfileSettings, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT,
@@ -99,9 +99,6 @@ pub struct SandboxStatusKey {
     pub thread_sandbox: ThreadSandbox,
     pub baseline_writable_paths: Vec<PathBuf>,
     pub git_paths: Vec<PathBuf>,
-    pub repository_paths: Vec<(PathBuf, PathBuf, PathBuf, PathBuf)>,
-    pub settings_allow_git_access: bool,
-    pub thread_allow_git_access: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1794,21 +1791,16 @@ impl Thread {
         }
     }
 
-    /// The sandbox grants configured for this thread, using unverified Git path
-    /// candidates. Use [`Self::refresh_verified_sandbox_status`] for UI or other
-    /// surfaces that need to match terminal enforcement.
     pub fn sandbox_status(&self, cx: &App) -> Option<(ThreadSandbox, ThreadSandbox)> {
         if !self.sandboxing_available(cx) {
             return None;
         }
         let persistent = AgentSettings::get_global(cx).sandbox_permissions.clone();
-        let git_dirs = crate::sandboxing::sandbox_git_dirs(self.project.read(cx), cx);
+        let git_dirs = sandbox_git_dirs(self.project.read(cx), cx);
         let grants = self.sandbox_grants.borrow();
         let settings = crate::sandboxing::settings_thread_sandbox(&persistent)
-            .with_git(persistent.allow_git_access, git_dirs.clone());
-        let thread = grants
-            .thread_sandbox()
-            .with_git(grants.git_access_granted(), git_dirs);
+            .with_protected_paths(git_dirs.clone());
+        let thread = grants.thread_sandbox().with_protected_paths(git_dirs);
         Some((settings, thread))
     }
 
@@ -1824,69 +1816,27 @@ impl Thread {
         let settings_sandbox = crate::sandboxing::settings_thread_sandbox(&persistent);
         let grants = self.sandbox_grants.borrow();
         let thread_sandbox = grants.thread_sandbox();
-        let thread_allow_git_access = grants.git_access_granted();
         drop(grants);
 
-        let (sandbox_path_candidates, fs) = {
-            let project = self.project.read(cx);
-            (
-                SandboxGitPathCandidates::from_project(project, cx),
-                project.fs().clone(),
-            )
-        };
-        let baseline_writable_paths = sandbox_path_candidates.writable_paths.clone();
-        let git_paths = sandbox_path_candidates.git_paths.clone();
-        let repository_paths = sandbox_path_candidates.cache_key_repositories();
+        let project = self.project.read(cx);
+        let baseline_writable_paths = sandbox_worktree_writable_paths(project, cx);
+        let git_paths = sandbox_git_dirs(project, cx);
 
         let key = SandboxStatusKey {
             settings_sandbox: settings_sandbox.clone(),
             thread_sandbox: thread_sandbox.clone(),
             baseline_writable_paths: baseline_writable_paths.clone(),
             git_paths: git_paths.clone(),
-            repository_paths,
-            settings_allow_git_access: persistent.allow_git_access,
-            thread_allow_git_access,
         };
 
-        if settings_sandbox.is_unsandboxed() || thread_sandbox.is_unsandboxed() {
-            return Some((
-                key,
-                SandboxStatusRefresh::Ready(VerifiedSandboxStatus {
-                    settings_sandbox,
-                    thread_sandbox,
-                    baseline_writable_paths,
-                }),
-            ));
-        }
-
-        let git_access_requested = persistent.allow_git_access || thread_allow_git_access;
-        if !git_access_requested {
-            return Some((
-                key,
-                SandboxStatusRefresh::Ready(VerifiedSandboxStatus {
-                    settings_sandbox: settings_sandbox.with_git(false, git_paths.clone()),
-                    thread_sandbox: thread_sandbox.with_git(false, git_paths),
-                    baseline_writable_paths,
-                }),
-            ));
-        }
-
-        let task = cx.spawn(async move |_this, _cx| {
-            let sandbox_paths = sandbox_git_paths(sandbox_path_candidates, fs.as_ref(), true).await;
-            VerifiedSandboxStatus {
-                settings_sandbox: settings_sandbox.with_git(
-                    persistent.allow_git_access && sandbox_paths.allow_git_access,
-                    sandbox_paths.git_dirs.clone(),
-                ),
-                thread_sandbox: thread_sandbox.with_git(
-                    thread_allow_git_access && sandbox_paths.allow_git_access,
-                    sandbox_paths.git_dirs,
-                ),
+        Some((
+            key,
+            SandboxStatusRefresh::Ready(VerifiedSandboxStatus {
+                settings_sandbox: settings_sandbox.with_protected_paths(git_paths.clone()),
+                thread_sandbox: thread_sandbox.with_protected_paths(git_paths),
                 baseline_writable_paths,
-            }
-        });
-
-        Some((key, SandboxStatusRefresh::Pending(task)))
+            }),
+        ))
     }
 
     /// Whether agent terminal commands are sandboxed for this thread's project,
@@ -5650,7 +5600,6 @@ impl ToolCallEventStream {
             command: None,
             network_hosts,
             network_all_hosts,
-            allow_git_access: request.allow_git_access,
             allow_fs_write_all: request.allow_fs_write_all,
             unsandboxed: request.unsandboxed,
             write_paths: request.write_paths.clone(),
@@ -5855,9 +5804,7 @@ impl ToolCallEventStream {
                         agent.set_sandbox_network_hosts(host_strings);
                     }
                 }
-                if request.allow_git_access {
-                    agent.allow_sandbox_git_access();
-                }
+
                 if request.allow_fs_write_all {
                     agent.allow_sandbox_fs_write_all();
                 }
@@ -5899,6 +5846,20 @@ impl ToolCallEventStream {
     /// command in the thread run without a sandbox.
     pub(crate) fn unsandboxed_granted_for_thread(&self) -> bool {
         self.sandbox_grants.borrow().unsandboxed_granted()
+    }
+
+    /// Whether unsandboxed access is currently in effect: granted for this
+    /// thread (a model-requested `unsandboxed` escape or a sandbox-creation
+    /// fallback) or configured persistently via `allow_unsandboxed`. When true,
+    /// commands already run without any OS sandbox, so per-host network grants
+    /// no longer provide isolation and callers may skip host authorization
+    /// entirely.
+    pub(crate) fn unsandboxed_access_granted(&self, cx: &App) -> bool {
+        self.unsandboxed_granted_for_thread()
+            || self.sandbox_fallback_granted_for_thread()
+            || AgentSettings::get_global(cx)
+                .sandbox_permissions
+                .allow_unsandboxed
     }
 
     /// Ask the user how to proceed when the OS sandbox could not be created
@@ -7592,7 +7553,6 @@ mod tests {
         let (event_stream, mut receiver) = ToolCallEventStream::test();
         let request = SandboxRequest {
             network: crate::sandboxing::NetworkRequest::None,
-            allow_git_access: false,
             allow_fs_write_all: false,
             unsandboxed: false,
             write_paths: vec![
@@ -7616,7 +7576,6 @@ mod tests {
                 .expect("sandbox authorization should include request details");
         assert!(details.network_hosts.is_empty());
         assert!(!details.network_all_hosts);
-        assert_eq!(details.allow_git_access, request.allow_git_access);
         assert_eq!(details.allow_fs_write_all, request.allow_fs_write_all);
         assert_eq!(details.unsandboxed, request.unsandboxed);
         assert_eq!(details.write_paths, request.write_paths);
