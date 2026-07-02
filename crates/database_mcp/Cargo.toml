@@ -1,0 +1,25 @@
+[package]
+name = "database_mcp"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "zed-database-mcp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+database_client.workspace = true
+paths.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_json_lenient.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-std", "io-util", "process"] }
+
+[dev-dependencies]
+database_client = { workspace = true, features = ["test-support"] }

@@ -48,6 +48,7 @@ members = [
     "crates/dap",
     "crates/dap_adapters",
     "crates/database_client",
+    "crates/database_mcp",
     "crates/database_ui",
     "crates/db",
     "crates/debug_adapter_extension",

@@ -4983,6 +4983,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "database_mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "database_client",
+ "paths",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "tokio",
+]
+
+[[package]]
 name = "database_ui"
 version = "0.1.0"
 dependencies = [
