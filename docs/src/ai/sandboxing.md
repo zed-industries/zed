@@ -245,8 +245,7 @@ setuid `bwrap` binaries_.
 
 ##### Ubuntu-specific requirements {#installing-bubblewrap-ubuntu}
 
-> [!NOTE]
-> The following does not affect Ubuntu on WSL.
+> **Note:** The following does not affect Ubuntu on WSL.
 
 Bubblewrap relies on a Linux kernel feature known as "namespaces". Unprivileged
 users on many systems can create namespaces, but historically, this feature has
