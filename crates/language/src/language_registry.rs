@@ -668,12 +668,9 @@ impl LanguageRegistry {
         cx: &App,
     ) -> Option<AvailableLanguage> {
         let user_file_types = all_language_settings(Some(file), cx);
+        let path = file.file_system_abs_path(cx);
 
-        self.language_for_file_internal(
-            &file.full_path(cx),
-            content,
-            Some(&user_file_types.file_types),
-        )
+        self.language_for_file_internal(&path, content, Some(&user_file_types.file_types))
     }
 
     pub fn language_for_file_path(self: &Arc<Self>, path: &Path) -> Option<AvailableLanguage> {

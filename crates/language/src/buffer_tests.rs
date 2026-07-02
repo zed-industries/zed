@@ -288,6 +288,7 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
                     "Dockerfile".into(),
                     vec!["Dockerfile".into(), "Dockerfile.*".into()].into(),
                 ),
+                ("SSH Config".into(), vec!["**/.ssh/config".into()].into()),
             ]);
         })
     });
@@ -331,6 +332,18 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
             name: "Dockerfile".into(),
             matcher: LanguageMatcher {
                 path_suffixes: vec!["Dockerfile".to_string()],
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        LanguageConfig {
+            name: "SSH Config".into(),
+            ..Default::default()
+        },
+        LanguageConfig {
+            name: "INI".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["config".to_string()],
                 ..Default::default()
             },
             ..Default::default()
@@ -385,6 +398,11 @@ async fn test_language_for_file_with_custom_file_types(cx: &mut TestAppContext) 
         .read(|cx| languages.language_for_file(&file("Dockerfile.dev"), None, cx))
         .unwrap();
     assert_eq!(language.name(), "Dockerfile");
+
+    let language = cx
+        .read(|cx| languages.language_for_file(&local_file("/root/.ssh", "config"), None, cx))
+        .unwrap();
+    assert_eq!(language.name(), "SSH Config");
 }
 
 fn file(path: &str) -> Arc<dyn File> {
@@ -392,6 +410,14 @@ fn file(path: &str) -> Arc<dyn File> {
         path: Arc::from(rel_path(path)),
         root_name: "zed".into(),
         local_root: None,
+    })
+}
+
+fn local_file(local_root: &str, root_name: &str) -> Arc<dyn File> {
+    Arc::new(TestFile {
+        path: Arc::from(rel_path("")),
+        root_name: root_name.into(),
+        local_root: Some(PathBuf::from(local_root)),
     })
 }
 
