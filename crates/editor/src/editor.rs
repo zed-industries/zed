@@ -11161,8 +11161,7 @@ pub trait CollaborationHub {
     /// audience (e.g. an unshared local project) override this so the editor can
     /// skip the per-keystroke `set_active_selections` work, which is
     /// `O(selections)` and pure overhead when nobody is observing.
-    fn should_broadcast_selections(&self, cx: &App) -> bool {
-        let _ = cx;
+    fn should_broadcast_selections(&self, _: &App) -> bool {
         true
     }
 }
