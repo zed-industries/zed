@@ -129,6 +129,31 @@ impl LinuxWslSandboxError {
             LinuxWslSandboxError::Other(message) => message.clone(),
         }
     }
+
+    /// The slug of the sandboxing docs section that best explains how to resolve
+    /// this failure, for deep-linking from the UI. Pair with
+    /// `client::zed_urls::sandboxing_docs`.
+    pub fn docs_section(&self) -> &'static str {
+        match self {
+            // Both "no bwrap" and "only a setuid-root bwrap" are resolved by
+            // installing a non-setuid Bubblewrap.
+            LinuxWslSandboxError::BwrapNotFound | LinuxWslSandboxError::SetuidRejected => {
+                "installing-bubblewrap"
+            }
+            // A failed probe on Linux is almost always disabled unprivileged
+            // user namespaces, which the Ubuntu-specific section covers.
+            LinuxWslSandboxError::SandboxProbeFailed => "installing-bubblewrap-ubuntu",
+            // Catch-all (includes WSL/Windows messages): point at the platform
+            // overview for the current OS.
+            LinuxWslSandboxError::Other(_) => {
+                if cfg!(target_os = "windows") {
+                    "windows"
+                } else {
+                    "linux"
+                }
+            }
+        }
+    }
 }
 
 impl SandboxWrap {

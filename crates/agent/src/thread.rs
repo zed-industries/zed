@@ -5883,10 +5883,15 @@ impl ToolCallEventStream {
         &self,
         command: Option<String>,
         reason: String,
+        docs_section: Option<String>,
         retries: usize,
         cx: &mut App,
     ) -> Task<Result<SandboxFallbackDecision>> {
-        let details = acp_thread::SandboxFallbackAuthorizationDetails { command, reason };
+        let details = acp_thread::SandboxFallbackAuthorizationDetails {
+            command,
+            reason,
+            docs_section,
+        };
         let retry_label = if retries == 0 {
             "Retry".to_string()
         } else {
@@ -7643,6 +7648,7 @@ mod tests {
             event_stream.authorize_sandbox_fallback(
                 Some("cargo build".to_string()),
                 "bwrap not found on PATH".to_string(),
+                Some("installing-bubblewrap".to_string()),
                 0,
                 cx,
             )
@@ -7654,6 +7660,10 @@ mod tests {
         .expect("fallback authorization should include details");
         assert_eq!(details.command.as_deref(), Some("cargo build"));
         assert_eq!(details.reason, "bwrap not found on PATH");
+        assert_eq!(
+            details.docs_section.as_deref(),
+            Some("installing-bubblewrap")
+        );
 
         let acp_thread::PermissionOptions::Flat(options) = &authorization.options else {
             panic!("expected flat fallback permission options");
@@ -7694,6 +7704,7 @@ mod tests {
                 event_stream.authorize_sandbox_fallback(
                     None,
                     "probe failed".to_string(),
+                    None,
                     retries,
                     cx,
                 )
@@ -7738,6 +7749,7 @@ mod tests {
             event_stream.authorize_sandbox_fallback(
                 Some("cargo build".to_string()),
                 "user namespaces are disabled".to_string(),
+                None,
                 0,
                 cx,
             )
@@ -7767,7 +7779,13 @@ mod tests {
 
         let (event_stream, mut receiver) = ToolCallEventStream::test();
         let authorize = cx.update(|cx| {
-            event_stream.authorize_sandbox_fallback(None, "bwrap probe failed".to_string(), 0, cx)
+            event_stream.authorize_sandbox_fallback(
+                None,
+                "bwrap probe failed".to_string(),
+                None,
+                0,
+                cx,
+            )
         });
         let authorization = receiver.expect_authorization().await;
         authorization

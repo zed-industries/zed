@@ -683,6 +683,7 @@ async fn run_terminal_tool(
                             event_stream.authorize_sandbox_fallback(
                                 Some(input.command.clone()),
                                 error.user_facing_message(),
+                                Some(error.docs_section().to_string()),
                                 retries,
                                 cx,
                             )
@@ -788,6 +789,7 @@ async fn run_terminal_tool(
                     event_stream.authorize_sandbox_fallback(
                         Some(input.command.clone()),
                         sandbox_error.user_facing_message(),
+                        Some(sandbox_error.docs_section().to_string()),
                         retries,
                         cx,
                     )

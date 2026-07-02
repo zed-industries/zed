@@ -7939,17 +7939,23 @@ impl ThreadView {
         reason: &SandboxNotAppliedReason,
         cx: &Context<Self>,
     ) -> AnyElement {
-        // (title, optional detail line)
-        let (title, detail): (SharedString, Option<SharedString>) = match reason {
+        // (title, optional detail line, docs section slug)
+        let (title, detail, docs_section): (
+            SharedString,
+            Option<SharedString>,
+            Option<&'static str>,
+        ) = match reason {
             SandboxNotAppliedReason::ErrorLinuxWsl(error) => (
                 "Couldn't create a sandbox".into(),
                 Some(error.user_facing_message().into()),
+                Some(error.docs_section()),
             ),
             SandboxNotAppliedReason::DisabledForThisThread => {
                 // The grant only exists because an earlier command failed to
                 // create a sandbox; surface that same explanation here.
-                let detail = self
-                    .find_thread_sandbox_error(cx)
+                let thread_error = self.find_thread_sandbox_error(cx);
+                let detail = thread_error
+                    .as_ref()
                     .map(|error| {
                         SharedString::from(format!(
                             "Allowed for this thread after the sandbox failed: {}",
@@ -7959,7 +7965,8 @@ impl ThreadView {
                     .unwrap_or_else(|| {
                         "Unsandboxed execution is allowed for the rest of this thread.".into()
                     });
-                ("Ran without sandbox".into(), Some(detail))
+                let docs_section = thread_error.as_ref().map(|error| error.docs_section());
+                ("Ran without sandbox".into(), Some(detail), docs_section)
             }
         };
 
@@ -7992,7 +7999,12 @@ impl ThreadView {
                                         .size(LabelSize::XSmall)
                                         .color(Color::Muted),
                                 )
-                            }),
+                            })
+                            .child(self.render_sandbox_docs_link(
+                                "sandbox-not-applied-docs-link",
+                                docs_section,
+                                cx,
+                            )),
                     ),
             )
             .into_any_element()
@@ -8603,6 +8615,36 @@ impl ThreadView {
             .children(tool_output_display)
     }
 
+    /// A small "Learn more" link to the sandboxing docs, deep-linked to
+    /// `section` when provided. Shared by the sandbox warning and the two
+    /// sandbox approval prompts so the user can always reach an explanation of
+    /// what they're being asked about.
+    fn render_sandbox_docs_link(
+        &self,
+        id: &'static str,
+        section: Option<&str>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let url = zed_urls::sandboxing_docs(section, cx);
+        let tooltip = format!("Opens {url}");
+        // Wrap in a row so the button shrinks to its content width instead of
+        // stretching to fill the enclosing column.
+        h_flex()
+            .child(
+                Button::new(id, "Learn more")
+                    .label_size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .end_icon(
+                        Icon::new(IconName::ArrowUpRight)
+                            .color(Color::Muted)
+                            .size(IconSize::XSmall),
+                    )
+                    .tooltip(Tooltip::text(tooltip))
+                    .on_click(move |_, _, cx| cx.open_url(&url)),
+            )
+            .into_any_element()
+    }
+
     fn render_sandbox_authorization_details(
         &self,
         entry_ix: usize,
@@ -8847,6 +8889,16 @@ impl ThreadView {
             .children(write_section)
             .children(unsandboxed_section)
             .children(reason_section)
+            .child(
+                h_flex()
+                    .px_1()
+                    .py_0p5()
+                    .child(self.render_sandbox_docs_link(
+                        "sandbox-authorization-docs-link",
+                        None,
+                        cx,
+                    )),
+            )
             .into_any_element()
     }
 
@@ -8882,7 +8934,12 @@ impl ThreadView {
                             .size(LabelSize::Small)
                             .color(Color::Muted),
                     )
-                    .child(Label::new(details.reason.clone()).size(LabelSize::Small)),
+                    .child(Label::new(details.reason.clone()).size(LabelSize::Small))
+                    .child(self.render_sandbox_docs_link(
+                        "sandbox-fallback-docs-link",
+                        details.docs_section.as_deref(),
+                        cx,
+                    )),
             )
             .into_any_element()
     }
