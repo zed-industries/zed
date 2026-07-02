@@ -1132,7 +1132,6 @@ async fn install_release_macos(
 /// Copies the bundle at `new_app_path` to `staged_app_path`, staging through a
 /// `.partial` directory so that an interrupted copy can never be mistaken for
 /// a completely staged bundle.
-#[cfg(target_os = "macos")]
 async fn stage_bundle_macos(new_app_path: &Path, staged_app_path: &Path) -> Result<()> {
     let partial_staging_path = staged_app_path.with_extension("app.partial");
     if let Some(staging_dir) = staged_app_path.parent() {
@@ -1164,7 +1163,6 @@ async fn stage_bundle_macos(new_app_path: &Path, staged_app_path: &Path) -> Resu
         .with_context(|| format!("failed to move staged bundle to {staged_app_path:?}"))
 }
 
-#[cfg(target_os = "macos")]
 fn staged_app_path_macos(running_app_path: &Path) -> PathBuf {
     let app_filename = running_app_path
         .file_name()
