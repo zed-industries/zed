@@ -4,6 +4,7 @@ description: Use Zed's Git tools to inspect status, review diffs, stage and comm
 ---
 
 # Git and Review
+
 <span id="git"></span>
 
 Zed includes Git tools for everyday version control: checking repository status,
