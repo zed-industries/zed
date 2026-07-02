@@ -20,8 +20,8 @@ use sum_tree::Bias;
 use text::BufferId;
 use theme::ActiveTheme;
 use ui::{
-    ButtonLike, ContextMenu, DiffStat, Indicator, KeyBinding, Tooltip, prelude::*, right_click_menu,
-    text_for_keystroke,
+    ButtonLike, ContextMenu, DiffStat, Indicator, KeyBinding, Tooltip, prelude::*,
+    right_click_menu, text_for_keystroke,
 };
 use util::ResultExt;
 use workspace::{ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel};
