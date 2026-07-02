@@ -130,6 +130,11 @@ impl Arena {
     pub fn clear(&mut self) {
         if self.scope_depth == 0 {
             self.force_clear();
+        } else {
+            log::debug!(
+                "deferring arena clear; {} enclosing scope(s) still active",
+                self.scope_depth
+            );
         }
     }
 

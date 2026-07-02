@@ -1,4 +1,8 @@
-use std::{cell::Cell, rc::Rc, sync::atomic::Ordering};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    sync::atomic::Ordering,
+};
 
 use anyhow::Context as _;
 use gpui_util::ResultExt;
@@ -38,6 +42,12 @@ thread_local! {
     /// by COM calls), and drawing re-entrantly would nest GPUI draws. Nested draws
     /// are wasted work whose output is immediately redrawn, so we defer them instead.
     static DRAWING_WINDOW: Cell<bool> = const { Cell::new(false) };
+
+    /// Windows whose draws were deferred while an outer `draw_window` was on the
+    /// stack. Their update regions were validated to keep a nested message pump
+    /// from re-dispatching WM_PAINT in a busy loop, so once the outer draw
+    /// finishes they must be re-invalidated to get their deferred frame drawn.
+    static DEFERRED_DRAW_WINDOWS: RefCell<Vec<HWND>> = const { RefCell::new(Vec::new()) };
 }
 
 struct DrawWindowGuard;
@@ -59,6 +69,15 @@ impl DrawWindowGuard {
 impl Drop for DrawWindowGuard {
     fn drop(&mut self) {
         DRAWING_WINDOW.set(false);
+        DEFERRED_DRAW_WINDOWS.with_borrow_mut(|deferred| {
+            for handle in deferred.drain(..) {
+                unsafe {
+                    RedrawWindow(Some(handle), None, None, RDW_INVALIDATE)
+                        .ok()
+                        .log_err();
+                }
+            }
+        });
     }
 }
 
@@ -1247,15 +1266,32 @@ impl WindowsWindowInner {
     #[inline]
     fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
         let Some(_guard) = DrawWindowGuard::try_acquire() else {
-            // Defer this re-entrant draw: leave the window invalidated so a fresh
-            // WM_PAINT arrives once the in-progress draw has unwound.
+            log::debug!("deferring re-entrant draw of window {handle:?}");
             if force_render {
                 self.state.force_render_pending.set(true);
             }
-            unsafe {
-                RedrawWindow(Some(handle), None, None, RDW_INVALIDATE)
-                    .ok()
-                    .log_err();
+            if DRAWING_WINDOW.get() {
+                // An outer `draw_window` is on the stack and will re-invalidate
+                // this window when it finishes. Validate the region now so that
+                // a nested message pump doesn't keep re-dispatching WM_PAINT for
+                // the still-invalid region in a busy loop until the outer draw
+                // unwinds.
+                unsafe { ValidateRect(Some(handle), None).ok().log_err() };
+                DEFERRED_DRAW_WINDOWS.with_borrow_mut(|deferred| {
+                    if !deferred.contains(&handle) {
+                        deferred.push(handle);
+                    }
+                });
+            } else {
+                // The in-progress draw didn't come through `draw_window` (e.g.
+                // key dispatch or opening a window draws synchronously), so
+                // nothing will re-invalidate this window when it finishes. Leave
+                // the region invalid so WM_PAINT retries once it unwinds.
+                unsafe {
+                    RedrawWindow(Some(handle), None, None, RDW_INVALIDATE)
+                        .ok()
+                        .log_err();
+                }
             }
             return Some(0);
         };
