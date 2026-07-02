@@ -361,7 +361,7 @@ pub struct FileFinderDelegate {
     latest_search_query: Option<FileSearchQuery>,
     currently_opened_path: Option<FoundPath>,
     matches: Matches,
-    selected_matches: Vec<Match>,
+    selected_matches: Vec<SelectedMatch>,
     selected_index: usize,
     has_changed_selected_index: bool,
     cancel_flag: Arc<AtomicBool>,
@@ -456,6 +456,37 @@ impl Match {
             Match::History { panel_match, .. } => panel_match.as_ref(),
             Match::Search(panel_match) => Some(panel_match),
             Match::Channel { .. } | Match::CreateNew(_) => None,
+        }
+    }
+}
+
+/// Wrapper with Eq using the releative_path()
+#[derive(Clone)]
+struct SelectedMatch(pub Match);
+
+impl SelectedMatch {
+    fn new(m: Match) -> Option<Self> {
+        if m.relative_path().is_some() {
+            Some(Self(m))
+        } else {
+            None
+        }
+    }
+}
+
+impl PartialEq for SelectedMatch {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.relative_path() == other.0.relative_path()
+    }
+}
+
+impl Eq for SelectedMatch {}
+
+impl PartialEq<Match> for SelectedMatch {
+    fn eq(&self, other: &Match) -> bool {
+        match other.relative_path() {
+            Some(path) => self.0.relative_path() == Some(path),
+            None => false,
         }
     }
 }
@@ -964,16 +995,15 @@ impl FileFinderDelegate {
         if self.selected_matches.is_empty() {
             return;
         }
-        let selected_paths: std::collections::HashSet<Arc<RelPath>> = self
-            .selected_matches
-            .iter()
-            .filter_map(|m| m.relative_path().cloned())
-            .collect();
         self.matches
             .matches
-            .retain(|m| m.relative_path().map_or(true, |p| !selected_paths.contains(p)));
-        let mut new = self.selected_matches.clone();
-        new.extend(self.matches.matches.drain(..));
+            .retain(|m| !self.selected_matches.iter().any(|selected| selected == m));
+        let mut new: Vec<Match> = self
+            .selected_matches
+            .iter()
+            .map(|selected| selected.0.clone())
+            .collect();
+        new.append(&mut self.matches.matches);
         self.matches.matches = new;
     }
 
@@ -1848,12 +1878,10 @@ impl PickerDelegate for FileFinderDelegate {
     }
 
     fn is_item_selected(&self, ix: usize) -> bool {
-        let Some(key) = self.matches.get(ix).and_then(|m| m.relative_path()) else {
+        let Some(m) = self.matches.get(ix) else {
             return false;
         };
-        self.selected_matches
-            .iter()
-            .any(|selected| selected.relative_path() == Some(key))
+        self.selected_matches.iter().any(|selected| selected == m)
     }
 
     fn toggle_item_selected(
@@ -1865,18 +1893,18 @@ impl PickerDelegate for FileFinderDelegate {
         let Some(m) = self.matches.get(ix).cloned() else {
             return;
         };
-        // Ignore channels and the `create-new` placeholder
-        let Some(key) = m.relative_path().cloned() else {
+        // `new` rejects channels and the `create-new` placeholder.
+        let Some(selected) = SelectedMatch::new(m) else {
             return;
         };
         if let Some(position) = self
             .selected_matches
             .iter()
-            .position(|selected| selected.relative_path() == Some(&key))
+            .position(|existing| *existing == selected)
         {
             self.selected_matches.remove(position);
         } else {
-            self.selected_matches.push(m);
+            self.selected_matches.push(selected);
         }
         cx.notify();
     }
@@ -1897,9 +1925,9 @@ impl PickerDelegate for FileFinderDelegate {
     ) {
         let selected = std::mem::take(&mut self.selected_matches);
         let count = selected.len();
-        for (i, m) in selected.into_iter().enumerate() {
+        for (i, selected_match) in selected.into_iter().enumerate() {
             let is_last = i + 1 == count;
-            self.open_match(m, secondary, is_last, window, cx);
+            self.open_match(selected_match.0, secondary, is_last, window, cx);
         }
     }
 

@@ -9,8 +9,7 @@ use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
-    cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc,
-    time::Duration,
+    cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc, time::Duration,
 };
 use ui::{ContextMenu, Divider, DocumentationAside, PopoverMenuHandle, prelude::*, v_flex};
 use ui_input::ErasedEditorEvent;
@@ -1280,7 +1279,9 @@ impl<D: PickerDelegate> Picker<D> {
             })
             .child(
                 h_flex()
-                    .when(multi_select_active, |this| {
+                    // Only selectable rows get an indicator; headers and
+                    // separators cannot be part of the selection.
+                    .when(multi_select_active && selectable, |this| {
                         this.child(self.render_multi_select_indicator(is_multi_selected, cx))
                     })
                     .children(self.delegate.render_match(
