@@ -173,6 +173,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-c": "markdown::Copy",
+      "ctrl-a": "markdown::SelectAll",
     },
   },
   {

@@ -175,6 +175,7 @@
       "copy": "markdown::Copy",
       "ctrl-insert": "markdown::Copy",
       "ctrl-c": "markdown::Copy",
+      "ctrl-a": "markdown::SelectAll",
     },
   },
   {
