@@ -1493,12 +1493,13 @@ impl Window {
                     if let Some(last_frame) = last_frame_time.get()
                         && now.duration_since(last_frame) < min_interval
                     {
-                        // Must still complete the frame on platforms that require it.
-                        // On Wayland, `surface.frame()` was already called to request the
-                        // next frame callback, so we must call `surface.commit()` (via
-                        // `complete_frame`) or the compositor won't send another callback.
+                        // Request another frame so demand-driven frame loops
+                        // (Wayland) retry the skipped frame instead of parking.
                         handle
-                            .update(&mut cx, |_, window, _| window.complete_frame())
+                            .update(&mut cx, |_, window, _| {
+                                window.platform_window.request_redraw();
+                                window.complete_frame();
+                            })
                             .log_err();
                         return;
                     }
@@ -1519,9 +1520,10 @@ impl Window {
                 // Keep presenting if input was recently arriving at a high rate (>= 60fps).
                 // Once high-rate input is detected, we sustain presentation for 1 second
                 // to prevent display underclocking during active input.
+                let high_rate_input = active.get() && input_rate_tracker.borrow().is_high_rate();
                 let needs_present = request_frame_options.require_presentation
                     || needs_present.get()
-                    || (active.get() && input_rate_tracker.borrow_mut().is_high_rate());
+                    || high_rate_input;
 
                 if invalidator.is_dirty() || request_frame_options.force_render {
                     measure("frame duration", || {
@@ -1546,6 +1548,11 @@ impl Window {
 
                 handle
                     .update(&mut cx, |_, window, _| {
+                        // The sustain is invisible to window dirtiness, request
+                        // the next frame explicitly.
+                        if high_rate_input {
+                            window.platform_window.request_redraw();
+                        }
                         window.complete_frame();
                     })
                     .log_err();
@@ -2619,6 +2626,16 @@ impl Window {
 
     fn complete_frame(&self) {
         self.platform_window.completed_frame();
+    }
+
+    /// Wakes an idle platform frame loop if this window still needs a frame.
+    pub(crate) fn request_redraw_if_needed(&self) {
+        if self.invalidator.is_dirty()
+            || self.needs_present.get()
+            || !self.next_frame_callbacks.borrow().is_empty()
+        {
+            self.platform_window.request_redraw();
+        }
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show

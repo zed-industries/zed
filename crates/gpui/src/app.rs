@@ -1526,6 +1526,14 @@ impl App {
                 }
             }
         }
+
+        // Wake idle platform frame loops (Wayland) for windows that still need
+        // a frame, they would otherwise only redraw on the next window event.
+        for window in self.windows.values() {
+            if let Some(window) = window.as_deref() {
+                window.request_redraw_if_needed();
+            }
+        }
     }
 
     /// Repeatedly called during `flush_effects` to release any entities whose
