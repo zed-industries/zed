@@ -474,7 +474,14 @@ pub struct SearchMatch {
     pub buffer: Entity<Buffer>,
     pub anchor_range: Range<Anchor>,
     pub range: Range<usize>,
+    /// The match range in bytes relative to the start of `line_text`, clamped
+    /// to `line_text`'s bounds.
     pub relative_range: Range<usize>,
+    /// The matched line, clamped to a window around the match start so that
+    /// many matches on an enormous line (e.g. in a minified file) don't each
+    /// retain a copy of the whole line.
     pub line_text: String,
     pub line_number: u32,
+    /// Byte offset of the match start within its full (unclamped) line.
+    pub column: u32,
 }

@@ -42,7 +42,7 @@ use project::{Project, ProjectPath};
 use project::{SearchResults, search::SearchQuery, search::SearchResult};
 use settings::Settings;
 use smol::future::yield_now;
-use text::Anchor;
+use text::{Anchor, Bias, Point};
 use theme_settings::ThemeSettings;
 use ui::{
     Disclosure, Divider, FluentBuilder, IconButtonShape, ListItem, ListItemSpacing, Toggleable,
@@ -130,29 +130,63 @@ fn multibuffer_ranges_to_search_matches<'a>(
 
         let start_offset: usize = buffer_snapshot.summary_for_anchor(&text_range.start);
         let end_offset: usize = buffer_snapshot.summary_for_anchor(&text_range.end);
-        let line_number = buffer_snapshot.offset_to_point(start_offset).row + 1;
-
-        let text = buffer_snapshot.text();
-        let line_start = text[..start_offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let line_end = text[start_offset..]
-            .find('\n')
-            .map(|i| start_offset + i)
-            .unwrap_or(text.len());
-        let line_text = text[line_start..line_end].to_string();
-
-        let relative_start = start_offset - line_start;
-        let relative_end = end_offset - line_start;
+        let match_line = clamped_match_line(&buffer_snapshot, start_offset..end_offset);
 
         Some(SearchMatch {
             path,
             buffer,
             anchor_range: text_range,
             range: start_offset..end_offset,
-            relative_range: relative_start..relative_end,
-            line_text,
-            line_number,
+            relative_range: match_line.match_range_in_text,
+            line_text: match_line.text,
+            line_number: match_line.start_point.row + 1,
+            column: match_line.start_point.column,
         })
     })
+}
+
+/// Maximum bytes of the matched line kept before and after a match start in
+/// [`SearchMatch::line_text`]. Far more than a picker row can display, but
+/// small enough that thousands of matches on one enormous line (e.g. in a
+/// minified file) don't each retain a copy of the whole line.
+const MATCH_CONTEXT_BYTES_BEFORE: usize = 128;
+const MATCH_CONTEXT_BYTES_AFTER: usize = 256;
+
+struct MatchLine {
+    /// The matched line's text, clamped to a window around the match start.
+    text: String,
+    /// The match range in bytes relative to `text`, clamped to its bounds.
+    match_range_in_text: Range<usize>,
+    /// The position of the match start in the buffer.
+    start_point: Point,
+}
+
+fn clamped_match_line(snapshot: &text::BufferSnapshot, match_range: Range<usize>) -> MatchLine {
+    let start_point = snapshot.offset_to_point(match_range.start);
+    let line_start = snapshot.point_to_offset(Point::new(start_point.row, 0));
+    let line_end = snapshot.point_to_offset(Point::new(
+        start_point.row,
+        snapshot.line_len(start_point.row),
+    ));
+
+    let window_start = snapshot.clip_offset(
+        line_start.max(match_range.start.saturating_sub(MATCH_CONTEXT_BYTES_BEFORE)),
+        Bias::Right,
+    );
+    let window_end = snapshot.clip_offset(
+        line_end.min(match_range.start.saturating_add(MATCH_CONTEXT_BYTES_AFTER)),
+        Bias::Left,
+    );
+
+    let text: String = snapshot.text_for_range(window_start..window_end).collect();
+    let match_start = match_range.start - window_start;
+    let match_end = match_range.end.clamp(match_range.start, window_end) - window_start;
+
+    MatchLine {
+        text,
+        match_range_in_text: match_start..match_end,
+        start_point,
+    }
 }
 
 /// Stream the matches already sitting in the project search's multibuffer into
@@ -476,7 +510,7 @@ impl Delegate {
         };
         let path = selected_match.path.clone();
         let line_number = selected_match.line_number;
-        let column = selected_match.relative_range.start as u32;
+        let column = selected_match.column;
         let Some(workspace) = self.project_search_view.read(cx).workspace.upgrade() else {
             return;
         };
@@ -826,7 +860,7 @@ impl PickerDelegate for Delegate {
 
         let path = selected_match.path.clone();
         let line_number = selected_match.line_number;
-        let column = selected_match.relative_range.start as u32;
+        let column = selected_match.column;
 
         let Some(workspace) = self.project_search_view.read(cx).workspace.upgrade() else {
             return;
@@ -1230,42 +1264,112 @@ impl Delegate {
         }
 
         buffer.read_with(cx, |buf, cx| {
-            let file = buf.file();
-            let path = file.map(|f| ProjectPath {
-                worktree_id: f.worktree_id(cx),
-                path: f.path().clone(),
-            });
-            let text = buf.text();
+            let Some(file) = buf.file() else {
+                return Vec::new();
+            };
+            let path = ProjectPath {
+                worktree_id: file.worktree_id(cx),
+                path: file.path().clone(),
+            };
 
             let mut matches = Vec::new();
             for anchor_range in ranges {
                 let start_offset: usize = buf.summary_for_anchor(&anchor_range.start);
                 let end_offset: usize = buf.summary_for_anchor(&anchor_range.end);
-                let match_row = buf.offset_to_point(start_offset).row;
-                let line_number = match_row + 1;
-                let line_start = text[..start_offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
-                let line_end = text[start_offset..]
-                    .find('\n')
-                    .map(|i| start_offset + i)
-                    .unwrap_or(text.len());
-                let line_text = text[line_start..line_end].to_string();
+                let match_line = clamped_match_line(buf, start_offset..end_offset);
 
-                let relative_start = start_offset - line_start;
-                let relative_end = end_offset - line_start;
-
-                if let Some(path) = &path {
-                    matches.push(SearchMatch {
-                        path: path.clone(),
-                        buffer: buffer.clone(),
-                        anchor_range: anchor_range.clone(),
-                        range: start_offset..end_offset,
-                        relative_range: relative_start..relative_end,
-                        line_text,
-                        line_number,
-                    });
-                }
+                matches.push(SearchMatch {
+                    path: path.clone(),
+                    buffer: buffer.clone(),
+                    anchor_range: anchor_range.clone(),
+                    range: start_offset..end_offset,
+                    relative_range: match_line.match_range_in_text,
+                    line_text: match_line.text,
+                    line_number: match_line.start_point.row + 1,
+                    column: match_line.start_point.column,
+                });
             }
             matches
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use text::{Buffer as TextBuffer, BufferId, ReplicaId};
+
+    fn buffer(text: &str) -> TextBuffer {
+        TextBuffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), text)
+    }
+
+    #[test]
+    fn test_clamped_match_line_keeps_short_lines_whole() {
+        let buffer = buffer("first line\nfoo bar baz\nlast line");
+        let match_start = 15; // "bar" on the second line
+        let match_line = clamped_match_line(&buffer, match_start..match_start + 3);
+        assert_eq!(match_line.text, "foo bar baz");
+        assert_eq!(match_line.match_range_in_text, 4..7);
+        assert_eq!(match_line.start_point, Point::new(1, 4));
+    }
+
+    #[test]
+    fn test_clamped_match_line_clamps_window_on_enormous_lines() {
+        let mut text = "x".repeat(10_000);
+        let match_start = 5_000;
+        text.replace_range(match_start..match_start + 6, "needle");
+        let buffer = buffer(&text);
+
+        let match_line = clamped_match_line(&buffer, match_start..match_start + 6);
+        assert_eq!(
+            match_line.text.len(),
+            MATCH_CONTEXT_BYTES_BEFORE + MATCH_CONTEXT_BYTES_AFTER
+        );
+        assert_eq!(
+            &match_line.text[match_line.match_range_in_text.clone()],
+            "needle"
+        );
+        assert_eq!(match_line.start_point, Point::new(0, match_start as u32));
+    }
+
+    #[test]
+    fn test_clamped_match_line_stays_within_the_matched_line() {
+        let text = format!("{}\nshort line\n{}", "a".repeat(1_000), "b".repeat(1_000));
+        let match_start = 1_007; // "line" on the middle line
+        let buffer = buffer(&text);
+
+        let match_line = clamped_match_line(&buffer, match_start..match_start + 4);
+        assert_eq!(match_line.text, "short line");
+        assert_eq!(match_line.match_range_in_text, 6..10);
+        assert_eq!(match_line.start_point, Point::new(1, 6));
+    }
+
+    #[test]
+    fn test_clamped_match_line_respects_char_boundaries() {
+        // Multi-byte characters ensure the window edges can land mid-character.
+        let mut text = "é".repeat(5_000);
+        let match_start = 5_001; // mid-line, odd byte offset
+        text.replace_range(match_start - 1..match_start + 5, "needle");
+        let buffer = buffer(&text);
+
+        let match_line = clamped_match_line(&buffer, match_start..match_start + 5);
+        assert!(match_line.text.len() <= MATCH_CONTEXT_BYTES_BEFORE + MATCH_CONTEXT_BYTES_AFTER);
+        assert_eq!(
+            &match_line.text[match_line.match_range_in_text.clone()],
+            "eedle"
+        );
+    }
+
+    #[test]
+    fn test_clamped_match_line_truncates_matches_longer_than_the_window() {
+        let text = "y".repeat(10_000);
+        let buffer = buffer(&text);
+
+        let match_line = clamped_match_line(&buffer, 100..9_000);
+        assert_eq!(
+            match_line.match_range_in_text.end,
+            match_line.text.len(),
+            "an over-long match should be clamped to the stored window"
+        );
     }
 }
