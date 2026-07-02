@@ -72,6 +72,11 @@ impl StatusToast {
         self.show_dismiss = show;
         self
     }
+
+    pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.text = text.into();
+        cx.notify();
+    }
 }
 
 impl Render for StatusToast {
