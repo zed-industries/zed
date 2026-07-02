@@ -2,7 +2,7 @@ use anyhow::Result;
 use collections::BTreeMap;
 use credentials_provider::CredentialsProvider;
 use futures::{AsyncReadExt, FutureExt, StreamExt, future::BoxFuture};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
+use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt, http,
 };
@@ -11,7 +11,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat, RateLimiter, env_var,
+    LanguageModelToolSchemaFormat, ProviderConfigurationView, RateLimiter, env_var,
 };
 use open_ai::ResponseStreamEvent;
 use serde::Deserialize;
@@ -246,14 +246,11 @@ impl LanguageModelProvider for VercelAiGatewayLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
-            .into()
+    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> ProviderConfigurationView {
+        ProviderConfigurationView::SubPage(
+            cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
+                .into(),
+        )
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {

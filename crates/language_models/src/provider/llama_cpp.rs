@@ -4,7 +4,7 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt};
+use gpui::{App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::util::parse_tool_arguments;
 use language_model::{
@@ -12,8 +12,8 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason, TokenUsage, env_var,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    ProviderConfigurationView, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 use llama_cpp::{
     LLAMA_CPP_API_URL, ModelEntry, Props, get_models, get_props, stream_chat_completion,
@@ -603,15 +603,12 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
+    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> ProviderConfigurationView {
         let state = self.state.clone();
-        cx.new(|cx| ConfigurationView::new(state, window, cx))
-            .into()
+        ProviderConfigurationView::SubPage(
+            cx.new(|cx| ConfigurationView::new(state, window, cx))
+                .into(),
+        )
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {

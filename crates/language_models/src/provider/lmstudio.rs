@@ -3,7 +3,7 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Subscription, Task, TaskExt};
+use gpui::{App, AsyncApp, Context, Entity, Subscription, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel, LanguageModelCompletionError,
@@ -13,7 +13,7 @@ use language_model::{
 use language_model::{
     InlineDescription, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, RateLimiter, Role,
+    LanguageModelRequest, ProviderConfigurationView, RateLimiter, Role,
 };
 use lmstudio::{LMSTUDIO_API_URL, ModelType, get_models};
 
@@ -318,14 +318,11 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), _window, cx))
-            .into()
+    fn configuration_view(&self, _window: &mut Window, cx: &mut App) -> ProviderConfigurationView {
+        ProviderConfigurationView::SubPage(
+            cx.new(|cx| ConfigurationView::new(self.state.clone(), _window, cx))
+                .into(),
+        )
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {

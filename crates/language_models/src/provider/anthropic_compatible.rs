@@ -3,13 +3,13 @@ use anthropic::{AnthropicError, AnthropicModelMode};
 use anyhow::Result;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AppContext, AsyncApp, Entity, Task, Window};
+use gpui::{App, AppContext, AsyncApp, Entity, Task, Window};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     AuthenticateError, IconOrSvg, LanguageModel, LanguageModelCompletionError,
     LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice, RateLimiter,
+    LanguageModelRequest, LanguageModelToolChoice, ProviderConfigurationView, RateLimiter,
 };
 use settings::Settings;
 use std::sync::Arc;
@@ -181,22 +181,19 @@ impl LanguageModelProvider for AnthropicCompatibleLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| {
-            ApiCompatibleProviderConfigurationView::new(
-                self.state.clone(),
-                "Anthropic",
-                API_KEY_PLACEHOLDER,
-                window,
-                cx,
-            )
-        })
-        .into()
+    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> ProviderConfigurationView {
+        ProviderConfigurationView::SubPage(
+            cx.new(|cx| {
+                ApiCompatibleProviderConfigurationView::new(
+                    self.state.clone(),
+                    "Anthropic",
+                    API_KEY_PLACEHOLDER,
+                    window,
+                    cx,
+                )
+            })
+            .into(),
+        )
     }
 
     fn set_api_key(&self, key: String, cx: &mut App) -> Task<Result<()>> {

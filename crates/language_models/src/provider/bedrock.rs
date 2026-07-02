@@ -26,8 +26,7 @@ use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, TaskExt, Window,
-    actions,
+    App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, TaskExt, Window, actions,
 };
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
@@ -36,8 +35,8 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    TokenUsage, env_var,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent,
+    ProviderConfigurationView, RateLimiter, Role, TokenUsage, env_var,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -523,14 +522,11 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
-            .into()
+    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> ProviderConfigurationView {
+        ProviderConfigurationView::SubPage(
+            cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
+                .into(),
+        )
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {

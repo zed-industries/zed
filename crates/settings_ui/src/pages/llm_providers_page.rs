@@ -3,9 +3,8 @@ use std::{collections::HashSet, sync::Arc};
 use editor::Editor;
 use gpui::{AnyView, Entity, Focusable as _, ScrollHandle, prelude::*};
 use language_model::{
-    ApiKeyConfiguration, ConfigurationViewTargetAgent, IconOrSvg, InlineDescription,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry,
-    ProviderConfigurationView,
+    ApiKeyConfiguration, IconOrSvg, InlineDescription, LanguageModelProvider,
+    LanguageModelProviderId, LanguageModelRegistry, ProviderConfigurationView,
 };
 
 use settings::{
@@ -451,16 +450,9 @@ fn render_provider_config_sub_page(
 
     // A provider routed to a sub-page always provides a `SubPage` view; fall
     // back to whatever view it returns otherwise.
-    let view = match get_or_create_configuration_view(
-        settings_window,
-        &provider_id,
-        &provider,
-        window,
-        cx,
-    ) {
-        ProviderConfigurationView::Inline { view, .. }
-        | ProviderConfigurationView::SubPage(view) => view,
-    };
+    let view =
+        get_or_create_configuration_view(settings_window, &provider_id, &provider, window, cx)
+            .into_any_view();
 
     v_flex()
         .id("provider-config-sub-page")
@@ -488,7 +480,7 @@ fn get_or_create_configuration_view(
         return view.clone();
     }
 
-    let view = provider.configuration_view_v2(ConfigurationViewTargetAgent::ZedAgent, window, cx);
+    let view = provider.configuration_view(window, cx);
 
     // Store the view for future renders by deferring a mutation
     let provider_id = provider_id.clone();

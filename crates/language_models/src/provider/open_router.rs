@@ -2,7 +2,7 @@ use anyhow::Result;
 use collections::HashMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt};
+use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
     ApiKeyConfiguration, ApiKeyState, AuthenticateError, EnvVar, IconOrSvg, LanguageModel,
@@ -10,7 +10,7 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
     LanguageModelToolResultContent, LanguageModelToolSchemaFormat, LanguageModelToolUse,
-    MessageContent, RateLimiter, Role, StopReason, TokenUsage, env_var,
+    MessageContent, ProviderConfigurationView, RateLimiter, Role, StopReason, TokenUsage, env_var,
 };
 use open_router::{
     Model, ModelMode as OpenRouterModelMode, OPEN_ROUTER_API_URL, ResponseStreamEvent, list_models,
@@ -259,14 +259,11 @@ impl LanguageModelProvider for OpenRouterLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
-            .into()
+    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> ProviderConfigurationView {
+        ProviderConfigurationView::SubPage(
+            cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
+                .into(),
+        )
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {

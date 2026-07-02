@@ -4,17 +4,17 @@ use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture};
 use google_ai::GenerateContentResponse;
 pub use google_ai::completion::{GoogleEventMapper, into_google};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
+use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, TaskExt, Window};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::{
-    ApiKeyConfiguration, AuthenticateError, ConfigurationViewTargetAgent, EnvVar,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelToolChoice,
-    LanguageModelToolSchemaFormat,
+    ApiKeyConfiguration, AuthenticateError, EnvVar, LanguageModelCompletionError,
+    LanguageModelCompletionEvent, LanguageModelToolChoice, LanguageModelToolSchemaFormat,
 };
 use language_model::{
     GOOGLE_PROVIDER_ID, GOOGLE_PROVIDER_NAME, IconOrSvg, LanguageModel, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    ProviderConfigurationView, RateLimiter,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -222,14 +222,11 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), target_agent, window, cx))
-            .into()
+    fn configuration_view(&self, window: &mut Window, cx: &mut App) -> ProviderConfigurationView {
+        ProviderConfigurationView::SubPage(
+            cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
+                .into(),
+        )
     }
 
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
@@ -392,17 +389,11 @@ impl LanguageModel for GoogleLanguageModel {
 struct ConfigurationView {
     api_key_editor: Entity<InputField>,
     state: Entity<State>,
-    target_agent: language_model::ConfigurationViewTargetAgent,
     load_credentials_task: Option<Task<()>>,
 }
 
 impl ConfigurationView {
-    fn new(
-        state: Entity<State>,
-        target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    fn new(state: Entity<State>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
@@ -425,7 +416,6 @@ impl ConfigurationView {
 
         Self {
             api_key_editor: cx.new(|cx| InputField::new(window, cx, "AIzaSy...")),
-            target_agent,
             state,
             load_credentials_task,
         }
@@ -493,10 +483,9 @@ impl Render for ConfigurationView {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
-                .child(Label::new(format!("To use {}, you need to add an API key. Follow these steps:", match &self.target_agent {
-                    ConfigurationViewTargetAgent::ZedAgent => "Zed's agent with Google AI".into(),
-                    ConfigurationViewTargetAgent::Other(agent) => agent.clone(),
-                })))
+                .child(Label::new(
+                    "To use Zed's agent with Google AI, you need to add an API key. Follow these steps:",
+                ))
                 .child(
                     List::new()
                         .child(

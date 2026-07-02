@@ -3,7 +3,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
+use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest,
     http::{HeaderName, HeaderValue},
@@ -243,40 +243,18 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
         }
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
+    fn configuration_view(&self, _window: &mut Window, cx: &mut App) -> ProviderConfigurationView {
         let state = self.state.clone();
         let http_client = self.http_client.clone();
-        cx.new(|_cx| ConfigurationView {
-            state,
-            http_client,
-            compact: false,
-        })
-        .into()
-    }
+        let view = cx
+            .new(|_cx| ConfigurationView {
+                state,
+                http_client,
+                compact: true,
+            })
+            .into();
 
-    fn configuration_view_v2(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> ProviderConfigurationView {
-        let state = self.state.clone();
-        let http_client = self.http_client.clone();
-
-        ProviderConfigurationView::Inline {
-            view: cx
-                .new(|_cx| ConfigurationView {
-                    state,
-                    http_client,
-                    compact: true,
-                })
-                .into(),
-        }
+        ProviderConfigurationView::Inline { view }
     }
 
     fn inline_title(&self, cx: &App) -> Option<SharedString> {
@@ -301,13 +279,13 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
 
     fn authentication_error_message(&self) -> SharedString {
         "Your ChatGPT subscription session is invalid or has expired. \
-        Sign in again via the Agent Panel settings to continue."
+        Sign in again via the settings UI to continue."
             .into()
     }
 
     fn missing_credentials_error_message(&self) -> SharedString {
         "You are not signed in to your ChatGPT account. \
-        Sign in via the Agent Panel settings to continue."
+        Sign in via the settings UI to continue."
             .into()
     }
 

@@ -9,7 +9,7 @@ use cloud_api_types::Plan;
 use futures::FutureExt;
 use futures::StreamExt;
 use futures::future::BoxFuture;
-use gpui::{AnyElement, AnyView, App, AppContext, Context, Entity, Subscription, Task, TaskExt};
+use gpui::{AnyElement, App, AppContext, Context, Entity, Subscription, Task, TaskExt};
 use language_model::{
     AuthenticateError, FastModeConfirmation, IconOrSvg, InlineDescription, LanguageModel,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
@@ -360,22 +360,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         })
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|_| ConfigurationView::new(self.state.clone(), false))
-            .into()
-    }
-
-    fn configuration_view_v2(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> ProviderConfigurationView {
+    fn configuration_view(&self, _: &mut Window, cx: &mut App) -> ProviderConfigurationView {
         ProviderConfigurationView::Inline {
             view: cx
                 .new(|_| ConfigurationView::new(self.state.clone(), true))
