@@ -12914,7 +12914,8 @@ mod tests {
         update_test_language_settings(
             cx,
             &|settings: &mut settings::AllLanguageSettingsContent| {
-                settings.defaults.soft_wrap = Some(language_settings::SoftWrap::Bounded(10));
+                settings.defaults.soft_wrap = Some(language_settings::SoftWrap::Bounded);
+                settings.defaults.preferred_line_length = Some(10);
             },
         );
 
