@@ -17,7 +17,7 @@
 - Никаких `mod.rs`; корень библиотеки — `src/<crate_name>.rs` через `[lib] path`.
 - Новые крейты: `edition.workspace = true`, `publish.workspace = true`, `license = "GPL-3.0-or-later"`, `[lints] workspace = true`; членство в корневом `Cargo.toml` (`members` — алфавитно) + запись в `[workspace.dependencies]`.
 - Значения фильтров — только параметрами запроса (`$N`); имена таблиц/колонок — только через `quote_ident`. Конкатенация пользовательских значений в SQL запрещена.
-- Сессии Postgres: `default_transaction_read_only=on` + `statement_timeout`.
+- Режимы сессий Postgres (уточнено 2026-07-03): UI — read-write, MCP — read-only (`default_transaction_read_only=on`); `statement_timeout` в обоих. `PostgresClient::new` принимает `SessionMode { ReadWrite, ReadOnly }`.
 - Линт перед финальным коммитом задачи: `./script/clippy -p <изменённые крейты>` (скрипт принимает аргументы cargo clippy; если нет — `./script/clippy` целиком в финальной задаче).
 - Справочники API (ОБЯЗАТЕЛЬНО читать указанные в задаче перед кодом): `docs/superpowers/plans/api-refs/*.md` — там точные сигнатуры и реальные сниппеты из этого репозитория с путями/строками.
 
@@ -1496,9 +1496,9 @@ SQL
   2. Add Connection: name=local, host=127.0.0.1, port=5432, database=shop, user=postgres, password=postgres → Test Connection OK → Save.
   3. Дерево: local → shop → public → customers/orders/paid_orders.
   4. Клик orders: данные (100 строк), сортировка по total desc, страница 2, фильтр `status = paid`, фильтр `note is null`, режим Structure (PK/FK/indexes видны).
-  5. SQL-вкладка: `SELECT status, count(*) FROM orders GROUP BY status;` → результат; `DELETE FROM orders;` → ошибка read-only (видна в UI!); Cmd+Enter работает.
+  5. SQL-вкладка: `SELECT status, count(*) FROM orders GROUP BY status;` → результат; UI теперь read-write (решение 2026-07-03): `UPDATE orders SET note = 'edited' WHERE id = 1;` → выполняется, проверить `SELECT note FROM orders WHERE id = 1`; Cmd+Enter работает. Read-only проверка переезжает в шаг 6 (MCP).
   6. Перезапуск Zed → коннекшен на месте, пароль из Keychain (без повторного ввода).
-- [ ] **Step 6: MCP end-to-end** — `cargo build --release -p database_mcp`; прописать в `~/.config/zed/settings.json` секцию `context_servers` (путь к release-бинарю); smoke через pipe: initialize → tools/list → tools/call list_connections → tools/call run_query (`SELECT count(*) FROM orders`) — ответы валидны. Затем проверить в Zed: Agent Panel → settings → сервер zed-database виден/запущен.
+- [ ] **Step 6: MCP end-to-end** — `cargo build --release -p database_mcp`; прописать в `~/.config/zed/settings.json` секцию `context_servers` (путь к release-бинарю); smoke через pipe: initialize → tools/list → tools/call list_connections → tools/call run_query (`SELECT count(*) FROM orders`) — ответы валидны; tools/call run_query с `DELETE FROM orders` → isError=true с текстом про read-only (MCP-сессии строго read-only — решение 2026-07-03). Затем проверить в Zed: Agent Panel → settings → сервер zed-database виден/запущен.
 - [ ] **Step 7: Документация для пользователя** — короткий `docs/superpowers/database-viewer-usage.md`: как открыть панель, добавить коннекшен, горячие клавиши, как подключить MCP к Claude Code (`claude mcp add zed-database /Users/user/zed/target/release/zed-database-mcp`).
 - [ ] **Step 8: Финальный коммит + отчёт пользователю** (скриншоты, что работает, что отложено).
 
