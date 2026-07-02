@@ -580,8 +580,25 @@ extern "C" fn touches_ended(this: &Object, _: Sel, touches: id, _event: id) {
     clear_hover(&window_state);
 }
 
-extern "C" fn touches_cancelled(this: &Object, selector: Sel, touches: id, event: id) {
-    // UIKit stole the touch (e.g. a system gesture); release gpui's pressed
-    // and hover state exactly as if the finger had lifted.
-    touches_ended(this, selector, touches, event);
+extern "C" fn touches_cancelled(this: &Object, _: Sel, _touches: id, _event: id) {
+    let window_state = unsafe { get_window_state(this) };
+    // UIKit cancels a touch when something else claims it (a gesture
+    // recognizer or a system gesture), so the press must not complete as a
+    // click. gpui fires click listeners when a `MouseUp` hit-tests to the
+    // element holding the pending `MouseDown` (the window re-runs the hit
+    // test at each event's own position), so releasing at the off-window
+    // park position discards the pending mouse-down instead of clicking
+    // whatever is still under the finger.
+    let park_position = point(px(-1.), px(-1.));
+    window_state.borrow_mut().mouse_position = park_position;
+    dispatch_input(
+        &window_state,
+        PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position: park_position,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+        }),
+    );
+    clear_hover(&window_state);
 }
