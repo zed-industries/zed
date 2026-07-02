@@ -2340,7 +2340,6 @@ mod test {
         );
     }
 
-    // Regression test for https://github.com/zed-industries/zed/issues/58702.
     // Deleting a selection that ends at the last non-newline character should
     // leave the cursor on the newline (matching Helix), not clamp it onto the
     // character to the left of the selection.
@@ -3011,7 +3010,7 @@ mod test {
         cx.assert_state("ˇ\nfox jumps over", Mode::HelixNormal);
 
         // same from the middle of a line — the cursor rests on the trailing
-        // newline, matching Helix and the whole-line case above (see #58702)
+        // newline, matching Helix and the whole-line case above.
         cx.set_state("The ˇquick brown\nfox jumps over", Mode::HelixNormal);
         cx.simulate_keystrokes("v g l d");
         cx.assert_state("The ˇ\nfox jumps over", Mode::HelixNormal);
