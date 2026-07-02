@@ -198,6 +198,19 @@ impl MetalRenderer {
         Self::new_internal(device, None, true, instance_buffer_pool)
     }
 
+    #[cfg(target_os = "ios")]
+    fn create_device() -> metal::Device {
+        // `MTLCopyAllDevices`, `isRemovable`, and `isLowPower` are
+        // macOS-only; on iOS there is exactly one GPU and querying those
+        // selectors raises an unrecognized-selector exception on real
+        // hardware.
+        metal::Device::system_default().unwrap_or_else(|| {
+            log::error!("unable to access a compatible graphics device");
+            std::process::exit(1);
+        })
+    }
+
+    #[cfg(target_os = "macos")]
     fn create_device() -> metal::Device {
         // Prefer low‐power integrated GPUs on Intel Mac. On Apple
         // Silicon, there is only ever one GPU, so this is equivalent to
