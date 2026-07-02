@@ -244,7 +244,10 @@ impl MetalRenderer {
 
         // Shared memory can be used only if CPU and GPU share the same memory space.
         // https://developer.apple.com/documentation/metal/setting-resource-storage-modes
-        let is_unified_memory = device.has_unified_memory();
+        //
+        // iOS has no Managed storage mode, and the simulator's paravirtual
+        // device reports non-unified memory, so treat iOS as always unified.
+        let is_unified_memory = cfg!(target_os = "ios") || device.has_unified_memory();
         // Apple GPU families support memoryless textures, which can significantly reduce
         // memory usage by keeping render targets in on-chip tile memory instead of
         // allocating backing store in system memory.
