@@ -463,7 +463,9 @@ actions!(
         /// Copies the selected text to the clipboard.
         Copy,
         /// Copies the selected text as markdown to the clipboard.
-        CopyAsMarkdown
+        CopyAsMarkdown,
+        /// Selects all of the rendered markdown.
+        SelectAll
     ]
 );
 
@@ -871,6 +873,25 @@ impl Markdown {
         let mut item = ClipboardItem::new_string(plain_text);
         item.entries.push(ClipboardEntry::Html(html));
         cx.write_to_clipboard(item);
+    }
+
+    fn select_all(&mut self, text: &RenderedText, window: &mut Window, cx: &mut Context<Self>) {
+        // The selection is stored in source coordinates. Use the last rendered
+        // line's `source_end` as the tail (mirroring the quadruple-click
+        // select-all path) so the painted highlight matches the rendered span.
+        let end = text.lines.last().map(|line| line.source_end).unwrap_or(0);
+        if end == 0 {
+            return;
+        }
+        self.selection = Selection {
+            start: 0,
+            end,
+            reversed: false,
+            pending: false,
+            mode: SelectMode::All,
+        };
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
     }
 
     fn copy_as_markdown(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -2836,6 +2857,16 @@ impl Element for MarkdownElement {
                 }
             }
         });
+        window.on_action(std::any::TypeId::of::<crate::SelectAll>(), {
+            let entity = self.markdown.clone();
+            let text = rendered_markdown.text.clone();
+            move |_, phase, window, cx| {
+                let text = text.clone();
+                if phase == DispatchPhase::Bubble {
+                    entity.update(cx, move |this, cx| this.select_all(&text, window, cx))
+                }
+            }
+        });
 
         self.paint_mouse_listeners(hitbox, &rendered_markdown.text, window, cx);
         rendered_markdown.element.paint(window, cx);
@@ -4630,6 +4661,31 @@ mod tests {
         assert_eq!(selection.end, 15);
         assert!(!selection.reversed);
         assert_eq!(selection.tail(), 5);
+    }
+
+    #[gpui::test]
+    fn test_select_all_range_covers_whole_document(cx: &mut TestAppContext) {
+        // `select_all` sets the selection to `0..last_line.source_end`; verify
+        // that span round-trips the entire rendered document as plain text and
+        // as HTML, so a subsequent copy carries the full content.
+        let source = "# Heading\n\nFirst paragraph.\n\n- one\n- two\n";
+        let rendered = render_markdown(source, cx);
+
+        let end = rendered
+            .lines
+            .last()
+            .map(|line| line.source_end)
+            .unwrap_or(0);
+        assert!(end > 0, "expected a non-empty rendered span");
+
+        let plain_text = rendered.text_for_range(0..end);
+        assert!(plain_text.contains("Heading"));
+        assert!(plain_text.contains("First paragraph."));
+        assert!(plain_text.contains("two"));
+
+        let html = selection_html(source, 0..end);
+        assert!(html.contains("<h1"), "full-document HTML keeps the heading: {html}");
+        assert!(html.contains("<ul>"), "full-document HTML keeps the list: {html}");
     }
 
     #[gpui::test]
