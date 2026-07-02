@@ -525,4 +525,72 @@ mod tests {
             "/docs/preview/assistant.md"
         );
     }
+
+    #[test]
+    fn test_write_ai_discovery_artifacts_generates_agent_facing_metadata() -> Result<()> {
+        let destination = std::env::temp_dir().join(format!(
+            "docs_preprocessor_ai_discovery_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&destination)?;
+
+        let pages = vec![
+            DocsPage {
+                section: "Docs".to_string(),
+                title: "Getting Started".to_string(),
+                description: Some("Start using Zed.".to_string()),
+                last_updated: Some("2026-06-18".to_string()),
+                source_path: PathBuf::from("getting-started.md"),
+                content: format!(
+                    "{}\n# Getting Started\n",
+                    FRONT_MATTER_COMMENT.replace("{}", r#"{"description":"Start using Zed."}"#)
+                ),
+            },
+            DocsPage {
+                section: "AI".to_string(),
+                title: "MCP".to_string(),
+                description: Some("Connect model context servers.".to_string()),
+                last_updated: Some("2026-06-19".to_string()),
+                source_path: PathBuf::from("ai/mcp.md"),
+                content: format!(
+                    "{}\n# MCP\n",
+                    FRONT_MATTER_COMMENT
+                        .replace("{}", r#"{"description":"Connect model context servers."}"#)
+                ),
+            },
+        ];
+
+        write_ai_discovery_artifacts(&pages, &destination, "/docs/")?;
+
+        let llms_txt = std::fs::read_to_string(destination.join("llms.txt"))?;
+        assert!(llms_txt.contains("## Docs"));
+        assert!(llms_txt.contains(
+            "- [Getting Started](https://zed.dev/docs/getting-started.md): Start using Zed. (Last updated: 2026-06-18)"
+        ));
+        assert!(llms_txt.contains("## AI"));
+        assert!(llms_txt.contains(
+            "- [MCP](https://zed.dev/docs/ai/mcp.md): Connect model context servers. (Last updated: 2026-06-19)"
+        ));
+
+        let sitemap_xml = std::fs::read_to_string(destination.join("sitemap.xml"))?;
+        assert!(sitemap_xml.contains("<loc>https://zed.dev/docs/getting-started.html</loc>"));
+        assert!(sitemap_xml.contains("<lastmod>2026-06-18</lastmod>"));
+        assert!(sitemap_xml.contains("<loc>https://zed.dev/docs/ai/mcp.html</loc>"));
+        assert!(sitemap_xml.contains("<lastmod>2026-06-19</lastmod>"));
+
+        let mcp_markdown = std::fs::read_to_string(destination.join("ai/mcp.md"))?;
+        assert!(mcp_markdown.starts_with(
+            "> For the complete documentation index and Markdown links, see [llms.txt](/docs/llms.txt). Last updated: 2026-06-19.\n\n# MCP"
+        ));
+        assert!(!mcp_markdown.contains("ZED_META"));
+
+        let index_markdown = std::fs::read_to_string(destination.join("index.md"))?;
+        assert!(index_markdown.contains("# Getting Started"));
+
+        std::fs::remove_dir_all(&destination)?;
+        Ok(())
+    }
 }
