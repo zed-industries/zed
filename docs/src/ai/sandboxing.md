@@ -108,6 +108,7 @@ unaligned agent may use these side channels to escalate privileges. For example:
   renders!
 
 There are steps you can take to mitigate these issues. For example:
+
 - disable language servers that execute user-defined code from the project (such
   as Rust procedural macros).
 - use a shell prompt that reports Git status without executing
