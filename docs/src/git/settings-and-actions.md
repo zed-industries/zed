@@ -109,7 +109,7 @@ Use `git_hosting_providers` for self-hosted Git providers:
 }
 ```
 
-See [GitHub and Pull Requests](./github-and-pull-requests.md).
+See [Git Hosting and Pull Requests](./github-and-pull-requests.md).
 
 ## Core Git actions {#core-git-actions}
 

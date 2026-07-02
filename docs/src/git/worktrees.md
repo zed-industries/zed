@@ -15,9 +15,9 @@ and folder roots in its [trust model](../worktree-trust.md).
 
 ## Projects, Zed worktrees, and Git worktrees {#projects-zed-worktrees-git-worktrees}
 
-A Zed project is the workspace context that owns your file tree, Git state,
-search scope, terminals, tasks, and agent threads. A project can contain one
-folder, multiple folders, or a mix of Git repositories and non-Git folders.
+A Zed project owns your file tree, Git state, search scope, terminals, tasks,
+and agent threads. A project can contain one folder, multiple folders, or a mix
+of Git repositories and non-Git folders.
 
 A Zed worktree is an opened file or folder root inside a project. That is broader
 than a Git worktree. For example, a normal folder, a single opened file, and a
@@ -40,7 +40,7 @@ From the picker you can:
 
 - create a linked worktree from the current branch or default branch
 - type a name or let Zed choose one
-- switch the current workspace to an existing worktree
+- switch the current project to an existing worktree
 - open an existing worktree in a new window
 - delete linked worktrees that are not currently open in the project
 
@@ -84,11 +84,11 @@ Use the [`create_worktree` task hook](../tasks.md#hooks) to run setup commands
 after Zed creates a linked worktree. The hook receives `ZED_WORKTREE_ROOT` for
 the new worktree and `ZED_MAIN_GIT_WORKTREE` for the original repository.
 
-## Multi-root workspaces {#multi-root-workspaces}
+## Multi-root projects {#multi-root-workspaces}
 
 If a project contains multiple Git repositories, Zed creates a linked worktree
 for each repository when you create a worktree from the picker. Non-Git folders
-in the same project are included in the new workspace as-is.
+in the same project are included in the new project context as-is.
 
 This means a Zed project is not the same thing as one Git repository. A project
 can span multiple roots, and each Git root keeps its own Git state.
@@ -97,19 +97,21 @@ can span multiple roots, and each Git root keeps its own Git state.
 
 Zed shows project, worktree, and branch context in different places:
 
-| Surface          | What it shows or controls                                                                                                                 |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Project picker   | The current project or recent project you are opening.                                                                                    |
-| Worktree picker  | The linked Git worktree checkout for the current project.                                                                                 |
-| Branch picker    | The branch or detached commit checked out in the active Git worktree.                                                                     |
-| Project Panel    | The roots in the current project, including multi-root folders and linked Git worktrees.                                                  |
-| Git Panel        | The active Git repository. In multi-root projects, use the repository selector before staging, committing, fetching, pulling, or pushing. |
-| Threads Sidebar  | Threads grouped by project. Threads in linked Git worktrees appear with the main checkout's project group.                                |
-| Terminal Threads | Terminal-backed threads with their own terminal working directory and shell environment.                                                  |
+| Surface          | Controls or shows                                      |
+| ---------------- | ------------------------------------------------------ |
+| Project picker   | Current or recent project.                             |
+| Worktree picker  | Linked Git checkout for the current project.           |
+| Branch picker    | Branch or detached commit for the active Git worktree. |
+| Project Panel    | Roots in the current project.                          |
+| Git Panel        | Active Git repository.                                 |
+| Threads Sidebar  | Thread grouping by project.                            |
+| Terminal Threads | Terminal working folder and shell environment.         |
 
 When you are choosing where an operation runs, use these rules:
 
 - Git Panel actions apply to the active repository in the Git Panel.
+- In multi-root projects, use the Git Panel repository selector before staging,
+  committing, fetching, pulling, or pushing.
 - Branch picker actions apply to the active Git worktree checkout.
 - Worktree picker actions switch, create, open, or delete linked Git worktrees for
   the current project.
@@ -119,6 +121,8 @@ When you are choosing where an operation runs, use these rules:
   created. Starting a thread from a project group in the Threads Sidebar scopes it
   to that project. Starting work in a linked Git worktree scopes edits to that
   checkout.
+- Threads in linked Git worktrees appear with the main checkout's project group
+  in the Threads Sidebar.
 - `create_worktree` task hooks run after Zed creates a linked Git worktree and
   receive `ZED_WORKTREE_ROOT` and `ZED_MAIN_GIT_WORKTREE`.
 

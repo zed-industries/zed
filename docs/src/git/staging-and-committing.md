@@ -24,8 +24,8 @@ To undo staging, use the matching unstage controls, {#action git::UnstageFile},
 
 ## Commit from the Git Panel {#commit}
 
-Type a commit message in the Git Panel commit editor, then use {#action
-git::Commit} or {#kb git::Commit}.
+Type a commit message in the Git Panel commit editor, then use
+{#action git::Commit} or {#kb git::Commit}.
 
 Zed commits staged changes. If tracked files have unstaged changes and nothing
 is staged, the Git Panel can stage tracked changes as part of the commit flow.
@@ -44,18 +44,18 @@ Review staged state before amending. Amend rewrites the last commit.
 
 ## Uncommit the last commit {#uncommit}
 
-After committing, the Git Panel shows the previous commit. Use {#action
-git::Uncommit} to undo the last commit while keeping its changes in the working
-directory.
+After committing, the Git Panel shows the previous commit. Use
+{#action git::Uncommit} to undo the last commit while keeping its changes in the
+working tree.
 
 This is equivalent to a soft reset of the last commit. Use the terminal for more
 advanced reset workflows.
 
 ## Generate a commit message with AI {#ai-commit-message}
 
-Focus the Git Panel commit editor, then use {#action
-git::GenerateCommitMessage}, {#kb git::GenerateCommitMessage}, or the pencil
-button to generate a commit message.
+Focus the Git Panel commit editor, then use {#action git::GenerateCommitMessage},
+{#kb git::GenerateCommitMessage}, or the pencil button to generate a commit
+message.
 
 AI commit generation requires an LLM provider. Start with [AI Quick
 Start](../ai/quick-start.md) if you have not configured one.

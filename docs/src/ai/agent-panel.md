@@ -47,7 +47,9 @@ You can also start a new thread from the [Threads Sidebar](./parallel-agents.md#
 
 ### Managing Multiple Threads {#multiple-threads}
 
-You can run multiple agent threads at once, each working independently with its own agent, context window, and conversation history. Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar} to see all your threads grouped by project. For how projects, Zed worktrees, Git worktrees, and branches fit together, see [Git Worktrees](../git/worktrees.md#projects-zed-worktrees-git-worktrees). Click any thread to switch to it, or use the thread switcher ({#kb agents_sidebar::ToggleThreadSwitcher}) to cycle between recent threads without opening the sidebar.
+You can run multiple agent threads at once, each working independently with its own agent, context window, and conversation history. Open the Threads Sidebar with {#kb multi_workspace::ToggleWorkspaceSidebar} to see all your threads grouped by project. Click any thread to switch to it, or use the thread switcher ({#kb agents_sidebar::ToggleThreadSwitcher}) to cycle between recent threads without opening the sidebar.
+
+See [Git Worktrees](../git/worktrees.md#projects-zed-worktrees-git-worktrees) for how project, Zed worktree, Git worktree, and branch context affect agent work.
 
 Threads you're no longer working on can be archived by hovering over them in the sidebar and clicking the archive icon, or selecting them and pressing {#kb agent::ArchiveSelectedThread}. The Thread History holds all your threads across all projects, sorted chronologically, and you can restore them at any time.
 

@@ -23,7 +23,9 @@ Agent paths decide how agentic work runs in Zed.
 - [External Agents](./external-agents.md): ACP-integrated agents that run through their own process and configuration.
 - [Terminal Threads](./terminal-threads.md): terminal-backed threads for running an agent CLI or TUI directly in Zed.
 
-The [Threads Sidebar](./parallel-agents.md#threads-sidebar) is where you organize agent work. You can run multiple agent threads and Terminal Threads at once, each using a different agent and working against different projects. For how projects, Zed worktrees, Git worktrees, and branches fit together, see [Git Worktrees](../git/worktrees.md#projects-zed-worktrees-git-worktrees).
+The [Threads Sidebar](./parallel-agents.md#threads-sidebar) is where you organize agent work. You can run multiple agent threads and Terminal Threads at once, each using a different agent and working against different projects.
+
+See [Git Worktrees](../git/worktrees.md#projects-zed-worktrees-git-worktrees) for how project, Zed worktree, Git worktree, and branch context affect agent work.
 
 See [Agents](./agents.md) for a comparison.
 

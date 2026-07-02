@@ -70,7 +70,10 @@ The same `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done
 
 Unlike agent threads, Terminal Threads are closed rather than archived. They do not go to Thread History. To close one, hover over it in the Threads Sidebar and click the **×** button, or select it and press {#kb agent::ArchiveSelectedThread}.
 
-If a Terminal Thread is the last reference to a Zed-managed linked Git worktree, closing it may remove that worktree workspace and delete the worktree directory from disk. Zed only does this for worktrees it can identify as safe to manage.
+If a Terminal Thread is the last reference to a Zed-managed linked Git worktree,
+closing the Terminal Thread may remove that worktree from Zed and delete the
+worktree folder from disk. Zed only does this for worktrees it can identify as
+safe to manage.
 
 ## CLI/TUI Setup Notes {#cli-setup}
 

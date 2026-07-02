@@ -5,7 +5,9 @@ description: Use Zed's native AI agent with Zed-configured models, tools, profil
 
 # Zed Agent
 
-Zed Agent is Zed's native agent path. It runs in the [Agent Panel](./agent-panel.md) and [Threads Sidebar](./parallel-agents.md#threads-sidebar), uses models configured through [LLM Providers](./llm-providers.md), and integrates with Zed's project, editor, terminal, and review surfaces. For how projects, Zed worktrees, Git worktrees, and branches set the context where agent work runs, see [Git Worktrees](../git/worktrees.md#projects-zed-worktrees-git-worktrees).
+Zed Agent is Zed's native agent path. It runs in the [Agent Panel](./agent-panel.md) and [Threads Sidebar](./parallel-agents.md#threads-sidebar), uses models configured through [LLM Providers](./llm-providers.md), and integrates with Zed's project, editor, terminal, and review surfaces.
+
+See [Git Worktrees](../git/worktrees.md#projects-zed-worktrees-git-worktrees) for how project, Zed worktree, Git worktree, and branch context affect agent work.
 
 Use Zed Agent when you want the agent to:
 

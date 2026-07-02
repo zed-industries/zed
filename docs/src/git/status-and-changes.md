@@ -34,13 +34,14 @@ Each changed file has a staged-state control:
 | Partially staged | Some hunks are staged and other hunks remain unstaged.  |
 | Conflict         | Git reported a conflict that must be resolved manually. |
 
-Use the checkbox beside a file to stage or unstage that file. Use {#action
-git::StageAll} and {#action git::UnstageAll} for repository-wide changes.
+Use the checkbox beside a file to stage or unstage that file. Use
+{#action git::StageAll} and {#action git::UnstageAll} for repository-wide
+changes.
 
 ## Choose flat or tree view {#tree-view}
 
 The Git Panel shows a flat list by default. Open the panel menu and toggle
-**Tree View** to group changed files by directory.
+**Tree View** to group changed files by folder.
 
 You can also configure this in the Settings Editor under **Panels > Git Panel**,
 or in [Settings and Actions](./settings-and-actions.md#git-panel-settings).

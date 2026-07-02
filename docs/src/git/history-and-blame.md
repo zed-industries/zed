@@ -76,11 +76,11 @@ Use {#action editor::ToggleGitBlameInline} to toggle inline blame.
 ## Permalinks from history {#permalinks}
 
 Commit views and editor selections can create links to hosted source when Zed
-can identify the Git hosting provider. Use {#action
-editor::CopyPermalinkToLine} or {#action editor::OpenPermalinkToLine} from the
-editor.
+can identify the Git hosting provider. Use
+{#action editor::CopyPermalinkToLine} or {#action editor::OpenPermalinkToLine}
+from the editor.
 
-See [GitHub and Pull Requests](./github-and-pull-requests.md#permalinks) for
+See [Git Hosting and Pull Requests](./github-and-pull-requests.md#permalinks) for
 provider support and self-hosted configuration.
 
 ## Known boundaries {#boundaries}
@@ -92,7 +92,7 @@ inside these views.
 ## See also {#see-also}
 
 - [Diffs and Review](./diffs-and-review.md): Review current and branch changes.
-- [GitHub and Pull Requests](./github-and-pull-requests.md): Configure hosted
+- [Git Hosting and Pull Requests](./github-and-pull-requests.md): Configure hosted
   links.
 - [Settings and Actions](./settings-and-actions.md): Configure inline blame and
   history actions.

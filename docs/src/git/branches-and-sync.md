@@ -58,13 +58,13 @@ Use {#action git::CreatePullRequest} to open the hosting provider's pull request
 or merge request creation URL when Zed can build one for the active branch.
 
 This is a publishing handoff to the host. Zed does not provide a full in-editor
-pull request review or comment-posting workflow. See [GitHub and Pull
+pull request review or comment-posting workflow. See [Git Hosting and Pull
 Requests](./github-and-pull-requests.md) for hosting boundaries.
 
 ## Compare branches {#compare-branches}
 
-Use {#action git::BranchDiff} to compare against the default branch, or {#action
-git::CompareWithBranch} from Project Diff to choose another base.
+Use {#action git::BranchDiff} to compare against the default branch, or
+{#action git::CompareWithBranch} from Project Diff to choose another base.
 
 See [Diffs and Review](./diffs-and-review.md#branch-diff) for the supported
 branch-diff workflow and its boundaries.
@@ -86,7 +86,7 @@ Recovery](./conflicts-and-recovery.md#stashes).
 ## See also {#see-also}
 
 - [Worktrees](./worktrees.md): Keep multiple checkouts of one repository.
-- [GitHub and Pull Requests](./github-and-pull-requests.md): Configure hosting
+- [Git Hosting and Pull Requests](./github-and-pull-requests.md): Configure hosting
   links and PR handoffs.
 - [Settings and Actions](./settings-and-actions.md): Find sync and branch
   actions.
