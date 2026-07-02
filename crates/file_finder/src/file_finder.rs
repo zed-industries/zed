@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod file_finder_tests;
+#[cfg(test)]
+mod multi_select_tests;
 
 use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
@@ -276,6 +278,10 @@ impl FileFinder {
     ) {
         self.picker.update(cx, |picker, cx| {
             let delegate = &mut picker.delegate;
+            if !delegate.selected_matches.is_empty() {
+                delegate.open_selected_in_one_split(split_direction, window, cx);
+                return;
+            }
             if let Some(workspace) = delegate.workspace.upgrade()
                 && let Some(m) = delegate.matches.get(delegate.selected_index())
             {
@@ -1522,14 +1528,18 @@ impl FileFinderDelegate {
         let Some(m) = self.matches.get(self.selected_index()).cloned() else {
             return;
         };
-        self.open_match(m, secondary, dismiss_after_open, window, cx);
+        let allow_preview = PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
+        self.open_match(m, secondary, dismiss_after_open, allow_preview, window, cx);
     }
 
+    /// `allow_preview` is forced off for batch opens so every file gets its
+    /// own tab instead of consecutive opens reusing one preview tab.
     fn open_match(
         &mut self,
         m: Match,
         secondary: bool,
         dismiss_after_open: bool,
+        allow_preview: bool,
         window: &mut Window,
         cx: &mut Context<Picker<FileFinderDelegate>>,
     ) {
@@ -1555,8 +1565,6 @@ impl FileFinderDelegate {
                                  project_path,
                                  window: &mut Window,
                                  cx: &mut Context<Workspace>| {
-                let allow_preview =
-                    PreviewTabsSettings::get_global(cx).enable_preview_from_file_finder;
                 if secondary {
                     workspace.split_path_preview(project_path, allow_preview, None, window, cx)
                 } else {
@@ -1670,6 +1678,59 @@ impl FileFinderDelegate {
         cx: &mut Context<Picker<FileFinderDelegate>>,
     ) {
         self.open_selected_file(false, false, window, cx);
+    }
+
+    /// Opens every multi-selected file as a tab in a single new split, then
+    /// dismisses the finder.
+    fn open_selected_in_one_split(
+        &mut self,
+        split_direction: SplitDirection,
+        window: &mut Window,
+        cx: &mut Context<Picker<FileFinderDelegate>>,
+    ) {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        let selected = std::mem::take(&mut self.selected_matches);
+        let paths: Vec<ProjectPath> = selected
+            .iter()
+            .filter_map(|selected| match &selected.0 {
+                Match::History { path, .. } => Some(ProjectPath {
+                    worktree_id: path.project.worktree_id,
+                    path: Arc::clone(&path.project.path),
+                }),
+                Match::Search(m) => Some(project_path_for_search_match(&self.project, &m.0, cx)),
+                Match::Channel { .. } | Match::CreateNew(_) => None,
+            })
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        workspace.update(cx, |workspace, cx| {
+            let new_pane =
+                workspace.split_pane(workspace.active_pane().clone(), split_direction, window, cx);
+            let count = paths.len();
+            for (i, path) in paths.into_iter().enumerate() {
+                let focus_item = i + 1 == count;
+                workspace
+                    .open_path_preview(
+                        path,
+                        Some(new_pane.downgrade()),
+                        focus_item,
+                        false,
+                        true,
+                        window,
+                        cx,
+                    )
+                    .detach_and_log_err(cx);
+            }
+        });
+        // Deferred because this runs from a `FileFinder` action handler, so
+        // the entity is already being updated.
+        let finder = self.file_finder.clone();
+        cx.defer(move |cx| {
+            finder.update(cx, |_, cx| cx.emit(DismissEvent)).log_err();
+        });
     }
 }
 
@@ -1936,7 +1997,7 @@ impl PickerDelegate for FileFinderDelegate {
         let count = selected.len();
         for (i, selected_match) in selected.into_iter().enumerate() {
             let is_last = i + 1 == count;
-            self.open_match(selected_match.0, secondary, is_last, window, cx);
+            self.open_match(selected_match.0, secondary, is_last, false, window, cx);
         }
     }
 

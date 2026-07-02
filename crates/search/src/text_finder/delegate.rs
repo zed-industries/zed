@@ -35,7 +35,7 @@ use gpui::{
     AnyElement, AppContext, AsyncApp, DismissEvent, EntityId, HighlightStyle, StyledText, Task,
     TextStyle, prelude::*,
 };
-use gpui::{Entity, FocusHandle};
+use gpui::{Entity, FocusHandle, WeakEntity};
 use language::{Buffer, LanguageAwareStyling};
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath};
@@ -52,6 +52,7 @@ use util::ResultExt;
 use workspace::SplitDirection;
 use workspace::Workspace;
 use workspace::item::ItemSettings;
+use workspace::pane::Pane;
 
 use super::SearchMatch;
 use crate::project_search::{ActiveSettings, ProjectSearch};
@@ -445,6 +446,7 @@ impl Delegate {
     fn open_match(
         &self,
         search_match: &SearchMatch,
+        pane: Option<WeakEntity<Pane>>,
         focus: bool,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
@@ -456,7 +458,7 @@ impl Delegate {
             return;
         };
         let open_task = workspace.update(cx, |workspace, cx| {
-            workspace.open_path_preview(path, None, focus, false, true, window, cx)
+            workspace.open_path_preview(path, pane, focus, false, true, window, cx)
         });
         cx.spawn_in(window, async move |_, cx| {
             let item = open_task.await.log_err()?;
@@ -478,12 +480,36 @@ impl Delegate {
     }
 
     /// Opens the selected match in a new split in `direction`, then dismisses.
+    /// With a multi-selection, every selected match opens as a tab in a
+    /// single new split.
     pub(crate) fn open_in_split(
         &mut self,
         direction: SplitDirection,
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
+        if !self.selected_matches.is_empty() {
+            let Some(workspace) = self.project_search_view.read(cx).workspace.upgrade() else {
+                return;
+            };
+            let selected = std::mem::take(&mut self.selected_matches);
+            let new_pane = workspace.update(cx, |workspace, cx| {
+                workspace.split_pane(workspace.active_pane().clone(), direction, window, cx)
+            });
+            let count = selected.len();
+            for (i, selected_match) in selected.iter().enumerate() {
+                let focus = i + 1 == count;
+                self.open_match(
+                    &selected_match.0,
+                    Some(new_pane.downgrade()),
+                    focus,
+                    window,
+                    cx,
+                );
+            }
+            cx.emit(DismissEvent);
+            return;
+        }
         let Some(selected_match) = self.selected_search_match() else {
             return;
         };
@@ -844,7 +870,7 @@ impl PickerDelegate for Delegate {
         let Some(selected_match) = self.selected_search_match().cloned() else {
             return;
         };
-        self.open_match(&selected_match, true, window, cx);
+        self.open_match(&selected_match, None, true, window, cx);
 
         cx.emit(DismissEvent);
     }
@@ -906,7 +932,7 @@ impl PickerDelegate for Delegate {
         let count = selected.len();
         for (i, selected_match) in selected.iter().enumerate() {
             let is_last = i + 1 == count;
-            self.open_match(&selected_match.0, is_last, window, cx);
+            self.open_match(&selected_match.0, None, is_last, window, cx);
         }
         cx.emit(DismissEvent);
     }
