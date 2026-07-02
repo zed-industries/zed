@@ -1,4 +1,4 @@
-use crate::{IosDisplay, IosWindow, id, nil, ns_string};
+use crate::{IosDisplay, IosWindow, id, nil, ns_string, window::string_from_ns_string};
 use anyhow::{Result, anyhow};
 use futures::channel::oneshot;
 use gpui::{
@@ -11,6 +11,7 @@ use gpui_apple::metal_renderer;
 use objc::{
     class,
     declare::ClassDecl,
+    msg_send,
     runtime::{BOOL, Class, Object, Sel, YES},
     sel, sel_impl,
 };
@@ -242,10 +243,25 @@ impl Platform for IosPlatform {
     }
 
     fn read_from_clipboard(&self) -> Option<ClipboardItem> {
-        None
+        unsafe {
+            let pasteboard: id = msg_send![class!(UIPasteboard), generalPasteboard];
+            let string: id = msg_send![pasteboard, string];
+            if string.is_null() {
+                return None;
+            }
+            Some(ClipboardItem::new_string(string_from_ns_string(string)))
+        }
     }
 
-    fn write_to_clipboard(&self, _item: ClipboardItem) {}
+    fn write_to_clipboard(&self, item: ClipboardItem) {
+        let Some(text) = item.text() else {
+            return;
+        };
+        unsafe {
+            let pasteboard: id = msg_send![class!(UIPasteboard), generalPasteboard];
+            let _: () = msg_send![pasteboard, setString: ns_string(&text)];
+        }
+    }
 
     fn write_credentials(&self, _url: &str, _username: &str, _password: &[u8]) -> Task<Result<()>> {
         Task::ready(Err(anyhow!("write_credentials not implemented on iOS")))
