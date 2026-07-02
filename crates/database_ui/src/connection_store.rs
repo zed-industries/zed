@@ -92,8 +92,7 @@ impl ConnectionStore {
             .cloned()
             .map(ConnectionState::new)
             .collect();
-        let settings_subscription =
-            cx.observe_global::<SettingsStore>(Self::sync_from_settings);
+        let settings_subscription = cx.observe_global::<SettingsStore>(Self::sync_from_settings);
         Self {
             connections,
             client_factory,
@@ -116,15 +115,17 @@ impl ConnectionStore {
     /// configured connections as `Disconnected`, drops removed ones, and keeps
     /// live state for connections whose config is unchanged.
     fn sync_from_settings(&mut self, cx: &mut Context<Self>) {
-        let configs: Vec<ConnectionConfig> =
-            DatabaseSettings::get_global(cx).connections.clone();
+        let configs: Vec<ConnectionConfig> = DatabaseSettings::get_global(cx).connections.clone();
 
         let mut changed = false;
 
         // Drop connections that no longer exist in settings.
         let before = self.connections.len();
-        self.connections
-            .retain(|connection| configs.iter().any(|config| config.name == connection.config.name));
+        self.connections.retain(|connection| {
+            configs
+                .iter()
+                .any(|config| config.name == connection.config.name)
+        });
         changed |= self.connections.len() != before;
 
         for config in &configs {
@@ -182,22 +183,20 @@ impl ConnectionStore {
         cx.spawn(async move |this, cx| {
             let read = provider.read_credentials(&url, cx).await;
             let password = match read {
-                Ok(Some((_user, password_bytes))) => {
-                    match String::from_utf8(password_bytes) {
-                        Ok(password) => password,
-                        Err(error) => {
-                            this.update(cx, |this, cx| {
-                                this.set_error(
-                                    &connection_name,
-                                    format!("saved password is not valid UTF-8: {error}"),
-                                    cx,
-                                );
-                            })
-                            .ok();
-                            return;
-                        }
+                Ok(Some((_user, password_bytes))) => match String::from_utf8(password_bytes) {
+                    Ok(password) => password,
+                    Err(error) => {
+                        this.update(cx, |this, cx| {
+                            this.set_error(
+                                &connection_name,
+                                format!("saved password is not valid UTF-8: {error}"),
+                                cx,
+                            );
+                        })
+                        .ok();
+                        return;
                     }
-                }
+                },
                 Ok(None) => {
                     this.update(cx, |this, cx| {
                         this.set_error(
@@ -283,12 +282,7 @@ impl ConnectionStore {
         .detach();
     }
 
-    pub fn load_schemas(
-        &mut self,
-        connection_name: &str,
-        database: &str,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn load_schemas(&mut self, connection_name: &str, database: &str, cx: &mut Context<Self>) {
         let Some(client) = self.client_for(connection_name) else {
             return;
         };
@@ -423,11 +417,7 @@ impl ConnectionStore {
             .find(|connection| connection.config.name == connection_name)
     }
 
-    fn database_mut(
-        &mut self,
-        connection_name: &str,
-        database: &str,
-    ) -> Option<&mut DatabaseNode> {
+    fn database_mut(&mut self, connection_name: &str, database: &str) -> Option<&mut DatabaseNode> {
         self.connection_mut(connection_name)?
             .databases
             .as_mut()?
@@ -485,15 +475,14 @@ mod tests {
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
                 store.update_user_settings(cx, |settings| {
-                    settings.database.get_or_insert_default().connections = Some(vec![
-                        settings::DatabaseConnectionContent {
+                    settings.database.get_or_insert_default().connections =
+                        Some(vec![settings::DatabaseConnectionContent {
                             name: "local".into(),
                             host: "127.0.0.1".into(),
                             port: 5432,
                             database: "postgres".into(),
                             user: "postgres".into(),
-                        },
-                    ]);
+                        }]);
                 });
             });
         });
@@ -528,8 +517,7 @@ mod tests {
         set_one_connection(cx);
 
         let fake = Arc::new(FakeDatabaseClient::new());
-        let factory: ClientFactory =
-            Arc::new(move |_, _| fake.clone() as Arc<dyn DatabaseClient>);
+        let factory: ClientFactory = Arc::new(move |_, _| fake.clone() as Arc<dyn DatabaseClient>);
         let store = cx.new(|cx| ConnectionStore::new(factory, cx));
         store.update(cx, |store, cx| {
             store.connect_with_password("local", "pw".into(), cx)
@@ -564,8 +552,7 @@ mod tests {
         set_one_connection(cx);
 
         let fake = Arc::new(FakeDatabaseClient::with_error("connection refused"));
-        let factory: ClientFactory =
-            Arc::new(move |_, _| fake.clone() as Arc<dyn DatabaseClient>);
+        let factory: ClientFactory = Arc::new(move |_, _| fake.clone() as Arc<dyn DatabaseClient>);
         let store = cx.new(|cx| ConnectionStore::new(factory, cx));
         store.update(cx, |store, cx| {
             store.connect_with_password("local", "pw".into(), cx)
@@ -595,8 +582,7 @@ mod tests {
         set_one_connection(cx);
 
         let fake = Arc::new(FakeDatabaseClient::new());
-        let factory: ClientFactory =
-            Arc::new(move |_, _| fake.clone() as Arc<dyn DatabaseClient>);
+        let factory: ClientFactory = Arc::new(move |_, _| fake.clone() as Arc<dyn DatabaseClient>);
         let store = cx.new(|cx| ConnectionStore::new(factory, cx));
         store.update(cx, |store, cx| {
             store.connect_with_password("local", "pw".into(), cx)
@@ -667,8 +653,7 @@ mod tests {
         set_one_connection(cx);
 
         let fake = Arc::new(FakeDatabaseClient::new());
-        let factory: ClientFactory =
-            Arc::new(move |_, _| fake.clone() as Arc<dyn DatabaseClient>);
+        let factory: ClientFactory = Arc::new(move |_, _| fake.clone() as Arc<dyn DatabaseClient>);
         let store = cx.new(|cx| ConnectionStore::new(factory, cx));
         store.read_with(cx, |store, _| {
             assert_eq!(store.connections().len(), 1);

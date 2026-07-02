@@ -7,12 +7,12 @@ use gpui::{
     Render, Styled, Window, rems,
 };
 use settings::update_settings_file;
-use ui::{prelude::*, Headline, HeadlineSize};
+use ui::{Headline, HeadlineSize, prelude::*};
 use ui_input::InputField;
 use util::ResultExt as _;
 use workspace::ModalView;
 
-use crate::connection_store::{credentials_url, ClientFactory};
+use crate::connection_store::{ClientFactory, credentials_url};
 
 /// Identifies which form field a validation error belongs to, so the modal can
 /// attach the message to the right [`InputField`].
@@ -53,7 +53,10 @@ const DEFAULT_PORT: u16 = 5432;
 ///
 /// An empty port defaults to [`DEFAULT_PORT`]; a non-numeric or out-of-range
 /// port is a [`FormField::Port`] error.
-fn validate(values: &FormValues, existing_names: &[String]) -> Result<ConnectionConfig, FieldError> {
+fn validate(
+    values: &FormValues,
+    existing_names: &[String],
+) -> Result<ConnectionConfig, FieldError> {
     let name = values.name.trim();
     if name.is_empty() {
         return Err(FieldError {
@@ -319,7 +322,8 @@ impl ConnectionModal {
         self.test_status = TestStatus::Testing;
         cx.notify();
 
-        let task = gpui_tokio::Tokio::spawn_result(cx, async move { client.test_connection().await });
+        let task =
+            gpui_tokio::Tokio::spawn_result(cx, async move { client.test_connection().await });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
@@ -419,9 +423,11 @@ impl Render for ConnectionModal {
 
         let status_label = match &self.test_status {
             TestStatus::Idle => None,
-            TestStatus::Testing => {
-                Some(Label::new("Testing…").color(Color::Muted).into_any_element())
-            }
+            TestStatus::Testing => Some(
+                Label::new("Testing…")
+                    .color(Color::Muted)
+                    .into_any_element(),
+            ),
             TestStatus::Ok => Some(
                 Label::new("Connection OK")
                     .color(Color::Success)
@@ -476,13 +482,11 @@ impl Render for ConnectionModal {
                                 this.test_connection(cx);
                             })),
                     )
-                    .child(
-                        Button::new("cancel", "Cancel").on_click(cx.listener(
-                            |_, _, _window, cx| {
-                                cx.emit(DismissEvent);
-                            },
-                        )),
-                    )
+                    .child(Button::new("cancel", "Cancel").on_click(cx.listener(
+                        |_, _, _window, cx| {
+                            cx.emit(DismissEvent);
+                        },
+                    )))
                     .child(
                         Button::new("save", "Save")
                             .style(ButtonStyle::Filled)

@@ -364,21 +364,11 @@ impl DatabasePanel {
         }
     }
 
-    fn add_connection(
-        &mut self,
-        _: &AddConnection,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn add_connection(&mut self, _: &AddConnection, window: &mut Window, cx: &mut Context<Self>) {
         self.open_connection_modal(None, window, cx);
     }
 
-    fn edit_connection(
-        &mut self,
-        _: &EditConnection,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn edit_connection(&mut self, _: &EditConnection, window: &mut Window, cx: &mut Context<Self>) {
         let Some(connection_name) = self.menu_target.clone() else {
             return;
         };
@@ -452,10 +442,7 @@ impl DatabasePanel {
         let url = credentials_url(&connection);
         let provider = zed_credentials_provider::global(cx);
         cx.spawn(async move |_, cx| {
-            provider
-                .delete_credentials(&url, cx)
-                .await
-                .log_err();
+            provider.delete_credentials(&url, cx).await.log_err();
         })
         .detach();
     }
@@ -479,8 +466,7 @@ impl DatabasePanel {
                 name,
                 expanded,
                 loading,
-            } => self
-                .render_schema_row(index, connection, database, name, *expanded, *loading, cx),
+            } => self.render_schema_row(index, connection, database, name, *expanded, *loading, cx),
             TreeRow::Table {
                 connection,
                 database,
@@ -489,7 +475,11 @@ impl DatabasePanel {
             } => self.render_table_row(index, connection, database, schema, info, cx),
             TreeRow::Loading { depth } => ListItem::new(index)
                 .indent_level(*depth)
-                .child(Label::new("Loading…").color(Color::Muted).size(LabelSize::Small))
+                .child(
+                    Label::new("Loading…")
+                        .color(Color::Muted)
+                        .size(LabelSize::Small),
+                )
                 .into_any_element(),
             TreeRow::Error { depth, message } => ListItem::new(index)
                 .indent_level(*depth)
@@ -516,7 +506,11 @@ impl DatabasePanel {
     ) -> AnyElement {
         let node = TreeNodeId::Connection(name.to_string());
         let is_error = matches!(status, ConnectionStatus::Error(_));
-        let icon_color = if is_error { Color::Error } else { Color::Default };
+        let icon_color = if is_error {
+            Color::Error
+        } else {
+            Color::Default
+        };
         let connection_name = name.to_string();
 
         let mut item = ListItem::new(index)
@@ -529,7 +523,11 @@ impl DatabasePanel {
             .child(
                 h_flex()
                     .gap_1p5()
-                    .child(Icon::new(IconName::DatabaseZap).color(icon_color).size(IconSize::Small))
+                    .child(
+                        Icon::new(IconName::DatabaseZap)
+                            .color(icon_color)
+                            .size(IconSize::Small),
+                    )
                     .child(Label::new(connection_name.clone())),
             )
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_node(node.clone(), cx)))
@@ -563,7 +561,11 @@ impl DatabasePanel {
         cx: &Context<Self>,
     ) -> AnyElement {
         let node = TreeNodeId::Database(connection.to_string(), name.to_string());
-        let icon = if expanded { IconName::FolderOpen } else { IconName::Folder };
+        let icon = if expanded {
+            IconName::FolderOpen
+        } else {
+            IconName::Folder
+        };
         ListItem::new(index)
             .indent_level(1)
             .toggle(Some(expanded))
@@ -577,9 +579,7 @@ impl DatabasePanel {
                     .child(Icon::new(icon).color(Color::Muted).size(IconSize::Small))
                     .child(Label::new(name.to_string()))
                     .when(loading, |this| {
-                        this.child(
-                            Label::new("…").color(Color::Muted).size(LabelSize::Small),
-                        )
+                        this.child(Label::new("…").color(Color::Muted).size(LabelSize::Small))
                     }),
             )
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_node(node.clone(), cx)))
@@ -596,8 +596,11 @@ impl DatabasePanel {
         loading: bool,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let node =
-            TreeNodeId::Schema(connection.to_string(), database.to_string(), name.to_string());
+        let node = TreeNodeId::Schema(
+            connection.to_string(),
+            database.to_string(),
+            name.to_string(),
+        );
         ListItem::new(index)
             .indent_level(2)
             .toggle(Some(expanded))
@@ -608,12 +611,14 @@ impl DatabasePanel {
             .child(
                 h_flex()
                     .gap_1p5()
-                    .child(Icon::new(IconName::Book).color(Color::Muted).size(IconSize::Small))
+                    .child(
+                        Icon::new(IconName::Book)
+                            .color(Color::Muted)
+                            .size(IconSize::Small),
+                    )
                     .child(Label::new(name.to_string()))
                     .when(loading, |this| {
-                        this.child(
-                            Label::new("…").color(Color::Muted).size(LabelSize::Small),
-                        )
+                        this.child(Label::new("…").color(Color::Muted).size(LabelSize::Small))
                     }),
             )
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_node(node.clone(), cx)))
@@ -629,7 +634,11 @@ impl DatabasePanel {
         info: &TableInfo,
         cx: &Context<Self>,
     ) -> AnyElement {
-        let icon = if info.is_view { IconName::Eye } else { IconName::FileTree };
+        let icon = if info.is_view {
+            IconName::Eye
+        } else {
+            IconName::FileTree
+        };
         let label = if info.is_view {
             format!("{} (view)", info.name)
         } else {
@@ -719,7 +728,13 @@ impl Render for DatabasePanel {
                             }),
                     ),
             )
-            .child(v_flex().flex_1().size_full().overflow_hidden().child(content))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .size_full()
+                    .overflow_hidden()
+                    .child(content),
+            )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
                     anchored()

@@ -194,9 +194,11 @@ impl TableDataView {
         let client = self.client.clone();
         let table = self.table.clone();
         let spec = self.spec.clone();
-        let task = gpui_tokio::Tokio::spawn_result(cx, async move {
-            client.fetch_rows(&table, &spec).await
-        });
+        let task =
+            gpui_tokio::Tokio::spawn_result(
+                cx,
+                async move { client.fetch_rows(&table, &spec).await },
+            );
 
         self._load_task = Some(cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -220,9 +222,11 @@ impl TableDataView {
     fn reload_structure(&mut self, cx: &mut Context<Self>) {
         let client = self.client.clone();
         let table = self.table.clone();
-        let task = gpui_tokio::Tokio::spawn_result(cx, async move {
-            client.table_structure(&table).await
-        });
+        let task =
+            gpui_tokio::Tokio::spawn_result(
+                cx,
+                async move { client.table_structure(&table).await },
+            );
 
         self._load_task = Some(cx.spawn(async move |this, cx| {
             let result = task.await;
@@ -388,26 +392,32 @@ impl TableDataView {
             ]);
         }
 
-        let indexes = if structure.indexes.is_empty() {
-            None
-        } else {
-            Some(
-                v_flex()
-                    .pt_2()
-                    .gap_1()
-                    .child(Label::new("Indexes").color(Color::Muted))
-                    .children(structure.indexes.iter().enumerate().map(|(index_pos, index)| {
-                        let definition: SharedString = index.definition.clone().into();
-                        div()
-                            .id(ElementId::NamedInteger("db-index".into(), index_pos as u64))
-                            .w_full()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
-                            .child(Label::new(definition.clone()).size(LabelSize::Small))
-                            .tooltip(move |_, cx| Tooltip::simple(definition.clone(), cx))
-                    })),
-            )
-        };
+        let indexes =
+            if structure.indexes.is_empty() {
+                None
+            } else {
+                Some(
+                    v_flex()
+                        .pt_2()
+                        .gap_1()
+                        .child(Label::new("Indexes").color(Color::Muted))
+                        .children(structure.indexes.iter().enumerate().map(
+                            |(index_pos, index)| {
+                                let definition: SharedString = index.definition.clone().into();
+                                div()
+                                    .id(ElementId::NamedInteger(
+                                        "db-index".into(),
+                                        index_pos as u64,
+                                    ))
+                                    .w_full()
+                                    .whitespace_nowrap()
+                                    .text_ellipsis()
+                                    .child(Label::new(definition.clone()).size(LabelSize::Small))
+                                    .tooltip(move |_, cx| Tooltip::simple(definition.clone(), cx))
+                            },
+                        )),
+                )
+            };
 
         v_flex()
             .p_2()
@@ -461,7 +471,11 @@ impl TableDataView {
             .justify_between()
             .border_t_1()
             .border_color(cx.theme().colors().border)
-            .child(Label::new(summary).color(Color::Muted).size(LabelSize::Small))
+            .child(
+                Label::new(summary)
+                    .color(Color::Muted)
+                    .size(LabelSize::Small),
+            )
             .child(
                 h_flex()
                     .gap_1()
@@ -511,7 +525,8 @@ impl Render for TableDataView {
             (_, ViewMode::Structure) => self.render_structure(),
             (_, ViewMode::Data) => self.render_data(cx),
         };
-        let show_footer = self.mode == ViewMode::Data && !matches!(self.load_state, LoadState::Error(_));
+        let show_footer =
+            self.mode == ViewMode::Data && !matches!(self.load_state, LoadState::Error(_));
 
         v_flex()
             .key_context("TableDataView")
@@ -530,7 +545,10 @@ impl Render for TableDataView {
                     .justify_between()
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
-                    .child(Label::new(format!("{}.{}", self.table.schema, self.table.name)))
+                    .child(Label::new(format!(
+                        "{}.{}",
+                        self.table.schema, self.table.name
+                    )))
                     .child(self.render_toggle(cx)),
             )
             .child(v_flex().flex_1().size_full().overflow_hidden().child(body))
@@ -600,8 +618,7 @@ pub fn open_table_tab(
                 .read(cx)
                 .items_of_type::<TableDataView>()
                 .find(|view| view.read(cx).table() == &table);
-            let view =
-                existing.unwrap_or_else(|| TableDataView::new(client, table, window, cx));
+            let view = existing.unwrap_or_else(|| TableDataView::new(client, table, window, cx));
             workspace.active_pane().update(cx, |pane, cx| {
                 if let Some(index) = pane.index_for_item(&view) {
                     pane.activate_item(index, true, true, window, cx);
@@ -844,7 +861,9 @@ mod tests {
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| TableDataView::new(client, table_ref(), window, cx));
         wait_until(cx, |cx| {
-            view.read_with(cx, |view, _| matches!(view.load_state(), LoadState::Error(_)))
+            view.read_with(cx, |view, _| {
+                matches!(view.load_state(), LoadState::Error(_))
+            })
         })
         .await;
 
@@ -858,5 +877,4 @@ mod tests {
             );
         });
     }
-
 }

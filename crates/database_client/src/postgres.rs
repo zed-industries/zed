@@ -249,10 +249,7 @@ impl DatabaseClient for PostgresClient {
     async fn run_query(&self, database: &str, sql: &str, max_rows: usize) -> Result<QueryResult> {
         let client = self.client_for(database).await?;
         self.register_cancel(&client);
-        let messages = client
-            .simple_query(sql)
-            .await
-            .context("running query")?;
+        let messages = client.simple_query(sql).await.context("running query")?;
 
         let mut columns = Vec::new();
         let mut rows: Vec<Vec<Option<String>>> = Vec::new();

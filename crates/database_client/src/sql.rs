@@ -74,7 +74,10 @@ pub fn build_select(
             SortDirection::Asc => "ASC",
             SortDirection::Desc => "DESC",
         };
-        sql.push_str(&format!(" ORDER BY {} {direction}", quote_ident(&column.name)));
+        sql.push_str(&format!(
+            " ORDER BY {} {direction}",
+            quote_ident(&column.name)
+        ));
     }
 
     sql.push_str(&format!(" LIMIT {} OFFSET {}", spec.limit + 1, spec.offset));

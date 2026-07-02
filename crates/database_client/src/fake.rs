@@ -162,7 +162,9 @@ impl DatabaseClient for FakeDatabaseClient {
 
     async fn run_query(&self, database: &str, sql: &str, max_rows: usize) -> Result<QueryResult> {
         self.check_error()?;
-        self.record(format!("run_query {database} max_rows={max_rows} sql={sql}"));
+        self.record(format!(
+            "run_query {database} max_rows={max_rows} sql={sql}"
+        ));
         Ok(self.query_result.clone())
     }
 
@@ -180,7 +182,10 @@ mod tests {
     #[tokio::test]
     async fn fake_client_returns_canned_data_and_logs_calls() {
         let fake = FakeDatabaseClient::new();
-        assert_eq!(fake.list_databases().await.unwrap(), vec!["app", "postgres"]);
+        assert_eq!(
+            fake.list_databases().await.unwrap(),
+            vec!["app", "postgres"]
+        );
         let spec = SelectSpec {
             limit: 100,
             ..Default::default()
