@@ -56,7 +56,7 @@ pub struct ParticipantIndex(pub u32);
 #[derive(Default, Debug)]
 pub struct User {
     pub legacy_id: LegacyUserId,
-    pub github_login: SharedString,
+    pub username: SharedString,
     pub avatar_uri: SharedUri,
     pub name: Option<String>,
 }
@@ -79,13 +79,13 @@ impl PartialOrd for User {
 
 impl Ord for User {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.github_login.cmp(&other.github_login)
+        self.username.cmp(&other.username)
     }
 }
 
 impl PartialEq for User {
     fn eq(&self, other: &Self) -> bool {
-        self.legacy_id == other.legacy_id && self.github_login == other.github_login
+        self.legacy_id == other.legacy_id && self.username == other.username
     }
 }
 
@@ -237,7 +237,7 @@ impl UserStore {
                                 let current_user_and_response = if let Some(response) = response {
                                     let user = Arc::new(User {
                                         legacy_id: user_id,
-                                        github_login: response.user.github_login.clone().into(),
+                                        username: response.user.username.clone().into(),
                                         avatar_uri: response.user.avatar_url.clone().into(),
                                         name: response.user.name.clone(),
                                     });
@@ -400,10 +400,11 @@ impl UserStore {
                             .retain(|contact| !removed_contacts.contains(&contact.user.legacy_id));
                         // Update existing contacts and insert new ones
                         for updated_contact in updated_contacts {
-                            match this.contacts.binary_search_by_key(
-                                &&updated_contact.user.github_login,
-                                |contact| &contact.user.github_login,
-                            ) {
+                            match this
+                                .contacts
+                                .binary_search_by_key(&&updated_contact.user.username, |contact| {
+                                    &contact.user.username
+                                }) {
                                 Ok(ix) => this.contacts[ix] = updated_contact,
                                 Err(ix) => this.contacts.insert(ix, updated_contact),
                             }
@@ -425,9 +426,8 @@ impl UserStore {
                         for user in incoming_requests {
                             match this
                                 .incoming_contact_requests
-                                .binary_search_by_key(&&user.github_login, |contact| {
-                                    &contact.github_login
-                                }) {
+                                .binary_search_by_key(&&user.username, |contact| &contact.username)
+                            {
                                 Ok(ix) => this.incoming_contact_requests[ix] = user,
                                 Err(ix) => this.incoming_contact_requests.insert(ix, user),
                             }
@@ -440,8 +440,8 @@ impl UserStore {
                         for request in outgoing_requests {
                             match this
                                 .outgoing_contact_requests
-                                .binary_search_by_key(&&request.github_login, |contact| {
-                                    &contact.github_login
+                                .binary_search_by_key(&&request.username, |contact| {
+                                    &contact.username
                                 }) {
                                 Ok(ix) => this.outgoing_contact_requests[ix] = request,
                                 Err(ix) => this.outgoing_contact_requests.insert(ix, request),
@@ -463,7 +463,7 @@ impl UserStore {
 
     pub fn has_contact(&self, user: &Arc<User>) -> bool {
         self.contacts
-            .binary_search_by_key(&&user.github_login, |contact| &contact.user.github_login)
+            .binary_search_by_key(&&user.username, |contact| &contact.user.username)
             .is_ok()
     }
 
@@ -482,19 +482,19 @@ impl UserStore {
     pub fn contact_request_status(&self, user: &User) -> ContactRequestStatus {
         if self
             .contacts
-            .binary_search_by_key(&&user.github_login, |contact| &contact.user.github_login)
+            .binary_search_by_key(&&user.username, |contact| &contact.user.username)
             .is_ok()
         {
             ContactRequestStatus::RequestAccepted
         } else if self
             .outgoing_contact_requests
-            .binary_search_by_key(&&user.github_login, |user| &user.github_login)
+            .binary_search_by_key(&&user.username, |user| &user.username)
             .is_ok()
         {
             ContactRequestStatus::RequestSent
         } else if self
             .incoming_contact_requests
-            .binary_search_by_key(&&user.github_login, |user| &user.github_login)
+            .binary_search_by_key(&&user.username, |user| &user.username)
             .is_ok()
         {
             ContactRequestStatus::RequestReceived
@@ -986,8 +986,8 @@ impl UserStore {
         let mut ret = HashMap::default();
         let mut missing_user_ids = Vec::new();
         for id in user_ids {
-            if let Some(github_login) = self.get_cached_user(id).map(|u| u.github_login.clone()) {
-                ret.insert(id, github_login);
+            if let Some(username) = self.get_cached_user(id).map(|u| u.username.clone()) {
+                ret.insert(id, username);
             } else {
                 missing_user_ids.push(id)
             }
@@ -1008,7 +1008,7 @@ impl User {
     fn new(message: proto::User) -> Arc<Self> {
         Arc::new(User {
             legacy_id: message.id,
-            github_login: message.github_login.into(),
+            username: message.username.into(),
             avatar_uri: message.avatar_url.into(),
             name: message.name,
         })

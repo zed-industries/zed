@@ -230,10 +230,11 @@ fn render_api_key_provider(
     };
 
     let base_container = v_flex().id(title).min_w_0().pt_8().gap_1p5();
+
     let header = SettingsSectionHeader::new(title)
         .icon(icon)
         .no_padding(true);
-    let button_link_label = format!("{} dashboard", title);
+
     let description = match docs {
         ApiKeyDocs::Custom { message } => div().min_w_0().w_full().child(
             Label::new(message)
@@ -251,7 +252,7 @@ fn render_api_key_provider(
                     .color(Color::Muted),
             )
             .child(
-                ButtonLink::new(button_link_label, dashboard_url)
+                ButtonLink::new(format!("{title} dashboard"), dashboard_url)
                     .no_icon(true)
                     .label_size(LabelSize::Small)
                     .label_color(Color::Muted),
@@ -262,6 +263,7 @@ fn render_api_key_provider(
                     .color(Color::Muted),
             ),
     };
+
     let configured_card_label = if is_from_env_var {
         "API Key Set in Environment Variable"
     } else {
@@ -270,7 +272,7 @@ fn render_api_key_provider(
 
     let container = if has_key {
         base_container.child(header).child(
-            ConfiguredApiCard::new(configured_card_label)
+            ConfiguredApiCard::new(format!("{title}-reset-key"), configured_card_label)
                 .button_label("Reset Key")
                 .button_tab_index(0)
                 .disabled(is_from_env_var)
@@ -298,6 +300,7 @@ fn render_api_key_provider(
                         .w_full()
                         .min_w_0()
                         .max_w_1_2()
+                        .gap_0p5()
                         .child(Label::new("API Key"))
                         .child(description)
                         .when_some(env_var_name, |this, env_var_name| {

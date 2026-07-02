@@ -16,8 +16,25 @@
         "type": "github"
       }
     },
+    "nixpkgs-mdbook": {
+      "locked": {
+        "lastModified": 1721153957,
+        "narHash": "sha256-3xc3Tvk+AivI7TKctzgg3Q/4cLeqtarUuWLgTv2rPPM=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "6ecabf9e3f617aeec1a23a27d0080cab066a9d5b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "6ecabf9e3f617aeec1a23a27d0080cab066a9d5b",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
+        "nixpkgs-mdbook": "nixpkgs-mdbook",
         "treefmt-nix": "treefmt-nix"
       }
     },

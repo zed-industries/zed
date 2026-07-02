@@ -143,6 +143,7 @@ remote_server = { workspace = true, features = ["test-support"] }
 
 search = { workspace = true, features = ["test-support"] }
 semver.workspace = true
+shlex.workspace = true
 reqwest_client.workspace = true
 tempfile.workspace = true
 vim.workspace = true

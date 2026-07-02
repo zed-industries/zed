@@ -209,13 +209,12 @@ mod tests {
         assert!(rendered.contains("allow_hosts"));
         assert!(rendered.contains("allow_all_hosts: true"));
         assert!(rendered.contains("fs_write_paths"));
-        assert!(rendered.contains("allow_git_access: true"));
         assert!(rendered.contains("allow_fs_write_all: true"));
         assert!(rendered.contains("unsandboxed: true"));
-        assert!(rendered.contains("file contents under `.git` directories"));
-        assert!(
-            rendered.contains("worktree metadata that may live outside the project directories")
-        );
+        assert!(rendered.contains("`.git` directories remain protected"));
+        assert!(rendered.contains("Git metadata writes are never grantable inside the sandbox"));
+        assert!(rendered.contains("request `unsandboxed: true` with a reason"));
+        assert!(rendered.contains("git --no-optional-locks status"));
         assert!(rendered.contains("for the rest of the thread"));
     }
 
@@ -247,6 +246,37 @@ mod tests {
         assert!(!rendered.contains("$TMPDIR"));
         assert!(rendered.contains("`/tmp` is writable"));
         assert!(rendered.contains("`/tmp/alpha`"));
+    }
+
+    #[test]
+    fn test_system_prompt_windows_sandbox_section_rejects_host_specific_network() {
+        use prompt_store::{ProjectContext, WorktreeContext};
+
+        let worktrees = vec![WorktreeContext {
+            root_name: "alpha".to_string(),
+            abs_path: std::path::Path::new("C:/Users/me/project").into(),
+            rules_file: None,
+        }];
+        let project = ProjectContext::new(worktrees);
+        let template = SystemPromptTemplate {
+            project: &project,
+            available_tools: vec!["echo".into()],
+            model_name: Some("test-model".to_string()),
+            date: "2026-01-01".to_string(),
+            user_agents_md: None,
+            sandboxing: true,
+            is_linux: false,
+            is_windows: true,
+        };
+        let templates = Templates::new();
+        let rendered = template.render(&templates).unwrap();
+
+        assert!(rendered.contains("commands run inside WSL under Bubblewrap"));
+        assert!(rendered.contains("Protected Git metadata remains read-only"));
+        assert!(rendered.contains("do not use this on Windows"));
+        assert!(rendered.contains("such requests are rejected"));
+        assert!(rendered.contains("allow_all_hosts: true"));
+        assert!(rendered.contains("git --no-optional-locks status"));
     }
 
     #[test]

@@ -31,6 +31,8 @@
 #   writablePaths = [ ];        # writable subtrees when fs = "restricted"
 #   networkAccess = "blocked";  # or "unrestricted" / "restricted"
 #   allowedDomains = [ ];       # allowed hosts when networkAccess = "restricted"
+#   protectedPaths = [ ];       # paths that remain readable but not writable,
+#                               # even if they fall under a writable subtree.
 #
 # Two echo servers (`echo1`, `echo2`) on separate nodes give the network checks
 # real peers, so a restricted-network policy that allowlists `echo1` can be
@@ -230,6 +232,51 @@ in
         networkAccess = "blocked";
         write = "/sandbox-test/forbidden/anywhere.txt";
         succeeds = true;
+      }
+
+      # ---- Protected paths ---------------------------------------------------
+      # A path inside a writable subtree can be re-bound read-only over the
+      # writable bind (order matters: later binds win). On Linux, protected paths
+      # remain readable but writes are denied.
+      {
+        fs = "restricted";
+        writablePaths = [ "/sandbox-test/repo" ];
+        protectedPaths = [ "/sandbox-test/repo/protected" ];
+        networkAccess = "blocked";
+        write = "/sandbox-test/repo/protected/test";
+        succeeds = false;
+      }
+
+      # Protected paths affect only the protected subtree: ordinary writes
+      # elsewhere in the writable worktree are unaffected.
+      {
+        fs = "restricted";
+        writablePaths = [ "/sandbox-test/repo" ];
+        protectedPaths = [ "/sandbox-test/repo/protected" ];
+        networkAccess = "blocked";
+        write = "/sandbox-test/repo/src/main.rs";
+        succeeds = true;
+      }
+
+      # Protected paths block writes but NOT reads on Linux because the protected
+      # subtree is read-only.
+      {
+        fs = "restricted";
+        writablePaths = [ "/sandbox-test/repo" ];
+        protectedPaths = [ "/sandbox-test/repo/protected" ];
+        networkAccess = "blocked";
+        read = "/sandbox-test/repo/protected/HEAD";
+        succeeds = true;
+      }
+
+      # Protected paths stay read-only even when ordinary filesystem writes are
+      # otherwise unrestricted.
+      {
+        fs = "unrestricted";
+        protectedPaths = [ "/sandbox-test/repo/protected" ];
+        networkAccess = "blocked";
+        write = "/sandbox-test/repo/protected/test";
+        succeeds = false;
       }
 
       # Blocked network: the echo server is unreachable.

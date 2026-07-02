@@ -856,6 +856,8 @@ actions!(
         Backtab,
         /// Toggles a bookmark at the current line.
         ToggleBookmark,
+        /// Toggles a bookmark at the current line, prompting for a label when adding one.
+        ToggleBookmarkWithLabel,
         /// Edits the bookmark's label at the current line.
         EditBookmark,
         /// Toggles a breakpoint at the current line.

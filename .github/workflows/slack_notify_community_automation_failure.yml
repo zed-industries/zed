@@ -12,6 +12,10 @@ on:
       - "Community PR Board"
       - "PR Board Meta Fields Refresh"
       - "PR Issue Labeler"
+      - "Guild Assignment Status"
+      - "Guild Stale Assignments"
+      - "Guild Weekly Shipped"
+      - "Guild New PR Notification"
     types: [completed]
 
 jobs:

@@ -9,10 +9,9 @@ You can restrict what operations the [Zed Agent](./zed-agent.md) can run in mult
 [Tool Permissions](./tool-permissions.md), but these are of limited use when the agent wants to do things like run a
 complicated script in a terminal.
 
-Sandboxing runs certain tool actions in an OS-level sandbox which limits filesystem access, network access, and access to
-protected Git metadata. This way, even if the agent wants to run an arbitrary script, that script will only be able to
-write to the files and folders you have allowed it to. You can similarly restrict network and Git metadata access in
-sandboxed tool actions.
+Sandboxing runs certain tool actions in an OS-level sandbox which limits filesystem access and network access, while
+protecting Git metadata such as `.git` directories. This way, even if the agent wants to run an arbitrary script, that
+script will only be able to write to the files and folders you have allowed it to.
 
 [Tool Permissions](./tool-permissions.md) can be used in addition to sandboxing:
 
@@ -26,9 +25,9 @@ terminal tabs, [External Agents](./external-agents.md), or [Terminal Threads](./
 
 Zed Agent sandboxing currently applies to the `terminal` tool.
 
-| Tool       | What sandboxing limits                                                                              |
-| ---------- | --------------------------------------------------------------------------------------------------- |
-| `terminal` | Filesystem writes, protected Git metadata, and outbound network access for commands the agent runs. |
+| Tool       | What sandboxing limits                                                                                |
+| ---------- | ----------------------------------------------------------------------------------------------------- |
+| `terminal` | Filesystem writes and outbound network access for commands the agent runs; Git metadata is protected. |
 
 Other built-in tools, including `fetch`, are still governed by [Tool Permissions](./tool-permissions.md),
 [Agent Profiles](./agent-profiles.md), and project trust, but they are not currently run inside this OS sandbox.
@@ -39,9 +38,9 @@ By default, sandboxed Zed Agent tool actions have these restrictions:
 
 | Access type         | Default behavior                                                                                                                                                    |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Filesystem reads    | Terminal commands can read most of the filesystem. Protected Git metadata file contents are hidden on macOS; on Linux and Windows/WSL they remain readable.         |
+| Filesystem reads    | Terminal commands can read most of the filesystem, including protected Git metadata.                                                                                |
 | Project writes      | Terminal commands can write inside open project directories, except for protected Git metadata.                                                                     |
-| Git metadata        | `.git` directories and linked worktree Git metadata are protected unless you approve Git metadata access. Protection details differ by platform, described below.   |
+| Git metadata        | `.git` directories and linked worktree Git metadata remain readable but are not writable while sandboxed.                                                           |
 | Temporary files     | Terminal commands receive a writable temporary location. The exact behavior differs by platform.                                                                    |
 | Other writes        | Writes outside the default writable locations are blocked unless you approve a broader sandbox request.                                                             |
 | Outbound networking | Network access is blocked unless you approve a host-specific or unrestricted network sandbox request. Host-specific enforcement is not available on every platform. |
@@ -53,9 +52,8 @@ Depending on what the tool requested, the prompt can ask you to allow:
 
 - network access to specific hosts, such as `github.com` or `*.npmjs.org`
 - network access to any host
-- access to protected Git metadata, such as `.git` directories and linked worktree metadata
 - write access to specific filesystem paths
-- unrestricted filesystem writes
+- unrestricted filesystem writes, except protected Git metadata
 - running a terminal command without the sandbox
 
 You can grant a sandbox request for:
@@ -76,7 +74,6 @@ If you want to pre-approve common sandbox requests, add persistent permissions t
   "agent": {
     "sandbox_permissions": {
       "network_hosts": ["github.com", "*.npmjs.org"],
-      "allow_git_access": true,
       "write_paths": ["/Users/you/.cache/my-tool"]
     }
   }
@@ -89,13 +86,22 @@ The available options are:
 | -------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | `network_hosts`      | Hosts that sandboxed tools may reach without prompting. Entries can be exact hostnames or leading-`*.` wildcards. |
 | `allow_all_hosts`    | Allow sandboxed tools to reach any host without prompting.                                                        |
-| `allow_git_access`   | Allow sandboxed terminal commands to access protected Git metadata without prompting.                             |
 | `write_paths`        | Directory subtrees that sandboxed terminal commands may write to without prompting. Paths are absolute.           |
-| `allow_fs_write_all` | Allow sandboxed terminal commands to write anywhere without prompting.                                            |
+| `allow_fs_write_all` | Allow sandboxed terminal commands to write anywhere except protected Git metadata without prompting.              |
 | `allow_unsandboxed`  | Allow terminal commands to run outside the sandbox without prompting when the agent explicitly requests it.       |
 
-Prefer narrow grants, such as a specific host, Git metadata access, or write path, over `allow_all_hosts`,
-`allow_fs_write_all`, or `allow_unsandboxed`.
+Prefer narrow grants, such as a specific host or write path, over `allow_all_hosts`, `allow_fs_write_all`, or
+`allow_unsandboxed`.
+
+## Git Metadata {#git-metadata}
+
+Git metadata writes are not grantable while a terminal command is sandboxed. This includes writes to `.git` directories,
+linked worktree metadata, refs, the index, hooks, local Git config, and other Git-controlled metadata files. Approving a
+specific writable path or `allow_fs_write_all` does not make Git metadata writable.
+
+When a Git command genuinely needs to update Git metadata, such as `git commit`, `git fetch`, `git checkout`, or `git
+rebase`, approve unsandboxed execution instead. For read-only operations, prefer Git flags that avoid optional metadata
+writes when possible. For example, use `git --no-optional-locks status` instead of `git status`.
 
 ## Platform Support {#platform-support}
 
@@ -111,7 +117,8 @@ Sandboxed terminal commands:
 - can read the filesystem
 - can write inside open project directories, except protected Git metadata
 - can write to a per-thread temporary directory exposed through `$TMPDIR`, `$TMP`, and `$TEMP`
-- cannot read or write protected Git metadata unless you approve Git metadata access
+- can read protected Git metadata
+- cannot write protected Git metadata, even if you approve broader write access
 - cannot write elsewhere unless you approve additional paths or broader write access
 - cannot reach the network unless you approve network access
 
@@ -133,7 +140,7 @@ Sandboxed terminal commands:
 - can read the filesystem, including protected Git metadata contents
 - can write inside open project directories, except protected Git metadata
 - can write to `/tmp`, which is backed by a fresh temporary filesystem and is cleared between terminal tool calls
-- cannot write protected Git metadata unless you approve Git metadata access
+- cannot write protected Git metadata
 - cannot write elsewhere unless you approve additional paths or broader write access
 - cannot reach the network unless you approve network access
 
@@ -155,9 +162,9 @@ command cannot be confined by Zed Agent's OS sandbox in the same way.
 When running inside WSL, the Linux sandboxing behavior applies, including the requirement that `bwrap` not be setuid-root:
 
 - filesystem isolation is provided by Bubblewrap
-- protected Git metadata contents remain readable, but writes are blocked unless you approve Git metadata access
+- protected Git metadata contents remain readable, but writes are blocked
 - `/tmp` is temporary for sandboxed terminal calls
-- network access is all-or-nothing rather than host-specific
+- network access is all-or-nothing rather than host-specific, so host-specific network requests are rejected and the agent must request unrestricted network access when network access is needed
 
 If WSL is not installed, or if you choose to run a command without the sandbox, Zed falls back to the standard terminal
 behavior of running in your native shell. It selects the shell using the usual preference order: Git Bash (or scoop's
@@ -170,8 +177,6 @@ rather than WSL's `/mnt/c/...`), so a command written for the sandboxed WSL shel
 When reviewing a sandbox prompt, prefer the narrowest permission that lets the task proceed:
 
 - approve a specific host instead of all hosts when the destination is known
-- approve Git metadata access when the command needs to run Git operations such as `git fetch`, `git commit`, or
-  `git status`
 - approve a specific write path instead of unrestricted filesystem writes
 - approve unsandboxed execution only when the command cannot work inside the sandbox
 - use one-time approvals for unfamiliar commands

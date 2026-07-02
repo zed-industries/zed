@@ -9,10 +9,12 @@ use gpui::{
 };
 use itertools::Itertools as _;
 use project::agent_server_store::{AgentId, AgentServerStore, ExternalAgentSource};
-use settings::{CustomAgentServerSettings, SettingsStore, update_settings_file};
+use settings::{
+    AgentConfigOptionValue, CustomAgentServerSettings, SettingsStore, update_settings_file,
+};
 use ui::{
     AiSettingItem, AiSettingItemSource, AiSettingItemStatus, ContextMenu, ContextMenuEntry,
-    Divider, DividerColor, PopoverMenu, Tooltip, prelude::*,
+    Divider, PopoverMenu, Tooltip, prelude::*,
 };
 use util::ResultExt as _;
 use workspace::{MultiWorkspace, Workspace, create_and_open_local_file};
@@ -23,7 +25,7 @@ use crate::SettingsWindow;
 pub(crate) fn render_external_agents_page(
     settings_window: &SettingsWindow,
     scroll_handle: &ScrollHandle,
-    window: &mut Window,
+    _window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyElement {
     let agent_server_store = get_agent_server_store(settings_window, cx);
@@ -39,8 +41,6 @@ pub(crate) fn render_external_agents_page(
         render_no_project_state(cx)
     };
 
-    let add_agent_popover = render_add_agent_popover(settings_window, window, cx);
-
     v_flex()
         .id("external-agents-page")
         .size_full()
@@ -49,22 +49,11 @@ pub(crate) fn render_external_agents_page(
         .pb_16()
         .track_scroll(scroll_handle)
         .overflow_y_scroll()
+        .child(Label::new("External Agents"))
         .child(
-            h_flex()
-                .w_full()
-                .justify_between()
-                .items_center()
-                .mb_4()
-                .child(
-                    v_flex()
-                        .child(Label::new("External Agents").size(LabelSize::Large))
-                        .child(
-                            Label::new("All agents connected through the Agent Client Protocol.")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
-                )
-                .child(add_agent_popover),
+            Label::new("Agents connected through the Agent Client Protocol.")
+                .size(LabelSize::Small)
+                .color(Color::Muted),
         )
         .child(agent_list)
         .into_any_element()
@@ -163,11 +152,7 @@ fn render_agent_list(agents: Vec<AgentRow>, cx: &mut Context<SettingsWindow>) ->
             agents.into_iter().map(|(id, icon, display_name, source)| {
                 render_agent(id, icon, display_name, source, cx).into_any_element()
             }),
-            || {
-                Divider::horizontal()
-                    .color(DividerColor::BorderFaded)
-                    .into_any_element()
-            },
+            || Divider::horizontal().into_any_element(),
         ))
         .into_any_element()
 }
@@ -196,22 +181,20 @@ fn render_agent(
     // Only custom agents are editable here; registry agents are managed via the
     // ACP registry and only support removal.
     let configure_button = (source == ExternalAgentSource::Custom).then(|| {
-        IconButton::new(
-            SharedString::from(format!("configure-{}", id_string)),
-            IconName::Settings,
-        )
-        .icon_color(Color::Muted)
-        .icon_size(IconSize::Small)
-        .tab_index(0isize)
-        .tooltip(Tooltip::text("Configure Agent"))
-        .on_click(cx.listener({
-            let id = id.clone();
-            move |this, _event, window, cx| {
-                let existing =
-                    custom_agent_settings(&id, cx).map(|settings| (id.clone(), settings));
-                open_custom_agent_form(this, existing, window, cx);
-            }
-        }))
+        IconButton::new(format!("configure-{}", id_string), IconName::Settings)
+            .icon_color(Color::Muted)
+            .icon_size(IconSize::Small)
+            .size(ButtonSize::Medium)
+            .tab_index(0isize)
+            .tooltip(Tooltip::text("Configure Agent"))
+            .on_click(cx.listener({
+                let id = id.clone();
+                move |this, _event, window, cx| {
+                    let existing =
+                        custom_agent_settings(&id, cx).map(|settings| (id.clone(), settings));
+                    open_custom_agent_form(this, existing, window, cx);
+                }
+            }))
     });
 
     let remove_tooltip = match source {
@@ -219,17 +202,15 @@ fn render_agent(
         ExternalAgentSource::Custom => "Remove Custom Agent",
     };
 
-    let remove_button = IconButton::new(
-        SharedString::from(format!("uninstall-{}", id_string)),
-        IconName::Trash,
-    )
-    .icon_color(Color::Muted)
-    .icon_size(IconSize::Small)
-    .tab_index(0isize)
-    .tooltip(Tooltip::text(remove_tooltip))
-    .on_click(move |_event, _window, cx| {
-        remove_agent(&id, source, cx);
-    });
+    let remove_button = IconButton::new(format!("uninstall-{}", id_string), IconName::Trash)
+        .icon_color(Color::Muted)
+        .icon_size(IconSize::Small)
+        .size(ButtonSize::Medium)
+        .tab_index(0isize)
+        .tooltip(Tooltip::text(remove_tooltip))
+        .on_click(move |_event, _window, cx| {
+            remove_agent(&id, source, cx);
+        });
 
     // The connection status of an external agent is tracked per agent-panel
     // session (via the agent panel's `AgentConnectionStore`), which isn't
@@ -271,7 +252,7 @@ fn remove_agent(id: &AgentId, source: ExternalAgentSource, cx: &mut App) {
     });
 }
 
-fn render_add_agent_popover(
+pub(crate) fn render_add_agent_popover(
     settings_window: &SettingsWindow,
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,
@@ -366,7 +347,7 @@ pub(crate) struct CustomAgentForm {
     /// Advanced fields not surfaced by the form. They're preserved verbatim so
     /// editing the basic settings doesn't drop a user's hand-written config.
     default_mode: Option<String>,
-    default_config_options: HashMap<String, String>,
+    default_config_options: HashMap<String, AgentConfigOptionValue>,
     favorite_config_option_values: HashMap<String, Vec<String>>,
     /// Stable handles for the Cancel/Save buttons so they can render a focus
     /// ring. `Filled`/`Subtle` buttons only get a subtle `focus_visible`
@@ -812,7 +793,7 @@ struct CustomAgentFormValues {
     args: String,
     env: Vec<(String, String)>,
     default_mode: Option<String>,
-    default_config_options: HashMap<String, String>,
+    default_config_options: HashMap<String, AgentConfigOptionValue>,
     favorite_config_option_values: HashMap<String, Vec<String>>,
 }
 
@@ -1157,7 +1138,7 @@ mod tests {
         let mut values = values();
         values.default_mode = Some("ask".into());
         values.default_config_options =
-            HashMap::from_iter([("opt".to_string(), "val".to_string())]);
+            HashMap::from_iter([("opt".to_string(), AgentConfigOptionValue::from("val"))]);
 
         let (_, _, content) = build_settings_from_values(values).unwrap();
         match content {
@@ -1168,8 +1149,10 @@ mod tests {
             } => {
                 assert_eq!(default_mode.as_deref(), Some("ask"));
                 assert_eq!(
-                    default_config_options.get("opt").map(String::as_str),
-                    Some("val")
+                    default_config_options
+                        .get("opt")
+                        .and_then(AgentConfigOptionValue::as_value_id),
+                    Some("val"),
                 );
             }
             _ => panic!("expected a custom agent"),

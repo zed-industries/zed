@@ -106,6 +106,6 @@ enable = false
 # and other docs-related functions.
 #
 # Comment the below section out if you need to bypass the preprocessor for some reason.
-[preprocessor.zed_docs_preprocessor]
+[preprocessor.zed-docs-preprocessor]
 command = "cargo run -p docs_preprocessor --"
 renderer = ["html", "zed-html"]

@@ -41,7 +41,7 @@ agent paths and model access paths.
 
 ## API Keys and Environment Variables {#api-keys}
 
-Most API-access providers can be configured in Zed's Agent Settings panel with {#action agent::OpenSettings}. Keys saved through Zed are stored in the system keychain, not in `settings.json`.
+Most API-access providers can be configured on the **Settings → AI → LLM Providers** page with {#action agent::OpenSettings}. Keys saved through Zed are stored in the system keychain, not in `settings.json`.
 
 Zed also reads provider-specific environment variables. Non-empty environment variables take precedence over keychain values. If a key comes from an environment variable, unset the variable and restart Zed to stop using it.
 

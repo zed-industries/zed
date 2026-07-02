@@ -1259,6 +1259,49 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_visual_rename_uses_visible_cursor_position(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new_typescript(cx).await;
+
+    cx.set_state("const before = 2; console.log(«beforeˇ»)", Mode::Visual);
+
+    let expected_position = cx.to_lsp(MultiBufferOffset(
+        "const before = 2; console.log(befor".len(),
+    ));
+    let def_range = cx.lsp_range("const «beforeˇ» = 2; console.log(before)");
+    let tgt_range = cx.lsp_range("const before = 2; console.log(«beforeˇ»)");
+    let mut prepare_request = cx.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
+        move |_, params, _| async move {
+            assert_eq!(params.position, expected_position);
+            Ok(Some(lsp::PrepareRenameResponse::Range(def_range)))
+        },
+    );
+    let mut rename_request =
+        cx.set_request_handler::<lsp::request::Rename, _, _>(move |url, params, _| async move {
+            Ok(Some(lsp::WorkspaceEdit {
+                changes: Some(
+                    [(
+                        url.clone(),
+                        vec![
+                            lsp::TextEdit::new(def_range, params.new_name.clone()),
+                            lsp::TextEdit::new(tgt_range, params.new_name),
+                        ],
+                    )]
+                    .into(),
+                ),
+                ..Default::default()
+            }))
+        });
+
+    cx.simulate_keystrokes("g r n");
+    prepare_request.next().await.unwrap();
+    cx.simulate_input("after");
+    cx.simulate_keystrokes("enter");
+    rename_request.next().await.unwrap();
+
+    cx.assert_state("const after = 2; console.log(afterˇ)", Mode::Visual);
+}
+
+#[gpui::test]
 async fn test_go_to_definition(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new_typescript(cx).await;
 

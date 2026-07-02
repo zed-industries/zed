@@ -55,6 +55,9 @@ serde_json = { workspace = true, optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
+# Safe wrappers for the SCM_RIGHTS fd-passing and `fstat` the bind validator
+# needs, so that code doesn't hand-roll `msghdr`/`CMSG_*`/`mem::zeroed` unsafe.
+nix = { workspace = true, features = ["fs", "socket", "uio"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 tempfile.workspace = true

@@ -724,6 +724,19 @@ impl LanguageServers {
     fn is_empty(&self) -> bool {
         self.binary_statuses.is_empty() && self.health_statuses.is_empty()
     }
+
+    /// Drop all id-keyed state for a server that has been removed (stopped or
+    /// reaching end-of-life via restart). `binary_statuses` is intentionally
+    /// preserved — it is keyed by name and shared across restart cycles to
+    /// drive the "Downloading… → Starting…" status UX.
+    fn remove_server(&mut self, server_id: LanguageServerId) {
+        self.health_statuses.remove(&server_id);
+        self.servers_per_buffer_abs_path
+            .retain(|_, servers_for_path| {
+                servers_for_path.servers.remove(&server_id);
+                !servers_for_path.servers.is_empty()
+            });
+    }
 }
 
 #[derive(Debug)]
@@ -903,7 +916,6 @@ impl LspButton {
         let mut updated = false;
 
         // TODO `LspStore` is global and reports status from all language servers, even from the other windows.
-        // Also, we do not get "LSP removed" events so LSPs are never removed.
         match e {
             LspStoreEvent::LanguageServerUpdate {
                 language_server_id,
@@ -990,6 +1002,12 @@ impl LspButton {
                     if worktree.is_some() {
                         entry.worktree = worktree;
                     }
+                });
+                updated = true;
+            }
+            LspStoreEvent::LanguageServerRemoved(server_id) => {
+                self.server_state.update(cx, |state, _| {
+                    state.language_servers.remove_server(*server_id);
                 });
                 updated = true;
             }
@@ -1404,5 +1422,165 @@ impl Render for LspButton {
                     },
                 ),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn server_id(n: usize) -> LanguageServerId {
+        LanguageServerId(n)
+    }
+
+    fn server_name(s: &str) -> LanguageServerName {
+        LanguageServerName(s.into())
+    }
+
+    fn health_status(name: &str) -> LanguageServerHealthStatus {
+        LanguageServerHealthStatus {
+            name: server_name(name),
+            health: Some((None, ServerHealth::Ok)),
+        }
+    }
+
+    fn servers_for_path(servers: &[(LanguageServerId, &str)]) -> ServersForPath {
+        ServersForPath {
+            servers: servers
+                .iter()
+                .map(|(id, name)| (*id, Some(server_name(name))))
+                .collect(),
+            worktree: None,
+        }
+    }
+
+    /// `remove_server` evicts the id from `health_statuses` so a restarted
+    /// server's new id renders without inheriting the old one's stale entry.
+    /// This is the regression test for #53627.
+    #[test]
+    fn remove_server_drops_health_entry_for_id() {
+        let mut state = LanguageServers::default();
+        state
+            .health_statuses
+            .insert(server_id(1), health_status("rust-analyzer"));
+        state
+            .health_statuses
+            .insert(server_id(2), health_status("typescript-language-server"));
+
+        state.remove_server(server_id(1));
+
+        assert!(!state.health_statuses.contains_key(&server_id(1)));
+        assert!(state.health_statuses.contains_key(&server_id(2)));
+    }
+
+    /// `remove_server` evicts the id from each per-buffer entry; entries that
+    /// become empty are dropped so the map does not grow unbounded across
+    /// many buffer opens/closes.
+    #[test]
+    fn remove_server_evicts_id_from_per_buffer_entries_and_drops_empty_entries() {
+        let mut state = LanguageServers::default();
+        let buffer_a = PathBuf::from("/project/a.rs");
+        let buffer_b = PathBuf::from("/project/b.rs");
+
+        state.servers_per_buffer_abs_path.insert(
+            buffer_a.clone(),
+            servers_for_path(&[(server_id(1), "rust-analyzer")]),
+        );
+        state.servers_per_buffer_abs_path.insert(
+            buffer_b.clone(),
+            servers_for_path(&[(server_id(1), "rust-analyzer"), (server_id(2), "typos-lsp")]),
+        );
+
+        state.remove_server(server_id(1));
+
+        assert!(
+            !state.servers_per_buffer_abs_path.contains_key(&buffer_a),
+            "buffer_a's entry held only the removed server, so the entry itself should be dropped",
+        );
+        let buffer_b_entry = state
+            .servers_per_buffer_abs_path
+            .get(&buffer_b)
+            .expect("buffer_b's entry has another server, so it must be retained");
+        assert!(!buffer_b_entry.servers.contains_key(&server_id(1)));
+        assert!(buffer_b_entry.servers.contains_key(&server_id(2)));
+    }
+
+    /// `binary_statuses` is keyed by name and intentionally shared across
+    /// restart cycles to drive the "Downloading… → Starting…" UX. Removing a
+    /// single server's id must not touch it.
+    #[test]
+    fn remove_server_does_not_touch_binary_statuses() {
+        let mut state = LanguageServers::default();
+        state.binary_statuses.insert(
+            server_name("rust-analyzer"),
+            LanguageServerBinaryStatus {
+                status: BinaryStatus::Starting,
+                message: None,
+            },
+        );
+
+        state.remove_server(server_id(1));
+
+        assert!(
+            state
+                .binary_statuses
+                .contains_key(&server_name("rust-analyzer")),
+            "binary_statuses is name-keyed and shared across restart cycles",
+        );
+    }
+
+    /// Simulates the full restart event sequence: remove old id, register
+    /// new id with same name, write health for the new id. After restart
+    /// only the new id should be visible — no leftover entry from the old
+    /// incarnation.
+    #[test]
+    fn restart_sequence_leaves_only_new_server_id() {
+        let mut state = LanguageServers::default();
+        let buffer = PathBuf::from("/project/main.rs");
+        let name = "rust-analyzer";
+
+        // Pre-restart: server v1 is registered for the buffer with health.
+        state
+            .servers_per_buffer_abs_path
+            .insert(buffer.clone(), servers_for_path(&[(server_id(1), name)]));
+        state
+            .health_statuses
+            .insert(server_id(1), health_status(name));
+
+        // Restart: old id is removed.
+        state.remove_server(server_id(1));
+
+        // New id registers for the same buffer.
+        let entry = state
+            .servers_per_buffer_abs_path
+            .entry(buffer.clone())
+            .or_insert_with(|| ServersForPath {
+                servers: HashMap::default(),
+                worktree: None,
+            });
+        entry.servers.insert(server_id(2), Some(server_name(name)));
+
+        // Health update for the new id arrives.
+        state
+            .health_statuses
+            .insert(server_id(2), health_status(name));
+
+        let entry = state
+            .servers_per_buffer_abs_path
+            .get(&buffer)
+            .expect("buffer must still be tracked");
+        assert_eq!(
+            entry.servers.keys().copied().collect::<Vec<_>>(),
+            vec![server_id(2)],
+            "exactly one server for this buffer — the new incarnation",
+        );
+        assert!(
+            !state.health_statuses.contains_key(&server_id(1)),
+            "the dead server's health entry must not linger",
+        );
+        assert!(
+            state.health_statuses.contains_key(&server_id(2)),
+            "the new server's health entry is present",
+        );
     }
 }

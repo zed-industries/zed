@@ -1,12 +1,11 @@
 use anyhow::Result;
 use gpui::Action;
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
+    AnyElement, App, Bounds, ClickEvent, Context, DismissEvent, EventEmitter, FocusHandle,
     Focusable, ListSizingBehavior, ListState, MouseButton, MouseUpEvent, Pixels, ScrollStrategy,
     Task, UniformListScrollHandle, Window, actions, canvas, div, list, prelude::*, uniform_list,
 };
 use head::Head;
-use project::Project;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
@@ -32,8 +31,10 @@ use crate::shape::RelativeHeight;
 use crate::shape::RelativeWidth;
 pub use footer::PickerAction;
 pub use language::{HighlightedText, HighlightedTextBuilder};
+pub use preview::Layout as PreviewLayout;
 pub use preview::MatchLocation;
 pub use preview::Preview;
+pub use preview::PreviewBackend;
 pub use preview::PreviewSource;
 pub use preview::Update as PreviewUpdate;
 pub use ui_input::ErasedEditor;
@@ -139,6 +140,7 @@ pub struct Picker<D: PickerDelegate> {
     /// Handle for the default footer's Actions popover menu. Used to keep the
     /// picker open while that menu has focus.
     actions_menu_handle: PopoverMenuHandle<ContextMenu>,
+    reopenable: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -399,7 +401,7 @@ impl<D: PickerDelegate> Picker<D> {
     /// preview window where it shows extra information.
     pub fn uniform_list_with_preview(
         delegate: D,
-        project: Entity<Project>,
+        preview: Arc<dyn PreviewBackend>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -410,7 +412,7 @@ impl<D: PickerDelegate> Picker<D> {
             cx,
         );
 
-        let preview = Preview::new_editor(project, window, cx);
+        let preview = Preview::new(preview);
         Self::new(
             delegate,
             ContainerKind::UniformList,
@@ -427,7 +429,7 @@ impl<D: PickerDelegate> Picker<D> {
     /// (e.g. section headers and separators interleaved with matches).
     pub fn list_with_preview(
         delegate: D,
-        project: Entity<Project>,
+        preview: Arc<dyn PreviewBackend>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -438,7 +440,7 @@ impl<D: PickerDelegate> Picker<D> {
             cx,
         );
 
-        let preview = Preview::new_editor(project, window, cx);
+        let preview = Preview::new(preview);
         Self::new(
             delegate,
             ContainerKind::List,
@@ -543,7 +545,12 @@ impl<D: PickerDelegate> Picker<D> {
             item_bounds: Rc::new(RefCell::new(HashMap::default())),
             size_bounds,
             actions_menu_handle: PopoverMenuHandle::default(),
+            reopenable: true,
         };
+        if this.reopenable {
+            let focus_handle = this.focus_handle(cx);
+            workspace::register_reopenable_picker(&focus_handle, cx);
+        }
         this.update_matches("".to_string(), window, cx);
         // give the delegate 4ms to render the first set of suggestions.
         this.delegate
@@ -618,6 +625,24 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn show_scrollbar(mut self, show_scrollbar: bool) -> Self {
         self.show_scrollbar = show_scrollbar;
+        self
+    }
+
+    /// Controls whether a modal hosting this picker can be revealed again with
+    /// `workspace::ReopenLastPicker` after it's dismissed. Defaults to `true`;
+    /// pass `false` to exclude this picker. As a builder, this only takes effect
+    /// while constructing the picker, before it's opened.
+    pub fn reopenable(mut self, reopenable: bool, cx: &mut App) -> Self {
+        if reopenable == self.reopenable {
+            return self;
+        }
+        self.reopenable = reopenable;
+        let focus_handle = self.focus_handle(cx);
+        if reopenable {
+            workspace::register_reopenable_picker(&focus_handle, cx);
+        } else {
+            workspace::deregister_reopenable_picker(&focus_handle, cx);
+        }
         self
     }
 

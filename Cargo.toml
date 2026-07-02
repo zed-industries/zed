@@ -153,6 +153,7 @@ members = [
     "crates/panel",
     "crates/paths",
     "crates/picker",
+    "crates/picker_preview",
     "crates/platform_title_bar",
     "crates/prettier",
     "crates/project",
@@ -415,6 +416,7 @@ panel = { path = "crates/panel" }
 paths = { path = "crates/paths" }
 perf = { path = "tooling/perf" }
 picker = { path = "crates/picker" }
+picker_preview = { path = "crates/picker_preview" }
 prettier = { path = "crates/prettier" }
 settings_profile_selector = { path = "crates/settings_profile_selector" }
 project = { path = "crates/project" }
@@ -843,7 +845,7 @@ which = "6.0.0"
 wasm-bindgen = "0.2.120"
 web-time = "1.1.0"
 webrtc-sys = "0.3.23"
-wgpu = { git = "https://github.com/zed-industries/wgpu.git", rev = "357a0c56e0070480ad9daea5d2eaa83150b79e88" }
+wgpu = "29.0.4"
 windows-core = "0.61"
 yaml-rust2 = "0.8"
 yawc = "0.2.5"

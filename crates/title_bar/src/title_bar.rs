@@ -755,13 +755,13 @@ impl TitleBar {
             .get(&host_user.legacy_id)?;
 
         Some(
-            Button::new("project_owner_trigger", host_user.github_login.clone())
+            Button::new("project_owner_trigger", host_user.username.clone())
                 .color(Color::Player(participant_index.0))
                 .label_size(LabelSize::Small)
                 .tooltip(move |_, cx| {
                     let tooltip_title = format!(
                         "{} is sharing this project. Click to follow.",
-                        host_user.github_login
+                        host_user.username
                     );
 
                     Tooltip::with_meta(tooltip_title, None, "Click to Follow", cx)
@@ -1216,7 +1216,7 @@ impl TitleBar {
         let user = user_store.read(cx).current_user();
 
         let user_avatar = user.as_ref().map(|u| u.avatar_uri.clone());
-        let user_login = user.as_ref().map(|u| u.github_login.clone());
+        let username = user.as_ref().map(|u| u.username.clone());
 
         let is_signed_in = user.is_some();
 
@@ -1268,7 +1268,7 @@ impl TitleBar {
         PopoverMenu::new("user-menu")
             .trigger(trigger)
             .menu(move |window, cx| {
-                let user_login = user_login.clone();
+                let username = username.clone();
                 let current_organization = current_organization.clone();
                 let organizations = organizations.clone();
                 let user_store = user_store.clone();
@@ -1282,15 +1282,15 @@ impl TitleBar {
 
                 ContextMenu::build(window, cx, |menu, _, _cx| {
                     menu.when(is_signed_in, |this| {
-                        let user_login = user_login.clone();
+                        let username = username.clone();
                         this.custom_entry(
                             move |_window, _cx| {
-                                let user_login = user_login.clone().unwrap_or_default();
+                                let username = username.clone().unwrap_or_default();
 
                                 h_flex()
                                     .w_full()
                                     .justify_between()
-                                    .child(Label::new(user_login))
+                                    .child(Label::new(username))
                                     .into_any_element()
                             },
                             move |_, cx| {

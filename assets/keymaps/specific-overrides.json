@@ -39,6 +39,9 @@
       "ctrl-k": "pane::SplitUp",
       "ctrl-h": "pane::SplitLeft",
       "ctrl-l": "pane::SplitRight",
+      "ctrl-{": "text_finder::Fold",
+      "ctrl-}": "text_finder::Unfold",
+      "ctrl-shift-enter": "text_finder::ToggleFoldAll",
     },
   },
 ]

@@ -67,7 +67,7 @@ use std::any::TypeId;
 use std::path::{Path, PathBuf};
 use workspace::Workspace;
 
-use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
+use crate::agent_configuration::ManageProfilesModal;
 pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
 pub use crate::agent_panel::{
     AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo, MaxIdleRetainedThreads, TerminalId,
@@ -353,49 +353,6 @@ pub struct ToggleCommandPattern {
 #[serde(deny_unknown_fields)]
 pub struct NewThread;
 
-/// The kind of context server to configure when adding a new one.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ContextServerType {
-    /// A context server that runs locally via stdin/stdout.
-    #[default]
-    Local,
-    /// A context server that is connected to over HTTP.
-    Remote,
-}
-
-/// Adds a context server to the configuration.
-#[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
-#[action(namespace = agent)]
-#[serde(deny_unknown_fields)]
-pub struct AddContextServer {
-    /// The kind of context server to add.
-    #[serde(default)]
-    pub context_server_type: ContextServerType,
-}
-
-impl Default for AddContextServer {
-    fn default() -> Self {
-        Self::local()
-    }
-}
-
-impl AddContextServer {
-    /// Returns an action that adds a local (stdin/stdout) context server.
-    pub fn local() -> Self {
-        Self {
-            context_server_type: ContextServerType::Local,
-        }
-    }
-
-    /// Returns an action that adds a remote (HTTP) context server.
-    pub fn remote() -> Self {
-        Self {
-            context_server_type: ContextServerType::Remote,
-        }
-    }
-}
-
 /// Creates a new external agent conversation thread.
 #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
 #[action(namespace = agent)]
@@ -628,16 +585,12 @@ pub fn init(
         init_language_model_settings(cx);
     }
     agent_panel::init(cx);
-    context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
+    context_server_configuration::init(language_registry, fs.clone(), cx);
     thread_metadata_store::init(cx);
     terminal_thread_metadata_store::init(cx);
 
     inline_assistant::init(fs.clone(), prompt_builder.clone(), cx);
     terminal_inline_assistant::init(fs.clone(), prompt_builder, cx);
-    cx.observe_new(move |workspace, window, cx| {
-        ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
-    })
-    .detach();
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(
             move |workspace: &mut Workspace,
@@ -993,6 +946,7 @@ mod tests {
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
             commit_message_model: None,
+            commit_message_include_project_rules: true,
             commit_message_instructions: None,
             thread_summary_model: None,
             inline_alternatives: vec![],

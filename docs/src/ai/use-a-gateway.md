@@ -20,7 +20,7 @@ Use OpenRouter when you want to route Zed AI features through OpenRouter.
 
 1. Visit [OpenRouter](https://openrouter.ai) and create an account.
 2. Generate an API key from your [OpenRouter keys page](https://openrouter.ai/keys).
-3. Open Agent Settings with {#action agent::OpenSettings} and go to the OpenRouter section.
+3. Open **Settings → AI → LLM Providers** with {#action agent::OpenSettings} and find the OpenRouter row.
 4. Enter your OpenRouter API key.
 
 Zed also reads `OPENROUTER_API_KEY` from the local Zed process environment.
@@ -104,7 +104,7 @@ Supported fields include `order`, `allow_fallbacks`, `require_parameters`, `data
 Use Vercel AI Gateway when you want to route Zed AI features through Vercel.
 
 1. Create an API key from your Vercel AI Gateway keys page.
-2. Open Agent Settings with {#action agent::OpenSettings} and go to the Vercel AI Gateway section.
+2. Open **Settings → AI → LLM Providers** with {#action agent::OpenSettings} and find the Vercel AI Gateway row.
 3. Enter your Vercel AI Gateway API key.
 
 Zed also reads `VERCEL_AI_GATEWAY_API_KEY` from the local Zed process environment.

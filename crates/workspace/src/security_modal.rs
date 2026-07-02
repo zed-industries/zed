@@ -22,6 +22,8 @@ use ui::{
 };
 use ui_input::InputField;
 
+use util::paths::PathStyle;
+
 use crate::{DismissDecision, ModalView, ToggleWorktreeSecurity};
 
 pub struct SecurityModal {
@@ -387,7 +389,12 @@ impl SecurityModal {
             return Ok(None);
         };
         let typed = self.trust_path_input.read(cx).text(cx);
-        validate_trust_scope(&typed, &project, self.home_dir.as_deref()).map(Some)
+        let path_style = self
+            .worktree_store
+            .upgrade()
+            .map(|store| store.read(cx).path_style())
+            .unwrap_or_else(PathStyle::local);
+        validate_trust_scope(&typed, &project, self.home_dir.as_deref(), path_style).map(Some)
     }
 
     fn trust_and_dismiss(&mut self, cx: &mut Context<Self>) {
@@ -498,18 +505,20 @@ fn validate_trust_scope(
     typed: &str,
     project: &Path,
     home_dir: Option<&Path>,
+    path_style: PathStyle,
 ) -> Result<PathBuf, SharedString> {
     let trimmed = typed.trim();
     if trimmed.is_empty() {
         return Err("Enter a folder to trust".into());
     }
     let expanded = match (trimmed.strip_prefix('~'), home_dir) {
-        (Some(rest), Some(home_dir)) => {
-            home_dir.join(rest.strip_prefix(std::path::MAIN_SEPARATOR).unwrap_or(rest))
-        }
+        (Some(rest), Some(home_dir)) => home_dir.join(
+            rest.strip_prefix(path_style.primary_separator())
+                .unwrap_or(rest),
+        ),
         _ => PathBuf::from(trimmed),
     };
-    if !expanded.is_absolute() {
+    if !util::paths::is_absolute(&expanded.to_string_lossy(), path_style) {
         return Err("Enter an absolute folder path".into());
     }
     if !project.starts_with(&expanded) {
@@ -525,39 +534,44 @@ mod tests {
     #[test]
     fn accepts_ancestor_or_equal() {
         let project = Path::new("/Users/me/dev/delta/wt/t1");
+        let style = PathStyle::Posix;
         assert_eq!(
-            validate_trust_scope("/Users/me/dev/delta/wt", project, None).unwrap(),
+            validate_trust_scope("/Users/me/dev/delta/wt", project, None, style).unwrap(),
             PathBuf::from("/Users/me/dev/delta/wt"),
         );
         // Equal to the project itself is allowed.
         assert_eq!(
-            validate_trust_scope("/Users/me/dev/delta/wt/t1", project, None).unwrap(),
+            validate_trust_scope("/Users/me/dev/delta/wt/t1", project, None, style).unwrap(),
             PathBuf::from("/Users/me/dev/delta/wt/t1"),
         );
         // A distant ancestor is allowed.
-        assert!(validate_trust_scope("/Users/me/dev", project, None).is_ok());
+        assert!(validate_trust_scope("/Users/me/dev", project, None, style).is_ok());
     }
 
     #[test]
     fn rejects_non_ancestor_relative_or_empty() {
         let project = Path::new("/Users/me/dev/delta/wt/t1");
-        assert!(validate_trust_scope("/Users/other", project, None).is_err());
-        assert!(validate_trust_scope("relative/path", project, None).is_err());
-        assert!(validate_trust_scope("   ", project, None).is_err());
+        let style = PathStyle::Posix;
+        assert!(validate_trust_scope("/Users/other", project, None, style).is_err());
+        assert!(validate_trust_scope("relative/path", project, None, style).is_err());
+        assert!(validate_trust_scope("   ", project, None, style).is_err());
         // Deeper than the project is not an ancestor.
-        assert!(validate_trust_scope("/Users/me/dev/delta/wt/t1/sub", project, None).is_err());
+        assert!(
+            validate_trust_scope("/Users/me/dev/delta/wt/t1/sub", project, None, style).is_err()
+        );
     }
 
     #[test]
     fn expands_leading_tilde() {
         let home = Path::new("/Users/me");
         let project = Path::new("/Users/me/dev/wt/t1");
+        let style = PathStyle::Posix;
         assert_eq!(
-            validate_trust_scope("~/dev/wt", project, Some(home)).unwrap(),
+            validate_trust_scope("~/dev/wt", project, Some(home), style).unwrap(),
             PathBuf::from("/Users/me/dev/wt"),
         );
         assert_eq!(
-            validate_trust_scope("~", project, Some(home)).unwrap(),
+            validate_trust_scope("~", project, Some(home), style).unwrap(),
             PathBuf::from("/Users/me"),
         );
     }

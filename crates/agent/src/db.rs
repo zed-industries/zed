@@ -107,9 +107,7 @@ pub struct DbSandboxGrants {
     /// granted.
     #[serde(default)]
     pub allow_fs_write_all: bool,
-    /// Whether access to protected Git directories (`.git`) was granted.
-    #[serde(default)]
-    pub allow_git_access: bool,
+
     /// Whether the model-requested fully-unsandboxed escape was granted.
     #[serde(default)]
     pub unsandboxed: bool,
@@ -950,7 +948,6 @@ mod tests {
             write_paths: vec![PathBuf::from("/tmp/build")],
             network_hosts: vec!["github.com".to_string(), "*.npmjs.org".to_string()],
             network_any_host: false,
-            allow_git_access: true,
             allow_fs_write_all: false,
             unsandboxed: true,
             sandbox_fallback: true,
