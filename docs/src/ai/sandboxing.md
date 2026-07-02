@@ -98,11 +98,23 @@ unaligned agent may use these side channels to escalate privileges. For example:
 - An agent may modify a `Makefile` to inject a malicious script, which is
   executed **outside the sandbox** when you next run `make` in the built-in
   terminal.
+- The agent cannot write to your repository's protected `.git` directory, but it
+  can create a submodule under your project whose Git metadata (including config
+  such as `core.fsmonitor`) it fully controls. That metadata may then be executed
+  **outside the sandbox** when you subsequently run Git commands in a regular
+  terminal. Your shell prompt may even execute Git commands every time it
+  renders!
 
-There are steps you can take to mitigate these approaches (e.g. disabling
-language servers which run user-defined arbitrary code). But **a sandbox is not
-a substitute for good security practices**. It is one layer in a
-defense-in-depth strategy.
+There are steps you can take to mitigate these issues. For example:
+- disable language servers that execute user-defined code from the project (such
+  as Rust procedural macros).
+- use a shell prompt that reports Git status without executing
+  repository-defined programs.
+- review the diff before running `git commit`
+
+But none of this changes the fundamental principle: **a sandbox is not a
+substitute for good security practices**. It is one layer in a defense-in-depth
+strategy.
 
 Zed's default profile aims to strike a balance between security and convenience,
 but we encourage you to tune your settings based on your own security

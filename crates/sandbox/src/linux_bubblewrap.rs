@@ -903,8 +903,18 @@ fn build_command_seccomp_program() -> Result<Option<seccompiler::BpfProgram>> {
     // family is none of the allowed ones, and a matched rule takes the deny
     // action; an allowed family matches no rule and falls through to `Allow`.
     let socket_deny = SeccompRule::new(vec![
-        SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, libc::AF_INET as u64)?,
-        SeccompCondition::new(0, SeccompCmpArgLen::Dword, SeccompCmpOp::Ne, libc::AF_INET6 as u64)?,
+        SeccompCondition::new(
+            0,
+            SeccompCmpArgLen::Dword,
+            SeccompCmpOp::Ne,
+            libc::AF_INET as u64,
+        )?,
+        SeccompCondition::new(
+            0,
+            SeccompCmpArgLen::Dword,
+            SeccompCmpOp::Ne,
+            libc::AF_INET6 as u64,
+        )?,
         SeccompCondition::new(
             0,
             SeccompCmpArgLen::Dword,
@@ -1904,8 +1914,7 @@ mod tests {
             None,
             None,
         );
-        let error =
-            result.expect_err("must fail closed when a writable path can't be provided");
+        let error = result.expect_err("must fail closed when a writable path can't be provided");
         assert!(
             error.to_string().contains("writable sandbox path"),
             "unexpected error: {error:#}"
