@@ -81,7 +81,9 @@ const HELPER_RESULT_PREFIX: &str = "zed-wsl-helper:";
 /// (`~/.local/libexec/zed/<channel>`, the conventional spot for executables run
 /// by other programs rather than directly by the user). One managed copy per
 /// channel is kept, tracked by a marker file so an exact channel+version match
-/// is reused rather than re-downloaded.
+/// is reused rather than re-downloaded. The floating `latest` version (dev
+/// builds) is the exception: it always re-downloads so it tracks the newest
+/// nightly rather than pinning to the first copy fetched.
 ///
 /// We ship no `zed` (nor `bwrap`) into WSL ourselves; this downloads `zed` on
 /// demand. A missing `curl`/`wget` (or a failed download) is a hard error the
@@ -94,9 +96,11 @@ dest="$HOME/.local/libexec/zed/$channel"
 marker="$dest/.zed-wsl-helper-version"
 want="$channel $version"
 
-# Reuse an exact, already-installed channel+version.
-if [ "$(cat "$marker" 2>/dev/null || true)" = "$want" ]; then
-    helper=$(find "$dest" -type f -path '*/bin/zed' -print 2>/dev/null | head -n 1 || true)
+# Reuse an exact, already-installed channel+version — but never for the floating
+# "latest" tag (dev builds), which must always re-fetch so they track the most
+# recent nightly instead of pinning to whatever was downloaded first.
+if [ "$version" != "latest" ] && [ "$(cat "$marker" 2>/dev/null || true)" = "$want" ]; then
+    helper=$(find "$dest" -type f -path '*/libexec/zed-editor' -print 2>/dev/null | head -n 1 || true)
     if [ -n "$helper" ] && [ -x "$helper" ]; then
         printf 'zed-wsl-helper: %s\n' "$helper"
         exit 0
@@ -125,9 +129,9 @@ fi
 
 mkdir -p "$tmp/unpacked"
 tar -xzf "$tarball" -C "$tmp/unpacked"
-helper_src=$(find "$tmp/unpacked" -type f -path '*/bin/zed' -print 2>/dev/null | head -n 1 || true)
+helper_src=$(find "$tmp/unpacked" -type f -path '*/libexec/zed-editor' -print 2>/dev/null | head -n 1 || true)
 if [ -z "$helper_src" ]; then
-    echo 'the downloaded zed tarball did not contain a bin/zed binary' >&2
+    echo 'the downloaded zed tarball did not contain a libexec/zed-editor binary' >&2
     exit 1
 fi
 app=$(dirname "$(dirname "$helper_src")")
@@ -144,7 +148,7 @@ mv "$dest.new" "$dest"
 rm -rf "$dest.old"
 printf '%s' "$want" > "$marker"
 
-helper=$(find "$dest" -type f -path '*/bin/zed' -print 2>/dev/null | head -n 1 || true)
+helper=$(find "$dest" -type f -path '*/libexec/zed-editor' -print 2>/dev/null | head -n 1 || true)
 if [ -z "$helper" ] || [ ! -x "$helper" ]; then
     echo "the installed zed sandbox helper is missing or not executable under $dest" >&2
     exit 1
