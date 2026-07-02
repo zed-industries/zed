@@ -63,12 +63,14 @@ pub struct WindowsWindowState {
     pub direct_manipulation: DirectManipulationHandler,
 
     pub renderer: RefCell<DirectXRenderer>,
-    /// Set after a GPU device-lost recovery so the next `draw_window` call is
-    /// treated as a forced render. This guarantees the next frame both
-    /// re-enables drawing (via `mark_drawable`) and bypasses the GPUI view
-    /// cache, which would otherwise replay stale atlas tile references from
-    /// the previous frame and panic in `DirectXAtlasState::texture`.
-    pub force_render_after_recovery: Cell<bool>,
+    /// Set when the next `draw_window` call must be treated as a forced
+    /// render. Used after a GPU device-lost recovery, where the next frame
+    /// must both re-enable drawing (via `mark_drawable`) and bypass the GPUI
+    /// view cache (which would otherwise replay stale atlas tile references
+    /// from the previous frame and panic in `DirectXAtlasState::texture`),
+    /// and when a forced render was requested while another draw was in
+    /// progress and had to be deferred.
+    pub force_render_pending: Cell<bool>,
 
     pub click_state: ClickState,
     pub current_cursor: Cell<Option<HCURSOR>>,
@@ -166,7 +168,7 @@ impl WindowsWindowState {
             last_reported_capslock: Cell::new(last_reported_capslock),
             hovered: Cell::new(hovered),
             renderer: RefCell::new(renderer),
-            force_render_after_recovery: Cell::new(false),
+            force_render_pending: Cell::new(false),
             click_state,
             current_cursor: Cell::new(current_cursor),
             cursor_visible,

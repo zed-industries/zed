@@ -44,7 +44,10 @@ struct DrawWindowGuard;
 
 impl DrawWindowGuard {
     fn try_acquire() -> Option<Self> {
-        if DRAWING_WINDOW.get() {
+        // Also check GPUI's own draw depth, which covers draws that don't go
+        // through `draw_window` (e.g. key dispatch or opening a window draws
+        // synchronously) but can still be re-entered by the window procedure.
+        if DRAWING_WINDOW.get() || gpui::draw_in_progress() {
             None
         } else {
             DRAWING_WINDOW.set(true);
@@ -1232,7 +1235,7 @@ impl WindowsWindowInner {
         // from the forced WM_GPUI_FORCE_UPDATE_WINDOW or a stray WM_PAINT in
         // between) is treated as a forced render so it both clears
         // `skip_draws` and bypasses the view cache.
-        self.state.force_render_after_recovery.set(true);
+        self.state.force_render_pending.set(true);
         Some(0)
     }
 
@@ -1247,7 +1250,7 @@ impl WindowsWindowInner {
             // Defer this re-entrant draw: leave the window invalidated so a fresh
             // WM_PAINT arrives once the in-progress draw has unwound.
             if force_render {
-                self.state.force_render_after_recovery.set(true);
+                self.state.force_render_pending.set(true);
             }
             unsafe {
                 RedrawWindow(Some(handle), None, None, RDW_INVALIDATE)
@@ -1270,7 +1273,7 @@ impl WindowsWindowInner {
             }
         }
 
-        let force_render = force_render || self.state.force_render_after_recovery.take();
+        let force_render = force_render || self.state.force_render_pending.take();
         if force_render {
             // Re-enable drawing after a device loss recovery. The forced render
             // will rebuild the scene with fresh atlas textures.

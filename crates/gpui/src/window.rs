@@ -276,6 +276,19 @@ thread_local! {
     /// This allows multiple test Apps to have isolated arenas, preventing
     /// cross-session corruption when the scheduler interleaves their tasks.
     static CURRENT_ELEMENT_ARENA: Cell<Option<*const RefCell<Arena>>> = const { Cell::new(None) };
+
+    /// The nesting depth of `Window::draw` calls on this thread, across all
+    /// windows and Apps. See [`draw_in_progress`].
+    static WINDOW_DRAW_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Whether a window draw is currently in progress on this thread.
+///
+/// Platform layers use this to defer draw requests that arrive re-entrantly
+/// while a draw is already on the stack (e.g. via nested message pumping in
+/// the Windows window procedure), instead of running a nested draw.
+pub fn draw_in_progress() -> bool {
+    WINDOW_DRAW_DEPTH.with(|depth| depth.get() > 0)
 }
 
 /// Allocates an element in the current arena. Uses the app-specific arena if one
@@ -308,6 +321,7 @@ impl ElementArenaScope {
     /// Enter a scope where element allocations use the given arena.
     pub(crate) fn enter(arena: &RefCell<Arena>) -> Self {
         arena.borrow_mut().begin_scope();
+        WINDOW_DRAW_DEPTH.with(|depth| depth.set(depth.get() + 1));
         let previous = CURRENT_ELEMENT_ARENA.with(|current| {
             let prev = current.get();
             current.set(Some(arena as *const RefCell<Arena>));
@@ -324,6 +338,14 @@ impl Drop for ElementArenaScope {
     fn drop(&mut self) {
         CURRENT_ELEMENT_ARENA.with(|current| {
             current.set(self.previous);
+        });
+        WINDOW_DRAW_DEPTH.with(|depth| {
+            depth.set(
+                depth
+                    .get()
+                    .checked_sub(1)
+                    .expect("window draw depth underflow"),
+            )
         });
         // SAFETY: The pointer is valid because the arena is owned by the App,
         // which outlives the draw operation that entered this scope.

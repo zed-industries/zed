@@ -109,9 +109,16 @@ impl Arena {
     }
 
     /// Ends the innermost scope started with `begin_scope`.
+    ///
+    /// Panics if no scope is active: an unbalanced `end_scope` would let `clear`
+    /// run while an enclosing scope still references arena memory, which is
+    /// exactly the use-after-free this bookkeeping exists to prevent, so failing
+    /// loudly here is preferable.
     pub fn end_scope(&mut self) {
-        debug_assert!(self.scope_depth > 0, "end_scope called without begin_scope");
-        self.scope_depth = self.scope_depth.saturating_sub(1);
+        self.scope_depth = self
+            .scope_depth
+            .checked_sub(1)
+            .expect("Arena::end_scope called without a matching begin_scope");
     }
 
     /// Drops all allocations and resets the arena, unless a scope is still active.
@@ -362,5 +369,14 @@ mod tests {
         assert_eq!(*value, 1);
         arena.clear();
         assert!(!value.valid.get());
+    }
+
+    #[test]
+    #[should_panic(expected = "Arena::end_scope called without a matching begin_scope")]
+    fn test_unbalanced_end_scope_panics() {
+        let mut arena = Arena::new(1024);
+        arena.begin_scope();
+        arena.end_scope();
+        arena.end_scope();
     }
 }
