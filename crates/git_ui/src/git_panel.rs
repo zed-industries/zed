@@ -85,6 +85,7 @@ use ui::{
     IndentGuideColors, KeyBinding, PopoverMenu, PopoverMenuHandle, ProjectEmptyState,
     RenderedIndentGuide, ScrollAxes, Scrollbars, SplitButton, Tab, TintColor, Tooltip,
     WithScrollbar, prelude::*,
+    IconButtonShape,
 };
 use util::paths::PathStyle;
 use util::{ResultExt, TryFutureExt, markdown::MarkdownInlineCode, maybe, rel_path::RelPath};
@@ -1156,7 +1157,9 @@ impl GitPanel {
                 .map(|status| status.status)
                 .map(|status| {
                     if GitPanelSettings::get_global(cx).group_by == GitPanelGroupBy::Staging {
-                        if status.staging().has_staged() {
+                        if status.is_conflicted() {
+                            Section::Conflict
+                        } else if status.staging().has_staged() {
                             Section::Staged
                         } else {
                             Section::Unstaged
@@ -4342,7 +4345,9 @@ impl GitPanel {
                 single_staged_entry = Some(entry.clone());
             }
 
-            if group_by_staging {
+            if group_by_staging && entry.status.is_conflicted() {
+                conflict_entries.push(entry);
+            } else if group_by_staging {
                 if staging.has_staged() {
                     staged_entries.push(entry.clone());
                 }
@@ -4433,6 +4438,7 @@ impl GitPanel {
 
         let section_entries = if group_by_staging {
             vec![
+                (Section::Conflict, std::mem::take(&mut conflict_entries)),
                 (Section::Staged, std::mem::take(&mut staged_entries)),
                 (Section::Unstaged, std::mem::take(&mut unstaged_entries)),
             ]
@@ -4566,12 +4572,26 @@ impl GitPanel {
         })
     }
 
-    fn staging_action_for_section(section: Section) -> Option<(bool, &'static str, &'static str)> {
+    fn staging_action_for_section(section: Section) -> Option<(bool, IconName, &'static str)> {
         match section {
-            Section::Staged => Some((false, "-", "Unstage")),
-            Section::Unstaged => Some((true, "+", "Stage")),
+            Section::Staged => Some((false, IconName::Dash, "Unstage")),
+            Section::Unstaged => Some((true, IconName::Plus, "Stage")),
             _ => None,
         }
+    }
+
+    fn staging_action_button(
+        id: ElementId,
+        icon: IconName,
+        action: &'static str,
+        disabled: bool,
+    ) -> IconButton {
+        IconButton::new(id, icon)
+            .disabled(disabled)
+            .icon_size(IconSize::Small)
+            .shape(IconButtonShape::Square)
+            .style(ButtonStyle::Subtle)
+            .aria_label(action)
     }
 
     fn update_counts(&mut self, repo: &Repository) {
@@ -6572,10 +6592,13 @@ impl GitPanel {
         let section = header.header;
         let weak = cx.weak_entity();
         let staging_action = Self::staging_action_for_section(section);
+        let staging_conflict = GitPanelSettings::get_global(cx).group_by
+            == GitPanelGroupBy::Staging
+            && section == Section::Conflict;
 
         h_flex()
             .id(id)
-            .cursor_pointer()
+            .when(!staging_conflict, |this| this.cursor_pointer())
             .group(group_name)
             .h(self.list_item_height())
             .w_full()
@@ -6591,11 +6614,10 @@ impl GitPanel {
                     .color(Color::Muted)
                     .size(LabelSize::Small),
             )
-            .child(if let Some((_stage, label, action)) = staging_action {
-                Button::new(checkbox_id, label)
-                    .disabled(!has_write_access)
-                    .label_size(LabelSize::Small)
-                    .style(ButtonStyle::Subtle)
+            .child(if staging_conflict {
+                div().into_any_element()
+            } else if let Some((_stage, icon, action)) = staging_action {
+                Self::staging_action_button(checkbox_id, icon, action, !has_write_access)
                     .tooltip(move |_window, cx| Tooltip::simple(format!("{action} all"), cx))
                     .into_any_element()
             } else {
@@ -6606,7 +6628,7 @@ impl GitPanel {
                     .into_any_element()
             })
             .on_click(move |_, window, cx| {
-                if !has_write_access {
+                if !has_write_access || staging_conflict {
                     return;
                 }
 
@@ -6801,9 +6823,12 @@ impl GitPanel {
             ElementId::Name(format!("entry_{}_{}_checkbox", display_name, ix).into());
 
         let stage_status = GitPanel::stage_status_for_entry(entry, &repo);
+        let section = self.section_for_entry_index(ix);
+        let staging_conflict = settings.group_by == GitPanelGroupBy::Staging
+            && section == Some(Section::Conflict)
+            && status.is_conflicted();
         let staging_action = if settings.group_by == GitPanelGroupBy::Staging {
-            self.section_for_entry_index(ix)
-                .and_then(Self::staging_action_for_section)
+            section.and_then(Self::staging_action_for_section)
         } else {
             None
         };
@@ -6919,11 +6944,31 @@ impl GitPanel {
                     .flex_none()
                     .occlude()
                     .cursor_pointer()
-                    .child(if let Some((stage, label, action)) = staging_action {
-                        Button::new(checkbox_id, label)
-                            .disabled(!has_write_access)
-                            .label_size(LabelSize::Small)
-                            .style(ButtonStyle::Subtle)
+                    .child(if staging_conflict {
+                        Self::staging_action_button(
+                            checkbox_id,
+                            IconName::Check,
+                            "Mark as Resolved",
+                            !has_write_access,
+                        )
+                        .on_click({
+                            let entry = entry.clone();
+                            let this = cx.weak_entity();
+                            move |_, _window, cx| {
+                                this.update(cx, |this, cx| {
+                                    if !has_write_access {
+                                        return;
+                                    }
+                                    this.change_file_stage(true, vec![entry.clone()], cx);
+                                    cx.stop_propagation();
+                                })
+                                .ok();
+                            }
+                        })
+                        .tooltip(move |_window, cx| Tooltip::simple("Mark as Resolved", cx))
+                        .into_any_element()
+                    } else if let Some((stage, icon, action)) = staging_action {
+                        Self::staging_action_button(checkbox_id, icon, action, !has_write_access)
                             .on_click({
                                 let entry = entry.clone();
                                 let this = cx.weak_entity();
@@ -7088,6 +7133,8 @@ impl GitPanel {
         } else {
             None
         };
+        let staging_conflict =
+            settings.group_by == GitPanelGroupBy::Staging && entry.key.section == Section::Conflict;
 
         let name_row = h_flex()
             .min_w_0()
@@ -7132,11 +7179,10 @@ impl GitPanel {
                     .flex_none()
                     .occlude()
                     .cursor_pointer()
-                    .child(if let Some((_stage, label, action)) = staging_action {
-                        Button::new(checkbox_id, label)
-                            .disabled(!has_write_access)
-                            .label_size(LabelSize::Small)
-                            .style(ButtonStyle::Subtle)
+                    .child(if staging_conflict {
+                        div().into_any_element()
+                    } else if let Some((_stage, icon, action)) = staging_action {
+                        Self::staging_action_button(checkbox_id, icon, action, !has_write_access)
                             .on_click({
                                 let entry = entry.clone();
                                 let this = cx.weak_entity();
@@ -8868,7 +8914,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_group_by_staging(cx: &mut TestAppContext) {
+    async fn test_group_by_staging_section_membership_and_order(cx: &mut TestAppContext) {
         use GitListEntry::*;
 
         init_test(cx);
@@ -8955,11 +9001,12 @@ mod tests {
         pretty_assertions::assert_matches!(
             entries.as_slice(),
             &[
+                Header(GitHeaderEntry { header: Section::Conflict }),
+                Status(GitStatusEntry { status: FileStatus::Unmerged(..), staging: StageStatus::Unstaged, .. }),
                 Header(GitHeaderEntry { header: Section::Staged }),
                 Status(GitStatusEntry { staging: StageStatus::PartiallyStaged, .. }),
                 Status(GitStatusEntry { staging: StageStatus::Staged, .. }),
                 Header(GitHeaderEntry { header: Section::Unstaged }),
-                Status(GitStatusEntry { status: FileStatus::Unmerged(..), staging: StageStatus::Unstaged, .. }),
                 Status(GitStatusEntry { status: FileStatus::Untracked, staging: StageStatus::Unstaged, .. }),
                 Status(GitStatusEntry { staging: StageStatus::PartiallyStaged, .. }),
                 Status(GitStatusEntry { staging: StageStatus::Unstaged, .. }),
@@ -8969,15 +9016,139 @@ mod tests {
             &entries,
             &[
                 None,
+                Some("conflict.rs"),
+                None,
                 Some("partial.rs"),
                 Some("staged.rs"),
                 None,
-                Some("conflict.rs"),
                 Some("new.rs"),
                 Some("partial.rs"),
                 Some("unstaged.rs"),
             ],
         );
+    }
+
+    #[gpui::test]
+    async fn test_staging_conflict_mark_resolved_transition(cx: &mut TestAppContext) {
+        use GitListEntry::*;
+
+        init_test(cx);
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "conflict.rs": "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n",
+            }),
+        )
+        .await;
+
+        let unresolved_status = FileStatus::Unmerged(UnmergedStatus {
+            first_head: UnmergedStatusCode::Updated,
+            second_head: UnmergedStatusCode::Updated,
+        });
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("conflict.rs", unresolved_status)],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().group_by =
+                        Some(GitPanelGroupBy::Staging);
+                })
+            });
+        });
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+        cx.executor().run_until_parked();
+
+        let panel = workspace.update_in(&mut cx, GitPanel::new);
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        let conflict_entry = panel.read_with(&cx, |panel, _| {
+            pretty_assertions::assert_matches!(
+                panel.entries.as_slice(),
+                &[
+                    Header(GitHeaderEntry {
+                        header: Section::Conflict
+                    }),
+                    Status(GitStatusEntry {
+                        status: FileStatus::Unmerged(..),
+                        ..
+                    }),
+                ],
+            );
+            panel
+                .entries
+                .get(1)
+                .and_then(GitListEntry::status_entry)
+                .cloned()
+                .expect("conflict entry should exist")
+        });
+
+        panel.update_in(&mut cx, |panel, _window, cx| {
+            panel.change_file_stage(true, vec![conflict_entry.clone()], cx);
+        });
+        cx.run_until_parked();
+
+        panel.read_with(&cx, |panel, _| {
+            assert!(matches!(
+                panel.entries.as_slice(),
+                [
+                    Header(GitHeaderEntry {
+                        header: Section::Conflict
+                    }),
+                    Status(GitStatusEntry {
+                        status: FileStatus::Unmerged(..),
+                        ..
+                    }),
+                ]
+            ));
+        });
+
+        fs.set_status_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("conflict.rs", FileStatus::index(StatusCode::Modified))],
+        );
+        cx.run_until_parked();
+        await_git_panel_entries(&panel, &mut cx).await;
+
+        panel.read_with(&cx, |panel, _| {
+            pretty_assertions::assert_matches!(
+                panel.entries.as_slice(),
+                &[
+                    Header(GitHeaderEntry {
+                        header: Section::Staged
+                    }),
+                    Status(GitStatusEntry {
+                        staging: StageStatus::Staged,
+                        ..
+                    }),
+                ],
+            );
+            assert_eq!(panel.entry_count, 1);
+        });
     }
 
     #[gpui::test]
