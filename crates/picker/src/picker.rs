@@ -1737,7 +1737,11 @@ mod tests {
             picker.handle_click(0, false, window, cx);
             picker.handle_click(2, false, window, cx);
         });
-        assert_eq!(confirmed_index.take(), None, "in-mode clicks must not confirm");
+        assert_eq!(
+            confirmed_index.take(),
+            None,
+            "in-mode clicks must not confirm"
+        );
         picker.update(cx, |picker, _cx| {
             assert!(picker.delegate.is_item_selected(0));
             assert!(picker.delegate.is_item_selected(2));

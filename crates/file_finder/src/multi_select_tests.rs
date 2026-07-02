@@ -157,9 +157,11 @@ impl TestContext {
 
     #[track_caller]
     fn assert_active_pane_items(&mut self, expected: &[&str]) {
-        let mut items = self.pane_item_names(&self.workspace.read_with(&self.cx, |workspace, _| {
-            workspace.active_pane().clone()
-        }));
+        let mut items = self.pane_item_names(
+            &self
+                .workspace
+                .read_with(&self.cx, |workspace, _| workspace.active_pane().clone()),
+        );
         let mut expected: Vec<String> = expected.iter().map(|name| name.to_string()).collect();
         items.sort();
         expected.sort();
@@ -169,9 +171,7 @@ impl TestContext {
     fn pane_item_names(&mut self, pane: &Entity<pane::Pane>) -> Vec<String> {
         pane.read_with(&self.cx, |pane, cx| {
             pane.items()
-                .filter_map(|item| {
-                    Some(item.project_path(cx)?.path.file_name()?.to_owned())
-                })
+                .filter_map(|item| Some(item.project_path(cx)?.path.file_name()?.to_owned()))
                 .collect()
         })
     }
@@ -286,5 +286,9 @@ async fn secondary_confirm_opens_one_split_per_file(cx: &mut TestAppContext) {
 
     cx.secondary_confirm();
     cx.assert_finder_closed();
-    assert_eq!(cx.pane_count(), 3, "each selected file opens in its own split");
+    assert_eq!(
+        cx.pane_count(),
+        3,
+        "each selected file opens in its own split"
+    );
 }

@@ -498,8 +498,7 @@ impl PartialEq<Match> for SelectedMatch {
             }
             (Match::History { path: h, .. }, Match::Search(s))
             | (Match::Search(s), Match::History { path: h, .. }) => {
-                h.project.worktree_id.to_usize() == s.0.worktree_id
-                    && h.project.path == s.0.path
+                h.project.worktree_id.to_usize() == s.0.worktree_id && h.project.path == s.0.path
             }
             _ => false,
         }
