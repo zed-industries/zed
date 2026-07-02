@@ -4106,6 +4106,138 @@ async fn test_collapse_all_entries_with_collapsed_root(cx: &mut gpui::TestAppCon
 }
 
 #[gpui::test]
+async fn test_create_entry_expands_collapsed_ancestors(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "a": {
+                "b": {
+                    "file.txt": "",
+                },
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    // Reveal the nested directory
+    toggle_expand_dir(&panel, "root/a", cx);
+    toggle_expand_dir(&panel, "root/a/b", cx);
+    cx.run_until_parked();
+
+    // Collapse the whole tree
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &["v root", "    > a"],
+        "Nested directories are collapsed before creating the new entry"
+    );
+
+    // Target the still-collapsed nested directory and create a folder inside it
+    select_path(&panel, "root/a/b", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_directory(&NewDirectory, window, cx);
+    });
+    cx.run_until_parked();
+    panel
+        .update_in(cx, |panel, window, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                editor.set_text("new_dir", window, cx);
+            });
+            panel.confirm_edit(true, window, cx).unwrap()
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    // The collapsed ancestor chain must auto-expand so the new entry is revealed
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v root",
+            "    v a",
+            "        v b",
+            "            v new_dir  <== selected",
+            "              file.txt",
+        ],
+        "Creating inside a collapsed directory expands its ancestors and reveals the new entry"
+    );
+}
+
+#[gpui::test]
+async fn test_collapse_all_cancels_in_progress_edit(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "dir1": {
+                "file.txt": "",
+            },
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    toggle_expand_dir(&panel, "root/dir1", cx);
+    select_path(&panel, "root/dir1", cx);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.new_file(&NewFile, window, cx);
+    });
+    cx.run_until_parked();
+    panel.read_with(cx, |panel, _| {
+        assert!(panel.state.edit_state.is_some(), "create prompt is open");
+    });
+
+    // Collapsing while the prompt is open cancels it rather than stranding the edit row
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx);
+    });
+    cx.run_until_parked();
+    panel.read_with(cx, |panel, _| {
+        assert!(panel.state.edit_state.is_none(), "create prompt is cancelled");
+    });
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &["v root", "    > dir1"],
+        "Collapsing cancels the in-progress create and leaves a cleanly collapsed tree"
+    );
+}
+
+#[gpui::test]
 async fn test_collapse_all_entries_with_invisible_worktree(cx: &mut gpui::TestAppContext) {
     init_test_with_editor(cx);
 

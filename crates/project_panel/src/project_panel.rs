@@ -61,7 +61,8 @@ use std::{
 };
 use theme_settings::ThemeSettings;
 use ui::{
-    ContextMenu, DecoratedIcon, IconDecoration, IconDecorationKind, IndentGuideColors,
+    ContextMenu, DecoratedIcon, IconButtonShape, IconDecoration, IconDecorationKind,
+    IndentGuideColors,
     IndentGuideLayout, Indicator, KeyBinding, ListItem, ListItemSpacing, ProjectEmptyState,
     ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
 };
@@ -158,6 +159,7 @@ pub struct ProjectPanel {
     // We keep track of the mouse down state on entries so we don't flash the UI
     // in case a user clicks to open a file.
     mouse_down: bool,
+    is_hovered: bool,
     hover_expand_task: Option<Task<()>>,
     previous_drag_position: Option<Point<Pixels>>,
     sticky_items_count: usize,
@@ -850,6 +852,7 @@ impl ProjectPanel {
                 diagnostic_summary_update: Task::ready(()),
                 scroll_handle,
                 mouse_down: false,
+                is_hovered: false,
                 hover_expand_task: None,
                 previous_drag_position: None,
                 sticky_items_count: 0,
@@ -1460,6 +1463,7 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.discard_edit_state(window, cx);
         let roots = self.all_worktree_roots(cx);
         self.collapse_worktree_roots(roots, window, cx);
     }
@@ -2181,8 +2185,14 @@ impl ProjectPanel {
             if let Some(mut entry) = worktree.entry_for_id(new_entry_id) {
                 loop {
                     if entry.is_dir() {
-                        if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
-                            expanded_dir_ids.insert(ix, entry.id);
+                        for ancestor in entry.path.ancestors() {
+                            if let Some(ancestor_entry) = worktree.entry_for_path(ancestor)
+                                && ancestor_entry.is_dir()
+                                && let Err(ix) =
+                                    expanded_dir_ids.binary_search(&ancestor_entry.id)
+                            {
+                                expanded_dir_ids.insert(ix, ancestor_entry.id);
+                            }
                         }
                         directory_id = entry.id;
                         break;
@@ -5464,6 +5474,56 @@ impl ProjectPanel {
         false
     }
 
+    fn render_root_actions(
+        &self,
+        entry_id: ProjectEntryId,
+        is_sticky: bool,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let is_read_only = self.project.read(cx).is_read_only(cx);
+        let action_button = move |name: &str, icon: IconName| {
+            let id = SharedString::from(format!(
+                "project-panel-action-{}-{}-{name}",
+                if is_sticky { "sticky" } else { "row" },
+                entry_id.to_usize(),
+            ));
+            IconButton::new(id, icon)
+                .shape(IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+        };
+        h_flex()
+            .flex_none()
+            .items_center()
+            .gap_1()
+            .when(!is_read_only, |this| {
+                this.child(
+                    action_button("new-file", IconName::Plus)
+                        .tooltip(Tooltip::for_action_title("New File", &NewFile))
+                        .on_click(cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+                            this.new_file(&NewFile, window, cx);
+                        })),
+                )
+                .child(
+                    action_button("new-folder", IconName::FolderAdd)
+                        .tooltip(Tooltip::for_action_title("New Folder", &NewDirectory))
+                        .on_click(cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+                            this.new_directory(&NewDirectory, window, cx);
+                        })),
+                )
+            })
+            .child(
+                action_button("collapse-all", IconName::ListCollapse)
+                    .tooltip(Tooltip::for_action_title(
+                        "Collapse All Entries",
+                        &CollapseAllEntries,
+                    ))
+                    .on_click(cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+                        this.collapse_all_entries(&CollapseAllEntries, window, cx);
+                    })),
+            )
+    }
+
     fn render_entry(
         &self,
         entry_id: ProjectEntryId,
@@ -5510,6 +5570,7 @@ impl ProjectPanel {
         let path = details.path.clone();
 
         let depth = details.depth;
+        let is_root_dir = depth == 0 && kind.is_dir();
         let worktree_id = details.worktree_id;
 
         let bg_color = if is_marked {
@@ -5943,7 +6004,8 @@ impl ProjectPanel {
                     .when(
                         canonical_path.is_some()
                             || diagnostic_count.is_some()
-                            || git_indicator.is_some(),
+                            || git_indicator.is_some()
+                            || is_root_dir,
                         |this| {
                             let symlink_element = canonical_path.map(|path| {
                                 div()
@@ -6001,6 +6063,16 @@ impl ProjectPanel {
                                         this.child(git_indicator)
                                     })
                                     .when_some(symlink_element, |this, el| this.child(el))
+                                    .when(
+                                        is_root_dir
+                                            && (self.is_hovered
+                                                || self.state.edit_state.is_some()),
+                                        |this| {
+                                            this.child(self.render_root_actions(
+                                                entry_id, is_sticky, cx,
+                                            ))
+                                        },
+                                    )
                                     .into_any_element(),
                             )
                         },
@@ -7297,6 +7369,18 @@ impl Render for ProjectPanel {
                                 }),
                         )
                         .size_full(),
+                )
+                .child(
+                    div()
+                        .id("project-panel-hover-tracker")
+                        .absolute()
+                        .size_full()
+                        .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
+                            if this.is_hovered != *hovered {
+                                this.is_hovered = *hovered;
+                                cx.notify();
+                            }
+                        })),
                 )
                 .custom_scrollbars(
                     {
