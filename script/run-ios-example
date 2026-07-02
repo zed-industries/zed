@@ -3,38 +3,66 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 [--release] [device]"
+  echo "Usage: $0 [--release] [--device [name-or-udid]] [--identity identity] [simulator]"
   echo ""
-  echo "Builds the gpui_ios hello_ios example, assembles a simulator app bundle,"
-  echo "boots the given simulator device (name or UDID), installs, and launches it."
+  echo "Builds the gpui_ios hello_ios example, assembles an app bundle, and installs"
+  echo "and launches it on a simulator (default) or a connected physical device."
   echo ""
   echo "Arguments:"
-  echo "  --release   Build the example in release mode"
-  echo "  device      Simulator device name or UDID (default: iPhone 17 Pro)"
+  echo "  --release    Build the example in release mode"
+  echo "  --device     Run on a physical device instead of a simulator. Takes an"
+  echo "               optional devicectl device name or UDID; without one, the"
+  echo "               single connected device is used"
+  echo "  --identity   Codesigning identity for device builds (defaults to the"
+  echo "               first 'Apple Development' identity in the keychain)"
+  echo "  simulator    Simulator device name or UDID (default: iPhone 17 Pro)"
   exit 1
 }
 
 profile=debug
 cargo_flags=()
-device="iPhone 17 Pro"
+run_on=simulator
+simulator="iPhone 17 Pro"
+device=""
+identity=""
 
-for argument in "$@"; do
-  case "$argument" in
+while [[ $# -gt 0 ]]; do
+  case "$1" in
   --release)
     profile=release
     cargo_flags+=(--release)
+    ;;
+  --device)
+    run_on=device
+    if [[ $# -gt 1 && "$2" != -* ]]; then
+      device="$2"
+      shift
+    fi
+    ;;
+  --identity)
+    [[ $# -gt 1 ]] || usage
+    identity="$2"
+    shift
     ;;
   -h | --help)
     usage
     ;;
   *)
-    device="$argument"
+    simulator="$1"
     ;;
   esac
+  shift
 done
 
-target=aarch64-apple-ios-sim
 bundle_id=dev.zed.gpui.hello-ios
+
+if [[ "$run_on" == device ]]; then
+  target=aarch64-apple-ios
+  supported_platform=iPhoneOS
+else
+  target=aarch64-apple-ios-sim
+  supported_platform=iPhoneSimulator
+fi
 
 cargo build -p gpui_ios --example hello_ios --target "$target" "${cargo_flags[@]+"${cargo_flags[@]}"}"
 
@@ -44,7 +72,7 @@ rm -rf "$app_dir"
 mkdir -p "$app_dir"
 cp "$target_dir/examples/hello_ios" "$app_dir/hello_ios"
 
-cat >"$app_dir/Info.plist" <<'PLIST'
+cat >"$app_dir/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -52,7 +80,7 @@ cat >"$app_dir/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key>
     <string>hello_ios</string>
     <key>CFBundleIdentifier</key>
-    <string>dev.zed.gpui.hello-ios</string>
+    <string>$bundle_id</string>
     <key>CFBundleName</key>
     <string>HelloGPUI</string>
     <key>CFBundlePackageType</key>
@@ -70,7 +98,7 @@ cat >"$app_dir/Info.plist" <<'PLIST'
     </array>
     <key>CFBundleSupportedPlatforms</key>
     <array>
-        <string>iPhoneSimulator</string>
+        <string>$supported_platform</string>
     </array>
     <key>UILaunchScreen</key>
     <dict/>
@@ -78,20 +106,100 @@ cat >"$app_dir/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-if [[ "$device" =~ ^[0-9A-Fa-f-]{36}$ ]]; then
-  udid="$device"
-else
-  udid=$(xcrun simctl list devices available | grep -F "$device (" | head -1 | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/')
-  if [[ -z "$udid" ]]; then
-    echo "error: no available simulator device named '$device'" >&2
+if [[ "$run_on" == simulator ]]; then
+  if [[ "$simulator" =~ ^[0-9A-Fa-f-]{36}$ ]]; then
+    udid="$simulator"
+  else
+    udid=$(xcrun simctl list devices available | grep -F "$simulator (" | head -1 | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/')
+    if [[ -z "$udid" ]]; then
+      echo "error: no available simulator device named '$simulator'" >&2
+      exit 1
+    fi
+  fi
+
+  if ! xcrun simctl list devices | grep -F "$udid" | grep -q Booted; then
+    xcrun simctl boot "$udid"
+  fi
+  xcrun simctl bootstatus "$udid" -b
+
+  xcrun simctl install "$udid" "$app_dir"
+  xcrun simctl launch --terminate-running-process "$udid" "$bundle_id"
+  exit 0
+fi
+
+# Device mode: sign the bundle with a development provisioning profile, then
+# install and launch it with devicectl.
+
+if [[ -z "$device" ]]; then
+  device_identifiers=$(xcrun devicectl list devices | grep -oE '[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}' || true)
+  if [[ -z "$device_identifiers" ]]; then
+    echo "error: no paired devices found by 'xcrun devicectl list devices'" >&2
+    exit 1
+  fi
+  if [[ $(wc -l <<<"$device_identifiers") -gt 1 ]]; then
+    echo "error: multiple paired devices; pass one with --device <name-or-udid>:" >&2
+    xcrun devicectl list devices >&2
+    exit 1
+  fi
+  device="$device_identifiers"
+fi
+
+if [[ -z "$identity" ]]; then
+  identity=$(security find-identity -v -p codesigning | grep -F "Apple Development" | head -1 | awk '{print $2}')
+  if [[ -z "$identity" ]]; then
+    echo "error: no 'Apple Development' codesigning identity in the keychain;" >&2
+    echo "pass one with --identity <name-or-hash>" >&2
     exit 1
   fi
 fi
 
-if ! xcrun simctl list devices | grep -F "$udid" | grep -q Booted; then
-  xcrun simctl boot "$udid"
-fi
-xcrun simctl bootstatus "$udid" -b
+# Find the newest non-expired development provisioning profile covering the
+# bundle ID. The application-identifier entitlement is "<prefix>.<app ID>"
+# where the app ID is either the explicit bundle ID or a wildcard ("*").
+provisioning_profile=""
+provisioning_profile_creation=""
+provisioning_profile_prefix=""
+now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+for profile_path in \
+  "$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"/*.mobileprovision \
+  "$HOME/Library/MobileDevice/Provisioning Profiles"/*.mobileprovision; do
+  [[ -f "$profile_path" ]] || continue
+  decoded=$(security cms -D -i "$profile_path")
+  application_identifier=$(plutil -extract Entitlements.application-identifier raw -o - - <<<"$decoded" 2>/dev/null || true)
+  prefix="${application_identifier%%.*}"
+  app_id="${application_identifier#*.}"
+  [[ "$app_id" == "$bundle_id" || "$app_id" == "*" ]] || continue
+  expiration=$(plutil -extract ExpirationDate raw -o - - <<<"$decoded")
+  [[ "$expiration" > "$now" ]] || continue
+  creation=$(plutil -extract CreationDate raw -o - - <<<"$decoded")
+  if [[ -z "$provisioning_profile" || "$creation" > "$provisioning_profile_creation" ]]; then
+    provisioning_profile="$profile_path"
+    provisioning_profile_creation="$creation"
+    provisioning_profile_prefix="$prefix"
+  fi
+done
 
-xcrun simctl install "$udid" "$app_dir"
-xcrun simctl launch --terminate-running-process "$udid" "$bundle_id"
+if [[ -z "$provisioning_profile" ]]; then
+  echo "error: no valid provisioning profile for '$bundle_id' found in" >&2
+  echo "  ~/Library/Developer/Xcode/UserData/Provisioning Profiles/" >&2
+  echo "  ~/Library/MobileDevice/Provisioning Profiles/" >&2
+  echo "Build any Xcode app project with that bundle ID for 'generic/platform=iOS'" >&2
+  echo "with -allowProvisioningUpdates once (signed into your team in Xcode) to" >&2
+  echo "register the device and download a development profile." >&2
+  exit 1
+fi
+
+cp "$provisioning_profile" "$app_dir/embedded.mobileprovision"
+
+entitlements_path=$(mktemp -t hello_ios_entitlements)
+security cms -D -i "$provisioning_profile" |
+  plutil -extract Entitlements xml1 -o "$entitlements_path" -
+# Wildcard profiles carry "<prefix>.*"; the signed app must claim the concrete
+# application-identifier the wildcard authorizes.
+plutil -replace application-identifier -string "$provisioning_profile_prefix.$bundle_id" "$entitlements_path"
+
+codesign --force --sign "$identity" --entitlements "$entitlements_path" --timestamp=none "$app_dir"
+rm -f "$entitlements_path"
+
+xcrun devicectl device install app --device "$device" "$app_dir"
+xcrun devicectl device process launch --terminate-existing --device "$device" "$bundle_id"
