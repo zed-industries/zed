@@ -2113,10 +2113,6 @@ impl PickerDelegate for FileFinderDelegate {
             picker::PickerAction::button("Up", pane::SplitUp::default().boxed_clone()),
             picker::PickerAction::button("Down", pane::SplitDown::default().boxed_clone()),
             picker::PickerAction::separator(),
-            picker::PickerAction::button(
-                "Multi Select",
-                picker::ToggleMultiSelectMode.boxed_clone(),
-            ),
             picker::PickerAction::button(open_label, menu::Confirm.boxed_clone()),
         ]
     }

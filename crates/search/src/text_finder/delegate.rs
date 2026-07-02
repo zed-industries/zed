@@ -719,10 +719,6 @@ impl PickerDelegate for Delegate {
             ),
             picker::PickerAction::separator(),
             picker::PickerAction::button(
-                "Select Multiple",
-                picker::ToggleMultiSelectMode.boxed_clone(),
-            ),
-            picker::PickerAction::button(
                 if self.selected_matches.len() > 1 {
                     "Open multiple"
                 } else {
