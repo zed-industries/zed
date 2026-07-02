@@ -1119,8 +1119,9 @@ impl ProjectDiff {
 }
 
 const CONFLICT_SORT_PREFIX: u64 = 1;
-const TRACKED_SORT_PREFIX: u64 = 2;
-const NEW_SORT_PREFIX: u64 = 3;
+const STAGED_SORT_PREFIX: u64 = 2;
+const TRACKED_SORT_PREFIX: u64 = 3;
+const NEW_SORT_PREFIX: u64 = 4;
 
 /// Computes a stable [`PathKey`] for a buffer in the project diff.
 ///
@@ -1142,14 +1143,14 @@ fn project_diff_path_key(
     cx: &App,
 ) -> PathKey {
     let settings = GitPanelSettings::get_global(cx);
-    let sort_prefix = if settings.group_by != GitPanelGroupBy::Status {
-        TRACKED_SORT_PREFIX
-    } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
-        CONFLICT_SORT_PREFIX
-    } else if status.is_created() {
-        NEW_SORT_PREFIX
-    } else {
-        TRACKED_SORT_PREFIX
+    let sort_prefix = match settings.group_by {
+        GitPanelGroupBy::Stage => STAGED_SORT_PREFIX,
+        GitPanelGroupBy::Status if repo.had_conflict_on_last_merge_head_change(repo_path) => {
+            CONFLICT_SORT_PREFIX
+        }
+        GitPanelGroupBy::Status if status.is_created() => NEW_SORT_PREFIX,
+        GitPanelGroupBy::Status => TRACKED_SORT_PREFIX,
+        GitPanelGroupBy::None => TRACKED_SORT_PREFIX,
     };
     let path = project_diff_sort_path(repo_path, settings.tree_view, settings.sort_by);
     PathKey::with_sort_prefix(sort_prefix, path)

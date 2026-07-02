@@ -87,6 +87,7 @@ impl SoloDiffView {
 
         let project = workspace_entity.read(cx).project().clone();
         let repo_path = entry.repo_path;
+        let staging = entry.staging;
         window.spawn(cx, async move |cx| {
             let buffer = project
                 .update(cx, |project, cx| {
@@ -94,8 +95,12 @@ impl SoloDiffView {
                 })
                 .await?;
             let diff = project
-                .update(cx, |project, cx| {
-                    project.open_uncommitted_diff(buffer.clone(), cx)
+                .update(cx, |project, cx| match staging {
+                    StageStatus::Staged => project.open_staged_diff(buffer.clone(), cx),
+                    StageStatus::Unstaged => project.open_unstaged_diff(buffer.clone(), cx),
+                    StageStatus::PartiallyStaged => {
+                        project.open_uncommitted_diff(buffer.clone(), cx)
+                    }
                 })
                 .await?;
 
