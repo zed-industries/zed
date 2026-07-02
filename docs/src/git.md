@@ -24,8 +24,8 @@ Use this page as the entry point. Each linked page focuses on one Git task.
 | Work in multiple checkouts                | [Worktrees](./git/worktrees.md)                               |
 | Browse Git Graph, file history, or blame  | [History and Blame](./git/history-and-blame.md)               |
 | Resolve merge conflicts or recover work   | [Conflicts and Recovery](./git/conflicts-and-recovery.md)     |
-| Copy permalinks or create PR links        | [GitHub and Pull Requests](./git/github-and-pull-requests.md) |
-| Review agent changes or branch diffs      | [Agents and Git](./git/agents-and-git.md)                     |
+| Copy permalinks or create PR links        | [Git Hosting and Pull Requests](./git/github-and-pull-requests.md) |
+| Review agent changes or ask an agent to review a diff | [Agents and Git](./git/agents-and-git.md)                     |
 | Find Git settings and actions             | [Settings and Actions](./git/settings-and-actions.md)         |
 
 Open the Git Panel with {#action git_panel::ToggleFocus}, {#kb
@@ -100,6 +100,6 @@ Some sections from the old Git page moved into focused Git and Review pages:
 - <span id="merge-conflicts"></span><span id="viewing-conflicts"></span><span id="resolving-conflicts"></span>[Conflicts and Recovery](./git/conflicts-and-recovery.md): Merge conflicts.
 - <span id="stashing"></span><span id="creating-stashes"></span><span id="managing-stashes"></span><span id="quick-stash-operations"></span><span id="stash-diff-view"></span>[Conflicts and Recovery](./git/conflicts-and-recovery.md#stashes): Stashes.
 - <span id="ai-support-in-git"></span>[Agents and Git](./git/agents-and-git.md) and [AI commit messages](./git/staging-and-committing.md#ai-commit-message): AI-assisted Git workflows.
-- <span id="git-integrations"></span><span id="self-hosted-instances"></span><span id="permalinks"></span>[GitHub and Pull Requests](./git/github-and-pull-requests.md): Hosting integrations and permalinks.
+- <span id="git-integrations"></span><span id="self-hosted-instances"></span><span id="permalinks"></span>[Git Hosting and Pull Requests](./git/github-and-pull-requests.md): Hosting integrations and permalinks.
 - <span id="diff-hunk-keyboard-shortcuts"></span><span id="action-reference"></span>[Settings and Actions](./git/settings-and-actions.md#core-git-actions): Git actions and keyboard shortcuts.
 - <span id="git-cli-configuration"></span>[Commit from the terminal](./git/staging-and-committing.md#terminal-editor): Git CLI editor configuration.

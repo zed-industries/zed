@@ -70,6 +70,9 @@ For general settings mechanics, see [Configuring Zed](../configuring-zed.md).
 | Run multiple AI tasks at once                  | [Parallel Agents](./parallel-agents.md)                                     |
 | Generate commit messages                       | [Git commit generation](../git/staging-and-committing.md#ai-commit-message) |
 
+For how projects, Zed worktrees, Git worktrees, and branches set the context
+where agent work runs, see [Git Worktrees](../git/worktrees.md#projects-zed-worktrees-git-worktrees).
+
 ## Learn More {#learn-more}
 
 | If you want to...                    | Use                                                                                                                                            |

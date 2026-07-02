@@ -34,7 +34,7 @@
   - [Worktrees](./git/worktrees.md)
   - [History and Blame](./git/history-and-blame.md)
   - [Conflicts and Recovery](./git/conflicts-and-recovery.md)
-  - [GitHub and Pull Requests](./git/github-and-pull-requests.md)
+  - [Git Hosting and Pull Requests](./git/github-and-pull-requests.md)
   - [Agents and Git](./git/agents-and-git.md)
   - [Settings and Actions](./git/settings-and-actions.md)
 - [Modelines](./modelines.md)

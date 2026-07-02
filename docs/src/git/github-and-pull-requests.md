@@ -1,9 +1,9 @@
 ---
-title: GitHub and Pull Requests - Zed
+title: Git Hosting and Pull Requests - Zed
 description: Configure Git hosting links, copy permalinks, and open pull request creation URLs from Zed.
 ---
 
-# GitHub and Pull Requests
+# Git Hosting and Pull Requests
 
 Zed integrates with Git hosting providers for links, permalinks, commit
 references, and pull request creation handoffs.
