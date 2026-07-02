@@ -893,21 +893,6 @@ pub(crate) fn render_buffer_header(
                                             cx,
                                         ))
                                     })
-                                    .when_some(diff_stat, |this, (added, removed)| {
-                                        this.child(
-                                            div().flex_shrink_0().child(
-                                                DiffStat::new(
-                                                    (
-                                                        "buffer-header-diff-stat",
-                                                        buffer_id.to_proto(),
-                                                    ),
-                                                    added as usize,
-                                                    removed as usize,
-                                                )
-                                                .label_size(LabelSize::Small),
-                                            ),
-                                        )
-                                    })
                             },
                         ))
                         .when(can_open_excerpts && relative_path.is_some(), |this| {
@@ -938,6 +923,22 @@ pub(crate) fn render_buffer_header(
                                                 }
                                             })),
                                     ),
+                            )
+                        })
+                        // Rendered after the Open File button, which reserves its space even
+                        // while invisible (`visible_on_hover`), so the diff stat is always
+                        // flush right and hovering never changes the layout. Toggling layout
+                        // on group hover panics: prepaint and paint can disagree.
+                        .when_some(diff_stat, |this, (added, removed)| {
+                            this.child(
+                                div().flex_shrink_0().child(
+                                    DiffStat::new(
+                                        ("buffer-header-diff-stat", buffer_id.to_proto()),
+                                        added as usize,
+                                        removed as usize,
+                                    )
+                                    .label_size(LabelSize::Small),
+                                ),
                             )
                         })
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
