@@ -239,7 +239,7 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
         }
     }
 
-    fn settings_view(&self, _window: &mut Window, cx: &mut App) -> Option<ProviderSettingsView> {
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
         let is_authenticated = self.state.read(cx).is_authenticated();
         let title = if is_authenticated {
             None
@@ -256,16 +256,18 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
             language_model::InlineProviderSettings {
                 title,
                 description,
-                view: {
+                create_view: Arc::new({
                     let state = self.state.clone();
                     let http_client = self.http_client.clone();
-                    cx.new(|_cx| ConfigurationView {
-                        state,
-                        http_client,
-                        compact: true,
-                    })
-                    .into()
-                },
+                    move |_window, cx| {
+                        cx.new(|_cx| ConfigurationView {
+                            state: state.clone(),
+                            http_client: http_client.clone(),
+                            compact: true,
+                        })
+                        .into()
+                    }
+                }),
             },
         ))
     }

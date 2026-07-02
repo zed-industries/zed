@@ -516,13 +516,13 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn settings_view(&self, window: &mut Window, cx: &mut App) -> Option<ProviderSettingsView> {
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.clone();
         Some(ProviderSettingsView::SubPage(
-            SubPageProviderSettings::new(
-                cx.new(|cx| ConfigurationView::new(state, window, cx))
-                    .into(),
-            )
+            SubPageProviderSettings::new(move |window, cx| {
+                cx.new(|cx| ConfigurationView::new(state.clone(), window, cx))
+                    .into()
+            })
             .description(InlineDescription::Text(
                 "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials.".into(),
             )),

@@ -312,13 +312,13 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn settings_view(&self, window: &mut Window, cx: &mut App) -> Option<ProviderSettingsView> {
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.clone();
         Some(ProviderSettingsView::SubPage(
-            SubPageProviderSettings::new(
-                cx.new(|cx| ConfigurationView::new(state, window, cx))
-                    .into(),
-            )
+            SubPageProviderSettings::new(move |window, cx| {
+                cx.new(|cx| ConfigurationView::new(state.clone(), window, cx))
+                    .into()
+            })
             .description(InlineDescription::Text(
                 "Run local LLMs like Llama, Phi, and Qwen with LM Studio.".into(),
             )),

@@ -68,11 +68,7 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         Task::ready(Ok(()))
     }
 
-    fn settings_view(
-        &self,
-        _: &mut gpui::Window,
-        _: &mut App,
-    ) -> Option<crate::ProviderSettingsView> {
+    fn settings_view(&self, _: &mut App) -> Option<crate::ProviderSettingsView> {
         None
     }
 }

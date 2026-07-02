@@ -15,6 +15,8 @@ use icons::IconName;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
+pub type CreateProviderSettingsView = Arc<dyn Fn(&mut Window, &mut App) -> AnyView + 'static>;
+
 pub use crate::api_key::{ApiKey, ApiKeyState};
 pub use crate::registry::*;
 pub use crate::request::{LanguageModelImageExt, gpui_size_to_image_size, image_size_to_gpui};
@@ -320,7 +322,7 @@ pub trait LanguageModelProvider: 'static {
     }
     fn is_authenticated(&self, cx: &App) -> bool;
     fn authenticate(&self, cx: &mut App) -> Task<Result<(), AuthenticateError>>;
-    fn settings_view(&self, window: &mut Window, cx: &mut App) -> Option<ProviderSettingsView>;
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView>;
 
     fn set_api_key(&self, _key: Option<String>, _cx: &mut App) -> Task<Result<()>> {
         Task::ready(Ok(()))
@@ -368,34 +370,24 @@ pub enum ProviderSettingsView {
     SubPage(SubPageProviderSettings),
 }
 
-impl ProviderSettingsView {
-    pub fn into_any_view(self) -> Option<AnyView> {
-        match self {
-            Self::Inline(settings) => Some(settings.view),
-            Self::SubPage(settings) => Some(settings.view),
-            Self::ApiKey(_) => None,
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct InlineProviderSettings {
     pub title: Option<SharedString>,
     pub description: Option<InlineDescription>,
-    pub view: AnyView,
+    pub create_view: CreateProviderSettingsView,
 }
 
 #[derive(Clone)]
 pub struct SubPageProviderSettings {
     pub description: Option<InlineDescription>,
-    pub view: AnyView,
+    pub create_view: CreateProviderSettingsView,
 }
 
 impl SubPageProviderSettings {
-    pub fn new(view: AnyView) -> Self {
+    pub fn new(create_view: impl Fn(&mut Window, &mut App) -> AnyView + 'static) -> Self {
         Self {
             description: None,
-            view,
+            create_view: Arc::new(create_view),
         }
     }
 

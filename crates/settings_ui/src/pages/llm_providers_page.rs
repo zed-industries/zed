@@ -3,8 +3,8 @@ use std::{collections::HashSet, sync::Arc};
 use editor::Editor;
 use gpui::{AnyView, Entity, Focusable as _, ScrollHandle, prelude::*};
 use language_model::{
-    ApiKeyConfiguration, IconOrSvg, InlineDescription, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelRegistry, ProviderSettingsView,
+    ApiKeyConfiguration, CreateProviderSettingsView, IconOrSvg, InlineDescription,
+    LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, ProviderSettingsView,
 };
 
 use settings::{
@@ -148,7 +148,7 @@ fn render_provider_section(
     let provider_id = provider.id();
     let provider_name = provider.name().0;
 
-    let body = match provider.settings_view(window, cx) {
+    let body = match provider.settings_view(cx) {
         Some(ProviderSettingsView::ApiKey(config)) => {
             render_api_key_providers_item(provider, provider_name.clone(), config, cx)
         }
@@ -156,7 +156,7 @@ fn render_provider_section(
             let view = get_or_create_configuration_view(
                 settings_window,
                 &provider_id,
-                settings.view,
+                settings.create_view,
                 window,
                 cx,
             );
@@ -218,8 +218,8 @@ fn render_api_key_providers_item(
     let provider_id = provider.id();
     let has_key = config.has_key;
     let is_from_env_var = config.is_from_env_var;
-    let env_var_name = config.env_var_name.clone();
-    let api_key_url = config.api_key_url.clone();
+    let env_var_name = config.env_var_name;
+    let api_key_url = config.api_key_url;
 
     if has_key {
         let configured_label = if is_from_env_var {
@@ -458,13 +458,19 @@ fn render_provider_config_sub_page(
         return div().into_any_element();
     };
 
-    let Some(view) = provider
-        .settings_view(window, cx)
-        .and_then(ProviderSettingsView::into_any_view)
+    let Some(create_view) =
+        provider
+            .settings_view(cx)
+            .and_then(|settings_view| match settings_view {
+                ProviderSettingsView::Inline(settings) => Some(settings.create_view),
+                ProviderSettingsView::SubPage(settings) => Some(settings.create_view),
+                ProviderSettingsView::ApiKey(_) => None,
+            })
     else {
         return div().into_any_element();
     };
-    let view = get_or_create_configuration_view(settings_window, &provider_id, view, window, cx);
+    let view =
+        get_or_create_configuration_view(settings_window, &provider_id, create_view, window, cx);
 
     v_flex()
         .id("provider-config-sub-page")
@@ -481,7 +487,7 @@ fn render_provider_config_sub_page(
 fn get_or_create_configuration_view(
     settings_window: &SettingsWindow,
     provider_id: &LanguageModelProviderId,
-    view: AnyView,
+    create_view: CreateProviderSettingsView,
     window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> AnyView {
@@ -491,6 +497,8 @@ fn get_or_create_configuration_view(
     {
         return view.clone();
     }
+
+    let view = create_view(window, cx);
 
     // Store the view for future renders by deferring a mutation
     let provider_id = provider_id.clone();

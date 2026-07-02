@@ -360,11 +360,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         })
     }
 
-    fn settings_view(
-        &self,
-        _window: &mut gpui::Window,
-        cx: &mut App,
-    ) -> Option<ProviderSettingsView> {
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.read(cx);
         let user_store = state.user_store.read(cx);
         let is_zed_model_provider_enabled = user_store
@@ -397,10 +393,13 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
             language_model::InlineProviderSettings {
                 title,
                 description: Some(description),
-                view: {
+                create_view: Arc::new({
                     let state = self.state.clone();
-                    cx.new(|_| ConfigurationView::new(state, true)).into()
-                },
+                    move |_window, cx| {
+                        cx.new(|_| ConfigurationView::new(state.clone(), true))
+                            .into()
+                    }
+                }),
             },
         ))
     }

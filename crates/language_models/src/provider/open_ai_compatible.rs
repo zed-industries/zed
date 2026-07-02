@@ -144,23 +144,21 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn settings_view(
-        &self,
-        window: &mut gpui::Window,
-        cx: &mut App,
-    ) -> Option<ProviderSettingsView> {
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.clone();
         Some(ProviderSettingsView::SubPage(SubPageProviderSettings::new(
-            cx.new(|cx| {
-                ApiCompatibleProviderConfigurationView::new(
-                    state,
-                    "OpenAI",
-                    API_KEY_PLACEHOLDER,
-                    window,
-                    cx,
-                )
-            })
-            .into(),
+            move |window, cx| {
+                cx.new(|cx| {
+                    ApiCompatibleProviderConfigurationView::new(
+                        state.clone(),
+                        "OpenAI",
+                        API_KEY_PLACEHOLDER,
+                        window,
+                        cx,
+                    )
+                })
+                .into()
+            },
         )))
     }
 

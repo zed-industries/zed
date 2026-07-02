@@ -177,11 +177,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         Task::ready(Err(err.into()))
     }
 
-    fn settings_view(
-        &self,
-        _window: &mut gpui::Window,
-        cx: &mut App,
-    ) -> Option<ProviderSettingsView> {
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
         let is_authenticated = self.state.read(cx).is_authenticated(cx);
         let title = if is_authenticated {
             None
@@ -200,8 +196,8 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
             language_model::InlineProviderSettings {
                 title,
                 description,
-                view: cx
-                    .new(|cx| {
+                create_view: Arc::new(|_window, cx| {
+                    cx.new(|cx| {
                         copilot_ui::ConfigurationView::new(
                             |cx| {
                                 CopilotChat::global(cx)
@@ -213,7 +209,8 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
                         )
                         .compact()
                     })
-                    .into(),
+                    .into()
+                }),
             },
         ))
     }

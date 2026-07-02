@@ -220,11 +220,7 @@ impl LanguageModelProvider for MistralLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn settings_view(
-        &self,
-        _window: &mut gpui::Window,
-        cx: &mut App,
-    ) -> Option<ProviderSettingsView> {
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.read(cx);
         Some(ProviderSettingsView::ApiKey(ApiKeyConfiguration::new(
             state.api_key_state.has_key(),
