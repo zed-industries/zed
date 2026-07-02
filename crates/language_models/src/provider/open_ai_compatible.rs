@@ -162,6 +162,11 @@ impl LanguageModelProvider for OpenAiCompatibleLanguageModelProvider {
         .into()
     }
 
+    fn set_api_key(&self, key: String, cx: &mut App) -> Task<Result<()>> {
+        self.state
+            .update(cx, |state, cx| state.set_api_key(Some(key), cx))
+    }
+
     fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
         self.state
             .update(cx, |state, cx| state.set_api_key(None, cx))

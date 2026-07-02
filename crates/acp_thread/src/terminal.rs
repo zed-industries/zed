@@ -46,14 +46,11 @@ pub struct SandboxWrap {
     pub extra_write_paths: Vec<PathBuf>,
     /// Outbound network access explicitly approved for this command.
     pub network: SandboxNetworkAccess,
-    /// The project's `.git` directories (worktree `.git`, linked-worktree common
-    /// dirs, discovered repos). Protected by default; made writable when
-    /// `allow_git_access` is set. Computed by the agent because locating them
-    /// needs Git knowledge the sandbox layer can't derive itself.
-    pub git_dirs: Vec<PathBuf>,
-    /// Whether the user approved access to the protected `.git` directories.
-    pub allow_git_access: bool,
-    /// Allow unrestricted filesystem writes (ignores all writable paths).
+    /// Additional paths that should remain readable but not writable, even when
+    /// they fall under writable paths.
+    pub protected_paths: Vec<PathBuf>,
+    /// Allow unrestricted filesystem writes except for protected paths (ignores
+    /// ordinary writable paths).
     pub allow_fs_write: bool,
     /// Whether the project (and therefore this terminal) is local. The
     /// enforcing proxy binds a loopback port on this host, so it can only
@@ -155,8 +152,13 @@ impl SandboxWrap {
     /// path) rather than passing a re-resolvable path. A location that can't be
     /// captured (e.g. it doesn't exist) is dropped from the grant — fail-closed.
     fn to_policy(&self) -> sandbox::SandboxPolicy {
+        let protected_paths = self
+            .protected_paths
+            .iter()
+            .filter_map(|path| sandbox::HostFilesystemLocation::new(path).ok())
+            .collect();
         let fs = if self.allow_fs_write {
-            sandbox::SandboxFsPolicy::Unrestricted
+            sandbox::SandboxFsPolicy::Unrestricted { protected_paths }
         } else {
             let writable_paths = self
                 .writable_paths
@@ -169,7 +171,10 @@ impl SandboxWrap {
                     sandbox::HostFilesystemLocation::new(path).ok()
                 })
                 .collect();
-            sandbox::SandboxFsPolicy::Restricted { writable_paths }
+            sandbox::SandboxFsPolicy::Restricted {
+                writable_paths,
+                protected_paths,
+            }
         };
         let network = match &self.network {
             SandboxNetworkAccess::None => sandbox::SandboxNetPolicy::Blocked,
@@ -182,17 +187,7 @@ impl SandboxWrap {
                     .collect(),
             },
         };
-        let git_dirs = self
-            .git_dirs
-            .iter()
-            .filter_map(|path| sandbox::HostFilesystemLocation::new(path).ok())
-            .collect();
-        let git = if self.allow_git_access {
-            sandbox::GitSandboxPolicy::Allowed { git_dirs }
-        } else {
-            sandbox::GitSandboxPolicy::Denied { git_dirs }
-        };
-        sandbox::SandboxPolicy { fs, network, git }
+        sandbox::SandboxPolicy { fs, network }
     }
 }
 
