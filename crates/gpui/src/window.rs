@@ -278,17 +278,31 @@ thread_local! {
     static CURRENT_ELEMENT_ARENA: Cell<Option<*const RefCell<Arena>>> = const { Cell::new(None) };
 }
 
-/// Whether a window draw is currently in progress on this thread.
+/// Capability to query whether a window draw is in progress on the current
+/// thread. Constructible only within GPUI, which hands one to each platform
+/// window via [`PlatformWindow::set_draw_monitor`], so this state is
+/// inaccessible to application code.
 ///
-/// This holds exactly while an `ElementArenaScope` is active: nested scopes
-/// restore the previous (still set) arena pointer, so `CURRENT_ELEMENT_ARENA`
-/// is `Some` from the outermost draw's start to its end.
-///
-/// Platform layers use this to defer draw requests that arrive re-entrantly
-/// while a draw is already on the stack (e.g. via nested message pumping in
-/// the Windows window procedure), instead of running a nested draw.
-pub fn draw_in_progress() -> bool {
-    CURRENT_ELEMENT_ARENA.with(|current| current.get().is_some())
+/// Platform implementations use it to defer draw requests that arrive
+/// re-entrantly while a draw is already on the stack (e.g. via nested message
+/// pumping in the Windows window procedure), instead of running a nested draw.
+#[derive(Clone, Copy)]
+pub struct DrawMonitor(());
+
+impl DrawMonitor {
+    pub(crate) fn new() -> Self {
+        Self(())
+    }
+
+    /// Whether a window draw is currently in progress on this thread.
+    ///
+    /// This holds exactly while an `ElementArenaScope` is active: nested
+    /// scopes restore the previous (still set) arena pointer, so
+    /// `CURRENT_ELEMENT_ARENA` is `Some` from the outermost draw's start to
+    /// its end.
+    pub fn draw_in_progress(&self) -> bool {
+        CURRENT_ELEMENT_ARENA.with(|current| current.get().is_some())
+    }
 }
 
 /// Allocates an element in the current arena. Uses the app-specific arena if one
@@ -306,21 +320,27 @@ pub(crate) fn with_element_arena<R>(f: impl FnOnce(&mut Arena) -> R) -> R {
     })
 }
 
-/// RAII guard that sets CURRENT_ELEMENT_ARENA for the duration of a draw operation.
-/// When dropped, restores the previous arena (supporting nested draws).
-///
-/// Entering a scope also calls `Arena::begin_scope`, so that a nested draw's
+/// Scope guard that sets CURRENT_ELEMENT_ARENA for the duration of a draw
+/// operation and tracks the arena's scope depth, so that a nested draw's
 /// `ArenaClearNeeded::clear` is deferred rather than freeing memory the outer
-/// draw still references (see `Arena::clear`). The matching `end_scope` is
-/// *not* called on drop — `Drop` has no access to the `App` that owns the
-/// arena, and holding a reference here would either borrow the `App` for the
-/// whole draw or require a raw pointer. Instead, the code that ends a draw
-/// must call `Arena::end_scope` explicitly (with `cx` in hand) after dropping
-/// this guard. If a panic unwinds a draw before that happens, the arena's
-/// scope depth stays elevated and subsequent clears are deferred: that leaks
-/// memory rather than freeing memory that may still be referenced.
+/// draw still references (see `Arena::clear`).
+///
+/// The scope must be ended by calling [`ElementArenaScope::exit`] with the
+/// same arena that was entered. It can't happen in `Drop` because `Drop` has
+/// no access to the `App` that owns the arena, and holding a reference here
+/// would either borrow the `App` for the whole draw or require dereferencing
+/// a raw pointer. If the guard is instead dropped — normally only possible
+/// when a panic unwinds a draw — the thread-local is still restored, but the
+/// arena's scope depth stays elevated and subsequent clears are deferred:
+/// that leaks memory rather than freeing memory that may still be referenced.
+/// (A mid-draw panic aborts the process in practice, but a harness that
+/// catches panics around draws would disable arena clearing from then on.)
 pub(crate) struct ElementArenaScope {
+    /// Identity of the entered arena. Only ever compared against another
+    /// pointer in `exit`; never dereferenced.
+    entered: *const RefCell<Arena>,
     previous: Option<*const RefCell<Arena>>,
+    exited: bool,
 }
 
 impl ElementArenaScope {
@@ -332,33 +352,78 @@ impl ElementArenaScope {
             current.set(Some(arena as *const RefCell<Arena>));
             prev
         });
-        Self { previous }
+        Self {
+            entered: arena as *const RefCell<Arena>,
+            previous,
+            exited: false,
+        }
+    }
+
+    /// End the scope: restores the previously-current arena and ends the
+    /// arena's clear-deferral scope.
+    ///
+    /// Panics if passed a different arena than was entered: ending the scope
+    /// of the wrong arena would unbalance two arenas' scope depths, allowing
+    /// one of them to clear while a draw still references its memory.
+    pub(crate) fn exit(mut self, arena: &RefCell<Arena>) {
+        assert!(
+            std::ptr::eq(self.entered, arena),
+            "ElementArenaScope::exit called with a different arena than was entered"
+        );
+        self.exited = true;
+        CURRENT_ELEMENT_ARENA.with(|current| {
+            current.set(self.previous);
+        });
+        arena.borrow_mut().end_scope();
     }
 }
 
 impl Drop for ElementArenaScope {
     fn drop(&mut self) {
-        CURRENT_ELEMENT_ARENA.with(|current| {
-            current.set(self.previous);
-        });
+        if !self.exited {
+            CURRENT_ELEMENT_ARENA.with(|current| {
+                current.set(self.previous);
+            });
+            if !std::thread::panicking() {
+                debug_assert!(false, "ElementArenaScope dropped without calling exit()");
+                log::error!(
+                    "ElementArenaScope dropped without calling exit(); \
+                     element arena clears will be deferred indefinitely"
+                );
+            }
+        }
     }
 }
 
 /// Returned when the element arena has been used and so must be cleared before the next draw.
 #[must_use]
-pub struct ArenaClearNeeded(());
+pub struct ArenaClearNeeded {
+    /// Identity of the arena that was drawn into. Only ever compared against
+    /// another pointer in `clear`; never dereferenced.
+    arena: *const RefCell<Arena>,
+}
 
 impl ArenaClearNeeded {
     /// Create a new ArenaClearNeeded token for the App whose arena was drawn into.
-    pub(crate) fn new() -> Self {
-        Self(())
+    pub(crate) fn new(arena: &RefCell<Arena>) -> Self {
+        Self {
+            arena: arena as *const RefCell<Arena>,
+        }
     }
 
     /// Clear the element arena of the App the draw ran against. If an enclosing
     /// draw is still in progress (this draw was nested inside it), the clear is
     /// deferred to the enclosing draw's own `ArenaClearNeeded` so that its live
     /// allocations aren't freed.
+    ///
+    /// Panics if passed a different App than the draw ran against, since
+    /// clearing another App's arena could free memory its draws still
+    /// reference.
     pub fn clear(self, cx: &mut App) {
+        assert!(
+            std::ptr::eq(self.arena, &cx.element_arena),
+            "ArenaClearNeeded::clear called with a different App than the draw ran against"
+        );
         cx.element_arena.borrow_mut().clear();
     }
 }
@@ -1481,6 +1546,7 @@ impl Window {
                 });
             }
         }));
+        platform_window.set_draw_monitor(DrawMonitor::new());
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
             let invalidator = invalidator.clone();
@@ -2754,12 +2820,11 @@ impl Window {
             });
         }
 
-        // End the arena scope explicitly: `ElementArenaScope::drop` can't call
-        // `Arena::end_scope` because it has no access to `cx` (see its docs).
-        drop(arena_scope);
-        cx.element_arena.borrow_mut().end_scope();
+        // End the arena scope explicitly: `ElementArenaScope::drop` can't do it
+        // because it has no access to `cx` (see its docs).
+        arena_scope.exit(&cx.element_arena);
 
-        ArenaClearNeeded::new()
+        ArenaClearNeeded::new(&cx.element_arena)
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {

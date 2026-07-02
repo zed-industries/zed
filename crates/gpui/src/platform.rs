@@ -33,8 +33,8 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
-    ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, DrawMonitor, Font, FontId, FontMetrics,
+    FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
     PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
     RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
     SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
@@ -632,6 +632,11 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn capslock(&self) -> Capslock;
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler);
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler>;
+    /// Receives the capability to query whether a GPUI window draw is in
+    /// progress on the current thread, so the platform can defer draw requests
+    /// that arrive re-entrantly instead of nesting draws. Platforms whose
+    /// window procedures can't be re-entered may ignore it.
+    fn set_draw_monitor(&self, _monitor: DrawMonitor) {}
     fn prompt(
         &self,
         level: PromptLevel,

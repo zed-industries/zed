@@ -889,8 +889,7 @@ impl VisualTestContext {
             drop(element);
             // The scope must end before clearing; otherwise the clear would be
             // deferred as if this were a nested draw, and never run.
-            drop(arena_scope);
-            cx.element_arena.borrow_mut().end_scope();
+            arena_scope.exit(&cx.element_arena);
             cx.element_arena.borrow_mut().clear();
 
             (request_layout_state, prepaint_state)

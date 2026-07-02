@@ -84,6 +84,9 @@ pub struct WindowsWindowState {
     pub invalidate_devices: Arc<AtomicBool>,
     /// Shared with [`WindowsPlatformState::draw_coordinator`] and every other window.
     pub(crate) draw_coordinator: Rc<DrawCoordinator>,
+    /// Capability to query GPUI's draw state, received via
+    /// [`PlatformWindow::set_draw_monitor`] when the GPUI window is created.
+    pub(crate) draw_monitor: Cell<Option<DrawMonitor>>,
     fullscreen: Cell<Option<StyleAndBounds>>,
     initial_placement: Cell<Option<WindowOpenStatus>>,
     hwnd: HWND,
@@ -182,6 +185,7 @@ impl WindowsWindowState {
             hwnd,
             invalidate_devices,
             draw_coordinator,
+            draw_monitor: Cell::new(None),
             direct_manipulation,
             a11y: RefCell::new(None),
         })
@@ -672,6 +676,10 @@ impl PlatformWindow for WindowsWindow {
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
         self.state.input_handler.set(Some(input_handler));
+    }
+
+    fn set_draw_monitor(&self, monitor: DrawMonitor) {
+        self.state.draw_monitor.set(Some(monitor));
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {

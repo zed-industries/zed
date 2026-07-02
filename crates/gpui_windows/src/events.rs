@@ -1,8 +1,4 @@
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-    sync::atomic::Ordering,
-};
+use std::{cell::Cell, rc::Rc, sync::atomic::Ordering};
 
 use anyhow::Context as _;
 use gpui_util::ResultExt;
@@ -38,8 +34,7 @@ const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 /// Coordinates window draws on the UI thread. Owned by the platform and
 /// shared with every window (like `WindowsPlatformState::cursor_visible`),
 /// because the coordination is inherently cross-window: while window A is
-/// drawing, a re-entrant paint request for window B must be deferred, and A's
-/// draw must re-invalidate B when it finishes.
+/// drawing, a re-entrant paint request for window B must be deferred.
 pub(crate) struct DrawCoordinator {
     /// Whether some window is currently inside `draw_window`. Win32 can
     /// re-enter the window procedure while a draw is in progress (e.g.
@@ -48,42 +43,24 @@ pub(crate) struct DrawCoordinator {
     /// nest GPUI draws. Nested draws are wasted work whose output is
     /// immediately redrawn, so we defer them instead.
     drawing: Cell<bool>,
-    /// Windows whose draws were deferred while an outer `draw_window` was on
-    /// the stack. Their update regions were validated to keep a nested
-    /// message pump from re-dispatching WM_PAINT in a busy loop, so once the
-    /// outer draw finishes they must be re-invalidated to get their deferred
-    /// frame drawn.
-    deferred: RefCell<Vec<HWND>>,
 }
 
 impl DrawCoordinator {
     pub(crate) fn new() -> Self {
         Self {
             drawing: Cell::new(false),
-            deferred: RefCell::new(Vec::new()),
         }
     }
 
-    fn try_begin_draw(&self) -> Option<DrawWindowGuard<'_>> {
+    fn try_begin_draw(&self, monitor: Option<DrawMonitor>) -> Option<DrawWindowGuard<'_>> {
         // Also check GPUI's own draw state, which covers draws that don't go
         // through `draw_window` (e.g. key dispatch or opening a window draws
         // synchronously) but can still be re-entered by the window procedure.
-        if self.drawing.get() || gpui::draw_in_progress() {
+        if self.drawing.get() || monitor.is_some_and(|monitor| monitor.draw_in_progress()) {
             None
         } else {
             self.drawing.set(true);
             Some(DrawWindowGuard { coordinator: self })
-        }
-    }
-
-    fn is_drawing(&self) -> bool {
-        self.drawing.get()
-    }
-
-    fn defer(&self, handle: HWND) {
-        let mut deferred = self.deferred.borrow_mut();
-        if !deferred.contains(&handle) {
-            deferred.push(handle);
         }
     }
 }
@@ -95,16 +72,6 @@ struct DrawWindowGuard<'a> {
 impl Drop for DrawWindowGuard<'_> {
     fn drop(&mut self) {
         self.coordinator.drawing.set(false);
-        // Collect first so the RefCell isn't borrowed while calling into
-        // Win32, in case the window procedure is re-entered synchronously.
-        let deferred: Vec<HWND> = self.coordinator.deferred.borrow_mut().drain(..).collect();
-        for handle in deferred {
-            unsafe {
-                RedrawWindow(Some(handle), None, None, RDW_INVALIDATE)
-                    .ok()
-                    .log_err();
-            }
-        }
     }
 }
 
@@ -1292,31 +1259,22 @@ impl WindowsWindowInner {
 
     #[inline]
     fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
-        let coordinator = &self.state.draw_coordinator;
-        let Some(_guard) = coordinator.try_begin_draw() else {
+        let Some(_guard) = self
+            .state
+            .draw_coordinator
+            .try_begin_draw(self.state.draw_monitor.get())
+        else {
             log::debug!("deferring re-entrant draw of window {handle:?}");
             if force_render {
                 self.state.force_render_pending.set(true);
             }
-            if coordinator.is_drawing() {
-                // An outer `draw_window` is on the stack and will re-invalidate
-                // this window when it finishes. Validate the region now so that
-                // a nested message pump doesn't keep re-dispatching WM_PAINT for
-                // the still-invalid region in a busy loop until the outer draw
-                // unwinds.
-                unsafe { ValidateRect(Some(handle), None).ok().log_err() };
-                coordinator.defer(handle);
-            } else {
-                // The in-progress draw didn't come through `draw_window` (e.g.
-                // key dispatch or opening a window draws synchronously), so
-                // nothing will re-invalidate this window when it finishes. Leave
-                // the region invalid so WM_PAINT retries once it unwinds.
-                unsafe {
-                    RedrawWindow(Some(handle), None, None, RDW_INVALIDATE)
-                        .ok()
-                        .log_err();
-                }
-            }
+            // Validate the region so a nested message pump doesn't keep
+            // re-dispatching WM_PAINT for the still-invalid region in a busy
+            // loop until the in-progress draw unwinds. The vsync thread
+            // re-invalidates every window on each vsync (see
+            // `begin_vsync_thread`), so the deferred frame still gets drawn,
+            // at most one vsync late.
+            unsafe { ValidateRect(Some(handle), None).ok().log_err() };
             return Some(0);
         };
         let mut request_frame = self.state.callbacks.request_frame.take()?;
