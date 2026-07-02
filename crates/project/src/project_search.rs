@@ -19,7 +19,6 @@ use gpui::{App, AppContext, AsyncApp, BackgroundExecutor, Entity, Priority, Task
 use language::{Buffer, BufferSnapshot, Point};
 use parking_lot::Mutex;
 use postage::oneshot;
-use rand::rand_core::le;
 use rpc::{AnyProtoClient, proto};
 
 use util::{ResultExt, maybe, paths::compare_rel_paths, rel_path::RelPath};
