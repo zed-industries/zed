@@ -241,8 +241,20 @@ fn key_char_for(
     key_maps: &mut HashMap<i32, KeyCharacterMap>,
     app: &AndroidApp,
 ) -> Option<String> {
+    const VIRTUAL_KEYBOARD_DEVICE_ID: i32 = -1;
+
     if !key_maps.contains_key(&device_id) {
-        match app.device_key_character_map(device_id) {
+        // Some devices (e.g. the emulator's forwarded host keyboard, id 0)
+        // have no per-device map; the built-in virtual keyboard map always
+        // exists. Cache whichever we got under the original id.
+        let map = app.device_key_character_map(device_id).or_else(|error| {
+            log::info!(
+                "no key character map for device {device_id} ({error:?}); \
+                 falling back to the virtual keyboard map"
+            );
+            app.device_key_character_map(VIRTUAL_KEYBOARD_DEVICE_ID)
+        });
+        match map {
             Ok(map) => {
                 key_maps.insert(device_id, map);
             }
