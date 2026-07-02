@@ -459,6 +459,19 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    /// Strip SBPL comment lines (`;`-prefixed) from a generated Seatbelt profile
+    /// so assertions match on the actual rules rather than on documentation.
+    /// Several comments legitimately mention rule syntax (for example the
+    /// blanket `(allow mach-lookup)` form they explain we avoid), which would
+    /// otherwise cause a naive substring check to spuriously match.
+    fn seatbelt_rules_only(config: &str) -> String {
+        config
+            .lines()
+            .filter(|line| !line.trim_start().starts_with(';'))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn test_generate_seatbelt_config_contains_read_and_project_write_permissions_by_default() {
         let dir = PathBuf::from("/Users/test/projects/myproject");
@@ -512,22 +525,26 @@ mod tests {
         let config =
             generate_seatbelt_config(&[dir.as_path()], &[], &[], SandboxPermissions::default())
                 .unwrap();
+        // Assert on the rules only: the mach-lookup comment intentionally spells
+        // out the blanket `(allow mach-lookup)` form it avoids, which a raw
+        // `config.contains` would match.
+        let rules = seatbelt_rules_only(&config);
 
         // A scoped allowlist, never the blanket form — a blanket `(allow
         // mach-lookup)` would let a command reach LaunchServices/launchd and
         // escape the sandbox via `open`.
-        assert!(config.contains("(allow mach-lookup"));
-        assert!(!config.contains("(allow mach-lookup)"));
-        assert!(config.contains("com.apple.cfprefsd.daemon"));
+        assert!(rules.contains("(allow mach-lookup"));
+        assert!(!rules.contains("(allow mach-lookup)"));
+        assert!(rules.contains("com.apple.cfprefsd.daemon"));
 
         // The escape/abuse endpoints must fall through to `(deny default)`.
-        assert!(!config.contains("launchservicesd"));
-        assert!(!config.contains("com.apple.lsd"));
-        assert!(!config.contains("com.apple.pasteboard"));
+        assert!(!rules.contains("launchservicesd"));
+        assert!(!rules.contains("com.apple.lsd"));
+        assert!(!rules.contains("com.apple.pasteboard"));
 
         // Network-only services must not be granted without network.
-        assert!(!config.contains("com.apple.SecurityServer"));
-        assert!(!config.contains("com.apple.SystemConfiguration.configd"));
+        assert!(!rules.contains("com.apple.SecurityServer"));
+        assert!(!rules.contains("com.apple.SystemConfiguration.configd"));
     }
 
     #[test]
