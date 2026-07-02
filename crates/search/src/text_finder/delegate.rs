@@ -912,54 +912,78 @@ impl PickerDelegate for Delegate {
                 let tooltip_focus_handle = self.focus_handle.clone();
 
                 Some(
-                    h_flex()
-                        .w_full()
-                        .min_w_0()
-                        .px(DynamicSpacing::Base06.rems(cx))
-                        .py_1()
-                        .gap_1p5()
-                        .rounded_sm()
-                        .when(selected, |this| {
-                            this.bg(cx.theme().colors().ghost_element_selected)
-                        })
-                        .child(
-                            Disclosure::new(("text-finder-fold", ix), !is_collapsed)
-                                .tooltip(move |_window, cx| {
-                                    Tooltip::with_meta_in(
-                                        if is_collapsed { "Unfold" } else { "Fold" },
-                                        Some(&ToggleFold),
-                                        format!(
-                                            "{} to toggle all",
-                                            text_for_keystroke(&Modifiers::alt(), "click", cx)
-                                        ),
-                                        &tooltip_focus_handle,
-                                        cx,
-                                    )
-                                })
-                                .on_click(cx.listener(
-                                    move |this, event: &ClickEvent, _window, cx| {
-                                        if event.modifiers().alt {
-                                            this.delegate.toggle_all_collapsed(cx);
-                                        } else {
-                                            this.delegate.toggle_group_collapsed(&toggle_path);
-                                            cx.notify();
-                                        }
-                                    },
-                                )),
-                        )
-                        .children(file_icon)
+                    div()
+                        .px_1()
                         .child(
                             h_flex()
-                                .gap_1()
-                                .child(Label::new(file_name).size(LabelSize::Small))
-                                .when(!directory.is_empty(), |this| {
-                                    this.child(
-                                        Label::new(directory)
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted)
-                                            .truncate_start(),
-                                    )
-                                }),
+                                .w_full()
+                                .min_w_0()
+                                .p_1()
+                                .gap_1p5()
+                                .rounded_sm()
+                                .when(selected, |this| {
+                                    this.bg(cx.theme().colors().ghost_element_selected)
+                                })
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(
+                                            Disclosure::new(
+                                                ("text-finder-fold", ix),
+                                                !is_collapsed,
+                                            )
+                                            .tooltip(move |_window, cx| {
+                                                let (label, action): (_, &dyn gpui::Action) =
+                                                    if is_collapsed {
+                                                        ("Unfold", &Unfold)
+                                                    } else {
+                                                        ("Fold", &Fold)
+                                                    };
+                                                Tooltip::with_meta_in(
+                                                    label,
+                                                    Some(action),
+                                                    format!(
+                                                        "{} to toggle all",
+                                                        text_for_keystroke(
+                                                            &Modifiers::alt(),
+                                                            "click",
+                                                            cx
+                                                        )
+                                                    ),
+                                                    &tooltip_focus_handle,
+                                                    cx,
+                                                )
+                                            })
+                                            .on_click(
+                                                cx.listener(
+                                                    move |this, event: &ClickEvent, _window, cx| {
+                                                        if event.modifiers().alt {
+                                                            this.delegate.toggle_all_collapsed(cx);
+                                                        } else {
+                                                            this.delegate.toggle_group_collapsed(
+                                                                &toggle_path,
+                                                            );
+                                                            cx.notify();
+                                                        }
+                                                    },
+                                                ),
+                                            ),
+                                        )
+                                        .children(file_icon),
+                                )
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .child(Label::new(file_name).size(LabelSize::Small))
+                                        .when(!directory.is_empty(), |this| {
+                                            this.child(
+                                                Label::new(directory)
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted)
+                                                    .truncate_start(),
+                                            )
+                                        }),
+                                ),
                         )
                         .into_any_element(),
                 )
