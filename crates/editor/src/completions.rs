@@ -266,14 +266,20 @@ impl Editor {
 
         let multibuffer_snapshot = self.buffer.read(cx).read(cx);
 
-        // Typically `start` == `end`, but with snippet tabstop choices the default choice is
-        // inserted and selected. To handle that case, the start of the selection is used so that
-        // the menu starts with all choices.
-        let position = self
-            .selections
-            .newest_anchor()
-            .start
-            .bias_right(&multibuffer_snapshot);
+        let is_showing_snippet_choices = matches!(
+            completions_source,
+            Some(CompletionsMenuSource::SnippetChoices)
+        );
+
+        let anchor = self.selections.newest_anchor();
+        let position = if is_showing_snippet_choices {
+            // Typically `start` == `end`, but with snippet tabstop choices the default choice is
+            // inserted and selected. To handle that case, the start of the selection is used so that
+            // the menu starts with all choices.
+            anchor.start.bias_right(&multibuffer_snapshot)
+        } else {
+            anchor.head().bias_right(&multibuffer_snapshot)
+        };
 
         if position.diff_base_anchor().is_some() {
             return;
@@ -315,7 +321,7 @@ impl Editor {
 
         // Hide the current completions menu when query is empty. Without this, cached
         // completions from before the trigger char may be reused (#32774).
-        if query.is_none() && menu_is_open {
+        if query.is_none() && menu_is_open && !is_showing_snippet_choices {
             self.hide_context_menu(window, cx);
         }
 
@@ -824,14 +830,19 @@ impl Editor {
         let old_text = buffer
             .text_for_range(replace_range.clone())
             .collect::<String>();
-        let lookbehind = newest_range_buffer
-            .start
-            .to_offset(buffer_snapshot)
-            .saturating_sub(replace_range.start.to_offset(&buffer_snapshot));
-        let lookahead = replace_range
-            .end
-            .to_offset(&buffer_snapshot)
-            .saturating_sub(newest_range_buffer.end.to_offset(&buffer));
+        let (lookbehind, lookahead) = if buffer.remote_id() == buffer_snapshot.remote_id() {
+            let lookbehind = newest_range_buffer
+                .start
+                .to_offset(&buffer)
+                .saturating_sub(replace_range.start.to_offset(&buffer));
+            let lookahead = replace_range
+                .end
+                .to_offset(&buffer)
+                .saturating_sub(newest_range_buffer.end.to_offset(&buffer));
+            (lookbehind, lookahead)
+        } else {
+            (0, 0)
+        };
         let prefix = &old_text[..old_text.len().saturating_sub(lookahead)];
         let suffix = &old_text[lookbehind.min(old_text.len())..];
 
