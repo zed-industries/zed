@@ -1262,6 +1262,22 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    pub fn set_selected_text_range(&mut self, range_utf16: Range<usize>) {
+        self.cx
+            .update(|window, cx| {
+                self.handler
+                    .set_selected_text_range(range_utf16, window, cx)
+            })
+            .ok();
+    }
+
+    pub fn element_bounds(&mut self) -> Option<Bounds<Pixels>> {
+        self.cx
+            .update(|window, cx| self.handler.element_bounds(window, cx))
+            .ok()
+            .flatten()
+    }
+
     #[allow(dead_code)]
     pub fn apple_press_and_hold_enabled(&mut self) -> bool {
         self.handler.apple_press_and_hold_enabled()
@@ -1447,6 +1463,29 @@ pub trait InputHandler: 'static {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<usize>;
+
+    /// Set the range of the user's currently selected text.
+    ///
+    /// Called by platforms when the system text machinery moves the selection on the
+    /// application's behalf, for example when the user adjusts a system-provided
+    /// selection control.
+    ///
+    /// range_utf16 is in terms of UTF-16 characters, from 0 to the length of the document
+    fn set_selected_text_range(
+        &mut self,
+        _range_utf16: Range<usize>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) {
+    }
+
+    /// Get the bounds of the focused text element in window coordinates, if known.
+    ///
+    /// This is used by platforms that overlay system text-interaction UI on the
+    /// focused element.
+    fn element_bounds(&mut self, _window: &mut Window, _cx: &mut App) -> Option<Bounds<Pixels>> {
+        None
+    }
 
     /// Allows a given input context to opt into getting raw key repeats instead of
     /// sending these to the platform.
