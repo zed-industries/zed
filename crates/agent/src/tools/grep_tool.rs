@@ -1,5 +1,5 @@
 use crate::{AgentTool, ToolCallEventStream, ToolInput};
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use anyhow::Result;
 use futures::{FutureExt as _, StreamExt};
 use gpui::{App, Entity, SharedString, Task};
@@ -174,7 +174,7 @@ impl AgentTool for GrepTool {
             let project = project.downgrade();
             // Keep the search alive for the duration of result iteration. Dropping this task is the
             // cancellation mechanism; we intentionally do not detach it.
-            let SearchResults {rx, _task_handle}  = results;
+            let SearchResults {rx, ..}  = results;
             futures::pin_mut!(rx);
 
             let mut output = String::new();

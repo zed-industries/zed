@@ -149,6 +149,18 @@ pub struct OpenSettingsAt {
     pub target: Option<OpenSettingsAtTarget>,
 }
 
+#[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct OpenSettingsPage {
+    /// A settings page title (e.g. `AI`).
+    pub page: String,
+    /// The settings file to select before opening `page`. When omitted, the
+    /// existing settings file selection is preserved.
+    #[serde(default)]
+    pub target: Option<OpenSettingsAtTarget>,
+}
+
 /// `OpenSettingsAt` path of the agent skills page in the settings UI.
 pub const AGENT_SKILLS_SETTINGS_PATH: &str = "agent.skills";
 
@@ -367,6 +379,18 @@ pub mod command_palette {
         command_palette,
         [
             /// Toggles the command palette.
+            Toggle,
+        ]
+    );
+}
+
+pub mod text_finder {
+    use gpui::actions;
+
+    actions!(
+        text_finder,
+        [
+            /// Opens the Project Search Picker.
             Toggle,
         ]
     );
