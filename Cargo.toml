@@ -47,6 +47,7 @@ members = [
     "crates/csv_preview",
     "crates/dap",
     "crates/dap_adapters",
+    "crates/database_client",
     "crates/db",
     "crates/debug_adapter_extension",
     "crates/debugger_tools",
@@ -315,6 +316,7 @@ crossbeam = "0.8.4"
 csv_preview = { path = "crates/csv_preview"}
 dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
+database_client = { path = "crates/database_client" }
 db = { path = "crates/db" }
 debug_adapter_extension = { path = "crates/debug_adapter_extension" }
 debugger_tools = { path = "crates/debugger_tools" }
@@ -782,6 +784,7 @@ time = { version = "0.3", features = [
 ] }
 tiny_http = "0.12"
 tokio = { version = "1" }
+tokio-postgres = "0.7"
 tokio-socks = { version = "0.5.2", default-features = false, features = [
     "futures-io",
     "tokio",
