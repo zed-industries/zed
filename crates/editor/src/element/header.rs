@@ -20,7 +20,7 @@ use sum_tree::Bias;
 use text::BufferId;
 use theme::ActiveTheme;
 use ui::{
-    ButtonLike, ContextMenu, Indicator, KeyBinding, Tooltip, prelude::*, right_click_menu,
+    ButtonLike, ContextMenu, DiffStat, Indicator, KeyBinding, Tooltip, prelude::*, right_click_menu,
     text_for_keystroke,
 };
 use util::ResultExt;
@@ -642,6 +642,15 @@ pub(crate) fn render_buffer_header(
         .all_diff_hunks_expanded()
         .then(|| editor_read.status_for_buffer_id(buffer_id, cx))
         .flatten();
+    // For diff multibuffers (where all hunks are expanded), surface the
+    // per-file changed line counts that the multibuffer already tracks per
+    // buffer. This is the same data aggregated by `total_changed_lines`.
+    let diff_stat = multi_buffer
+        .all_diff_hunks_expanded()
+        .then(|| multibuffer_snapshot.diff_for_buffer_id(buffer_id))
+        .flatten()
+        .map(|diff| diff.changed_row_counts())
+        .filter(|(added, removed)| *added > 0 || *removed > 0);
     let indicator = multi_buffer.buffer(buffer_id).and_then(|buffer| {
         let buffer = buffer.read(cx);
         let indicator_color = match (buffer.has_conflict(), buffer.is_dirty()) {
@@ -886,6 +895,16 @@ pub(crate) fn render_buffer_header(
                                     })
                             },
                         ))
+                        .when_some(diff_stat, |this, (added, removed)| {
+                            this.child(
+                                DiffStat::new(
+                                    ("buffer-header-diff-stat", buffer_id.to_proto()),
+                                    added as usize,
+                                    removed as usize,
+                                )
+                                .label_size(LabelSize::Small),
+                            )
+                        })
                         .when(can_open_excerpts && relative_path.is_some(), |this| {
                             this.child(
                                 div()
