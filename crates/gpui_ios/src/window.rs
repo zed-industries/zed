@@ -1,25 +1,28 @@
 use crate::{CGFloat, CGPoint, CGRect, IosDisplay, id, nil};
 use futures::channel::oneshot;
 use gpui::{
-    Bounds, Capslock, DispatchEventResult, GpuSpecs, Modifiers, MouseButton, MouseDownEvent,
-    MouseExitEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, Scene, ScrollDelta, ScrollWheelEvent, Size, TouchPhase,
-    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, point, px, size,
+    Bounds, Capslock, DispatchEventResult, GpuSpecs, KeyDownEvent, KeyUpEvent, Keystroke,
+    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, PinchEvent, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput,
+    PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel, RequestFrameOptions,
+    Scene, ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowAppearance,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, point, px, size,
 };
 use gpui_apple::metal_renderer::{self, Renderer};
 use objc::{
     class,
     declare::ClassDecl,
     msg_send,
-    runtime::{Class, NO, Object, Sel, YES},
+    runtime::{BOOL, Class, NO, Object, Sel, YES},
     sel, sel_impl,
 };
 use raw_window_handle as rwh;
 use std::{
     cell::RefCell,
-    ffi::c_void,
-    mem, ptr,
+    ffi::{CStr, c_void},
+    mem,
+    os::raw::c_char,
+    ptr,
     rc::Rc,
     sync::{Arc, Once},
     time::{Duration, Instant},
@@ -43,6 +46,31 @@ const UI_GESTURE_RECOGNIZER_STATE_CHANGED: i64 = 2;
 const UI_GESTURE_RECOGNIZER_STATE_ENDED: i64 = 3;
 const UI_GESTURE_RECOGNIZER_STATE_CANCELLED: i64 = 4;
 const UI_GESTURE_RECOGNIZER_STATE_FAILED: i64 = 5;
+
+// `UIKeyModifierFlags` bit masks.
+const UI_KEY_MODIFIER_ALPHA_SHIFT: i64 = 1 << 16;
+const UI_KEY_MODIFIER_SHIFT: i64 = 1 << 17;
+const UI_KEY_MODIFIER_CONTROL: i64 = 1 << 18;
+const UI_KEY_MODIFIER_ALTERNATE: i64 = 1 << 19;
+const UI_KEY_MODIFIER_COMMAND: i64 = 1 << 20;
+
+// `UIKeyboardHIDUsage` values (USB HID keyboard usage page).
+const HID_USAGE_KEYBOARD_RETURN_OR_ENTER: i64 = 0x28;
+const HID_USAGE_KEYBOARD_ESCAPE: i64 = 0x29;
+const HID_USAGE_KEYBOARD_DELETE_OR_BACKSPACE: i64 = 0x2A;
+const HID_USAGE_KEYBOARD_TAB: i64 = 0x2B;
+const HID_USAGE_KEYBOARD_SPACEBAR: i64 = 0x2C;
+const HID_USAGE_KEYBOARD_F1: i64 = 0x3A;
+const HID_USAGE_KEYBOARD_F12: i64 = 0x45;
+const HID_USAGE_KEYBOARD_HOME: i64 = 0x4A;
+const HID_USAGE_KEYBOARD_PAGE_UP: i64 = 0x4B;
+const HID_USAGE_KEYBOARD_DELETE_FORWARD: i64 = 0x4C;
+const HID_USAGE_KEYBOARD_END: i64 = 0x4D;
+const HID_USAGE_KEYBOARD_PAGE_DOWN: i64 = 0x4E;
+const HID_USAGE_KEYBOARD_RIGHT_ARROW: i64 = 0x4F;
+const HID_USAGE_KEYBOARD_LEFT_ARROW: i64 = 0x50;
+const HID_USAGE_KEYBOARD_DOWN_ARROW: i64 = 0x51;
+const HID_USAGE_KEYBOARD_UP_ARROW: i64 = 0x52;
 
 /// `UIScrollView.DecelerationRate.normal`: a decelerating scroll's velocity
 /// multiplies by 0.998 for every elapsed millisecond. Applied per tick as
@@ -86,6 +114,11 @@ struct IosWindowState {
     input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     input_handler: Option<PlatformInputHandler>,
     mouse_position: Point<Pixels>,
+    /// Last modifier state read off a hardware key press. UIKit has no
+    /// flags-changed callback, so this is only as fresh as the most recent
+    /// `presses*` event.
+    modifiers: Modifiers,
+    capslock: Capslock,
     is_active: bool,
     scroll_momentum: Option<ScrollMomentum>,
     /// When the active pan gesture's translation last changed; consulted at
@@ -149,6 +182,9 @@ impl IosWindow {
 
             let _: () = msg_send![native_window, setRootViewController: view_controller];
             let _: () = msg_send![native_window, makeKeyAndVisible];
+            // Hardware key presses are only delivered along the responder
+            // chain, so the view must be first responder to see them.
+            let _: BOOL = msg_send![native_view, becomeFirstResponder];
 
             let bounds = Bounds {
                 origin: Point::default(),
@@ -187,6 +223,8 @@ impl IosWindow {
                 input_callback: None,
                 input_handler: None,
                 mouse_position: Point::default(),
+                modifiers: Modifiers::default(),
+                capslock: Capslock::default(),
                 // The app launches foreground-active; UIKit only notifies on
                 // transitions.
                 is_active: true,
@@ -310,11 +348,11 @@ impl PlatformWindow for IosWindow {
     }
 
     fn modifiers(&self) -> Modifiers {
-        Modifiers::default()
+        self.0.borrow().modifiers
     }
 
     fn capslock(&self) -> Capslock {
-        Capslock::default()
+        self.0.borrow().capslock
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
@@ -460,6 +498,22 @@ fn gpui_view_class() -> &'static Class {
             decl.add_method(
                 sel!(handlePinch:),
                 handle_pinch as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(canBecomeFirstResponder),
+                can_become_first_responder as extern "C" fn(&Object, Sel) -> BOOL,
+            );
+            decl.add_method(
+                sel!(pressesBegan:withEvent:),
+                presses_began as extern "C" fn(&Object, Sel, id, id),
+            );
+            decl.add_method(
+                sel!(pressesEnded:withEvent:),
+                presses_ended as extern "C" fn(&Object, Sel, id, id),
+            );
+            decl.add_method(
+                sel!(pressesCancelled:withEvent:),
+                presses_cancelled as extern "C" fn(&Object, Sel, id, id),
             );
         }
         decl.register();
@@ -613,14 +667,22 @@ fn tracked_touch_in_set(window_state: &Rc<RefCell<IosWindowState>>, touches: id)
 
 /// Invokes the gpui input callback with the `RefCell` borrow released: gpui
 /// may reenter the window (e.g. to read `mouse_position` or request a frame)
-/// while handling the event. The returned `DispatchEventResult` is ignored
-/// because no gesture-recognizer arbitration exists yet to act on it.
-fn dispatch_input(window_state: &Rc<RefCell<IosWindowState>>, input: PlatformInput) {
+/// while handling the event. Without a registered callback the event is
+/// reported as propagating, so it falls through to UIKit's default handling.
+fn dispatch_input(
+    window_state: &Rc<RefCell<IosWindowState>>,
+    input: PlatformInput,
+) -> DispatchEventResult {
     let callback = window_state.borrow_mut().input_callback.take();
-    if let Some(mut callback) = callback {
-        callback(input);
-        window_state.borrow_mut().input_callback = Some(callback);
-    }
+    let Some(mut callback) = callback else {
+        return DispatchEventResult {
+            propagate: true,
+            default_prevented: false,
+        };
+    };
+    let result = callback(input);
+    window_state.borrow_mut().input_callback = Some(callback);
+    result
 }
 
 /// Parks the pointer just outside the window once the finger lifts. A touch
@@ -845,6 +907,184 @@ extern "C" fn handle_pan(this: &Object, _: Sel, recognizer: id) {
             }
         }
         _ => {}
+    }
+}
+
+extern "C" fn can_become_first_responder(_this: &Object, _: Sel) -> BOOL {
+    YES
+}
+
+extern "C" fn presses_began(this: &Object, _: Sel, presses: id, event: id) {
+    if handle_presses(this, presses, true) {
+        unsafe {
+            let _: () = msg_send![super(this, class!(UIView)), pressesBegan: presses
+                                                                  withEvent: event];
+        }
+    }
+}
+
+extern "C" fn presses_ended(this: &Object, _: Sel, presses: id, event: id) {
+    if handle_presses(this, presses, false) {
+        unsafe {
+            let _: () = msg_send![super(this, class!(UIView)), pressesEnded: presses
+                                                                  withEvent: event];
+        }
+    }
+}
+
+extern "C" fn presses_cancelled(this: &Object, _: Sel, presses: id, event: id) {
+    if handle_presses(this, presses, false) {
+        unsafe {
+            let _: () = msg_send![super(this, class!(UIView)), pressesCancelled: presses
+                                                                      withEvent: event];
+        }
+    }
+}
+
+/// Translates hardware key presses into gpui key events and reports whether
+/// any press should be forwarded to `UIView`'s own implementation. Presses
+/// gpui doesn't handle must reach the superclass so UIKit's text-input
+/// machinery can consume them (which software-keyboard/IME support relies
+/// on), as must presses with no `key` object (non-keyboard presses).
+fn handle_presses(this: &Object, presses: id, is_key_down: bool) -> bool {
+    let window_state = unsafe { get_window_state(this) };
+    let mut forward_to_super = false;
+    let press_array: id = unsafe { msg_send![presses, allObjects] };
+    let press_count: usize = unsafe { msg_send![press_array, count] };
+    for index in 0..press_count {
+        let press: id = unsafe { msg_send![press_array, objectAtIndex: index] };
+        let ui_key: id = unsafe { msg_send![press, key] };
+        if ui_key.is_null() {
+            forward_to_super = true;
+            continue;
+        }
+
+        let modifier_flags: i64 = unsafe { msg_send![ui_key, modifierFlags] };
+        let modifiers = Modifiers {
+            control: modifier_flags & UI_KEY_MODIFIER_CONTROL != 0,
+            alt: modifier_flags & UI_KEY_MODIFIER_ALTERNATE != 0,
+            shift: modifier_flags & UI_KEY_MODIFIER_SHIFT != 0,
+            platform: modifier_flags & UI_KEY_MODIFIER_COMMAND != 0,
+            function: false,
+        };
+        let capslock = Capslock {
+            on: modifier_flags & UI_KEY_MODIFIER_ALPHA_SHIFT != 0,
+        };
+
+        // UIKit has no flags-changed callback; modifier keys arrive as
+        // ordinary presses and every press carries the full modifier state,
+        // so ModifiersChanged is synthesized from state differences here.
+        let modifiers_changed = {
+            let mut state = window_state.borrow_mut();
+            let changed = state.modifiers != modifiers || state.capslock != capslock;
+            state.modifiers = modifiers;
+            state.capslock = capslock;
+            changed
+        };
+        if modifiers_changed {
+            dispatch_input(
+                &window_state,
+                PlatformInput::ModifiersChanged(ModifiersChangedEvent {
+                    modifiers,
+                    capslock,
+                }),
+            );
+        }
+
+        let Some(keystroke) = (unsafe { keystroke_for_ui_key(ui_key, modifiers) }) else {
+            // A modifier-only press; the ModifiersChanged above covers it.
+            forward_to_super = true;
+            continue;
+        };
+        let input = if is_key_down {
+            PlatformInput::KeyDown(KeyDownEvent {
+                keystroke,
+                is_held: false,
+                prefer_character_input: false,
+            })
+        } else {
+            PlatformInput::KeyUp(KeyUpEvent { keystroke })
+        };
+        if dispatch_input(&window_state, input).propagate {
+            forward_to_super = true;
+        }
+    }
+    forward_to_super
+}
+
+/// Builds a gpui keystroke from a `UIKey`, following the same conventions as
+/// the macOS backend: special keys get gpui's cross-platform names, other
+/// keys use their unmodified character, and `key_char` carries the text the
+/// press would insert—withheld when command or control is held because those
+/// chords never insert text. Returns `None` for modifier-only presses, which
+/// produce no characters.
+unsafe fn keystroke_for_ui_key(ui_key: id, modifiers: Modifiers) -> Option<Keystroke> {
+    unsafe {
+        let key_code: i64 = msg_send![ui_key, keyCode];
+        let mut key_char = None;
+        let key = match key_code {
+            HID_USAGE_KEYBOARD_RETURN_OR_ENTER => {
+                key_char = Some("\n".to_string());
+                "enter".to_string()
+            }
+            HID_USAGE_KEYBOARD_ESCAPE => "escape".to_string(),
+            HID_USAGE_KEYBOARD_DELETE_OR_BACKSPACE => "backspace".to_string(),
+            HID_USAGE_KEYBOARD_TAB => {
+                key_char = Some("\t".to_string());
+                "tab".to_string()
+            }
+            HID_USAGE_KEYBOARD_SPACEBAR => {
+                key_char = Some(" ".to_string());
+                "space".to_string()
+            }
+            HID_USAGE_KEYBOARD_F1..=HID_USAGE_KEYBOARD_F12 => {
+                format!("f{}", key_code - HID_USAGE_KEYBOARD_F1 + 1)
+            }
+            HID_USAGE_KEYBOARD_HOME => "home".to_string(),
+            HID_USAGE_KEYBOARD_PAGE_UP => "pageup".to_string(),
+            HID_USAGE_KEYBOARD_DELETE_FORWARD => "delete".to_string(),
+            HID_USAGE_KEYBOARD_END => "end".to_string(),
+            HID_USAGE_KEYBOARD_PAGE_DOWN => "pagedown".to_string(),
+            HID_USAGE_KEYBOARD_RIGHT_ARROW => "right".to_string(),
+            HID_USAGE_KEYBOARD_LEFT_ARROW => "left".to_string(),
+            HID_USAGE_KEYBOARD_DOWN_ARROW => "down".to_string(),
+            HID_USAGE_KEYBOARD_UP_ARROW => "up".to_string(),
+            _ => {
+                let unmodified: id = msg_send![ui_key, charactersIgnoringModifiers];
+                let unmodified = string_from_ns_string(unmodified);
+                if unmodified.is_empty() {
+                    return None;
+                }
+                let characters: id = msg_send![ui_key, characters];
+                let characters = string_from_ns_string(characters);
+                if !modifiers.control
+                    && !modifiers.platform
+                    && !characters.is_empty()
+                    && characters.chars().all(|character| !character.is_control())
+                {
+                    key_char = Some(characters);
+                }
+                unmodified.to_lowercase()
+            }
+        };
+        Some(Keystroke {
+            modifiers,
+            key,
+            key_char,
+        })
+    }
+}
+
+unsafe fn string_from_ns_string(ns_string: id) -> String {
+    if ns_string.is_null() {
+        return String::new();
+    }
+    unsafe {
+        let utf8: *const c_char = msg_send![ns_string, UTF8String];
+        if utf8.is_null() {
+            return String::new();
+        }
+        CStr::from_ptr(utf8).to_string_lossy().into_owned()
     }
 }
 
