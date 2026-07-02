@@ -20,6 +20,14 @@ objc.workspace = true
 raw-window-handle = "0.6"
 uuid.workspace = true
 
+[dev-dependencies]
+assets.workspace = true
+# Physical devices can't read assets from the Mac's source tree the way the
+# simulator can, so examples must embed them even in debug builds.
+rust-embed = { workspace = true, features = ["debug-embed"] }
+theme.workspace = true
+ui.workspace = true
+
 [[example]]
-name = "hello_ios"
-path = "examples/hello_ios.rs"
+name = "todos"
+path = "examples/todos.rs"

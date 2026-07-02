@@ -7867,11 +7867,15 @@ name = "gpui_ios"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assets",
  "futures 0.3.32",
  "gpui",
  "gpui_apple",
  "objc",
  "raw-window-handle",
+ "rust-embed",
+ "theme",
+ "ui",
  "uuid",
 ]
 

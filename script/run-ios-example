@@ -5,7 +5,7 @@ set -euo pipefail
 usage() {
   echo "Usage: $0 [--release] [--device [name-or-udid]] [--identity identity] [simulator]"
   echo ""
-  echo "Builds the gpui_ios hello_ios example, assembles an app bundle, and installs"
+  echo "Builds the gpui_ios todos example, assembles an app bundle, and installs"
   echo "and launches it on a simulator (default) or a connected physical device."
   echo ""
   echo "Arguments:"
@@ -54,7 +54,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-bundle_id=dev.zed.gpui.hello-ios
+bundle_id=dev.zed.gpui.todos
 
 if [[ "$run_on" == device ]]; then
   target=aarch64-apple-ios
@@ -64,13 +64,13 @@ else
   supported_platform=iPhoneSimulator
 fi
 
-cargo build -p gpui_ios --example hello_ios --target "$target" "${cargo_flags[@]+"${cargo_flags[@]}"}"
+cargo build -p gpui_ios --example todos --target "$target" "${cargo_flags[@]+"${cargo_flags[@]}"}"
 
 target_dir="target/$target/$profile"
-app_dir="$target_dir/HelloGPUI.app"
+app_dir="$target_dir/Todos.app"
 rm -rf "$app_dir"
 mkdir -p "$app_dir"
-cp "$target_dir/examples/hello_ios" "$app_dir/hello_ios"
+cp "$target_dir/examples/todos" "$app_dir/todos"
 
 cat >"$app_dir/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -78,11 +78,13 @@ cat >"$app_dir/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>hello_ios</string>
+    <string>todos</string>
     <key>CFBundleIdentifier</key>
     <string>$bundle_id</string>
     <key>CFBundleName</key>
-    <string>HelloGPUI</string>
+    <string>Todos</string>
+    <key>CFBundleDisplayName</key>
+    <string>Todos</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleVersion</key>
@@ -191,7 +193,7 @@ fi
 
 cp "$provisioning_profile" "$app_dir/embedded.mobileprovision"
 
-entitlements_path=$(mktemp -t hello_ios_entitlements)
+entitlements_path=$(mktemp -t todos_entitlements)
 security cms -D -i "$provisioning_profile" |
   plutil -extract Entitlements xml1 -o "$entitlements_path" -
 # Wildcard profiles carry "<prefix>.*"; the signed app must claim the concrete
