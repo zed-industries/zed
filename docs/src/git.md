@@ -15,18 +15,18 @@ Use this page as the entry point. Each linked page focuses on one Git task.
 
 ## Quick start {#quick-start}
 
-| Goal                                      | Go to                                                         |
-| ----------------------------------------- | ------------------------------------------------------------- |
-| See changed, staged, and conflicted files | [Status and Changes](./git/status-and-changes.md)             |
-| Review working-tree or branch diffs       | [Diffs and Review](./git/diffs-and-review.md)                 |
-| Stage, unstage, amend, uncommit, commit   | [Staging and Committing](./git/staging-and-committing.md)     |
-| Fetch, pull, push, publish, or switch     | [Branches and Sync](./git/branches-and-sync.md)               |
-| Work in multiple checkouts                | [Worktrees](./git/worktrees.md)                               |
-| Browse Git Graph, file history, or blame  | [History and Blame](./git/history-and-blame.md)               |
-| Resolve merge conflicts or recover work   | [Conflicts and Recovery](./git/conflicts-and-recovery.md)     |
-| Copy permalinks or create PR links        | [Git Hosting and Pull Requests](./git/github-and-pull-requests.md) |
-| Review agent changes or ask an agent to review a diff | [Agents and Git](./git/agents-and-git.md)                     |
-| Find Git settings and actions             | [Settings and Actions](./git/settings-and-actions.md)         |
+| Goal                                                  | Go to                                                              |
+| ----------------------------------------------------- | ------------------------------------------------------------------ |
+| See changed, staged, and conflicted files             | [Status and Changes](./git/status-and-changes.md)                  |
+| Review working-tree or branch diffs                   | [Diffs and Review](./git/diffs-and-review.md)                      |
+| Stage, unstage, amend, uncommit, commit               | [Staging and Committing](./git/staging-and-committing.md)          |
+| Fetch, pull, push, publish, or switch                 | [Branches and Sync](./git/branches-and-sync.md)                    |
+| Work in multiple checkouts                            | [Worktrees](./git/worktrees.md)                                    |
+| Browse Git Graph, file history, or blame              | [History and Blame](./git/history-and-blame.md)                    |
+| Resolve merge conflicts or recover work               | [Conflicts and Recovery](./git/conflicts-and-recovery.md)          |
+| Copy permalinks or create PR links                    | [Git Hosting and Pull Requests](./git/github-and-pull-requests.md) |
+| Review agent changes or ask an agent to review a diff | [Agents and Git](./git/agents-and-git.md)                          |
+| Find Git settings and actions                         | [Settings and Actions](./git/settings-and-actions.md)              |
 
 Open the Git Panel with {#action git_panel::ToggleFocus}, {#kb
 git_panel::ToggleFocus}, or the Git icon in the status bar. The Git Panel is
