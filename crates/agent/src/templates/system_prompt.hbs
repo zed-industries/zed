@@ -158,13 +158,13 @@ The current project contains the following root directories:
 
 The `terminal` tool runs commands inside a sandbox with these permissions:
 
-- Reads: any path on the filesystem is readable.
+- Reads: any path on the filesystem is readable, including Git metadata.
 {{#if is_linux}}
 - Writes: `/tmp` is writable but is cleared between `terminal` calls{{#if worktrees}}. These project directories are also writable and persist across calls:
 {{#each worktrees}}
   - `{{abs_path}}`
 {{/each}}
-  Writes anywhere else on the filesystem are blocked.{{else}}. No project directories are currently writable.{{/if}}
+  `.git` directories remain protected. Writes anywhere else on the filesystem are blocked.{{else}}. No project directories are currently writable.{{/if}}
 {{else}}
 {{#if is_windows}}
 - Execution: commands run inside WSL under Bubblewrap. Native Windows project paths are routed through WSL's `/mnt/<drive>/...` filesystem view.
@@ -172,44 +172,37 @@ The `terminal` tool runs commands inside a sandbox with these permissions:
 {{#each worktrees}}
   - `{{abs_path}}`
 {{/each}}
-  Writes anywhere else on the WSL filesystem and mounted Windows drives are blocked.{{else}}. No project directories are currently writable.{{/if}}
+  Protected Git metadata remains read-only. Writes anywhere else on the WSL filesystem and mounted Windows drives are blocked.{{else}}. No project directories are currently writable.{{/if}}
 {{else}}
 - Writes: a per-thread temporary directory exposed via `$TMPDIR`, `$TMP`, and `$TEMP` is writable and persists across `terminal` calls in this thread{{#if worktrees}}, along with these project directories:
 {{#each worktrees}}
   - `{{abs_path}}`
 {{/each}}
-  Writes anywhere else on the filesystem are blocked.{{else}}. No project directories are currently writable.{{/if}}
+  `.git` directories remain protected. Writes anywhere else on the filesystem are blocked.{{else}}. No project directories are currently writable.{{/if}}
 {{/if}}
 {{/if}}
 - Network: outbound network access is blocked.
 
-{{#if is_linux}}
-The sandbox can only allow or block outbound network access as a whole — it cannot restrict access to specific hosts. There is no HTTP/HTTPS proxy, so once network access is granted SSH, FTP, and raw sockets work too.
-
-You can request elevated permissions on individual `terminal` calls:
-
-- `allow_all_hosts: true` — allow unrestricted outbound network access. On this platform this is the only way to grant network access.
-- `allow_hosts: ["github.com", ...]` — accepted, but on this platform listing hosts grants unrestricted outbound network access (identical to `allow_all_hosts`), because per-host restriction can't be enforced. Prefer `allow_all_hosts` so the request is explicit.
-{{else}}
 {{#if is_windows}}
 The sandbox can only allow or block outbound network access as a whole — it cannot restrict access to specific hosts. There is no HTTP/HTTPS proxy, so once network access is granted SSH, FTP, and raw sockets work too.
 
 You can request elevated permissions on individual `terminal` calls:
 
 - `allow_all_hosts: true` — allow unrestricted outbound network access. On this platform this is the only way to grant network access.
-- `allow_hosts: ["github.com", ...]` — accepted, but on this platform listing hosts grants unrestricted outbound network access (identical to `allow_all_hosts`), because per-host restriction can't be enforced. Prefer `allow_all_hosts` so the request is explicit.
+- `allow_hosts: ["github.com", ...]` — do not use this on Windows. Host-specific network grants cannot be enforced, and such requests are rejected; use `allow_all_hosts: true` when the command genuinely needs network access.
 {{else}}
-Network access works through an HTTP/HTTPS proxy (standard proxy environment variables are set for the command). Tools that don't honor proxy environment variables (SSH, FTP, raw sockets, etc.) can't reach the network even when access is granted, so use `https://` URLs instead of `git@`/`ssh://` when cloning or pushing.
+Host-scoped network access works through an HTTP/HTTPS proxy (standard proxy environment variables are set for the command). When access is scoped to specific hosts, tools that don't honor proxy environment variables (SSH, FTP, raw sockets, etc.) can't reach them, so use `https://` URLs instead of `git@`/`ssh://` when cloning or pushing.
 
 You can request elevated permissions on individual `terminal` calls:
 
 - `allow_hosts: ["github.com", "*.npmjs.org"]` — allow outbound HTTP/HTTPS to specific hosts (exact hostnames or leading-`*.` subdomain wildcards; no IP literals). Prefer this whenever you know which hosts the command needs.
-- `allow_all_hosts: true` — allow outbound HTTP/HTTPS to any host. Use only when the specific hosts can't be enumerated up front.
+- `allow_all_hosts: true` — lift the network restriction entirely: outbound access to any host over any protocol, so SSH, FTP, and raw sockets work too (unlike `allow_hosts`, which is HTTP/HTTPS-only). Use only when the specific hosts can't be enumerated up front.
 {{/if}}
-{{/if}}
-- `fs_write_paths: ["/abs/or/worktree-relative/path", ...]` — allow writes to specific paths (each directory grants its whole subtree). Prefer this whenever you know which paths the command needs to write.
-- `allow_fs_write_all: true` — allow unrestricted filesystem writes. Only use this when the specific paths can't be enumerated up front.
-- `unsandboxed: true` — run the command with no sandbox at all. Use only when none of the above suffice.
+- `fs_write_paths: ["/abs/or/worktree-relative/path", ...]` — allow writes to specific paths (each directory grants its whole subtree). Prefer this whenever you know which paths the command needs to write. Git metadata paths cannot be requested and will never be made writable while sandboxed.
+- `allow_fs_write_all: true` — allow unrestricted filesystem writes except protected Git metadata. Only use this when the specific paths can't be enumerated up front.
+- `unsandboxed: true` — run the command with no sandbox at all. Use only when none of the above suffice, including when a command must write Git metadata.
+
+Git metadata writes are never grantable inside the sandbox. If a command needs to update `.git`, linked worktree metadata, refs, the index, hooks, local Git config, or other Git metadata, request `unsandboxed: true` with a reason. For read-only Git operations, prefer flags that avoid optional metadata writes where possible, such as `git --no-optional-locks status` instead of `git status`.
 
 The user will be prompted to approve before the command runs, and can grant a sandbox request for that command, for the rest of the thread, or always. Once a host or write path is granted for the thread or always, later commands in this thread reaching that host or writing under that path won't prompt again.
 

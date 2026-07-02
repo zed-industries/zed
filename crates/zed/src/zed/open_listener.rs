@@ -59,9 +59,6 @@ pub enum OpenRequestKind {
     AgentPanel {
         external_source_prompt: Option<ExternalSourcePrompt>,
     },
-    SharedAgentThread {
-        session_id: String,
-    },
     InstallSkill {
         /// Full `SKILL.md` contents embedded in a `zed://skill` share link.
         content: String,
@@ -98,10 +95,6 @@ impl std::fmt::Debug for OpenRequestKind {
             } => f
                 .debug_struct("AgentPanel")
                 .field("external_source_prompt", external_source_prompt)
-                .finish(),
-            Self::SharedAgentThread { session_id } => f
-                .debug_struct("SharedAgentThread")
-                .field("session_id", session_id)
                 .finish(),
             Self::InstallSkill { content } => f
                 .debug_struct("InstallSkill")
@@ -178,14 +171,6 @@ impl OpenRequest {
                 this.kind = Some(OpenRequestKind::Extension {
                     extension_id: extension_id.to_string(),
                 });
-            } else if let Some(session_id_str) = url.strip_prefix("zed://agent/shared/") {
-                if uuid::Uuid::parse_str(session_id_str).is_ok() {
-                    this.kind = Some(OpenRequestKind::SharedAgentThread {
-                        session_id: session_id_str.to_string(),
-                    });
-                } else {
-                    log::error!("Invalid session ID in URL: {}", session_id_str);
-                }
             } else if url.starts_with(agent_skills::SKILL_SHARE_LINK_PREFIX) {
                 this.parse_skill_install_url(&url)?
             } else if let Some(agent_path) = url.strip_prefix("zed://agent") {
@@ -627,10 +612,14 @@ pub async fn handle_cli_connection(
                             open_behavior = cli::OpenBehavior::ExistingWindow;
                         }
                         Some(settings::CliDefaultOpenBehavior::NewWindow) => {
-                            open_behavior = cli::OpenBehavior::Classic;
+                            open_behavior = cli::OpenBehavior::PreferNewWindow;
                         }
                         None => {}
                     }
+                }
+
+                if open_behavior == cli::OpenBehavior::Default {
+                    open_behavior = cx.update(|cx| open_behavior_for_default_setting(cx));
                 }
 
                 cx.update(|cx| cx.activate(true));
@@ -662,8 +651,8 @@ pub async fn handle_cli_connection(
     }
 }
 
-/// Resolves the CLI open behavior when no explicit flag (`-n`, `-e`, `--reuse`)
-/// was given. May prompt the user interactively on first run.
+/// Resolves the CLI open behavior when no explicit open behavior flag was given.
+/// May prompt the user interactively on first run.
 ///
 /// Returns `Some(behavior)` to override the default, or `None` if no override
 /// is needed (e.g. no existing windows, paths already in a workspace, or the
@@ -764,7 +753,7 @@ pub(crate) fn open_options_for_request(
     let open_behavior = open_behavior.unwrap_or_else(|| {
         match workspace::WorkspaceSettings::get_global(cx).default_open_behavior {
             settings::DefaultOpenBehavior::ExistingWindow => cli::OpenBehavior::ExistingWindow,
-            settings::DefaultOpenBehavior::NewWindow => cli::OpenBehavior::Classic,
+            settings::DefaultOpenBehavior::NewWindow => cli::OpenBehavior::PreferNewWindow,
         }
     });
     open_options_for_behavior(open_behavior, location, cx)
@@ -775,6 +764,12 @@ pub(crate) fn open_options_for_behavior(
     location: &SerializedWorkspaceLocation,
     cx: &App,
 ) -> workspace::OpenOptions {
+    let open_behavior = if open_behavior == cli::OpenBehavior::Default {
+        open_behavior_for_default_setting(cx)
+    } else {
+        open_behavior
+    };
+
     // If reuse flag is passed, open a new workspace in an existing window.
     let requesting_window = if open_behavior == cli::OpenBehavior::Reuse {
         workspace::workspace_windows_for_location(location, cx)
@@ -788,21 +783,23 @@ pub(crate) fn open_options_for_behavior(
             cli::OpenBehavior::AlwaysNew | cli::OpenBehavior::Reuse => {
                 workspace::WorkspaceMatching::None
             }
+            cli::OpenBehavior::PreferNewWindow => workspace::WorkspaceMatching::MatchSubpaths,
             cli::OpenBehavior::Add => workspace::WorkspaceMatching::MatchSubdirectory,
             _ => workspace::WorkspaceMatching::MatchExact,
         },
         add_dirs_to_sidebar: match open_behavior {
             cli::OpenBehavior::ExistingWindow => true,
-            // For the default value, we consult the settings to decide
-            // whether to open in a new window or existing window.
-            cli::OpenBehavior::Default => {
-                workspace::WorkspaceSettings::get_global(cx).cli_default_open_behavior
-                    == settings::CliDefaultOpenBehavior::ExistingWindow
-            }
             _ => false,
         },
         requesting_window,
         ..Default::default()
+    }
+}
+
+fn open_behavior_for_default_setting(cx: &App) -> cli::OpenBehavior {
+    match workspace::WorkspaceSettings::get_global(cx).cli_default_open_behavior {
+        settings::CliDefaultOpenBehavior::ExistingWindow => cli::OpenBehavior::ExistingWindow,
+        settings::CliDefaultOpenBehavior::NewWindow => cli::OpenBehavior::PreferNewWindow,
     }
 }
 
@@ -819,7 +816,13 @@ async fn open_workspaces(
     cwd: Option<PathBuf>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    if paths.is_empty() && diff_paths.is_empty() && open_behavior != cli::OpenBehavior::AlwaysNew {
+    if paths.is_empty()
+        && diff_paths.is_empty()
+        && !matches!(
+            open_behavior,
+            cli::OpenBehavior::AlwaysNew | cli::OpenBehavior::PreferNewWindow
+        )
+    {
         return restore_or_create_workspace(app_state, cx).await;
     }
 
@@ -1101,7 +1104,7 @@ mod tests {
     use cli::CliResponse;
     use editor::Editor;
     use futures::poll;
-    use gpui::{AppContext as _, TestAppContext};
+    use gpui::{AppContext as _, TestAppContext, UpdateGlobal as _};
     use language::LineEnding;
     use remote::SshConnectionOptions;
     use rope::Rope;
@@ -1386,7 +1389,7 @@ mod tests {
             cx.update(|cx| open_options_for_request(None, &SerializedWorkspaceLocation::Local, cx));
         assert_eq!(
             options.workspace_matching,
-            workspace::WorkspaceMatching::MatchExact
+            workspace::WorkspaceMatching::MatchSubpaths
         );
         assert!(!options.add_dirs_to_sidebar);
 
@@ -1595,50 +1598,6 @@ mod tests {
             }
             _ => panic!("Expected AgentPanel kind"),
         }
-    }
-
-    #[gpui::test]
-    fn test_parse_shared_agent_thread_url(cx: &mut TestAppContext) {
-        let _app_state = init_test(cx);
-        let session_id = "123e4567-e89b-12d3-a456-426614174000";
-
-        let request = cx.update(|cx| {
-            OpenRequest::parse(
-                RawOpenRequest {
-                    urls: vec![format!("zed://agent/shared/{session_id}")],
-                    ..Default::default()
-                },
-                cx,
-            )
-            .unwrap()
-        });
-
-        match request.kind {
-            Some(OpenRequestKind::SharedAgentThread {
-                session_id: parsed_session_id,
-            }) => {
-                assert_eq!(parsed_session_id, session_id);
-            }
-            _ => panic!("Expected SharedAgentThread kind"),
-        }
-    }
-
-    #[gpui::test]
-    fn test_parse_shared_agent_thread_url_with_invalid_uuid(cx: &mut TestAppContext) {
-        let _app_state = init_test(cx);
-
-        let request = cx.update(|cx| {
-            OpenRequest::parse(
-                RawOpenRequest {
-                    urls: vec!["zed://agent/shared/not-a-uuid".into()],
-                    ..Default::default()
-                },
-                cx,
-            )
-            .unwrap()
-        });
-
-        assert!(request.kind.is_none());
     }
 
     #[gpui::test]
@@ -2692,6 +2651,135 @@ mod tests {
             !prompt_shown,
             "no prompt should be shown when setting already configured"
         );
+    }
+
+    #[gpui::test]
+    async fn test_e2e_new_window_setting_opens_project_root_in_new_window(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), json!({ "file.txt": "content" }))
+            .await;
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                paths::config_dir(),
+                json!({
+                    "settings.json": r#"{"cli_default_open_behavior": "new_window"}"#
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.cli_default_open_behavior =
+                        Some(settings::CliDefaultOpenBehavior::NewWindow);
+                });
+            });
+        });
+
+        open_workspace_file(path!("/project"), Default::default(), app_state.clone(), cx).await;
+        assert_eq!(cx.windows().len(), 1);
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state,
+            make_cli_open_request(
+                vec![path!("/project").to_string()],
+                cli::OpenBehavior::Default,
+            ),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(
+            !prompt_shown,
+            "no prompt should be shown when setting already configured"
+        );
+        assert_eq!(cx.windows().len(), 2);
+    }
+
+    #[gpui::test]
+    async fn test_e2e_new_window_setting_focuses_existing_window_for_subpaths(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/project"),
+                json!({
+                    "file.txt": "content",
+                    "src": {
+                        "main.rs": "fn main() {}",
+                    },
+                }),
+            )
+            .await;
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                paths::config_dir(),
+                json!({
+                    "settings.json": r#"{"cli_default_open_behavior": "new_window"}"#
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.cli_default_open_behavior =
+                        Some(settings::CliDefaultOpenBehavior::NewWindow);
+                });
+            });
+        });
+
+        open_workspace_file(path!("/project"), Default::default(), app_state.clone(), cx).await;
+        assert_eq!(cx.windows().len(), 1);
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state.clone(),
+            make_cli_open_request(
+                vec![path!("/project/src").to_string()],
+                cli::OpenBehavior::Default,
+            ),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(
+            !prompt_shown,
+            "no prompt should be shown when setting already configured"
+        );
+        assert_eq!(cx.windows().len(), 1);
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state,
+            make_cli_open_request(
+                vec![path!("/project/file.txt").to_string()],
+                cli::OpenBehavior::Default,
+            ),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(
+            !prompt_shown,
+            "no prompt should be shown when setting already configured"
+        );
+        assert_eq!(cx.windows().len(), 1);
     }
 
     #[gpui::test]

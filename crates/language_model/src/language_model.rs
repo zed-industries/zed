@@ -24,6 +24,15 @@ pub fn init(cx: &mut App) {
     registry::init(cx);
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisabledReason(pub SharedString);
+
+impl DisabledReason {
+    pub fn new(reason: impl Into<SharedString>) -> Self {
+        Self(reason.into())
+    }
+}
+
 pub struct LanguageModelTextStream {
     pub message_id: Option<String>,
     pub stream: BoxStream<'static, Result<String, LanguageModelCompletionError>>,
@@ -56,6 +65,11 @@ pub trait LanguageModel: Send + Sync {
     /// Returns whether this model is the "latest", so we can highlight it in the UI.
     fn is_latest(&self) -> bool {
         false
+    }
+
+    /// Whether the model is currently disabled and, if so, why this is the case.
+    fn is_disabled(&self) -> Option<DisabledReason> {
+        None
     }
 
     /// Whether requests to this model require the user to consent to the
@@ -357,6 +371,22 @@ pub trait LanguageModelProvider: 'static {
         ProviderConfigurationView::SubPage(self.configuration_view(target_agent, window, cx))
     }
 
+    fn inline_title(&self, _cx: &App) -> Option<SharedString> {
+        None
+    }
+
+    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
+        None
+    }
+
+    fn api_key_configuration(&self, _cx: &App) -> Option<ApiKeyConfiguration> {
+        None
+    }
+
+    fn set_api_key(&self, _key: String, _cx: &mut App) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
+
     /// Copy shown the first time a user enables fast mode for a model from
     /// this provider. Returning `None` skips the confirmation prompt and lets
     /// the toggle apply silently.
@@ -368,11 +398,29 @@ pub trait LanguageModelProvider: 'static {
 /// How a provider's configuration UI prefers to be presented by the settings UI.
 #[derive(Clone)]
 pub enum ProviderConfigurationView {
-    /// A compact control suitable for rendering inline in a list row, such as a
-    /// single API-key field.
-    Inline(AnyView),
-    /// A richer view that should be shown on its own dedicated sub-page.
+    Inline { view: AnyView },
     SubPage(AnyView),
+}
+
+/// A live snapshot of a single-API-key provider's credential state, used by the
+/// settings UI to render the provider's "API Key" section.
+#[derive(Clone)]
+pub struct ApiKeyConfiguration {
+    pub has_key: bool,
+    pub is_from_env_var: bool,
+    pub env_var_name: SharedString,
+    pub api_key_url: SharedString,
+}
+
+/// The subtitle rendered beneath a provider's name when its configuration is
+/// shown inline.
+#[derive(Clone)]
+pub enum InlineDescription {
+    /// A clickable "Where to find key" link pointing at the given URL, for
+    /// API-key based providers.
+    ApiKeyUrl(SharedString),
+    /// Plain descriptive text, e.g. explaining a sign-in based provider.
+    Text(SharedString),
 }
 
 /// Provider-specific copy shown the first time a user enables fast mode.

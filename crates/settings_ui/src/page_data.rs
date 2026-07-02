@@ -94,6 +94,7 @@ fn developer_page(cx: &App) -> SettingsPage {
             title: "Feature Flags".into(),
             r#type: Default::default(),
             description: None,
+            search_aliases: &[],
             json_path: Some("feature_flags"),
             in_json: true,
             files: USER,
@@ -1161,6 +1162,67 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
+    fn markdown_preview_font_section() -> [SettingsPageItem; 4] {
+        [
+            SettingsPageItem::SectionHeader("Markdown Preview Font"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Family",
+                description: "Font family for the markdown preview. Falls back to the UI font family.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview_font_family"),
+                    pick: |settings_content| {
+                        settings_content.theme.markdown_preview_font_family.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.theme.markdown_preview_font_family = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Code Font Family",
+                description: "Font family for code blocks in the markdown preview. Falls back to the editor font family.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview_code_font_family"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .markdown_preview_code_font_family
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.theme.markdown_preview_code_font_family = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Size",
+                description: "Font size for the markdown preview. Falls back to the editor font size.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview_font_size"),
+                    pick: |settings_content| {
+                        settings_content
+                            .theme
+                            .markdown_preview_font_size
+                            .as_ref()
+                            .or(settings_content.theme.buffer_font_size.as_ref())
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content.theme.markdown_preview_font_size = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
     fn text_rendering_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SectionHeader("Text Rendering"),
@@ -1389,6 +1451,7 @@ fn appearance_page() -> SettingsPage {
         buffer_font_section(),
         ui_font_section(),
         agent_panel_font_section(),
+        markdown_preview_font_section(),
         text_rendering_section(),
         cursor_section(),
         highlighting_section(),
@@ -3314,6 +3377,7 @@ fn languages_and_tools_page(cx: &App) -> SettingsPage {
                     title: language_name,
                     r#type: crate::SubPageType::Language,
                     description: None,
+                    search_aliases: &[],
                     json_path: Some(link.leak()),
                     in_json: true,
                     files: USER | PROJECT,
@@ -3516,7 +3580,7 @@ fn search_and_files_page() -> SettingsPage {
         ]
     }
 
-    fn file_finder_section() -> [SettingsPageItem; 5] {
+    fn file_finder_section() -> [SettingsPageItem; 4] {
         [
             SettingsPageItem::SectionHeader("File Finder"),
             // todo: null by default
@@ -3557,29 +3621,6 @@ fn search_and_files_page() -> SettingsPage {
                             .file_finder
                             .get_or_insert_default()
                             .file_icons = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Modal Max Width",
-                description: "Determines how much space the file finder can take up in relation to the available window width.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("file_finder.modal_max_width"),
-                    pick: |settings_content| {
-                        settings_content
-                            .file_finder
-                            .as_ref()?
-                            .modal_max_width
-                            .as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .file_finder
-                            .get_or_insert_default()
-                            .modal_max_width = value;
                     },
                 }),
                 metadata: None,
@@ -5799,7 +5840,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 15] {
+    fn git_panel_section() -> [SettingsPageItem; 17] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -5892,19 +5933,28 @@ fn panels_page() -> SettingsPage {
                 files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
-                title: "Sort By Path",
-                description: "Enable to sort entries in the panel by path, disable to sort by status.",
+                title: "Sort By",
+                description: "How to sort entries in the git panel.",
                 field: Box::new(SettingField {
                     organization_override: None,
-                    json_path: Some("git_panel.sort_by_path"),
-                    pick: |settings_content| {
-                        settings_content.git_panel.as_ref()?.sort_by_path.as_ref()
-                    },
+                    json_path: Some("git_panel.sort_by"),
+                    pick: |settings_content| settings_content.git_panel.as_ref()?.sort_by.as_ref(),
                     write: |settings_content, value, _| {
-                        settings_content
-                            .git_panel
-                            .get_or_insert_default()
-                            .sort_by_path = value;
+                        settings_content.git_panel.get_or_insert_default().sort_by = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Group By",
+                description: "How to group entries in the git panel.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_panel.group_by"),
+                    pick: |settings_content| settings_content.git_panel.as_ref()?.group_by.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.git_panel.get_or_insert_default().group_by = value;
                     },
                 }),
                 metadata: None,
@@ -6001,6 +6051,29 @@ fn panels_page() -> SettingsPage {
                             .git_panel
                             .get_or_insert_default()
                             .diff_stats = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Primary Click Behavior",
+                description: "Default action when clicking a changed file in the Git panel.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_panel.entry_primary_click_action"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .entry_primary_click_action
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .entry_primary_click_action = value;
                     },
                 }),
                 metadata: None,
@@ -7447,32 +7520,75 @@ fn version_control_page() -> SettingsPage {
     fn inline_git_blame_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("Inline Git Blame"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Enabled",
-                description: "Whether or not to show Git blame data inline in the currently focused line.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("git.inline_blame.enabled"),
-                    pick: |settings_content| {
-                        settings_content
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    title: "Enabled",
+                    description: "Whether or not to show Git blame data for the currently focused line.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some("git.inline_blame.enabled"),
+                        pick: |settings_content| {
+                            settings_content
+                                .git
+                                .as_ref()?
+                                .inline_blame
+                                .as_ref()?
+                                .enabled
+                                .as_ref()
+                        },
+                        write: |settings_content, value, _| {
+                            settings_content
+                                .git
+                                .get_or_insert_default()
+                                .inline_blame
+                                .get_or_insert_default()
+                                .enabled = value;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                },
+                pick_discriminant: |settings_content| {
+                    Some(
+                        *settings_content
                             .git
                             .as_ref()?
                             .inline_blame
                             .as_ref()?
                             .enabled
-                            .as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .git
-                            .get_or_insert_default()
-                            .inline_blame
-                            .get_or_insert_default()
-                            .enabled = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
+                            .as_ref()? as usize,
+                    )
+                },
+                fields: vec![
+                    vec![],
+                    vec![SettingItem {
+                        title: "Location",
+                        description: "Where to render Git blame when it is enabled.",
+                        field: Box::new(SettingField {
+                            organization_override: None,
+                            json_path: Some("git.inline_blame.location"),
+                            pick: |settings_content| {
+                                settings_content
+                                    .git
+                                    .as_ref()?
+                                    .inline_blame
+                                    .as_ref()?
+                                    .location
+                                    .as_ref()
+                            },
+                            write: |settings_content, value, _| {
+                                settings_content
+                                    .git
+                                    .get_or_insert_default()
+                                    .inline_blame
+                                    .get_or_insert_default()
+                                    .location = value;
+                            },
+                        }),
+                        metadata: None,
+                        files: USER,
+                    }],
+                ],
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Delay",
@@ -7827,7 +7943,7 @@ fn collaboration_page() -> SettingsPage {
 }
 
 fn ai_page(cx: &App) -> SettingsPage {
-    fn general_section() -> [SettingsPageItem; 3] {
+    fn general_section() -> [SettingsPageItem; 6] {
         [
             SettingsPageItem::SectionHeader("General"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -7858,29 +7974,86 @@ fn ai_page(cx: &App) -> SettingsPage {
                 metadata: None,
                 files: USER,
             }),
-        ]
-    }
-
-    fn agent_configuration_section(cx: &App) -> Box<[SettingsPageItem]> {
-        use feature_flags::FeatureFlagAppExt as _;
-
-        // The LLM provider and MCP server pages are gated behind a feature flag
-        // while their configuration is being moved out of the agent panel.
-        let agent_settings_ui_enabled = cx.has_flag::<feature_flags::AgentSettingsUiFeatureFlag>();
-
-        let mut items = vec![SettingsPageItem::SectionHeader("Agent Configuration")];
-
-        if agent_settings_ui_enabled {
-            items.push(SettingsPageItem::SubPageLink(SubPageLink {
+            SettingsPageItem::SubPageLink(SubPageLink {
                 title: "LLM Providers".into(),
                 r#type: Default::default(),
                 json_path: Some("llm_providers"),
-                description: Some("Configure API keys and settings for LLM providers.".into()),
+                description: Some("Configure natively-included model providers.".into()),
+                search_aliases: &[
+                    "ai",
+                    "amazon",
+                    "anthropic",
+                    "api key",
+                    "azure",
+                    "bedrock",
+                    "chat",
+                    "claude",
+                    "copilot",
+                    "gemini",
+                    "github",
+                    "google",
+                    "gpt",
+                    "grok",
+                    "llama",
+                    "llm",
+                    "lm studio",
+                    "mistral",
+                    "ollama",
+                    "openai",
+                    "opencode",
+                    "provider",
+                    "vercel",
+                    "xai",
+                ],
                 in_json: false,
                 files: USER,
                 render: render_llm_providers_page,
-            }));
-        }
+            }),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "External Agents".into(),
+                r#type: Default::default(),
+                json_path: Some("agent_servers"),
+                description: Some(
+                    "View, add, and remove agents connected through the Agent Client Protocol."
+                        .into(),
+                ),
+                search_aliases: &[
+                    "acp",
+                    "agent client protocol",
+                    "amp",
+                    "claude agent",
+                    "claude code",
+                    "codex",
+                    "copilot cli",
+                    "cursor",
+                    "external agent",
+                    "factory droid",
+                    "github copilot",
+                    "grok build",
+                    "junie",
+                    "opencode",
+                ],
+                in_json: false,
+                files: USER,
+                render: render_external_agents_page,
+            }),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "MCP Servers".into(),
+                r#type: Default::default(),
+                json_path: Some("context_servers"),
+                description: Some(
+                    "View, add, configure, and remove Model Context Protocol servers.".into(),
+                ),
+                search_aliases: &["context server", "mcp", "model context protocol"],
+                in_json: false,
+                files: USER,
+                render: render_mcp_servers_page,
+            }),
+        ]
+    }
+
+    fn agent_configuration_section(_cx: &App) -> Box<[SettingsPageItem]> {
+        let mut items = vec![SettingsPageItem::SectionHeader("Agent Configuration")];
 
         items.extend([
             SettingsPageItem::SubPageLink(SubPageLink {
@@ -7888,6 +8061,7 @@ fn ai_page(cx: &App) -> SettingsPage {
                 r#type: Default::default(),
                 json_path: Some(zed_actions::AGENT_SKILLS_SETTINGS_PATH),
                 description: Some("View and manage agent skills installed globally or in project worktrees.".into()),
+                search_aliases: &["agent skill", "agent skills", "custom instructions", "skill", "skills"],
                 in_json: false,
                 files: USER | PROJECT,
                 render: render_skills_setup_page,
@@ -7900,6 +8074,15 @@ fn ai_page(cx: &App) -> SettingsPage {
                     "Review and change the elevated terminal sandbox permissions that are always allowed without prompting."
                         .into(),
                 ),
+                search_aliases: &[
+                    "allow",
+                    "domain",
+                    "filesystem",
+                    "network",
+                    "sandbox",
+                    "unsandboxed",
+                    "permissions",
+                ],
                 in_json: true,
                 files: USER,
                 render: render_sandbox_settings_page,
@@ -7909,37 +8092,12 @@ fn ai_page(cx: &App) -> SettingsPage {
                 r#type: Default::default(),
                 json_path: Some("agent.tool_permissions"),
                 description: Some("Set up regex patterns to auto-allow, auto-deny, or always request confirmation, for specific tool inputs.".into()),
+                search_aliases: &[],
                 in_json: true,
                 files: USER,
                 render: render_tool_permissions_setup_page,
             }),
         ]);
-
-        if agent_settings_ui_enabled {
-            items.push(SettingsPageItem::SubPageLink(SubPageLink {
-                title: "MCP Servers".into(),
-                r#type: Default::default(),
-                json_path: Some("context_servers"),
-                description: Some(
-                    "View, add, configure, and remove Model Context Protocol servers.".into(),
-                ),
-                in_json: false,
-                files: USER,
-                render: render_mcp_servers_page,
-            }));
-            items.push(SettingsPageItem::SubPageLink(SubPageLink {
-                title: "External Agents".into(),
-                r#type: Default::default(),
-                json_path: Some("agent_servers"),
-                description: Some(
-                    "View, add, and remove agents connected through the Agent Client Protocol."
-                        .into(),
-                ),
-                in_json: false,
-                files: USER,
-                render: render_external_agents_page,
-            }));
-        }
 
         items.extend([
             SettingsPageItem::SettingItem(SettingItem {
@@ -8297,28 +8455,6 @@ fn ai_page(cx: &App) -> SettingsPage {
         items.into_boxed_slice()
     }
 
-    fn context_servers_section() -> [SettingsPageItem; 2] {
-        [
-            SettingsPageItem::SectionHeader("Context Servers"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Context Server Timeout",
-                description: "Default timeout in seconds for context server tool calls. Can be overridden per-server in context_servers configuration.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("context_server_timeout"),
-                    pick: |settings_content| {
-                        settings_content.project.context_server_timeout.as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content.project.context_server_timeout = value;
-                    },
-                }),
-                metadata: None,
-                files: USER | PROJECT,
-            }),
-        ]
-    }
-
     fn edit_prediction_display_sub_section() -> [SettingsPageItem; 1] {
         [SettingsPageItem::SettingItem(SettingItem {
             title: "Display Mode",
@@ -8351,13 +8487,14 @@ fn ai_page(cx: &App) -> SettingsPage {
 
     SettingsPage {
         title: "AI",
-        items: concat_sections![
+        items: concat_sections!(
+            @vec,
             general_section(),
             agent_configuration_section(cx),
-            context_servers_section(),
             edit_prediction_language_settings_section(),
-            edit_prediction_display_sub_section()
-        ],
+            edit_prediction_display_sub_section(),
+        )
+        .into(),
     }
 }
 
@@ -9654,7 +9791,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn global_only_miscellaneous_sub_section() -> [SettingsPageItem; 4] {
+    fn global_only_miscellaneous_sub_section() -> [SettingsPageItem; 3] {
         [
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Image Viewer",
@@ -9733,30 +9870,6 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                         metadata: None,
                     }],
                 ],
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Auto Replace Emoji Shortcode",
-                description: "Whether to automatically replace emoji shortcodes with emoji characters.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("message_editor.auto_replace_emoji_shortcode"),
-                    pick: |settings_content| {
-                        settings_content
-                            .message_editor
-                            .as_ref()
-                            .and_then(|message_editor| {
-                                message_editor.auto_replace_emoji_shortcode.as_ref()
-                            })
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content
-                            .message_editor
-                            .get_or_insert_default()
-                            .auto_replace_emoji_shortcode = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Drop Size Target",
@@ -10245,6 +10358,7 @@ fn edit_prediction_language_settings_section() -> [SettingsPageItem; 5] {
             r#type: Default::default(),
             json_path: Some("edit_predictions.providers"),
             description: Some("Set up different edit prediction providers in complement to Zed's built-in Zeta model.".into()),
+            search_aliases: &[],
             in_json: false,
             files: USER,
             render: render_edit_prediction_setup_page
