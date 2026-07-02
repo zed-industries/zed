@@ -272,13 +272,13 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
 
     fn authentication_error_message(&self) -> SharedString {
         "Your ChatGPT subscription session is invalid or has expired. \
-        Sign in again via the settings UI to continue."
+        Sign in again via Settings > AI > LLM Providers to continue."
             .into()
     }
 
     fn missing_credentials_error_message(&self) -> SharedString {
         "You are not signed in to your ChatGPT account. \
-        Sign in via the settings UI to continue."
+        Sign in via Settings > AI > LLM Providers to continue."
             .into()
     }
 
