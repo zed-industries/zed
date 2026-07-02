@@ -309,11 +309,17 @@ pub(crate) fn with_element_arena<R>(f: impl FnOnce(&mut Arena) -> R) -> R {
 /// RAII guard that sets CURRENT_ELEMENT_ARENA for the duration of a draw operation.
 /// When dropped, restores the previous arena (supporting nested draws).
 ///
-/// It also tracks scope depth on the arena itself, so that a nested draw's
+/// Entering a scope also calls `Arena::begin_scope`, so that a nested draw's
 /// `ArenaClearNeeded::clear` is deferred rather than freeing memory the outer
-/// draw still references (see `Arena::clear`).
+/// draw still references (see `Arena::clear`). The matching `end_scope` is
+/// *not* called on drop — `Drop` has no access to the `App` that owns the
+/// arena, and holding a reference here would either borrow the `App` for the
+/// whole draw or require a raw pointer. Instead, the code that ends a draw
+/// must call `Arena::end_scope` explicitly (with `cx` in hand) after dropping
+/// this guard. If a panic unwinds a draw before that happens, the arena's
+/// scope depth stays elevated and subsequent clears are deferred: that leaks
+/// memory rather than freeing memory that may still be referenced.
 pub(crate) struct ElementArenaScope {
-    entered: *const RefCell<Arena>,
     previous: Option<*const RefCell<Arena>>,
 }
 
@@ -326,10 +332,7 @@ impl ElementArenaScope {
             current.set(Some(arena as *const RefCell<Arena>));
             prev
         });
-        Self {
-            entered: arena as *const RefCell<Arena>,
-            previous,
-        }
+        Self { previous }
     }
 }
 
@@ -338,35 +341,25 @@ impl Drop for ElementArenaScope {
         CURRENT_ELEMENT_ARENA.with(|current| {
             current.set(self.previous);
         });
-        // SAFETY: The pointer is valid because the arena is owned by the App,
-        // which outlives the draw operation that entered this scope.
-        let arena_cell = unsafe { &*self.entered };
-        arena_cell.borrow_mut().end_scope();
     }
 }
 
 /// Returned when the element arena has been used and so must be cleared before the next draw.
 #[must_use]
-pub struct ArenaClearNeeded {
-    arena: *const RefCell<Arena>,
-}
+pub struct ArenaClearNeeded(());
 
 impl ArenaClearNeeded {
-    /// Create a new ArenaClearNeeded that will clear the given arena.
-    pub(crate) fn new(arena: &RefCell<Arena>) -> Self {
-        Self {
-            arena: arena as *const RefCell<Arena>,
-        }
+    /// Create a new ArenaClearNeeded token for the App whose arena was drawn into.
+    pub(crate) fn new() -> Self {
+        Self(())
     }
 
-    /// Clear the element arena. If an enclosing draw is still in progress (this
-    /// draw was nested inside it), the clear is deferred to the enclosing draw's
-    /// own `ArenaClearNeeded` so that its live allocations aren't freed.
-    pub fn clear(self) {
-        // SAFETY: The arena pointer is valid because ArenaClearNeeded is created
-        // at the end of draw() and must be cleared before the next draw.
-        let arena_cell = unsafe { &*self.arena };
-        arena_cell.borrow_mut().clear();
+    /// Clear the element arena of the App the draw ran against. If an enclosing
+    /// draw is still in progress (this draw was nested inside it), the clear is
+    /// deferred to the enclosing draw's own `ArenaClearNeeded` so that its live
+    /// allocations aren't freed.
+    pub fn clear(self, cx: &mut App) {
+        cx.element_arena.borrow_mut().clear();
     }
 }
 
@@ -1562,7 +1555,7 @@ impl Window {
                                 }
                                 let arena_clear_needed = window.draw(cx);
                                 window.present();
-                                arena_clear_needed.clear();
+                                arena_clear_needed.clear(cx);
                             })
                             .log_err();
                     })
@@ -2660,7 +2653,7 @@ impl Window {
 
         // Set up the per-App arena for element allocation during this draw.
         // This ensures that multiple test Apps have isolated arenas.
-        let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
+        let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
         self.invalidate_entities();
         cx.entities.clear_accessed();
@@ -2761,7 +2754,12 @@ impl Window {
             });
         }
 
-        ArenaClearNeeded::new(&cx.element_arena)
+        // End the arena scope explicitly: `ElementArenaScope::drop` can't call
+        // `Arena::end_scope` because it has no access to `cx` (see its docs).
+        drop(arena_scope);
+        cx.element_arena.borrow_mut().end_scope();
+
+        ArenaClearNeeded::new()
     }
 
     fn record_entities_accessed(&mut self, cx: &mut App) {
@@ -4736,7 +4734,7 @@ impl Window {
 
     fn dispatch_key_event(&mut self, event: &dyn Any, cx: &mut App) {
         if self.invalidator.is_dirty() {
-            self.draw(cx).clear();
+            self.draw(cx).clear(cx);
         }
 
         let node_id = self.focus_node_id_in_rendered_frame(self.focus);
@@ -6393,7 +6391,7 @@ mod tests {
 
         // The deferred clear must actually run once the outer draw unwinds:
         // subsequent draws of both windows work against a fresh arena.
-        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear())
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
             .unwrap();
     }
 }

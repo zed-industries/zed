@@ -873,7 +873,7 @@ impl VisualTestContext {
         E: Element,
     {
         self.update(|window, cx| {
-            let _arena_scope = ElementArenaScope::enter(&cx.element_arena);
+            let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
             window.invalidator.set_phase(DrawPhase::Prepaint);
             let mut element = Drawable::new(f(window, cx));
@@ -887,6 +887,10 @@ impl VisualTestContext {
             window.refresh();
 
             drop(element);
+            // The scope must end before clearing; otherwise the clear would be
+            // deferred as if this were a nested draw, and never run.
+            drop(arena_scope);
+            cx.element_arena.borrow_mut().end_scope();
             cx.element_arena.borrow_mut().clear();
 
             (request_layout_state, prepaint_state)
