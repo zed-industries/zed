@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+usage() {
+  echo "Usage: $0 [--release] [device]"
+  echo ""
+  echo "Builds the gpui_ios hello_ios example, assembles a simulator app bundle,"
+  echo "boots the given simulator device (name or UDID), installs, and launches it."
+  echo ""
+  echo "Arguments:"
+  echo "  --release   Build the example in release mode"
+  echo "  device      Simulator device name or UDID (default: iPhone 17 Pro)"
+  exit 1
+}
+
+profile=debug
+cargo_flags=()
+device="iPhone 17 Pro"
+
+for argument in "$@"; do
+  case "$argument" in
+  --release)
+    profile=release
+    cargo_flags+=(--release)
+    ;;
+  -h | --help)
+    usage
+    ;;
+  *)
+    device="$argument"
+    ;;
+  esac
+done
+
+target=aarch64-apple-ios-sim
+bundle_id=dev.zed.gpui.hello-ios
+
+cargo build -p gpui_ios --example hello_ios --target "$target" "${cargo_flags[@]+"${cargo_flags[@]}"}"
+
+target_dir="target/$target/$profile"
+app_dir="$target_dir/HelloGPUI.app"
+rm -rf "$app_dir"
+mkdir -p "$app_dir"
+cp "$target_dir/examples/hello_ios" "$app_dir/hello_ios"
+
+cat >"$app_dir/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>hello_ios</string>
+    <key>CFBundleIdentifier</key>
+    <string>dev.zed.gpui.hello-ios</string>
+    <key>CFBundleName</key>
+    <string>HelloGPUI</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>MinimumOSVersion</key>
+    <string>17.0</string>
+    <key>UIDeviceFamily</key>
+    <array>
+        <integer>1</integer>
+        <integer>2</integer>
+    </array>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>iPhoneSimulator</string>
+    </array>
+    <key>UILaunchScreen</key>
+    <dict/>
+</dict>
+</plist>
+PLIST
+
+if [[ "$device" =~ ^[0-9A-Fa-f-]{36}$ ]]; then
+  udid="$device"
+else
+  udid=$(xcrun simctl list devices available | grep -F "$device (" | head -1 | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/')
+  if [[ -z "$udid" ]]; then
+    echo "error: no available simulator device named '$device'" >&2
+    exit 1
+  fi
+fi
+
+if ! xcrun simctl list devices | grep -F "$udid" | grep -q Booted; then
+  xcrun simctl boot "$udid"
+fi
+xcrun simctl bootstatus "$udid" -b
+
+xcrun simctl install "$udid" "$app_dir"
+xcrun simctl launch --terminate-running-process "$udid" "$bundle_id"
