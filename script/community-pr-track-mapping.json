@@ -62,7 +62,7 @@
     },
     {
       "name": "GPUI & Input",
-      "labels": ["area:controls/ime", "area:controls/mouse", "area:gpui"]
+      "labels": ["area:controls/ime", "area:controls/mouse", "area:gpui", "area:gpui/graphics"]
     },
     {
       "name": "Auth & Zed.dev",
