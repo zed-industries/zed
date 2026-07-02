@@ -1,5 +1,10 @@
 pub mod sql;
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod fake;
+pub mod postgres;
+
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,4 +110,17 @@ pub struct QueryResult {
     pub rows: Vec<Vec<Option<String>>>,
     pub truncated: bool,             // обрезано по max_rows
     pub command_tag: Option<String>, // например "SELECT 42"
+}
+
+#[async_trait::async_trait]
+pub trait DatabaseClient: Send + Sync {
+    async fn test_connection(&self) -> Result<()>;
+    async fn list_databases(&self) -> Result<Vec<String>>;
+    async fn list_schemas(&self, database: &str) -> Result<Vec<String>>;
+    async fn list_tables(&self, database: &str, schema: &str) -> Result<Vec<TableInfo>>;
+    async fn table_structure(&self, table: &TableRef) -> Result<TableStructure>;
+    async fn fetch_rows(&self, table: &TableRef, spec: &SelectSpec) -> Result<RowsPage>;
+    async fn run_query(&self, database: &str, sql: &str, max_rows: usize) -> Result<QueryResult>;
+    /// Sends a cancel signal to the server for all in-flight queries of this client.
+    async fn cancel_running(&self) -> Result<()>;
 }

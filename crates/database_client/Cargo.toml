@@ -15,9 +15,13 @@ test-support = []
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+log.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tokio-postgres.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
 
 [lints]
 workspace = true
