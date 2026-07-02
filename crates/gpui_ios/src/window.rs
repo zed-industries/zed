@@ -2,10 +2,10 @@ use crate::{CGFloat, CGPoint, CGRect, IosDisplay, id, nil};
 use futures::channel::oneshot;
 use gpui::{
     Bounds, Capslock, DispatchEventResult, GpuSpecs, Modifiers, MouseButton, MouseDownEvent,
-    MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
-    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel,
-    RequestFrameOptions, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowControlArea, point, px, size,
+    MouseExitEvent, MouseMoveEvent, MouseUpEvent, PinchEvent, Pixels, PlatformAtlas,
+    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
+    PromptLevel, RequestFrameOptions, Scene, ScrollDelta, ScrollWheelEvent, Size, TouchPhase,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControlArea, point, px, size,
 };
 use gpui_apple::metal_renderer::{self, Renderer};
 use objc::{
@@ -22,6 +22,7 @@ use std::{
     mem, ptr,
     rc::Rc,
     sync::{Arc, Once},
+    time::{Duration, Instant},
 };
 
 #[link(name = "Foundation", kind = "framework")]
@@ -36,6 +37,40 @@ unsafe extern "C" {
 }
 
 const WINDOW_STATE_IVAR: &str = "windowState";
+
+const UI_GESTURE_RECOGNIZER_STATE_BEGAN: i64 = 1;
+const UI_GESTURE_RECOGNIZER_STATE_CHANGED: i64 = 2;
+const UI_GESTURE_RECOGNIZER_STATE_ENDED: i64 = 3;
+const UI_GESTURE_RECOGNIZER_STATE_CANCELLED: i64 = 4;
+const UI_GESTURE_RECOGNIZER_STATE_FAILED: i64 = 5;
+
+/// `UIScrollView.DecelerationRate.normal`: a decelerating scroll's velocity
+/// multiplies by 0.998 for every elapsed millisecond. Applied per tick as
+/// `0.998^dt_ms` so 60Hz and 120Hz displays follow the same curve.
+const MOMENTUM_DECAY_PER_MILLISECOND: f32 = 0.998;
+
+/// Below this speed (points per second) a decelerating scroll moves less
+/// than a physical pixel per frame, so it stops instead of trickling on.
+const MOMENTUM_MINIMUM_SPEED: f32 = 10.;
+
+/// Dragging, holding still, then lifting must stop the scroll dead, like
+/// UIScrollView. `velocityInView:` can't be trusted for this: it reports the
+/// velocity of the most recent movement samples, and a stationary finger
+/// stops producing samples, so the pre-hold fling velocity survives to the
+/// release. Instead, a release this long after the last translation change
+/// starts no momentum.
+const PAN_HOLD_SUPPRESSES_MOMENTUM: Duration = Duration::from_millis(100);
+
+/// A synthesized deceleration continuing a finished pan gesture, stepped on
+/// each display-link tick.
+struct ScrollMomentum {
+    /// Points per second, in the pan translation's sign convention.
+    velocity: Point<f32>,
+    /// Where the finger lifted; momentum events keep scrolling whatever is
+    /// under that point.
+    position: Point<Pixels>,
+    last_tick: Instant,
+}
 
 struct IosWindowState {
     native_window: id,
@@ -52,6 +87,13 @@ struct IosWindowState {
     input_handler: Option<PlatformInputHandler>,
     mouse_position: Point<Pixels>,
     is_active: bool,
+    scroll_momentum: Option<ScrollMomentum>,
+    /// When the active pan gesture's translation last changed; consulted at
+    /// release to distinguish a flick from a drag-hold-release.
+    pan_last_moved_at: Option<Instant>,
+    /// The `UITouch` the pointer shim is following, compared by identity
+    /// (UIKit keeps a touch's object stable for its whole lifetime).
+    active_touch: Option<id>,
 }
 
 pub(crate) struct IosWindow(Rc<RefCell<IosWindowState>>);
@@ -75,11 +117,35 @@ impl IosWindow {
 
             let native_view: id = msg_send![gpui_view_class(), alloc];
             let native_view: id = msg_send![native_view, initWithFrame: screen_bounds];
-            // The pointer shim can only represent one touch; with multi-touch
-            // disabled UIKit coalesces additional fingers instead of
-            // interleaving their events.
-            let _: () = msg_send![native_view, setMultipleTouchEnabled: NO];
+            // The pinch recognizer needs the second finger delivered to the
+            // view; the `touches*` overrides preserve the pointer shim's
+            // single-touch semantics by tracking only the first touch.
+            let _: () = msg_send![native_view, setMultipleTouchEnabled: YES];
             let _: () = msg_send![view_controller, setView: native_view];
+
+            let pan_recognizer: id = msg_send![class!(UIPanGestureRecognizer), alloc];
+            let pan_recognizer: id = msg_send![
+                pan_recognizer,
+                initWithTarget: native_view
+                action: sel!(handlePan:)
+            ];
+            // One finger pans; a second finger belongs to the pinch
+            // recognizer. `cancelsTouchesInView` stays at its default YES so
+            // recognition sends `touchesCancelled:` — that's the tap/scroll
+            // arbitration: sub-slop touches stay taps, movement becomes a
+            // scroll and the pending press is released off-window.
+            let _: () = msg_send![pan_recognizer, setMaximumNumberOfTouches: 1usize];
+            let _: () = msg_send![native_view, addGestureRecognizer: pan_recognizer];
+            let _: () = msg_send![pan_recognizer, release];
+
+            let pinch_recognizer: id = msg_send![class!(UIPinchGestureRecognizer), alloc];
+            let pinch_recognizer: id = msg_send![
+                pinch_recognizer,
+                initWithTarget: native_view
+                action: sel!(handlePinch:)
+            ];
+            let _: () = msg_send![native_view, addGestureRecognizer: pinch_recognizer];
+            let _: () = msg_send![pinch_recognizer, release];
 
             let _: () = msg_send![native_window, setRootViewController: view_controller];
             let _: () = msg_send![native_window, makeKeyAndVisible];
@@ -124,6 +190,9 @@ impl IosWindow {
                 // The app launches foreground-active; UIKit only notifies on
                 // transitions.
                 is_active: true,
+                scroll_momentum: None,
+                pan_last_moved_at: None,
+                active_touch: None,
             })));
 
             // The view and the display-link target each keep a strong `Rc`
@@ -384,6 +453,14 @@ fn gpui_view_class() -> &'static Class {
                 sel!(touchesCancelled:withEvent:),
                 touches_cancelled as extern "C" fn(&Object, Sel, id, id),
             );
+            decl.add_method(
+                sel!(handlePan:),
+                handle_pan as extern "C" fn(&Object, Sel, id),
+            );
+            decl.add_method(
+                sel!(handlePinch:),
+                handle_pinch as extern "C" fn(&Object, Sel, id),
+            );
         }
         decl.register();
     });
@@ -424,6 +501,7 @@ unsafe fn get_window_state(object: &Object) -> Rc<RefCell<IosWindowState>> {
 
 extern "C" fn step(this: &Object, _: Sel, _display_link: id) {
     let window_state = unsafe { get_window_state(this) };
+    tick_scroll_momentum(&window_state);
     // Don't hold the RefCell borrow across the callback: gpui reenters the
     // window from inside it (e.g. `draw`).
     let callback = window_state.borrow_mut().request_frame_callback.take();
@@ -433,11 +511,51 @@ extern "C" fn step(this: &Object, _: Sel, _display_link: id) {
     }
 }
 
+fn tick_scroll_momentum(window_state: &Rc<RefCell<IosWindowState>>) {
+    let event = {
+        let mut state = window_state.borrow_mut();
+        let Some(momentum) = state.scroll_momentum.as_mut() else {
+            return;
+        };
+        let now = Instant::now();
+        let elapsed_seconds = now.duration_since(momentum.last_tick).as_secs_f32();
+        momentum.last_tick = now;
+        let delta = point(
+            px(momentum.velocity.x * elapsed_seconds),
+            px(momentum.velocity.y * elapsed_seconds),
+        );
+        let position = momentum.position;
+        let decay = MOMENTUM_DECAY_PER_MILLISECOND.powf(elapsed_seconds * 1000.);
+        momentum.velocity.x *= decay;
+        momentum.velocity.y *= decay;
+        if momentum.velocity.x.hypot(momentum.velocity.y) < MOMENTUM_MINIMUM_SPEED {
+            state.scroll_momentum = None;
+            ScrollWheelEvent {
+                position,
+                delta: ScrollDelta::Pixels(Point::default()),
+                modifiers: Modifiers::default(),
+                touch_phase: TouchPhase::Ended,
+            }
+        } else {
+            ScrollWheelEvent {
+                position,
+                delta: ScrollDelta::Pixels(delta),
+                modifiers: Modifiers::default(),
+                touch_phase: TouchPhase::Moved,
+            }
+        }
+    };
+    dispatch_input(window_state, PlatformInput::ScrollWheel(event));
+}
+
 extern "C" fn application_will_resign_active(this: &Object, _: Sel, _notification: id) {
     let window_state = unsafe { get_window_state(this) };
     let callback = {
         let mut state = window_state.borrow_mut();
         state.is_active = false;
+        // Otherwise the pause duration would be applied as one giant
+        // momentum step on the first tick after reactivation.
+        state.scroll_momentum = None;
         unsafe {
             let _: () = msg_send![state.display_link, setPaused: YES];
         }
@@ -469,12 +587,10 @@ extern "C" fn application_did_become_active(this: &Object, _: Sel, _notification
     }
 }
 
-/// Reads the single coalesced touch out of a `touches` set. UIKit's
-/// `locationInView:` coordinates are in points, which map 1:1 onto gpui's
-/// logical pixels.
-unsafe fn touch_position_and_tap_count(view: &Object, touches: id) -> (Point<Pixels>, usize) {
+/// Reads a touch's location and tap count. UIKit's `locationInView:`
+/// coordinates are in points, which map 1:1 onto gpui's logical pixels.
+unsafe fn touch_position_and_tap_count(view: &Object, touch: id) -> (Point<Pixels>, usize) {
     unsafe {
-        let touch: id = msg_send![touches, anyObject];
         let location: CGPoint = msg_send![touch, locationInView: view as *const Object as id];
         let tap_count: usize = msg_send![touch, tapCount];
         (
@@ -482,6 +598,17 @@ unsafe fn touch_position_and_tap_count(view: &Object, touches: id) -> (Point<Pix
             tap_count,
         )
     }
+}
+
+/// Returns the window's tracked touch if it's a member of `touches`, so a
+/// `touches*` override only reacts to the finger the pointer shim follows.
+fn tracked_touch_in_set(window_state: &Rc<RefCell<IosWindowState>>, touches: id) -> Option<id> {
+    let tracked_touch = window_state.borrow().active_touch?;
+    let is_member: bool = unsafe {
+        let contains: objc::runtime::BOOL = msg_send![touches, containsObject: tracked_touch];
+        contains == YES
+    };
+    is_member.then_some(tracked_touch)
 }
 
 /// Invokes the gpui input callback with the `RefCell` borrow released: gpui
@@ -523,8 +650,23 @@ fn clear_hover(window_state: &Rc<RefCell<IosWindowState>>) {
 
 extern "C" fn touches_began(this: &Object, _: Sel, touches: id, _event: id) {
     let window_state = unsafe { get_window_state(this) };
-    let (position, tap_count) = unsafe { touch_position_and_tap_count(this, touches) };
-    window_state.borrow_mut().mouse_position = position;
+    {
+        let mut state = window_state.borrow_mut();
+        // A finger landing anywhere catches a decelerating scroll, like
+        // UIScrollView. Killed silently: the touch's own events supersede
+        // the scroll, so no final Ended scroll event is needed.
+        state.scroll_momentum = None;
+        if state.active_touch.is_some() {
+            return;
+        }
+    }
+    let touch: id = unsafe { msg_send![touches, anyObject] };
+    let (position, tap_count) = unsafe { touch_position_and_tap_count(this, touch) };
+    {
+        let mut state = window_state.borrow_mut();
+        state.active_touch = Some(touch);
+        state.mouse_position = position;
+    }
     // A touch has no hover phase, so this move is gpui's only chance to
     // learn the pointer location before the press lands. The hover styling
     // it triggers while the finger is down reads as a pressed-state
@@ -551,7 +693,10 @@ extern "C" fn touches_began(this: &Object, _: Sel, touches: id, _event: id) {
 
 extern "C" fn touches_moved(this: &Object, _: Sel, touches: id, _event: id) {
     let window_state = unsafe { get_window_state(this) };
-    let (position, _) = unsafe { touch_position_and_tap_count(this, touches) };
+    let Some(touch) = tracked_touch_in_set(&window_state, touches) else {
+        return;
+    };
+    let (position, _) = unsafe { touch_position_and_tap_count(this, touch) };
     window_state.borrow_mut().mouse_position = position;
     dispatch_input(
         &window_state,
@@ -566,8 +711,15 @@ extern "C" fn touches_moved(this: &Object, _: Sel, touches: id, _event: id) {
 
 extern "C" fn touches_ended(this: &Object, _: Sel, touches: id, _event: id) {
     let window_state = unsafe { get_window_state(this) };
-    let (position, tap_count) = unsafe { touch_position_and_tap_count(this, touches) };
-    window_state.borrow_mut().mouse_position = position;
+    let Some(touch) = tracked_touch_in_set(&window_state, touches) else {
+        return;
+    };
+    let (position, tap_count) = unsafe { touch_position_and_tap_count(this, touch) };
+    {
+        let mut state = window_state.borrow_mut();
+        state.active_touch = None;
+        state.mouse_position = position;
+    }
     dispatch_input(
         &window_state,
         PlatformInput::MouseUp(MouseUpEvent {
@@ -580,8 +732,12 @@ extern "C" fn touches_ended(this: &Object, _: Sel, touches: id, _event: id) {
     clear_hover(&window_state);
 }
 
-extern "C" fn touches_cancelled(this: &Object, _: Sel, _touches: id, _event: id) {
+extern "C" fn touches_cancelled(this: &Object, _: Sel, touches: id, _event: id) {
     let window_state = unsafe { get_window_state(this) };
+    if tracked_touch_in_set(&window_state, touches).is_none() {
+        return;
+    }
+    window_state.borrow_mut().active_touch = None;
     // UIKit cancels a touch when something else claims it (a gesture
     // recognizer or a system gesture), so the press must not complete as a
     // click. gpui fires click listeners when a `MouseUp` hit-tests to the
@@ -601,4 +757,126 @@ extern "C" fn touches_cancelled(this: &Object, _: Sel, _touches: id, _event: id)
         }),
     );
     clear_hover(&window_state);
+}
+
+extern "C" fn handle_pan(this: &Object, _: Sel, recognizer: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let view = this as *const Object as id;
+    let recognizer_state: i64 = unsafe { msg_send![recognizer, state] };
+    let location: CGPoint = unsafe { msg_send![recognizer, locationInView: view] };
+    let position = point(px(location.x as f32), px(location.y as f32));
+
+    match recognizer_state {
+        UI_GESTURE_RECOGNIZER_STATE_BEGAN => {
+            {
+                let mut state = window_state.borrow_mut();
+                state.scroll_momentum = None;
+                state.pan_last_moved_at = Some(Instant::now());
+                state.mouse_position = position;
+            }
+            dispatch_input(
+                &window_state,
+                PlatformInput::ScrollWheel(ScrollWheelEvent {
+                    position,
+                    delta: ScrollDelta::Pixels(Point::default()),
+                    modifiers: Modifiers::default(),
+                    touch_phase: TouchPhase::Started,
+                }),
+            );
+        }
+        UI_GESTURE_RECOGNIZER_STATE_CHANGED => {
+            let translation: CGPoint = unsafe { msg_send![recognizer, translationInView: view] };
+            // Resetting after each read turns the cumulative translation
+            // into a per-event delta.
+            let _: () =
+                unsafe { msg_send![recognizer, setTranslation: CGPoint::default() inView: view] };
+            {
+                let mut state = window_state.borrow_mut();
+                if translation.x != 0. || translation.y != 0. {
+                    state.pan_last_moved_at = Some(Instant::now());
+                }
+                state.mouse_position = position;
+            }
+            // UIKit's pan translation grows downward/rightward with the
+            // finger, and a positive gpui scroll delta also moves content
+            // down/right (matching macOS natural scrolling, where dragging
+            // two fingers down produces positive `scrollingDeltaY`), so the
+            // sign passes through unchanged and content follows the finger.
+            dispatch_input(
+                &window_state,
+                PlatformInput::ScrollWheel(ScrollWheelEvent {
+                    position,
+                    delta: ScrollDelta::Pixels(point(
+                        px(translation.x as f32),
+                        px(translation.y as f32),
+                    )),
+                    modifiers: Modifiers::default(),
+                    touch_phase: TouchPhase::Moved,
+                }),
+            );
+        }
+        UI_GESTURE_RECOGNIZER_STATE_ENDED
+        | UI_GESTURE_RECOGNIZER_STATE_CANCELLED
+        | UI_GESTURE_RECOGNIZER_STATE_FAILED => {
+            dispatch_input(
+                &window_state,
+                PlatformInput::ScrollWheel(ScrollWheelEvent {
+                    position,
+                    delta: ScrollDelta::Pixels(Point::default()),
+                    modifiers: Modifiers::default(),
+                    touch_phase: TouchPhase::Ended,
+                }),
+            );
+            let pan_last_moved_at = window_state.borrow_mut().pan_last_moved_at.take();
+            if recognizer_state == UI_GESTURE_RECOGNIZER_STATE_ENDED
+                && pan_last_moved_at.is_some_and(|last_moved_at| {
+                    last_moved_at.elapsed() < PAN_HOLD_SUPPRESSES_MOMENTUM
+                })
+            {
+                let velocity: CGPoint = unsafe { msg_send![recognizer, velocityInView: view] };
+                let velocity = point(velocity.x as f32, velocity.y as f32);
+                if velocity.x.hypot(velocity.y) >= MOMENTUM_MINIMUM_SPEED {
+                    window_state.borrow_mut().scroll_momentum = Some(ScrollMomentum {
+                        velocity,
+                        position,
+                        last_tick: Instant::now(),
+                    });
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+extern "C" fn handle_pinch(this: &Object, _: Sel, recognizer: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let view = this as *const Object as id;
+    let recognizer_state: i64 = unsafe { msg_send![recognizer, state] };
+    let location: CGPoint = unsafe { msg_send![recognizer, locationInView: view] };
+    let position = point(px(location.x as f32), px(location.y as f32));
+
+    let (phase, delta) = match recognizer_state {
+        UI_GESTURE_RECOGNIZER_STATE_BEGAN => (TouchPhase::Started, 0.),
+        UI_GESTURE_RECOGNIZER_STATE_CHANGED => {
+            let scale: CGFloat = unsafe { msg_send![recognizer, scale] };
+            // Resetting after each read makes `scale - 1` the fractional
+            // change since the previous event, which is what
+            // `PinchEvent::delta` expects (macOS's `magnification`).
+            let _: () = unsafe { msg_send![recognizer, setScale: 1. as CGFloat] };
+            (TouchPhase::Moved, scale as f32 - 1.)
+        }
+        UI_GESTURE_RECOGNIZER_STATE_ENDED
+        | UI_GESTURE_RECOGNIZER_STATE_CANCELLED
+        | UI_GESTURE_RECOGNIZER_STATE_FAILED => (TouchPhase::Ended, 0.),
+        _ => return,
+    };
+    dispatch_input(
+        &window_state,
+        PlatformInput::Pinch(PinchEvent {
+            position,
+            delta,
+            modifiers: Modifiers::default(),
+            phase,
+        }),
+    );
 }
