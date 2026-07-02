@@ -644,6 +644,8 @@ pub mod simple_message_notification {
         primary_message: Option<SharedString>,
         primary_icon: Option<ActionIcon>,
         primary_icon_color: Option<Color>,
+        primary_disabled: bool,
+        primary_tooltip: Option<SharedString>,
         primary_on_click: Option<Arc<dyn Fn(&mut Window, &mut Context<Self>)>>,
         secondary_message: Option<SharedString>,
         secondary_icon: Option<ActionIcon>,
@@ -696,6 +698,8 @@ pub mod simple_message_notification {
                 primary_message: None,
                 primary_icon: None,
                 primary_icon_color: None,
+                primary_disabled: false,
+                primary_tooltip: None,
                 primary_on_click: None,
                 secondary_message: None,
                 secondary_icon: None,
@@ -739,6 +743,19 @@ pub mod simple_message_notification {
 
         pub fn primary_icon_color(mut self, color: Color) -> Self {
             self.primary_icon_color = Some(color);
+            self
+        }
+
+        pub fn primary_disabled(mut self, disabled: bool) -> Self {
+            self.primary_disabled = disabled;
+            self
+        }
+
+        pub fn primary_tooltip<S>(mut self, tooltip: S) -> Self
+        where
+            S: Into<SharedString>,
+        {
+            self.primary_tooltip = Some(tooltip.into());
             self
         }
 
@@ -1027,6 +1044,10 @@ pub mod simple_message_notification {
                     Button::new(("notification-primary", cx.entity_id()), message.clone())
                         .when_some(self.button_style, |button, style| button.style(style))
                         .label_size(LabelSize::Small)
+                        .disabled(self.primary_disabled)
+                        .when_some(self.primary_tooltip.clone(), |button, tooltip| {
+                            button.tooltip(Tooltip::text(tooltip))
+                        })
                         .on_click(cx.listener(|this, _, window, cx| {
                             if let Some(on_click) = this.primary_on_click.as_ref() {
                                 (on_click)(window, cx)

@@ -138,7 +138,30 @@ Linux works on a large variety of systems configured in many different ways. We 
 
 ### Zed fails to start
 
-If you see an error like "/lib64/libc.so.6: version 'GLIBC_2.29' not found" it means that your distribution's version of glibc is too old. You can either upgrade your system, or [install Zed from source](./development/linux.md).
+If you see an error like "/lib64/libc.so.6: version 'GLIBC_2.29' not found" it means that your distribution's version of glibc is too old. You can either upgrade your system, install the Flatpak bundle, or [install Zed from source](./development/linux.md).
+
+### Flatpak sandbox is preventing host access
+
+Zed's Flatpak support opens most projects through a "Local Host" remote connection. This requires the `--talk-name=org.freedesktop.Flatpak` permission to be granted to the `dev.zed.Zed` app in Flatpak to run the agent. Without this permission, local projects will be opened in the minimal Flatpak runtime included with Zed.
+
+Typically this permission is granted by default when you install Zed, however if needed this permission can be granted:
+
+```sh
+flatpak override --user --talk-name=org.freedesktop.Flatpak dev.zed.Zed
+```
+
+To grant it for just a single launch:
+
+```sh
+flatpak run --talk-name=org.freedesktop.Flatpak dev.zed.Zed
+```
+
+Conversely, to revoke this permission persistently or for a single launch:
+
+```sh
+flatpak override --user --no-talk-name=org.freedesktop.Flatpak dev.zed.Zed
+flatpak run --no-talk-name=org.freedesktop.Flatpak dev.zed.Zed
+```
 
 ### Graphics issues
 

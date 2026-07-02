@@ -1,12 +1,15 @@
 mod dev_container_suggest;
 pub mod disconnected_overlay;
+mod flatpak_sandbox_notice;
 mod remote_connections;
 mod remote_servers;
 pub mod sidebar_recent_projects;
 mod ssh_config;
 
 use std::{
+    cell::Cell,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::Arc,
 };
 
@@ -50,7 +53,7 @@ use workspace::{
     RecentWorkspace, SerializedWorkspaceLocation, Workspace, WorkspaceDb, WorkspaceId,
     notifications::DetachAndPromptErr, with_active_or_new_workspace,
 };
-use zed_actions::{OpenDevContainer, OpenLocal, OpenRecent, OpenRemote};
+use zed_actions::{OpenDevContainer, OpenLocal, OpenRecent, OpenRemote, ReopenAsLocal};
 
 actions!(
     recent_projects,
@@ -601,12 +604,75 @@ pub fn init(cx: &mut App) {
         });
     });
 
-    // Subscribe to worktree additions to suggest opening the project in a dev container
+    cx.on_action(|_: &ReopenAsLocal, cx| {
+        with_active_or_new_workspace(cx, move |workspace, window, cx| {
+            let state_error = if workspace.project().read(cx).is_local() {
+                match util::flatpak::CURRENT_SANDBOX_METADATA.as_ref() {
+                    Some(meta) => {
+                        if !meta.can_spawn_on_host() {
+                            Some((
+                                "Flatpak sandbox is preventing host access",
+                                Some("Missing permission --talk-name=org.freedesktop.Flatpak, add with flatpak override"),
+                            ))
+                        } else {
+                            None
+                        }
+                    }
+                    None => Some(("Already running on the local host", None)),
+                }
+            } else {
+                Some(("Cannot open a remote project on the local host", None))
+            };
+            if let Some((state_error, detail)) = state_error {
+                cx.spawn_in(window, async move |_, cx| {
+                    cx.prompt(gpui::PromptLevel::Critical, state_error, detail, &["Ok"])
+                        .await
+                        .ok();
+                })
+                .detach();
+                return;
+            }
+
+            let paths: Vec<PathBuf> = workspace
+                .project()
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect();
+
+            if paths.is_empty() {
+                return;
+            }
+
+            let app_state = workspace.app_state().clone();
+            let open_options = OpenOptions {
+                requesting_window: window.window_handle().downcast::<MultiWorkspace>(),
+                ..Default::default()
+            };
+
+            cx.spawn_in(window, async move |_, cx| {
+                open_remote_project(
+                    RemoteConnectionOptions::FlatpakHost(Default::default()),
+                    paths,
+                    app_state,
+                    open_options,
+                    cx,
+                )
+                .await
+                .log_err();
+            })
+            .detach();
+        });
+    });
+
+    // Subscribe to worktree events to suggest opening the project in a dev container
+    // or (when sandboxed under Flatpak) on the Flatpak host.
     cx.observe_new(
         |workspace: &mut Workspace, window: Option<&mut Window>, cx: &mut Context<Workspace>| {
             let Some(window) = window else {
                 return;
             };
+            let flatpak_notice_shown = Rc::new(Cell::new(false));
             cx.subscribe_in(
                 workspace.project(),
                 window,
@@ -619,6 +685,14 @@ pub fn init(cx: &mut App) {
                             *worktree_id,
                             updated_entries,
                             project,
+                            window,
+                            cx,
+                        );
+                        flatpak_sandbox_notice::maybe_notify(
+                            workspace,
+                            *worktree_id,
+                            project,
+                            &flatpak_notice_shown,
                             window,
                             cx,
                         );
