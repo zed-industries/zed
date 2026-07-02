@@ -5,7 +5,6 @@ use db::{
     sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
     sqlez_macros::sql,
 };
-use editor::Editor;
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Modifiers, Subscription, Task, WeakEntity, actions,
@@ -379,12 +378,7 @@ impl TextFinder {
             return Some(query);
         }
 
-        if let Some(editor) = item.act_as::<Editor>(cx) {
-            let query = editor.query_suggestion(Some(SeedQuerySetting::Selection), window, cx);
-            if !query.is_empty() {
-                return Some(query);
-            }
-        } else if let Some(searchable_item) = item.to_searchable_item_handle(cx) {
+        if let Some(searchable_item) = item.to_searchable_item_handle(cx) {
             let query =
                 searchable_item.query_suggestion(Some(SeedQuerySetting::Selection), window, cx);
             if !query.is_empty() {
