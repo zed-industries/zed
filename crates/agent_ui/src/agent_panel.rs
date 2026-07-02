@@ -85,6 +85,7 @@ use project::{Project, ProjectPath, Worktree};
 use settings::TerminalDockPosition;
 use settings::{NotifyWhenAgentWaiting, Settings, update_settings_file};
 
+use search::{BufferSearchBar, buffer_search::Deploy as DeployBufferSearch};
 use terminal::{Event as TerminalEvent, terminal_settings::TerminalSettings};
 use terminal_view::{TerminalView, terminal_panel::TerminalPanel};
 use text::OffsetRangeExt;
@@ -96,9 +97,9 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, MultiWorkspace, PathList, SerializedPathList,
-    ToggleWorkspaceSidebar, ToggleZoom, Workspace, WorkspaceId,
+    ToggleWorkspaceSidebar, ToggleZoom, ToolbarItemView, Workspace, WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
-    item::ItemEvent,
+    item::{ItemEvent, ItemHandle},
 };
 
 const AGENT_PANEL_KEY: &str = "agent_panel";
@@ -1157,6 +1158,7 @@ pub struct AgentPanel {
     draft_thread: Option<Entity<ConversationView>>,
     retained_threads: HashMap<ThreadId, Entity<ConversationView>>,
     terminals: HashMap<TerminalId, AgentTerminal>,
+    terminal_search_bar: Option<Entity<BufferSearchBar>>,
     pending_terminal_spawn: Option<TerminalId>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -1559,6 +1561,7 @@ impl AgentPanel {
             draft_thread: None,
             retained_threads: HashMap::default(),
             terminals: HashMap::default(),
+            terminal_search_bar: None,
             pending_terminal_spawn: None,
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
@@ -3946,6 +3949,39 @@ impl AgentPanel {
         match self.visible_surface() {
             VisibleSurface::Terminal(terminal_view) => Some(terminal_view),
             _ => None,
+        }
+    }
+
+    fn toggle_terminal_thread_search(
+        &mut self,
+        _: &crate::ToggleSearch,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(terminal_view) = self.visible_terminal_view().cloned() else {
+            cx.propagate();
+            return;
+        };
+
+        let search_bar = self
+            .terminal_search_bar
+            .get_or_insert_with(|| cx.new(|cx| BufferSearchBar::new(None, window, cx)))
+            .clone();
+        let action = DeployBufferSearch {
+            focus: true,
+            replace_enabled: false,
+            selection_search_enabled: false,
+        };
+
+        let deployed = search_bar.update(cx, |search_bar, cx| {
+            let terminal_item: &dyn ItemHandle = &terminal_view;
+            search_bar.set_active_pane_item(Some(terminal_item), window, cx);
+            search_bar.deploy(&action, None, window, cx)
+        });
+        if deployed {
+            cx.stop_propagation();
+        } else {
+            cx.propagate();
         }
     }
 
@@ -6415,6 +6451,7 @@ impl Render for AgentPanel {
             .on_action(cx.listener(Self::decrease_font_size))
             .on_action(cx.listener(Self::reset_font_size))
             .on_action(cx.listener(Self::toggle_zoom))
+            .on_action(cx.listener(Self::toggle_terminal_thread_search))
             .on_action(cx.listener(|this, _: &ReauthenticateAgent, window, cx| {
                 if let Some(conversation_view) = this.active_conversation_view() {
                     conversation_view.update(cx, |conversation_view, cx| {
@@ -6439,9 +6476,31 @@ impl Render for AgentPanel {
                 VisibleSurface::AgentThread(conversation_view) => parent
                     .child(conversation_view.clone())
                     .child(self.render_drag_target(cx)),
-                VisibleSurface::Terminal(terminal_view) => parent
-                    .child(terminal_view.clone())
-                    .child(self.render_drag_target(cx)),
+                VisibleSurface::Terminal(terminal_view) => {
+                    let terminal_content = v_flex()
+                        .key_context("AgentTerminalThread")
+                        .size_full()
+                        .when_some(self.terminal_search_bar.clone(), |this, search_bar| {
+                            this.when(!search_bar.read(cx).is_dismissed(), |this| {
+                                this.child(
+                                    v_flex()
+                                        .group("toolbar")
+                                        .relative()
+                                        .py(DynamicSpacing::Base06.rems(cx))
+                                        .px(DynamicSpacing::Base08.rems(cx))
+                                        .border_b_1()
+                                        .border_color(cx.theme().colors().border_variant)
+                                        .bg(cx.theme().colors().toolbar_background)
+                                        .child(search_bar),
+                                )
+                            })
+                        })
+                        .child(terminal_view.clone());
+
+                    parent
+                        .child(terminal_content)
+                        .child(self.render_drag_target(cx))
+                }
             })
             .children(self.render_trial_end_upsell(window, cx));
 
