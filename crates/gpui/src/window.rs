@@ -278,31 +278,18 @@ thread_local! {
     static CURRENT_ELEMENT_ARENA: Cell<Option<*const RefCell<Arena>>> = const { Cell::new(None) };
 }
 
-/// Capability to query whether a window draw is in progress on the current
-/// thread. Constructible only within GPUI, which hands one to each platform
-/// window via [`PlatformWindow::set_draw_monitor`], so this state is
-/// inaccessible to application code.
+/// Whether a window draw is currently in progress on this thread.
 ///
-/// Platform implementations use it to defer draw requests that arrive
-/// re-entrantly while a draw is already on the stack (e.g. via nested message
-/// pumping in the Windows window procedure), instead of running a nested draw.
-#[derive(Clone, Copy)]
-pub struct DrawMonitor(());
-
-impl DrawMonitor {
-    pub(crate) fn new() -> Self {
-        Self(())
-    }
-
-    /// Whether a window draw is currently in progress on this thread.
-    ///
-    /// This holds exactly while an `ElementArenaScope` is active: nested
-    /// scopes restore the previous (still set) arena pointer, so
-    /// `CURRENT_ELEMENT_ARENA` is `Some` from the outermost draw's start to
-    /// its end.
-    pub fn draw_in_progress(&self) -> bool {
-        CURRENT_ELEMENT_ARENA.with(|current| current.get().is_some())
-    }
+/// This holds exactly while an `ElementArenaScope` is active: nested scopes
+/// restore the previous (still set) arena pointer, so `CURRENT_ELEMENT_ARENA`
+/// is `Some` from the outermost draw's start to its end.
+///
+/// The `on_request_frame` callback uses this to defer draw requests that
+/// arrive re-entrantly while a draw is already on the stack (e.g. via nested
+/// message pumping in the Windows window procedure), instead of running a
+/// nested draw or panicking on the already-borrowed App.
+pub(crate) fn draw_in_progress() -> bool {
+    CURRENT_ELEMENT_ARENA.with(|current| current.get().is_some())
 }
 
 /// Allocates an element in the current arena. Uses the app-specific arena if one
@@ -1550,7 +1537,6 @@ impl Window {
                 });
             }
         }));
-        platform_window.set_draw_monitor(DrawMonitor::new());
         platform_window.on_request_frame(Box::new({
             let mut cx = cx.to_async();
             let invalidator = invalidator.clone();
@@ -1558,7 +1544,25 @@ impl Window {
             let needs_present = needs_present.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let input_rate_tracker = input_rate_tracker.clone();
+            let mut deferred_force_render = false;
             move |request_frame_options| {
+                // This must be checked before anything else: if this request
+                // arrived re-entrantly while a draw is on this thread's stack
+                // (e.g. via a nested message pump in the Windows window
+                // procedure), drawing would nest draws, and even touching the
+                // App would panic on its already-mutable borrow. Skip instead;
+                // the platform leaves the window invalidated (or re-invalidates
+                // it), so a fresh request arrives once the in-progress draw
+                // unwinds. Remember force_render so the deferred frame still
+                // bypasses the view cache.
+                if draw_in_progress() {
+                    log::debug!("deferring re-entrant window draw request");
+                    deferred_force_render |= request_frame_options.force_render;
+                    return;
+                }
+                let force_render =
+                    request_frame_options.force_render || mem::take(&mut deferred_force_render);
+
                 let thermal_state = handle
                     .update(&mut cx, |_, _, cx| cx.thermal_state())
                     .log_err();
@@ -1566,7 +1570,7 @@ impl Window {
                 // Throttle frame rate based on conditions:
                 // - Thermal pressure (Serious/Critical): cap to ~60fps
                 // - Inactive window (not focused): cap to ~30fps to save energy
-                let min_frame_interval = if !request_frame_options.force_render
+                let min_frame_interval = if !force_render
                     && !request_frame_options.require_presentation
                     && next_frame_callbacks.borrow().is_empty()
                 {
@@ -1584,6 +1588,8 @@ impl Window {
                     if let Some(last_frame) = last_frame_time.get()
                         && now.duration_since(last_frame) < min_interval
                     {
+                        // Don't lose a pending forced render to throttling.
+                        deferred_force_render |= force_render;
                         // Must still complete the frame on platforms that require it.
                         // On Wayland, `surface.frame()` was already called to request the
                         // next frame callback, so we must call `surface.commit()` (via
@@ -1614,11 +1620,11 @@ impl Window {
                     || needs_present.get()
                     || (active.get() && input_rate_tracker.borrow_mut().is_high_rate());
 
-                if invalidator.is_dirty() || request_frame_options.force_render {
+                if invalidator.is_dirty() || force_render {
                     measure("frame duration", || {
                         handle
                             .update(&mut cx, |_, window, cx| {
-                                if request_frame_options.force_render {
+                                if force_render {
                                     // Bypass cached view reuse so we don't replay stale
                                     // atlas tile references after a GPU device recovery.
                                     window.refresh();

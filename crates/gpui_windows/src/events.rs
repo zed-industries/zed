@@ -52,11 +52,13 @@ impl DrawCoordinator {
         }
     }
 
-    fn try_begin_draw(&self, monitor: Option<DrawMonitor>) -> Option<DrawWindowGuard<'_>> {
-        // Also check GPUI's own draw state, which covers draws that don't go
-        // through `draw_window` (e.g. key dispatch or opening a window draws
-        // synchronously) but can still be re-entered by the window procedure.
-        if self.drawing.get() || monitor.is_some_and(|monitor| monitor.draw_in_progress()) {
+    fn try_begin_draw(&self) -> Option<DrawWindowGuard<'_>> {
+        // This only covers the `draw_window` span (which extends past the GPUI
+        // draw, through presentation and IME updates). Requests that arrive
+        // re-entrantly during GPUI-initiated draws (e.g. key dispatch or
+        // opening a window draws synchronously) are deferred by GPUI's
+        // `on_request_frame` callback itself, which no-ops in that case.
+        if self.drawing.get() {
             None
         } else {
             self.drawing.set(true);
@@ -1259,11 +1261,7 @@ impl WindowsWindowInner {
 
     #[inline]
     fn draw_window(&self, handle: HWND, force_render: bool) -> Option<isize> {
-        let Some(_guard) = self
-            .state
-            .draw_coordinator
-            .try_begin_draw(self.state.draw_monitor.get())
-        else {
+        let Some(_guard) = self.state.draw_coordinator.try_begin_draw() else {
             log::debug!("deferring re-entrant draw of window {handle:?}");
             if force_render {
                 self.state.force_render_pending.set(true);
