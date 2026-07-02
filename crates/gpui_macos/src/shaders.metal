@@ -468,13 +468,11 @@ vertex ShadowVertexOutput shadow_vertex(
   float2 unit_vertex = unit_vertices[unit_vertex_id];
   Shadow shadow = shadows[shadow_id];
 
-  Bounds_ScaledPixels bounds;
-  if (shadow.inset != 0u) {
-    bounds = shadow.element_bounds;
-  } else {
-    // Leave room for the gaussian tail outside the shadow rect.
+  // Outer shadows need expanded bounds so the blur extends beyond the element.
+  // Inset shadows are clipped to the element bounds, so no expansion needed.
+  Bounds_ScaledPixels bounds = shadow.bounds;
+  if (shadow.inset == 0u) {
     float margin = 3. * shadow.blur_radius;
-    bounds = shadow.bounds;
     bounds.origin.x -= margin;
     bounds.origin.y -= margin;
     bounds.size.width += 2. * margin;
@@ -504,6 +502,12 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
   float2 half_size = size / 2.;
   float2 center = origin + half_size;
   float2 point = input.position.xy - center;
+  if (shadow.inset != 0u) {
+    // Shift the blur center by the offset so the shadow is heavier on one side.
+    point -= float2(shadow.offset.x, shadow.offset.y);
+    // Shrink the virtual rect so the shadow reaches further inward.
+    half_size -= float2(shadow.spread_radius, shadow.spread_radius);
+  }
   float corner_radius;
   if (point.x < 0.) {
     if (point.y < 0.) {
@@ -543,11 +547,10 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
   }
 
   if (shadow.inset != 0u) {
-    // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
+    // The inset shadow is the complement of the blurred rect, clipped to the element.
     // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
     alpha = 1. - alpha;
-    float element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
-                                      shadow.element_corner_radii);
+    float element_distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
     alpha *= saturate(0.5 - element_distance);
   }
 

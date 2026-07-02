@@ -951,18 +951,20 @@ fn fmod(a: f32, b: f32) -> f32 {
 struct Shadow {
     order: u32,
     blur_radius: f32,
-    // The shadow rect for drop shadows; the "hole" rect for inset shadows.
+    // Only used for inset shadows: shifts the blur center in the shader so
+    // the shadow is heavier on one side. Outer shadows apply their offset
+    // to bounds before reaching the shader, so this is zero for them.
+    offset: vec2<f32>,
     bounds: Bounds,
     corner_radii: Corners,
     content_mask: Bounds,
     color: Hsla,
-    // Only consulted when `inset == 1u`: the element's own bounds, used as a rounded-rect
-    // clip so the shadow never escapes the element.
-    element_bounds: Bounds,
-    element_corner_radii: Corners,
     // 0 = drop shadow, 1 = inset shadow.
     inset: u32,
-    pad: u32, // align to 8 bytes
+    // Only used for inset shadows: shrinks the virtual rect the gaussian
+    // blurs against, making the shadow reach further inward. Zero for outer
+    // shadows (they apply spread to bounds before reaching the shader).
+    spread_radius: f32,
 }
 @group(1) @binding(0) var<storage, read> b_shadows: array<Shadow>;
 
@@ -979,22 +981,19 @@ fn vs_shadow(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) ins
     let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
     var shadow = b_shadows[instance_id];
 
-    var geometry: Bounds;
-    if (shadow.inset != 0u) {
-        geometry = shadow.element_bounds;
-    } else {
-        // Leave room for the gaussian tail outside the shadow rect.
+    // Outer shadows need expanded bounds so the blur extends beyond the element.
+    // Inset shadows are clipped to the element bounds, so no expansion needed.
+    if (shadow.inset == 0u) {
         let margin = 3.0 * shadow.blur_radius;
-        geometry = shadow.bounds;
-        geometry.origin -= vec2<f32>(margin);
-        geometry.size += 2.0 * vec2<f32>(margin);
+        shadow.bounds.origin -= vec2<f32>(margin);
+        shadow.bounds.size += 2.0 * vec2<f32>(margin);
     }
 
     var out = ShadowVarying();
-    out.position = to_device_position(unit_vertex, geometry);
+    out.position = to_device_position(unit_vertex, shadow.bounds);
     out.color = hsla_to_rgba(shadow.color);
     out.shadow_id = instance_id;
-    out.clip_distances = distance_from_clip_rect(unit_vertex, geometry, shadow.content_mask);
+    out.clip_distances = distance_from_clip_rect(unit_vertex, shadow.bounds, shadow.content_mask);
     return out;
 }
 
@@ -1006,9 +1005,15 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
     }
 
     let shadow = b_shadows[input.shadow_id];
-    let half_size = shadow.bounds.size / 2.0;
+    var half_size = shadow.bounds.size / 2.0;
     let center = shadow.bounds.origin + half_size;
-    let center_to_point = input.position.xy - center;
+    var center_to_point = input.position.xy - center;
+    if (shadow.inset != 0u) {
+        // Shift the blur center by the offset so the shadow is heavier on one side.
+        center_to_point -= shadow.offset;
+        // Shrink the virtual rect so the shadow reaches further inward.
+        half_size -= vec2<f32>(shadow.spread_radius);
+    }
 
     let corner_radius = pick_corner_radius(center_to_point, shadow.corner_radii);
 
@@ -1036,11 +1041,10 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
     }
 
     if (shadow.inset != 0u) {
-        // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
+        // The inset shadow is the complement of the blurred rect, clipped to the element.
         // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
         alpha = 1.0 - alpha;
-        let element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
-                                        shadow.element_corner_radii);
+        let element_distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
         alpha *= saturate(0.5 - element_distance);
     }
 
