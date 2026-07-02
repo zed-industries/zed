@@ -288,6 +288,7 @@ dependencies = [
  "quick-xml 0.38.3",
  "rand 0.9.4",
  "regex",
+ "release_channel",
  "reqwest_client",
  "rust-embed",
  "sandbox",
@@ -534,6 +535,7 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "shlex",
  "streaming_diff",
  "task",
  "telemetry",
@@ -10663,6 +10665,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "html5ever 0.27.0",
+ "image",
  "language",
  "languages",
  "linkify",
@@ -11441,6 +11444,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases 0.2.1",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -15972,6 +15976,7 @@ dependencies = [
  "http_proxy",
  "libc",
  "log",
+ "nix 0.29.0",
  "serde",
  "serde_json",
  "smol",
@@ -16243,6 +16248,7 @@ dependencies = [
  "anyhow",
  "bitflags 2.10.0",
  "collections",
+ "db",
  "editor",
  "file_icons",
  "fs",
@@ -18415,6 +18421,7 @@ dependencies = [
  "serde_json",
  "settings",
  "shellexpand",
+ "shlex",
  "task",
  "terminal",
  "theme",
@@ -22961,7 +22968,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.10.0"
+version = "1.11.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

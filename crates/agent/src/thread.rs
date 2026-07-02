@@ -12,14 +12,14 @@ use action_log::ActionLog;
 use agent_settings::UserAgentsMd;
 
 use crate::sandboxing::{
-    SandboxRequest, ThreadSandbox, ThreadSandboxGrants, sandboxing_available_for_project,
+    SandboxRequest, ThreadSandbox, ThreadSandboxGrants, sandbox_git_dirs,
+    sandbox_worktree_writable_paths, sandboxing_available_for_project,
     sandboxing_enabled_for_project,
 };
-use crate::tools::{SandboxGitPathCandidates, sandbox_git_paths};
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::{
-    AgentProfileId, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT,
-    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT,
+    AgentProfileId, AgentProfileSettings, AgentSettings, AutoCompactThreshold, COMPACTION_PROMPT,
+    SUMMARIZE_THREAD_DETAILED_PROMPT, SUMMARIZE_THREAD_PROMPT, builtin_profiles,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Local, Utc};
@@ -46,7 +46,7 @@ use language_model::{
     LanguageModelToolUse, LanguageModelToolUseId, MessageContent, Role, SelectedModel, Speed,
     StopReason, TokenUsage, ZED_CLOUD_PROVIDER_ID,
 };
-use project::Project;
+use project::{Project, trusted_worktrees::TrustedWorktrees};
 use prompt_store::ProjectContext;
 use schemars::{JsonSchema, Schema};
 use serde::de::DeserializeOwned;
@@ -72,15 +72,33 @@ const TOOL_CANCELED_MESSAGE: &str = "Tool canceled by user";
 pub const MAX_TOOL_NAME_LENGTH: usize = 64;
 pub const MAX_SUBAGENT_DEPTH: u8 = 1;
 
+pub(crate) fn provider_compatible_tool_name(tool_name: &str) -> String {
+    let mut sanitized = String::new();
+    for character in tool_name.chars() {
+        if sanitized.len() >= MAX_TOOL_NAME_LENGTH {
+            break;
+        }
+
+        if character.is_ascii_alphanumeric() || character == '_' || character == '-' {
+            sanitized.push(character);
+        } else {
+            sanitized.push('_');
+        }
+    }
+
+    if sanitized.is_empty() {
+        sanitized.push_str("tool");
+    }
+
+    sanitized
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SandboxStatusKey {
     pub settings_sandbox: ThreadSandbox,
     pub thread_sandbox: ThreadSandbox,
     pub baseline_writable_paths: Vec<PathBuf>,
     pub git_paths: Vec<PathBuf>,
-    pub repository_paths: Vec<(PathBuf, PathBuf, PathBuf, PathBuf)>,
-    pub settings_allow_git_access: bool,
-    pub thread_allow_git_access: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1226,6 +1244,9 @@ pub struct Thread {
     initial_project_snapshot: Shared<Task<Option<Arc<ProjectSnapshot>>>>,
     pub(crate) context_server_registry: Entity<ContextServerRegistry>,
     profile_id: AgentProfileId,
+    /// Whether `profile_id` was downgraded to `minimal` at thread start because
+    /// the workspace is restricted. Used purely to surface a warning in the UI.
+    profile_downgraded_for_restricted_workspace: bool,
     project_context: Entity<ProjectContext>,
     pub(crate) templates: Arc<Templates>,
     model: ThreadModel,
@@ -1320,7 +1341,8 @@ impl Thread {
         cx: &mut Context<Self>,
     ) -> Self {
         let settings = AgentSettings::get_global(cx);
-        let profile_id = settings.default_profile.clone();
+        let (profile_id, profile_downgraded_for_restricted_workspace) =
+            Self::profile_for_restricted_workspace(settings.default_profile.clone(), &project, cx);
         let enable_thinking = settings
             .default_model
             .as_ref()
@@ -1363,6 +1385,7 @@ impl Thread {
             },
             context_server_registry,
             profile_id,
+            profile_downgraded_for_restricted_workspace,
             project_context,
             templates,
             model,
@@ -1395,6 +1418,8 @@ impl Thread {
         self.thinking_effort = parent.thinking_effort.clone();
         self.summarization_model = parent.summarization_model.clone();
         self.profile_id = parent.profile_id.clone();
+        self.profile_downgraded_for_restricted_workspace =
+            parent.profile_downgraded_for_restricted_workspace;
     }
 
     fn apply_model_selection(
@@ -1738,6 +1763,7 @@ impl Thread {
             initial_project_snapshot: Task::ready(db_thread.initial_project_snapshot).shared(),
             context_server_registry,
             profile_id,
+            profile_downgraded_for_restricted_workspace: false,
             project_context,
             templates,
             model,
@@ -1765,21 +1791,16 @@ impl Thread {
         }
     }
 
-    /// The sandbox grants configured for this thread, using unverified Git path
-    /// candidates. Use [`Self::refresh_verified_sandbox_status`] for UI or other
-    /// surfaces that need to match terminal enforcement.
     pub fn sandbox_status(&self, cx: &App) -> Option<(ThreadSandbox, ThreadSandbox)> {
         if !self.sandboxing_available(cx) {
             return None;
         }
         let persistent = AgentSettings::get_global(cx).sandbox_permissions.clone();
-        let git_dirs = crate::sandboxing::sandbox_git_dirs(self.project.read(cx), cx);
+        let git_dirs = sandbox_git_dirs(self.project.read(cx), cx);
         let grants = self.sandbox_grants.borrow();
         let settings = crate::sandboxing::settings_thread_sandbox(&persistent)
-            .with_git(persistent.allow_git_access, git_dirs.clone());
-        let thread = grants
-            .thread_sandbox()
-            .with_git(grants.git_access_granted(), git_dirs);
+            .with_protected_paths(git_dirs.clone());
+        let thread = grants.thread_sandbox().with_protected_paths(git_dirs);
         Some((settings, thread))
     }
 
@@ -1795,69 +1816,27 @@ impl Thread {
         let settings_sandbox = crate::sandboxing::settings_thread_sandbox(&persistent);
         let grants = self.sandbox_grants.borrow();
         let thread_sandbox = grants.thread_sandbox();
-        let thread_allow_git_access = grants.git_access_granted();
         drop(grants);
 
-        let (sandbox_path_candidates, fs) = {
-            let project = self.project.read(cx);
-            (
-                SandboxGitPathCandidates::from_project(project, cx),
-                project.fs().clone(),
-            )
-        };
-        let baseline_writable_paths = sandbox_path_candidates.writable_paths.clone();
-        let git_paths = sandbox_path_candidates.git_paths.clone();
-        let repository_paths = sandbox_path_candidates.cache_key_repositories();
+        let project = self.project.read(cx);
+        let baseline_writable_paths = sandbox_worktree_writable_paths(project, cx);
+        let git_paths = sandbox_git_dirs(project, cx);
 
         let key = SandboxStatusKey {
             settings_sandbox: settings_sandbox.clone(),
             thread_sandbox: thread_sandbox.clone(),
             baseline_writable_paths: baseline_writable_paths.clone(),
             git_paths: git_paths.clone(),
-            repository_paths,
-            settings_allow_git_access: persistent.allow_git_access,
-            thread_allow_git_access,
         };
 
-        if settings_sandbox.is_unsandboxed() || thread_sandbox.is_unsandboxed() {
-            return Some((
-                key,
-                SandboxStatusRefresh::Ready(VerifiedSandboxStatus {
-                    settings_sandbox,
-                    thread_sandbox,
-                    baseline_writable_paths,
-                }),
-            ));
-        }
-
-        let git_access_requested = persistent.allow_git_access || thread_allow_git_access;
-        if !git_access_requested {
-            return Some((
-                key,
-                SandboxStatusRefresh::Ready(VerifiedSandboxStatus {
-                    settings_sandbox: settings_sandbox.with_git(false, git_paths.clone()),
-                    thread_sandbox: thread_sandbox.with_git(false, git_paths),
-                    baseline_writable_paths,
-                }),
-            ));
-        }
-
-        let task = cx.spawn(async move |_this, _cx| {
-            let sandbox_paths = sandbox_git_paths(sandbox_path_candidates, fs.as_ref(), true).await;
-            VerifiedSandboxStatus {
-                settings_sandbox: settings_sandbox.with_git(
-                    persistent.allow_git_access && sandbox_paths.allow_git_access,
-                    sandbox_paths.git_dirs.clone(),
-                ),
-                thread_sandbox: thread_sandbox.with_git(
-                    thread_allow_git_access && sandbox_paths.allow_git_access,
-                    sandbox_paths.git_dirs,
-                ),
+        Some((
+            key,
+            SandboxStatusRefresh::Ready(VerifiedSandboxStatus {
+                settings_sandbox: settings_sandbox.with_protected_paths(git_paths.clone()),
+                thread_sandbox: thread_sandbox.with_protected_paths(git_paths),
                 baseline_writable_paths,
-            }
-        });
-
-        Some((key, SandboxStatusRefresh::Pending(task)))
+            }),
+        ))
     }
 
     /// Whether agent terminal commands are sandboxed for this thread's project,
@@ -2195,7 +2174,44 @@ impl Thread {
         &self.profile_id
     }
 
+    /// Whether this thread's profile was downgraded to `minimal` at thread start
+    /// because the workspace is restricted.
+    pub fn profile_was_downgraded(&self) -> bool {
+        self.profile_downgraded_for_restricted_workspace
+    }
+
+    /// Computes the profile a thread should start with, given the user's chosen
+    /// profile. In a restricted workspace, the built-in `write`/`ask` profiles
+    /// are downgraded to `minimal` — but only when both the chosen profile and
+    /// `minimal` are unmodified, shipped defaults, so we never override a user's
+    /// custom or customized profiles.
+    ///
+    /// Returns the (possibly downgraded) profile and whether a downgrade
+    /// happened.
+    fn profile_for_restricted_workspace(
+        profile_id: AgentProfileId,
+        project: &Entity<Project>,
+        cx: &App,
+    ) -> (AgentProfileId, bool) {
+        let is_write_or_ask = profile_id.as_str() == builtin_profiles::WRITE
+            || profile_id.as_str() == builtin_profiles::ASK;
+        let minimal = AgentProfileId(builtin_profiles::MINIMAL.into());
+        if is_write_or_ask
+            && TrustedWorktrees::has_restricted_worktrees(&project.read(cx).worktree_store(), cx)
+            && AgentProfileSettings::is_unmodified_default(&profile_id, cx)
+            && AgentProfileSettings::is_unmodified_default(&minimal, cx)
+        {
+            (minimal, true)
+        } else {
+            (profile_id, false)
+        }
+    }
+
     pub fn set_profile(&mut self, profile_id: AgentProfileId, cx: &mut Context<Self>) {
+        // An explicit selection means any earlier automatic downgrade no longer
+        // applies, even if the user re-selects the same profile.
+        self.profile_downgraded_for_restricted_workspace = false;
+
         if self.profile_id == profile_id {
             return;
         }
@@ -3458,6 +3474,26 @@ impl Thread {
         cancellation_rx: watch::Receiver<bool>,
         cx: &mut Context<Self>,
     ) -> Task<LanguageModelToolResult> {
+        // A workspace can become restricted after a thread has already started.
+        // Tools that aren't allowed in restricted workspaces must never run in
+        // that state, even though they were exposed to the model earlier.
+        if !tool.allow_in_restricted_mode()
+            && TrustedWorktrees::has_restricted_worktrees(
+                &self.project.read(cx).worktree_store(),
+                cx,
+            )
+        {
+            return Task::ready(LanguageModelToolResult {
+                tool_use_id,
+                tool_name,
+                is_error: true,
+                content: vec![LanguageModelToolResultContent::Text(Arc::from(
+                    "workspace has become restricted",
+                ))],
+                output: None,
+            });
+        }
+
         let fs = self.project.read(cx).fs().clone();
         let tool_event_stream = ToolCallEventStream::new(
             tool_use_id.clone(),
@@ -3921,24 +3957,21 @@ impl Thread {
         let Some(profile) = AgentSettings::get_global(cx).profiles.get(&self.profile_id) else {
             return BTreeMap::new();
         };
-        fn truncate(tool_name: &SharedString) -> SharedString {
-            if tool_name.len() > MAX_TOOL_NAME_LENGTH {
-                let mut truncated = tool_name.to_string();
-                truncated.truncate(MAX_TOOL_NAME_LENGTH);
-                truncated.into()
-            } else {
-                tool_name.clone()
-            }
-        }
-
         // Terminal variants are configured by users under the canonical
         // `terminal` name. Expose the one matching the current sandbox state
         // to the model under that name.
         let use_sandboxed_terminal = sandboxing_enabled_for_project(self.project.read(cx), cx);
 
+        // Tools that aren't allowed in restricted workspaces must never be
+        // provided to the model while the workspace is restricted, regardless
+        // of what the active profile enables.
+        let is_restricted =
+            TrustedWorktrees::has_restricted_worktrees(&self.project.read(cx).worktree_store(), cx);
+
         let mut tools = self
             .tools
             .iter()
+            .filter(|(_, tool)| !is_restricted || tool.allow_in_restricted_mode())
             .filter_map(|(tool_name, tool)| {
                 let terminal_variant = matches!(
                     tool_name.as_ref(),
@@ -3958,7 +3991,10 @@ impl Thread {
                             Some((SharedString::from(TerminalTool::NAME), tool.clone()))
                         }
                         (TerminalTool::NAME | SandboxedTerminalTool::NAME, _) => None,
-                        _ => Some((truncate(tool_name), tool.clone())),
+                        _ => Some((
+                            provider_compatible_tool_name(tool_name.as_ref()).into(),
+                            tool.clone(),
+                        )),
                     }
                 } else {
                     None
@@ -3973,7 +4009,8 @@ impl Thread {
         for (server_id, server_tools) in self.context_server_registry.read(cx).servers() {
             for (tool_name, tool) in server_tools {
                 if profile.is_context_server_tool_enabled(&server_id.0, &tool_name) {
-                    let tool_name = truncate(tool_name);
+                    let tool_name: SharedString =
+                        provider_compatible_tool_name(tool_name.as_ref()).into();
                     if !seen_tools.insert(tool_name.clone()) {
                         duplicate_tool_names.insert(tool_name.clone());
                     }
@@ -3990,7 +4027,8 @@ impl Thread {
             if duplicate_tool_names.contains(&tool_name) {
                 let available = MAX_TOOL_NAME_LENGTH.saturating_sub(tool_name.len());
                 if available >= 2 {
-                    let mut disambiguated = server_id.0.to_snake_case();
+                    let mut disambiguated =
+                        provider_compatible_tool_name(&server_id.0.to_snake_case()).to_string();
                     disambiguated.truncate(available - 1);
                     disambiguated.push('_');
                     disambiguated.push_str(&tool_name);
@@ -4904,6 +4942,14 @@ where
         true
     }
 
+    /// Whether this tool may be provided to an agent in a restricted workspace.
+    ///
+    /// Tools that return `false` are never exposed to the model while the
+    /// workspace is restricted, and will fail if invoked in that state.
+    fn allow_in_restricted_mode() -> bool {
+        true
+    }
+
     /// Runs the tool with the provided input.
     ///
     /// Returns `Result<Self::Output, Self::Output>` rather than `Result<Self::Output, anyhow::Error>`
@@ -4967,6 +5013,9 @@ pub trait AnyAgentTool {
     fn supports_provider(&self, _provider: &LanguageModelProviderId) -> bool {
         true
     }
+    fn allow_in_restricted_mode(&self) -> bool {
+        true
+    }
     /// See [`AgentTool::run`] for why this returns `Result<AgentToolOutput, AgentToolOutput>`.
     fn run(
         self: Arc<Self>,
@@ -5016,6 +5065,10 @@ where
 
     fn supports_provider(&self, provider: &LanguageModelProviderId) -> bool {
         T::supports_provider(provider)
+    }
+
+    fn allow_in_restricted_mode(&self) -> bool {
+        T::allow_in_restricted_mode()
     }
 
     fn run(
@@ -5547,7 +5600,6 @@ impl ToolCallEventStream {
             command: None,
             network_hosts,
             network_all_hosts,
-            allow_git_access: request.allow_git_access,
             allow_fs_write_all: request.allow_fs_write_all,
             unsandboxed: request.unsandboxed,
             write_paths: request.write_paths.clone(),
@@ -5752,9 +5804,7 @@ impl ToolCallEventStream {
                         agent.set_sandbox_network_hosts(host_strings);
                     }
                 }
-                if request.allow_git_access {
-                    agent.allow_sandbox_git_access();
-                }
+
                 if request.allow_fs_write_all {
                     agent.allow_sandbox_fs_write_all();
                 }
@@ -5796,6 +5846,20 @@ impl ToolCallEventStream {
     /// command in the thread run without a sandbox.
     pub(crate) fn unsandboxed_granted_for_thread(&self) -> bool {
         self.sandbox_grants.borrow().unsandboxed_granted()
+    }
+
+    /// Whether unsandboxed access is currently in effect: granted for this
+    /// thread (a model-requested `unsandboxed` escape or a sandbox-creation
+    /// fallback) or configured persistently via `allow_unsandboxed`. When true,
+    /// commands already run without any OS sandbox, so per-host network grants
+    /// no longer provide isolation and callers may skip host authorization
+    /// entirely.
+    pub(crate) fn unsandboxed_access_granted(&self, cx: &App) -> bool {
+        self.unsandboxed_granted_for_thread()
+            || self.sandbox_fallback_granted_for_thread()
+            || AgentSettings::get_global(cx)
+                .sandbox_permissions
+                .allow_unsandboxed
     }
 
     /// Ask the user how to proceed when the OS sandbox could not be created
@@ -7489,7 +7553,6 @@ mod tests {
         let (event_stream, mut receiver) = ToolCallEventStream::test();
         let request = SandboxRequest {
             network: crate::sandboxing::NetworkRequest::None,
-            allow_git_access: false,
             allow_fs_write_all: false,
             unsandboxed: false,
             write_paths: vec![
@@ -7513,7 +7576,6 @@ mod tests {
                 .expect("sandbox authorization should include request details");
         assert!(details.network_hosts.is_empty());
         assert!(!details.network_all_hosts);
-        assert_eq!(details.allow_git_access, request.allow_git_access);
         assert_eq!(details.allow_fs_write_all, request.allow_fs_write_all);
         assert_eq!(details.unsandboxed, request.unsandboxed);
         assert_eq!(details.write_paths, request.write_paths);
