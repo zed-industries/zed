@@ -39,6 +39,12 @@ pub fn current_platform(headless: bool) -> Rc<dyn Platform> {
         Rc::new(gpui_macos::MacPlatform::new(headless))
     }
 
+    #[cfg(target_os = "ios")]
+    {
+        let _ = headless;
+        Rc::new(gpui_ios::IosPlatform::new())
+    }
+
     #[cfg(target_os = "windows")]
     {
         Rc::new(
