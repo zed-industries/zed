@@ -460,23 +460,22 @@ impl Match {
     }
 }
 
-/// Wrapper with Eq using the releative_path()
+/// Wrapper with Eq comparing the worktree-qualified path of file matches
 #[derive(Clone)]
 struct SelectedMatch(pub Match);
 
 impl SelectedMatch {
     fn new(m: Match) -> Option<Self> {
-        if m.relative_path().is_some() {
-            Some(Self(m))
-        } else {
-            None
+        match m {
+            Match::History { .. } | Match::Search(_) => Some(Self(m)),
+            Match::Channel { .. } | Match::CreateNew(_) => None,
         }
     }
 }
 
 impl PartialEq for SelectedMatch {
     fn eq(&self, other: &Self) -> bool {
-        self.0.relative_path() == other.0.relative_path()
+        *self == other.0
     }
 }
 
@@ -484,9 +483,19 @@ impl Eq for SelectedMatch {}
 
 impl PartialEq<Match> for SelectedMatch {
     fn eq(&self, other: &Match) -> bool {
-        match other.relative_path() {
-            Some(path) => self.0.relative_path() == Some(path),
-            None => false,
+        match (&self.0, other) {
+            (Match::History { path: a, .. }, Match::History { path: b, .. }) => {
+                a.project == b.project
+            }
+            (Match::Search(a), Match::Search(b)) => {
+                a.0.worktree_id == b.0.worktree_id && a.0.path == b.0.path
+            }
+            (Match::History { path: h, .. }, Match::Search(s))
+            | (Match::Search(s), Match::History { path: h, .. }) => {
+                h.project.worktree_id.to_usize() == s.0.worktree_id
+                    && h.project.path == s.0.path
+            }
+            _ => false,
         }
     }
 }
@@ -2045,7 +2054,7 @@ impl PickerDelegate for FileFinderDelegate {
             picker::PickerAction::separator(),
             picker::PickerAction::button(
                 "Multi Select",
-                picker::ToggleMultiSelectItem.boxed_clone(),
+                picker::ToggleMultiSelectMode.boxed_clone(),
             ),
             picker::PickerAction::button(open_label, menu::Confirm.boxed_clone()),
         ]

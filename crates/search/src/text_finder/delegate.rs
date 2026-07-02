@@ -693,8 +693,8 @@ impl PickerDelegate for Delegate {
             ),
             picker::PickerAction::separator(),
             picker::PickerAction::button(
-                "Multi Select",
-                picker::ToggleMultiSelectItem.boxed_clone(),
+                "Select Multiple",
+                picker::ToggleMultiSelectMode.boxed_clone(),
             ),
             picker::PickerAction::button(
                 if self.selected_matches.len() > 1 {

@@ -75,6 +75,11 @@ actions!(
         ToggleActionsMenu,
         /// Take the picker's content and open it in a multibuffer
         ToMultiBuffer,
+        /// Toggles multi-select mode, in which clicking items adds them to
+        /// the selection instead of opening them
+        ToggleMultiSelectMode,
+        /// Toggles whether the current item is in the multi-selection and
+        /// advances to the next item
         ToggleMultiSelectItem,
     ]
 );
@@ -124,6 +129,7 @@ pub struct Picker<D: PickerDelegate> {
     preview: Option<Preview>,
     pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
+    select_instead_of_open: bool,
     shape: shape::Shape,
     /// The size the picker opens at (and resets to). Defaults depend on whether
     /// the picker has a preview; see [`Picker::initial_width`] / [`Picker::max_height`].
@@ -564,6 +570,7 @@ impl<D: PickerDelegate> Picker<D> {
             element_container,
             pending_update_matches: None,
             confirm_on_update: None,
+            select_instead_of_open: false,
             preview,
             shape_loaded_from_persistence: persisted_shape.is_some(),
             shape: persisted_shape.unwrap_or_else(|| {
@@ -897,10 +904,27 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.delegate.should_dismiss() {
+            self.select_instead_of_open = false;
             self.delegate.clear_selection(cx);
             self.delegate.dismissed(window, cx);
             cx.emit(DismissEvent);
         }
+    }
+
+    fn toggle_multi_select_mode(
+        &mut self,
+        _: &ToggleMultiSelectMode,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.delegate.supports_multi_select() {
+            return;
+        }
+        self.select_instead_of_open = !self.select_instead_of_open;
+        if !self.select_instead_of_open {
+            self.delegate.clear_selection(cx);
+        }
+        cx.notify();
     }
 
     fn toggle_multi_select_item(
@@ -909,7 +933,8 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.delegate.supports_multi_select() {
+        if !self.delegate.supports_multi_select() || !self.select_instead_of_open {
+            cx.propagate();
             return;
         }
         let ix = self.delegate.selected_index();
@@ -1020,18 +1045,17 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         }
         self.set_selected_index(ix, None, false, window, cx);
-        if self.delegate.supports_multi_select()
-            && (secondary || self.delegate.selected_item_count() > 0)
-        {
+        if self.delegate.supports_multi_select() && self.select_instead_of_open {
             self.delegate.toggle_item_selected(ix, window, cx);
             cx.notify();
         } else {
-            self.do_confirm(false, window, cx);
+            self.do_confirm(secondary, window, cx);
         }
     }
 
     fn do_confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.delegate.supports_multi_select() && self.delegate.selected_item_count() > 0 {
+            self.select_instead_of_open = false;
             self.delegate.confirm_multi(secondary, window, cx);
         } else if let Some(update_query) = self.delegate.confirm_update_query(window, cx) {
             self.set_query(&update_query, window, cx);
@@ -1229,7 +1253,7 @@ impl<D: PickerDelegate> Picker<D> {
 
         let supports_multi_select = self.delegate.supports_multi_select();
         let is_multi_selected = supports_multi_select && self.delegate.is_item_selected(ix);
-        let multi_select_active = supports_multi_select && self.delegate.selected_item_count() > 0;
+        let multi_select_active = supports_multi_select && self.select_instead_of_open;
 
         div()
             .id(("item", ix))
@@ -1277,20 +1301,35 @@ impl<D: PickerDelegate> Picker<D> {
                     }
                 }))
             })
-            .child(
-                h_flex()
-                    // Only selectable rows get an indicator; headers and
-                    // separators cannot be part of the selection.
-                    .when(multi_select_active && selectable, |this| {
-                        this.child(self.render_multi_select_indicator(is_multi_selected, cx))
-                    })
-                    .children(self.delegate.render_match(
+            .map(|row| {
+                // Pickers without multi-select keep their element tree
+                // unchanged.
+                if supports_multi_select {
+                    row.child(
+                        h_flex()
+                            // Headers and separators cannot be part of the
+                            // selection, so they get no indicator.
+                            .when(multi_select_active && selectable, |this| {
+                                this.child(
+                                    self.render_multi_select_indicator(is_multi_selected, cx),
+                                )
+                            })
+                            .children(self.delegate.render_match(
+                                ix,
+                                ix == self.delegate.selected_index(),
+                                window,
+                                cx,
+                            )),
+                    )
+                } else {
+                    row.children(self.delegate.render_match(
                         ix,
                         ix == self.delegate.selected_index(),
                         window,
                         cx,
-                    )),
-            )
+                    ))
+                }
+            })
             .when(
                 self.delegate.separators_after_indices().contains(&ix),
                 |picker| {
@@ -1302,6 +1341,7 @@ impl<D: PickerDelegate> Picker<D> {
             )
     }
 
+    /// The checkbox in front of items while in multi-select mode.
     fn render_multi_select_indicator(
         &self,
         is_selected: bool,
