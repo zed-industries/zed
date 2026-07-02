@@ -30,6 +30,8 @@ impl ReqwestClient {
         reqwest::Client::builder()
             .use_rustls_tls()
             .connect_timeout(Duration::from_secs(10))
+            // Bail out of a request whose body stops producing bytes entirely
+            .read_timeout(Duration::from_secs(30))
             // Detect and drop connections that have silently gone bad on a
             // flaky path (NAT timeouts, resets) instead of reusing them. A
             // stale reused HTTP/2 connection is a common source of
