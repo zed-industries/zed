@@ -1401,6 +1401,77 @@ mod tests {
         assert_eq!(std::fs::read_to_string(path).unwrap(), "<fake-zed-update>");
     }
 
+    #[gpui::test]
+    async fn test_download_release_reports_progress(cx: &mut TestAppContext) {
+        // File IO in `download_release` blocks on smol's thread pool, so the
+        // test executor needs to be allowed to park while awaiting it.
+        cx.background_executor.allow_parking();
+
+        // Use a body larger than the 8KB read buffer so that progress is
+        // reported across multiple reads rather than in a single step.
+        let body = vec![0u8; 20_000];
+        let content_length = body.len();
+
+        let client = FakeHttpClient::create(move |_req| {
+            let body = body.clone();
+            async move {
+                Ok(Response::builder()
+                    .status(200)
+                    .header(
+                        http_client::http::header::CONTENT_LENGTH,
+                        body.len().to_string(),
+                    )
+                    .body(body.into())
+                    .unwrap())
+            }
+        });
+
+        let temp_dir = tempdir().unwrap();
+        let target_path = temp_dir.path().join("zed-download");
+        let release = ReleaseAsset {
+            version: "1.0.0".to_string(),
+            url: "https://test.example/download".to_string(),
+        };
+
+        let reported = Rc::new(std::cell::RefCell::new(Vec::<f32>::new()));
+        download_release(&target_path, release, client, {
+            let reported = reported.clone();
+            move |fraction| {
+                if let Some(fraction) = fraction {
+                    reported.borrow_mut().push(fraction);
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        let reported = reported.borrow();
+        assert!(
+            reported.len() >= 2,
+            "expected progress to be reported across multiple reads, got {reported:?}"
+        );
+        assert_eq!(
+            reported.last().copied(),
+            Some(1.0),
+            "download should finish at 100%"
+        );
+        for fraction in reported.iter() {
+            assert!(
+                (0.0..=1.0).contains(fraction),
+                "progress {fraction} out of range"
+            );
+        }
+        for pair in reported.windows(2) {
+            assert!(
+                pair[0] <= pair[1],
+                "progress must not decrease: {reported:?}"
+            );
+        }
+
+        let downloaded_len = std::fs::metadata(&target_path).unwrap().len();
+        assert_eq!(downloaded_len, content_length as u64);
+    }
+
     #[test]
     fn test_stable_does_not_update_when_fetched_version_is_not_higher() {
         let release_channel = ReleaseChannel::Stable;
