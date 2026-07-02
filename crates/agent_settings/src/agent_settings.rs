@@ -216,6 +216,7 @@ pub struct AgentSettings {
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub inline_assistant_use_streaming_tools: bool,
     pub commit_message_model: Option<LanguageModelSelection>,
+    pub commit_message_include_project_rules: bool,
     pub commit_message_instructions: Option<String>,
     pub thread_summary_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
@@ -421,8 +422,6 @@ pub struct SandboxPermissions {
     /// hostnames or leading-`*.` subdomain wildcards). Parsed/validated where
     /// consumed (`agent::sandboxing`).
     pub network_hosts: Vec<String>,
-    /// Allow sandboxed commands to access protected Git metadata paths.
-    pub allow_git_access: bool,
     pub allow_fs_write_all: bool,
     /// Persistently run agent terminal commands outside the OS sandbox. This is
     /// the model-facing "off switch": when set, the sandboxed terminal tool is
@@ -747,6 +746,9 @@ impl Settings for AgentSettings {
             inline_assistant_use_streaming_tools: agent
                 .inline_assistant_use_streaming_tools
                 .unwrap_or(true),
+            commit_message_include_project_rules: agent
+                .commit_message_include_project_rules
+                .unwrap(),
             commit_message_model: agent.commit_message_model,
             commit_message_instructions: agent.commit_message_instructions,
             thread_summary_model: agent.thread_summary_model,
@@ -816,7 +818,6 @@ fn compile_sandbox_permissions(
     SandboxPermissions {
         allow_all_hosts: content.allow_all_hosts.unwrap_or(false),
         network_hosts,
-        allow_git_access: content.allow_git_access.unwrap_or(false),
         allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
         allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
         write_paths,
@@ -1104,7 +1105,6 @@ mod tests {
         let json = json!({
             "allow_all_hosts": true,
             "network_hosts": ["github.com", "*.npmjs.org"],
-            "allow_git_access": true,
             "allow_unsandboxed": true,
             "write_paths": [
                 "/tmp/build/cache",
@@ -1121,7 +1121,6 @@ mod tests {
             permissions.network_hosts,
             vec!["github.com".to_string(), "*.npmjs.org".to_string()]
         );
-        assert!(permissions.allow_git_access);
         assert!(!permissions.allow_fs_write_all);
         assert!(permissions.allow_unsandboxed);
         assert_eq!(
