@@ -9,8 +9,8 @@ use head::Head;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{
-    cell::Cell, cell::RefCell, collections::HashMap, collections::HashSet, ops::Range, rc::Rc,
-    sync::Arc, time::Duration,
+    cell::Cell, cell::RefCell, collections::HashMap, ops::Range, rc::Rc, sync::Arc,
+    time::Duration,
 };
 use ui::{ContextMenu, Divider, DocumentationAside, PopoverMenuHandle, prelude::*, v_flex};
 use ui_input::ErasedEditorEvent;
@@ -125,7 +125,6 @@ pub struct Picker<D: PickerDelegate> {
     preview: Option<Preview>,
     pending_update_matches: Option<PendingUpdateMatches>,
     confirm_on_update: Option<bool>,
-    selected_indices: HashSet<usize>,
     shape: shape::Shape,
     /// The size the picker opens at (and resets to). Defaults depend on whether
     /// the picker has a preview; see [`Picker::initial_width`] / [`Picker::max_height`].
@@ -239,24 +238,40 @@ pub trait PickerDelegate: Sized + 'static {
         None
     }
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>);
+    /// Whether this delegate supports selecting multiple items at once. When
+    /// `true`, the delegate owns the multi-selection state; the picker only
+    /// drives the generic UX (toggle action, indicator, click routing).
     fn supports_multi_select(&self) -> bool {
         false
     }
-    fn save_selected_matches(&mut self, _indices: &[usize]) {}
-    fn pinned_match_count(&self) -> usize {
+    /// Whether the item at `ix` is part of the current multi-selection.
+    fn is_item_selected(&self, _ix: usize) -> bool {
+        false
+    }
+    /// Toggle whether the item at `ix` is part of the multi-selection. Items
+    /// that cannot participate in multi-selection (e.g. non-file entries)
+    /// should leave the selection unchanged.
+    fn toggle_item_selected(
+        &mut self,
+        _ix: usize,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
+    ) {
+    }
+    /// Number of items currently in the multi-selection.
+    fn selected_item_count(&self) -> usize {
         0
     }
+    /// Clear the multi-selection.
+    fn clear_selection(&mut self, _cx: &mut Context<Picker<Self>>) {}
+    /// Open every item in the multi-selection. Called on confirm when the
+    /// selection is non-empty; implementations should clear the selection.
     fn confirm_multi(
         &mut self,
-        secondary: bool,
-        indices: Vec<usize>,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
+        _secondary: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Picker<Self>>,
     ) {
-        if let Some(&first) = indices.first() {
-            self.set_selected_index(first, window, cx);
-            self.confirm(secondary, window, cx);
-        }
     }
     /// Instead of interacting with currently selected entry, treats editor input literally,
     /// performing some kind of action on it.
@@ -369,7 +384,6 @@ pub trait PickerDelegate: Sized + 'static {
         &self,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
-        _selected_count: usize,
     ) -> Vec<footer::PickerAction> {
         Vec::new()
     }
@@ -551,7 +565,6 @@ impl<D: PickerDelegate> Picker<D> {
             element_container,
             pending_update_matches: None,
             confirm_on_update: None,
-            selected_indices: HashSet::default(),
             preview,
             shape_loaded_from_persistence: persisted_shape.is_some(),
             shape: persisted_shape.unwrap_or_else(|| {
@@ -885,7 +898,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     pub fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.delegate.should_dismiss() {
-            self.selected_indices.clear();
+            self.delegate.clear_selection(cx);
             self.delegate.dismissed(window, cx);
             cx.emit(DismissEvent);
         }
@@ -901,11 +914,7 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         }
         let ix = self.delegate.selected_index();
-        if self.selected_indices.contains(&ix) {
-            self.selected_indices.remove(&ix);
-        } else {
-            self.selected_indices.insert(ix);
-        }
+        self.delegate.toggle_item_selected(ix, window, cx);
         self.select_next(&menu::SelectNext, window, cx);
         cx.notify();
     }
@@ -1013,13 +1022,9 @@ impl<D: PickerDelegate> Picker<D> {
         }
         self.set_selected_index(ix, None, false, window, cx);
         if self.delegate.supports_multi_select()
-            && (secondary || !self.selected_indices.is_empty())
+            && (secondary || self.delegate.selected_item_count() > 0)
         {
-            if self.selected_indices.contains(&ix) {
-                self.selected_indices.remove(&ix);
-            } else {
-                self.selected_indices.insert(ix);
-            }
+            self.delegate.toggle_item_selected(ix, window, cx);
             cx.notify();
         } else {
             self.do_confirm(false, window, cx);
@@ -1027,11 +1032,8 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn do_confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_indices.is_empty() {
-            let mut indices: Vec<usize> = self.selected_indices.iter().copied().collect();
-            indices.sort();
-            self.selected_indices.clear();
-            self.delegate.confirm_multi(secondary, indices, window, cx);
+        if self.delegate.supports_multi_select() && self.delegate.selected_item_count() > 0 {
+            self.delegate.confirm_multi(secondary, window, cx);
         } else if let Some(update_query) = self.delegate.confirm_update_query(window, cx) {
             self.set_query(&update_query, window, cx);
             self.set_selected_index(0, Some(Direction::Down), false, window, cx);
@@ -1094,12 +1096,6 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn update_matches(&mut self, query: String, window: &mut Window, cx: &mut Context<Self>) {
-        if self.delegate.supports_multi_select() && !self.selected_indices.is_empty() {
-            let mut indices: Vec<usize> = self.selected_indices.iter().copied().collect();
-            indices.sort();
-            self.delegate.save_selected_matches(&indices);
-        }
-        self.selected_indices.clear();
         self.update_matches_with_options(query, ScrollBehavior::RevealSelected, window, cx);
     }
 
@@ -1173,10 +1169,6 @@ impl<D: PickerDelegate> Picker<D> {
             },
         }
         self.pending_update_matches = None;
-        let pinned = self.delegate.pinned_match_count();
-        if pinned > 0 {
-            self.selected_indices = (0..pinned).collect();
-        }
         if let Some(update) = self.delegate.try_get_preview_data_for_match(cx)
             && let Some(preview) = &mut self.preview
         {
@@ -1237,8 +1229,8 @@ impl<D: PickerDelegate> Picker<D> {
             ix < self.delegate.match_count() && self.delegate.can_select(ix, window, cx);
 
         let supports_multi_select = self.delegate.supports_multi_select();
-        let is_multi_selected = supports_multi_select && self.selected_indices.contains(&ix);
-        let multi_select_active = supports_multi_select && !self.selected_indices.is_empty();
+        let is_multi_selected = supports_multi_select && self.delegate.is_item_selected(ix);
+        let multi_select_active = supports_multi_select && self.delegate.selected_item_count() > 0;
 
         div()
             .id(("item", ix))

@@ -97,7 +97,7 @@ impl<D: PickerDelegate> Picker<D> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let actions = self.delegate.actions_menu(window, cx, self.selected_indices.len());
+        let actions = self.delegate.actions_menu(window, cx);
         if self.preview.is_none() && actions.is_empty() {
             return None;
         }

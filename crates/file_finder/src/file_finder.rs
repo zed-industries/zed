@@ -361,7 +361,7 @@ pub struct FileFinderDelegate {
     latest_search_query: Option<FileSearchQuery>,
     currently_opened_path: Option<FoundPath>,
     matches: Matches,
-    pinned_matches: Vec<Match>,
+    selected_matches: Vec<Match>,
     selected_index: usize,
     has_changed_selected_index: bool,
     cancel_flag: Arc<AtomicBool>,
@@ -928,7 +928,7 @@ impl FileFinderDelegate {
             latest_search_query: None,
             currently_opened_path,
             matches: Matches::default(),
-            pinned_matches: Vec::new(),
+            selected_matches: Vec::new(),
             has_changed_selected_index: false,
             selected_index: 0,
             cancel_flag: Arc::new(AtomicBool::new(false)),
@@ -960,19 +960,19 @@ impl FileFinderDelegate {
         .detach();
     }
 
-    fn prepend_pinned_matches(&mut self) {
-        if self.pinned_matches.is_empty() {
+    fn prepend_selected_matches(&mut self) {
+        if self.selected_matches.is_empty() {
             return;
         }
-        let pinned_paths: std::collections::HashSet<Arc<RelPath>> = self
-            .pinned_matches
+        let selected_paths: std::collections::HashSet<Arc<RelPath>> = self
+            .selected_matches
             .iter()
             .filter_map(|m| m.relative_path().cloned())
             .collect();
         self.matches
             .matches
-            .retain(|m| m.relative_path().map_or(true, |p| !pinned_paths.contains(p)));
-        let mut new = self.pinned_matches.clone();
+            .retain(|m| m.relative_path().map_or(true, |p| !selected_paths.contains(p)));
+        let mut new = self.selected_matches.clone();
         new.extend(self.matches.matches.drain(..));
         self.matches.matches = new;
     }
@@ -1179,9 +1179,9 @@ impl FileFinderDelegate {
                 }
             }
 
-            self.prepend_pinned_matches();
+            self.prepend_selected_matches();
 
-            self.selected_index = if !self.pinned_matches.is_empty() {
+            self.selected_index = if !self.selected_matches.is_empty() {
                 0
             } else {
                 selected_match.map_or_else(
@@ -1483,6 +1483,17 @@ impl FileFinderDelegate {
         let Some(m) = self.matches.get(self.selected_index()).cloned() else {
             return;
         };
+        self.open_match(m, secondary, dismiss_after_open, window, cx);
+    }
+
+    fn open_match(
+        &mut self,
+        m: Match,
+        secondary: bool,
+        dismiss_after_open: bool,
+        window: &mut Window,
+        cx: &mut Context<Picker<FileFinderDelegate>>,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -1781,7 +1792,7 @@ impl PickerDelegate for FileFinderDelegate {
                 self.first_update = false;
                 self.selected_index = 0;
             }
-            self.prepend_pinned_matches();
+            self.prepend_selected_matches();
             cx.notify();
             self.search_in_flight
                 .store(false, atomic::Ordering::Release);
@@ -1836,28 +1847,59 @@ impl PickerDelegate for FileFinderDelegate {
         true
     }
 
-    fn save_selected_matches(&mut self, indices: &[usize]) {
-        self.pinned_matches = indices
+    fn is_item_selected(&self, ix: usize) -> bool {
+        let Some(key) = self.matches.get(ix).and_then(|m| m.relative_path()) else {
+            return false;
+        };
+        self.selected_matches
             .iter()
-            .filter_map(|&ix| self.matches.get(ix).cloned())
-            .collect();
+            .any(|selected| selected.relative_path() == Some(key))
     }
 
-    fn pinned_match_count(&self) -> usize {
-        self.pinned_matches.len()
+    fn toggle_item_selected(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        cx: &mut Context<Picker<FileFinderDelegate>>,
+    ) {
+        let Some(m) = self.matches.get(ix).cloned() else {
+            return;
+        };
+        // Ignore channels and the `create-new` placeholder
+        let Some(key) = m.relative_path().cloned() else {
+            return;
+        };
+        if let Some(position) = self
+            .selected_matches
+            .iter()
+            .position(|selected| selected.relative_path() == Some(&key))
+        {
+            self.selected_matches.remove(position);
+        } else {
+            self.selected_matches.push(m);
+        }
+        cx.notify();
+    }
+
+    fn selected_item_count(&self) -> usize {
+        self.selected_matches.len()
+    }
+
+    fn clear_selection(&mut self, _cx: &mut Context<Picker<FileFinderDelegate>>) {
+        self.selected_matches.clear();
     }
 
     fn confirm_multi(
         &mut self,
         secondary: bool,
-        indices: Vec<usize>,
         window: &mut Window,
         cx: &mut Context<Picker<FileFinderDelegate>>,
     ) {
-        for (i, &ix) in indices.iter().enumerate() {
-            self.selected_index = ix;
-            let is_last = i == indices.len() - 1;
-            self.open_selected_file(secondary, is_last, window, cx);
+        let selected = std::mem::take(&mut self.selected_matches);
+        let count = selected.len();
+        for (i, m) in selected.into_iter().enumerate() {
+            let is_last = i + 1 == count;
+            self.open_match(m, secondary, is_last, window, cx);
         }
     }
 
@@ -1960,9 +2002,8 @@ impl PickerDelegate for FileFinderDelegate {
         &self,
         _window: &mut Window,
         _cx: &mut Context<Picker<Self>>,
-        selected_count: usize,
     ) -> Vec<picker::PickerAction> {
-        let open_label: SharedString = if selected_count > 1 {
+        let open_label: SharedString = if self.selected_matches.len() > 1 {
             "Open multiple".into()
         } else {
             "Open File".into()
