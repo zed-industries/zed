@@ -392,52 +392,32 @@ impl Editor {
         });
 
         let can_append = selection_count == 1 && first_selection_is_empty;
-        let item = if can_append {
-            if let Some(previous_ring) = cx.try_global::<KillRing>() {
-                if previous_ring.can_append
-                    && previous_ring.buffer_id == buffer_id
-                    && previous_ring.row == selection_start_row
-                    && previous_ring.column == selection_start_column
-                {
-                    let mut entries = previous_ring
-                        .metadata
-                        .as_ref()
-                        .map_or_else(Vec::new, Clone::clone);
-                    if let Some(metadata) = entry_metadata.as_ref() {
-                        entries.extend_from_slice(metadata);
-                    }
+        let item = if can_append
+            && let Some(previous_ring) = cx.try_global::<KillRing>()
+            && previous_ring.can_append
+            && previous_ring.buffer_id == buffer_id
+            && previous_ring.row == selection_start_row
+            && previous_ring.column == selection_start_column
+        {
+            let mut entries = previous_ring
+                .metadata
+                .as_ref()
+                .map_or_else(Vec::new, Clone::clone);
+            if let Some(metadata) = entry_metadata.as_ref() {
+                entries.extend_from_slice(metadata);
+            }
 
-                    let mut text = previous_ring.text.clone();
-                    text.push_str(&item_text);
-                    let text_len = text.len();
+            let mut text = previous_ring.text.clone();
+            text.push_str(&item_text);
+            let text_len = text.len();
 
-                    KillRing {
-                        text,
-                        metadata: kill_ring_metadata_for_text(entries, text_len),
-                        row: previous_ring.row,
-                        column: previous_ring.column,
-                        buffer_id: previous_ring.buffer_id,
-                        can_append,
-                    }
-                } else {
-                    KillRing {
-                        text: item_text,
-                        metadata: entry_metadata,
-                        row: selection_start_row,
-                        column: selection_start_column,
-                        buffer_id,
-                        can_append,
-                    }
-                }
-            } else {
-                KillRing {
-                    text: item_text,
-                    metadata: entry_metadata,
-                    row: selection_start_row,
-                    column: selection_start_column,
-                    buffer_id,
-                    can_append,
-                }
+            KillRing {
+                text,
+                metadata: kill_ring_metadata_for_text(entries, text_len),
+                row: previous_ring.row,
+                column: previous_ring.column,
+                buffer_id: previous_ring.buffer_id,
+                can_append,
             }
         } else {
             KillRing {
