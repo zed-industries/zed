@@ -10,7 +10,7 @@ You can restrict what operations the [Zed Agent](./zed-agent.md) can run in mult
 complicated script in a terminal.
 
 Sandboxing instead uses OS features to forcibly restrict which resources a tool
-call has access to. This does *not* rely on an agent following a particular set
+call has access to. This does _not_ rely on an agent following a particular set
 of instructions. If the agent attempts to access a resource that is restricted
 by the sandbox, the OS will block it. See [How much can I trust the
 sandbox?](#trust) for more details.
@@ -22,7 +22,6 @@ sandbox?](#trust) for more details.
 
 Sandboxing applies only to Zed Agent. It does not sandbox Zed itself, language servers, extensions, tasks, your normal
 terminal tabs, [External Agents](./external-agents.md), or [Terminal Threads](./terminal-threads.md).
-
 
 ## Sandboxed Tools {#sandboxed-tools}
 
@@ -41,6 +40,7 @@ run inside this OS sandbox.
 
 Sandboxing is supported, in some form, on all platforms. In order to sandbox a
 `terminal` tool call, the following is required:
+
 - On Linux, a runnable, non-setuid `bwrap` binary must be on the `$PATH`. See [Installing Bubblewrap](#installing-bubblewrap).
 - On Windows, WSL must be available.
 
@@ -52,15 +52,15 @@ The `fetch` tool has no extra requirements on any platform.
 
 By default, sandboxed Zed Agent tool actions have these restrictions:
 
-| Access type         | Default behavior                                                                                                                                                    |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Filesystem reads    | Terminal commands can read most of the filesystem, including protected Git metadata.                                                                                |
-| Project writes      | Terminal commands can write inside open project directories, except for protected Git metadata.                                                                     |
-| Git metadata        | `.git` directories and linked worktree Git metadata remain readable but are not writable while sandboxed.                                                           |
-| Temporary files     | Terminal commands receive a writable temporary location. The exact behavior differs by platform.                                                                    |
-| Other writes        | Writes outside the default writable locations are blocked unless you approve a broader sandbox request.                                                             |
-| Outbound networking | Network access is blocked unless you approve a host-specific or unrestricted network sandbox request. Host-specific enforcement is not available on every platform. |
-| Local IPC sockets   | Sandboxed commands cannot open Unix-domain sockets (for example, to the desktop session bus or a container daemon), which could otherwise be used to run commands outside the sandbox.                |
+| Access type         | Default behavior                                                                                                                                                                       |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Filesystem reads    | Terminal commands can read most of the filesystem, including protected Git metadata.                                                                                                   |
+| Project writes      | Terminal commands can write inside open project directories, except for protected Git metadata.                                                                                        |
+| Git metadata        | `.git` directories and linked worktree Git metadata remain readable but are not writable while sandboxed.                                                                              |
+| Temporary files     | Terminal commands receive a writable temporary location. The exact behavior differs by platform.                                                                                       |
+| Other writes        | Writes outside the default writable locations are blocked unless you approve a broader sandbox request.                                                                                |
+| Outbound networking | Network access is blocked unless you approve a host-specific or unrestricted network sandbox request. Host-specific enforcement is not available on every platform.                    |
+| Local IPC sockets   | Sandboxed commands cannot open Unix-domain sockets (for example, to the desktop session bus or a container daemon), which could otherwise be used to run commands outside the sandbox. |
 
 ## How much can I trust the sandbox? {#trust}
 
@@ -86,6 +86,7 @@ whether it makes sense before approving.
 
 Also, sandboxing restricts **only** what the `terminal` and `fetch` tools in the
 Zed agent can do. It has **no effect** on other parts of Zed, including:
+
 - Language servers
 - The built-in git client
 - The regular terminal
@@ -93,6 +94,7 @@ Zed agent can do. It has **no effect** on other parts of Zed, including:
 
 Even when sandboxing is enabled, you should remain vigilant. A malicious or
 unaligned agent may use these side channels to escalate privileges. For example:
+
 - An agent may add a malicious Rust procedural macro to your codebase, which
   will be automatically executed by `rust-analyzer` **outside the sandbox**.
 - An agent may modify a `Makefile` to inject a malicious script, which is
@@ -230,18 +232,19 @@ Zed needs a runnable, non-setuid `bwrap` binary on your `$PATH`. Installing
 `bubblewrap` from your distribution's package manager is usually all you need.
 
 You can test whether it's working with:
+
 ```sh
 bwrap --ro-bind / / -- echo "working"
 ```
 
 "Non-setuid" here refers to the [setuid bit][setuid bit]. Historically,
 bubblewrap has shipped both a setuid and non-setuid binary. The setuid binary is
-being phased out for security concerns, and so Zed's sandbox *explicitly rejects
-setuid `bwrap` binaries*.
+being phased out for security concerns, and so Zed's sandbox _explicitly rejects
+setuid `bwrap` binaries_.
 
 ##### Ubuntu-specific requirements {#installing-bubblewrap-ubuntu}
 
-> [!NOTE] 
+> [!NOTE]
 > The following does not affect Ubuntu on WSL.
 
 Bubblewrap relies on a Linux kernel feature known as "namespaces". Unprivileged
@@ -305,7 +308,6 @@ When reviewing a sandbox prompt, prefer the narrowest permission that lets the t
 
 If a command fails because the sandbox blocked access, ask the agent why it needs that access before approving a broader
 request.
-
 
 [bubblewrap]: https://github.com/containers/bubblewrap
 [setuid bit]: https://en.wikipedia.org/wiki/Setuid
