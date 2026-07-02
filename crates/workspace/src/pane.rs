@@ -4892,18 +4892,20 @@ impl NavHistoryState {
 }
 
 fn dirty_message_for(buffer_path: Option<ProjectPath>, path_style: PathStyle) -> String {
-    let path = buffer_path
-        .as_ref()
-        .and_then(|p| {
-            let path = p.path.display(path_style);
-            if path.is_empty() { None } else { Some(path) }
-        })
-        .unwrap_or("This buffer".into());
-    let path = truncate_and_remove_front(&path, 80);
-    format!(
-        "{} contains unsaved edits. Do you want to save it?",
-        MarkdownInlineCode(path.as_str())
-    )
+    let path = buffer_path.as_ref().and_then(|p| {
+        let path = p.path.display(path_style);
+        if path.is_empty() { None } else { Some(path) }
+    });
+    match path {
+        Some(path) => {
+            let path = truncate_and_remove_front(&path, 80);
+            format!(
+                "{} contains unsaved edits. Do you want to save it?",
+                MarkdownInlineCode(path.as_str())
+            )
+        }
+        None => "This buffer contains unsaved edits. Do you want to save it?".to_string(),
+    }
 }
 
 pub fn tab_details(items: &[Box<dyn ItemHandle>], _window: &Window, cx: &App) -> Vec<usize> {
@@ -9095,6 +9097,22 @@ mod tests {
                 assert_pane_ids_on_axis(&workspace, expected_ids, expected_axis, cx);
             }
         }
+    }
+
+    #[test]
+    fn test_dirty_message_for_escapes_markdown_in_path() {
+        let project_path = ProjectPath {
+            worktree_id: WorktreeId::from_usize(0),
+            path: util::rel_path::rel_path("dir/__init__.py").into(),
+        };
+        assert_eq!(
+            dirty_message_for(Some(project_path), PathStyle::Posix),
+            "`dir/__init__.py` contains unsaved edits. Do you want to save it?"
+        );
+        assert_eq!(
+            dirty_message_for(None, PathStyle::Posix),
+            "This buffer contains unsaved edits. Do you want to save it?"
+        );
     }
 
     mod property_test {
