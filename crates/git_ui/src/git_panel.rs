@@ -2014,7 +2014,6 @@ impl GitPanel {
             1 => return self.revert_entry(&to_delete[0], window, cx),
             _ => {}
         };
-        let total_untracked = to_delete.len();
 
         let mut details = to_delete
             .iter()
@@ -2039,8 +2038,8 @@ impl GitPanel {
                 TrashCancel::Trash => {}
                 TrashCancel::Cancel => return Ok(()),
             }
-            let (tasks, status_toast) = workspace.update(cx, |workspace, cx| {
-                let tasks = to_delete
+            let tasks = workspace.update(cx, |workspace, cx| {
+                to_delete
                     .iter()
                     .filter_map(|entry| {
                         workspace.project().update(cx, |project, cx| {
@@ -2050,44 +2049,17 @@ impl GitPanel {
                             project.delete_file(project_path, true, cx)
                         })
                     })
-                    .collect::<Vec<_>>();
-                let status_toast = StatusToast::new(
-                    format!("Trashing 0/{total_untracked} untracked files…"),
-                    cx,
-                    |this, _cx| {
-                        this.icon(
-                            Icon::new(IconName::LoadCircle)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                        .auto_dismiss(false)
-                    },
-                );
-                workspace.toggle_status_toast(status_toast.clone(), cx);
-                (tasks, status_toast)
+                    .collect::<Vec<_>>()
             })?;
             let to_unstage = to_delete
                 .into_iter()
                 .filter(|entry| !entry.status.staging().is_fully_unstaged())
                 .collect();
             this.update(cx, |this, cx| this.change_file_stage(false, to_unstage, cx))?;
-            let result: anyhow::Result<()> = async {
-                let mut completed = 0;
-                for task in tasks {
-                    task.await?;
-                    completed += 1;
-                    status_toast.update(cx, |toast, cx| {
-                        toast.set_text(
-                            format!("Trashing {completed}/{total_untracked} untracked files…"),
-                            cx,
-                        );
-                    });
-                }
-                Ok(())
+            for task in tasks {
+                task.await?;
             }
-            .await;
-            status_toast.update(cx, |_, cx| cx.emit(DismissEvent));
-            result
+            Ok(())
         })
         .detach_and_prompt_err("Failed to trash files", window, cx, |e, _, _| {
             Some(format!("{e}"))
