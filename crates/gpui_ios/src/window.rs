@@ -1,10 +1,11 @@
-use crate::{CGFloat, CGRect, IosDisplay, id, nil};
+use crate::{CGFloat, CGPoint, CGRect, IosDisplay, id, nil};
 use futures::channel::oneshot;
 use gpui::{
-    Bounds, Capslock, DispatchEventResult, GpuSpecs, Modifiers, Pixels, PlatformAtlas,
-    PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton,
-    PromptLevel, RequestFrameOptions, Scene, Size, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControlArea, px, size,
+    Bounds, Capslock, DispatchEventResult, GpuSpecs, Modifiers, MouseButton, MouseDownEvent,
+    MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformAtlas, PlatformDisplay,
+    PlatformInput, PlatformInputHandler, PlatformWindow, Point, PromptButton, PromptLevel,
+    RequestFrameOptions, Scene, Size, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+    WindowControlArea, point, px, size,
 };
 use gpui_apple::metal_renderer::{self, Renderer};
 use objc::{
@@ -47,7 +48,9 @@ struct IosWindowState {
     scale_factor: f32,
     request_frame_callback: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     active_status_change_callback: Option<Box<dyn FnMut(bool)>>,
+    input_callback: Option<Box<dyn FnMut(PlatformInput) -> DispatchEventResult>>,
     input_handler: Option<PlatformInputHandler>,
+    mouse_position: Point<Pixels>,
     is_active: bool,
 }
 
@@ -69,10 +72,17 @@ impl IosWindow {
 
             // UIKit requires a root view controller on every visible window.
             let view_controller: id = msg_send![class!(UIViewController), new];
+
+            let native_view: id = msg_send![gpui_view_class(), alloc];
+            let native_view: id = msg_send![native_view, initWithFrame: screen_bounds];
+            // The pointer shim can only represent one touch; with multi-touch
+            // disabled UIKit coalesces additional fingers instead of
+            // interleaving their events.
+            let _: () = msg_send![native_view, setMultipleTouchEnabled: NO];
+            let _: () = msg_send![view_controller, setView: native_view];
+
             let _: () = msg_send![native_window, setRootViewController: view_controller];
             let _: () = msg_send![native_window, makeKeyAndVisible];
-
-            let native_view: id = msg_send![view_controller, view];
 
             let bounds = Bounds {
                 origin: Point::default(),
@@ -108,14 +118,21 @@ impl IosWindow {
                 scale_factor,
                 request_frame_callback: None,
                 active_status_change_callback: None,
+                input_callback: None,
                 input_handler: None,
+                mouse_position: Point::default(),
                 // The app launches foreground-active; UIKit only notifies on
                 // transitions.
                 is_active: true,
             })));
 
-            // The display-link target keeps a strong `Rc` reference to the
-            // window state in an ivar; `Drop` reclaims it.
+            // The view and the display-link target each keep a strong `Rc`
+            // reference to the window state in an ivar; `Drop` reclaims them.
+            (*native_view).set_ivar(
+                WINDOW_STATE_IVAR,
+                Rc::into_raw(window.0.clone()) as *mut c_void,
+            );
+
             let display_link_target: id = msg_send![display_link_target_class(), new];
             (*display_link_target).set_ivar(
                 WINDOW_STATE_IVAR,
@@ -160,12 +177,13 @@ impl IosWindow {
 
 impl Drop for IosWindow {
     fn drop(&mut self) {
-        let (display_link, display_link_target, view_controller, native_window) = {
+        let (display_link, display_link_target, view_controller, native_view, native_window) = {
             let state = self.0.borrow();
             (
                 state.display_link,
                 state.display_link_target,
                 state.view_controller,
+                state.native_view,
                 state.native_window,
             )
         };
@@ -173,11 +191,14 @@ impl Drop for IosWindow {
             let notification_center: id = msg_send![class!(NSNotificationCenter), defaultCenter];
             let _: () = msg_send![notification_center, removeObserver: display_link_target];
             let _: () = msg_send![display_link, invalidate];
-            // Reclaim the strong reference the display-link target holds so
-            // the window state can actually be freed.
+            // Reclaim the strong references the display-link target and the
+            // view hold so the window state can actually be freed.
             let raw: *mut c_void = *(*display_link_target).get_ivar(WINDOW_STATE_IVAR);
             drop(Rc::from_raw(raw as *const RefCell<IosWindowState>));
+            let raw: *mut c_void = *(*native_view).get_ivar(WINDOW_STATE_IVAR);
+            drop(Rc::from_raw(raw as *const RefCell<IosWindowState>));
             let _: () = msg_send![display_link_target, release];
+            let _: () = msg_send![native_view, release];
             let _: () = msg_send![view_controller, release];
             let _: () = msg_send![native_window, release];
         }
@@ -216,7 +237,7 @@ impl PlatformWindow for IosWindow {
     }
 
     fn mouse_position(&self) -> Point<Pixels> {
-        Point::default()
+        self.0.borrow().mouse_position
     }
 
     fn modifiers(&self) -> Modifiers {
@@ -277,7 +298,9 @@ impl PlatformWindow for IosWindow {
         self.0.borrow_mut().request_frame_callback = Some(callback);
     }
 
-    fn on_input(&self, _callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {}
+    fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {
+        self.0.borrow_mut().input_callback = Some(callback);
+    }
 
     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>) {
         self.0.borrow_mut().active_status_change_callback = Some(callback);
@@ -336,6 +359,35 @@ impl rwh::HasDisplayHandle for IosWindow {
     fn display_handle(&self) -> Result<rwh::DisplayHandle<'_>, rwh::HandleError> {
         Ok(rwh::DisplayHandle::uikit())
     }
+}
+
+fn gpui_view_class() -> &'static Class {
+    static REGISTER: Once = Once::new();
+    REGISTER.call_once(|| {
+        let mut decl = ClassDecl::new("GPUIView", class!(UIView))
+            .expect("GPUIView class is already registered");
+        decl.add_ivar::<*mut c_void>(WINDOW_STATE_IVAR);
+        unsafe {
+            decl.add_method(
+                sel!(touchesBegan:withEvent:),
+                touches_began as extern "C" fn(&Object, Sel, id, id),
+            );
+            decl.add_method(
+                sel!(touchesMoved:withEvent:),
+                touches_moved as extern "C" fn(&Object, Sel, id, id),
+            );
+            decl.add_method(
+                sel!(touchesEnded:withEvent:),
+                touches_ended as extern "C" fn(&Object, Sel, id, id),
+            );
+            decl.add_method(
+                sel!(touchesCancelled:withEvent:),
+                touches_cancelled as extern "C" fn(&Object, Sel, id, id),
+            );
+        }
+        decl.register();
+    });
+    Class::get("GPUIView").expect("GPUIView was just registered")
 }
 
 fn display_link_target_class() -> &'static Class {
@@ -415,4 +467,121 @@ extern "C" fn application_did_become_active(this: &Object, _: Sel, _notification
         callback(true);
         window_state.borrow_mut().active_status_change_callback = Some(callback);
     }
+}
+
+/// Reads the single coalesced touch out of a `touches` set. UIKit's
+/// `locationInView:` coordinates are in points, which map 1:1 onto gpui's
+/// logical pixels.
+unsafe fn touch_position_and_tap_count(view: &Object, touches: id) -> (Point<Pixels>, usize) {
+    unsafe {
+        let touch: id = msg_send![touches, anyObject];
+        let location: CGPoint = msg_send![touch, locationInView: view as *const Object as id];
+        let tap_count: usize = msg_send![touch, tapCount];
+        (
+            point(px(location.x as f32), px(location.y as f32)),
+            tap_count,
+        )
+    }
+}
+
+/// Invokes the gpui input callback with the `RefCell` borrow released: gpui
+/// may reenter the window (e.g. to read `mouse_position` or request a frame)
+/// while handling the event. The returned `DispatchEventResult` is ignored
+/// because no gesture-recognizer arbitration exists yet to act on it.
+fn dispatch_input(window_state: &Rc<RefCell<IosWindowState>>, input: PlatformInput) {
+    let callback = window_state.borrow_mut().input_callback.take();
+    if let Some(mut callback) = callback {
+        callback(input);
+        window_state.borrow_mut().input_callback = Some(callback);
+    }
+}
+
+/// Parks the pointer just outside the window once the finger lifts. A touch
+/// has no persistent pointer, but gpui recomputes hover from the last
+/// mouse-move position, so without this the last-touched element would stay
+/// hovered forever. `MouseExited` alone is not enough—it doesn't relocate
+/// gpui's pointer—hence the synthetic off-window move before it.
+fn clear_hover(window_state: &Rc<RefCell<IosWindowState>>) {
+    let off_window_position = point(px(-1.), px(-1.));
+    dispatch_input(
+        window_state,
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position: off_window_position,
+            pressed_button: None,
+            modifiers: Modifiers::default(),
+        }),
+    );
+    dispatch_input(
+        window_state,
+        PlatformInput::MouseExited(MouseExitEvent {
+            position: off_window_position,
+            pressed_button: None,
+            modifiers: Modifiers::default(),
+        }),
+    );
+}
+
+extern "C" fn touches_began(this: &Object, _: Sel, touches: id, _event: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let (position, tap_count) = unsafe { touch_position_and_tap_count(this, touches) };
+    window_state.borrow_mut().mouse_position = position;
+    // A touch has no hover phase, so this move is gpui's only chance to
+    // learn the pointer location before the press lands. The hover styling
+    // it triggers while the finger is down reads as a pressed-state
+    // highlight.
+    dispatch_input(
+        &window_state,
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position,
+            pressed_button: None,
+            modifiers: Modifiers::default(),
+        }),
+    );
+    dispatch_input(
+        &window_state,
+        PlatformInput::MouseDown(MouseDownEvent {
+            button: MouseButton::Left,
+            position,
+            modifiers: Modifiers::default(),
+            click_count: tap_count,
+            first_mouse: false,
+        }),
+    );
+}
+
+extern "C" fn touches_moved(this: &Object, _: Sel, touches: id, _event: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let (position, _) = unsafe { touch_position_and_tap_count(this, touches) };
+    window_state.borrow_mut().mouse_position = position;
+    dispatch_input(
+        &window_state,
+        PlatformInput::MouseMove(MouseMoveEvent {
+            position,
+            // gpui models an in-progress drag as a move with the button held.
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::default(),
+        }),
+    );
+}
+
+extern "C" fn touches_ended(this: &Object, _: Sel, touches: id, _event: id) {
+    let window_state = unsafe { get_window_state(this) };
+    let (position, tap_count) = unsafe { touch_position_and_tap_count(this, touches) };
+    window_state.borrow_mut().mouse_position = position;
+    dispatch_input(
+        &window_state,
+        PlatformInput::MouseUp(MouseUpEvent {
+            button: MouseButton::Left,
+            position,
+            modifiers: Modifiers::default(),
+            click_count: tap_count,
+        }),
+    );
+    clear_hover(&window_state);
+}
+
+extern "C" fn touches_cancelled(this: &Object, selector: Sel, touches: id, event: id) {
+    // UIKit stole the touch (e.g. a system gesture); release gpui's pressed
+    // and hover state exactly as if the finger had lifted.
+    touches_ended(this, selector, touches, event);
 }
