@@ -13,6 +13,7 @@ pub(crate) struct DocsPage {
     section: String,
     title: String,
     description: Option<String>,
+    pub(crate) last_updated: Option<String>,
     pub(crate) source_path: PathBuf,
     content: String,
 }
@@ -28,9 +29,12 @@ pub(crate) fn write_ai_discovery_artifacts(
     Ok(())
 }
 
-pub(crate) fn docs_pages(book: &Book) -> Result<Vec<DocsPage>> {
+pub(crate) fn docs_pages(book: &Book, docs_root: &Path) -> Result<Vec<DocsPage>> {
     let mut pages = Vec::new();
     let mut section = "Docs".to_string();
+    let git_last_updated = docs_page_last_updated_from_git(docs_root);
+    let last_updated_fallbacks = docs_page_last_updated_fallbacks(docs_root)?;
+    let mut missing_last_updated = Vec::new();
     for item in book.iter() {
         let BookItem::Chapter(chapter) = item else {
             if let BookItem::PartTitle(part_title) = item {
@@ -44,13 +48,28 @@ pub(crate) fn docs_pages(book: &Book) -> Result<Vec<DocsPage>> {
         if source_path == Path::new("SUMMARY.md") {
             continue;
         }
+        let source_path_key = source_path.to_string_lossy().replace('\\', "/");
+        let last_updated = git_last_updated
+            .get(&source_path_key)
+            .or_else(|| last_updated_fallbacks.get(&source_path_key))
+            .cloned();
+        if last_updated.is_none() {
+            missing_last_updated.push(source_path_key);
+        }
         pages.push(DocsPage {
             section: section.clone(),
             title: chapter.name.clone(),
             description: docs_page_description(&chapter.content),
+            last_updated,
             source_path: source_path.clone(),
             content: chapter.content.clone(),
         });
+    }
+    if !missing_last_updated.is_empty() {
+        anyhow::bail!(
+            "missing last-updated metadata for docs pages: {}",
+            missing_last_updated.join(", ")
+        );
     }
     Ok(pages)
 }
@@ -65,7 +84,11 @@ fn copy_markdown_sources(destination: &Path, site_url: &str, pages: &[DocsPage])
         }
         std::fs::write(
             &destination,
-            add_llms_markdown_directive(&markdown_source_contents(&page.content), site_url),
+            add_llms_markdown_directive(
+                &markdown_source_contents(&page.content),
+                site_url,
+                page.last_updated.as_deref(),
+            ),
         )
         .with_context(|| {
             format!(
@@ -88,6 +111,57 @@ fn markdown_source_contents(contents: &str) -> String {
         .replace(contents, "")
         .trim_start()
         .to_string()
+}
+
+fn docs_page_last_updated_from_git(docs_root: &Path) -> HashMap<String, String> {
+    let output = git_log_last_updated(docs_root).ok();
+    let Some(output) = output else {
+        return HashMap::default();
+    };
+    if !output.status.success() {
+        return HashMap::default();
+    }
+    let Ok(output) = String::from_utf8(output.stdout) else {
+        return HashMap::default();
+    };
+
+    let mut last_updated_by_path = HashMap::new();
+    let mut current_date = None;
+    for line in output.lines() {
+        if let Some(date) = line.strip_prefix("--") {
+            current_date = Some(date.to_string());
+            continue;
+        }
+        if line.is_empty() {
+            continue;
+        }
+        let Some(date) = current_date.as_ref() else {
+            continue;
+        };
+        let Some(source_path) = line.strip_prefix("src/") else {
+            continue;
+        };
+        last_updated_by_path
+            .entry(source_path.to_string())
+            .or_insert_with(|| date.clone());
+    }
+    last_updated_by_path
+}
+
+#[allow(clippy::disallowed_methods)]
+fn git_log_last_updated(docs_root: &Path) -> std::io::Result<std::process::Output> {
+    std::process::Command::new("git")
+        .current_dir(docs_root)
+        .args(["log", "--format=--%cs", "--name-only", "--", "src"])
+        .output()
+}
+
+fn docs_page_last_updated_fallbacks(docs_root: &Path) -> Result<HashMap<String, String>> {
+    let path = docs_root.join("last-updated.json");
+    let Ok(contents) = std::fs::read_to_string(&path) else {
+        return Ok(HashMap::default());
+    };
+    serde_json::from_str(&contents).with_context(|| format!("failed to parse {}", path.display()))
 }
 
 fn docs_page_description(contents: &str) -> Option<String> {
@@ -146,6 +220,11 @@ fn write_llms_txt(destination: &Path, site_url: &str, pages: &[DocsPage]) -> Res
             contents.push_str(": ");
             contents.push_str(&markdown_text(description));
         }
+        if let Some(last_updated) = &page.last_updated {
+            contents.push_str(" (Last updated: ");
+            contents.push_str(last_updated);
+            contents.push(')');
+        }
         contents.push('\n');
     }
     std::fs::write(destination.join("llms.txt"), contents).context("failed to write llms.txt")?;
@@ -169,6 +248,11 @@ fn write_sitemap_xml(destination: &Path, site_url: &str, pages: &[DocsPage]) -> 
             &page.source_path.with_extension("html"),
         )));
         contents.push_str("</loc>");
+        if let Some(last_updated) = &page.last_updated {
+            contents.push_str("<lastmod>");
+            contents.push_str(&xml_escape(last_updated));
+            contents.push_str("</lastmod>");
+        }
         contents.push_str("</url>\n");
     }
     contents.push_str("</urlset>\n");
@@ -325,10 +409,17 @@ pub(crate) fn add_markdown_alternate_link(
     contents.replacen("</head>", &(link + "    </head>"), 1)
 }
 
-fn add_llms_markdown_directive(contents: &str, site_url: &str) -> String {
+fn add_llms_markdown_directive(
+    contents: &str,
+    site_url: &str,
+    last_updated: Option<&str>,
+) -> String {
     let directive = format!(
-        "> For the complete documentation index and Markdown links, see [llms.txt]({}).\n\n",
+        "> For the complete documentation index and Markdown links, see [llms.txt]({}).{}\n\n",
         docs_url(site_url, Path::new("llms.txt")),
+        last_updated
+            .map(|last_updated| format!(" Last updated: {last_updated}."))
+            .unwrap_or_default()
     );
     if let Some(rest) = contents.strip_prefix("---\n") {
         if let Some(frontmatter_end) = rest.find("\n---\n") {
@@ -346,6 +437,18 @@ fn add_llms_markdown_directive(contents: &str, site_url: &str) -> String {
     output.push_str(&directive);
     output.push_str(contents);
     output
+}
+
+pub(crate) fn add_last_updated_meta(contents: &str, last_updated: Option<&str>) -> String {
+    let Some(last_updated) = last_updated else {
+        return contents.to_string();
+    };
+    let meta = format!(
+        "        <meta name=\"last-modified\" content=\"{}\">\n        <meta property=\"article:modified_time\" content=\"{}\">\n",
+        xml_escape(last_updated),
+        xml_escape(last_updated),
+    );
+    contents.replacen("</head>", &(meta + "    </head>"), 1)
 }
 
 fn docs_url(site_url: &str, path: &Path) -> String {
@@ -380,14 +483,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_add_llms_markdown_directive_inserts_after_frontmatter() {
+    fn test_add_llms_markdown_directive_includes_last_updated_after_frontmatter() {
         let contents = "---\ntitle: Example\n---\n# Example\n";
-        let output = add_llms_markdown_directive(contents, "/docs/");
+        let output = add_llms_markdown_directive(contents, "/docs/", Some("2026-06-19"));
 
         assert!(output.starts_with("---\ntitle: Example\n---\n\n"));
         assert!(output.contains(
-            "> For the complete documentation index and Markdown links, see [llms.txt](/docs/llms.txt)."
+            "> For the complete documentation index and Markdown links, see [llms.txt](/docs/llms.txt). Last updated: 2026-06-19."
         ));
+    }
+
+    #[test]
+    fn test_add_last_updated_meta_inserts_machine_readable_dates() {
+        let output = add_last_updated_meta(
+            "<html><head></head><body></body></html>",
+            Some("2026-06-19"),
+        );
+
+        assert!(output.contains("<meta name=\"last-modified\" content=\"2026-06-19\">"));
+        assert!(
+            output.contains("<meta property=\"article:modified_time\" content=\"2026-06-19\">")
+        );
     }
 
     #[test]
@@ -426,6 +542,7 @@ mod tests {
                 section: "Docs".to_string(),
                 title: "Getting Started".to_string(),
                 description: Some("Start using Zed.".to_string()),
+                last_updated: Some("2026-06-18".to_string()),
                 source_path: PathBuf::from("getting-started.md"),
                 content: format!(
                     "{}\n# Getting Started\n",
@@ -436,6 +553,7 @@ mod tests {
                 section: "AI".to_string(),
                 title: "MCP".to_string(),
                 description: Some("Connect model context servers.".to_string()),
+                last_updated: Some("2026-06-19".to_string()),
                 source_path: PathBuf::from("ai/mcp.md"),
                 content: format!(
                     "{}\n# MCP\n",
@@ -450,22 +568,22 @@ mod tests {
         let llms_txt = std::fs::read_to_string(destination.join("llms.txt"))?;
         assert!(llms_txt.contains("## Docs"));
         assert!(llms_txt.contains(
-            "- [Getting Started](https://zed.dev/docs/getting-started.md): Start using Zed."
+            "- [Getting Started](https://zed.dev/docs/getting-started.md): Start using Zed. (Last updated: 2026-06-18)"
         ));
         assert!(llms_txt.contains("## AI"));
-        assert!(
-            llms_txt.contains(
-                "- [MCP](https://zed.dev/docs/ai/mcp.md): Connect model context servers."
-            )
-        );
+        assert!(llms_txt.contains(
+            "- [MCP](https://zed.dev/docs/ai/mcp.md): Connect model context servers. (Last updated: 2026-06-19)"
+        ));
 
         let sitemap_xml = std::fs::read_to_string(destination.join("sitemap.xml"))?;
         assert!(sitemap_xml.contains("<loc>https://zed.dev/docs/getting-started.html</loc>"));
+        assert!(sitemap_xml.contains("<lastmod>2026-06-18</lastmod>"));
         assert!(sitemap_xml.contains("<loc>https://zed.dev/docs/ai/mcp.html</loc>"));
+        assert!(sitemap_xml.contains("<lastmod>2026-06-19</lastmod>"));
 
         let mcp_markdown = std::fs::read_to_string(destination.join("ai/mcp.md"))?;
         assert!(mcp_markdown.starts_with(
-            "> For the complete documentation index and Markdown links, see [llms.txt](/docs/llms.txt).\n\n# MCP"
+            "> For the complete documentation index and Markdown links, see [llms.txt](/docs/llms.txt). Last updated: 2026-06-19.\n\n# MCP"
         ));
         assert!(!mcp_markdown.contains("ZED_META"));
 

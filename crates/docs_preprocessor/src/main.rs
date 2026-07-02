@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 mod ai_discovery;
 
 use ai_discovery::{
-    add_markdown_alternate_link, docs_pages, write_ai_discovery_artifacts,
+    add_last_updated_meta, add_markdown_alternate_link, docs_pages, write_ai_discovery_artifacts,
     write_markdown_redirect_aliases, write_pages_redirects,
 };
 use mdbook::BookItem;
@@ -763,8 +763,16 @@ fn handle_postprocessing() -> Result<()> {
         .and_then(|site_url| site_url.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| "/docs/".to_string());
-    let pages = docs_pages(&ctx.book)?;
+    let pages = docs_pages(&ctx.book, &ctx.root)?;
     write_ai_discovery_artifacts(&pages, &root_dir, &site_url)?;
+    let last_updated_by_html_path = pages
+        .iter()
+        .filter_map(|page| {
+            page.last_updated
+                .as_ref()
+                .map(|last_updated| (page.source_path.with_extension("html"), last_updated))
+        })
+        .collect::<HashMap<_, _>>();
     let meta_regex = Regex::new(&FRONT_MATTER_COMMENT.replace("{}", "(.*)")).unwrap();
     for file in &files {
         let contents = std::fs::read_to_string(&file)?;
@@ -803,6 +811,15 @@ fn handle_postprocessing() -> Result<()> {
         let contents = contents.replace("#consent_io_instance#", &consent_io_instance);
         let contents = contents.replace("#noindex#", noindex);
         let contents = add_markdown_alternate_link(&contents, file, &root_dir, &site_url);
+        let contents = match file.strip_prefix(&root_dir) {
+            Ok(relative_path) => add_last_updated_meta(
+                &contents,
+                last_updated_by_html_path
+                    .get(relative_path)
+                    .map(|last_updated| last_updated.as_str()),
+            ),
+            Err(_) => contents,
+        };
         let contents = title_regex()
             .replace(&contents, |_: &regex::Captures| {
                 format!("<title>{}</title>", meta_title)
