@@ -55,6 +55,8 @@ impl SidebarRecentProjects {
                 Picker::list(delegate, window, cx)
                     .list_measure_all()
                     .show_scrollbar(true)
+                    .initial_width(rems(18.))
+                    .popover()
             });
 
             let picker_focus_handle = picker.focus_handle(cx);
@@ -133,6 +135,10 @@ impl EventEmitter<DismissEvent> for SidebarRecentProjectsDelegate {}
 
 impl PickerDelegate for SidebarRecentProjectsDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "sidebar recent projects"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search projects…".into()

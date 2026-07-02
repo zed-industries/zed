@@ -14,8 +14,8 @@ use gpui::{
     Action, AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, Render, Subscription, Task, WeakEntity, Window,
 };
-use language::{Buffer, HighlightedText};
-use multi_buffer::MultiBuffer;
+use language::{Anchor, Buffer, HighlightedText, OffsetRangeExt as _, Point};
+use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
 use project::{
     Project,
     git_store::{Repository, RepositoryId},
@@ -23,6 +23,7 @@ use project::{
 use settings::{DiffViewStyle, Settings, SettingsStore, update_settings_file};
 use std::{
     any::{Any, TypeId},
+    ops::Range,
     sync::Arc,
 };
 use ui::{
@@ -43,8 +44,10 @@ pub struct SoloDiffView {
     repository_id: RepositoryId,
     repo_path: RepoPath,
     buffer: Entity<Buffer>,
+    diff: Entity<buffer_diff::BufferDiff>,
     editor: Entity<SplittableEditor>,
     workspace: WeakEntity<Workspace>,
+    showing_full_file: bool,
     _settings_subscription: Subscription,
 }
 
@@ -129,9 +132,15 @@ impl SoloDiffView {
     ) -> Self {
         let repository_id = repository.read(cx).id;
         let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
-            multibuffer.add_diff(diff, cx);
-            multibuffer.set_all_diff_hunks_expanded(cx);
+            let mut multibuffer = MultiBuffer::without_headers(buffer.read(cx).capability());
+            multibuffer.set_excerpts_for_path(
+                PathKey::for_buffer(&buffer, cx),
+                buffer.clone(),
+                Self::hunk_ranges(&buffer, &diff, cx),
+                excerpt_context_lines(cx),
+                cx,
+            );
+            multibuffer.add_diff(diff.clone(), cx);
             multibuffer
         });
         let editor = cx.new(|cx| {
@@ -178,10 +187,63 @@ impl SoloDiffView {
             repository_id,
             repo_path,
             buffer,
+            diff,
             editor,
             workspace: workspace.downgrade(),
+            showing_full_file: false,
             _settings_subscription: settings_subscription,
         }
+    }
+
+    fn hunk_ranges(
+        buffer: &Entity<Buffer>,
+        diff: &Entity<buffer_diff::BufferDiff>,
+        cx: &App,
+    ) -> Vec<Range<Point>> {
+        let buffer = buffer.read(cx);
+        diff.read(cx)
+            .snapshot(cx)
+            .hunks_intersecting_range(
+                Anchor::min_for_buffer(buffer.remote_id())
+                    ..Anchor::max_for_buffer(buffer.remote_id()),
+                buffer,
+            )
+            .map(|diff_hunk| diff_hunk.buffer_range.to_point(buffer))
+            .collect()
+    }
+
+    fn set_showing_full_file(&mut self, showing_full_file: bool, cx: &mut Context<Self>) {
+        if self.showing_full_file == showing_full_file {
+            return;
+        }
+
+        let ranges = if showing_full_file {
+            let buffer = self.buffer.read(cx);
+            vec![Point::zero()..buffer.max_point()]
+        } else {
+            Self::hunk_ranges(&self.buffer, &self.diff, cx)
+        };
+        let context_line_count = if showing_full_file {
+            0
+        } else {
+            excerpt_context_lines(cx)
+        };
+
+        self.editor.update(cx, |editor, cx| {
+            let path = PathKey::for_buffer(&self.buffer, cx);
+            editor.remove_excerpts_for_path(path.clone(), cx);
+            editor.update_excerpts_for_path(
+                path,
+                self.buffer.clone(),
+                ranges,
+                context_line_count,
+                self.diff.clone(),
+                cx,
+            );
+        });
+
+        self.showing_full_file = showing_full_file;
+        cx.notify();
     }
 
     fn matches(&self, repository: &Entity<Repository>, repo_path: &RepoPath, cx: &App) -> bool {
@@ -367,13 +429,15 @@ impl Item for SoloDiffView {
     ) -> Option<gpui::AnyEntity> {
         if type_id == TypeId::of::<Self>() {
             Some(self_handle.clone().into())
+        } else if type_id == TypeId::of::<SplittableEditor>() {
+            None
         } else {
             self.editor.act_as_type(type_id, cx)
         }
     }
 
     fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
-        Some(Box::new(self.editor.clone()))
+        None
     }
 
     fn for_each_project_item(
@@ -415,7 +479,22 @@ impl Item for SoloDiffView {
     }
 
     fn breadcrumbs(&self, cx: &App) -> Option<(Vec<HighlightedText>, Option<gpui::Font>)> {
-        self.editor.breadcrumbs(cx)
+        Some((
+            vec![HighlightedText {
+                text: self
+                    .repo_path
+                    .as_ref()
+                    .display(PathStyle::local())
+                    .into_owned()
+                    .into(),
+                highlights: Vec::new(),
+            }],
+            Some(
+                theme_settings::ThemeSettings::get_global(cx)
+                    .buffer_font
+                    .clone(),
+            ),
+        ))
     }
 
     fn added_to_workspace(
@@ -505,6 +584,14 @@ impl SoloDiffStyleToolbar {
 
         cx.notify();
     }
+
+    fn toggle_showing_full_file(&mut self, cx: &mut Context<Self>) {
+        if let Some(solo_diff) = self.solo_diff() {
+            solo_diff.update(cx, |solo_diff, cx| {
+                solo_diff.set_showing_full_file(!solo_diff.showing_full_file, cx);
+            });
+        }
+    }
 }
 
 impl EventEmitter<ToolbarItemEvent> for SoloDiffStyleToolbar {}
@@ -532,7 +619,10 @@ impl Render for SoloDiffStyleToolbar {
         let Some(solo_diff) = self.solo_diff() else {
             return div();
         };
-        let editor_entity = solo_diff.read(cx).editor.clone();
+        let (editor_entity, showing_full_file) = {
+            let solo_diff = solo_diff.read(cx);
+            (solo_diff.editor.clone(), solo_diff.showing_full_file)
+        };
         let editor = editor_entity.read(cx);
         let diff_view_style = editor.diff_view_style();
         let is_split_set = diff_view_style == DiffViewStyle::Split;
@@ -546,6 +636,25 @@ impl Render for SoloDiffStyleToolbar {
             .h_8()
             .items_center()
             .gap_1()
+            .child(
+                IconButton::new(
+                    "solo-diff-toggle-excerpts",
+                    if showing_full_file {
+                        IconName::ChevronDownUp
+                    } else {
+                        IconName::ChevronUpDown
+                    },
+                )
+                .icon_size(IconSize::Small)
+                .tooltip(Tooltip::text(if showing_full_file {
+                    "Show Changes Only"
+                } else {
+                    "Show Full File"
+                }))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.toggle_showing_full_file(cx);
+                })),
+            )
             .child(
                 IconButton::new("solo-diff-unified", IconName::DiffUnified)
                     .icon_size(IconSize::Small)
@@ -659,6 +768,7 @@ impl Render for SoloDiffGitToolbar {
                 DiffStat::new("solo-diff-stat", stat.added as usize, stat.deleted as usize)
                     .into_any_element()
             }))
+            .child(Divider::vertical())
             .child(
                 h_group_sm()
                     .when(button_states.selection, |el| {
@@ -746,7 +856,7 @@ impl Render for SoloDiffGitToolbar {
             .child(vertical_divider())
             .child(
                 h_group_sm()
-                    .child(
+                    .child(if button_states.stage_file {
                         Button::new("stage-file", "Stage File")
                             .tooltip(Tooltip::for_action_title_in(
                                 "Stage file",
@@ -756,9 +866,8 @@ impl Render for SoloDiffGitToolbar {
                             .disabled(!button_states.stage_file)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.stage_file(window, cx)),
-                            ),
-                    )
-                    .child(
+                            )
+                    } else {
                         Button::new("unstage-file", "Unstage File")
                             .tooltip(Tooltip::for_action_title_in(
                                 "Unstage file",
@@ -768,9 +877,8 @@ impl Render for SoloDiffGitToolbar {
                             .disabled(!button_states.unstage_file)
                             .on_click(
                                 cx.listener(|this, _, window, cx| this.unstage_file(window, cx)),
-                            ),
-                    )
-                    .child(Divider::vertical())
+                            )
+                    })
                     .child(
                         Button::new("commit", "Commit")
                             .tooltip(Tooltip::for_action_title_in(

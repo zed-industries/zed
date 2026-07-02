@@ -14,6 +14,15 @@ message HideToast {
   string notification_id = 2;
 }
 
+// A telemetry event generated on the remote server, forwarded to the client for
+// reporting. The OS metadata is not included: the client already knows the
+// remote platform from connection setup and attaches it when reporting.
+message TelemetryEvent {
+  uint64 project_id = 1;
+  // JSON-serialized telemetry_events::FlexibleEvent { event_type, event_properties }.
+  string event_json = 2;
+}
+
 message OpenServerSettings {
   uint64 project_id = 1;
 }

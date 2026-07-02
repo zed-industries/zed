@@ -499,16 +499,6 @@ impl Database {
                 return Err(anyhow!("room does not exist or was already joined"))?;
             }
 
-            let participant = room_participant::Entity::find()
-                .filter(
-                    Condition::all()
-                        .add(room_participant::Column::RoomId.eq(room_id))
-                        .add(room_participant::Column::UserId.eq(user_id)),
-                )
-                .one(&*tx)
-                .await?
-                .context("participant not found")?;
-
             let mut reshared_projects = Vec::new();
             for reshared_project in &rejoin_room.reshared_projects {
                 let project_id = ProjectId::from_proto(reshared_project.project_id);
@@ -601,7 +591,6 @@ impl Database {
                 channel,
                 rejoined_projects,
                 reshared_projects,
-                role: participant.role.unwrap_or(ChannelRole::Member),
             })
         })
         .await

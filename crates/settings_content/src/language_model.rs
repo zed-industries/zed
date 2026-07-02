@@ -15,6 +15,8 @@ pub struct AllLanguageModelSettingsContent {
     pub bedrock: Option<AmazonBedrockSettingsContent>,
     pub deepseek: Option<DeepseekSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
+    #[serde(rename = "llama.cpp")]
+    pub llama_cpp: Option<LlamaCppSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
     pub mistral: Option<MistralSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
@@ -264,6 +266,36 @@ pub struct LmStudioAvailableModel {
 
 #[with_fallible_options]
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
+pub struct LlamaCppSettingsContent {
+    pub api_url: Option<String>,
+    /// Whether to automatically discover models served by the llama.cpp server.
+    /// Defaults to true.
+    pub auto_discover: Option<bool>,
+    pub available_models: Option<Vec<LlamaCppAvailableModel>>,
+    /// Overrides the context length reported for every llama.cpp model.
+    pub context_window: Option<u64>,
+    pub custom_headers: Option<HashMap<String, String>>,
+}
+
+#[with_fallible_options]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct LlamaCppAvailableModel {
+    /// The model id reported by the llama.cpp server (its `--alias` or the model file path).
+    pub name: String,
+    /// The model's name in Zed's UI, such as in the model selector dropdown menu in the agent panel.
+    pub display_name: Option<String>,
+    /// The Context Length parameter to the model (aka n_ctx).
+    pub max_tokens: u64,
+    /// Whether the model supports tools.
+    pub supports_tools: Option<bool>,
+    /// Whether the model supports vision.
+    pub supports_images: Option<bool>,
+    /// Whether the model emits reasoning/thinking content.
+    pub supports_thinking: Option<bool>,
+}
+
+#[with_fallible_options]
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema, MergeFrom)]
 pub struct DeepseekSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<DeepseekAvailableModel>>,
@@ -379,6 +411,8 @@ pub struct OpenAiCompatibleModelCapabilities {
     pub chat_completions: bool,
     #[serde(default)]
     pub interleaved_reasoning: bool,
+    #[serde(default)]
+    pub max_tokens_parameter: bool,
 }
 
 impl Default for OpenAiCompatibleModelCapabilities {
@@ -390,6 +424,7 @@ impl Default for OpenAiCompatibleModelCapabilities {
             prompt_cache_key: false,
             chat_completions: default_true(),
             interleaved_reasoning: false,
+            max_tokens_parameter: false,
         }
     }
 }
