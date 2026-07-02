@@ -5496,22 +5496,22 @@ impl ProjectPanel {
             .flex_none()
             .items_center()
             .gap_1()
-            .when(!is_read_only, |this| {
-                this.child(
-                    action_button("new-file", IconName::Plus)
-                        .tooltip(Tooltip::for_action_title("New File", &NewFile))
-                        .on_click(cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
-                            this.new_file(&NewFile, window, cx);
-                        })),
-                )
-                .child(
-                    action_button("new-folder", IconName::FolderAdd)
-                        .tooltip(Tooltip::for_action_title("New Folder", &NewDirectory))
-                        .on_click(cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
-                            this.new_directory(&NewDirectory, window, cx);
-                        })),
-                )
-            })
+            .child(
+                action_button("new-file", IconName::Plus)
+                    .disabled(is_read_only)
+                    .tooltip(Tooltip::for_action_title("New File", &NewFile))
+                    .on_click(cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+                        this.new_file(&NewFile, window, cx);
+                    })),
+            )
+            .child(
+                action_button("new-folder", IconName::FolderAdd)
+                    .disabled(is_read_only)
+                    .tooltip(Tooltip::for_action_title("New Folder", &NewDirectory))
+                    .on_click(cx.listener(|this, _: &gpui::ClickEvent, window, cx| {
+                        this.new_directory(&NewDirectory, window, cx);
+                    })),
+            )
             .child(
                 action_button("collapse-all", IconName::ListCollapse)
                     .tooltip(Tooltip::for_action_title(
