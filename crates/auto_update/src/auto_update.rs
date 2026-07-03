@@ -109,12 +109,6 @@ actions!(
     ]
 );
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum VersionCheckType {
-    Sha(AppCommitSha),
-    Semantic(Version),
-}
-
 #[derive(Serialize, Debug)]
 pub struct AssetQuery<'a> {
     asset: &'a str,
@@ -130,16 +124,16 @@ pub enum AutoUpdateStatus {
     Idle,
     Checking,
     Downloading {
-        version: VersionCheckType,
+        version: Version,
         /// Download progress as a fraction in the range `0.0..=1.0`, or `None`
         /// when the total download size is not yet known.
         progress: Option<f32>,
     },
     Installing {
-        version: VersionCheckType,
+        version: Version,
     },
     Updated {
-        version: VersionCheckType,
+        version: Version,
     },
     Errored {
         error: Arc<anyhow::Error>,
@@ -800,49 +794,33 @@ impl AutoUpdater {
         installed_version: Version,
         fetched_version: String,
         status: AutoUpdateStatus,
-    ) -> Result<Option<VersionCheckType>> {
-        let parsed_fetched_version = fetched_version.parse::<Version>();
-
-        if let AutoUpdateStatus::Updated { version, .. } = status {
-            match version {
-                VersionCheckType::Sha(cached_version) => {
-                    let should_download =
-                        parsed_fetched_version.as_ref().ok().is_none_or(|version| {
-                            version.build.as_str().rsplit('.').next()
-                                != Some(&cached_version.full())
-                        });
-                    let newer_version = should_download
-                        .then(|| VersionCheckType::Sha(AppCommitSha::new(fetched_version)));
-                    return Ok(newer_version);
-                }
-                VersionCheckType::Semantic(cached_version) => {
-                    return Self::check_if_fetched_version_is_newer_non_nightly(
-                        cached_version,
-                        parsed_fetched_version?,
-                    );
-                }
-            }
-        }
+    ) -> Result<Option<Version>> {
+        let fetched_version = fetched_version.parse::<Version>()?;
 
         match release_channel {
             ReleaseChannel::Nightly => {
-                let should_download = app_commit_sha
-                    .ok()
-                    .flatten()
-                    .map(|sha| {
-                        parsed_fetched_version.as_ref().ok().is_none_or(|version| {
-                            version.build.as_str().rsplit('.').next() != Some(&sha)
-                        })
-                    })
-                    .unwrap_or(true);
-                let newer_version = should_download
-                    .then(|| VersionCheckType::Sha(AppCommitSha::new(fetched_version)));
-                Ok(newer_version)
+                let should_download = if let AutoUpdateStatus::Updated { version } = status {
+                    fetched_version != version
+                } else {
+                    let fetched_sha = fetched_version.build.as_str().rsplit('.').next();
+                    app_commit_sha
+                        .ok()
+                        .flatten()
+                        .is_none_or(|sha| fetched_sha != Some(sha.as_str()))
+                };
+                Ok(should_download.then_some(fetched_version))
             }
-            _ => Self::check_if_fetched_version_is_newer_non_nightly(
-                installed_version,
-                parsed_fetched_version?,
-            ),
+            _ => {
+                let current_version = if let AutoUpdateStatus::Updated { version } = status {
+                    version
+                } else {
+                    installed_version
+                };
+                Ok(Self::check_if_fetched_version_is_newer_non_nightly(
+                    current_version,
+                    fetched_version,
+                ))
+            }
         }
     }
 
@@ -905,13 +883,11 @@ impl AutoUpdater {
     fn check_if_fetched_version_is_newer_non_nightly(
         mut installed_version: Version,
         fetched_version: Version,
-    ) -> Result<Option<VersionCheckType>> {
+    ) -> Option<Version> {
         // For non-nightly releases, ignore build and pre-release fields as they're not provided by our endpoints right now.
         installed_version.pre = semver::Prerelease::EMPTY;
         installed_version.build = semver::BuildMetadata::EMPTY;
-        let should_download = fetched_version > installed_version;
-        let newer_version = should_download.then(|| VersionCheckType::Semantic(fetched_version));
-        Ok(newer_version)
+        (fetched_version > installed_version).then_some(fetched_version)
     }
 
     pub fn set_should_show_update_notification(
@@ -1366,7 +1342,7 @@ mod tests {
         assert_eq!(
             status,
             AutoUpdateStatus::Downloading {
-                version: VersionCheckType::Semantic(semver::Version::new(0, 100, 1)),
+                version: semver::Version::new(0, 100, 1),
                 progress: None,
             }
         );
@@ -1397,7 +1373,7 @@ mod tests {
         assert_eq!(
             status,
             AutoUpdateStatus::Updated {
-                version: VersionCheckType::Semantic(semver::Version::new(0, 100, 1))
+                version: semver::Version::new(0, 100, 1)
             }
         );
         let will_restart = cx.expect_restart();
@@ -1550,10 +1526,7 @@ mod tests {
             status,
         );
 
-        assert_eq!(
-            newer_version.unwrap(),
-            Some(VersionCheckType::Semantic(fetched_version))
-        );
+        assert_eq!(newer_version.unwrap(), Some(fetched_version));
     }
 
     #[test]
@@ -1562,7 +1535,7 @@ mod tests {
         let app_commit_sha = Ok(Some("a".to_string()));
         let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
-            version: VersionCheckType::Semantic(semver::Version::new(1, 0, 1)),
+            version: semver::Version::new(1, 0, 1),
         };
         let fetched_version = semver::Version::new(1, 0, 1);
 
@@ -1583,7 +1556,7 @@ mod tests {
         let app_commit_sha = Ok(Some("a".to_string()));
         let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
-            version: VersionCheckType::Semantic(semver::Version::new(1, 0, 1)),
+            version: semver::Version::new(1, 0, 1),
         };
         let fetched_version = semver::Version::new(1, 0, 2);
 
@@ -1595,10 +1568,7 @@ mod tests {
             status,
         );
 
-        assert_eq!(
-            newer_version.unwrap(),
-            Some(VersionCheckType::Semantic(fetched_version))
-        );
+        assert_eq!(newer_version.unwrap(), Some(fetched_version));
     }
 
     #[test]
@@ -1608,13 +1578,13 @@ mod tests {
         let mut installed_version = semver::Version::new(1, 0, 0);
         installed_version.build = semver::BuildMetadata::new("a").unwrap();
         let status = AutoUpdateStatus::Idle;
-        let fetched_sha = "1.0.0+a".to_string();
+        let fetched_version = "1.0.0+a".to_string();
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            fetched_sha,
+            fetched_version,
             status,
         );
 
@@ -1627,19 +1597,19 @@ mod tests {
         let app_commit_sha = Ok(Some("a".to_string()));
         let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Idle;
-        let fetched_sha = "b".to_string();
+        let fetched_version = "1.0.0+b".to_string();
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            fetched_sha.clone(),
+            fetched_version.clone(),
             status,
         );
 
         assert_eq!(
             newer_version.unwrap(),
-            Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
+            Some(fetched_version.parse().unwrap())
         );
     }
 
@@ -1650,15 +1620,15 @@ mod tests {
         let mut installed_version = semver::Version::new(1, 0, 0);
         installed_version.build = semver::BuildMetadata::new("a").unwrap();
         let status = AutoUpdateStatus::Updated {
-            version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
+            version: "1.0.0+b".parse().unwrap(),
         };
-        let fetched_sha = "1.0.0+b".to_string();
+        let fetched_version = "1.0.0+b".to_string();
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            fetched_sha,
+            fetched_version,
             status,
         );
 
@@ -1672,22 +1642,51 @@ mod tests {
         let mut installed_version = semver::Version::new(1, 0, 0);
         installed_version.build = semver::BuildMetadata::new("a").unwrap();
         let status = AutoUpdateStatus::Updated {
-            version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
+            version: "1.0.0+b".parse().unwrap(),
         };
-        let fetched_sha = "1.0.0+c".to_string();
+        let fetched_version = "1.0.0+c".to_string();
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            fetched_sha.clone(),
+            fetched_version.clone(),
             status,
         );
 
         assert_eq!(
             newer_version.unwrap(),
-            Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
+            Some(fetched_version.parse().unwrap())
         );
+    }
+
+    #[test]
+    fn test_nightly_does_not_redownload_after_updating_to_fetched_version() {
+        let release_channel = ReleaseChannel::Nightly;
+        let installed_version = semver::Version::new(1, 0, 0);
+        let fetched_version = "1.0.0+nightly.b".to_string();
+
+        let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            Ok(Some("a".to_string())),
+            installed_version.clone(),
+            fetched_version.clone(),
+            AutoUpdateStatus::Idle,
+        )
+        .unwrap()
+        .expect("a newer nightly version should be available");
+
+        let next_check = AutoUpdater::check_if_fetched_version_is_newer(
+            release_channel,
+            Ok(Some("a".to_string())),
+            installed_version,
+            fetched_version,
+            AutoUpdateStatus::Updated {
+                version: newer_version,
+            },
+        );
+
+        assert_eq!(next_check.unwrap(), None);
     }
 
     #[test]
@@ -1696,19 +1695,19 @@ mod tests {
         let app_commit_sha = Ok(None);
         let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Idle;
-        let fetched_sha = "a".to_string();
+        let fetched_version = "1.0.0+a".to_string();
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            fetched_sha.clone(),
+            fetched_version.clone(),
             status,
         );
 
         assert_eq!(
             newer_version.unwrap(),
-            Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
+            Some(fetched_version.parse().unwrap())
         );
     }
 
@@ -1719,15 +1718,15 @@ mod tests {
         let app_commit_sha = Ok(None);
         let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
-            version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
+            version: "1.0.0+b".parse().unwrap(),
         };
-        let fetched_sha = "1.0.0+b".to_string();
+        let fetched_version = "1.0.0+b".to_string();
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            fetched_sha,
+            fetched_version,
             status,
         );
 
@@ -1741,21 +1740,21 @@ mod tests {
         let app_commit_sha = Ok(None);
         let installed_version = semver::Version::new(1, 0, 0);
         let status = AutoUpdateStatus::Updated {
-            version: VersionCheckType::Sha(AppCommitSha::new("b".to_string())),
+            version: "1.0.0+b".parse().unwrap(),
         };
-        let fetched_sha = "c".to_string();
+        let fetched_version = "1.0.0+c".to_string();
 
         let newer_version = AutoUpdater::check_if_fetched_version_is_newer(
             release_channel,
             app_commit_sha,
             installed_version,
-            fetched_sha.clone(),
+            fetched_version.clone(),
             status,
         );
 
         assert_eq!(
             newer_version.unwrap(),
-            Some(VersionCheckType::Sha(AppCommitSha::new(fetched_sha)))
+            Some(fetched_version.parse().unwrap())
         );
     }
 }
