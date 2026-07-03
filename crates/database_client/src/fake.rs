@@ -14,7 +14,6 @@ pub struct FakeDatabaseClient {
     pub schemas: Vec<String>,
     pub tables: Vec<TableInfo>,
     pub structure: TableStructure,
-    pub page: RowsPage,
     pub query_result: QueryResult,
     pub error: Option<String>,
     /// FIFO queue of results consumed one at a time by `run_query`, falling
@@ -60,15 +59,6 @@ impl FakeDatabaseClient {
             foreign_keys: Vec::new(),
             indexes: Vec::new(),
         };
-        let page = RowsPage {
-            columns: vec!["id".into(), "name".into()],
-            rows: vec![
-                vec![Some("1".into()), Some("Alice".into())],
-                vec![Some("2".into()), Some("Bob".into())],
-                vec![Some("3".into()), None],
-            ],
-            has_more: true,
-        };
         let query_result = QueryResult {
             columns: vec!["count".into()],
             rows: vec![vec![Some("3".into())]],
@@ -89,7 +79,6 @@ impl FakeDatabaseClient {
                 },
             ],
             structure,
-            page,
             query_result,
             error: None,
             queued_results: Mutex::new(VecDeque::new()),
@@ -176,19 +165,6 @@ impl DatabaseClient for FakeDatabaseClient {
         Ok(self.structure.clone())
     }
 
-    async fn fetch_rows(&self, table: &TableRef, spec: &SelectSpec) -> Result<RowsPage> {
-        self.check_error()?;
-        self.record(format!(
-            "fetch_rows {} limit={} offset={} sort={:?} filters={}",
-            table.name,
-            spec.limit,
-            spec.offset,
-            spec.sort.as_ref().map(|sort| &sort.column),
-            spec.filters.len()
-        ));
-        Ok(self.page.clone())
-    }
-
     async fn run_query(&self, database: &str, sql: &str, max_rows: usize) -> Result<QueryResult> {
         self.check_error()?;
         self.record(format!(
@@ -247,21 +223,15 @@ mod tests {
             fake.list_databases().await.unwrap(),
             vec!["app", "postgres"]
         );
-        let spec = SelectSpec {
-            limit: 100,
-            ..Default::default()
-        };
-        let table = TableRef {
-            database: "app".into(),
-            schema: "public".into(),
-            name: "users".into(),
-        };
-        let page = fake.fetch_rows(&table, &spec).await.unwrap();
-        assert_eq!(page.rows.len(), 3);
+        let result = fake
+            .run_query("app", "SELECT * FROM users", 100)
+            .await
+            .unwrap();
+        assert_eq!(result.rows.len(), 1);
         assert!(
             fake.calls()
                 .iter()
-                .any(|call| call.starts_with("fetch_rows users"))
+                .any(|call| call.starts_with("run_query app"))
         );
     }
 

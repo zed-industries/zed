@@ -14,7 +14,7 @@ use crate::sql::{
 };
 use crate::{
     AppliedCounts, ColumnInfo, ConnectionConfig, DatabaseClient, ForeignKey, IndexInfo,
-    QueryResult, RowsPage, SelectSpec, TableEdits, TableInfo, TableRef, TableStructure,
+    QueryResult, TableEdits, TableInfo, TableRef, TableStructure,
 };
 
 /// How long to wait for a TCP connection to a database before giving up, so a
@@ -315,40 +315,6 @@ impl DatabaseClient for PostgresClient {
         })
     }
 
-    async fn fetch_rows(&self, table: &TableRef, spec: &SelectSpec) -> Result<RowsPage> {
-        let columns = self.columns(table).await?;
-        let built = sql::build_select(table, &columns, spec)?;
-
-        let client = self.client_for(&table.database).await?;
-        let _cancel = self.register_cancel(&client);
-        let param_refs: Vec<&(dyn ToSql + Sync)> = built
-            .params
-            .iter()
-            .map(|param| param as &(dyn ToSql + Sync))
-            .collect();
-        let rows = client
-            .query(&built.sql, &param_refs)
-            .await
-            .with_context(|| format!("fetching rows from {}.{}", table.schema, table.name))?;
-
-        let has_more = rows.len() > spec.limit;
-        let take = rows.len().min(spec.limit);
-        let mut result_rows = Vec::with_capacity(take);
-        for row in rows.iter().take(take) {
-            let mut values = Vec::with_capacity(columns.len());
-            for index in 0..columns.len() {
-                values.push(row.try_get::<_, Option<String>>(index)?);
-            }
-            result_rows.push(values);
-        }
-
-        Ok(RowsPage {
-            columns: columns.into_iter().map(|column| column.name).collect(),
-            rows: result_rows,
-            has_more,
-        })
-    }
-
     /// Runs arbitrary user SQL and returns its result.
     ///
     /// For [`SessionMode::ReadOnly`] (MCP-driven sessions) the user SQL is wrapped
@@ -524,8 +490,9 @@ async fn execute_edits(
     Ok(counts)
 }
 
-/// Executes a built statement, binding its text parameters the same way as
-/// `fetch_rows`, and returns the number of rows it affected.
+/// Executes a built statement, binding its text parameters as Rust `String`s
+/// cast to the column's type server-side, and returns the number of rows it
+/// affected.
 async fn execute_statement(client: &Client, statement: &BuiltStatement) -> Result<u64> {
     let param_refs: Vec<&(dyn ToSql + Sync)> = statement
         .params
@@ -625,9 +592,7 @@ fn command_verb(sql: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        EditCell, Filter, FilterOp, RowDelete, RowInsert, RowKey, RowUpdate, Sort, SortDirection,
-    };
+    use crate::{EditCell, RowDelete, RowInsert, RowKey, RowUpdate};
 
     #[test]
     fn command_verb_extracts_leading_keyword() {
@@ -674,26 +639,17 @@ mod tests {
         read_only_client.test_connection().await.unwrap();
         assert!(!read_only_client.list_databases().await.unwrap().is_empty());
 
-        let orders = TableRef {
-            database: database.clone(),
-            schema: "public".into(),
-            name: "orders".into(),
-        };
-
-        // Filtering an int primary key by equality: the parameter is bound as
-        // text and cast server-side to int4, so this must return exactly the one
-        // matching row rather than failing at bind time.
-        let by_id = SelectSpec {
-            filters: vec![Filter {
-                column: "id".into(),
-                op: FilterOp::Eq,
-                value: "3".into(),
-            }],
-            sort: None,
-            limit: 100,
-            offset: 0,
-        };
-        let page = read_only_client.fetch_rows(&orders, &by_id).await.unwrap();
+        // Filtering an int primary key by equality: the literal is quoted as
+        // text and Postgres coerces it to int4 via implicit cast, so this must
+        // return exactly the one matching row rather than erroring.
+        let page = read_only_client
+            .run_query(
+                &database,
+                "SELECT * FROM \"public\".\"orders\" WHERE \"id\" = '3'",
+                100,
+            )
+            .await
+            .unwrap();
         assert_eq!(page.rows.len(), 1, "id = 3 must match exactly one order");
         let id_index = page
             .columns
@@ -704,21 +660,12 @@ mod tests {
 
         // Filtering a numeric column with a typed comparison (`>`): the cast
         // must preserve numeric ordering, not fall back to text comparison.
-        let by_total = SelectSpec {
-            filters: vec![Filter {
-                column: "total".into(),
-                op: FilterOp::Gt,
-                value: "10".into(),
-            }],
-            sort: Some(Sort {
-                column: "total".into(),
-                direction: SortDirection::Asc,
-            }),
-            limit: 100,
-            offset: 0,
-        };
         let page = read_only_client
-            .fetch_rows(&orders, &by_total)
+            .run_query(
+                &database,
+                "SELECT * FROM \"public\".\"orders\" WHERE \"total\" > '10' ORDER BY \"total\" ASC",
+                100,
+            )
             .await
             .unwrap();
         let total_index = page
@@ -764,7 +711,14 @@ mod tests {
             "read-only transaction must block a GUC-override write"
         );
         // The orders fixture must be untouched by the blocked write above.
-        let page = read_only_client.fetch_rows(&orders, &by_id).await.unwrap();
+        let page = read_only_client
+            .run_query(
+                &database,
+                "SELECT * FROM \"public\".\"orders\" WHERE \"id\" = '3'",
+                100,
+            )
+            .await
+            .unwrap();
         assert_eq!(
             page.rows.len(),
             1,

@@ -1,14 +1,6 @@
 use anyhow::{Context as _, bail};
 
-use crate::{
-    ColumnInfo, FilterOp, RowDelete, RowInsert, RowKey, RowUpdate, SelectSpec, SortDirection,
-    TableRef,
-};
-
-pub struct BuiltSelect {
-    pub sql: String,
-    pub params: Vec<String>,
-}
+use crate::{ColumnInfo, RowDelete, RowInsert, RowKey, RowUpdate, TableRef};
 
 pub struct BuiltStatement {
     pub sql: String,
@@ -70,87 +62,6 @@ fn build_key_predicate(
         ));
     }
     Ok(predicates.join(" AND "))
-}
-
-pub fn build_select(
-    table: &TableRef,
-    columns: &[ColumnInfo],
-    spec: &SelectSpec,
-) -> anyhow::Result<BuiltSelect> {
-    if spec.limit == 0 {
-        bail!("page size must be greater than zero");
-    }
-
-    let select_list = columns
-        .iter()
-        .map(|column| format!("{}::text", quote_ident(&column.name)))
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let mut sql = format!(
-        "SELECT {} FROM {}.{}",
-        select_list,
-        quote_ident(&table.schema),
-        quote_ident(&table.name),
-    );
-
-    let mut params = Vec::new();
-    let mut predicates = Vec::new();
-    for filter in &spec.filters {
-        let column = find_column(columns, &filter.column)?;
-        let ident = quote_ident(&column.name);
-        match filter.op {
-            FilterOp::IsNull => predicates.push(format!("{ident} IS NULL")),
-            FilterOp::IsNotNull => predicates.push(format!("{ident} IS NOT NULL")),
-            FilterOp::Contains => {
-                params.push(format!("%{}%", escape_like(&filter.value)));
-                // `E'\\'` is a single backslash regardless of the server's
-                // `standard_conforming_strings` setting; a bare `'\'` literal
-                // breaks parsing when that GUC is off. Backslash is already the
-                // default LIKE escape, so this preserves `escape_like`'s meaning.
-                predicates.push(format!(
-                    "{ident}::text ILIKE ${} ESCAPE E'\\\\'",
-                    params.len()
-                ));
-            }
-            FilterOp::Eq | FilterOp::NotEq | FilterOp::Gt | FilterOp::Lt => {
-                let op = match filter.op {
-                    FilterOp::Eq => "=",
-                    FilterOp::NotEq => "<>",
-                    FilterOp::Gt => ">",
-                    FilterOp::Lt => "<",
-                    FilterOp::Contains | FilterOp::IsNull | FilterOp::IsNotNull => {
-                        unreachable!()
-                    }
-                };
-                params.push(filter.value.clone());
-                // Bind the parameter as text and let the server cast it to the
-                // column's type (see `param_cast`). This keeps typed comparison
-                // semantics for Gt/Lt while avoiding a bind-time `WrongType`
-                // error on non-text columns.
-                predicates.push(format!("{ident} {op} {}", param_cast(column, params.len())));
-            }
-        }
-    }
-    if !predicates.is_empty() {
-        sql.push_str(" WHERE ");
-        sql.push_str(&predicates.join(" AND "));
-    }
-
-    if let Some(sort) = &spec.sort {
-        let column = find_column(columns, &sort.column)?;
-        let direction = match sort.direction {
-            SortDirection::Asc => "ASC",
-            SortDirection::Desc => "DESC",
-        };
-        sql.push_str(&format!(
-            " ORDER BY {} {direction}",
-            quote_ident(&column.name)
-        ));
-    }
-
-    sql.push_str(&format!(" LIMIT {} OFFSET {}", spec.limit + 1, spec.offset));
-    Ok(BuiltSelect { sql, params })
 }
 
 /// Builds an `UPDATE` statement. The `SET` clause covers the columns in
@@ -307,24 +218,10 @@ pub fn quote_ident(ident: &str) -> String {
     out
 }
 
-/// Escapes `\`, `%`, `_` for use in `ILIKE ... ESCAPE '\'` patterns.
-pub fn escape_like(value: &str) -> String {
-    let mut out = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if matches!(ch, '\\' | '%' | '_') {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        EditCell, Filter, FilterOp, RowDelete, RowInsert, RowKey, RowUpdate, Sort, SortDirection,
-    };
+    use crate::{EditCell, RowDelete, RowInsert, RowKey, RowUpdate};
 
     fn col(name: &str, udt: &str) -> ColumnInfo {
         ColumnInfo {
@@ -354,171 +251,10 @@ mod tests {
     }
 
     #[test]
-    fn build_select_plain_page() {
-        let columns = vec![col("id", "int4"), col("name", "text")];
-        let spec = SelectSpec {
-            filters: vec![],
-            sort: None,
-            limit: 100,
-            offset: 0,
-        };
-        let built = build_select(&users_table(), &columns, &spec).unwrap();
-        assert_eq!(
-            built.sql,
-            "SELECT \"id\"::text, \"name\"::text FROM \"public\".\"users\" LIMIT 101 OFFSET 0"
-        );
-        assert!(built.params.is_empty());
-    }
-
-    #[test]
-    fn build_select_with_filters_sort_offset() {
-        let columns = vec![col("id", "int4"), col("name", "text")];
-        let spec = SelectSpec {
-            filters: vec![
-                Filter {
-                    column: "id".into(),
-                    op: FilterOp::Gt,
-                    value: "5".into(),
-                },
-                Filter {
-                    column: "name".into(),
-                    op: FilterOp::Contains,
-                    value: "a%b".into(),
-                },
-                Filter {
-                    column: "name".into(),
-                    op: FilterOp::IsNull,
-                    value: String::new(),
-                },
-            ],
-            sort: Some(Sort {
-                column: "name".into(),
-                direction: SortDirection::Desc,
-            }),
-            limit: 50,
-            offset: 100,
-        };
-        let built = build_select(&users_table(), &columns, &spec).unwrap();
-        assert_eq!(
-            built.sql,
-            "SELECT \"id\"::text, \"name\"::text FROM \"public\".\"users\" \
-             WHERE \"id\" > $1::text::\"pg_catalog\".\"int4\" \
-             AND \"name\"::text ILIKE $2 ESCAPE E'\\\\' AND \"name\" IS NULL \
-             ORDER BY \"name\" DESC LIMIT 51 OFFSET 100"
-        );
-        assert_eq!(built.params, vec!["5".to_string(), "%a\\%b%".to_string()]);
-    }
-
-    #[test]
-    fn build_select_casts_filter_params_through_text_schema_qualified() {
-        // Non-text columns must be compared by casting the text-bound parameter
-        // server-side to the column's schema-qualified type, so binding the
-        // parameter as a Rust String does not fail and typed comparison is kept.
-        let mut price = col("price", "numeric");
-        price.udt_schema = "pg_catalog".into();
-        let mut email = col("email", "citext");
-        email.udt_schema = "extensions".into();
-        let columns = vec![col("id", "int4"), price, email];
-        let spec = SelectSpec {
-            filters: vec![
-                Filter {
-                    column: "id".into(),
-                    op: FilterOp::Eq,
-                    value: "5".into(),
-                },
-                Filter {
-                    column: "price".into(),
-                    op: FilterOp::Lt,
-                    value: "9.99".into(),
-                },
-                Filter {
-                    column: "email".into(),
-                    op: FilterOp::NotEq,
-                    value: "a@b.com".into(),
-                },
-            ],
-            sort: None,
-            limit: 10,
-            offset: 0,
-        };
-        let built = build_select(&users_table(), &columns, &spec).unwrap();
-        assert_eq!(
-            built.sql,
-            "SELECT \"id\"::text, \"price\"::text, \"email\"::text FROM \"public\".\"users\" \
-             WHERE \"id\" = $1::text::\"pg_catalog\".\"int4\" \
-             AND \"price\" < $2::text::\"pg_catalog\".\"numeric\" \
-             AND \"email\" <> $3::text::\"extensions\".\"citext\" \
-             LIMIT 11 OFFSET 0"
-        );
-        assert_eq!(built.params, vec!["5", "9.99", "a@b.com"]);
-    }
-
-    #[test]
-    fn build_select_is_not_null() {
-        let columns = vec![col("id", "int4"), col("notes", "text")];
-        let spec = SelectSpec {
-            filters: vec![Filter {
-                column: "notes".into(),
-                op: FilterOp::IsNotNull,
-                value: String::new(),
-            }],
-            sort: None,
-            limit: 10,
-            offset: 0,
-        };
-        let built = build_select(&users_table(), &columns, &spec).unwrap();
-        assert!(built.sql.contains(r#""notes" IS NOT NULL"#));
-        assert!(built.params.is_empty());
-    }
-
-    #[test]
-    fn build_select_rejects_unknown_columns_and_zero_limit() {
-        let columns = vec![col("id", "int4")];
-        let bad_filter = SelectSpec {
-            filters: vec![Filter {
-                column: "nope".into(),
-                op: FilterOp::Eq,
-                value: "1".into(),
-            }],
-            sort: None,
-            limit: 10,
-            offset: 0,
-        };
-        assert!(build_select(&users_table(), &columns, &bad_filter).is_err());
-
-        let bad_sort = SelectSpec {
-            filters: vec![],
-            sort: Some(Sort {
-                column: "nope".into(),
-                direction: SortDirection::Asc,
-            }),
-            limit: 10,
-            offset: 0,
-        };
-        assert!(build_select(&users_table(), &columns, &bad_sort).is_err());
-
-        let zero = SelectSpec {
-            filters: vec![],
-            sort: None,
-            limit: 0,
-            offset: 0,
-        };
-        assert!(build_select(&users_table(), &columns, &zero).is_err());
-    }
-
-    #[test]
     fn quote_ident_wraps_and_doubles_quotes() {
         assert_eq!(quote_ident("users"), "\"users\"");
         assert_eq!(quote_ident("weird\"name"), "\"weird\"\"name\"");
         assert_eq!(quote_ident("Mixed Case"), "\"Mixed Case\"");
-    }
-
-    #[test]
-    fn escape_like_escapes_metacharacters() {
-        assert_eq!(escape_like("100%"), "100\\%");
-        assert_eq!(escape_like("a_b"), "a\\_b");
-        assert_eq!(escape_like("back\\slash"), "back\\\\slash");
-        assert_eq!(escape_like("plain"), "plain");
     }
 
     fn edit_columns() -> Vec<ColumnInfo> {

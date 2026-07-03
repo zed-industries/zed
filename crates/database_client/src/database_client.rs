@@ -95,21 +95,6 @@ pub struct Sort {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct SelectSpec {
-    pub filters: Vec<Filter>,
-    pub sort: Option<Sort>,
-    pub limit: usize,
-    pub offset: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct RowsPage {
-    pub columns: Vec<String>,
-    pub rows: Vec<Vec<Option<String>>>, // all values as text; None = NULL
-    pub has_more: bool,                 // true when the limit+1 probe row was returned
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct QueryResult {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<Option<String>>>,
@@ -171,7 +156,6 @@ pub trait DatabaseClient: Send + Sync {
     async fn list_schemas(&self, database: &str) -> Result<Vec<String>>;
     async fn list_tables(&self, database: &str, schema: &str) -> Result<Vec<TableInfo>>;
     async fn table_structure(&self, table: &TableRef) -> Result<TableStructure>;
-    async fn fetch_rows(&self, table: &TableRef, spec: &SelectSpec) -> Result<RowsPage>;
     async fn run_query(&self, database: &str, sql: &str, max_rows: usize) -> Result<QueryResult>;
     /// Applies a batch of row edits (deletes, updates, inserts) in a single
     /// transaction, rolling the whole batch back on any error.
