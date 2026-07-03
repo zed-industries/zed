@@ -192,7 +192,12 @@ mod tests {
             Box::new(|_config, _database, _password| {
                 Arc::new(FakeDatabaseClient::new()) as Arc<dyn DatabaseClient>
             }),
+            Box::new(|_config, _database, _password| {
+                Arc::new(FakeDatabaseClient::new()) as Arc<dyn DatabaseClient>
+            }),
             Box::new(|_config| Ok("pw".to_string())),
+            std::collections::HashSet::new(),
+            crate::token_store::TokenStore::new(std::time::Duration::from_secs(300)),
         )
     }
 
@@ -249,7 +254,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tools_list_returns_four_tools() {
+    async fn tools_list_returns_six_tools() {
         let mut host = empty_host();
         let response = handle_request(
             request(
@@ -275,7 +280,9 @@ mod tests {
                 "list_connections",
                 "list_tables",
                 "describe_table",
-                "run_query"
+                "run_query",
+                "propose_write",
+                "apply_write"
             ]
         );
     }

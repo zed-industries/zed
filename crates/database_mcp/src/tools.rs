@@ -1,11 +1,15 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Instant;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use database_client::{
     ColumnInfo, ConnectionConfig, DatabaseClient, ForeignKey, IndexInfo, QueryResult, TableRef,
-    TableStructure,
+    TableStructure, WriteKind, WriteOutcome, WritePreview,
 };
+
+use crate::token_store::{Proposal, TokenStore};
+use crate::write_sql::{classify_dml, extract_update_target};
 
 /// Constructs a [`DatabaseClient`] for a connection, target database, and the
 /// already-resolved password. The password is resolved once by the host (via
@@ -29,7 +33,20 @@ pub struct ToolHost {
     // contains "::".
     clients: HashMap<(String, String), Arc<dyn DatabaseClient>>,
     client_factory: ClientFactory,
+    /// Builds a dedicated `SessionMode::ReadWrite` client for `propose_write`
+    /// and `apply_write`. This is deliberately never merged into `clients`
+    /// (the read-only cache used by `run_query`/`list_*`/`describe_table`): a
+    /// cached read-only client must never be handed to `commit_write`, so
+    /// writes always go through a client built fresh via this factory instead
+    /// of being looked up by `client()`.
+    write_client_factory: ClientFactory,
     password_source: PasswordSource,
+    /// Connection names for which `propose_write`/`apply_write` are permitted
+    /// (mirrors each connection's `allow_mcp_writes` setting). Checked both in
+    /// `propose_write` and again in `apply_write`, since the setting could
+    /// change between the two calls.
+    write_allowed: HashSet<String>,
+    tokens: TokenStore,
 }
 
 impl ToolHost {
@@ -37,14 +54,20 @@ impl ToolHost {
         connections: Vec<ConnectionConfig>,
         max_rows: usize,
         client_factory: ClientFactory,
+        write_client_factory: ClientFactory,
         password_source: PasswordSource,
+        write_allowed: HashSet<String>,
+        tokens: TokenStore,
     ) -> Self {
         Self {
             connections,
             max_rows,
             clients: HashMap::new(),
             client_factory,
+            write_client_factory,
             password_source,
+            write_allowed,
+            tokens,
         }
     }
 
@@ -124,6 +147,48 @@ impl ToolHost {
                     "required": ["connection", "sql"],
                     "additionalProperties": false
                 }
+            },
+            {
+                "name": "propose_write",
+                "description": "Preview a single INSERT, UPDATE, or DELETE statement (DML only — no DDL, no SELECT/WITH). \
+                    The statement is run inside a transaction that is always rolled back, so nothing is committed. \
+                    On success, returns a one-shot token valid for 5 minutes; call apply_write with that token to \
+                    actually commit the statement. Only permitted for connections with allow_mcp_writes enabled.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "connection": {
+                            "type": "string",
+                            "description": "Name of a configured connection with allow_mcp_writes enabled."
+                        },
+                        "database": {
+                            "type": "string",
+                            "description": "Database to write to. Defaults to the connection's initial database."
+                        },
+                        "sql": {
+                            "type": "string",
+                            "description": "A single INSERT, UPDATE, or DELETE statement."
+                        }
+                    },
+                    "required": ["connection", "sql"],
+                    "additionalProperties": false
+                }
+            },
+            {
+                "name": "apply_write",
+                "description": "Commits the statement previously previewed by propose_write, identified by its token. \
+                    Each token may be applied exactly once and expires 5 minutes after propose_write returned it.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "token": {
+                            "type": "string",
+                            "description": "The one-shot token returned by propose_write."
+                        }
+                    },
+                    "required": ["token"],
+                    "additionalProperties": false
+                }
             }
         ])
     }
@@ -141,6 +206,8 @@ impl ToolHost {
             "list_tables" => self.list_tables(arguments).await,
             "describe_table" => self.describe_table(arguments).await,
             "run_query" => self.run_query(arguments).await,
+            "propose_write" => self.propose_write(arguments).await,
+            "apply_write" => self.apply_write(arguments).await,
             other => Err(anyhow!("unknown tool: {other}")),
         }
     }
@@ -232,6 +299,76 @@ impl ToolHost {
         Ok(query_result_to_json(&result))
     }
 
+    async fn propose_write(&mut self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
+        let connection_name = required_str(arguments, "connection")?;
+        if !self.write_allowed.contains(connection_name) {
+            bail!(
+                "writes are disabled for connection `{connection_name}`; set allow_mcp_writes: true in settings"
+            );
+        }
+        let config = self.connection(connection_name)?.clone();
+        let database = optional_str(arguments, "database")
+            .unwrap_or(config.database.as_str())
+            .to_string();
+        let sql = required_str(arguments, "sql")?.to_string();
+
+        let kind = classify_dml(&sql)?;
+        let update_target = match kind {
+            WriteKind::Update => extract_update_target(&sql).map(|(schema, name)| TableRef {
+                database: database.clone(),
+                schema,
+                name,
+            }),
+            WriteKind::Insert | WriteKind::Delete => None,
+        };
+
+        let client = self.write_client(&config, &database)?;
+        let preview = client
+            .preview_write(&database, &sql, kind, update_target, self.max_rows)
+            .await?;
+
+        let token = self.tokens.insert(
+            Proposal {
+                connection: connection_name.to_string(),
+                database: database.clone(),
+                sql: sql.clone(),
+                previewed_rows_affected: preview.rows_affected,
+            },
+            Instant::now(),
+        );
+
+        Ok(propose_write_result_to_json(
+            &token,
+            kind,
+            &preview,
+            self.tokens.ttl_seconds(),
+        ))
+    }
+
+    async fn apply_write(&mut self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
+        let token = required_str(arguments, "token")?;
+        let Some(proposal) = self.tokens.take(token, Instant::now()) else {
+            bail!("unknown or expired token; call propose_write again");
+        };
+        if !self.write_allowed.contains(&proposal.connection) {
+            bail!(
+                "writes are disabled for connection `{}`; set allow_mcp_writes: true in settings",
+                proposal.connection
+            );
+        }
+        let config = self.connection(&proposal.connection)?.clone();
+
+        let client = self.write_client(&config, &proposal.database)?;
+        let outcome = client
+            .commit_write(&proposal.database, &proposal.sql)
+            .await?;
+
+        Ok(apply_write_result_to_json(
+            &outcome,
+            proposal.previewed_rows_affected,
+        ))
+    }
+
     /// Looks up a configured connection by name.
     fn connection(&self, name: &str) -> Result<&ConnectionConfig> {
         self.connections
@@ -261,6 +398,23 @@ impl ToolHost {
         let client = (self.client_factory)(config, database, &password);
         self.clients.insert(key, client.clone());
         Ok(client)
+    }
+
+    /// Builds a dedicated `SessionMode::ReadWrite` client for `propose_write`
+    /// and `apply_write`. Deliberately not cached and never drawn from
+    /// `self.clients`: that cache is populated exclusively by `client()` via
+    /// `client_factory`, which `main.rs` hard-codes to `SessionMode::ReadOnly`.
+    /// Reusing it here would let a write tool commit through a client the
+    /// server believes is read-only, so writes always go through this
+    /// separate factory instead.
+    fn write_client(
+        &self,
+        config: &ConnectionConfig,
+        database: &str,
+    ) -> Result<Arc<dyn DatabaseClient>> {
+        let password = (self.password_source)(config)
+            .with_context(|| format!("resolving password for connection {}", config.name))?;
+        Ok((self.write_client_factory)(config, database, &password))
     }
 }
 
@@ -351,12 +505,52 @@ fn query_result_to_json(result: &QueryResult) -> serde_json::Value {
     })
 }
 
+fn write_kind_str(kind: WriteKind) -> &'static str {
+    match kind {
+        WriteKind::Insert => "insert",
+        WriteKind::Update => "update",
+        WriteKind::Delete => "delete",
+    }
+}
+
+fn propose_write_result_to_json(
+    token: &str,
+    kind: WriteKind,
+    preview: &WritePreview,
+    expires_in_seconds: u64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "token": token,
+        "statement_kind": write_kind_str(kind),
+        "rows_affected": preview.rows_affected,
+        "columns": preview.columns,
+        "before": preview.before,
+        "after": preview.after,
+        "preview_truncated": preview.preview_truncated,
+        "expires_in_seconds": expires_in_seconds,
+        "note": preview.note,
+    })
+}
+
+fn apply_write_result_to_json(
+    outcome: &WriteOutcome,
+    previewed_rows_affected: u64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "rows_affected": outcome.rows_affected,
+        "columns": outcome.columns,
+        "returned": outcome.returned,
+        "rows_affected_matches_preview": outcome.rows_affected == previewed_rows_affected,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use database_client::fake::FakeDatabaseClient;
-    use database_client::{QueryResult, TableInfo};
+    use database_client::{QueryResult, TableInfo, WriteOutcome, WritePreview};
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     fn config(name: &str) -> ConnectionConfig {
         ConnectionConfig {
@@ -369,7 +563,9 @@ mod tests {
     }
 
     /// Builds a host whose factory returns the supplied fake client and whose
-    /// password source always succeeds.
+    /// password source always succeeds. Writes are disabled for every
+    /// connection (empty `write_allowed`); use `host_with_writes` for tests
+    /// that exercise `propose_write`/`apply_write`.
     fn host_with(
         connections: Vec<ConnectionConfig>,
         max_rows: usize,
@@ -380,8 +576,40 @@ mod tests {
         ToolHost::new(
             connections,
             max_rows,
+            Box::new({
+                let fake = fake.clone();
+                move |_config, _database, _password| fake.clone() as Arc<dyn DatabaseClient>
+            }),
             Box::new(move |_config, _database, _password| fake.clone() as Arc<dyn DatabaseClient>),
             Box::new(|_config| Ok("pw".to_string())),
+            HashSet::new(),
+            TokenStore::new(Duration::from_secs(300)),
+        )
+    }
+
+    /// Builds a host like `host_with`, but with `write_allowed` populated and
+    /// a dedicated fake client for the write factory (`write_fake`), separate
+    /// from the read-only factory's client (`read_fake`), so tests can assert
+    /// that writes never reach the read-only client and vice versa.
+    fn host_with_writes(
+        connections: Vec<ConnectionConfig>,
+        max_rows: usize,
+        read_fake: Arc<FakeDatabaseClient>,
+        write_fake: Arc<FakeDatabaseClient>,
+        write_allowed: HashSet<String>,
+    ) -> ToolHost {
+        ToolHost::new(
+            connections,
+            max_rows,
+            Box::new(move |_config, _database, _password| {
+                read_fake.clone() as Arc<dyn DatabaseClient>
+            }),
+            Box::new(move |_config, _database, _password| {
+                write_fake.clone() as Arc<dyn DatabaseClient>
+            }),
+            Box::new(|_config| Ok("pw".to_string())),
+            write_allowed,
+            TokenStore::new(Duration::from_secs(300)),
         )
     }
 
@@ -559,8 +787,14 @@ mod tests {
         let mut host = ToolHost::new(
             vec![config("primary")],
             200,
+            Box::new({
+                let fake = fake.clone();
+                move |_config, _database, _password| fake.clone() as Arc<dyn DatabaseClient>
+            }),
             Box::new(move |_config, _database, _password| fake.clone() as Arc<dyn DatabaseClient>),
             Box::new(|config| Err(anyhow!("no saved password for connection {}", config.name))),
+            HashSet::new(),
+            TokenStore::new(Duration::from_secs(300)),
         );
         let error = host
             .call(
@@ -587,7 +821,12 @@ mod tests {
                 *counter.lock().unwrap() += 1;
                 Arc::new(FakeDatabaseClient::new()) as Arc<dyn DatabaseClient>
             }),
+            Box::new(|_config, _database, _password| {
+                Arc::new(FakeDatabaseClient::new()) as Arc<dyn DatabaseClient>
+            }),
             Box::new(|_config| Ok("pw".to_string())),
+            HashSet::new(),
+            TokenStore::new(Duration::from_secs(300)),
         );
 
         host.call(
@@ -631,10 +870,15 @@ mod tests {
                 *recorder.lock().unwrap() = Some(password.to_string());
                 Arc::new(FakeDatabaseClient::new()) as Arc<dyn DatabaseClient>
             }),
+            Box::new(|_config, _database, _password| {
+                Arc::new(FakeDatabaseClient::new()) as Arc<dyn DatabaseClient>
+            }),
             Box::new(move |_config| {
                 *counter.lock().unwrap() += 1;
                 Ok("s3cret".to_string())
             }),
+            HashSet::new(),
+            TokenStore::new(Duration::from_secs(300)),
         );
 
         host.call(
@@ -671,7 +915,12 @@ mod tests {
                 *counter.lock().unwrap() += 1;
                 Arc::new(FakeDatabaseClient::new()) as Arc<dyn DatabaseClient>
             }),
+            Box::new(|_config, _database, _password| {
+                Arc::new(FakeDatabaseClient::new()) as Arc<dyn DatabaseClient>
+            }),
             Box::new(|_config| Ok("pw".to_string())),
+            HashSet::new(),
+            TokenStore::new(Duration::from_secs(300)),
         );
 
         // (prod::analytics, app) — the connection's initial database.
@@ -690,5 +939,365 @@ mod tests {
         .unwrap();
 
         assert_eq!(*build_count.lock().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn propose_write_on_non_allowed_connection_is_error() {
+        let read_fake = Arc::new(FakeDatabaseClient::new());
+        let write_fake = Arc::new(FakeDatabaseClient::new());
+        let mut host = host_with_writes(
+            vec![config("primary")],
+            200,
+            read_fake,
+            write_fake,
+            HashSet::new(), // writes not allowed for "primary"
+        );
+
+        let error = host
+            .call(
+                "propose_write",
+                &serde_json::json!({ "connection": "primary", "sql": "DELETE FROM t WHERE id=1" }),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("writes are disabled"));
+    }
+
+    #[tokio::test]
+    async fn propose_write_of_select_is_error() {
+        let read_fake = Arc::new(FakeDatabaseClient::new());
+        let write_fake = Arc::new(FakeDatabaseClient::new());
+        let mut host = host_with_writes(
+            vec![config("primary")],
+            200,
+            read_fake,
+            write_fake,
+            HashSet::from(["primary".to_string()]),
+        );
+
+        let error = host
+            .call(
+                "propose_write",
+                &serde_json::json!({ "connection": "primary", "sql": "SELECT * FROM t" }),
+            )
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("INSERT/UPDATE/DELETE"));
+    }
+
+    #[tokio::test]
+    async fn propose_write_happy_path_returns_token_and_preview() {
+        let read_fake = Arc::new(FakeDatabaseClient::new());
+        let mut write_fake = FakeDatabaseClient::new();
+        write_fake.write_preview = WritePreview {
+            rows_affected: 1,
+            columns: vec!["id".into(), "name".into()],
+            before: Some(vec![vec![Some("1".into()), Some("old".into())]]),
+            after: Some(vec![vec![Some("1".into()), Some("new".into())]]),
+            preview_truncated: false,
+            note: None,
+        };
+        let write_fake = Arc::new(write_fake);
+        let mut host = host_with_writes(
+            vec![config("primary")],
+            200,
+            read_fake,
+            write_fake.clone(),
+            HashSet::from(["primary".to_string()]),
+        );
+
+        let sql = "UPDATE users SET name = 'new' WHERE id = 1";
+        let result = host
+            .call(
+                "propose_write",
+                &serde_json::json!({ "connection": "primary", "sql": sql }),
+            )
+            .await
+            .unwrap();
+
+        assert!(result["token"].as_str().is_some());
+        assert_eq!(result["statement_kind"], "update");
+        assert_eq!(result["rows_affected"], 1);
+        assert_eq!(result["columns"], serde_json::json!(["id", "name"]));
+        assert_eq!(result["before"], serde_json::json!([["1", "old"]]));
+        assert_eq!(result["after"], serde_json::json!([["1", "new"]]));
+        assert_eq!(result["preview_truncated"], false);
+        assert_eq!(result["expires_in_seconds"], 300);
+        assert!(result["note"].is_null());
+
+        assert!(
+            write_fake
+                .calls()
+                .iter()
+                .any(|call| call.contains(sql) && call.contains("kind=update"))
+        );
+    }
+
+    #[tokio::test]
+    async fn propose_write_insert_has_after_only() {
+        let read_fake = Arc::new(FakeDatabaseClient::new());
+        let mut write_fake = FakeDatabaseClient::new();
+        write_fake.write_preview = WritePreview {
+            rows_affected: 1,
+            columns: vec!["id".into()],
+            before: None,
+            after: Some(vec![vec![Some("4".into())]]),
+            preview_truncated: false,
+            note: None,
+        };
+        let write_fake = Arc::new(write_fake);
+        let mut host = host_with_writes(
+            vec![config("primary")],
+            200,
+            read_fake,
+            write_fake,
+            HashSet::from(["primary".to_string()]),
+        );
+
+        let result = host
+            .call(
+                "propose_write",
+                &serde_json::json!({ "connection": "primary", "sql": "INSERT INTO t (id) VALUES (4)" }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result["statement_kind"], "insert");
+        assert!(result["before"].is_null());
+        assert_eq!(result["after"], serde_json::json!([["4"]]));
+    }
+
+    #[tokio::test]
+    async fn propose_write_delete_has_before_only() {
+        let read_fake = Arc::new(FakeDatabaseClient::new());
+        let mut write_fake = FakeDatabaseClient::new();
+        write_fake.write_preview = WritePreview {
+            rows_affected: 1,
+            columns: vec!["id".into()],
+            before: Some(vec![vec![Some("1".into())]]),
+            after: None,
+            preview_truncated: false,
+            note: None,
+        };
+        let write_fake = Arc::new(write_fake);
+        let mut host = host_with_writes(
+            vec![config("primary")],
+            200,
+            read_fake,
+            write_fake,
+            HashSet::from(["primary".to_string()]),
+        );
+
+        let result = host
+            .call(
+                "propose_write",
+                &serde_json::json!({ "connection": "primary", "sql": "DELETE FROM t WHERE id=1" }),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result["statement_kind"], "delete");
+        assert_eq!(result["before"], serde_json::json!([["1"]]));
+        assert!(result["after"].is_null());
+    }
+
+    #[tokio::test]
+    async fn apply_write_with_unknown_token_is_error() {
+        let read_fake = Arc::new(FakeDatabaseClient::new());
+        let write_fake = Arc::new(FakeDatabaseClient::new());
+        let mut host = host_with_writes(
+            vec![config("primary")],
+            200,
+            read_fake,
+            write_fake,
+            HashSet::from(["primary".to_string()]),
+        );
+
+        let error = host
+            .call(
+                "apply_write",
+                &serde_json::json!({ "token": "bogus-token" }),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("unknown or expired token"));
+    }
+
+    #[tokio::test]
+    async fn apply_write_commits_and_is_one_shot() {
+        let read_fake = Arc::new(FakeDatabaseClient::new());
+        let mut write_fake = FakeDatabaseClient::new();
+        write_fake.write_preview = WritePreview {
+            rows_affected: 1,
+            columns: vec!["id".into()],
+            before: Some(vec![vec![Some("1".into())]]),
+            after: None,
+            preview_truncated: false,
+            note: None,
+        };
+        write_fake.write_outcome = WriteOutcome {
+            rows_affected: 1,
+            columns: vec!["id".into()],
+            returned: vec![vec![Some("1".into())]],
+        };
+        let write_fake = Arc::new(write_fake);
+        let mut host = host_with_writes(
+            vec![config("primary")],
+            200,
+            read_fake,
+            write_fake.clone(),
+            HashSet::from(["primary".to_string()]),
+        );
+
+        let sql = "DELETE FROM t WHERE id=1";
+        let proposal = host
+            .call(
+                "propose_write",
+                &serde_json::json!({ "connection": "primary", "sql": sql }),
+            )
+            .await
+            .unwrap();
+        let token = proposal["token"].as_str().unwrap().to_string();
+
+        let result = host
+            .call("apply_write", &serde_json::json!({ "token": token }))
+            .await
+            .unwrap();
+        assert_eq!(result["rows_affected"], 1);
+        assert_eq!(result["columns"], serde_json::json!(["id"]));
+        assert_eq!(result["returned"], serde_json::json!([["1"]]));
+        assert_eq!(result["rows_affected_matches_preview"], true);
+        assert!(
+            write_fake
+                .calls()
+                .iter()
+                .any(|call| call == &format!("commit_write app sql={sql}"))
+        );
+
+        // A second apply with the same (now-consumed) token must fail.
+        let error = host
+            .call("apply_write", &serde_json::json!({ "token": token }))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("unknown or expired token"));
+    }
+
+    #[tokio::test]
+    async fn apply_write_rechecks_gate_after_propose() {
+        let read_fake = Arc::new(FakeDatabaseClient::new());
+        let write_fake = Arc::new(FakeDatabaseClient::new());
+        let mut host = host_with_writes(
+            vec![config("primary")],
+            200,
+            read_fake,
+            write_fake,
+            HashSet::from(["primary".to_string()]),
+        );
+
+        let proposal = host
+            .call(
+                "propose_write",
+                &serde_json::json!({ "connection": "primary", "sql": "DELETE FROM t WHERE id=1" }),
+            )
+            .await
+            .unwrap();
+        let token = proposal["token"].as_str().unwrap().to_string();
+
+        // Flip the gate off between propose and apply.
+        host.write_allowed.clear();
+
+        let error = host
+            .call("apply_write", &serde_json::json!({ "token": token }))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("writes are disabled"));
+    }
+
+    #[tokio::test]
+    async fn apply_write_reports_rows_affected_mismatch() {
+        let read_fake = Arc::new(FakeDatabaseClient::new());
+        let mut write_fake = FakeDatabaseClient::new();
+        write_fake.write_preview = WritePreview {
+            rows_affected: 3,
+            columns: vec!["id".into()],
+            before: Some(vec![vec![Some("1".into())]]),
+            after: None,
+            preview_truncated: false,
+            note: None,
+        };
+        write_fake.write_outcome = WriteOutcome {
+            rows_affected: 2,
+            columns: vec!["id".into()],
+            returned: vec![vec![Some("1".into())], vec![Some("2".into())]],
+        };
+        let write_fake = Arc::new(write_fake);
+        let mut host = host_with_writes(
+            vec![config("primary")],
+            200,
+            read_fake,
+            write_fake,
+            HashSet::from(["primary".to_string()]),
+        );
+
+        let proposal = host
+            .call(
+                "propose_write",
+                &serde_json::json!({ "connection": "primary", "sql": "DELETE FROM t WHERE id>0" }),
+            )
+            .await
+            .unwrap();
+        let token = proposal["token"].as_str().unwrap().to_string();
+
+        let result = host
+            .call("apply_write", &serde_json::json!({ "token": token }))
+            .await
+            .unwrap();
+        assert_eq!(result["rows_affected"], 2);
+        assert_eq!(result["rows_affected_matches_preview"], false);
+    }
+
+    #[tokio::test]
+    async fn propose_write_never_reaches_read_only_client() {
+        // Guards the safety-critical split: propose_write/apply_write must use
+        // the write_client_factory, never the read-only client() cache used by
+        // run_query/list_*/describe_table.
+        let read_fake = Arc::new(FakeDatabaseClient::new());
+        let write_fake = Arc::new(FakeDatabaseClient::new());
+        let mut host = host_with_writes(
+            vec![config("primary")],
+            200,
+            read_fake.clone(),
+            write_fake.clone(),
+            HashSet::from(["primary".to_string()]),
+        );
+
+        let proposal = host
+            .call(
+                "propose_write",
+                &serde_json::json!({ "connection": "primary", "sql": "DELETE FROM t WHERE id=1" }),
+            )
+            .await
+            .unwrap();
+        let token = proposal["token"].as_str().unwrap().to_string();
+        host.call("apply_write", &serde_json::json!({ "token": token }))
+            .await
+            .unwrap();
+
+        assert!(
+            read_fake.calls().is_empty(),
+            "read-only client must not be touched by write tools"
+        );
+        assert!(
+            write_fake
+                .calls()
+                .iter()
+                .any(|call| call.starts_with("preview_write"))
+        );
+        assert!(
+            write_fake
+                .calls()
+                .iter()
+                .any(|call| call.starts_with("commit_write"))
+        );
     }
 }

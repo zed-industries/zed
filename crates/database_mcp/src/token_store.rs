@@ -5,12 +5,6 @@
 //! one [`TokenStore::take`] call within the configured TTL; after that (or
 //! once expired) it is gone. Storage lives in the MCP server process's
 //! memory only — nothing here is persisted across restarts.
-//!
-//! `#[allow(dead_code)]` below is temporary: nothing calls into this module
-//! yet because the `propose_write`/`apply_write` tools that use it land in
-//! task 5 (`.superpowers/sdd/task-5-brief.md`). Remove the attribute when
-//! that call site is wired up.
-#![allow(dead_code)]
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};

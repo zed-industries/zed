@@ -22,6 +22,7 @@ use tokio::process::Command;
 use tokio::runtime::Handle;
 
 use crate::protocol::{RpcRequest, RpcResponse, handle_request, parse_error};
+use crate::token_store::TokenStore;
 use crate::tools::{ClientFactory, PasswordSource, ToolHost};
 
 /// Default when `database.mcp_max_rows` is absent from settings.
@@ -42,12 +43,38 @@ async fn main() -> Result<()> {
         statement_timeout.as_secs()
     );
 
+    let write_allowed = parse_write_allowed(&settings);
+
     let client_factory: ClientFactory = Box::new(move |config, database, password| {
-        build_client(config, database, password, statement_timeout)
+        build_client(
+            config,
+            database,
+            password,
+            statement_timeout,
+            SessionMode::ReadOnly,
+        )
+    });
+    let write_client_factory: ClientFactory = Box::new(move |config, database, password| {
+        build_client(
+            config,
+            database,
+            password,
+            statement_timeout,
+            SessionMode::ReadWrite,
+        )
     });
     let password_source: PasswordSource = Box::new(resolve_password);
+    let tokens = TokenStore::new(Duration::from_secs(300));
 
-    let mut host = ToolHost::new(connections, max_rows, client_factory, password_source);
+    let mut host = ToolHost::new(
+        connections,
+        max_rows,
+        client_factory,
+        write_client_factory,
+        password_source,
+        write_allowed,
+        tokens,
+    );
 
     run_stdio_loop(&mut host).await
 }
@@ -138,13 +165,10 @@ fn parse_connections(settings: &serde_json::Value) -> Vec<ConnectionConfig> {
 }
 
 /// Extracts the names of connections whose `allow_mcp_writes` setting is
-/// `true`. The `apply_write` tool consults this to decide whether it may
-/// commit DML against a given connection; every other connection stays
-/// read-only. An absent `database.connections` section yields an empty set.
-///
-/// Not yet wired into `main()`: the `propose_write`/`apply_write` tools that
-/// consume this land in a later task, which should remove this `allow`.
-#[allow(dead_code)]
+/// `true`. The `propose_write`/`apply_write` tools consult this to decide
+/// whether they may preview/commit DML against a given connection; every
+/// other connection stays read-only. An absent `database.connections` section
+/// yields an empty set.
 fn parse_write_allowed(settings: &serde_json::Value) -> std::collections::HashSet<String> {
     let Some(connections) = settings
         .get("database")
@@ -183,8 +207,12 @@ fn parse_query_timeout(settings: &serde_json::Value) -> Duration {
     Duration::from_secs(seconds)
 }
 
-/// Builds a read-only [`PostgresClient`] targeting `database`. MCP sessions must
-/// never write, so the mode is hard-coded to [`SessionMode::ReadOnly`].
+/// Builds a [`PostgresClient`] targeting `database` in the given `mode`.
+/// `run_query`/`list_*`/`describe_table` always pass [`SessionMode::ReadOnly`]
+/// (via `client_factory`); only the dedicated `write_client_factory` used by
+/// `propose_write`/`apply_write` passes [`SessionMode::ReadWrite`]. The two
+/// factories are never interchanged, so a cached read-only client can never be
+/// used to commit a write.
 ///
 /// The password is resolved once by the host and passed in here; we never
 /// re-resolve it (that would query the keychain twice and could silently swallow
@@ -196,6 +224,7 @@ fn build_client(
     database: &str,
     password: &str,
     statement_timeout: Duration,
+    mode: SessionMode,
 ) -> Arc<dyn DatabaseClient> {
     let mut config = config.clone();
     database.clone_into(&mut config.database);
@@ -203,7 +232,7 @@ fn build_client(
         config,
         password.to_string(),
         statement_timeout,
-        SessionMode::ReadOnly,
+        mode,
     ))
 }
 

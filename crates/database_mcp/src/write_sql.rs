@@ -7,12 +7,6 @@
 //! exactly one INSERT/UPDATE/DELETE statement — and must not be fooled by
 //! comments, string/identifier-quoted content, or statement separators
 //! embedded in literals.
-//!
-//! `#[allow(dead_code)]` below is temporary: nothing calls into this module
-//! yet because the `propose_write`/`apply_write` tools that use it land in
-//! task 5 (`.superpowers/sdd/task-4-brief.md`). Remove the attribute when
-//! that call site is wired up.
-#![allow(dead_code)]
 
 use anyhow::{Result, bail};
 
