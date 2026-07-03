@@ -268,13 +268,18 @@ impl Render for TitleBar {
                 };
 
                 if let Some(repo_name) = display_name.and_then(|n| n.to_str()) {
-                    let name = if let Ok(relative) =
-                        worktree_abs_path.strip_prefix(&*repo.work_directory_abs_path)
-                    {
-                        if relative.as_os_str().is_empty() {
-                            repo_name.to_string()
+                    let visible_worktrees_in_repo = self.visible_worktrees_in_repository(repo, cx);
+                    let name = if visible_worktrees_in_repo == 1 {
+                        if let Ok(relative) =
+                            worktree_abs_path.strip_prefix(&*repo.work_directory_abs_path)
+                        {
+                            if relative.as_os_str().is_empty() {
+                                repo_name.to_string()
+                            } else {
+                                format!("{}/{}", repo_name, relative.display())
+                            }
                         } else {
-                            format!("{}/{}", repo_name, relative.display())
+                            repo_name.to_string()
                         }
                     } else {
                         repo_name.to_string()
@@ -574,6 +579,22 @@ impl TitleBar {
             .cloned()
     }
 
+    fn visible_worktrees_in_repository(
+        &self,
+        repository: &project::git_store::Repository,
+        cx: &App,
+    ) -> usize {
+        let repo_path = &repository.work_directory_abs_path;
+        self.project
+            .read(cx)
+            .visible_worktrees(cx)
+            .filter(|worktree| {
+                let worktree_path = worktree.read(cx).abs_path();
+                worktree_path == *repo_path || worktree_path.starts_with(repo_path.as_ref())
+            })
+            .count()
+    }
+
     fn render_remote_project_connection(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let workspace = self.workspace.clone();
 
@@ -734,13 +755,13 @@ impl TitleBar {
             .get(&host_user.legacy_id)?;
 
         Some(
-            Button::new("project_owner_trigger", host_user.github_login.clone())
+            Button::new("project_owner_trigger", host_user.username.clone())
                 .color(Color::Player(participant_index.0))
                 .label_size(LabelSize::Small)
                 .tooltip(move |_, cx| {
                     let tooltip_title = format!(
                         "{} is sharing this project. Click to follow.",
-                        host_user.github_login
+                        host_user.username
                     );
 
                     Tooltip::with_meta(tooltip_title, None, "Click to Follow", cx)
@@ -1195,7 +1216,7 @@ impl TitleBar {
         let user = user_store.read(cx).current_user();
 
         let user_avatar = user.as_ref().map(|u| u.avatar_uri.clone());
-        let user_login = user.as_ref().map(|u| u.github_login.clone());
+        let username = user.as_ref().map(|u| u.username.clone());
 
         let is_signed_in = user.is_some();
 
@@ -1230,7 +1251,7 @@ impl TitleBar {
                 }
             });
 
-            ButtonLike::new("user-menu").child(
+            ButtonLike::new("user-menu").aria_label("User menu").child(
                 h_flex()
                     .when_some(business_organization, |this, organization| {
                         this.gap_2()
@@ -1240,13 +1261,14 @@ impl TitleBar {
             )
         } else {
             ButtonLike::new("user-menu")
+                .aria_label("User menu")
                 .child(Icon::new(IconName::ChevronDown).size(IconSize::Small))
         };
 
         PopoverMenu::new("user-menu")
             .trigger(trigger)
             .menu(move |window, cx| {
-                let user_login = user_login.clone();
+                let username = username.clone();
                 let current_organization = current_organization.clone();
                 let organizations = organizations.clone();
                 let user_store = user_store.clone();
@@ -1260,15 +1282,15 @@ impl TitleBar {
 
                 ContextMenu::build(window, cx, |menu, _, _cx| {
                     menu.when(is_signed_in, |this| {
-                        let user_login = user_login.clone();
+                        let username = username.clone();
                         this.custom_entry(
                             move |_window, _cx| {
-                                let user_login = user_login.clone().unwrap_or_default();
+                                let username = username.clone().unwrap_or_default();
 
                                 h_flex()
                                     .w_full()
                                     .justify_between()
-                                    .child(Label::new(user_login))
+                                    .child(Label::new(username))
                                     .into_any_element()
                             },
                             move |_, cx| {

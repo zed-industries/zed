@@ -19,6 +19,10 @@ jobs:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -132,6 +136,10 @@ jobs:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-4x8-ubuntu-2204
     steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -212,6 +220,10 @@ jobs:
       CC: clang
       CXX: clang++
     steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -321,9 +333,10 @@ jobs:
         Copy-Item -Path "./.cargo/ci-config.toml" -Destination "./../.cargo/config.toml"
       shell: pwsh
     - name: steps::setup_node
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
       with:
-        node-version: '20'
+        node-version: '24'
+        check-latest: true
     - name: steps::clear_target_dir_if_large
       run: ./script/clear-target-dir-if-larger-than.ps1 350 200
       shell: pwsh
@@ -356,6 +369,10 @@ jobs:
       CC: clang
       CXX: clang++
     steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -374,9 +391,10 @@ jobs:
     - name: steps::download_wasi_sdk
       run: ./script/download-wasi-sdk
     - name: steps::setup_node
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
       with:
-        node-version: '20'
+        node-version: '24'
+        check-latest: true
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
@@ -425,9 +443,10 @@ jobs:
         cache: rust
         path: ~/.rustup
     - name: steps::setup_node
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
       with:
-        node-version: '20'
+        node-version: '24'
+        check-latest: true
     - name: steps::cargo_install_nextest
       uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: steps::clear_target_dir_if_large
@@ -454,6 +473,10 @@ jobs:
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-16x32-ubuntu-2204
     steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -485,6 +508,10 @@ jobs:
       CC: clang
       CXX: clang++
     steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -529,6 +556,10 @@ jobs:
       CC: clang
       CXX: clang++
     steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -595,6 +626,10 @@ jobs:
     if: needs.orchestrate.outputs.run_tests == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -638,6 +673,10 @@ jobs:
       CC: clang
       CXX: clang++
     steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -672,6 +711,10 @@ jobs:
       CC: clang
       CXX: clang++
     steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -721,6 +764,10 @@ jobs:
     if: needs.orchestrate.outputs.run_licenses == 'true' && github.event_name != 'merge_group'
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -740,6 +787,10 @@ jobs:
     if: needs.orchestrate.outputs.run_action_checks == 'true'
     runs-on: namespace-profile-8x16-ubuntu-2204
     steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
@@ -778,6 +829,10 @@ jobs:
       GIT_COMMITTER_NAME: Protobuf Action
       GIT_COMMITTER_EMAIL: ci@zed.dev
     steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
     - name: steps::checkout_repo
       uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:

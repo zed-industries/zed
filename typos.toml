@@ -20,6 +20,9 @@ extend-exclude = [
     # Suppress false positives in database schema.
     "crates/collab/migrations/20251208000000_test_schema.sql",
 
+    # Vendored JSON schemas from SchemaStore.
+    "crates/json_schema_store/src/schemas/",
+
     # Not our typos.
     "crates/livekit_api/",
     # Vim makes heavy use of partial typing tables.
