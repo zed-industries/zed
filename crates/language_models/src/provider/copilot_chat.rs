@@ -16,7 +16,7 @@ use copilot_chat::{
 use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, Stream, StreamExt};
-use gpui::{AnyView, App, AsyncApp, Entity, Subscription, Task};
+use gpui::{App, AsyncApp, Entity, Subscription, Task};
 use http_client::StatusCode;
 use language::language_settings::all_language_settings;
 use language_model::{
@@ -25,7 +25,8 @@ use language_model::{
     LanguageModelName, LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
-    LanguageModelToolUse, MessageContent, RateLimiter, Role, StopReason, TokenUsage,
+    LanguageModelToolUse, MessageContent, ProviderSettingsView, RateLimiter, Role, StopReason,
+    TokenUsage,
 };
 use settings::SettingsStore;
 use ui::prelude::*;
@@ -176,30 +177,42 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         Task::ready(Err(err.into()))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| {
-            copilot_ui::ConfigurationView::new(
-                |cx| {
-                    CopilotChat::global(cx)
-                        .map(|m| m.read(cx).is_authenticated())
-                        .unwrap_or(false)
-                },
-                copilot_ui::ConfigurationMode::Chat,
-                cx,
-            )
-        })
-        .into()
-    }
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
+        let is_authenticated = self.state.read(cx).is_authenticated(cx);
+        let title = if is_authenticated {
+            None
+        } else {
+            Some("Configure Copilot".into())
+        };
+        let description = if is_authenticated {
+            None
+        } else {
+            Some(language_model::InlineDescription::Text(
+                "Requires an active GitHub Copilot subscription.".into(),
+            ))
+        };
 
-    fn reset_credentials(&self, _cx: &mut App) -> Task<Result<()>> {
-        Task::ready(Err(anyhow!(
-            "Signing out of GitHub Copilot Chat is currently not supported."
-        )))
+        Some(ProviderSettingsView::Inline(
+            language_model::InlineProviderSettings {
+                title,
+                description,
+                create_view: Arc::new(|_window, cx| {
+                    cx.new(|cx| {
+                        copilot_ui::ConfigurationView::new(
+                            |cx| {
+                                CopilotChat::global(cx)
+                                    .map(|m| m.read(cx).is_authenticated())
+                                    .unwrap_or(false)
+                            },
+                            copilot_ui::ConfigurationMode::Chat,
+                            cx,
+                        )
+                        .compact()
+                    })
+                    .into()
+                }),
+            },
+        ))
     }
 }
 
@@ -400,7 +413,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                 request_limiter
                     .stream(async move {
                         let events = stream.await?;
-                        let mapper = AnthropicEventMapper::new();
+                        let mapper = AnthropicEventMapper::new(PROVIDER_NAME);
                         Ok(mapper.map_stream(events).boxed())
                     })
                     .await
@@ -1062,7 +1075,8 @@ fn into_copilot_chat(
                         | MessageContent::ToolUse(_)
                         | MessageContent::RedactedThinking(_)
                         | MessageContent::ToolResult(_)
-                        | MessageContent::Image(_) => None,
+                        | MessageContent::Image(_)
+                        | MessageContent::Compaction(_) => None,
                     }) {
                         buffer.push_str(string);
                     }
@@ -1189,6 +1203,7 @@ fn into_copilot_responses(
         thinking_allowed,
         thinking_effort,
         speed: _,
+        compact_at_tokens: _,
     } = request;
 
     let mut input_items: Vec<responses::ResponseInputItem> = Vec::new();

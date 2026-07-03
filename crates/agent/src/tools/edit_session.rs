@@ -6,7 +6,7 @@ use super::tool_permissions::resolve_creatable_global_skill_path;
 use crate::{Thread, ToolCallEventStream};
 use acp_thread::Diff;
 use action_log::ActionLog;
-use agent_client_protocol::schema::{self as acp, ToolCallLocation, ToolCallUpdateFields};
+use agent_client_protocol::schema::v1::{self as acp, ToolCallLocation, ToolCallUpdateFields};
 use anyhow::Result;
 use collections::HashSet;
 use futures::{FutureExt, channel::oneshot};
@@ -102,11 +102,7 @@ impl std::fmt::Display for EditSessionOutput {
                 if diff.is_empty() {
                     write!(f, "No edits were made.")
                 } else {
-                    write!(
-                        f,
-                        "Edited {}:\n\n```diff\n{diff}\n```",
-                        input_path.display()
-                    )
+                    write!(f, "Edited {} successfully", input_path.display())
                 }
             }
             EditSessionOutput::Error {
@@ -1058,9 +1054,17 @@ async fn resolve_dirty_buffer(
     };
 
     let Some(decision) = decision else {
-        event_stream.update_fields(
-            acp::ToolCallUpdateFields::new().status(acp::ToolCallStatus::InProgress),
-        );
+        let outcome = match mode {
+            EditSessionMode::Edit => acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("save"),
+                acp::PermissionOptionKind::AllowOnce,
+            ),
+            EditSessionMode::Write => acp_thread::SelectedPermissionOutcome::new(
+                acp::PermissionOptionId::new("keep"),
+                acp::PermissionOptionKind::RejectOnce,
+            ),
+        };
+        event_stream.resolve_authorization(outcome);
         return match mode {
             EditSessionMode::Edit => Ok(()),
             EditSessionMode::Write => Err(
