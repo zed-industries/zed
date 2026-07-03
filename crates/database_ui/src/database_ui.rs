@@ -2,6 +2,7 @@ mod connection_modal;
 mod connection_store;
 mod database_panel;
 mod database_settings;
+pub(crate) mod query_state;
 mod sql_query_view;
 mod table_data_view;
 
