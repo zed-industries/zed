@@ -12348,10 +12348,10 @@ dependencies = [
  "google_ai",
  "http_client",
  "language_model_core",
+ "log",
  "schemars 1.0.4",
  "serde",
  "serde_json",
- "strum 0.27.2",
 ]
 
 [[package]]
