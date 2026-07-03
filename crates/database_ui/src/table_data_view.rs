@@ -7,10 +7,13 @@ use database_client::{
     ColumnInfo, DatabaseClient, EditCell, Filter, FilterOp, RowDelete, RowInsert, RowKey,
     RowUpdate, Sort, SortDirection, TableEdits, TableRef, TableStructure,
 };
+use editor::{Editor, EditorEvent, EditorMode};
 use gpui::{
     Anchor, AnyElement, App, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
-    Task, WeakEntity, Window, actions,
+    Subscription, Task, WeakEntity, Window, actions,
 };
+use language::{Buffer, LanguageRegistry};
+use multi_buffer::MultiBuffer;
 use settings::Settings as _;
 use ui::{
     AbsoluteLength, ColumnWidthConfig, ContextMenu, PopoverMenu, ResizableColumnsState, Table,
@@ -22,7 +25,8 @@ use workspace::{Workspace, item::Item};
 
 use crate::DatabaseSettings;
 use crate::UI_MAX_QUERY_ROWS;
-use crate::query_state::{QueryState, render_sql};
+use crate::query_state::{QueryBase, QueryState, render_sql};
+use crate::sql_query_view::RunQuery;
 
 actions!(
     database,
@@ -266,6 +270,20 @@ pub struct TableDataView {
     save_state: SaveState,
     mode: ViewMode,
     query: QueryState,
+    /// The visible, editable SQL bar. Its text is always in sync with either
+    /// the rendered [`QueryState`] (via [`Self::sync_editor_text`]) or, while
+    /// `sql_dirty`, the user's own unsynced edits.
+    sql_editor: Entity<Editor>,
+    /// Whether the SQL bar is collapsed to just its chevron row.
+    sql_bar_collapsed: bool,
+    /// Whether the SQL editor's text has diverged from `render_sql(&self.query)`
+    /// by a real (non-programmatic) edit. While `true` the bar is read-only with
+    /// respect to UI-driven query mutations (sort/filter/paging), since applying
+    /// them would silently discard the user's unsaved edit.
+    sql_dirty: bool,
+    /// Set around programmatic `set_text` calls so the resulting `BufferEdited`
+    /// event is not mistaken for a real user edit.
+    suppress_editor_events: bool,
     /// Wrapped in `Arc` so the render hot path (scroll re-renders) hands the
     /// rows to `uniform_list` by cheap clone instead of deep-copying every cell.
     page: Option<Arc<PageData>>,
@@ -293,6 +311,8 @@ pub struct TableDataView {
     /// The in-flight save task, if any. Held so `save_state == Saving` reliably
     /// gates against concurrent saves and the work is cancelled on drop.
     _save_task: Option<Task<()>>,
+    /// Watches the SQL editor for user edits to maintain `sql_dirty`.
+    _editor_subscription: Subscription,
 }
 
 impl TableDataView {
@@ -301,18 +321,77 @@ impl TableDataView {
         connection: String,
         table: TableRef,
         is_view: bool,
+        language_registry: Option<Arc<LanguageRegistry>>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
         let page_size = DatabaseSettings::get_global(cx).page_size.max(1) as usize;
+        let query = QueryState::for_table(table.clone(), page_size);
+        let initial_sql = render_sql(&query);
         cx.new(|cx| {
             let interaction = cx.new(|cx| TableInteractionState::new(cx));
             let draft_value = cx.new(|cx| InputField::new(window, cx, "Value"));
+
+            let sql_editor = cx.new(|cx| {
+                let buffer = cx.new(|cx| {
+                    let buffer = Buffer::local(initial_sql.clone(), cx);
+                    if let Some(language_registry) = language_registry.clone() {
+                        buffer.set_language_registry(language_registry);
+                    }
+                    buffer
+                });
+                let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+                let mut editor = Editor::new(
+                    EditorMode::AutoHeight {
+                        min_lines: 1,
+                        max_lines: Some(5),
+                    },
+                    buffer,
+                    None,
+                    window,
+                    cx,
+                );
+                editor.set_show_gutter(false, cx);
+                editor
+            });
+            if let Some(language_registry) = language_registry {
+                cx.spawn(async move |this, cx| {
+                    let sql = language_registry.language_for_name("SQL").await.ok();
+                    if sql.is_none() {
+                        log::debug!("SQL language unavailable; SQL bar stays plain text");
+                    }
+                    // Closing the tab before the language resolves releases the
+                    // entity; that is the expected race, so ignore it rather
+                    // than logging a spurious error on every quick close.
+                    this.update(cx, |this: &mut Self, cx| {
+                        if let Some(buffer) =
+                            this.sql_editor.read(cx).buffer().read(cx).as_singleton()
+                        {
+                            buffer.update(cx, |buffer, cx| buffer.set_language(sql, cx));
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+
+            let editor_subscription = cx.subscribe(&sql_editor, |this: &mut Self, _, event, cx| {
+                let EditorEvent::BufferEdited = event else {
+                    return;
+                };
+                if this.suppress_editor_events {
+                    return;
+                }
+                let text = this.sql_editor.read(cx).text(cx);
+                this.sql_dirty = text != render_sql(&this.query);
+                cx.notify();
+            });
+
             let mut view = Self {
                 focus_handle: cx.focus_handle(),
                 client,
                 connection,
-                query: QueryState::for_table(table.clone(), page_size),
+                query,
                 table,
                 is_view,
                 editable: false,
@@ -321,6 +400,10 @@ impl TableDataView {
                 editing_cell: None,
                 save_state: SaveState::Idle,
                 mode: ViewMode::Data,
+                sql_editor,
+                sql_bar_collapsed: false,
+                sql_dirty: false,
+                suppress_editor_events: false,
                 page: None,
                 structure: None,
                 load_state: LoadState::Idle,
@@ -334,6 +417,7 @@ impl TableDataView {
                 _data_task: None,
                 _structure_task: None,
                 _save_task: None,
+                _editor_subscription: editor_subscription,
             };
             view.restart_query(window, cx);
             // Load the structure eagerly alongside the first page so the primary
@@ -387,10 +471,25 @@ impl TableDataView {
         self.mode
     }
 
-    /// Whether rows in this table can be edited (base table with a primary key).
-    /// `false` until the structure has loaded.
+    /// Whether rows in this table can be edited right now: the structure says
+    /// so (base table with a primary key, `false` until the structure has
+    /// loaded), the SQL bar has no unsynced edit, and the query is still
+    /// table-backed rather than a custom query. Custom SQL results are
+    /// read-only because there is no table to address `UPDATE`/`DELETE`
+    /// statements against.
     pub fn editable(&self) -> bool {
-        self.editable
+        self.editable && !self.sql_dirty && matches!(self.query.base, QueryBase::Table(_))
+    }
+
+    /// Whether the SQL bar's text has diverged from `render_sql(&self.query)`
+    /// by a user edit not yet run.
+    pub fn sql_dirty(&self) -> bool {
+        self.sql_dirty
+    }
+
+    /// Whether the SQL bar is collapsed to just its chevron row.
+    pub fn sql_bar_collapsed(&self) -> bool {
+        self.sql_bar_collapsed
     }
 
     /// The buffered, not-yet-applied edits.
@@ -645,7 +744,7 @@ impl TableDataView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.editable || self.is_saving() {
+        if !self.editable() || self.is_saving() {
             return;
         }
         let Some(page) = self.page.clone() else {
@@ -707,7 +806,7 @@ impl TableDataView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.editable || self.is_saving() {
+        if !self.editable() || self.is_saving() {
             return;
         }
         let Some(page) = self.page.clone() else {
@@ -1065,16 +1164,15 @@ impl TableDataView {
         }
     }
 
-    /// The single reload entry point: commits any open cell edit, then renders
-    /// the current [`QueryState`] to SQL and spawns the run. Every mutator that
-    /// changes what is on screen (sort, filter, paging, refresh, save) funnels
-    /// through this one method rather than issuing its own query.
+    /// The single reload entry point: commits any open cell edit, resyncs the
+    /// SQL bar's text from `self.query`, then runs the rendered SQL. Every
+    /// mutator that changes what is on screen (sort, filter, paging, refresh,
+    /// save) funnels through this one method rather than issuing its own query,
+    /// which is what keeps the SQL bar's text always equal to the executed
+    /// query — the invariant this view is built around.
     fn restart_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.finish_editing(cx);
-        // Once the SQL bar (Task 4) owns editable text, this is where the
-        // editor's buffer is resynchronized from `self.query` when the two have
-        // diverged; until then there is no editor to sync, so `window` is only
-        // needed to spawn the task below.
+        self.sync_editor_text(window, cx);
 
         let sql = self.current_sql();
         let database = self.table.database.clone();
@@ -1119,6 +1217,49 @@ impl TableDataView {
             })
             .log_err();
         }));
+    }
+
+    /// Overwrites the SQL bar's text with `render_sql(&self.query)`, under a
+    /// guard that stops the resulting `BufferEdited` event from being taken for
+    /// a real user edit, and clears `sql_dirty`. Called whenever `self.query`
+    /// changes so the visible text and the executed query never drift apart.
+    fn sync_editor_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let sql = self.current_sql();
+        self.suppress_editor_events = true;
+        self.sql_editor.update(cx, |editor, cx| {
+            editor.set_text(sql, window, cx);
+        });
+        self.suppress_editor_events = false;
+        self.sql_dirty = false;
+    }
+
+    /// Runs the SQL bar's current text (`RunQuery`/cmd-enter): commits any open
+    /// cell edit first, then either refreshes the existing query (when the text
+    /// is unchanged from `current_sql()`) or, when the text was hand-edited,
+    /// enters custom-query mode with a fresh overlay and runs that instead.
+    pub fn run_from_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.finish_editing(cx);
+        let text = self.sql_editor.read(cx).text(cx);
+        if text == self.current_sql() {
+            self.restart_query(window, cx);
+            return;
+        }
+        self.query = QueryState::for_custom(text);
+        self.sql_dirty = false;
+        self.restart_query(window, cx);
+    }
+
+    /// Leaves custom-query mode, rebuilding a plain [`QueryState::for_table`]
+    /// query over this tab's table at the current page-size setting, and runs
+    /// it. The SQL bar's text is resynced to the freshly generated SELECT.
+    pub fn reset_to_table_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let page_size = DatabaseSettings::get_global(cx).page_size.max(1) as usize;
+        self.query = QueryState::for_table(self.table.clone(), page_size);
+        self.restart_query(window, cx);
+    }
+
+    fn handle_run_query(&mut self, _: &RunQuery, window: &mut Window, cx: &mut Context<Self>) {
+        self.run_from_editor(window, cx);
     }
 
     fn reload_structure(&mut self, cx: &mut Context<Self>) {
@@ -1276,7 +1417,7 @@ impl TableDataView {
             .is_some_and(|key| self.edits.deletes.contains(key));
 
         let group_name = SharedString::from(format!("db-row-{row_index}"));
-        let delete_button = if self.editable {
+        let delete_button = if self.editable() {
             Some(
                 h_flex()
                     .absolute()
@@ -1364,7 +1505,7 @@ impl TableDataView {
             None => page_value,
         };
 
-        let editable_here = self.editable
+        let editable_here = self.editable()
             && row_key.is_some()
             && column_name
                 .as_ref()
@@ -1466,7 +1607,7 @@ impl TableDataView {
             None => cell.child(Label::new("default").color(Color::Muted).italic()),
         };
 
-        if self.editable {
+        if self.editable() {
             div()
                 .id(ElementId::NamedInteger(
                     SharedString::from(format!("db-insert-cell-{column_index}")),
@@ -1900,8 +2041,13 @@ impl TableDataView {
     /// The bar shown in the tab header area while there are pending edits (a
     /// change count plus Save/Discard), or, for a read-only table, a muted banner
     /// explaining why editing is off. Returns `None` when there is nothing to
-    /// show (an editable table with no pending edits).
+    /// show (an editable table with no pending edits), including while a custom
+    /// query is active — that read-only reason is communicated by the SQL bar's
+    /// own badge instead of this toolbar.
     fn render_edit_toolbar(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        if self.query.is_custom() {
+            return None;
+        }
         if !self.editable {
             // Only explain read-only once the structure has loaded, so the banner
             // does not flash before editability is known.
@@ -2028,6 +2174,94 @@ impl TableDataView {
             )
             .into_any_element()
     }
+
+    /// The visible, editable SQL bar shown under the header: a collapse
+    /// chevron, the SQL editor, and a Run button; in custom-query mode, also a
+    /// read-only badge and a button back to the plain table query.
+    fn render_sql_bar(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let chevron = IconButton::new(
+            "db-sql-bar-collapse",
+            if self.sql_bar_collapsed {
+                IconName::ChevronRight
+            } else {
+                IconName::ChevronDown
+            },
+        )
+        .icon_size(IconSize::Small)
+        .tooltip(Tooltip::text(if self.sql_bar_collapsed {
+            "Expand SQL"
+        } else {
+            "Collapse SQL"
+        }))
+        .on_click(cx.listener(|this, _, _, cx| {
+            this.sql_bar_collapsed = !this.sql_bar_collapsed;
+            cx.notify();
+        }));
+
+        if self.sql_bar_collapsed {
+            return h_flex()
+                .w_full()
+                .px_2()
+                .py_1()
+                .gap_1()
+                .items_center()
+                .border_b_1()
+                .border_color(cx.theme().colors().border)
+                .child(chevron)
+                .child(Label::new("SQL").size(LabelSize::Small).color(Color::Muted))
+                .into_any_element();
+        }
+
+        let run_button = Button::new("db-sql-run", "Run")
+            .size(ButtonSize::Compact)
+            .style(ButtonStyle::Filled)
+            .tooltip(move |_window, cx| Tooltip::for_action("Run Query", &RunQuery, cx))
+            .on_click(cx.listener(|this, _, window, cx| this.run_from_editor(window, cx)));
+
+        let mut bar = v_flex()
+            .key_context("SqlQueryEditor")
+            .on_action(cx.listener(Self::handle_run_query))
+            .w_full()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .child(
+                h_flex()
+                    .w_full()
+                    .px_2()
+                    .py_1()
+                    .gap_2()
+                    .items_start()
+                    .child(chevron)
+                    .child(div().flex_1().child(self.sql_editor.clone()))
+                    .child(run_button),
+            );
+
+        if self.query.is_custom() {
+            bar = bar.child(
+                h_flex()
+                    .w_full()
+                    .px_2()
+                    .pb_1()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Label::new("Custom query · read-only")
+                            .size(LabelSize::Small)
+                            .color(Color::Warning),
+                    )
+                    .child(
+                        Button::new("db-reset-query", "Reset to table query")
+                            .size(ButtonSize::Compact)
+                            .style(ButtonStyle::Subtle)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.reset_to_table_query(window, cx);
+                            })),
+                    ),
+            );
+        }
+
+        bar.into_any_element()
+    }
 }
 
 impl Render for TableDataView {
@@ -2039,6 +2273,7 @@ impl Render for TableDataView {
         };
         let in_data =
             self.mode == ViewMode::Data && !matches!(self.load_state, LoadState::Error(_));
+        let sql_bar = self.render_sql_bar(window, cx);
         let filter_bar = in_data.then(|| self.render_filter_bar(window, cx));
         let edit_toolbar = in_data.then(|| self.render_edit_toolbar(cx)).flatten();
 
@@ -2090,6 +2325,7 @@ impl Render for TableDataView {
                     )))
                     .child(self.render_toggle(cx)),
             )
+            .child(sql_bar)
             .children(edit_toolbar)
             .children(filter_bar)
             .child(v_flex().flex_1().size_full().overflow_hidden().child(body))
@@ -2156,6 +2392,7 @@ pub fn open_table_tab(
     connection: String,
     table: TableRef,
     is_view: bool,
+    language_registry: Option<Arc<LanguageRegistry>>,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -2170,7 +2407,15 @@ pub fn open_table_tab(
                     view.connection() == connection && view.table() == &table
                 });
             let view = existing.unwrap_or_else(|| {
-                TableDataView::new(client, connection, table, is_view, window, cx)
+                TableDataView::new(
+                    client,
+                    connection,
+                    table,
+                    is_view,
+                    language_registry,
+                    window,
+                    cx,
+                )
             });
             workspace.active_pane().update(cx, |pane, cx| {
                 if let Some(index) = pane.index_for_item(&view) {
@@ -2191,12 +2436,13 @@ mod tests {
     use database_client::{
         ColumnInfo, DatabaseClient, Filter, FilterOp, QueryResult, RowKey, SortDirection, TableRef,
     };
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{Focusable, TestAppContext, VisualTestContext};
 
     use super::{
         LoadState, SaveState, TableDataView, ViewMode, all_filter_ops, compute_editable,
         filter_op_label,
     };
+    use crate::query_state::{QueryBase, render_sql};
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -2297,7 +2543,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
 
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
@@ -2329,7 +2575,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -2389,7 +2635,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -2439,7 +2685,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -2489,7 +2735,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -2547,7 +2793,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -2599,12 +2845,13 @@ mod tests {
                 "staging".into(),
                 table_ref(),
                 false,
+                None,
                 window,
                 cx,
             )
         });
         let prod = cx.update(|window, cx| {
-            TableDataView::new(client, "prod".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "prod".into(), table_ref(), false, None, window, cx)
         });
 
         staging.read_with(cx, |staging, _| {
@@ -2636,7 +2883,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -2667,7 +2914,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -2722,7 +2969,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -2844,7 +3091,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| view.structure().is_some())
@@ -2866,7 +3113,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), true, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), true, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| view.structure().is_some())
@@ -2888,7 +3135,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -2913,7 +3160,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -2964,7 +3211,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3007,7 +3254,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), true, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), true, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3034,7 +3281,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3080,7 +3327,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3122,7 +3369,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3156,7 +3403,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3206,7 +3453,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         // The fake fails every call, so structure never loads and editable stays
         // false; buffer the update directly to exercise the save error path.
@@ -3260,7 +3507,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3298,7 +3545,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3358,7 +3605,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3399,7 +3646,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3436,7 +3683,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3498,7 +3745,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3556,7 +3803,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3595,7 +3842,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3644,7 +3891,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3707,7 +3954,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3747,7 +3994,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3779,7 +4026,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3831,7 +4078,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3872,7 +4119,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -3908,6 +4155,336 @@ mod tests {
             // A stale id (the deleted first row) is a harmless no-op.
             view.set_new_cell_value(first, "name", "Ghost".into(), cx);
             assert_eq!(view.edits().inserts().len(), 1, "no phantom row appears");
+        });
+    }
+
+    #[gpui::test]
+    async fn sql_editor_starts_with_current_sql(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        view.read_with(cx, |view, cx| {
+            let editor_text = view.sql_editor.read(cx).text(cx);
+            assert_eq!(
+                editor_text,
+                view.current_sql(),
+                "the SQL bar should start showing the SQL it just ran"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn run_dirty_text_enters_custom_read_only_mode(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+        view.read_with(cx, |view, _| {
+            assert!(view.editable(), "a PK base table should start editable");
+        });
+
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor
+                .update(cx, |editor, cx| editor.set_text("SELECT 1", window, cx));
+        });
+        view.read_with(cx, |view, _| {
+            assert!(
+                view.sql_dirty(),
+                "hand-editing the bar should mark it dirty"
+            );
+            assert!(
+                !view.editable(),
+                "a dirty SQL bar should suspend row editing"
+            );
+        });
+
+        view.update_in(cx, |view, window, cx| view.run_from_editor(window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert!(
+                matches!(view.query().base, QueryBase::Custom(_)),
+                "running dirty text should switch the query to a custom base"
+            );
+            assert!(
+                view.query().filters.is_empty(),
+                "entering custom mode resets the filter overlay"
+            );
+            assert!(
+                view.query().sort.is_none(),
+                "entering custom mode resets the sort overlay"
+            );
+            assert!(!view.sql_dirty(), "running the text clears dirtiness");
+            assert!(
+                !view.editable(),
+                "custom-query results are read-only regardless of structure"
+            );
+            assert!(view.query().is_custom());
+        });
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
+        assert_eq!(last, "SELECT 1");
+    }
+
+    #[gpui::test]
+    async fn ui_sort_in_custom_mode_wraps_subquery(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let mut fake = FakeDatabaseClient::new();
+        fake.query_result = QueryResult {
+            columns: vec!["a".into()],
+            rows: vec![vec![Some("1".into())]],
+            truncated: false,
+            command_tag: None,
+        };
+        let fake = Arc::new(fake);
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        // Enter custom mode with a hand-typed query.
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor.update(cx, |editor, cx| {
+                editor.set_text("SELECT a FROM t", window, cx)
+            });
+            view.run_from_editor(window, cx);
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.query().is_custom() && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        // A UI-driven sort (as if the user clicked a header) mutates the
+        // overlay and wraps the custom text in a subquery.
+        view.update_in(cx, |view, window, cx| view.toggle_sort("a", window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.query().sort.is_some() && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        view.read_with(cx, |view, cx| {
+            let expected = render_sql(view.query());
+            assert_eq!(
+                expected,
+                "SELECT * FROM (\nSELECT a FROM t\n) AS zed_sub ORDER BY \"a\" ASC;"
+            );
+            let editor_text = view.sql_editor.read(cx).text(cx);
+            assert_eq!(
+                editor_text, expected,
+                "the SQL bar must always show exactly the executed query"
+            );
+        });
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
+        assert_eq!(
+            last, "SELECT * FROM (\nSELECT a FROM t\n) AS zed_sub ORDER BY \"a\" ASC;",
+            "the fake should have received the same wrapped SQL"
+        );
+    }
+
+    #[gpui::test]
+    async fn reset_returns_to_generated_table_query(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor
+                .update(cx, |editor, cx| editor.set_text("SELECT 1", window, cx));
+            view.run_from_editor(window, cx);
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.query().is_custom() && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| view.reset_to_table_query(window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                !view.query().is_custom() && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        view.read_with(cx, |view, cx| {
+            assert!(matches!(view.query().base, QueryBase::Table(_)));
+            assert_eq!(
+                view.sql_editor.read(cx).text(cx),
+                r#"SELECT * FROM "public"."users" LIMIT 100 OFFSET 0;"#
+            );
+            assert!(!view.sql_dirty());
+            assert!(view.editable(), "leaving custom mode restores editability");
+        });
+    }
+
+    #[gpui::test]
+    async fn programmatic_sync_does_not_mark_dirty(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let mut fake = FakeDatabaseClient::new();
+        fake.query_result = rows_result(100);
+        let client: Arc<dyn DatabaseClient> = Arc::new(fake);
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        let before = view.read_with(cx, |view, cx| view.sql_editor.read(cx).text(cx));
+
+        view.update_in(cx, |view, window, cx| view.toggle_sort("name", window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.query().sort.is_some() && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        view.read_with(cx, |view, cx| {
+            let after = view.sql_editor.read(cx).text(cx);
+            assert_ne!(before, after, "the sort should change the visible SQL text");
+            assert_eq!(after, view.current_sql());
+            assert!(
+                !view.sql_dirty(),
+                "a programmatic resync must not be mistaken for a user edit"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn run_commits_open_cell_editor_first(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = fake_with_default_rows();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        // Open the inline cell editor on row 0 / column `name` and type a new
+        // value without committing it.
+        view.update_in(cx, |view, window, cx| {
+            view.begin_edit_cell(0, 1, window, cx);
+            let editing = view.editing_cell().expect("edit should be in progress");
+            editing.field.update(cx, |field, cx| {
+                field.set_text("Alicia", window, cx);
+            });
+        });
+
+        // Running the SQL bar (a refresh, since the text is unchanged) must
+        // finish the open cell editor first, committing it by stable RowKey.
+        view.update_in(cx, |view, window, cx| view.run_from_editor(window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert!(
+                view.editing_cell().is_none(),
+                "running should close the inline cell editor"
+            );
+            let key = RowKey {
+                columns: vec!["id".into()],
+                values: vec![Some("1".into())],
+            };
+            let cell = view
+                .edits()
+                .updates()
+                .get(&key)
+                .and_then(|row| row.get("name"))
+                .expect("the in-progress edit should be committed keyed by RowKey");
+            assert_eq!(cell, &database_client::EditCell::Value("Alicia".into()));
+        });
+    }
+
+    #[gpui::test]
+    async fn sql_editor_focus_does_not_trip_cell_editor_confirm_gate(cx: &mut TestAppContext) {
+        // menu::Confirm/Cancel are claimed by the view only when the open cell
+        // editor's own field is focused (see `cell_editor_focused`, checked by
+        // the `on_action` handlers in `Render for TableDataView`). Focusing the
+        // SQL bar's editor instead — e.g. to press cmd-enter for `RunQuery` —
+        // must leave that gate false, or Enter/Escape typed into the SQL bar
+        // would incorrectly commit/cancel an unrelated open cell edit.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = fake_with_default_rows();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.begin_edit_cell(0, 1, window, cx);
+            assert!(
+                view.cell_editor_focused(window, cx),
+                "opening the cell editor should focus its own field"
+            );
+        });
+
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor.update(cx, |editor, cx| {
+                editor.focus_handle(cx).focus(window, cx);
+            });
+            assert!(
+                !view.cell_editor_focused(window, cx),
+                "focusing the SQL bar must not read as the cell editor being focused"
+            );
         });
     }
 }

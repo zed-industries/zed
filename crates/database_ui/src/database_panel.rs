@@ -357,12 +357,19 @@ impl DatabasePanel {
             schema: schema.to_string(),
             name: info.name.clone(),
         };
+        let language_registry = self
+            .workspace
+            .read_with(cx, |workspace, cx| {
+                workspace.project().read(cx).languages().clone()
+            })
+            .log_err();
         crate::open_table_tab(
             &self.workspace,
             client,
             connection.to_string(),
             table,
             info.is_view,
+            language_registry,
             window,
             cx,
         );
