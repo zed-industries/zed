@@ -624,6 +624,16 @@ pub(crate) fn render_buffer_header(
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
+    let buffer_id = for_excerpt.buffer_id();
+    // Element-scoped state rather than a field on `Editor`: it only affects this
+    // header's presentation, and it is dropped as soon as the header stops
+    // rendering (e.g. it scrolls out).
+    let header_hovered_state = window.use_keyed_state(
+        ("buffer-header-hovered", buffer_id.to_proto()),
+        cx,
+        |_, _| false,
+    );
+    let header_hovered = *header_hovered_state.read(cx);
     let editor_read = editor.read(cx);
     let multi_buffer = editor_read.buffer.read(cx);
     let is_read_only = editor_read.read_only(cx);
@@ -637,7 +647,6 @@ pub(crate) fn render_buffer_header(
         None
     };
 
-    let buffer_id = for_excerpt.buffer_id();
     let file_status = multi_buffer
         .all_diff_hunks_expanded()
         .then(|| editor_read.status_for_buffer_id(buffer_id, cx))
@@ -690,6 +699,17 @@ pub(crate) fn render_buffer_header(
 
     let header = div()
         .id(("buffer-header", buffer_id.to_proto()))
+        .on_hover({
+            let header_hovered_state = header_hovered_state.clone();
+            move |hovered, _window, cx| {
+                header_hovered_state.update(cx, |state, cx| {
+                    if *state != *hovered {
+                        *state = *hovered;
+                        cx.notify();
+                    }
+                });
+            }
+        })
         .p(BUFFER_HEADER_PADDING)
         .w_full()
         .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
@@ -895,40 +915,6 @@ pub(crate) fn render_buffer_header(
                                     })
                             },
                         ))
-                        .when(can_open_excerpts && relative_path.is_some(), |this| {
-                            this.child(
-                                div()
-                                    .when(!is_selected, |this| {
-                                        this.visible_on_hover("buffer-header-group")
-                                    })
-                                    .child(
-                                        Button::new("open-file-button", "Open File")
-                                            .style(ButtonStyle::OutlinedGhost)
-                                            .when(is_selected, |this| {
-                                                this.key_binding(KeyBinding::for_action_in(
-                                                    &OpenExcerpts,
-                                                    &focus_handle,
-                                                    cx,
-                                                ))
-                                            })
-                                            .on_click(window.listener_for(editor, {
-                                                let jump_data = jump_data.clone();
-                                                move |editor, e: &ClickEvent, window, cx| {
-                                                    editor.open_excerpts_common(
-                                                        Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                            })),
-                                    ),
-                            )
-                        })
-                        // Rendered after the Open File button, which reserves its space even
-                        // while invisible (`visible_on_hover`), so the diff stat is always
-                        // flush right and hovering never changes the layout. Toggling layout
-                        // on group hover panics: prepaint and paint can disagree.
                         .when_some(diff_stat, |this, (added, removed)| {
                             this.child(
                                 div().flex_shrink_0().child(
@@ -941,6 +927,40 @@ pub(crate) fn render_buffer_header(
                                 ),
                             )
                         })
+                        // The button is only added to the layout while the header is
+                        // hovered or its excerpt is selected. Hover is tracked as element
+                        // state (via `on_hover` above) rather than a `group_hover` style
+                        // because layout changes between prepaint and paint panic; state
+                        // changes re-render a consistent tree on the next frame.
+                        .when(
+                            can_open_excerpts
+                                && relative_path.is_some()
+                                && (is_selected || header_hovered),
+                            |this| {
+                                this.child(
+                                    Button::new("open-file-button", "Open File")
+                                        .style(ButtonStyle::OutlinedGhost)
+                                        .when(is_selected, |this| {
+                                            this.key_binding(KeyBinding::for_action_in(
+                                                &OpenExcerpts,
+                                                &focus_handle,
+                                                cx,
+                                            ))
+                                        })
+                                        .on_click(window.listener_for(editor, {
+                                            let jump_data = jump_data.clone();
+                                            move |editor, e: &ClickEvent, window, cx| {
+                                                editor.open_excerpts_common(
+                                                    Some(jump_data.clone()),
+                                                    e.modifiers().secondary(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        })),
+                                )
+                            },
+                        )
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(window.listener_for(editor, {
                             let buffer_id = for_excerpt.buffer_id();
