@@ -27,22 +27,6 @@ impl FeatureFlag for AcpBetaFeatureFlag {
 }
 register_feature_flag!(AcpBetaFeatureFlag);
 
-pub struct AgentSharingFeatureFlag;
-
-impl FeatureFlag for AgentSharingFeatureFlag {
-    const NAME: &'static str = "agent-sharing";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(AgentSharingFeatureFlag);
-
-pub struct HandoffFeatureFlag;
-
-impl FeatureFlag for HandoffFeatureFlag {
-    const NAME: &'static str = "handoff";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(HandoffFeatureFlag);
-
 pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
@@ -143,9 +127,5 @@ pub struct SandboxingFeatureFlag;
 impl FeatureFlag for SandboxingFeatureFlag {
     const NAME: &'static str = "sandboxing";
     type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
 }
 register_feature_flag!(SandboxingFeatureFlag);

@@ -10,7 +10,7 @@ use crate::thread_metadata_store::{
 use crate::{Agent, ArchiveSelectedThread, DEFAULT_THREAD_TITLE, RemoveSelectedThread};
 
 use agent::ThreadStore;
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use chrono::{DateTime, Datelike as _, Local, NaiveDate, TimeDelta, Utc};
 use collections::HashMap;
@@ -133,6 +133,7 @@ pub enum ThreadsArchiveViewEvent {
     Activate { thread: ThreadMetadata },
     CancelRestore { thread_id: ThreadId },
     Import,
+    NewThread,
 }
 
 impl EventEmitter<ThreadsArchiveViewEvent> for ThreadsArchiveView {}
@@ -299,16 +300,27 @@ impl ThreadsArchiveView {
 
         for session in sessions {
             let highlight_positions = if !query.is_empty() {
-                match fuzzy_match_positions(
-                    &query,
-                    session
-                        .title
-                        .as_ref()
-                        .map(|t| t.as_ref())
-                        .unwrap_or(DEFAULT_THREAD_TITLE),
-                ) {
-                    Some(positions) => positions,
-                    None => continue,
+                let title = session
+                    .title
+                    .as_ref()
+                    .map(|t| t.as_ref())
+                    .unwrap_or(DEFAULT_THREAD_TITLE);
+                if let Some(positions) = fuzzy_match_positions(&query, title) {
+                    positions
+                } else {
+                    // If title didn't match, also try matching the project name
+                    // (the basename of any of the thread's worktree paths), so
+                    // typing a project name surfaces its threads here too.
+                    let worktree_matched = session.folder_paths().paths().iter().any(|p| {
+                        p.as_path()
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| fuzzy_match_positions(&query, name).is_some())
+                    });
+                    if !worktree_matched {
+                        continue;
+                    }
+                    Vec::new()
                 }
             } else {
                 Vec::new()
@@ -962,6 +974,14 @@ impl ThreadsArchiveView {
                 h_flex()
                     .gap_1()
                     .child(
+                        IconButton::new("new-thread", IconName::Plus)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Start New Agent Thread"))
+                            .on_click(cx.listener(|_this, _, _, cx| {
+                                cx.emit(ThreadsArchiveViewEvent::NewThread);
+                            })),
+                    )
+                    .child(
                         IconButton::new("thread-import", IconName::Download)
                             .icon_size(IconSize::Small)
                             .tooltip(Tooltip::text("Import Threads"))
@@ -1114,7 +1134,7 @@ impl ProjectPickerModal {
         let picker = cx.new(|cx| {
             Picker::list(delegate, window, cx)
                 .list_measure_all()
-                .modal(false)
+                .embedded()
         });
 
         let picker_focus_handle = picker.focus_handle(cx);
@@ -1168,7 +1188,6 @@ impl Render for ProjectPickerModal {
         v_flex()
             .key_context("ProjectPickerModal")
             .elevation_3(cx)
-            .w(rems(34.))
             .on_action(cx.listener(|this, _: &workspace::Open, window, cx| {
                 this.picker.update(cx, |picker, cx| {
                     picker.delegate.open_local_folder(window, cx)
@@ -1266,6 +1285,10 @@ impl EventEmitter<DismissEvent> for ProjectPickerDelegate {}
 
 impl PickerDelegate for ProjectPickerDelegate {
     type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "thread archive project picker"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         format!(

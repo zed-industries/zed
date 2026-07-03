@@ -1,12 +1,12 @@
 use crate::{
-    AuthenticateError, ConfigurationViewTargetAgent, LanguageModel, LanguageModelCompletionError,
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelName, LanguageModelProvider,
-    LanguageModelProviderId, LanguageModelProviderName, LanguageModelProviderState,
-    LanguageModelRequest, LanguageModelToolChoice,
+    AuthenticateError, LanguageModel, LanguageModelCompletionError, LanguageModelCompletionEvent,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice,
 };
 use anyhow::anyhow;
 use futures::{FutureExt, channel::mpsc, future::BoxFuture, stream::BoxStream, stream::StreamExt};
-use gpui::{AnyView, App, AsyncApp, Entity, Task, Window};
+use gpui::{App, AsyncApp, Entity, Task};
 use http_client::Result;
 use parking_lot::Mutex;
 use std::sync::{
@@ -68,17 +68,8 @@ impl LanguageModelProvider for FakeLanguageModelProvider {
         Task::ready(Ok(()))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        _: &mut App,
-    ) -> AnyView {
-        unimplemented!()
-    }
-
-    fn reset_credentials(&self, _: &mut App) -> Task<Result<()>> {
-        Task::ready(Ok(()))
+    fn settings_view(&self, _: &mut App) -> Option<crate::ProviderSettingsView> {
+        None
     }
 }
 
@@ -124,8 +115,10 @@ pub struct FakeLanguageModel {
     >,
     forbid_requests: AtomicBool,
     supports_thinking: AtomicBool,
+    supports_disabling_thinking: AtomicBool,
     supports_streaming_tools: AtomicBool,
     supports_images: AtomicBool,
+    supports_server_side_compaction: AtomicBool,
     max_token_count: AtomicU64,
     max_output_tokens: AtomicU64,
 }
@@ -140,8 +133,10 @@ impl Default for FakeLanguageModel {
             current_completion_txs: Mutex::new(Vec::new()),
             forbid_requests: AtomicBool::new(false),
             supports_thinking: AtomicBool::new(false),
+            supports_disabling_thinking: AtomicBool::new(true),
             supports_streaming_tools: AtomicBool::new(false),
             supports_images: AtomicBool::new(false),
+            supports_server_side_compaction: AtomicBool::new(false),
             max_token_count: AtomicU64::new(1_000_000),
             max_output_tokens: AtomicU64::new(0),
         }
@@ -176,12 +171,20 @@ impl FakeLanguageModel {
         self.supports_thinking.store(supports, SeqCst);
     }
 
+    pub fn set_supports_disabling_thinking(&self, supports: bool) {
+        self.supports_disabling_thinking.store(supports, SeqCst);
+    }
+
     pub fn set_supports_streaming_tools(&self, supports: bool) {
         self.supports_streaming_tools.store(supports, SeqCst);
     }
 
     pub fn set_supports_images(&self, supports: bool) {
         self.supports_images.store(supports, SeqCst);
+    }
+
+    pub fn set_supports_server_side_compaction(&self, supports: bool) {
+        self.supports_server_side_compaction.store(supports, SeqCst);
     }
 
     pub fn set_max_token_count(&self, count: u64) {
@@ -302,8 +305,16 @@ impl LanguageModel for FakeLanguageModel {
         self.supports_images.load(SeqCst)
     }
 
+    fn supports_server_side_compaction(&self) -> bool {
+        self.supports_server_side_compaction.load(SeqCst)
+    }
+
     fn supports_thinking(&self) -> bool {
         self.supports_thinking.load(SeqCst)
+    }
+
+    fn supports_disabling_thinking(&self) -> bool {
+        self.supports_disabling_thinking.load(SeqCst)
     }
 
     fn supports_streaming_tools(&self) -> bool {

@@ -535,6 +535,33 @@ impl ContextServerStore {
         self.servers.get(id).map(|state| state.configuration())
     }
 
+    /// Returns the configured settings for a server, if it is present in the user
+    /// or project settings. This is available regardless of whether the server is
+    /// currently running, unlike [`Self::configuration_for_server`].
+    pub fn settings_for_server(&self, id: &ContextServerId) -> Option<&ContextServerSettings> {
+        self.context_server_settings.get(&id.0)
+    }
+
+    /// Returns whether a server is provided by an extension (as opposed to a
+    /// custom Stdio/HTTP server configured directly in settings).
+    ///
+    /// This is derived from the configured settings rather than the runtime
+    /// configuration, so it stays correct even when a custom server is disabled
+    /// or has not been started yet (in which case it has no runtime state).
+    pub fn is_extension_provided(&self, id: &ContextServerId, cx: &App) -> bool {
+        match self.context_server_settings.get(&id.0) {
+            Some(ContextServerSettings::Stdio { .. } | ContextServerSettings::Http { .. }) => false,
+            Some(ContextServerSettings::Extension { .. }) => true,
+            // No custom settings entry: the server can only originate from an
+            // extension descriptor in the registry.
+            None => self
+                .registry
+                .read(cx)
+                .context_server_descriptor(&id.0)
+                .is_some(),
+        }
+    }
+
     /// Returns a sorted slice of available unique context server IDs. Within the
     /// slice, context servers which have `mcp-server-` as a prefix in their ID will
     /// appear after servers that do not have this prefix in their ID.

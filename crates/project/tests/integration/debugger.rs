@@ -174,6 +174,44 @@ mod go_locator {
     }
 
     #[gpui::test]
+    async fn test_go_locator_unescapes_nested_subtest_regex(_: &mut TestAppContext) {
+        let locator = GoLocator;
+        let delve = DebugAdapterName("Delve".into());
+
+        // Delve receives the `-run` regex with no shell, so GoLocator must strip
+        // the escaping itself.
+        let task = TaskTemplate {
+            label: "test subtest".into(),
+            command: "go".into(),
+            args: vec![
+                "test".to_string(),
+                "-v".to_string(),
+                "-run".to_string(),
+                "\\^TestFoo\\$/\\^simple_subtest\\$".to_string(),
+            ],
+            ..Default::default()
+        };
+        let result = locator.create_scenario(&task, "", &delve).await.unwrap();
+        let config: DelveLaunchRequest = serde_json::from_value(result.config).unwrap();
+        assert_eq!(
+            config,
+            DelveLaunchRequest {
+                request: "launch".to_string(),
+                mode: "test".to_string(),
+                program: ".".to_string(),
+                build_flags: vec![],
+                args: vec![
+                    "-test.v".to_string(),
+                    "-test.run".to_string(),
+                    "^TestFoo$/^simple_subtest$".to_string(),
+                ],
+                env: Default::default(),
+                cwd: None,
+            }
+        );
+    }
+
+    #[gpui::test]
     async fn test_skip_unsupported_go_commands(_: &mut TestAppContext) {
         let locator = GoLocator;
         let task = TaskTemplate {
