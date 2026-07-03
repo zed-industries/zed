@@ -625,9 +625,6 @@ pub(crate) fn render_buffer_header(
     cx: &mut App,
 ) -> impl IntoElement {
     let buffer_id = for_excerpt.buffer_id();
-    // Element-scoped state rather than a field on `Editor`: it only affects this
-    // header's presentation, and it is dropped as soon as the header stops
-    // rendering (e.g. it scrolls out).
     let header_hovered_state = window.use_keyed_state(
         ("buffer-header-hovered", buffer_id.to_proto()),
         cx,
@@ -651,9 +648,6 @@ pub(crate) fn render_buffer_header(
         .all_diff_hunks_expanded()
         .then(|| editor_read.status_for_buffer_id(buffer_id, cx))
         .flatten();
-    // For diff multibuffers (where all hunks are expanded), surface the
-    // per-file changed line counts that the multibuffer already tracks per
-    // buffer. This is the same data aggregated by `total_changed_lines`.
     let diff_stat = multi_buffer
         .all_diff_hunks_expanded()
         .then(|| multibuffer_snapshot.diff_for_buffer_id(buffer_id))
@@ -924,11 +918,6 @@ pub(crate) fn render_buffer_header(
                                 ),
                             )
                         })
-                        // The button is only added to the layout while the header is
-                        // hovered or its excerpt is selected. Hover is tracked as element
-                        // state (via `on_hover` above) rather than a `group_hover` style
-                        // because layout changes between prepaint and paint panic; state
-                        // changes re-render a consistent tree on the next frame.
                         .when(
                             can_open_excerpts
                                 && relative_path.is_some()
