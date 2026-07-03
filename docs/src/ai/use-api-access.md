@@ -26,6 +26,7 @@ Zed supports these first-class API providers for model-backed Zed AI features:
 - [xAI](#xai)
   - [Custom xAI Models](#xai-custom-models)
 - [OpenCode API](#opencode)
+  - [OpenCode Model Auto-Discovery](#opencode-auto-models)
   - [Custom OpenCode Models](#opencode-custom-models)
 - [Anthropic-compatible endpoints](#anthropic-compatible)
 - [OpenAI-compatible endpoints](#openai-compatible)
@@ -356,6 +357,10 @@ Zed does not sign in to OpenCode with OAuth or detect your OpenCode subscription
 
 Zed also reads `OPENCODE_API_KEY` from the local Zed process environment.
 
+#### OpenCode Model Auto-Discovery {#opencode-auto-models}
+
+Zed automatically discovers OpenCode models based on data from [Models.dev](https://models.dev/). To manually refresh the model list and model configuration details, click **Refresh model list** in the OpenCode provider settings.
+
 By default, models from all OpenCode subscription types are shown. You can hide subscriptions that are not relevant to you in the provider UI or in settings:
 
 ```json [settings]
@@ -370,11 +375,9 @@ By default, models from all OpenCode subscription types are shown. You can hide 
 }
 ```
 
-**Note:** Zed only bundles configuration for long-term OpenCode Free models. Free models that are available for a limited time are not included in Zed. To use those models, add a custom OpenCode model with configuration from [the OpenCode website](https://opencode.ai/docs/zen#pricing) and [models.dev](https://github.com/anomalyco/models.dev/tree/dev/providers/opencode/models).
-
 #### Custom OpenCode Models {#opencode-custom-models}
 
-The Zed Agent comes preconfigured with OpenCode models. Add custom OpenCode models when you need newer models, limited-time Free models, or models with custom endpoints.
+Custom models are added alongside auto-discovered models. Add custom OpenCode models when you need newer models, models with custom endpoints, or overrides for existing model configurations.
 
 Add custom models in your settings file:
 
