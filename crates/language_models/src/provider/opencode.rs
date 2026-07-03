@@ -755,11 +755,10 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
 
         for model in &settings.available_models {
             let protocol = match model.protocol {
-                Some(OpenCodeApiProtocol::Anthropic) => ApiProtocol::Anthropic,
-                Some(OpenCodeApiProtocol::OpenAiResponses) => ApiProtocol::OpenAiResponses,
-                Some(OpenCodeApiProtocol::OpenAiChat) => ApiProtocol::OpenAiChat,
-                Some(OpenCodeApiProtocol::Google) => ApiProtocol::Google,
-                None => ApiProtocol::OpenAiChat, // default fallback
+                OpenCodeApiProtocol::Anthropic => ApiProtocol::Anthropic,
+                OpenCodeApiProtocol::OpenAiResponses => ApiProtocol::OpenAiResponses,
+                OpenCodeApiProtocol::OpenAiChat => ApiProtocol::OpenAiChat,
+                OpenCodeApiProtocol::Google => ApiProtocol::Google,
             };
             let subscription = match model.subscription {
                 Some(settings::OpenCodeModelSubscription::Go) => OpenCodeSubscription::Go,
@@ -1968,7 +1967,7 @@ mod tests {
                 display_name: Some("My Custom Addition".to_string()),
                 max_tokens: 100_000,
                 max_output_tokens: Some(8_000),
-                protocol: Some(OpenCodeApiProtocol::Anthropic),
+                protocol: OpenCodeApiProtocol::Anthropic,
                 subscription: Some(settings::OpenCodeModelSubscription::Zen),
                 reasoning_effort_levels: None,
                 interleaved_reasoning: false,

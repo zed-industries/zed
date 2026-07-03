@@ -245,7 +245,7 @@ pub struct OpenCodeAvailableModel {
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
     /// The API protocol to use for this model: "anthropic", "openai_responses", "openai_chat", or "google".
-    pub protocol: Option<OpenCodeApiProtocol>,
+    pub protocol: OpenCodeApiProtocol,
     /// The subscription for this model: "zen", "go", or "free". Defaults to Zen.
     pub subscription: Option<OpenCodeModelSubscription>,
     /// Custom Model API URL to use for this model.
