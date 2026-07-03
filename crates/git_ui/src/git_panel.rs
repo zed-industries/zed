@@ -5219,7 +5219,6 @@ impl GitPanel {
             })
             .child(
                 panel_editor_container(window, cx)
-                    .debug_bg_red()
                     .id("commit-editor-container")
                     .cursor_text()
                     .flex_col()
@@ -5236,12 +5235,11 @@ impl GitPanel {
                     }))
                     .child(
                         h_flex()
-                            .debug_bg_blue()
                             .size_full()
                             .items_stretch()
                             .child(
                                 div()
-                                    .p_12()
+                                    .p_2()
                                     .flex_grow_1()
                                     .on_action(|&zed_actions::editor::MoveUp, _, cx| {
                                         cx.stop_propagation();
@@ -5256,7 +5254,6 @@ impl GitPanel {
                             )
                             .child(
                                 v_flex()
-                                    .debug_bg_red()
                                     .gap_px()
                                     .p_1()
                                     .opacity(0.6)
@@ -5321,7 +5318,6 @@ impl GitPanel {
                     )
                     .child(
                         h_flex()
-                            .debug_bg_green()
                             .id("commit-footer")
                             .border_t_1()
                             .when(editor_is_long, |el| {
