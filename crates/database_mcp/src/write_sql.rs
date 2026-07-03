@@ -69,6 +69,12 @@ fn single_statement(sql: &str) -> Result<&str> {
             b'"' if !in_string => {
                 in_ident = !in_ident;
             }
+            b'$' if !in_string && !in_ident => {
+                if let Some(next) = skip_dollar_quote(bytes, index) {
+                    index = next;
+                    continue;
+                }
+            }
             b';' if !in_string && !in_ident => {
                 if trimmed[index + 1..].trim().is_empty() {
                     return Ok(trimmed[..index].trim());
@@ -86,6 +92,46 @@ fn single_statement(sql: &str) -> Result<&str> {
         bail!("unterminated quoted identifier in statement");
     }
     Ok(trimmed)
+}
+
+/// If a dollar-quoted string (`$$...$$` or `$tag$...$tag$`) starts at
+/// `bytes[index]`, returns the byte index just past its closing delimiter
+/// (or `bytes.len()`, if unterminated). Returns `None` if `index` is not the
+/// start of a valid dollar-quote opening delimiter (e.g. a bare `$` used as
+/// an operator, or `$1` parameter placeholder syntax, which is not a
+/// dollar-quote).
+///
+/// Dollar-quote delimiters and tags are pure ASCII, so byte indexing here is
+/// UTF-8-boundary-safe even though the span's content may be arbitrary
+/// multi-byte UTF-8.
+fn skip_dollar_quote(bytes: &[u8], index: usize) -> Option<usize> {
+    let mut tag_end = index + 1;
+    while bytes.get(tag_end).is_some_and(|&b| {
+        (tag_end == index + 1 && (b.is_ascii_alphabetic() || b == b'_'))
+            || (tag_end > index + 1 && (b.is_ascii_alphanumeric() || b == b'_'))
+    }) {
+        tag_end += 1;
+    }
+    if bytes.get(tag_end) != Some(&b'$') {
+        return None;
+    }
+    let opening_end = tag_end + 1;
+    let tag = &bytes[index + 1..tag_end];
+    let mut search_index = opening_end;
+    while search_index < bytes.len() {
+        if bytes[search_index] == b'$' {
+            let candidate_end = search_index + 1 + tag.len() + 1;
+            if let Some(candidate) = bytes.get(search_index..candidate_end)
+                && candidate.first() == Some(&b'$')
+                && candidate.last() == Some(&b'$')
+                && &candidate[1..candidate.len() - 1] == tag
+            {
+                return Some(candidate_end);
+            }
+        }
+        search_index += 1;
+    }
+    Some(bytes.len())
 }
 
 /// Skips whitespace and leading `--` line comments or `/* */` block comments
@@ -428,5 +474,66 @@ mod tests {
             extract_update_target("UPDATE only orders SET a=1"),
             Some(("public".into(), "orders".into()))
         );
+    }
+
+    // --- Dollar-quote statement-stacking bypass hardening ---
+
+    #[test]
+    fn rejects_confirmed_dollar_quote_stacking_bypass() {
+        assert!(
+            classify_dml(
+                "UPDATE t SET a=1 WHERE note=$$'$$ ; UPDATE accounts SET balance=0 WHERE note=$$'$$ RETURNING id"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_top_level_semicolon_after_dollar_quote() {
+        assert!(classify_dml("UPDATE t SET a=1 WHERE x=$$foo$$ ; DROP TABLE accounts").is_err());
+    }
+
+    #[test]
+    fn accepts_dollar_quoted_value_containing_semicolon_and_quote() {
+        assert_eq!(
+            classify_dml("UPDATE t SET body=$$a; b 'c'$$ WHERE id=1").unwrap(),
+            WriteKind::Update
+        );
+    }
+
+    #[test]
+    fn accepts_tagged_dollar_quote() {
+        assert_eq!(
+            classify_dml("INSERT INTO t(x) VALUES($tag$ ; ' \" $tag$)").unwrap(),
+            WriteKind::Insert
+        );
+    }
+
+    #[test]
+    fn rejects_stacked_statement_masked_by_tagged_dollar_quote() {
+        assert!(
+            classify_dml(
+                "UPDATE t SET a=1 WHERE note=$tag$'$tag$ ; UPDATE accounts SET balance=0 WHERE note=$tag$'$tag$ RETURNING id"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn dollar_placeholder_is_not_a_dollar_quote_and_does_not_swallow_next_statement() {
+        assert!(classify_dml("UPDATE t SET a=$1 WHERE id=1 ; DELETE FROM t").is_err());
+    }
+
+    #[test]
+    fn accepts_dollar_quoted_value_with_trailing_semicolon_only() {
+        assert_eq!(
+            classify_dml("UPDATE t SET body=$$x$$ ;").unwrap(),
+            WriteKind::Update
+        );
+    }
+
+    #[test]
+    fn unterminated_dollar_quote_does_not_panic() {
+        let _ = classify_dml("UPDATE t SET body=$$unterminated WHERE id=1");
     }
 }
