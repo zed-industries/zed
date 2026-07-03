@@ -186,7 +186,13 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         ))
     }
 
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
+    fn set_api_key(&self, key: Option<String>, cx: &mut App) -> Task<Result<()>> {
+        // Copilot authenticates via an OAuth device flow rather than an API key,
+        // so the only meaningful credential change here is clearing it (which
+        // signs the user out of the agent provider).
+        if key.is_some() {
+            return Task::ready(Ok(()));
+        }
         let Some(copilot_chat) = CopilotChat::global(cx) else {
             return Task::ready(Ok(()));
         };

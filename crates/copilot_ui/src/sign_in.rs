@@ -785,6 +785,7 @@ impl ConfigurationView {
                             cx.notify();
                         })
                     }),
+                    compact: false,
                 }
             }
         }
@@ -1017,12 +1018,6 @@ impl Render for ConfigurationView {
         let edit_prediction = self.edit_prediction;
 
         if is_authenticated(cx) {
-            let sign_out = |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
-                if let Some(auth) = GlobalCopilotAuth::try_global(cx) {
-                    initiate_sign_out(auth.0.clone(), window, cx);
-                }
-            };
-
             return ConfiguredApiCard::new("copilot-authorized", "Authorized")
                 .button_label("Sign Out")
                 .on_click(move |_, window, cx| {
