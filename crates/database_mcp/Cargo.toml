@@ -23,3 +23,4 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-std", "
 
 [dev-dependencies]
 database_client = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true

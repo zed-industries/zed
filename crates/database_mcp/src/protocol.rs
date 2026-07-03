@@ -11,14 +11,45 @@ pub const METHOD_NOT_FOUND: i32 = -32601;
 pub const INVALID_PARAMS: i32 = -32602;
 
 /// A single JSON-RPC 2.0 request or notification. A missing `id` marks a
-/// notification, to which no response is sent.
+/// notification, to which no response is sent. Per JSON-RPC 2.0, an *explicit*
+/// `"id": null` is still a request and must receive a response, so the absent
+/// and null cases are tracked separately via [`RequestId`].
 #[derive(Deserialize)]
 pub struct RpcRequest {
     #[serde(default)]
-    pub id: Option<serde_json::Value>,
+    pub id: RequestId,
     pub method: String,
     #[serde(default)]
     pub params: serde_json::Value,
+}
+
+/// Distinguishes an absent `id` (a notification) from an explicit `"id": null`.
+///
+/// `serde` collapses both an omitted field and an explicit JSON `null` into
+/// `Option::None` when the field type is `Option<T>`, so a plain
+/// `Option<serde_json::Value>` cannot tell them apart. Because `#[serde(default)]`
+/// only fills in a value when the key is *absent*, defaulting to
+/// [`RequestId::Absent`] while deserializing present values (including null)
+/// into [`RequestId::Present`] recovers the distinction JSON-RPC 2.0 requires.
+#[derive(Clone, Default)]
+pub enum RequestId {
+    /// The `id` key was not present: this message is a notification.
+    #[default]
+    Absent,
+    /// The `id` key was present (possibly with a `null` value): this message is
+    /// a request and must receive a response echoing this id.
+    Present(serde_json::Value),
+}
+
+impl<'de> Deserialize<'de> for RequestId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Reached only when the key is present (serde uses the `Default` impl
+        // otherwise), so any value here — including `null` — is an explicit id.
+        serde_json::Value::deserialize(deserializer).map(RequestId::Present)
+    }
 }
 
 #[derive(Serialize)]
@@ -71,10 +102,11 @@ pub fn parse_error(message: impl Into<String>) -> RpcResponse {
 ///
 /// This is pure with respect to stdio so it can be unit tested directly.
 pub async fn handle_request(request: RpcRequest, host: &mut ToolHost) -> Option<RpcResponse> {
-    let id = request.id.clone();
-    // Notifications carry no id and never receive a response.
-    let Some(id) = id else {
-        return None;
+    // Notifications carry no id and never receive a response. An explicit
+    // `"id": null` is a request and is answered with a null-id response.
+    let id = match request.id.clone() {
+        RequestId::Absent => return None,
+        RequestId::Present(id) => id,
     };
 
     let response = match request.method.as_str() {
@@ -157,7 +189,7 @@ mod tests {
         ToolHost::new(
             Vec::new(),
             200,
-            Box::new(|_config, _database| {
+            Box::new(|_config, _database, _password| {
                 Arc::new(FakeDatabaseClient::new()) as Arc<dyn DatabaseClient>
             }),
             Box::new(|_config| Ok("pw".to_string())),
@@ -170,7 +202,10 @@ mod tests {
         params: serde_json::Value,
     ) -> RpcRequest {
         RpcRequest {
-            id,
+            id: match id {
+                Some(id) => RequestId::Present(id),
+                None => RequestId::Absent,
+            },
             method: method.to_string(),
             params,
         }
@@ -292,6 +327,33 @@ mod tests {
         assert_eq!(result["isError"], true);
         let text = result["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("unknown tool"));
+    }
+
+    #[tokio::test]
+    async fn explicit_null_id_request_receives_response() {
+        // Parse from raw JSON to exercise the real deserialization path: an
+        // explicit `"id": null` is a request (not a notification) and must be
+        // answered with a null-id response per JSON-RPC 2.0.
+        let mut host = empty_host();
+        let request: RpcRequest =
+            serde_json::from_str(r#"{"jsonrpc":"2.0","id":null,"method":"ping"}"#).unwrap();
+        let response = handle_request(request, &mut host)
+            .await
+            .expect("explicit null id is a request and must respond");
+        assert_eq!(response.id, serde_json::Value::Null);
+        assert_eq!(response.result.unwrap(), serde_json::json!({}));
+    }
+
+    #[tokio::test]
+    async fn absent_id_is_notification() {
+        // A message with no `id` key at all is a notification and gets no reply,
+        // even when deserialized from raw JSON.
+        let mut host = empty_host();
+        let request: RpcRequest =
+            serde_json::from_str(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
+                .unwrap();
+        let response = handle_request(request, &mut host).await;
+        assert!(response.is_none());
     }
 
     #[tokio::test]

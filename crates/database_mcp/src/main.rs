@@ -40,8 +40,9 @@ async fn main() -> Result<()> {
         statement_timeout.as_secs()
     );
 
-    let client_factory: ClientFactory =
-        Box::new(move |config, database| build_client(config, database, statement_timeout));
+    let client_factory: ClientFactory = Box::new(move |config, database, password| {
+        build_client(config, database, password, statement_timeout)
+    });
     let password_source: PasswordSource = Box::new(resolve_password);
 
     let mut host = ToolHost::new(connections, max_rows, client_factory, password_source);
@@ -152,39 +153,80 @@ fn parse_query_timeout(settings: &serde_json::Value) -> Duration {
     Duration::from_secs(seconds)
 }
 
-/// Builds a read-only [`PostgresClient`]. MCP sessions must never write, so the
-/// mode is hard-coded to [`SessionMode::ReadOnly`].
+/// Builds a read-only [`PostgresClient`] targeting `database`. MCP sessions must
+/// never write, so the mode is hard-coded to [`SessionMode::ReadOnly`].
+///
+/// The password is resolved once by the host and passed in here; we never
+/// re-resolve it (that would query the keychain twice and could silently swallow
+/// a second-lookup failure). The connection's initial database is overridden
+/// with the requested `database` so connection-level operations that consult
+/// `config.database` target the database the agent asked for.
 fn build_client(
     config: &ConnectionConfig,
-    _database: &str,
+    database: &str,
+    password: &str,
     statement_timeout: Duration,
 ) -> Arc<dyn DatabaseClient> {
-    // The password is resolved separately by the host's `password_source`; the
-    // client only needs it when it actually connects, so we resolve it here as
-    // well. A failure to resolve is surfaced by the host before we reach this
-    // point, so a lookup failure here degrades to an empty password (the
-    // connection then fails with a clear libpq error at call time).
-    let password = resolve_password(config).unwrap_or_default();
+    let mut config = config.clone();
+    database.clone_into(&mut config.database);
     Arc::new(PostgresClient::new(
-        config.clone(),
-        password,
+        config,
+        password.to_string(),
         statement_timeout,
         SessionMode::ReadOnly,
     ))
 }
 
-/// Resolves a connection's password from the macOS keychain via `security`.
-/// The password is never logged. A non-zero exit means no saved credential.
+/// The credentials URL a connection's password is stored under. This must match
+/// the URL the UI writes with (`database_ui::connection_store::credentials_url`).
+fn credentials_url(connection_name: &str) -> String {
+    format!("zed-database://{connection_name}")
+}
+
+/// Resolves a connection's password. The password is never logged.
+///
+/// Passwords can live in two backends depending on how Zed was built. Release
+/// builds store them in the macOS keychain; Dev builds (this fork's default) use
+/// `zed_credentials_provider`'s `DevelopmentCredentialsProvider`, a plaintext
+/// JSON file at `paths::config_dir()/development_credentials`. We try the
+/// keychain first, then fall back to the dev file, so a password saved by a
+/// locally-run Zed UI is visible to the MCP regardless of channel.
+fn resolve_password(config: &ConnectionConfig) -> Result<String> {
+    let url = credentials_url(&config.name);
+
+    match resolve_password_from_keychain(&url) {
+        Ok(Some(password)) => return Ok(password),
+        Ok(None) => {}
+        Err(error) => {
+            // A keychain error (e.g. the CLI is missing) should not prevent the
+            // dev-file fallback, but is worth a diagnostic on stderr.
+            eprintln!("zed-database-mcp: keychain lookup failed: {error:#}");
+        }
+    }
+
+    let dev_path = paths::config_dir().join("development_credentials");
+    match resolve_password_from_dev_credentials(&dev_path, &url) {
+        Ok(Some(password)) => return Ok(password),
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("zed-database-mcp: development_credentials lookup failed: {error:#}");
+        }
+    }
+
+    bail!("no saved password for connection {}", config.name);
+}
+
+/// Looks up a password in the macOS keychain via `security find-internet-password`.
+/// Returns `Ok(None)` when no credential exists (non-zero exit).
 ///
 /// This is a synchronous function (it is called from the sync `ToolHost`
 /// factory/password closures), so it bridges to the async `tokio::process`
 /// runner via `block_in_place` on the current multi-threaded runtime.
-fn resolve_password(config: &ConnectionConfig) -> Result<String> {
-    let service = format!("zed-database://{}", config.name);
+fn resolve_password_from_keychain(url: &str) -> Result<Option<String>> {
     let output = tokio::task::block_in_place(|| {
         Handle::current().block_on(async {
             Command::new("/usr/bin/security")
-                .args(["find-internet-password", "-s", &service, "-w"])
+                .args(["find-internet-password", "-s", url, "-w"])
                 .output()
                 .await
                 .context("invoking /usr/bin/security")
@@ -192,11 +234,104 @@ fn resolve_password(config: &ConnectionConfig) -> Result<String> {
     })?;
 
     if !output.status.success() {
-        bail!("no saved password for connection {}", config.name);
+        return Ok(None);
     }
 
     let password = String::from_utf8(output.stdout)
         .map_err(|_| anyhow!("keychain returned a non-UTF-8 password"))?;
     // `security -w` appends a trailing newline.
-    Ok(password.trim_end_matches(['\n', '\r']).to_string())
+    Ok(Some(password.trim_end_matches(['\n', '\r']).to_string()))
+}
+
+/// Looks up a password in the `development_credentials` JSON file written by
+/// `zed_credentials_provider::DevelopmentCredentialsProvider`. The file maps
+/// `url -> (username, password_bytes)`. Returns `Ok(None)` when the file is
+/// absent or has no entry for `url`.
+fn resolve_password_from_dev_credentials(
+    path: &std::path::Path,
+    url: &str,
+) -> Result<Option<String>> {
+    let json = match std::fs::read(path) {
+        Ok(json) => json,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(anyhow::Error::from(error).context("reading development_credentials"));
+        }
+    };
+    let credentials: std::collections::HashMap<String, (String, Vec<u8>)> =
+        serde_json::from_slice(&json).context("parsing development_credentials")?;
+    let Some((_username, password_bytes)) = credentials.get(url) else {
+        return Ok(None);
+    };
+    let password = String::from_utf8(password_bytes.clone())
+        .map_err(|_| anyhow!("development_credentials stored a non-UTF-8 password"))?;
+    Ok(Some(password))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+    use std::io::Write as _;
+
+    fn write_dev_credentials(entries: &[(&str, &str, &[u8])]) -> tempfile::NamedTempFile {
+        let map: HashMap<String, (String, Vec<u8>)> = entries
+            .iter()
+            .map(|(url, user, password)| (url.to_string(), (user.to_string(), password.to_vec())))
+            .collect();
+        let json = serde_json::to_vec(&map).expect("serialize dev credentials");
+        let mut file = tempfile::NamedTempFile::new().expect("create temp file");
+        file.write_all(&json).expect("write dev credentials");
+        file.flush().expect("flush dev credentials");
+        file
+    }
+
+    #[test]
+    fn dev_credentials_lookup_finds_password_by_url() {
+        let url = credentials_url("local-shop");
+        let file = write_dev_credentials(&[
+            (&url, "postgres", b"hunter2"),
+            ("zed-database://other", "postgres", b"nope"),
+        ]);
+        let password = resolve_password_from_dev_credentials(file.path(), &url)
+            .expect("lookup succeeds")
+            .expect("password present");
+        assert_eq!(password, "hunter2");
+    }
+
+    #[test]
+    fn dev_credentials_lookup_missing_entry_returns_none() {
+        let file = write_dev_credentials(&[("zed-database://other", "postgres", b"nope")]);
+        let result =
+            resolve_password_from_dev_credentials(file.path(), &credentials_url("local-shop"))
+                .expect("lookup succeeds");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn dev_credentials_lookup_absent_file_returns_none() {
+        let missing = std::env::temp_dir().join("zed-database-mcp-nonexistent-credentials");
+        // Ensure the path really does not exist.
+        let _ = std::fs::remove_file(&missing);
+        let result =
+            resolve_password_from_dev_credentials(&missing, &credentials_url("local-shop"))
+                .expect("absent file is not an error");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn dev_credentials_lookup_rejects_non_utf8_password() {
+        let url = credentials_url("local-shop");
+        let file = write_dev_credentials(&[(&url, "postgres", &[0xff, 0xfe])]);
+        let error = resolve_password_from_dev_credentials(file.path(), &url)
+            .expect_err("non-utf8 password is an error");
+        assert!(format!("{error:#}").contains("non-UTF-8"));
+    }
+
+    #[test]
+    fn credentials_url_matches_ui_scheme() {
+        // Must stay byte-for-byte identical to
+        // `database_ui::connection_store::credentials_url`.
+        assert_eq!(credentials_url("local-shop"), "zed-database://local-shop");
+    }
 }

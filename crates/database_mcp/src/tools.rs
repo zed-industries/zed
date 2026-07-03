@@ -7,9 +7,12 @@ use database_client::{
     TableStructure,
 };
 
-/// Constructs a [`DatabaseClient`] for a connection and target database.
+/// Constructs a [`DatabaseClient`] for a connection, target database, and the
+/// already-resolved password. The password is resolved once by the host (via
+/// [`PasswordSource`]) and threaded through so the keychain is not queried a
+/// second time here.
 pub type ClientFactory =
-    Box<dyn Fn(&ConnectionConfig, &str) -> Arc<dyn DatabaseClient> + Send + Sync>;
+    Box<dyn Fn(&ConnectionConfig, &str, &str) -> Arc<dyn DatabaseClient> + Send + Sync>;
 
 /// Resolves the password for a connection (e.g. from the system keychain).
 pub type PasswordSource = Box<dyn Fn(&ConnectionConfig) -> Result<String> + Send + Sync>;
@@ -21,7 +24,10 @@ pub type PasswordSource = Box<dyn Fn(&ConnectionConfig) -> Result<String> + Send
 pub struct ToolHost {
     pub connections: Vec<ConnectionConfig>,
     pub max_rows: usize,
-    clients: HashMap<String, Arc<dyn DatabaseClient>>,
+    // Keyed by `(connection name, database)`. A tuple key avoids the ambiguity
+    // of a formatted `"{name}::{database}"` string when a connection name itself
+    // contains "::".
+    clients: HashMap<(String, String), Arc<dyn DatabaseClient>>,
     client_factory: ClientFactory,
     password_source: PasswordSource,
 }
@@ -218,10 +224,10 @@ impl ToolHost {
         let sql = required_str(arguments, "sql")?;
 
         let client = self.client(&config, &database)?;
-        let result = client
-            .run_query(&database, sql, self.max_rows)
-            .await
-            .context("running query")?;
+        // The client's `run_query` already wraps failures with a "running query"
+        // context; adding another here would double the prefix in the tool's
+        // error text (`format!("{error:#}")`), so we forward the error as-is.
+        let result = client.run_query(&database, sql, self.max_rows).await?;
 
         Ok(query_result_to_json(&result))
     }
@@ -235,21 +241,24 @@ impl ToolHost {
     }
 
     /// Returns a cached client for `(connection, database)`, building and
-    /// caching one on first use. Building requires resolving the password.
+    /// caching one on first use. Building resolves the password exactly once and
+    /// passes it to the factory, so a resolution failure surfaces as a tool
+    /// error rather than silently degrading to an empty password.
     fn client(
         &mut self,
         config: &ConnectionConfig,
         database: &str,
     ) -> Result<Arc<dyn DatabaseClient>> {
-        let key = format!("{}::{}", config.name, database);
+        let key = (config.name.clone(), database.to_string());
         if let Some(client) = self.clients.get(&key) {
             return Ok(client.clone());
         }
-        // Resolving the password validates that credentials exist before we
-        // build the client; the factory itself takes the connection config.
-        let _password = (self.password_source)(config)
+        // Resolve the password once here and thread it through to the factory;
+        // the factory must not re-resolve it (that would double keychain
+        // prompts and could silently swallow a second-lookup failure).
+        let password = (self.password_source)(config)
             .with_context(|| format!("resolving password for connection {}", config.name))?;
-        let client = (self.client_factory)(config, database);
+        let client = (self.client_factory)(config, database, &password);
         self.clients.insert(key, client.clone());
         Ok(client)
     }
@@ -371,7 +380,7 @@ mod tests {
         ToolHost::new(
             connections,
             max_rows,
-            Box::new(move |_config, _database| fake.clone() as Arc<dyn DatabaseClient>),
+            Box::new(move |_config, _database, _password| fake.clone() as Arc<dyn DatabaseClient>),
             Box::new(|_config| Ok("pw".to_string())),
         )
     }
@@ -400,20 +409,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_query_truncates_to_max_rows() {
+    async fn run_query_forwards_max_rows() {
+        // Truncation itself lives in `PostgresClient::run_query`, which the fake
+        // does not emulate; this test only asserts that the host forwards its
+        // configured `max_rows` to the client (the value the client would then
+        // truncate against). Actual truncation reporting is covered by
+        // `run_query_reports_truncation_flag`.
         let mut fake = FakeDatabaseClient::new();
         fake.query_result = QueryResult {
             columns: vec!["id".into()],
-            rows: vec![
-                vec![Some("1".into())],
-                vec![Some("2".into())],
-                vec![Some("3".into())],
-            ],
+            rows: vec![vec![Some("1".into())]],
             truncated: false,
-            command_tag: Some("SELECT 3".into()),
+            command_tag: Some("SELECT 1".into()),
         };
-        // The host passes `max_rows` down to `run_query`; the fake records it so
-        // we assert the value threads through and simulate truncation ourselves.
         let fake = Arc::new(fake);
         let mut host = host_with(vec![config("primary")], 2, fake.clone());
 
@@ -425,10 +433,8 @@ mod tests {
             .await
             .unwrap();
 
-        // The fake echoes its canned rows; the important behavior is that
-        // max_rows=2 was forwarded to the client.
         assert!(fake.calls().iter().any(|call| call.contains("max_rows=2")));
-        assert_eq!(result["command_tag"], "SELECT 3");
+        assert_eq!(result["command_tag"], "SELECT 1");
         assert!(result["columns"].is_array());
     }
 
@@ -553,7 +559,7 @@ mod tests {
         let mut host = ToolHost::new(
             vec![config("primary")],
             200,
-            Box::new(move |_config, _database| fake.clone() as Arc<dyn DatabaseClient>),
+            Box::new(move |_config, _database, _password| fake.clone() as Arc<dyn DatabaseClient>),
             Box::new(|config| Err(anyhow!("no saved password for connection {}", config.name))),
         );
         let error = host
@@ -577,7 +583,7 @@ mod tests {
         let mut host = ToolHost::new(
             vec![config("primary")],
             200,
-            Box::new(move |_config, _database| {
+            Box::new(move |_config, _database, _password| {
                 *counter.lock().unwrap() += 1;
                 Arc::new(FakeDatabaseClient::new()) as Arc<dyn DatabaseClient>
             }),
@@ -605,6 +611,84 @@ mod tests {
         )
         .await
         .unwrap();
+        assert_eq!(*build_count.lock().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn resolved_password_is_threaded_to_factory_once() {
+        // The password source must be consulted exactly once per built client,
+        // and the resolved value must reach the factory (rather than being
+        // discarded and re-resolved). This guards against the double-resolution
+        // and silent empty-password degradation.
+        let resolve_count = Arc::new(Mutex::new(0usize));
+        let seen_password = Arc::new(Mutex::new(None::<String>));
+        let counter = resolve_count.clone();
+        let recorder = seen_password.clone();
+        let mut host = ToolHost::new(
+            vec![config("primary")],
+            200,
+            Box::new(move |_config, _database, password| {
+                *recorder.lock().unwrap() = Some(password.to_string());
+                Arc::new(FakeDatabaseClient::new()) as Arc<dyn DatabaseClient>
+            }),
+            Box::new(move |_config| {
+                *counter.lock().unwrap() += 1;
+                Ok("s3cret".to_string())
+            }),
+        );
+
+        host.call(
+            "run_query",
+            &serde_json::json!({ "connection": "primary", "sql": "select 1" }),
+        )
+        .await
+        .unwrap();
+        // A second call against the same (connection, database) reuses the cached
+        // client and must not resolve the password again.
+        host.call(
+            "run_query",
+            &serde_json::json!({ "connection": "primary", "sql": "select 2" }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(*resolve_count.lock().unwrap(), 1);
+        assert_eq!(seen_password.lock().unwrap().as_deref(), Some("s3cret"));
+    }
+
+    #[tokio::test]
+    async fn cache_key_does_not_collide_on_names_containing_separator() {
+        // A connection named "prod::analytics" (initial db "app") and a
+        // connection "prod" queried with database "analytics::app" would collapse
+        // to the same `"{name}::{database}"` string. With a tuple key they build
+        // distinct clients, so the query hits the intended server.
+        let build_count = Arc::new(Mutex::new(0usize));
+        let counter = build_count.clone();
+        let mut host = ToolHost::new(
+            vec![config("prod::analytics"), config("prod")],
+            200,
+            Box::new(move |_config, _database, _password| {
+                *counter.lock().unwrap() += 1;
+                Arc::new(FakeDatabaseClient::new()) as Arc<dyn DatabaseClient>
+            }),
+            Box::new(|_config| Ok("pw".to_string())),
+        );
+
+        // (prod::analytics, app) — the connection's initial database.
+        host.call(
+            "run_query",
+            &serde_json::json!({ "connection": "prod::analytics", "sql": "select 1" }),
+        )
+        .await
+        .unwrap();
+        // (prod, analytics::app) — collides with the above under string keying.
+        host.call(
+            "run_query",
+            &serde_json::json!({ "connection": "prod", "sql": "select 2", "database": "analytics::app" }),
+        )
+        .await
+        .unwrap();
+
         assert_eq!(*build_count.lock().unwrap(), 2);
     }
 }
