@@ -365,16 +365,20 @@ pub struct TableDataView {
     /// Whether the SQL editor's text has diverged from `render_sql(&self.query)`
     /// by a real (non-programmatic) edit. While `true`, row editing is
     /// suspended (see `editable()`). UI-driven query mutators (sort/filter/
-    /// paging/refresh) do not silently apply on top of the stale query while
-    /// dirty: each one first runs the bar's current text (as `run_from_editor`
-    /// would - refreshing in place if unchanged, or promoting to a custom
-    /// query if hand-edited) and only then layers its own change on top, so
-    /// the user's typed SQL is never discarded by an unrelated click.
+    /// paging) are gated to no-ops while dirty (see
+    /// [`Self::gate_while_dirty`]): the UI session is `SessionMode::ReadWrite`
+    /// with autocommit, so silently running the bar's hand-typed text as a
+    /// side effect of an unrelated click could commit an in-progress
+    /// `UPDATE`/`DELETE` the user never asked to run. The bar's text can only
+    /// be executed by an explicit user action - Run (⌘↵, [`Self::run_from_editor`])
+    /// or Refresh (see [`Self::refresh`]) - each of which runs it exactly once.
     sql_dirty: bool,
-    /// A non-navigational notice shown near the SQL bar, e.g. explaining why a
-    /// run was refused because it would have entered custom-query mode with a
-    /// non-empty edit buffer (see [`Self::run_from_editor`]). Cleared on the
-    /// next successful run.
+    /// A non-navigational notice shown near the SQL bar: either explaining
+    /// why a run was refused because it would have entered custom-query mode
+    /// with a non-empty edit buffer (see [`Self::run_from_editor`]), or
+    /// prompting the user to Run or discard their edits before a query
+    /// mutator that was gated while dirty (see [`Self::gate_while_dirty`]).
+    /// Cleared on the next successful run and by [`Self::discard_edits`].
     pending_edits_notice: Option<String>,
     /// Set around programmatic `set_text` calls so the resulting `BufferEdited`
     /// event is not mistaken for a real user edit.
@@ -853,11 +857,15 @@ impl TableDataView {
         }
     }
 
-    /// Clears all buffered edits and the inline editor.
+    /// Clears all buffered edits and the inline editor. Also clears
+    /// `pending_edits_notice`: a stale "Save or discard your N pending
+    /// changes" refusal notice from an earlier blocked run must not keep
+    /// showing once the buffer that caused it is gone.
     pub fn discard_edits(&mut self, cx: &mut Context<Self>) {
         self.edits.clear();
         self.editing_cell = None;
         self.save_state = SaveState::Idle;
+        self.pending_edits_notice = None;
         cx.notify();
     }
 
@@ -1253,11 +1261,10 @@ impl TableDataView {
     /// Cycles the sort on `column` (None -> Asc -> Desc -> None), resets the
     /// page offset, and reloads the current page.
     ///
-    /// While the bar is dirty, first runs the bar's text (see
-    /// [`Self::commit_dirty_bar`]) and applies the sort on top of that result;
-    /// a refused run (finding 2) leaves the sort untouched.
+    /// While the bar is dirty, this is a no-op (see [`Self::gate_while_dirty`]):
+    /// the hand-typed bar text is never run as a side effect of sorting.
     pub fn toggle_sort(&mut self, column: &str, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.commit_dirty_bar(window, cx) {
+        if !self.gate_while_dirty(cx) {
             return;
         }
         // Commit and close any open editor before the rows on screen change, so
@@ -1309,9 +1316,8 @@ impl TableDataView {
     /// bounds), `None` appends `filter` as a new one. Either way resets the
     /// page offset and reloads the current page.
     ///
-    /// While the bar is dirty, first runs the bar's text (see
-    /// [`Self::commit_dirty_bar`]) and applies the filter on top of that
-    /// result; a refused run (finding 2) leaves the filter unapplied.
+    /// While the bar is dirty, this is a no-op (see [`Self::gate_while_dirty`]):
+    /// the hand-typed bar text is never run as a side effect of filtering.
     pub fn apply_filter_edit(
         &mut self,
         index: Option<usize>,
@@ -1319,7 +1325,7 @@ impl TableDataView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.commit_dirty_bar(window, cx) {
+        if !self.gate_while_dirty(cx) {
             return;
         }
         match index {
@@ -1343,11 +1349,11 @@ impl TableDataView {
     /// Removes the filter at `index`, resets the page offset, and reloads. An
     /// out-of-bounds index is a no-op.
     ///
-    /// While the bar is dirty, first runs the bar's text (see
-    /// [`Self::commit_dirty_bar`]); a refused run (finding 2) leaves the
-    /// filter list untouched.
+    /// While the bar is dirty, this is a no-op (see [`Self::gate_while_dirty`]):
+    /// the hand-typed bar text is never run as a side effect of removing a
+    /// filter.
     pub fn remove_filter(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.commit_dirty_bar(window, cx) {
+        if !self.gate_while_dirty(cx) {
             return;
         }
         if index >= self.query.filters.len() {
@@ -1375,11 +1381,10 @@ impl TableDataView {
     /// rows already displayed (finding 11). Ordinary table pagination is
     /// unaffected since `limit` is always `Some` there already.
     ///
-    /// While the bar is dirty, first runs the bar's text (see
-    /// [`Self::commit_dirty_bar`]) and evaluates `has_more` against that
-    /// freshly loaded page; a refused run (finding 2) leaves paging untouched.
+    /// While the bar is dirty, this is a no-op (see [`Self::gate_while_dirty`]):
+    /// the hand-typed bar text is never run as a side effect of paging.
     pub fn next_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.commit_dirty_bar(window, cx) {
+        if !self.gate_while_dirty(cx) {
             return;
         }
         let Some(page) = self.page.as_ref() else {
@@ -1404,12 +1409,10 @@ impl TableDataView {
     /// Moves back one page, clamping the offset at zero. No-op at the first
     /// page.
     ///
-    /// While the bar is dirty, first runs the bar's text (see
-    /// [`Self::commit_dirty_bar`]) and evaluates the first-page guard against
-    /// that freshly loaded query; a refused run (finding 2) leaves paging
-    /// untouched.
+    /// While the bar is dirty, this is a no-op (see [`Self::gate_while_dirty`]):
+    /// the hand-typed bar text is never run as a side effect of paging.
     pub fn prev_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.commit_dirty_bar(window, cx) {
+        if !self.gate_while_dirty(cx) {
             return;
         }
         if self.query.offset == 0 {
@@ -1425,11 +1428,11 @@ impl TableDataView {
     /// open cell editor, sets the new limit, resets to the first page, and
     /// reruns the query.
     ///
-    /// While the bar is dirty, first runs the bar's text (see
-    /// [`Self::commit_dirty_bar`]) and applies the new page size on top of
-    /// that result; a refused run (finding 2) leaves the page size untouched.
+    /// While the bar is dirty, this is a no-op (see [`Self::gate_while_dirty`]):
+    /// the hand-typed bar text is never run as a side effect of changing the
+    /// page size.
     pub fn set_page_size(&mut self, page_size: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.commit_dirty_bar(window, cx) {
+        if !self.gate_while_dirty(cx) {
             return;
         }
         self.finish_editing(cx);
@@ -1461,15 +1464,23 @@ impl TableDataView {
     /// actually re-issues the request instead of showing "Loading structure…"
     /// forever.
     ///
-    /// While the bar is dirty, Refresh means "run what's in the bar" (see
-    /// [`Self::commit_dirty_bar`]), not "re-run the stale query" - otherwise it
-    /// would silently discard the user's unrun edit (finding 1). A refused run
-    /// (finding 2) leaves the query untouched and skips the reload.
+    /// While the bar is dirty, Refresh is the one UI gesture the user can
+    /// use to explicitly run their hand-typed text (alongside Run/⌘↵): it
+    /// delegates to [`Self::run_from_editor`], which issues exactly one
+    /// `restart_query` - not "re-run the stale query" (that would silently
+    /// discard the user's unrun edit, finding 1) and not a run followed by a
+    /// second `restart_query` here (that was the double-execution data-safety
+    /// defect this gate model replaces). A refused run (finding 2, a
+    /// non-empty edit buffer blocking entry to custom mode) leaves the query
+    /// untouched and skips the reload.
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.commit_dirty_bar(window, cx) {
-            return;
+        if self.sql_dirty {
+            if !self.run_from_editor(window, cx) {
+                return;
+            }
+        } else {
+            self.restart_query(window, cx);
         }
-        self.restart_query(window, cx);
         if self.structure.is_some() || self.mode == ViewMode::Structure {
             self.reload_structure(cx);
         }
@@ -1483,9 +1494,11 @@ impl TableDataView {
     /// query — the invariant this view is built around.
     ///
     /// Skips resyncing the editor text when the bar is dirty: every mutator
-    /// that changes `self.query` runs `commit_dirty_bar` first, so by the time
-    /// it reaches here the bar is already clean. The one caller that can still
-    /// be dirty here is the save success handler, which reloads data with the
+    /// that changes `self.query` is gated to a no-op while dirty (see
+    /// [`Self::gate_while_dirty`]), and the two callers that do run while
+    /// dirty - `run_from_editor` and `refresh` - already clear `sql_dirty`
+    /// themselves before reaching here. The one caller that can still be
+    /// dirty here is the save success handler, which reloads data with the
     /// existing `self.query` after a save completes; if the user has since
     /// started typing a new query, overwriting that unsaved text out from
     /// under them would be exactly the bug finding 1 flags, so it is left
@@ -1593,25 +1606,27 @@ impl TableDataView {
         true
     }
 
-    /// The dirty-bar half of every UI query mutator (sort/filter/paging/
-    /// refresh): while the bar is clean this is a no-op that returns `true`
-    /// immediately. While dirty, it first runs the bar's hand-typed text
-    /// exactly as [`Self::run_from_editor`] would - refreshing in place if the
-    /// text is unchanged, or promoting to a custom query otherwise - and only
-    /// then lets the caller layer its own change on top of the result. This is
-    /// the "promote" model chosen for finding 1: a UI action taken while dirty
-    /// means "run what's in the bar, then do this", so the user's typed SQL is
-    /// never silently discarded by an unrelated click.
-    ///
-    /// Returns `false` when the run was refused (a non-empty edit buffer
-    /// blocked entering custom mode, per finding 2); callers must not apply
-    /// their own change in that case; the bar stays dirty and
-    /// [`Self::pending_edits_notice`] explains why.
-    fn commit_dirty_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+    /// The dirty-bar gate shared by every UI query mutator (sort/filter/
+    /// paging): while the bar is clean this is a no-op that returns `true`
+    /// immediately, letting the caller proceed. While dirty, the mutator must
+    /// not run - the UI session is `SessionMode::ReadWrite` with autocommit,
+    /// so silently executing whatever the user has half-typed in the bar as a
+    /// side effect of, say, clicking a column header, could commit an
+    /// in-progress `UPDATE`/`DELETE` the user never asked to run (the
+    /// data-safety defect this gate replaces the old "promote" model to
+    /// avoid). So this leaves `self.query`, the bar's text, and `sql_dirty`
+    /// completely untouched and instead surfaces
+    /// [`Self::pending_edits_notice`] explaining that the user must Run
+    /// (⌘↵) or discard their edits first. Returns `false` in that case;
+    /// callers must not apply their own change.
+    fn gate_while_dirty(&mut self, cx: &mut Context<Self>) -> bool {
         if !self.sql_dirty {
             return true;
         }
-        self.run_from_editor(window, cx)
+        self.pending_edits_notice =
+            Some("Run (⌘↵) or discard your SQL edits to sort/filter/paginate".to_string());
+        cx.notify();
+        false
     }
 
     /// Leaves custom-query mode, rebuilding a plain [`QueryState::for_table`]
@@ -2797,10 +2812,10 @@ impl TableDataView {
                     .icon_size(IconSize::XSmall)
                     .tooltip(Tooltip::text("Clear sort"))
                     .on_click(cx.listener(|this, _, window, cx| {
-                        // While dirty, run the bar's text first (finding 1) and
-                        // only clear the sort that results from it; a refused
-                        // run (finding 2) leaves the sort untouched.
-                        if !this.commit_dirty_bar(window, cx) {
+                        // While dirty, this is a no-op (finding 1 / gate model):
+                        // the hand-typed bar text is never run as a side effect
+                        // of clearing the sort chip. See `gate_while_dirty`.
+                        if !this.gate_while_dirty(cx) {
                             return;
                         }
                         this.query.sort = None;
@@ -6976,12 +6991,26 @@ mod tests {
 
     // -- Fix cluster A: dirty/custom state machine & edit-buffer reconciliation --
 
+    /// Counts how many `run_query` calls the fake has recorded so far, so
+    /// tests can assert a UI gesture caused *no* new run (gate-while-dirty)
+    /// or *exactly one* (Refresh's single explicit run) rather than just
+    /// checking whether `run_query` was ever called.
+    fn run_query_call_count(fake: &FakeDatabaseClient) -> usize {
+        fake.calls()
+            .iter()
+            .filter(|call| call.starts_with("run_query"))
+            .count()
+    }
+
     #[gpui::test]
-    async fn toggle_sort_while_dirty_runs_bar_text_then_sorts(cx: &mut TestAppContext) {
-        // Finding 1: a UI mutator invoked while the bar is dirty must not
-        // silently discard the hand-typed text by reapplying the *old* query.
-        // The chosen model promotes the dirty text first (as `run_from_editor`
-        // would), then layers the mutator's own change on top.
+    async fn toggle_sort_while_dirty_is_gated(cx: &mut TestAppContext) {
+        // Finding 1 (gate-at-dirty model): a UI mutator invoked while the bar
+        // is dirty must not run the hand-typed bar text as a side effect of
+        // an unrelated click. The session is ReadWrite with autocommit, so
+        // promoting dirty text to a run was itself the data-safety bug this
+        // model replaces. While dirty, `toggle_sort` must be a no-op: no new
+        // query run, the bar text and sort state untouched, and a notice
+        // shown explaining why.
         init_test(cx);
         cx.executor().allow_parking();
         let mut fake = FakeDatabaseClient::new();
@@ -7006,37 +7035,92 @@ mod tests {
             });
         });
         view.read_with(cx, |view, _| assert!(view.sql_dirty()));
+        let calls_before = run_query_call_count(&fake);
 
         view.update_in(cx, |view, window, cx| view.toggle_sort("name", window, cx));
-        wait_until(cx, |cx| {
-            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
-        })
-        .await;
+        cx.run_until_parked();
 
-        view.read_with(cx, |view, _| {
+        assert_eq!(
+            run_query_call_count(&fake),
+            calls_before,
+            "sorting while dirty must not run any query"
+        );
+        view.read_with(cx, |view, cx| {
             assert!(
-                matches!(view.query().base, QueryBase::Custom(_)),
-                "the dirty text should have been promoted to a custom base"
+                matches!(view.query().base, QueryBase::Table(_)),
+                "the query must not have been promoted to custom"
             );
-            assert!(!view.sql_dirty(), "promoting the text clears dirtiness");
-            let sort = view.query().sort.as_ref().expect("sort should be applied");
-            assert_eq!(sort.column, "name");
+            assert!(view.sql_dirty(), "the bar must remain dirty");
+            assert!(
+                view.query().sort.is_none(),
+                "the sort must not have been applied while gated"
+            );
+            assert_eq!(
+                view.sql_editor.read(cx).text(cx),
+                "SELECT * FROM users WHERE id > 1",
+                "the hand-typed bar text must be left untouched"
+            );
+            assert!(
+                view.pending_edits_notice().is_some(),
+                "a notice should explain why sorting was gated"
+            );
         });
-        let last = last_run_query_sql(&fake).expect("run_query should have been called");
-        assert!(
-            last.contains("WHERE id > 1"),
-            "the executed SQL must be built from the hand-typed text, not the stale query: {last}"
-        );
-        assert!(
-            last.contains("ORDER BY \"name\""),
-            "the sort should also have been applied on top: {last}"
-        );
     }
 
     #[gpui::test]
-    async fn refresh_while_dirty_runs_bar_text(cx: &mut TestAppContext) {
-        // Finding 1: Refresh at dirty must behave like Run, not like a re-run
-        // of the stale query.
+    async fn dirty_bar_text_survives_ui_gesture_without_surprise_execution(
+        cx: &mut TestAppContext,
+    ) {
+        // Regression test for the High-severity data-safety defect: an
+        // unrelated UI gesture (here, a sort click) must never execute
+        // arbitrary hand-typed bar text as a side effect, since the session
+        // autocommits and the text could be an in-progress UPDATE/DELETE.
+        // Proven by asserting the run_query call count does not increase at
+        // all (neither once nor twice) across the gesture.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor.update(cx, |editor, cx| {
+                editor.set_text("UPDATE users SET name = 'x' WHERE id = 1", window, cx)
+            });
+        });
+        view.read_with(cx, |view, _| assert!(view.sql_dirty()));
+        let calls_before = run_query_call_count(&fake);
+
+        view.update_in(cx, |view, window, cx| view.toggle_sort("name", window, cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            run_query_call_count(&fake),
+            calls_before,
+            "a dirty write-like bar text must never be executed by an unrelated click"
+        );
+        view.read_with(cx, |view, cx| {
+            assert_eq!(
+                view.sql_editor.read(cx).text(cx),
+                "UPDATE users SET name = 'x' WHERE id = 1"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn refresh_while_dirty_runs_bar_text_exactly_once(cx: &mut TestAppContext) {
+        // Finding 1: Refresh at dirty is the explicit user action that is
+        // allowed to run the bar text - but exactly once, not twice.
         init_test(cx);
         cx.executor().allow_parking();
         let fake = Arc::new(FakeDatabaseClient::new());
@@ -7058,6 +7142,7 @@ mod tests {
                 .update(cx, |editor, cx| editor.set_text("SELECT 1", window, cx));
         });
         view.read_with(cx, |view, _| assert!(view.sql_dirty()));
+        let calls_before = run_query_call_count(&fake);
 
         view.update_in(cx, |view, window, cx| view.refresh(window, cx));
         wait_until(cx, |cx| {
@@ -7065,6 +7150,11 @@ mod tests {
         })
         .await;
 
+        assert_eq!(
+            run_query_call_count(&fake) - calls_before,
+            1,
+            "Refresh at dirty must run the bar text exactly once, not twice"
+        );
         view.read_with(cx, |view, _| {
             assert!(
                 matches!(view.query().base, QueryBase::Custom(_)),
@@ -7202,6 +7292,58 @@ mod tests {
             "the custom text must not have been executed: {:?}",
             fake.calls()
         );
+    }
+
+    #[gpui::test]
+    async fn discard_edits_clears_pending_edits_notice(cx: &mut TestAppContext) {
+        // Minor bug fixed alongside finding 1: `discard_edits` must clear
+        // `pending_edits_notice`, or the "Save or discard your N pending
+        // changes" notice from a previously refused run keeps showing after
+        // the buffer that caused it is gone.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = fake_with_default_rows();
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.begin_edit_cell(0, 1, window, cx);
+            let editing = view.editing_cell().expect("edit should be in progress");
+            editing.field.update(cx, |field, cx| {
+                field.set_text("Alicia", window, cx);
+            });
+            view.commit_cell_edit(window, cx);
+        });
+        view.read_with(cx, |view, _| assert_eq!(view.pending_change_count(), 1));
+
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor
+                .update(cx, |editor, cx| editor.set_text("SELECT 1", window, cx));
+            view.run_from_editor(window, cx);
+        });
+        cx.run_until_parked();
+        view.read_with(cx, |view, _| {
+            assert!(view.pending_edits_notice().is_some());
+        });
+
+        view.update_in(cx, |view, _window, cx| view.discard_edits(cx));
+
+        view.read_with(cx, |view, _| {
+            assert!(
+                view.pending_edits_notice().is_none(),
+                "discarding the buffer should clear the stale refusal notice"
+            );
+        });
     }
 
     #[gpui::test]
