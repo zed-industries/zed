@@ -699,16 +699,13 @@ pub(crate) fn render_buffer_header(
 
     let header = div()
         .id(("buffer-header", buffer_id.to_proto()))
-        .on_hover({
-            let header_hovered_state = header_hovered_state.clone();
-            move |hovered, _window, cx| {
-                header_hovered_state.update(cx, |state, cx| {
-                    if *state != *hovered {
-                        *state = *hovered;
-                        cx.notify();
-                    }
-                });
-            }
+        .on_hover(move |hovered, _window, cx| {
+            header_hovered_state.update(cx, |state, cx| {
+                if *state != *hovered {
+                    *state = *hovered;
+                    cx.notify();
+                }
+            });
         })
         .p(BUFFER_HEADER_PADDING)
         .w_full()
