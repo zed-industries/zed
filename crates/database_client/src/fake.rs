@@ -170,6 +170,26 @@ impl DatabaseClient for FakeDatabaseClient {
         Ok(self.query_result.clone())
     }
 
+    async fn apply_edits(
+        &self,
+        _table: &TableRef,
+        _columns: &[ColumnInfo],
+        edits: &TableEdits,
+    ) -> Result<AppliedCounts> {
+        self.check_error()?;
+        self.record(format!(
+            "apply_edits u={} i={} d={}",
+            edits.updates.len(),
+            edits.inserts.len(),
+            edits.deletes.len()
+        ));
+        Ok(AppliedCounts {
+            updated: edits.updates.len(),
+            inserted: edits.inserts.len(),
+            deleted: edits.deletes.len(),
+        })
+    }
+
     async fn cancel_running(&self) -> Result<()> {
         self.check_error()?;
         self.record("cancel_running");
@@ -211,5 +231,53 @@ mod tests {
         let fake = FakeDatabaseClient::with_error("boom");
         let error = fake.list_databases().await.unwrap_err();
         assert!(error.to_string().contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn fake_apply_edits_records_and_counts() {
+        let fake = FakeDatabaseClient::new();
+        let table = TableRef {
+            database: "app".into(),
+            schema: "public".into(),
+            name: "users".into(),
+        };
+        let edits = TableEdits {
+            updates: vec![RowUpdate {
+                key: RowKey {
+                    columns: vec!["id".into()],
+                    values: vec![Some("1".into())],
+                },
+                set: vec![("name".into(), EditCell::Value("Alice2".into()))],
+            }],
+            inserts: vec![RowInsert {
+                values: vec![
+                    ("id".into(), EditCell::Value("4".into())),
+                    ("name".into(), EditCell::Value("Dave".into())),
+                ],
+            }],
+            deletes: vec![RowDelete {
+                key: RowKey {
+                    columns: vec!["id".into()],
+                    values: vec![Some("2".into())],
+                },
+            }],
+        };
+        let counts = fake
+            .apply_edits(&table, &fake.structure.columns.clone(), &edits)
+            .await
+            .unwrap();
+        assert_eq!(
+            counts,
+            AppliedCounts {
+                updated: 1,
+                inserted: 1,
+                deleted: 1,
+            }
+        );
+        assert!(
+            fake.calls()
+                .iter()
+                .any(|call| call == "apply_edits u=1 i=1 d=1")
+        );
     }
 }

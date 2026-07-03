@@ -3,18 +3,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio_postgres::types::ToSql;
 use tokio_postgres::{CancelToken, Client, NoTls, SimpleQueryMessage};
 
 use crate::sql::{
-    self, COLUMNS_SQL, FOREIGN_KEYS_SQL, INDEXES_SQL, LIST_DATABASES_SQL, LIST_SCHEMAS_SQL,
-    LIST_TABLES_SQL,
+    self, BuiltStatement, COLUMNS_SQL, FOREIGN_KEYS_SQL, INDEXES_SQL, LIST_DATABASES_SQL,
+    LIST_SCHEMAS_SQL, LIST_TABLES_SQL,
 };
 use crate::{
-    ColumnInfo, ConnectionConfig, DatabaseClient, ForeignKey, IndexInfo, QueryResult, RowsPage,
-    SelectSpec, TableInfo, TableRef, TableStructure,
+    AppliedCounts, ColumnInfo, ConnectionConfig, DatabaseClient, ForeignKey, IndexInfo,
+    QueryResult, RowsPage, SelectSpec, TableEdits, TableInfo, TableRef, TableStructure,
 };
 
 /// How long to wait for a TCP connection to a database before giving up, so a
@@ -366,6 +366,52 @@ impl DatabaseClient for PostgresClient {
         }
     }
 
+    /// Applies a batch of edits in a single transaction on a read-write session.
+    ///
+    /// The order is `DELETE` → `UPDATE` → `INSERT`; each `DELETE`/`UPDATE` must
+    /// affect exactly one row (fewer or more means the row is gone or was changed
+    /// concurrently, and the whole batch is rolled back). The transaction body
+    /// runs in [`execute_edits`], whose `Result` is matched here so that a
+    /// best-effort `ROLLBACK` always runs on the error path — never leaving a
+    /// dangling open transaction on the cached connection — while success commits.
+    async fn apply_edits(
+        &self,
+        table: &TableRef,
+        columns: &[ColumnInfo],
+        edits: &TableEdits,
+    ) -> Result<AppliedCounts> {
+        if self.mode == SessionMode::ReadOnly {
+            bail!("apply_edits requires a read-write session");
+        }
+
+        let client = self.client_for(&table.database).await?;
+        let _cancel = self.register_cancel(&client);
+
+        client
+            .simple_query("BEGIN")
+            .await
+            .context("beginning edit transaction")?;
+
+        match execute_edits(&client, table, columns, edits).await {
+            Ok(counts) => {
+                client
+                    .simple_query("COMMIT")
+                    .await
+                    .context("committing edit transaction")?;
+                Ok(counts)
+            }
+            Err(error) => {
+                // Best-effort rollback: closing the aborted transaction keeps the
+                // cached connection usable. The original error is what the caller
+                // needs, so a rollback failure is only logged.
+                if let Err(rollback_error) = client.simple_query("ROLLBACK").await {
+                    log::warn!("failed to roll back edit transaction: {rollback_error}");
+                }
+                Err(error)
+            }
+        }
+    }
+
     async fn cancel_running(&self) -> Result<()> {
         let tokens: Vec<CancelToken> = {
             let mut guard = self
@@ -390,6 +436,63 @@ impl DatabaseClient for PostgresClient {
         }
         Ok(())
     }
+}
+
+/// Runs the DELETE → UPDATE → INSERT statements of a batch inside an already
+/// open transaction, returning the accumulated counts. Any error here (including
+/// a `DELETE`/`UPDATE` that did not affect exactly one row) propagates so the
+/// caller can roll the whole batch back.
+async fn execute_edits(
+    client: &Client,
+    table: &TableRef,
+    columns: &[ColumnInfo],
+    edits: &TableEdits,
+) -> Result<AppliedCounts> {
+    let mut counts = AppliedCounts::default();
+
+    for delete in &edits.deletes {
+        let statement = sql::build_delete(table, columns, delete)?;
+        let affected = execute_statement(client, &statement)
+            .await
+            .context("applying row delete")?;
+        if affected != 1 {
+            bail!("row not found or changed concurrently");
+        }
+        counts.deleted += 1;
+    }
+
+    for update in &edits.updates {
+        let statement = sql::build_update(table, columns, update)?;
+        let affected = execute_statement(client, &statement)
+            .await
+            .context("applying row update")?;
+        if affected != 1 {
+            bail!("row not found or changed concurrently");
+        }
+        counts.updated += 1;
+    }
+
+    for insert in &edits.inserts {
+        let statement = sql::build_insert(table, columns, insert)?;
+        execute_statement(client, &statement)
+            .await
+            .context("applying row insert")?;
+        counts.inserted += 1;
+    }
+
+    Ok(counts)
+}
+
+/// Executes a built statement, binding its text parameters the same way as
+/// `fetch_rows`, and returns the number of rows it affected.
+async fn execute_statement(client: &Client, statement: &BuiltStatement) -> Result<u64> {
+    let param_refs: Vec<&(dyn ToSql + Sync)> = statement
+        .params
+        .iter()
+        .map(|param| param as &(dyn ToSql + Sync))
+        .collect();
+    let affected = client.execute(&statement.sql, &param_refs).await?;
+    Ok(affected)
 }
 
 /// Builds the `-c` options string for a session's `statement_timeout` and,
@@ -481,7 +584,9 @@ fn command_verb(sql: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Filter, FilterOp, Sort, SortDirection};
+    use crate::{
+        EditCell, Filter, FilterOp, RowDelete, RowInsert, RowKey, RowUpdate, Sort, SortDirection,
+    };
 
     #[test]
     fn command_verb_extracts_leading_keyword() {
@@ -636,5 +741,155 @@ mod tests {
             .run_query(&database, "CREATE TEMPORARY TABLE zed_rw_check(id int)", 10)
             .await
             .unwrap();
+    }
+
+    /// Opens a direct `tokio_postgres` connection for test setup/teardown and
+    /// verification, spawning its background driver.
+    async fn setup_connection(host: &str, database: &str, password: &str) -> Client {
+        let mut config = tokio_postgres::Config::new();
+        config
+            .host(host)
+            .port(5432)
+            .user("postgres")
+            .password(password)
+            .dbname(database);
+        let (client, connection) = config.connect(NoTls).await.expect("setup connection");
+        tokio::spawn(async move {
+            if let Err(error) = connection.await {
+                eprintln!("setup connection closed with error: {error}");
+            }
+        });
+        client
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live postgres: ZED_DB_TEST_HOST/PASSWORD"]
+    async fn apply_edits_transaction_smoke() {
+        let host = std::env::var("ZED_DB_TEST_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let database = std::env::var("ZED_DB_TEST_DATABASE").unwrap_or_else(|_| "shop".into());
+        let password = std::env::var("ZED_DB_TEST_PASSWORD").unwrap_or_else(|_| "postgres".into());
+
+        // Direct connection drives table setup, teardown, and verification so the
+        // assertions are independent of the code under test.
+        let setup = setup_connection(&host, &database, &password).await;
+        setup
+            .simple_query("DROP TABLE IF EXISTS zed_edit_test")
+            .await
+            .expect("drop pre-existing test table");
+        setup
+            .simple_query(
+                "CREATE TABLE zed_edit_test (id int PRIMARY KEY, name text); \
+                 INSERT INTO zed_edit_test (id, name) VALUES (1, 'one'), (2, 'two')",
+            )
+            .await
+            .expect("create and seed test table");
+
+        let config = ConnectionConfig {
+            name: "test".into(),
+            host: host.clone(),
+            port: 5432,
+            database: database.clone(),
+            user: "postgres".into(),
+        };
+        let client = PostgresClient::new(
+            config,
+            password.clone(),
+            Duration::from_secs(30),
+            SessionMode::ReadWrite,
+        );
+        let table = TableRef {
+            database: database.clone(),
+            schema: "public".into(),
+            name: "zed_edit_test".into(),
+        };
+        let columns = client
+            .columns(&table)
+            .await
+            .expect("load test table columns");
+
+        let key = |id: &str| RowKey {
+            columns: vec!["id".into()],
+            values: vec![Some(id.to_string())],
+        };
+
+        // Update id=1's name, insert id=3, delete id=2, all in one transaction.
+        let edits = TableEdits {
+            updates: vec![RowUpdate {
+                key: key("1"),
+                set: vec![("name".into(), EditCell::Value("one-edited".into()))],
+            }],
+            inserts: vec![RowInsert {
+                values: vec![
+                    ("id".into(), EditCell::Value("3".into())),
+                    ("name".into(), EditCell::Value("three".into())),
+                ],
+            }],
+            deletes: vec![RowDelete { key: key("2") }],
+        };
+        let counts = client
+            .apply_edits(&table, &columns, &edits)
+            .await
+            .expect("apply_edits succeeds");
+        assert_eq!(
+            counts,
+            AppliedCounts {
+                updated: 1,
+                inserted: 1,
+                deleted: 1,
+            }
+        );
+
+        // Verify the final state via the independent setup connection.
+        let rows = setup
+            .query("SELECT id, name FROM zed_edit_test ORDER BY id", &[])
+            .await
+            .expect("read back rows");
+        let state: Vec<(i32, String)> = rows
+            .iter()
+            .map(|row| (row.get::<_, i32>(0), row.get::<_, String>(1)))
+            .collect();
+        assert_eq!(
+            state,
+            vec![(1, "one-edited".to_string()), (3, "three".to_string()),],
+            "id=1 updated, id=2 deleted, id=3 inserted"
+        );
+
+        // Negative case: an insert that violates the primary key must roll back
+        // the whole batch, leaving the table exactly as it was above.
+        let bad_edits = TableEdits {
+            updates: vec![RowUpdate {
+                key: key("1"),
+                set: vec![("name".into(), EditCell::Value("should-not-stick".into()))],
+            }],
+            inserts: vec![RowInsert {
+                // id=3 already exists → duplicate primary key.
+                values: vec![
+                    ("id".into(), EditCell::Value("3".into())),
+                    ("name".into(), EditCell::Value("dup".into())),
+                ],
+            }],
+            deletes: vec![],
+        };
+        let error = client.apply_edits(&table, &columns, &bad_edits).await;
+        assert!(error.is_err(), "duplicate primary key must fail the batch");
+
+        let rows = setup
+            .query("SELECT id, name FROM zed_edit_test ORDER BY id", &[])
+            .await
+            .expect("read back rows after rollback");
+        let state: Vec<(i32, String)> = rows
+            .iter()
+            .map(|row| (row.get::<_, i32>(0), row.get::<_, String>(1)))
+            .collect();
+        assert_eq!(
+            state,
+            vec![(1, "one-edited".to_string()), (3, "three".to_string()),],
+            "failed batch must roll back the update too"
+        );
+
+        setup
+            .simple_query("DROP TABLE zed_edit_test")
+            .await
+            .expect("drop test table");
     }
 }

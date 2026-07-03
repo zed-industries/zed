@@ -171,6 +171,14 @@ pub trait DatabaseClient: Send + Sync {
     async fn table_structure(&self, table: &TableRef) -> Result<TableStructure>;
     async fn fetch_rows(&self, table: &TableRef, spec: &SelectSpec) -> Result<RowsPage>;
     async fn run_query(&self, database: &str, sql: &str, max_rows: usize) -> Result<QueryResult>;
+    /// Applies a batch of row edits (deletes, updates, inserts) in a single
+    /// transaction, rolling the whole batch back on any error.
+    async fn apply_edits(
+        &self,
+        table: &TableRef,
+        columns: &[ColumnInfo],
+        edits: &TableEdits,
+    ) -> Result<AppliedCounts>;
     /// Sends a cancel signal to the server for all in-flight queries of this client.
     async fn cancel_running(&self) -> Result<()>;
 }
