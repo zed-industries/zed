@@ -101,6 +101,7 @@ pub fn build_select(
         let ident = quote_ident(&column.name);
         match filter.op {
             FilterOp::IsNull => predicates.push(format!("{ident} IS NULL")),
+            FilterOp::IsNotNull => predicates.push(format!("{ident} IS NOT NULL")),
             FilterOp::Contains => {
                 params.push(format!("%{}%", escape_like(&filter.value)));
                 // `E'\\'` is a single backslash regardless of the server's
@@ -118,7 +119,9 @@ pub fn build_select(
                     FilterOp::NotEq => "<>",
                     FilterOp::Gt => ">",
                     FilterOp::Lt => "<",
-                    FilterOp::Contains | FilterOp::IsNull => unreachable!(),
+                    FilterOp::Contains | FilterOp::IsNull | FilterOp::IsNotNull => {
+                        unreachable!()
+                    }
                 };
                 params.push(filter.value.clone());
                 // Bind the parameter as text and let the server cast it to the
@@ -448,6 +451,24 @@ mod tests {
              LIMIT 11 OFFSET 0"
         );
         assert_eq!(built.params, vec!["5", "9.99", "a@b.com"]);
+    }
+
+    #[test]
+    fn build_select_is_not_null() {
+        let columns = vec![col("id", "int4"), col("notes", "text")];
+        let spec = SelectSpec {
+            filters: vec![Filter {
+                column: "notes".into(),
+                op: FilterOp::IsNotNull,
+                value: String::new(),
+            }],
+            sort: None,
+            limit: 10,
+            offset: 0,
+        };
+        let built = build_select(&users_table(), &columns, &spec).unwrap();
+        assert!(built.sql.contains(r#""notes" IS NOT NULL"#));
+        assert!(built.params.is_empty());
     }
 
     #[test]

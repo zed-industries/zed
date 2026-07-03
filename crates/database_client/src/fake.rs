@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use anyhow::{Result, anyhow};
@@ -16,6 +17,14 @@ pub struct FakeDatabaseClient {
     pub page: RowsPage,
     pub query_result: QueryResult,
     pub error: Option<String>,
+    /// FIFO queue of results consumed one at a time by `run_query`, falling
+    /// back to `query_result` once empty. Lets a single test drive multiple
+    /// distinct `run_query` calls (e.g. successive pages) with different
+    /// responses.
+    queued_results: Mutex<VecDeque<QueryResult>>,
+    /// When set, fails only `run_query` (unlike `error`, which fails every
+    /// method including the eager `table_structure` load).
+    run_query_error: Mutex<Option<String>>,
     calls: Mutex<Vec<String>>,
 }
 
@@ -83,7 +92,25 @@ impl FakeDatabaseClient {
             page,
             query_result,
             error: None,
+            queued_results: Mutex::new(VecDeque::new()),
+            run_query_error: Mutex::new(None),
             calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Pushes a result onto the FIFO queue consumed by `run_query`. Once the
+    /// queue is drained, `run_query` falls back to `query_result`.
+    pub fn push_query_result(&self, result: QueryResult) {
+        if let Ok(mut queue) = self.queued_results.lock() {
+            queue.push_back(result);
+        }
+    }
+
+    /// Sets or clears an error that fails only `run_query`, unlike `error`
+    /// which fails every method.
+    pub fn set_run_query_error(&self, error: Option<String>) {
+        if let Ok(mut slot) = self.run_query_error.lock() {
+            *slot = error;
         }
     }
 
@@ -167,6 +194,16 @@ impl DatabaseClient for FakeDatabaseClient {
         self.record(format!(
             "run_query {database} max_rows={max_rows} sql={sql}"
         ));
+        if let Ok(slot) = self.run_query_error.lock()
+            && let Some(message) = slot.as_ref()
+        {
+            return Err(anyhow!("{message}"));
+        }
+        if let Ok(mut queue) = self.queued_results.lock()
+            && let Some(result) = queue.pop_front()
+        {
+            return Ok(result);
+        }
         Ok(self.query_result.clone())
     }
 
@@ -199,6 +236,8 @@ impl DatabaseClient for FakeDatabaseClient {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     #[tokio::test]
@@ -279,5 +318,44 @@ mod tests {
                 .iter()
                 .any(|call| call == "apply_edits u=1 i=1 d=1")
         );
+    }
+
+    #[tokio::test]
+    async fn fake_run_query_queue_and_error() {
+        let mut fake = FakeDatabaseClient::new();
+        fake.query_result = QueryResult {
+            columns: vec!["a".into()],
+            ..Default::default()
+        };
+        let fake = Arc::new(fake);
+        fake.push_query_result(QueryResult {
+            columns: vec!["first".into()],
+            ..Default::default()
+        });
+        fake.push_query_result(QueryResult {
+            columns: vec!["second".into()],
+            ..Default::default()
+        });
+        assert_eq!(
+            fake.run_query("db", "SELECT 1", 10).await.unwrap().columns,
+            vec!["first"]
+        );
+        assert_eq!(
+            fake.run_query("db", "SELECT 1", 10).await.unwrap().columns,
+            vec!["second"]
+        );
+        // queue empty -> falls back to query_result
+        assert_eq!(
+            fake.run_query("db", "SELECT 1", 10).await.unwrap().columns,
+            vec!["a"]
+        );
+        fake.set_run_query_error(Some("boom".into()));
+        assert!(fake.run_query("db", "SELECT 1", 10).await.is_err());
+        let table = TableRef {
+            database: "app".into(),
+            schema: "public".into(),
+            name: "users".into(),
+        };
+        assert!(fake.table_structure(&table).await.is_ok()); // other methods unaffected
     }
 }

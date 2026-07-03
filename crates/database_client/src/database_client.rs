@@ -5,6 +5,7 @@ pub mod fake;
 pub mod postgres;
 
 pub use postgres::SessionMode;
+pub use sql::quote_ident;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -71,13 +72,14 @@ pub enum FilterOp {
     Lt,
     Contains,
     IsNull,
+    IsNotNull,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Filter {
     pub column: String,
     pub op: FilterOp,
-    pub value: String, // ignored for IsNull
+    pub value: String, // ignored for IsNull and IsNotNull
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

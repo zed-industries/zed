@@ -53,11 +53,12 @@ fn filter_op_label(op: FilterOp) -> &'static str {
         FilterOp::Lt => "<",
         FilterOp::Contains => "contains",
         FilterOp::IsNull => "is null",
+        FilterOp::IsNotNull => "is not null",
     }
 }
 
 /// Every filter operator, in the order they appear in the operator dropdown.
-fn all_filter_ops() -> [FilterOp; 6] {
+fn all_filter_ops() -> [FilterOp; 7] {
     [
         FilterOp::Eq,
         FilterOp::NotEq,
@@ -65,6 +66,7 @@ fn all_filter_ops() -> [FilterOp; 6] {
         FilterOp::Lt,
         FilterOp::Contains,
         FilterOp::IsNull,
+        FilterOp::IsNotNull,
     ]
 }
 
@@ -1585,10 +1587,11 @@ impl TableDataView {
     }
 
     /// Whether the current draft is complete enough to apply: a column must be
-    /// chosen, and non-`IsNull` operators additionally require a value.
+    /// chosen, and non-`IsNull`/`IsNotNull` operators additionally require a
+    /// value.
     fn draft_apply_enabled(&self, cx: &App) -> bool {
         let has_column = self.draft_column.is_some();
-        let needs_value = self.draft_op != FilterOp::IsNull;
+        let needs_value = !matches!(self.draft_op, FilterOp::IsNull | FilterOp::IsNotNull);
         let has_value = !self.draft_value.read(cx).text(cx).trim().is_empty();
         has_column && (!needs_value || has_value)
     }
@@ -1602,7 +1605,7 @@ impl TableDataView {
         let Some(column) = self.draft_column.clone() else {
             return;
         };
-        let value = if self.draft_op == FilterOp::IsNull {
+        let value = if matches!(self.draft_op, FilterOp::IsNull | FilterOp::IsNotNull) {
             String::new()
         } else {
             self.draft_value.read(cx).text(cx)
@@ -1658,7 +1661,7 @@ impl TableDataView {
     }
 
     fn render_filter_chip(&self, index: usize, filter: &Filter, cx: &Context<Self>) -> AnyElement {
-        let text = if filter.op == FilterOp::IsNull {
+        let text = if matches!(filter.op, FilterOp::IsNull | FilterOp::IsNotNull) {
             format!("{} {}", filter.column, filter_op_label(filter.op))
         } else {
             format!(
@@ -1754,7 +1757,7 @@ impl TableDataView {
             });
 
         let apply_enabled = self.draft_apply_enabled(cx);
-        let show_value = self.draft_op != FilterOp::IsNull;
+        let show_value = !matches!(self.draft_op, FilterOp::IsNull | FilterOp::IsNotNull);
 
         h_flex()
             .gap_1()
@@ -2656,9 +2659,10 @@ mod tests {
         assert_eq!(filter_op_label(FilterOp::Lt), "<");
         assert_eq!(filter_op_label(FilterOp::Contains), "contains");
         assert_eq!(filter_op_label(FilterOp::IsNull), "is null");
+        assert_eq!(filter_op_label(FilterOp::IsNotNull), "is not null");
 
         let ops = all_filter_ops();
-        assert_eq!(ops.len(), 6, "there should be six filter operators");
+        assert_eq!(ops.len(), 7, "there should be seven filter operators");
         for op in ops {
             assert!(
                 !filter_op_label(op).is_empty(),
