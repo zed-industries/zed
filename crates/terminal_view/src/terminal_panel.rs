@@ -1718,7 +1718,7 @@ mod tests {
     use std::num::NonZero;
 
     use super::*;
-    use gpui::{TestAppContext, UpdateGlobal as _};
+    use gpui::{Modifiers, TestAppContext, UpdateGlobal as _, VisualTestContext};
     use pretty_assertions::assert_eq;
     use project::FakeFs;
     use settings::SettingsStore;
@@ -1907,6 +1907,47 @@ mod tests {
         assert!(
             result.is_ok(),
             "local terminal should successfully create in local project"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_inline_assist_tooltip_shows_keybinding_of_active_terminal(
+        cx: &mut TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        cx.update(|cx| {
+            cx.bind_keys([gpui::KeyBinding::new(
+                "ctrl-enter",
+                InlineAssist::default(),
+                Some("Terminal"),
+            )])
+        });
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        terminal_panel.update(cx, |panel, cx| panel.set_assistant_enabled(true, cx));
+        terminal_panel
+            .update_in(cx, |panel, window, cx| {
+                panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let button_bounds = cx
+            .debug_bounds("ICON-ZedAssistant")
+            .expect("inline assist button should be rendered in the terminal tab bar");
+        cx.simulate_mouse_move(button_bounds.center(), None, Modifiers::default());
+
+        cx.executor().advance_clock(Duration::from_millis(600));
+        cx.run_until_parked();
+
+        assert!(
+            cx.debug_bounds("KEY_BINDING-enter").is_some(),
+            "tooltip should show the InlineAssist keybinding resolved in the terminal's context"
         );
     }
 
