@@ -420,7 +420,12 @@ impl DatabaseClient for PostgresClient {
         }
 
         let client = self.connect_dedicated(&table.database).await?;
-        let _cancel = self.register_cancel(&client);
+        // Deliberately do NOT register this dedicated connection in the shared
+        // `cancel_tokens` map. `cancel_running()` (wired to the query view's
+        // Cancel button on the same client) would otherwise collaterally cancel
+        // an in-flight save's statement and abort the whole edit transaction. The
+        // dedicated connection is short-lived and isolated by design, so its
+        // cancellation must stay independent of the shared query-cancel path.
 
         client
             .simple_query("BEGIN")

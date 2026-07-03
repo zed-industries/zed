@@ -48,6 +48,14 @@ fn build_key_predicate(
     if key.columns.is_empty() {
         bail!("row key must not be empty");
     }
+    // Guard against a malformed key whose columns and values differ in length:
+    // `zip` below would silently stop at the shorter, producing a WHERE clause
+    // over only a prefix of the primary key, which could match/modify the wrong
+    // rows on an UPDATE/DELETE. RowKey should be equal-length by construction,
+    // so this is defensive.
+    if key.columns.len() != key.values.len() {
+        bail!("row key columns and values length mismatch");
+    }
     let mut predicates = Vec::with_capacity(key.columns.len());
     for (name, value) in key.columns.iter().zip(&key.values) {
         let column = find_column(columns, name)?;
@@ -588,6 +596,29 @@ mod tests {
         let built = build_insert(&users_table(), &columns, &insert).unwrap();
         assert_eq!(built.sql, "INSERT INTO \"public\".\"users\" DEFAULT VALUES");
         assert!(built.params.is_empty());
+    }
+
+    #[test]
+    fn build_key_predicate_rejects_length_mismatch() {
+        // A key whose columns and values differ in length must error rather than
+        // silently building a WHERE clause over only a prefix of the key.
+        let columns = edit_columns();
+        let delete = RowDelete {
+            key: RowKey {
+                columns: vec!["id".into(), "name".into()],
+                values: vec![Some("3".into())],
+            },
+        };
+        assert!(build_delete(&users_table(), &columns, &delete).is_err());
+
+        let update = RowUpdate {
+            key: RowKey {
+                columns: vec!["id".into()],
+                values: vec![Some("7".into()), Some("extra".into())],
+            },
+            set: vec![("name".into(), EditCell::Value("Ann".into()))],
+        };
+        assert!(build_update(&users_table(), &columns, &update).is_err());
     }
 
     #[test]
