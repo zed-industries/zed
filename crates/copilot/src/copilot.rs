@@ -46,20 +46,11 @@ use workspace::AppState;
 pub use crate::copilot_edit_prediction_delegate::CopilotEditPredictionDelegate;
 
 actions!(
-    copilot,
+    copilot_edit_predictions,
     [
-        /// Requests a code completion suggestion from Copilot Edit Predictions.
-        Suggest,
-        /// Cycles to the next Copilot Edit Predictions suggestion.
-        NextSuggestion,
-        /// Cycles to the previous Copilot Edit Predictions suggestion.
-        PreviousSuggestion,
         /// Reinstalls the Copilot Edit Predictions language server.
+        #[action(deprecated_aliases = ["copilot::Reinstall"])]
         Reinstall,
-        /// Signs in to GitHub Copilot Edit Predictions.
-        SignIn,
-        /// Signs out of GitHub Copilot Edit Predictions.
-        SignOut
     ]
 );
 
@@ -1296,39 +1287,16 @@ impl Copilot {
 
     fn update_action_visibilities(&self, cx: &mut App) {
         let signed_in_actions = [
-            TypeId::of::<Suggest>(),
-            TypeId::of::<NextSuggestion>(),
-            TypeId::of::<PreviousSuggestion>(),
             TypeId::of::<Reinstall>(),
         ];
-        let auth_actions = [TypeId::of::<SignOut>()];
-        let no_auth_actions = [TypeId::of::<SignIn>()];
-        let status = self.status();
 
         let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
         let filter = CommandPaletteFilter::global_mut(cx);
 
         if is_ai_disabled {
             filter.hide_action_types(&signed_in_actions);
-            filter.hide_action_types(&auth_actions);
-            filter.hide_action_types(&no_auth_actions);
         } else {
-            match status {
-                Status::Disabled => {
-                    filter.hide_action_types(&signed_in_actions);
-                    filter.hide_action_types(&auth_actions);
-                    filter.hide_action_types(&no_auth_actions);
-                }
-                Status::Authorized => {
-                    filter.hide_action_types(&no_auth_actions);
-                    filter.show_action_types(signed_in_actions.iter().chain(&auth_actions));
-                }
-                _ => {
-                    filter.hide_action_types(&signed_in_actions);
-                    filter.hide_action_types(&auth_actions);
-                    filter.show_action_types(&no_auth_actions);
-                }
-            }
+            filter.show_action_types(&signed_in_actions);
         }
     }
 }

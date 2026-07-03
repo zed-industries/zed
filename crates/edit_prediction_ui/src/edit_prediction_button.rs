@@ -1052,7 +1052,11 @@ impl EditPredictionButton {
                     "Go to Copilot Settings",
                     OpenBrowser { url: settings_url }.boxed_clone(),
                 )
-                .action("Sign Out", copilot::SignOut.boxed_clone());
+                .entry("Sign Out", None, |window, cx| {
+                    if let Some(auth) = copilot::GlobalCopilotAuth::try_global(cx) {
+                        copilot_ui::initiate_sign_out(auth.0.clone(), window, cx);
+                    }
+                });
             menu
         })
     }
