@@ -1817,13 +1817,21 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) {
         let mut removed_ids = Vec::new();
+
+        let is_trusted = TrustedWorktrees::try_get_global(cx)
+            .map(|trusted_worktrees| {
+                trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                    trusted_worktrees.can_trust(&self.worktree_store, worktree_id, cx)
+                })
+            })
+            .unwrap_or(false);
+
         for update in updated_git_repositories.iter() {
             if let Some((id, existing)) = self.repositories.iter().find(|(_, repo)| {
-                let existing_work_directory_abs_path =
-                    repo.read(cx).work_directory_abs_path.clone();
-                Some(&existing_work_directory_abs_path)
+                let existing_work_directory_abs_path = &repo.read(cx).work_directory_abs_path;
+                Some(existing_work_directory_abs_path)
                     == update.old_work_directory_abs_path.as_ref()
-                    || Some(&existing_work_directory_abs_path)
+                    || Some(existing_work_directory_abs_path)
                         == update.new_work_directory_abs_path.as_ref()
             }) {
                 let repo_id = *id;
@@ -1842,17 +1850,6 @@ impl GitStore {
                             update.repository_dir_abs_path.clone()
                         && let Some(common_dir_abs_path) = update.common_dir_abs_path.clone()
                     {
-                        let is_trusted = TrustedWorktrees::try_get_global(cx)
-                            .map(|trusted_worktrees| {
-                                trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                                    trusted_worktrees.can_trust(
-                                        &self.worktree_store,
-                                        worktree_id,
-                                        cx,
-                                    )
-                                })
-                            })
-                            .unwrap_or(false);
                         existing.update(cx, |existing, cx| {
                             existing.reinitialize_local_backend(
                                 new_work_directory_abs_path,
@@ -1888,16 +1885,7 @@ impl GitStore {
                 ..
             } = update
             {
-                let repository_dir_abs_path = repository_dir_abs_path.clone();
-                let common_dir_abs_path = common_dir_abs_path.clone();
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
-                let is_trusted = TrustedWorktrees::try_get_global(cx)
-                    .map(|trusted_worktrees| {
-                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            trusted_worktrees.can_trust(&self.worktree_store, worktree_id, cx)
-                        })
-                    })
-                    .unwrap_or(false);
                 let git_store = cx.weak_entity();
                 let repo = cx.new(|cx| {
                     let mut repo = Repository::local(
