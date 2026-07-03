@@ -1706,3 +1706,91 @@ impl ConfigurationView {
             )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language_model::LanguageModelRequestMessage;
+
+    fn into_bedrock_request(messages: Vec<LanguageModelRequestMessage>) -> bedrock::Request {
+        into_bedrock(
+            LanguageModelRequest {
+                messages,
+                ..Default::default()
+            },
+            "claude-sonnet-4-5".to_string(),
+            1.0,
+            4096,
+            BedrockModelMode::Default,
+            true,
+            true,
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_cache_marked_message_that_filters_to_empty_is_dropped() {
+        let request = into_bedrock_request(vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("What's the weather?".into())],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Thinking {
+                    text: "Let me think about this...".into(),
+                    signature: None,
+                }],
+                cache: true,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Summarize this conversation.".into())],
+                cache: false,
+                reasoning_details: None,
+            },
+        ]);
+
+        for message in &request.messages {
+            assert!(
+                message
+                    .content()
+                    .iter()
+                    .any(|block| !matches!(block, BedrockInnerContent::CachePoint(_))),
+                "message must not consist solely of cache points: {:?}",
+                message
+            );
+        }
+        assert!(
+            request
+                .messages
+                .iter()
+                .all(|message| *message.role() == bedrock::BedrockRole::User),
+            "the assistant message stripped to empty content should be dropped entirely"
+        );
+    }
+
+    #[test]
+    fn test_cache_marked_message_with_content_gets_cache_point() {
+        let request = into_bedrock_request(vec![LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::Text("What's the weather?".into())],
+            cache: true,
+            reasoning_details: None,
+        }]);
+
+        assert_eq!(request.messages.len(), 1);
+        assert!(
+            matches!(
+                request.messages[0].content().last(),
+                Some(BedrockInnerContent::CachePoint(_))
+            ),
+            "a cache-marked message with content should end with a cache point"
+        );
+    }
+}
