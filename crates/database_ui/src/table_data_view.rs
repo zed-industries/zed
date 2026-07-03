@@ -10,13 +10,14 @@ use database_client::{
 use editor::{Editor, EditorEvent, EditorMode};
 use gpui::{
     Anchor, AnyElement, App, Context, DismissEvent, ElementId, Entity, EventEmitter, FocusHandle,
-    Focusable, SharedString, Subscription, Task, WeakEntity, Window, actions,
+    Focusable, MouseButton, MouseDownEvent, Pixels, Point, SharedString, Subscription, Task,
+    WeakEntity, Window, actions, anchored, deferred,
 };
 use language::{Buffer, LanguageRegistry};
 use multi_buffer::MultiBuffer;
 use settings::Settings as _;
 use ui::{
-    AbsoluteLength, ColumnWidthConfig, PopoverMenu, ResizableColumnsState, Table,
+    AbsoluteLength, ColumnWidthConfig, ContextMenu, PopoverMenu, ResizableColumnsState, Table,
     TableInteractionState, TableResizeBehavior, Tooltip, prelude::*,
 };
 use ui_input::InputField;
@@ -296,6 +297,13 @@ pub struct TableDataView {
     /// The row count and wall-clock duration of the most recent successful
     /// query run, shown in the footer. `None` before the first page loads.
     last_run: Option<(usize, Duration)>,
+    /// The right-click menu deployed on a data cell, anchored at the cursor
+    /// position it opened at. The `Subscription` watches the menu's
+    /// `DismissEvent` to clear this field; dropping the tuple drops both.
+    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    /// The "View value" popup deployed from the cell context menu, anchored
+    /// at the cursor position the menu opened at.
+    value_popover: Option<(Entity<ValuePopover>, Point<Pixels>, Subscription)>,
     /// Held separately from `_structure_task` so a structure load and a data
     /// reload can be in flight at the same time without one aborting the other.
     _data_task: Option<Task<()>>,
@@ -401,6 +409,8 @@ impl TableDataView {
                 interaction,
                 column_widths: None,
                 last_run: None,
+                context_menu: None,
+                value_popover: None,
                 _data_task: None,
                 _structure_task: None,
                 _save_task: None,
@@ -444,6 +454,20 @@ impl TableDataView {
     #[cfg(test)]
     fn page(&self) -> Option<&PageData> {
         self.page.as_deref()
+    }
+
+    /// Test-only: exposes whether the cell context menu is deployed.
+    #[cfg(test)]
+    fn context_menu_open(&self) -> bool {
+        self.context_menu.is_some()
+    }
+
+    /// Test-only: exposes the "View value" popover's current text, if open.
+    #[cfg(test)]
+    fn value_popover_text(&self, cx: &App) -> Option<SharedString> {
+        self.value_popover
+            .as_ref()
+            .map(|(popover, _, _)| popover.read(cx).value.clone())
     }
 
     pub fn structure(&self) -> Option<&TableStructure> {
@@ -1469,6 +1493,267 @@ impl TableDataView {
             .into_any_element()
     }
 
+    /// Truncates a menu label's value to `max_chars`, appending an ellipsis when
+    /// it was cut. Used only for menu entry text; filters and the value popover
+    /// always carry the untruncated value.
+    fn truncate_for_label(value: &str, max_chars: usize) -> String {
+        if value.chars().count() <= max_chars {
+            value.to_string()
+        } else {
+            let mut truncated: String = value.chars().take(max_chars).collect();
+            truncated.push('…');
+            truncated
+        }
+    }
+
+    /// Whether the cell context menu should offer an "Edit cell" entry for
+    /// `column`: only when the caller found an addressable row (`target`) and
+    /// the view is editable (not read-only/dirty-SQL/custom-query). For an
+    /// existing row the column must also not be part of the primary key
+    /// (same rule `begin_edit_cell` enforces, since the PK identifies the
+    /// row); a pending insert row has no such restriction, matching
+    /// `begin_edit_new_cell`, where every column of a new row - including the
+    /// primary key it will be created with - is editable.
+    fn shows_edit_cell_entry(&self, column: &str, target: &Option<EditTarget>) -> bool {
+        if !self.editable() {
+            return false;
+        }
+        match target {
+            Some(EditTarget::Existing(_)) => !self.is_primary_key_column(column),
+            Some(EditTarget::New(_)) => true,
+            None => false,
+        }
+    }
+
+    /// Deploys the right-click menu for a data cell at `position`, offering
+    /// quick filters on the cell's value, a "View value" popup, and (when
+    /// editable) an "Edit cell" entry.
+    ///
+    /// `column`, `value`, and `target` must be captured by the caller during
+    /// render rather than resolved here by index: by the time this runs, a
+    /// concurrent page swap could otherwise make it act on the wrong row.
+    /// `target` is `Some` only for rows an inline edit can apply to (an
+    /// existing row's `RowKey` or a pending insert's `InsertId`); the "Edit
+    /// cell" entry is omitted when it is `None`, the view is not editable, or
+    /// the column is part of the primary key.
+    fn deploy_cell_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        column: String,
+        value: Option<String>,
+        target: Option<EditTarget>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let show_edit = self.shows_edit_cell_entry(&column, &target);
+        let table_view = cx.weak_entity();
+        let context_menu = ContextMenu::build(window, cx, move |menu, _, _| {
+            let mut menu = match value.clone() {
+                Some(value) => {
+                    let filter_label = format!(
+                        "Filter: {column} = '{}'",
+                        Self::truncate_for_label(&value, 40)
+                    );
+                    let exclude_label = format!(
+                        "Exclude: {column} ≠ '{}'",
+                        Self::truncate_for_label(&value, 40)
+                    );
+                    menu.entry(filter_label, None, {
+                        let table_view = table_view.clone();
+                        let column = column.clone();
+                        let value = value.clone();
+                        move |window, cx| {
+                            table_view
+                                .update(cx, |table, cx| {
+                                    table.apply_filter_edit(
+                                        None,
+                                        Filter {
+                                            column: column.clone(),
+                                            op: FilterOp::Eq,
+                                            value: value.clone(),
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    })
+                    .entry(exclude_label, None, {
+                        let table_view = table_view.clone();
+                        let column = column.clone();
+                        move |window, cx| {
+                            table_view
+                                .update(cx, |table, cx| {
+                                    table.apply_filter_edit(
+                                        None,
+                                        Filter {
+                                            column: column.clone(),
+                                            op: FilterOp::NotEq,
+                                            value: value.clone(),
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    })
+                }
+                None => menu
+                    .entry(format!("Filter: {column} IS NULL"), None, {
+                        let table_view = table_view.clone();
+                        let column = column.clone();
+                        move |window, cx| {
+                            table_view
+                                .update(cx, |table, cx| {
+                                    table.apply_filter_edit(
+                                        None,
+                                        Filter {
+                                            column: column.clone(),
+                                            op: FilterOp::IsNull,
+                                            value: String::new(),
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    })
+                    .entry(format!("Exclude: {column} IS NOT NULL"), None, {
+                        let table_view = table_view.clone();
+                        let column = column.clone();
+                        move |window, cx| {
+                            table_view
+                                .update(cx, |table, cx| {
+                                    table.apply_filter_edit(
+                                        None,
+                                        Filter {
+                                            column: column.clone(),
+                                            op: FilterOp::IsNotNull,
+                                            value: String::new(),
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    }),
+            };
+            menu = menu.separator().entry("View value", None, {
+                let table_view = table_view.clone();
+                let popover_value = value.clone().unwrap_or_else(|| "NULL".to_string());
+                move |window, cx| {
+                    table_view
+                        .update(cx, |table, cx| {
+                            table.open_value_popover(position, popover_value.clone(), window, cx);
+                        })
+                        .log_err();
+                }
+            });
+            if show_edit {
+                let Some(target) = target.clone() else {
+                    return menu;
+                };
+                menu = menu.entry("Edit cell", None, {
+                    let table_view = table_view.clone();
+                    move |window, cx| {
+                        table_view
+                            .update(cx, |table, cx| match &target {
+                                EditTarget::Existing(row_key) => {
+                                    if let Some(display_row) = table.display_row_for_key(row_key)
+                                        && let Some(column_index) = table.column_index_for(&column)
+                                    {
+                                        table.begin_edit_cell(
+                                            display_row,
+                                            column_index,
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                }
+                                EditTarget::New(id) => {
+                                    if let Some(insert_index) = table.insert_index_for_id(*id)
+                                        && let Some(column_index) = table.column_index_for(&column)
+                                    {
+                                        table.begin_edit_new_cell(
+                                            *id,
+                                            insert_index,
+                                            column_index,
+                                            window,
+                                            cx,
+                                        );
+                                    }
+                                }
+                            })
+                            .log_err();
+                    }
+                });
+            }
+            menu
+        });
+        window.focus(&context_menu.focus_handle(cx), cx);
+        let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+            this.context_menu.take();
+            cx.notify();
+        });
+        self.context_menu = Some((context_menu, position, subscription));
+        cx.notify();
+    }
+
+    /// The display-row index of the page row identified by `row_key`, if it is
+    /// still present on the current page. Used by the "Edit cell" menu action,
+    /// which is built once at deploy time but runs later, so the row's position
+    /// must be re-resolved rather than trusted from when the menu opened.
+    fn display_row_for_key(&self, row_key: &RowKey) -> Option<usize> {
+        let page = self.page.as_ref()?;
+        (0..page.rows.len()).find(|&display_row| {
+            self.row_key_for(display_row)
+                .is_some_and(|key| &key == row_key)
+        })
+    }
+
+    /// The insert-row index of the pending insert identified by `id`, if it is
+    /// still present in the edit buffer. See [`Self::display_row_for_key`] for
+    /// why this is re-resolved rather than captured.
+    fn insert_index_for_id(&self, id: InsertId) -> Option<usize> {
+        self.edits
+            .inserts
+            .iter()
+            .position(|(insert_id, _)| *insert_id == id)
+    }
+
+    /// The column index of `column` in the current page, if loaded.
+    fn column_index_for(&self, column: &str) -> Option<usize> {
+        let page = self.page.as_ref()?;
+        page.columns.iter().position(|name| name == column)
+    }
+
+    /// Opens the "View value" popup at `position`, showing `value` in full
+    /// (already resolved to the literal text `"NULL"` by the caller when the
+    /// cell was NULL).
+    fn open_value_popover(
+        &mut self,
+        position: Point<Pixels>,
+        value: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let popover = cx.new(|cx| ValuePopover {
+            value: value.into(),
+            focus_handle: cx.focus_handle(),
+        });
+        window.focus(&popover.focus_handle(cx), cx);
+        let subscription = cx.subscribe(&popover, |this, _, _: &DismissEvent, cx| {
+            this.value_popover.take();
+            cx.notify();
+        });
+        self.value_popover = Some((popover, position, subscription));
+        cx.notify();
+    }
+
     /// Renders one data cell of an existing row, honouring the inline editor and
     /// any buffered edit: the cell being edited shows the input field with a NULL
     /// button; a cell with a buffered edit shows the new value on a highlighted
@@ -1518,6 +1803,13 @@ impl TableDataView {
                 .as_ref()
                 .is_some_and(|column| !self.is_primary_key_column(column));
 
+        // Captured now, at render time, rather than resolved by index inside
+        // the context-menu handler: a page swap between paint and right-click
+        // must not make the menu act on a different row than the one shown.
+        let context_menu_target = row_key.clone().map(EditTarget::Existing);
+        let context_menu_column = column_name.clone().unwrap_or_default();
+        let context_menu_value = display.clone();
+
         let mut cell = div().w_full();
         if modified {
             cell = cell.bg(modified_cell_background(cx)).rounded_sm().px_1();
@@ -1527,16 +1819,16 @@ impl TableDataView {
             None => cell.child(Label::new("NULL").color(Color::Muted).italic()),
         };
 
-        if editable_here {
-            div()
-                .id(ElementId::NamedInteger(
-                    SharedString::from(format!("db-cell-{column_index}")),
-                    display_row as u64,
-                ))
-                .w_full()
-                .cursor_pointer()
-                .child(cell)
-                .on_click(
+        let cell = div()
+            .id(ElementId::NamedInteger(
+                SharedString::from(format!("db-cell-{column_index}")),
+                display_row as u64,
+            ))
+            .w_full()
+            .when(editable_here, |this| this.cursor_pointer())
+            .child(cell)
+            .when(editable_here, |this| {
+                this.on_click(
                     cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
                         // A double-click opens the inline editor for this cell.
                         // `begin_edit_cell` re-resolves the row key against the
@@ -1548,10 +1840,23 @@ impl TableDataView {
                         }
                     }),
                 )
-                .into_any_element()
-        } else {
-            cell.into_any_element()
-        }
+            })
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.deploy_cell_context_menu(
+                        event.position,
+                        context_menu_column.clone(),
+                        context_menu_value.clone(),
+                        context_menu_target.clone(),
+                        window,
+                        cx,
+                    );
+                }),
+            );
+
+        cell.into_any_element()
     }
 
     /// The inline editor UI shared by existing-row and new-row cells: the text
@@ -1614,16 +1919,27 @@ impl TableDataView {
             None => cell.child(Label::new("default").color(Color::Muted).italic()),
         };
 
-        if self.editable() {
-            div()
-                .id(ElementId::NamedInteger(
-                    SharedString::from(format!("db-insert-cell-{column_index}")),
-                    insert_index as u64,
-                ))
-                .w_full()
-                .cursor_pointer()
-                .child(cell)
-                .on_click(
+        // Every column of an insert row is editable (including the primary
+        // key, unlike an existing row), so the menu's "Edit cell" entry is
+        // gated only on `editable()`.
+        let editable_here = self.editable();
+        let context_menu_target = Some(EditTarget::New(insert_id));
+        let context_menu_column = column_name.clone().unwrap_or_default();
+        let context_menu_value = match buffered {
+            Some(EditCell::Value(value)) => Some(value.clone()),
+            Some(EditCell::Null) | None => None,
+        };
+
+        let cell = div()
+            .id(ElementId::NamedInteger(
+                SharedString::from(format!("db-insert-cell-{column_index}")),
+                insert_index as u64,
+            ))
+            .w_full()
+            .when(editable_here, |this| this.cursor_pointer())
+            .child(cell)
+            .when(editable_here, |this| {
+                this.on_click(
                     cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
                         if event.click_count() >= 2 {
                             this.begin_edit_new_cell(
@@ -1636,10 +1952,23 @@ impl TableDataView {
                         }
                     }),
                 )
-                .into_any_element()
-        } else {
-            cell.into_any_element()
-        }
+            })
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.deploy_cell_context_menu(
+                        event.position,
+                        context_menu_column.clone(),
+                        context_menu_value.clone(),
+                        context_menu_target.clone(),
+                        window,
+                        cx,
+                    );
+                }),
+            );
+
+        cell.into_any_element()
     }
 
     fn render_header(&self, index: usize, column: &str, cx: &Context<Self>) -> AnyElement {
@@ -2358,6 +2687,45 @@ impl Render for FilterPopover {
     }
 }
 
+/// A read-only popup showing a data cell's full value, opened from the cell
+/// context menu's "View value" entry. Values in the grid are truncated for
+/// display and menu labels are truncated further; this is the one place the
+/// whole value is shown.
+pub struct ValuePopover {
+    value: SharedString,
+    focus_handle: FocusHandle,
+}
+
+impl EventEmitter<DismissEvent> for ValuePopover {}
+
+impl Focusable for ValuePopover {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
+impl Render for ValuePopover {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("DatabaseValuePopover")
+            .track_focus(&self.focus_handle)
+            .occlude()
+            .elevation_2(cx)
+            .max_w_96()
+            .max_h_80()
+            .p_2()
+            .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| cx.emit(DismissEvent)))
+            .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(DismissEvent)))
+            .child(
+                div()
+                    .id("db-value-scroll")
+                    .overflow_y_scroll()
+                    .max_h_72()
+                    .child(Label::new(self.value.clone()).size(LabelSize::Small)),
+            )
+    }
+}
+
 impl Render for TableDataView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match (&self.load_state, self.mode) {
@@ -2424,6 +2792,26 @@ impl Render for TableDataView {
             .children(chips_row)
             .child(v_flex().flex_1().size_full().overflow_hidden().child(body))
             .when(in_data, |this| this.child(self.render_footer(cx)))
+            .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+                deferred(
+                    anchored()
+                        .position(*position)
+                        .anchor(Anchor::TopLeft)
+                        .snap_to_window_with_margin(px(8.))
+                        .child(menu.clone()),
+                )
+                .with_priority(3)
+            }))
+            .children(self.value_popover.as_ref().map(|(popover, position, _)| {
+                deferred(
+                    anchored()
+                        .position(*position)
+                        .anchor(Anchor::TopLeft)
+                        .snap_to_window_with_margin(px(8.))
+                        .child(popover.clone()),
+                )
+                .with_priority(3)
+            }))
     }
 }
 
@@ -2530,10 +2918,12 @@ mod tests {
     use database_client::{
         ColumnInfo, DatabaseClient, Filter, FilterOp, QueryResult, RowKey, SortDirection, TableRef,
     };
-    use gpui::{AppContext as _, Focusable, TestAppContext, VisualTestContext};
+    use gpui::{
+        AppContext as _, DismissEvent, Entity, Focusable, TestAppContext, VisualTestContext,
+    };
 
     use super::{
-        FilterPopover, LoadState, SaveState, TableDataView, ViewMode, all_filter_ops,
+        EditTarget, FilterPopover, LoadState, SaveState, TableDataView, ViewMode, all_filter_ops,
         compute_editable, filter_op_label,
     };
     use crate::query_state::{QueryBase, render_sql};
@@ -4930,5 +5320,439 @@ mod tests {
                 "focusing the SQL bar must not read as the cell editor being focused"
             );
         });
+    }
+
+    /// Loads a `TableDataView` seeded with [`fake_with_default_rows`] and waits
+    /// for both the first page and structure to be loaded (so `row_key_for` and
+    /// PK gating are available), returning the fake alongside the view so tests
+    /// can assert on regenerated SQL.
+    async fn view_with_default_rows(
+        cx: &mut TestAppContext,
+    ) -> (
+        Arc<FakeDatabaseClient>,
+        Entity<TableDataView>,
+        &mut VisualTestContext,
+    ) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = fake_with_default_rows();
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+        (fake, view, cx)
+    }
+
+    #[gpui::test]
+    async fn context_menu_filter_entry_adds_eq_filter_with_exact_value(cx: &mut TestAppContext) {
+        let cx = &mut cx.clone();
+        let (fake, view, cx) = view_with_default_rows(cx).await;
+
+        // Row 0's `name` is "Alice"; the RowKey for row 0 makes this an
+        // existing-row target so "Edit cell" would also be offered.
+        let key = view.read_with(cx, |view, _| {
+            view.row_key_for(0).expect("row 0 should yield a RowKey")
+        });
+
+        view.update_in(cx, |view, window, cx| {
+            view.deploy_cell_context_menu(
+                gpui::Point::default(),
+                "name".into(),
+                Some("Alice".into()),
+                Some(EditTarget::Existing(key)),
+                window,
+                cx,
+            );
+        });
+        view.read_with(cx, |view, _| {
+            assert!(view.context_menu_open(), "right-click should open a menu");
+        });
+
+        // Simulate clicking "Filter: name = 'Alice'" by calling the same code
+        // path the menu entry closure calls.
+        view.update_in(cx, |view, window, cx| {
+            view.apply_filter_edit(
+                None,
+                Filter {
+                    column: "name".into(),
+                    op: FilterOp::Eq,
+                    value: "Alice".into(),
+                },
+                window,
+                cx,
+            );
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.query().filters.len(), 1);
+            assert_eq!(view.query().filters[0].op, FilterOp::Eq);
+            assert_eq!(view.query().filters[0].value, "Alice");
+        });
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
+        assert!(
+            last.contains(r#""name" = 'Alice'"#),
+            "unexpected generated SQL: {last}"
+        );
+    }
+
+    #[gpui::test]
+    async fn context_menu_exclude_entry_adds_not_eq_filter(cx: &mut TestAppContext) {
+        let cx = &mut cx.clone();
+        let (fake, view, cx) = view_with_default_rows(cx).await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.deploy_cell_context_menu(
+                gpui::Point::default(),
+                "name".into(),
+                Some("Alice".into()),
+                None,
+                window,
+                cx,
+            );
+        });
+        view.read_with(cx, |view, _| assert!(view.context_menu_open()));
+
+        view.update_in(cx, |view, window, cx| {
+            view.apply_filter_edit(
+                None,
+                Filter {
+                    column: "name".into(),
+                    op: FilterOp::NotEq,
+                    value: "Alice".into(),
+                },
+                window,
+                cx,
+            );
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
+        assert!(
+            last.contains(r#""name" <> 'Alice'"#),
+            "unexpected generated SQL: {last}"
+        );
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.query().filters[0].op, FilterOp::NotEq);
+        });
+    }
+
+    #[gpui::test]
+    async fn context_menu_null_cell_offers_is_null_filters(cx: &mut TestAppContext) {
+        let cx = &mut cx.clone();
+        let (fake, view, cx) = view_with_default_rows(cx).await;
+
+        // Row 2's `name` is NULL in `default_rows_result`.
+        view.update_in(cx, |view, window, cx| {
+            view.deploy_cell_context_menu(
+                gpui::Point::default(),
+                "name".into(),
+                None,
+                None,
+                window,
+                cx,
+            );
+        });
+        view.read_with(cx, |view, _| assert!(view.context_menu_open()));
+
+        view.update_in(cx, |view, window, cx| {
+            view.apply_filter_edit(
+                None,
+                Filter {
+                    column: "name".into(),
+                    op: FilterOp::IsNull,
+                    value: String::new(),
+                },
+                window,
+                cx,
+            );
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.query().filters[0].op, FilterOp::IsNull);
+        });
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
+        assert!(
+            last.contains(r#""name" IS NULL"#),
+            "unexpected generated SQL: {last}"
+        );
+    }
+
+    #[gpui::test]
+    async fn context_menu_null_cell_exclude_uses_is_not_null(cx: &mut TestAppContext) {
+        let cx = &mut cx.clone();
+        let (fake, view, cx) = view_with_default_rows(cx).await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.apply_filter_edit(
+                None,
+                Filter {
+                    column: "name".into(),
+                    op: FilterOp::IsNotNull,
+                    value: String::new(),
+                },
+                window,
+                cx,
+            );
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.query().filters[0].op, FilterOp::IsNotNull);
+        });
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
+        assert!(
+            last.contains(r#""name" IS NOT NULL"#),
+            "unexpected generated SQL: {last}"
+        );
+    }
+
+    #[gpui::test]
+    async fn view_value_populates_popover_with_full_text(cx: &mut TestAppContext) {
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        let long_value = "x".repeat(200);
+        view.update_in(cx, |view, window, cx| {
+            view.open_value_popover(gpui::Point::default(), long_value.clone(), window, cx);
+        });
+
+        view.read_with(cx, |view, cx| {
+            assert_eq!(
+                view.value_popover_text(cx).as_deref(),
+                Some(long_value.as_str()),
+                "the popover should hold the full, untruncated value"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn view_value_shows_null_literal_for_null_cell(cx: &mut TestAppContext) {
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.open_value_popover(gpui::Point::default(), "NULL".into(), window, cx);
+        });
+
+        view.read_with(cx, |view, cx| {
+            assert_eq!(view.value_popover_text(cx).as_deref(), Some("NULL"));
+        });
+    }
+
+    #[gpui::test]
+    async fn edit_cell_entry_shown_for_editable_non_pk_target(cx: &mut TestAppContext) {
+        // Positive control for the other `shows_edit_cell_entry` tests below:
+        // a non-PK column with a valid target on an editable table shows it.
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        let key = view.read_with(cx, |view, _| view.row_key_for(0).unwrap());
+        view.read_with(cx, |view, _| {
+            assert!(view.shows_edit_cell_entry("name", &Some(EditTarget::Existing(key))));
+        });
+    }
+
+    #[gpui::test]
+    async fn edit_cell_entry_shown_for_pk_column_on_insert_row(cx: &mut TestAppContext) {
+        // Unlike an existing row, a pending insert row has no key yet, so
+        // every column - including the primary key it will be created with -
+        // stays editable (matching `begin_edit_new_cell`'s behavior).
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        let id = view.update(cx, |view, cx| {
+            view.add_row(cx).expect("add_row should yield an insert id")
+        });
+        view.read_with(cx, |view, _| {
+            assert!(view.shows_edit_cell_entry("id", &Some(EditTarget::New(id))));
+        });
+    }
+
+    #[gpui::test]
+    async fn edit_cell_entry_absent_when_target_is_none(cx: &mut TestAppContext) {
+        // No `target` (e.g. a header/summary cell with no addressable row)
+        // means "Edit cell" cannot be offered even on an editable table.
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        view.read_with(cx, |view, _| {
+            assert!(!view.shows_edit_cell_entry("name", &None));
+        });
+
+        view.update_in(cx, |view, window, cx| {
+            view.deploy_cell_context_menu(
+                gpui::Point::default(),
+                "name".into(),
+                Some("Alice".into()),
+                None,
+                window,
+                cx,
+            );
+            assert!(
+                view.context_menu.is_some(),
+                "the menu should still deploy without a target"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn edit_cell_entry_absent_for_primary_key_column(cx: &mut TestAppContext) {
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        let key = view.read_with(cx, |view, _| view.row_key_for(0).unwrap());
+        // "id" is the fake structure's primary-key column: even with a valid
+        // target, editing it must not be offered (the PK identifies the row).
+        view.read_with(cx, |view, _| {
+            assert!(view.is_primary_key_column("id"));
+            assert!(!view.shows_edit_cell_entry("id", &Some(EditTarget::Existing(key))));
+        });
+    }
+
+    #[gpui::test]
+    async fn edit_cell_entry_absent_when_sql_dirty(cx: &mut TestAppContext) {
+        // A dirty SQL bar suspends `editable()` (see
+        // `dirty_sql_bar_blocks_row_mutations`), so even a valid target on a
+        // non-PK column must not offer "Edit cell".
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        let key = view.read_with(cx, |view, _| view.row_key_for(0).unwrap());
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor
+                .update(cx, |editor, cx| editor.set_text("SELECT 1", window, cx));
+        });
+        view.read_with(cx, |view, _| {
+            assert!(
+                !view.editable(),
+                "a dirty SQL bar should suspend row editing, hence Edit cell"
+            );
+            assert!(!view.shows_edit_cell_entry("name", &Some(EditTarget::Existing(key))));
+        });
+    }
+
+    #[gpui::test]
+    async fn edit_cell_entry_absent_for_custom_query_mode(cx: &mut TestAppContext) {
+        // Custom SQL results are read-only (no table to address UPDATE
+        // against), independent of the dirty-bar gate above.
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        let key = view.read_with(cx, |view, _| view.row_key_for(0).unwrap());
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor
+                .update(cx, |editor, cx| editor.set_text("SELECT 1", window, cx));
+            view.run_from_editor(window, cx);
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert!(
+                matches!(view.query().base, QueryBase::Custom(_)),
+                "running the dirty text should enter custom-query mode"
+            );
+            assert!(!view.shows_edit_cell_entry("name", &Some(EditTarget::Existing(key))));
+        });
+    }
+
+    #[gpui::test]
+    async fn dismiss_event_clears_context_menu(cx: &mut TestAppContext) {
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.deploy_cell_context_menu(
+                gpui::Point::default(),
+                "name".into(),
+                Some("Alice".into()),
+                None,
+                window,
+                cx,
+            );
+        });
+        view.read_with(cx, |view, _| {
+            assert!(view.context_menu_open(), "menu should be open after deploy");
+        });
+
+        let menu = view.read_with(cx, |view, _| {
+            view.context_menu
+                .as_ref()
+                .expect("menu should be set")
+                .0
+                .clone()
+        });
+        menu.update(cx, |_, cx| cx.emit(DismissEvent));
+        cx.run_until_parked();
+
+        view.read_with(cx, |view, _| {
+            assert!(
+                !view.context_menu_open(),
+                "DismissEvent should clear the context_menu field"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn dismiss_event_clears_value_popover(cx: &mut TestAppContext) {
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.open_value_popover(gpui::Point::default(), "Alice".into(), window, cx);
+        });
+        view.read_with(cx, |view, cx| {
+            assert!(view.value_popover_text(cx).is_some());
+        });
+
+        let popover = view.read_with(cx, |view, _| {
+            view.value_popover
+                .as_ref()
+                .expect("popover should be set")
+                .0
+                .clone()
+        });
+        popover.update(cx, |_, cx| cx.emit(DismissEvent));
+        cx.run_until_parked();
+
+        view.read_with(cx, |view, cx| {
+            assert!(
+                view.value_popover_text(cx).is_none(),
+                "DismissEvent should clear the value_popover field"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn truncate_for_label_shortens_long_values(_cx: &mut TestAppContext) {
+        assert_eq!(TableDataView::truncate_for_label("short", 40), "short");
+        let long = "a".repeat(50);
+        let truncated = TableDataView::truncate_for_label(&long, 40);
+        assert_eq!(truncated.chars().count(), 41, "40 chars plus the ellipsis");
+        assert!(truncated.ends_with('…'));
     }
 }
