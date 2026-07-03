@@ -1,9 +1,10 @@
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
 use database_client::{
-    DatabaseClient, Filter, FilterOp, RowsPage, SelectSpec, Sort, SortDirection, TableRef,
-    TableStructure,
+    ColumnInfo, DatabaseClient, EditCell, Filter, FilterOp, RowKey, RowsPage, SelectSpec, Sort,
+    SortDirection, TableRef, TableStructure,
 };
 use gpui::{
     Anchor, AnyElement, App, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
@@ -76,6 +77,53 @@ pub enum LoadState {
     Error(String),
 }
 
+/// Buffers pending row edits before they are applied to the database as one
+/// transaction. Updates are keyed by [`RowKey`] (the row's original primary-key
+/// values) so repeated edits to the same row and column coalesce; inserts are
+/// new rows that have no key yet; deletes hold the keys of rows to remove.
+#[derive(Debug, Default)]
+pub struct TableEditBuffer {
+    /// Per-row column edits against existing rows, keyed by original PK values.
+    updates: HashMap<RowKey, HashMap<String, EditCell>>,
+    /// New rows to insert, each a partial map of column name to value.
+    inserts: Vec<HashMap<String, EditCell>>,
+    /// Keys of existing rows to delete.
+    deletes: HashSet<RowKey>,
+}
+
+impl TableEditBuffer {
+    /// The number of rows affected by the buffered edits: updated rows plus
+    /// inserted rows plus deleted rows.
+    pub fn pending_change_count(&self) -> usize {
+        self.updates.len() + self.inserts.len() + self.deletes.len()
+    }
+
+    pub fn updates(&self) -> &HashMap<RowKey, HashMap<String, EditCell>> {
+        &self.updates
+    }
+
+    pub fn inserts(&self) -> &[HashMap<String, EditCell>] {
+        &self.inserts
+    }
+
+    pub fn deletes(&self) -> &HashSet<RowKey> {
+        &self.deletes
+    }
+
+    fn clear(&mut self) {
+        self.updates.clear();
+        self.inserts.clear();
+        self.deletes.clear();
+    }
+}
+
+/// Whether a table's rows can be edited: only base tables (not views) that have
+/// a primary key, since every UPDATE/DELETE is addressed by its full PK.
+fn compute_editable(is_view: bool, columns: &[ColumnInfo]) -> bool {
+    let has_primary_key = columns.iter().any(|column| column.is_primary_key);
+    !is_view && has_primary_key
+}
+
 /// A workspace tab showing the rows and structure of a single database table.
 ///
 /// The data grid supports server-side sorting and offset pagination through the
@@ -89,6 +137,14 @@ pub struct TableDataView {
     /// tab, so this is part of the tab dedup key (see [`open_table_tab`]).
     connection: String,
     table: TableRef,
+    /// Whether this tab's table is a database view. Provided by the tree at open
+    /// time; combined with the loaded structure's primary key to gate editing.
+    is_view: bool,
+    /// Whether rows can be edited. `false` until the structure loads, then set to
+    /// `!is_view && has_primary_key` (see [`compute_editable`]).
+    editable: bool,
+    /// Buffered, not-yet-applied row edits.
+    edits: TableEditBuffer,
     mode: ViewMode,
     spec: SelectSpec,
     /// Wrapped in `Arc` so the render hot path (scroll re-renders) hands the
@@ -119,6 +175,7 @@ impl TableDataView {
         client: Arc<dyn DatabaseClient>,
         connection: String,
         table: TableRef,
+        is_view: bool,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
@@ -131,6 +188,9 @@ impl TableDataView {
                 client,
                 connection,
                 table,
+                is_view,
+                editable: false,
+                edits: TableEditBuffer::default(),
                 mode: ViewMode::Data,
                 spec: SelectSpec {
                     limit,
@@ -149,6 +209,10 @@ impl TableDataView {
                 _structure_task: None,
             };
             view.reload_data(cx);
+            // Load the structure eagerly alongside the first page so the primary
+            // key (hence editability) is known without switching to the
+            // Structure tab.
+            view.reload_structure(cx);
             view
         })
     }
@@ -179,6 +243,107 @@ impl TableDataView {
 
     pub fn mode(&self) -> ViewMode {
         self.mode
+    }
+
+    /// Whether rows in this table can be edited (base table with a primary key).
+    /// `false` until the structure has loaded.
+    pub fn editable(&self) -> bool {
+        self.editable
+    }
+
+    /// The buffered, not-yet-applied edits.
+    pub fn edits(&self) -> &TableEditBuffer {
+        &self.edits
+    }
+
+    /// The number of rows affected by buffered edits.
+    pub fn pending_change_count(&self) -> usize {
+        self.edits.pending_change_count()
+    }
+
+    /// Builds a [`RowKey`] for the row at `display_row` in the current page,
+    /// using the primary-key columns from the loaded structure and that row's
+    /// values in the page. Returns `None` if the structure or page is missing,
+    /// there is no primary key, or a PK column is absent from the page.
+    pub fn row_key_for(&self, display_row: usize) -> Option<RowKey> {
+        let structure = self.structure.as_ref()?;
+        let page = self.page.as_ref()?;
+        let row = page.rows.get(display_row)?;
+
+        let mut columns = Vec::new();
+        let mut values = Vec::new();
+        for column in structure.columns.iter().filter(|c| c.is_primary_key) {
+            let column_index = page.columns.iter().position(|name| name == &column.name)?;
+            let value = row.get(column_index)?.clone();
+            columns.push(column.name.clone());
+            values.push(value);
+        }
+        if columns.is_empty() {
+            return None;
+        }
+        Some(RowKey { columns, values })
+    }
+
+    /// Whether `column` is a primary-key column of the loaded structure. Editing
+    /// PK cells is disallowed because the PK identifies the row.
+    fn is_primary_key_column(&self, column: &str) -> bool {
+        self.structure.as_ref().is_some_and(|structure| {
+            structure
+                .columns
+                .iter()
+                .any(|c| c.name == column && c.is_primary_key)
+        })
+    }
+
+    /// Buffers a non-null value edit for `column` of the existing row identified
+    /// by `row_key`. Editing a primary-key column is a no-op.
+    pub fn set_cell_value(
+        &mut self,
+        row_key: RowKey,
+        column: &str,
+        value: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_cell(row_key, column, EditCell::Value(value), cx);
+    }
+
+    /// Buffers a NULL edit for `column` of the existing row identified by
+    /// `row_key`. Editing a primary-key column is a no-op.
+    pub fn set_cell_null(&mut self, row_key: RowKey, column: &str, cx: &mut Context<Self>) {
+        self.set_cell(row_key, column, EditCell::Null, cx);
+    }
+
+    fn set_cell(&mut self, row_key: RowKey, column: &str, cell: EditCell, cx: &mut Context<Self>) {
+        if self.is_primary_key_column(column) {
+            log::debug!("ignoring edit of primary-key column {column:?}: PK identifies the row");
+            return;
+        }
+        self.edits
+            .updates
+            .entry(row_key)
+            .or_default()
+            .insert(column.to_string(), cell);
+        cx.notify();
+    }
+
+    /// Appends an empty new row to the insert buffer.
+    pub fn add_row(&mut self, cx: &mut Context<Self>) {
+        self.edits.inserts.push(HashMap::new());
+        cx.notify();
+    }
+
+    /// Marks the existing row identified by `row_key` for deletion, dropping any
+    /// buffered update for that same row (a delete supersedes an update).
+    pub fn delete_row(&mut self, row_key: RowKey, cx: &mut Context<Self>) {
+        self.edits.updates.remove(&row_key);
+        self.edits.deletes.insert(row_key);
+        cx.notify();
+    }
+
+    /// Clears all buffered edits.
+    pub fn discard_edits(&mut self, cx: &mut Context<Self>) {
+        self.edits.clear();
+        cx.notify();
     }
 
     /// Test-only: emulates a structure fetch that failed by clearing the cached
@@ -323,6 +488,7 @@ impl TableDataView {
             this.update(cx, |this, cx| {
                 match result {
                     Ok(structure) => {
+                        this.editable = compute_editable(this.is_view, &structure.columns);
                         this.structure = Some(structure);
                         this.load_state = LoadState::Idle;
                     }
@@ -904,6 +1070,7 @@ pub fn open_table_tab(
     client: Arc<dyn DatabaseClient>,
     connection: String,
     table: TableRef,
+    is_view: bool,
     window: &mut Window,
     cx: &mut App,
 ) {
@@ -917,8 +1084,9 @@ pub fn open_table_tab(
                     let view = view.read(cx);
                     view.connection() == connection && view.table() == &table
                 });
-            let view = existing
-                .unwrap_or_else(|| TableDataView::new(client, connection, table, window, cx));
+            let view = existing.unwrap_or_else(|| {
+                TableDataView::new(client, connection, table, is_view, window, cx)
+            });
             workspace.active_pane().update(cx, |pane, cx| {
                 if let Some(index) = pane.index_for_item(&view) {
                     pane.activate_item(index, true, true, window, cx);
@@ -935,10 +1103,14 @@ mod tests {
     use std::sync::Arc;
 
     use database_client::fake::FakeDatabaseClient;
-    use database_client::{DatabaseClient, Filter, FilterOp, SortDirection, TableRef};
+    use database_client::{
+        ColumnInfo, DatabaseClient, Filter, FilterOp, RowKey, SortDirection, TableRef,
+    };
     use gpui::{TestAppContext, VisualTestContext};
 
-    use super::{LoadState, TableDataView, ViewMode, all_filter_ops, filter_op_label};
+    use super::{
+        LoadState, TableDataView, ViewMode, all_filter_ops, compute_editable, filter_op_label,
+    };
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -994,7 +1166,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
         });
 
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
@@ -1022,7 +1194,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -1071,7 +1243,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -1122,7 +1294,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -1172,7 +1344,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -1230,7 +1402,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -1277,10 +1449,17 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let staging = cx.update(|window, cx| {
-            TableDataView::new(client.clone(), "staging".into(), table_ref(), window, cx)
+            TableDataView::new(
+                client.clone(),
+                "staging".into(),
+                table_ref(),
+                false,
+                window,
+                cx,
+            )
         });
         let prod = cx.update(|window, cx| {
-            TableDataView::new(client, "prod".into(), table_ref(), window, cx)
+            TableDataView::new(client, "prod".into(), table_ref(), false, window, cx)
         });
 
         staging.read_with(cx, |staging, _| {
@@ -1312,7 +1491,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
@@ -1341,7 +1520,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -1393,7 +1572,7 @@ mod tests {
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
-            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -1468,5 +1647,197 @@ mod tests {
                 "every operator needs a label"
             );
         }
+    }
+
+    fn col(name: &str, is_primary_key: bool) -> ColumnInfo {
+        ColumnInfo {
+            name: name.into(),
+            data_type: "text".into(),
+            udt_name: "text".into(),
+            udt_schema: "pg_catalog".into(),
+            is_nullable: true,
+            default: None,
+            is_primary_key,
+        }
+    }
+
+    #[gpui::test]
+    fn compute_editable_gate(_cx: &mut TestAppContext) {
+        // A base table with a primary key is editable.
+        assert!(compute_editable(
+            false,
+            &[col("id", true), col("name", false)]
+        ));
+        // A view is never editable, even with a primary key.
+        assert!(!compute_editable(
+            true,
+            &[col("id", true), col("name", false)]
+        ));
+        // A base table with no primary key is not editable.
+        assert!(!compute_editable(
+            false,
+            &[col("name", false), col("email", false)]
+        ));
+        // No columns at all is not editable.
+        assert!(!compute_editable(false, &[]));
+    }
+
+    #[gpui::test]
+    async fn editable_gate_true_for_pk_table(cx: &mut TestAppContext) {
+        // The fake's structure has an `id` primary key, and `is_view = false`
+        // is passed, so the loaded table is editable.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.structure().is_some())
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert!(view.editable(), "PK base table should be editable");
+        });
+    }
+
+    #[gpui::test]
+    async fn editable_gate_false_for_view(cx: &mut TestAppContext) {
+        // Even though the fake structure carries a PK, passing `is_view = true`
+        // makes the table read-only.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), true, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.structure().is_some())
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert!(!view.editable(), "a view should never be editable");
+        });
+    }
+
+    #[gpui::test]
+    async fn structure_loaded_with_first_page(cx: &mut TestAppContext) {
+        // Structure is loaded eagerly on tab open, alongside the first page,
+        // so PK/editability are known without switching to Structure mode.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        view.read_with(cx, |view, _| {
+            assert!(
+                view.structure().is_some(),
+                "structure should be loaded eagerly with the first page"
+            );
+            assert_eq!(
+                view.mode(),
+                ViewMode::Data,
+                "eager structure load must not change the active mode"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn buffer_edits_change_pending_count(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update(cx, |view, cx| {
+            assert_eq!(view.pending_change_count(), 0);
+
+            // Row 0 is id=1 in the fake page; the PK column is `id`.
+            let key = view.row_key_for(0).expect("row 0 should yield a RowKey");
+            assert_eq!(key.columns, vec!["id".to_string()]);
+            assert_eq!(key.values, vec![Some("1".to_string())]);
+
+            // Editing a non-PK cell records an update.
+            view.set_cell_value(key.clone(), "name", "Alicia".into(), cx);
+            assert_eq!(view.pending_change_count(), 1);
+
+            // A second edit on the same row does not add another change.
+            view.set_cell_null(key.clone(), "name", cx);
+            assert_eq!(view.pending_change_count(), 1);
+
+            // Editing the PK column is a no-op.
+            view.set_cell_value(key, "id", "999".into(), cx);
+            assert_eq!(view.pending_change_count(), 1);
+
+            // Adding a row and deleting a row each add one pending change.
+            view.add_row(cx);
+            assert_eq!(view.pending_change_count(), 2);
+
+            let key2 = view.row_key_for(1).expect("row 1 should yield a RowKey");
+            view.delete_row(key2, cx);
+            assert_eq!(view.pending_change_count(), 3);
+
+            // Discarding clears everything.
+            view.discard_edits(cx);
+            assert_eq!(view.pending_change_count(), 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn delete_row_drops_pending_update(cx: &mut TestAppContext) {
+        // Deleting a row that has a buffered update removes the redundant update
+        // so it counts once, as a delete.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update(cx, |view, cx| {
+            let key = RowKey {
+                columns: vec!["id".into()],
+                values: vec![Some("1".into())],
+            };
+            view.set_cell_value(key.clone(), "name", "Alicia".into(), cx);
+            assert_eq!(view.pending_change_count(), 1);
+            view.delete_row(key, cx);
+            assert_eq!(
+                view.pending_change_count(),
+                1,
+                "deleting an updated row collapses to a single delete"
+            );
+            assert!(view.edits().updates.is_empty());
+            assert_eq!(view.edits().deletes.len(), 1);
+        });
     }
 }

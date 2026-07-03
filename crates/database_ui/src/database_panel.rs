@@ -362,6 +362,7 @@ impl DatabasePanel {
             client,
             connection.to_string(),
             table,
+            info.is_view,
             window,
             cx,
         );
