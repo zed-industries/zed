@@ -97,15 +97,23 @@ pub enum SaveState {
     Error(String),
 }
 
+/// A stable identifier for a pending insert row, assigned from a monotonic
+/// counter when the row is added. Insert rows are addressed by this id rather
+/// than by their position in [`TableEditBuffer::inserts`], so deleting one
+/// pending insert never shifts the identity of the others (which a `Vec` index
+/// would).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct InsertId(u64);
+
 /// Identifies which row an inline edit targets: an existing page row, addressed
 /// by its original primary-key values, or a pending insert row, addressed by its
-/// index into [`TableEditBuffer::inserts`].
+/// stable [`InsertId`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EditTarget {
     /// An existing row, identified by its original primary-key values.
     Existing(RowKey),
-    /// A pending insert row, identified by its index in the insert buffer.
-    New(usize),
+    /// A pending insert row, identified by its stable insert id.
+    New(InsertId),
 }
 
 /// The cell currently being edited inline. The target distinguishes an existing
@@ -122,6 +130,11 @@ pub struct EditingCell {
     /// The column index in the current page, so the editor renders in the right
     /// cell.
     pub column_index: usize,
+    /// The cell's display value when the editor opened: `Some` for a concrete
+    /// value, `None` when the cell was NULL. Used to decide whether a commit
+    /// actually changed anything, so an untouched cell (in particular an
+    /// untouched NULL) is not degraded into an empty-string update.
+    pub original: Option<String>,
     /// The live text input.
     pub field: Entity<InputField>,
 }
@@ -134,8 +147,10 @@ pub struct EditingCell {
 pub struct TableEditBuffer {
     /// Per-row column edits against existing rows, keyed by original PK values.
     updates: HashMap<RowKey, HashMap<String, EditCell>>,
-    /// New rows to insert, each a partial map of column name to value.
-    inserts: Vec<HashMap<String, EditCell>>,
+    /// New rows to insert, in display order. Each carries a stable [`InsertId`]
+    /// so edits and deletes can address a specific pending row without being
+    /// invalidated when an earlier one is removed.
+    inserts: Vec<(InsertId, HashMap<String, EditCell>)>,
     /// Keys of existing rows to delete.
     deletes: HashSet<RowKey>,
 }
@@ -151,12 +166,28 @@ impl TableEditBuffer {
         &self.updates
     }
 
-    pub fn inserts(&self) -> &[HashMap<String, EditCell>] {
+    pub fn inserts(&self) -> &[(InsertId, HashMap<String, EditCell>)] {
         &self.inserts
     }
 
     pub fn deletes(&self) -> &HashSet<RowKey> {
         &self.deletes
+    }
+
+    /// The column map of the pending insert row with the given id, if present.
+    fn insert(&self, id: InsertId) -> Option<&HashMap<String, EditCell>> {
+        self.inserts
+            .iter()
+            .find(|(insert_id, _)| *insert_id == id)
+            .map(|(_, columns)| columns)
+    }
+
+    /// The mutable column map of the pending insert row with the given id.
+    fn insert_mut(&mut self, id: InsertId) -> Option<&mut HashMap<String, EditCell>> {
+        self.inserts
+            .iter_mut()
+            .find(|(insert_id, _)| *insert_id == id)
+            .map(|(_, columns)| columns)
     }
 
     fn clear(&mut self) {
@@ -209,6 +240,10 @@ pub struct TableDataView {
     editable: bool,
     /// Buffered, not-yet-applied row edits.
     edits: TableEditBuffer,
+    /// Monotonic source of stable [`InsertId`]s for pending insert rows. Never
+    /// reset within a tab's lifetime, so ids stay unique even after a save
+    /// clears the insert buffer.
+    next_insert_id: u64,
     /// The cell currently open in the inline editor, if any.
     editing_cell: Option<EditingCell>,
     /// The in-flight state of the most recent save.
@@ -262,6 +297,7 @@ impl TableDataView {
                 is_view,
                 editable: false,
                 edits: TableEditBuffer::default(),
+                next_insert_id: 0,
                 editing_cell: None,
                 save_state: SaveState::Idle,
                 mode: ViewMode::Data,
@@ -398,8 +434,17 @@ impl TableDataView {
     }
 
     fn set_cell(&mut self, row_key: RowKey, column: &str, cell: EditCell, cx: &mut Context<Self>) {
+        if self.is_saving() {
+            return;
+        }
         if self.is_primary_key_column(column) {
             log::debug!("ignoring edit of primary-key column {column:?}: PK identifies the row");
+            return;
+        }
+        // A row already marked for deletion must not also gather an update: the
+        // apply would carry a delete and an update for the same key and fail.
+        if self.edits.deletes.contains(&row_key) {
+            log::debug!("ignoring edit of row marked for deletion");
             return;
         }
         self.edits
@@ -411,35 +456,45 @@ impl TableDataView {
         cx.notify();
     }
 
-    /// Appends an empty new row to the insert buffer.
-    pub fn add_row(&mut self, cx: &mut Context<Self>) {
-        self.edits.inserts.push(HashMap::new());
+    /// Appends an empty new row to the insert buffer, returning its stable
+    /// [`InsertId`].
+    pub fn add_row(&mut self, cx: &mut Context<Self>) -> Option<InsertId> {
+        if self.is_saving() {
+            return None;
+        }
+        let id = InsertId(self.next_insert_id);
+        self.next_insert_id += 1;
+        self.edits.inserts.push((id, HashMap::new()));
         self.clear_finished_save_state();
         cx.notify();
+        Some(id)
     }
 
-    /// Buffers a value for `column` of the pending insert row at `index`. Unlike
+    /// Buffers a value for `column` of the pending insert row `id`. Unlike
     /// existing rows, primary-key columns *are* settable here, since a new row
-    /// needs a supplied key. Out-of-bounds indices are a no-op.
+    /// needs a supplied key. An unknown id is a no-op.
     pub fn set_new_cell_value(
         &mut self,
-        index: usize,
+        id: InsertId,
         column: &str,
         value: String,
         cx: &mut Context<Self>,
     ) {
-        self.set_new_cell(index, column, EditCell::Value(value), cx);
+        self.set_new_cell(id, column, EditCell::Value(value), cx);
     }
 
-    /// Buffers a NULL for `column` of the pending insert row at `index`.
-    /// Out-of-bounds indices are a no-op.
-    pub fn set_new_cell_null(&mut self, index: usize, column: &str, cx: &mut Context<Self>) {
-        self.set_new_cell(index, column, EditCell::Null, cx);
+    /// Buffers a NULL for `column` of the pending insert row `id`. An unknown id
+    /// is a no-op.
+    pub fn set_new_cell_null(&mut self, id: InsertId, column: &str, cx: &mut Context<Self>) {
+        self.set_new_cell(id, column, EditCell::Null, cx);
     }
 
-    fn set_new_cell(&mut self, index: usize, column: &str, cell: EditCell, cx: &mut Context<Self>) {
-        let Some(row) = self.edits.inserts.get_mut(index) else {
-            log::debug!("ignoring edit of insert row {index}: index out of bounds");
+    fn set_new_cell(&mut self, id: InsertId, column: &str, cell: EditCell, cx: &mut Context<Self>) {
+        if self.is_saving() {
+            return;
+        }
+        let Some(row) = self.edits.insert_mut(id) else {
+            log::debug!("ignoring edit of insert row {id:?}: unknown insert id");
             return;
         };
         row.insert(column.to_string(), cell);
@@ -447,34 +502,64 @@ impl TableDataView {
         cx.notify();
     }
 
-    /// Removes the pending insert row at `index` from the buffer (a new,
-    /// not-yet-saved row is simply forgotten rather than recorded as a delete).
-    /// Also closes the inline editor if it targets a shifting row. Out-of-bounds
-    /// indices are a no-op.
-    pub fn delete_new_row(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index >= self.edits.inserts.len() {
-            log::debug!("delete_new_row: index {index} out of bounds");
+    /// Removes the pending insert row `id` from the buffer (a new, not-yet-saved
+    /// row is simply forgotten rather than recorded as a delete). Also closes the
+    /// inline editor if it targets that row. An unknown id is a no-op.
+    pub fn delete_new_row(&mut self, id: InsertId, cx: &mut Context<Self>) {
+        if self.is_saving() {
             return;
         }
-        // Closing the editor avoids it pointing at a stale/shifted insert row.
-        if matches!(
-            self.editing_cell.as_ref().map(|editing| &editing.target),
-            Some(EditTarget::New(_))
-        ) {
+        let Some(position) = self
+            .edits
+            .inserts
+            .iter()
+            .position(|(insert_id, _)| *insert_id == id)
+        else {
+            log::debug!("delete_new_row: unknown insert id {id:?}");
+            return;
+        };
+        // Close the editor only if it targets the row being removed; other
+        // pending inserts keep their (stable) identity, so their editor is fine.
+        if self
+            .editing_cell
+            .as_ref()
+            .is_some_and(|editing| editing.target == EditTarget::New(id))
+        {
             self.editing_cell = None;
         }
-        self.edits.inserts.remove(index);
+        self.edits.inserts.remove(position);
         self.clear_finished_save_state();
         cx.notify();
     }
 
     /// Marks the existing row identified by `row_key` for deletion, dropping any
-    /// buffered update for that same row (a delete supersedes an update).
+    /// buffered update for that same row (a delete supersedes an update). Also
+    /// closes the inline editor if it is open on that row.
     pub fn delete_row(&mut self, row_key: RowKey, cx: &mut Context<Self>) {
+        if self.is_saving() {
+            return;
+        }
+        // The editor for the row being deleted would otherwise commit an update
+        // for a now-deleted key on the next page swap, failing the save.
+        if self
+            .editing_cell
+            .as_ref()
+            .is_some_and(|editing| editing.target == EditTarget::Existing(row_key.clone()))
+        {
+            self.editing_cell = None;
+        }
         self.edits.updates.remove(&row_key);
         self.edits.deletes.insert(row_key);
         self.clear_finished_save_state();
         cx.notify();
+    }
+
+    /// Whether a save is currently in flight. While saving, the edit buffer is
+    /// frozen so the snapshot handed to `apply_edits` matches what the success
+    /// handler clears; programmatic mutations are ignored (the toolbar already
+    /// disables the corresponding buttons).
+    fn is_saving(&self) -> bool {
+        self.save_state == SaveState::Saving
     }
 
     /// Resets a finished (Done/Error) save banner back to Idle once the buffer is
@@ -528,7 +613,7 @@ impl TableDataView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.editable {
+        if !self.editable || self.is_saving() {
             return;
         }
         let Some(page) = self.page.clone() else {
@@ -543,6 +628,11 @@ impl TableDataView {
         let Some(row_key) = self.row_key_for(display_row) else {
             return;
         };
+        // A row marked for deletion must not be edited: the apply cannot carry
+        // both a delete and an update for the same key.
+        if self.edits.deletes.contains(&row_key) {
+            return;
+        }
         let page_value = page
             .rows
             .get(display_row)
@@ -564,25 +654,28 @@ impl TableDataView {
             column,
             display_row,
             column_index,
+            original: current,
             field,
         });
         cx.notify();
     }
 
-    /// Opens the inline editor on a cell of the pending insert row at `index`.
+    /// Opens the inline editor on a cell of the pending insert row `id`, rendered
+    /// at `display_row`.
     ///
     /// Unlike [`begin_edit_cell`], every column is editable here (including the
     /// primary key), since a new row needs a supplied key. No-op unless the table
-    /// is editable, the page is loaded (for the column name), and `index` is in
-    /// bounds. The editor is pre-filled with any buffered value for the cell.
+    /// is editable, the page is loaded (for the column name), and `id` names a
+    /// known insert row. The editor is pre-filled with any buffered value.
     pub fn begin_edit_new_cell(
         &mut self,
-        index: usize,
+        id: InsertId,
+        display_row: usize,
         column_index: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.editable {
+        if !self.editable || self.is_saving() {
             return;
         }
         let Some(page) = self.page.clone() else {
@@ -591,7 +684,7 @@ impl TableDataView {
         let Some(column) = page.columns.get(column_index).cloned() else {
             return;
         };
-        let Some(row) = self.edits.inserts.get(index) else {
+        let Some(row) = self.edits.insert(id) else {
             return;
         };
         let current = match row.get(&column) {
@@ -609,10 +702,11 @@ impl TableDataView {
         field.focus_handle(cx).focus(window, cx);
 
         self.editing_cell = Some(EditingCell {
-            target: EditTarget::New(index),
+            target: EditTarget::New(id),
             column,
-            display_row: index,
+            display_row,
             column_index,
+            original: current,
             field,
         });
         cx.notify();
@@ -621,20 +715,67 @@ impl TableDataView {
     /// Commits the inline editor's text to the edit buffer (an update for an
     /// existing row, or a new-row cell for an insert row) and closes the editor.
     /// No-op if no cell is being edited.
+    ///
+    /// The buffer is only touched when the typed text differs from the value the
+    /// editor opened with, so pressing Enter on an unchanged cell (in particular
+    /// an untouched NULL) does not record a no-op update or degrade a NULL into
+    /// an empty string. Setting a value explicitly to NULL still goes through
+    /// [`set_editing_cell_null`].
     pub fn commit_cell_edit(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_cell_edit_inner(cx);
+    }
+
+    /// The windowless core of [`commit_cell_edit`]. Committing only reads the
+    /// editor field's text, so no [`Window`] is needed; this lets page-changing
+    /// operations finish the editor without threading a window through.
+    fn commit_cell_edit_inner(&mut self, cx: &mut Context<Self>) {
         let Some(editing) = self.editing_cell.take() else {
             return;
         };
         let value = editing.field.read(cx).text(cx);
+        // Unchanged: the value equals what was shown (both non-NULL and equal),
+        // or the cell was NULL and the field was left empty. Buffer nothing.
+        let unchanged = match &editing.original {
+            Some(original) => original == &value,
+            None => value.is_empty(),
+        };
+        if unchanged {
+            cx.notify();
+            return;
+        }
         match editing.target {
             EditTarget::Existing(row_key) => {
                 self.set_cell_value(row_key, &editing.column, value, cx);
             }
-            EditTarget::New(index) => {
-                self.set_new_cell_value(index, &editing.column, value, cx);
+            EditTarget::New(id) => {
+                self.set_new_cell_value(id, &editing.column, value, cx);
             }
         }
         cx.notify();
+    }
+
+    /// Commits the open inline editor (if dirty) into the buffer, then closes it.
+    ///
+    /// This is the single lifecycle hook run before any operation that changes
+    /// the on-screen row set (page swap, sort, filter, pagination, refresh) or
+    /// snapshots the buffer to save. Committing is keyed by the stable
+    /// [`RowKey`]/[`InsertId`] captured when the editor opened, not by the
+    /// editor's display position, so it lands on the intended row even though
+    /// the display is about to change. Without this, the editor would visually
+    /// "move" to a different row after the swap and its next commit would write
+    /// into the wrong (hidden) row.
+    ///
+    /// A save in flight freezes the buffer, so this is a no-op while saving.
+    pub fn finish_editing(&mut self, cx: &mut Context<Self>) {
+        if self.is_saving() {
+            return;
+        }
+        if self.editing_cell.is_some() {
+            // `commit_cell_edit` does not use the window (it only reads the
+            // field's text), so page-changing callers that lack a `Window` can
+            // still finish the editor.
+            self.commit_cell_edit_inner(cx);
+        }
     }
 
     /// Closes the inline editor without touching the edit buffer.
@@ -642,6 +783,16 @@ impl TableDataView {
         if self.editing_cell.take().is_some() {
             cx.notify();
         }
+    }
+
+    /// Whether the inline cell editor's own text field currently holds focus.
+    /// Used to gate Enter/Escape (`menu::Confirm`/`menu::Cancel`) so they only
+    /// commit or cancel the cell edit when the user is typing in that field, not
+    /// when focus is in another input such as the filter value field.
+    fn cell_editor_focused(&self, window: &Window, cx: &App) -> bool {
+        self.editing_cell
+            .as_ref()
+            .is_some_and(|editing| editing.field.focus_handle(cx).contains_focused(window, cx))
     }
 
     /// Sets the cell currently being edited to NULL and closes the editor.
@@ -653,8 +804,8 @@ impl TableDataView {
             EditTarget::Existing(row_key) => {
                 self.set_cell_null(row_key, &editing.column, cx);
             }
-            EditTarget::New(index) => {
-                self.set_new_cell_null(index, &editing.column, cx);
+            EditTarget::New(id) => {
+                self.set_new_cell_null(id, &editing.column, cx);
             }
         }
         cx.notify();
@@ -666,10 +817,14 @@ impl TableDataView {
     /// the buffer and inline editor are cleared and the page is reloaded; on
     /// failure the buffer is kept and the error is surfaced in `save_state`.
     pub fn save_edits(&mut self, cx: &mut Context<Self>) {
-        if self.edits.pending_change_count() == 0 {
+        if self.save_state == SaveState::Saving {
             return;
         }
-        if self.save_state == SaveState::Saving {
+        // Commit the open editor into the buffer before snapshotting it, so an
+        // in-progress cell edit is not silently dropped by the save. Must run
+        // before the empty check, since finishing may add the first change.
+        self.finish_editing(cx);
+        if self.edits.pending_change_count() == 0 {
             return;
         }
         // `apply_edits` addresses rows by full primary key and casts each value to
@@ -727,6 +882,10 @@ impl TableDataView {
             .edits
             .updates()
             .iter()
+            // A delete supersedes any update for the same key. `delete_row`
+            // already drops the update, but guard here too so a stray update can
+            // never pair with a delete for one key and fail the whole apply.
+            .filter(|(key, _)| !self.edits.deletes.contains(key))
             .map(|(key, columns)| RowUpdate {
                 key: key.clone(),
                 set: columns
@@ -739,7 +898,7 @@ impl TableDataView {
             .edits
             .inserts()
             .iter()
-            .map(|columns| RowInsert {
+            .map(|(_id, columns)| RowInsert {
                 values: columns
                     .iter()
                     .map(|(column, cell)| (column.clone(), cell.clone()))
@@ -777,6 +936,9 @@ impl TableDataView {
     /// Cycles the sort on `column` (None -> Asc -> Desc -> None), resets the
     /// page offset, and reloads the current page.
     pub fn toggle_sort(&mut self, column: &str, cx: &mut Context<Self>) {
+        // Commit and close any open editor before the rows on screen change, so
+        // its next commit cannot land on a different (now-hidden) row.
+        self.finish_editing(cx);
         let next = match &self.spec.sort {
             Some(sort) if sort.column == column => match sort.direction {
                 SortDirection::Asc => Some(Sort {
@@ -798,6 +960,7 @@ impl TableDataView {
     /// Appends `filter` to the active filter set, resets the page offset, and
     /// reloads the current page.
     pub fn add_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
+        self.finish_editing(cx);
         self.spec.filters.push(filter);
         self.spec.offset = 0;
         self.reload_data(cx);
@@ -813,6 +976,7 @@ impl TableDataView {
             );
             return;
         }
+        self.finish_editing(cx);
         self.spec.filters.remove(index);
         self.spec.offset = 0;
         self.reload_data(cx);
@@ -824,6 +988,7 @@ impl TableDataView {
         if !has_more {
             return;
         }
+        self.finish_editing(cx);
         self.spec.offset += self.spec.limit;
         self.reload_data(cx);
     }
@@ -833,6 +998,7 @@ impl TableDataView {
         if self.spec.offset == 0 {
             return;
         }
+        self.finish_editing(cx);
         self.spec.offset = self.spec.offset.saturating_sub(self.spec.limit);
         self.reload_data(cx);
     }
@@ -856,6 +1022,7 @@ impl TableDataView {
     /// actually re-issues the request instead of showing "Loading structure…"
     /// forever.
     fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.finish_editing(cx);
         self.reload_data(cx);
         if self.structure.is_some() || self.mode == ViewMode::Structure {
             self.reload_structure(cx);
@@ -1032,16 +1199,24 @@ impl TableDataView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let is_insert = row_index >= page_row_count;
-        let marked_deleted = if is_insert {
-            false
-        } else {
-            self.row_key_for(row_index)
-                .is_some_and(|key| self.edits.deletes.contains(&key))
-        };
+        // Resolve the row's stable identity now, during render, rather than in
+        // the click handler: a page swap between paint and click would otherwise
+        // make the handler mark or discard a different row than the one shown.
+        let insert_id = is_insert
+            .then(|| {
+                self.edits
+                    .inserts
+                    .get(row_index - page_row_count)
+                    .map(|(id, _)| *id)
+            })
+            .flatten();
+        let existing_key = (!is_insert).then(|| self.row_key_for(row_index)).flatten();
+        let marked_deleted = existing_key
+            .as_ref()
+            .is_some_and(|key| self.edits.deletes.contains(key));
 
         let group_name = SharedString::from(format!("db-row-{row_index}"));
         let delete_button = if self.editable {
-            let insert_index = row_index.saturating_sub(page_row_count);
             Some(
                 h_flex()
                     .absolute()
@@ -1064,9 +1239,9 @@ impl TableDataView {
                             "Delete this row"
                         }))
                         .on_click(cx.listener(move |this, _, _, cx| {
-                            if is_insert {
-                                this.delete_new_row(insert_index, cx);
-                            } else if let Some(key) = this.row_key_for(row_index) {
+                            if let Some(id) = insert_id {
+                                this.delete_new_row(id, cx);
+                            } else if let Some(key) = existing_key.clone() {
                                 this.delete_row(key, cx);
                             }
                         })),
@@ -1156,6 +1331,10 @@ impl TableDataView {
                 .on_click(
                     cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
                         // A double-click opens the inline editor for this cell.
+                        // `begin_edit_cell` re-resolves the row key against the
+                        // current page; that is safe because it also records the
+                        // key it captured, and `finish_editing` runs before any
+                        // page swap, so a swap cannot strand a stale editor.
                         if event.click_count() >= 2 {
                             this.begin_edit_cell(display_row, column_index, window, cx);
                         }
@@ -1185,10 +1364,13 @@ impl TableDataView {
             .into_any_element()
     }
 
-    /// Renders one cell of a pending insert row at `insert_index`. Every column
-    /// is editable (including the primary key), and the cell shows the buffered
-    /// value, a muted `NULL` for a buffered NULL, or a muted placeholder when the
-    /// column has not been set yet (so a column-default will apply on save).
+    /// Renders one cell of the pending insert row shown at `insert_index`. The
+    /// row's stable [`InsertId`] is resolved here, during render, so the click
+    /// handler targets that specific row even if the insert buffer shifts before
+    /// the click. Every column is editable (including the primary key); the cell
+    /// shows the buffered value, a muted `NULL` for a buffered NULL, or a muted
+    /// placeholder when the column has not been set (so a column default applies
+    /// on save).
     fn render_insert_cell(
         &self,
         insert_index: usize,
@@ -1196,8 +1378,13 @@ impl TableDataView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let Some((insert_id, row)) = self.edits.inserts.get(insert_index) else {
+            return div().w_full().into_any_element();
+        };
+        let insert_id = *insert_id;
+
         if let Some(editing) = &self.editing_cell
-            && editing.target == EditTarget::New(insert_index)
+            && editing.target == EditTarget::New(insert_id)
             && editing.column_index == column_index
         {
             return self.render_cell_editor(editing.field.clone(), cx);
@@ -1207,9 +1394,7 @@ impl TableDataView {
             .page
             .as_ref()
             .and_then(|page| page.columns.get(column_index).cloned());
-        let buffered = column_name
-            .as_ref()
-            .and_then(|column| self.edits.inserts.get(insert_index)?.get(column));
+        let buffered = column_name.as_ref().and_then(|column| row.get(column));
 
         let cell = div().w_full();
         let cell = match buffered {
@@ -1233,7 +1418,13 @@ impl TableDataView {
                 .on_click(
                     cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
                         if event.click_count() >= 2 {
-                            this.begin_edit_new_cell(insert_index, column_index, window, cx);
+                            this.begin_edit_new_cell(
+                                insert_id,
+                                insert_index,
+                                column_index,
+                                window,
+                                cx,
+                            );
                         }
                     }),
                 )
@@ -1680,7 +1871,9 @@ impl TableDataView {
             .style(ButtonStyle::Subtle)
             .disabled(saving)
             .tooltip(Tooltip::text("Add a new row"))
-            .on_click(cx.listener(|this, _, _, cx| this.add_row(cx)));
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.add_row(cx);
+            }));
 
         // The left cluster shows the change count while dirty, otherwise the last
         // save outcome (success/error) so the user still sees confirmation.
@@ -1795,18 +1988,19 @@ impl Render for TableDataView {
             )
             .on_action(cx.listener(|this, _: &CancelCellEdit, _, cx| this.cancel_cell_edit(cx)))
             .on_action(cx.listener(|this, _: &SetCellNull, _, cx| this.set_editing_cell_null(cx)))
-            // Enter/Escape reach here as menu::Confirm/Cancel from the focused
-            // single-line editor. Only claim them while a cell is being edited;
-            // otherwise let them bubble so other handlers still see them.
+            // Enter/Escape reach here as menu::Confirm/Cancel. Only claim them
+            // when the cell editor's own field is focused, so Enter/Escape in a
+            // different input (e.g. the filter value field) is not hijacked to
+            // commit or cancel a cell edit; otherwise let them bubble.
             .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| {
-                if this.editing_cell.is_some() {
+                if this.cell_editor_focused(window, cx) {
                     this.commit_cell_edit(window, cx);
                 } else {
                     cx.propagate();
                 }
             }))
-            .on_action(cx.listener(|this, _: &menu::Cancel, _, cx| {
-                if this.editing_cell.is_some() {
+            .on_action(cx.listener(|this, _: &menu::Cancel, window, cx| {
+                if this.cell_editor_focused(window, cx) {
                     this.cancel_cell_edit(cx);
                 } else {
                     cx.propagate();
@@ -2980,11 +3174,11 @@ mod tests {
         .await;
 
         view.update_in(cx, |view, window, cx| {
-            view.add_row(cx);
+            let id = view.add_row(cx).expect("add_row yields an insert id");
             assert_eq!(view.pending_change_count(), 1);
             // The new row's cells are editable via the same inline editor, and
             // PK cells are editable for new rows (a value can be supplied).
-            view.begin_edit_new_cell(0, 0, window, cx);
+            view.begin_edit_new_cell(id, 0, 0, window, cx);
             let editing = view
                 .editing_cell()
                 .expect("editing the new row's id cell should begin an edit");
@@ -3000,7 +3194,7 @@ mod tests {
                 .edits()
                 .inserts()
                 .first()
-                .and_then(|row| row.get("id"))
+                .and_then(|(_id, row)| row.get("id"))
                 .expect("the new row's id cell should be buffered");
             assert_eq!(cell, &database_client::EditCell::Value("42".into()));
         });
@@ -3081,9 +3275,9 @@ mod tests {
         .await;
 
         view.update(cx, |view, cx| {
-            view.add_row(cx);
+            let id = view.add_row(cx).expect("add_row yields an insert id");
             assert_eq!(view.edits().inserts().len(), 1);
-            view.delete_new_row(0, cx);
+            view.delete_new_row(id, cx);
             assert!(
                 view.edits().inserts().is_empty(),
                 "deleting a new row must drop it from inserts"
@@ -3123,8 +3317,8 @@ mod tests {
             view.set_cell_value(update_key, "name", "Alicia".into(), cx);
             let delete_key = view.row_key_for(1).expect("row 1 should yield a RowKey");
             view.delete_row(delete_key, cx);
-            view.add_row(cx);
-            view.set_new_cell_value(0, "name", "Zoe".into(), cx);
+            let insert_id = view.add_row(cx).expect("add_row yields an insert id");
+            view.set_new_cell_value(insert_id, "name", "Zoe".into(), cx);
             assert_eq!(view.pending_change_count(), 3);
 
             let edits = view.build_table_edits_for_test();
@@ -3156,6 +3350,427 @@ mod tests {
         view.read_with(cx, |view, _| {
             assert_eq!(view.pending_change_count(), 0, "buffer cleared on success");
             assert!(matches!(view.save_state(), SaveState::Done(_)));
+        });
+    }
+
+    #[gpui::test]
+    async fn finish_editing_on_page_change_commits_by_key(cx: &mut TestAppContext) {
+        // Regression (Critical): a page change must close the open inline editor,
+        // committing its edit keyed by the row's stable RowKey — not leave it open
+        // to write into whatever row later lands at the same display position.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        // Open the editor on row 0 (id=1), column `name`, and type a new value
+        // without committing.
+        view.update_in(cx, |view, window, cx| {
+            view.begin_edit_cell(0, 1, window, cx);
+            let editing = view.editing_cell().expect("edit should be open");
+            editing.field.update(cx, |field, cx| {
+                field.set_text("Alicia", window, cx);
+            });
+        });
+
+        // A sort (page-changing op) must finish the editor first.
+        view.update(cx, |view, cx| view.toggle_sort("name", cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert!(
+                view.editing_cell().is_none(),
+                "a page change must close the inline editor"
+            );
+            // The edit landed on id=1's name, keyed by its stable RowKey.
+            let key = RowKey {
+                columns: vec!["id".into()],
+                values: vec![Some("1".into())],
+            };
+            let cell = view
+                .edits()
+                .updates()
+                .get(&key)
+                .and_then(|row| row.get("name"))
+                .expect("the in-progress edit should be committed keyed by RowKey");
+            assert_eq!(cell, &database_client::EditCell::Value("Alicia".into()));
+        });
+    }
+
+    #[gpui::test]
+    async fn finish_editing_on_reload_keeps_editor_closed(cx: &mut TestAppContext) {
+        // reload via next_page must also close the editor and commit its edit.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.begin_edit_cell(0, 1, window, cx);
+            let editing = view.editing_cell().expect("edit should be open");
+            editing.field.update(cx, |field, cx| {
+                field.set_text("Alicia", window, cx);
+            });
+            view.next_page(cx);
+            assert!(
+                view.editing_cell().is_none(),
+                "paging must close the inline editor"
+            );
+            assert_eq!(
+                view.pending_change_count(),
+                1,
+                "the in-progress edit is committed to the buffer, not lost"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn save_commits_open_editor(cx: &mut TestAppContext) {
+        // Saving while a cell editor is open must commit its edit before the
+        // snapshot, rather than dropping the typed text.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.begin_edit_cell(0, 1, window, cx);
+            let editing = view.editing_cell().expect("edit should be open");
+            editing.field.update(cx, |field, cx| {
+                field.set_text("Alicia", window, cx);
+            });
+            // Save with the editor still open: the edit must be committed.
+            view.save_edits(cx);
+            assert!(
+                view.editing_cell().is_none(),
+                "saving closes the inline editor"
+            );
+        });
+
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.pending_change_count() == 0)
+        })
+        .await;
+
+        assert!(
+            fake.calls()
+                .iter()
+                .any(|call| call == "apply_edits u=1 i=0 d=0"),
+            "save must apply the just-typed edit as one update: {:?}",
+            fake.calls()
+        );
+    }
+
+    #[gpui::test]
+    async fn edits_during_in_flight_save_are_ignored(cx: &mut TestAppContext) {
+        // While a save is in flight the edit buffer is frozen, so a programmatic
+        // mutation is ignored; the success handler then clears the exact snapshot
+        // that was applied.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update(cx, |view, cx| {
+            let key = view.row_key_for(0).expect("row 0 should yield a RowKey");
+            view.set_cell_value(key, "name", "Alicia".into(), cx);
+            view.save_edits(cx);
+            // The save is now in flight (state == Saving). Every buffer mutation
+            // must be a no-op until it settles.
+            assert_eq!(view.save_state(), &SaveState::Saving);
+            view.add_row(cx);
+            let key1 = view.row_key_for(1).expect("row 1 should yield a RowKey");
+            view.delete_row(key1, cx);
+            view.set_cell_value(
+                view.row_key_for(2).expect("row 2 should yield a RowKey"),
+                "name",
+                "Nope".into(),
+                cx,
+            );
+            assert_eq!(
+                view.pending_change_count(),
+                1,
+                "no mutation should take effect during an in-flight save"
+            );
+        });
+
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.pending_change_count() == 0)
+        })
+        .await;
+
+        assert!(
+            fake.calls()
+                .iter()
+                .any(|call| call == "apply_edits u=1 i=0 d=0"),
+            "only the pre-save snapshot (one update) should be applied: {:?}",
+            fake.calls()
+        );
+        view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.pending_change_count(),
+                0,
+                "the buffer is cleared to the applied snapshot on success"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn edit_of_row_marked_for_deletion_is_no_op(cx: &mut TestAppContext) {
+        // A row already marked for deletion must not gather an update, or the
+        // apply would carry both a delete and an update for the same key and fail.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            let key = view.row_key_for(0).expect("row 0 should yield a RowKey");
+            view.delete_row(key.clone(), cx);
+
+            // Direct set is a no-op on a deletion-marked row.
+            view.set_cell_value(key, "name", "Alicia".into(), cx);
+            assert!(
+                view.edits().updates().is_empty(),
+                "editing a deletion-marked row must not buffer an update"
+            );
+
+            // Opening the inline editor on that row is likewise refused.
+            view.begin_edit_cell(0, 1, window, cx);
+            assert!(
+                view.editing_cell().is_none(),
+                "the editor must not open on a row marked for deletion"
+            );
+            assert_eq!(view.pending_change_count(), 1, "still just the one delete");
+        });
+    }
+
+    #[gpui::test]
+    async fn delete_row_closes_open_editor(cx: &mut TestAppContext) {
+        // Deleting a row that is currently being edited must close that editor,
+        // so a later page swap cannot commit an update for the now-deleted key.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.begin_edit_cell(0, 1, window, cx);
+            assert!(view.editing_cell().is_some());
+            let key = view.row_key_for(0).expect("row 0 should yield a RowKey");
+            view.delete_row(key, cx);
+            assert!(
+                view.editing_cell().is_none(),
+                "deleting the edited row must close its editor"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn untouched_null_is_not_degraded_to_empty_string(cx: &mut TestAppContext) {
+        // Row 2 (id=3) has a NULL `name`. Opening its editor and committing
+        // without typing must leave the cell NULL, not record an empty-string
+        // update.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.begin_edit_cell(2, 1, window, cx);
+            let editing = view.editing_cell().expect("edit should be open");
+            // A NULL cell pre-fills empty and was NULL originally.
+            assert_eq!(editing.field.read(cx).text(cx), "");
+            view.commit_cell_edit(window, cx);
+            assert!(
+                view.editing_cell().is_none(),
+                "committing closes the editor"
+            );
+            assert_eq!(
+                view.pending_change_count(),
+                0,
+                "committing an untouched NULL must not buffer any change"
+            );
+        });
+
+        // Also: committing an untouched non-NULL value records nothing.
+        view.update_in(cx, |view, window, cx| {
+            view.begin_edit_cell(0, 1, window, cx);
+            assert_eq!(
+                view.editing_cell().map(|e| e.field.read(cx).text(cx)),
+                Some("Alice".to_string())
+            );
+            view.commit_cell_edit(window, cx);
+            assert_eq!(
+                view.pending_change_count(),
+                0,
+                "committing an unchanged value must not buffer a no-op update"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn build_table_edits_delete_supersedes_update(cx: &mut TestAppContext) {
+        // Even if an update ends up buffered for a key that is also in `deletes`,
+        // build_table_edits must not emit the update: the delete wins.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update(cx, |view, cx| {
+            let key = view.row_key_for(0).expect("row 0 should yield a RowKey");
+            // Buffer an update, then mark the same row for deletion. delete_row
+            // drops the update; force a stray update back in to exercise the
+            // build-time guard directly.
+            view.set_cell_value(key.clone(), "name", "Alicia".into(), cx);
+            view.delete_row(key.clone(), cx);
+            view.edits.updates.entry(key).or_default().insert(
+                "name".into(),
+                database_client::EditCell::Value("Stray".into()),
+            );
+
+            let edits = view.build_table_edits_for_test();
+            assert_eq!(
+                edits.updates.len(),
+                0,
+                "a key in deletes must not also appear as an update"
+            );
+            assert_eq!(edits.deletes.len(), 1, "the delete is emitted");
+        });
+    }
+
+    #[gpui::test]
+    async fn new_row_survives_deletion_of_earlier_new_row(cx: &mut TestAppContext) {
+        // Insert rows are addressed by stable id, so deleting an earlier pending
+        // insert must not shift or invalidate the identity of a later one.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update(cx, |view, cx| {
+            let first = view.add_row(cx).expect("first insert id");
+            let second = view.add_row(cx).expect("second insert id");
+            assert_ne!(first, second, "each insert gets a distinct id");
+            view.set_new_cell_value(first, "name", "First".into(), cx);
+            view.set_new_cell_value(second, "name", "Second".into(), cx);
+            assert_eq!(view.edits().inserts().len(), 2);
+
+            // Delete the first row by its id. The second must keep its value,
+            // addressable by the same id that still resolves after the shift.
+            view.delete_new_row(first, cx);
+            assert_eq!(view.edits().inserts().len(), 1);
+
+            // Editing the second row via its original id still targets it.
+            view.set_new_cell_value(second, "name", "Second!".into(), cx);
+            let cell = view
+                .edits()
+                .inserts()
+                .iter()
+                .find(|(id, _)| *id == second)
+                .and_then(|(_, row)| row.get("name"))
+                .expect("second row is still present and addressable by its id");
+            assert_eq!(cell, &database_client::EditCell::Value("Second!".into()));
+
+            // A stale id (the deleted first row) is a harmless no-op.
+            view.set_new_cell_value(first, "name", "Ghost".into(), cx);
+            assert_eq!(view.edits().inserts().len(), 1, "no phantom row appears");
         });
     }
 }
