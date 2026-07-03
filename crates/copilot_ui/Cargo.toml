@@ -22,6 +22,7 @@ test-support = [
 [dependencies]
 anyhow.workspace = true
 copilot.workspace = true
+copilot_chat.workspace = true
 gpui.workspace = true
 language.workspace = true
 log.workspace = true
