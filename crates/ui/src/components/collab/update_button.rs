@@ -1,6 +1,10 @@
 use gpui::{AnyElement, ClickEvent, prelude::*};
 
-use crate::{ButtonLike, CommonAnimationExt, Tooltip, prelude::*};
+use crate::{ButtonLike, CircularProgress, CommonAnimationExt, Tooltip, prelude::*};
+
+const LOAD_CIRCLE_GLYPH_VIEWBOX: f32 = 16.0;
+const LOAD_CIRCLE_GLYPH_STROKE_WIDTH: f32 = 1.2;
+const LOAD_CIRCLE_GLYPH_RADIUS: f32 = 5.0;
 
 /// A button component displayed in the title bar to show auto-update status.
 #[derive(IntoElement, RegisterComponent)]
@@ -80,8 +84,6 @@ impl UpdateButton {
         self
     }
 
-    /// Sets the download progress (a fraction in the range `0.0..=1.0`) to
-    /// display as a progress bar beneath the label.
     pub fn progress(mut self, progress: impl Into<Option<f32>>) -> Self {
         self.progress = progress.into();
         self
@@ -122,24 +124,37 @@ impl UpdateButton {
 }
 
 impl RenderOnce for UpdateButton {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let border_color = if self.disabled {
             cx.theme().colors().border
         } else {
             cx.theme().colors().text.opacity(0.15)
         };
 
-        let icon = Icon::new(self.icon)
-            .size(IconSize::XSmall)
-            .when_some(self.icon_color, |this, color| this.color(color));
-        let icon_element = if self.icon_animate {
-            icon.with_rotate_animation(2).into_any_element()
+        let icon_element = if let Some(progress) = self.progress {
+            let progress = progress.clamp(0.0, 1.0);
+            let icon_box = IconSize::XSmall.rems().to_pixels(window.rem_size());
+            let progress_color = Color::Default.color(cx);
+            CircularProgress::new(progress, 1.0, icon_box, cx)
+                .stroke_width(
+                    icon_box * (LOAD_CIRCLE_GLYPH_STROKE_WIDTH / LOAD_CIRCLE_GLYPH_VIEWBOX),
+                )
+                .radius(icon_box * (LOAD_CIRCLE_GLYPH_RADIUS / LOAD_CIRCLE_GLYPH_VIEWBOX))
+                .bg_color(progress_color.opacity(0.2))
+                .progress_color(progress_color)
+                .into_any_element()
         } else {
-            icon.into_any_element()
+            let icon = Icon::new(self.icon)
+                .size(IconSize::XSmall)
+                .when_some(self.icon_color, |this, color| this.color(color));
+            if self.icon_animate {
+                icon.with_rotate_animation(2).into_any_element()
+            } else {
+                icon.into_any_element()
+            }
         };
 
         let tooltip = self.tooltip.clone();
-        let progress = self.progress;
 
         let label_row = h_flex()
             .h_full()
@@ -148,8 +163,6 @@ impl RenderOnce for UpdateButton {
             .child(Label::new(self.message).size(LabelSize::Small));
 
         h_flex()
-            .relative()
-            .overflow_hidden()
             .mr_2()
             .rounded_sm()
             .border_1()
@@ -163,19 +176,6 @@ impl RenderOnce for UpdateButton {
                     .disabled(self.disabled)
                     .when_some(self.on_click, |this, handler| this.on_click(handler)),
             )
-            .when_some(progress, |this, progress| {
-                // Render the progress as a thin bar pinned to the bottom edge so
-                // it doesn't change the button's height or shift the label.
-                this.child(
-                    div()
-                        .absolute()
-                        .bottom_0()
-                        .left_0()
-                        .h(px(2.))
-                        .w(relative(progress.clamp(0.0, 1.0)))
-                        .bg(cx.theme().status().info),
-                )
-            })
             .when(self.show_dismiss, |this| {
                 this.child(
                     div().border_l_1().border_color(border_color).child(

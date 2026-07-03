@@ -13,7 +13,10 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings, SettingsStore};
 use smol::fs::File;
-use smol::{fs, io::AsyncReadExt, io::AsyncWriteExt};
+use smol::{
+    fs,
+    io::{AsyncReadExt, AsyncWriteExt},
+};
 use std::mem;
 use std::{
     env::{
@@ -144,6 +147,8 @@ pub enum AutoUpdateStatus {
 }
 
 impl PartialEq for AutoUpdateStatus {
+    // `progress` is deliberately not compared: two `Downloading` statuses for
+    // the same version are equal regardless of how far the download is.
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (AutoUpdateStatus::Idle, AutoUpdateStatus::Idle) => true,
@@ -1051,8 +1056,7 @@ async fn download_release(
 
         if let Some(total_bytes) = total_bytes {
             let fraction = (downloaded_bytes as f32 / total_bytes as f32).clamp(0.0, 1.0);
-            // Only report when the whole-number percentage changes to avoid
-            // notifying the UI on every chunk.
+            // Only report when the whole-number percentage changes to avoid notifying the UI on every chunk.
             let percent = (fraction * 100.0) as u8;
             if last_reported_percent != Some(percent) {
                 last_reported_percent = Some(percent);
@@ -1061,7 +1065,9 @@ async fn download_release(
         }
     }
     target_file.flush().await?;
-    on_progress(Some(1.0));
+    if total_bytes.is_some() && last_reported_percent != Some(100) {
+        on_progress(Some(1.0));
+    }
     log::info!("downloaded update. path:{:?}", target_path);
 
     Ok(())
@@ -1403,12 +1409,8 @@ mod tests {
 
     #[gpui::test]
     async fn test_download_release_reports_progress(cx: &mut TestAppContext) {
-        // File IO in `download_release` blocks on smol's thread pool, so the
-        // test executor needs to be allowed to park while awaiting it.
         cx.background_executor.allow_parking();
 
-        // Use a body larger than the 8KB read buffer so that progress is
-        // reported across multiple reads rather than in a single step.
         let body = vec![0u8; 20_000];
         let content_length = body.len();
 
@@ -1467,6 +1469,47 @@ mod tests {
                 "progress must not decrease: {reported:?}"
             );
         }
+
+        let downloaded_len = std::fs::metadata(&target_path).unwrap().len();
+        assert_eq!(downloaded_len, content_length as u64);
+    }
+
+    #[gpui::test]
+    async fn test_download_release_without_content_length_reports_no_progress(
+        cx: &mut TestAppContext,
+    ) {
+        cx.background_executor.allow_parking();
+
+        let body = vec![0u8; 20_000];
+        let content_length = body.len();
+
+        let client = FakeHttpClient::create(move |_req| {
+            let body = body.clone();
+            async move { Ok(Response::builder().status(200).body(body.into()).unwrap()) }
+        });
+
+        let temp_dir = tempdir().unwrap();
+        let target_path = temp_dir.path().join("zed-download");
+        let release = ReleaseAsset {
+            version: "1.0.0".to_string(),
+            url: "https://test.example/download".to_string(),
+        };
+
+        let reported = Rc::new(std::cell::RefCell::new(Vec::<Option<f32>>::new()));
+        download_release(&target_path, release, client, {
+            let reported = reported.clone();
+            move |fraction| {
+                reported.borrow_mut().push(fraction);
+            }
+        })
+        .await
+        .unwrap();
+
+        assert!(
+            reported.borrow().is_empty(),
+            "progress should not be reported when the total size is unknown, got {:?}",
+            reported.borrow()
+        );
 
         let downloaded_len = std::fs::metadata(&target_path).unwrap().len();
         assert_eq!(downloaded_len, content_length as u64);
