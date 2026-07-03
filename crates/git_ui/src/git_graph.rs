@@ -1338,6 +1338,7 @@ struct CreateRefModal {
     message_editor: Option<Entity<Editor>>,
     repository: Entity<Repository>,
     workspace: WeakEntity<Workspace>,
+    git_graph: WeakEntity<GitGraph>,
     kind: CreateRefKind,
     base: SharedString,
 }
@@ -1356,6 +1357,7 @@ impl CreateRefModal {
         kind: CreateRefKind,
         base: SharedString,
         workspace: WeakEntity<Workspace>,
+        git_graph: WeakEntity<GitGraph>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -1384,6 +1386,7 @@ impl CreateRefModal {
             message_editor,
             repository,
             workspace,
+            git_graph,
             kind,
             base,
         }
@@ -1421,12 +1424,19 @@ impl CreateRefModal {
                 )
             }
         };
-        cx.spawn(async move |_, cx| {
-            if let Ok(Err(error)) = receiver.await
-                && let Some(workspace) = workspace.upgrade()
-            {
-                cx.update(|cx| show_error_toast(workspace, command_label, error, cx));
+        let git_graph = self.git_graph.clone();
+        cx.spawn(async move |_, cx| match receiver.await {
+            Ok(Ok(())) => {
+                git_graph
+                    .update(cx, |git_graph, cx| git_graph.invalidate_state(cx))
+                    .ok();
             }
+            Ok(Err(error)) => {
+                if let Some(workspace) = workspace.upgrade() {
+                    cx.update(|cx| show_error_toast(workspace, command_label, error, cx));
+                }
+            }
+            Err(_) => {}
         })
         .detach();
         cx.emit(DismissEvent);
@@ -2628,11 +2638,20 @@ impl GitGraph {
         cx: &mut Context<Self>,
     ) {
         let workspace = self.workspace.clone();
-        cx.spawn(async move |_, cx| {
-            if let Ok(Err(error)) = receiver.await
-                && let Some(workspace) = workspace.upgrade()
-            {
-                cx.update(|cx| show_error_toast(workspace, command_label, error, cx));
+        cx.spawn(async move |this, cx| {
+            match receiver.await {
+                Ok(Ok(())) => {
+                    // Refresh the graph right away rather than waiting for the
+                    // file watcher to notice the change; ref updates like tag
+                    // edits produce no repository event at all.
+                    this.update(cx, |this, cx| this.invalidate_state(cx)).ok();
+                }
+                Ok(Err(error)) => {
+                    if let Some(workspace) = workspace.upgrade() {
+                        cx.update(|cx| show_error_toast(workspace, command_label, error, cx));
+                    }
+                }
+                Err(_) => {}
             }
         })
         .detach();
@@ -2674,7 +2693,7 @@ impl GitGraph {
             return;
         };
         let workspace = self.workspace.clone();
-        cx.spawn_in(window, async move |_, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let answer = cx.update(|window, cx| {
                 window.prompt(
                     PromptLevel::Warning,
@@ -2693,12 +2712,17 @@ impl GitGraph {
                     repository.delete_tag(tag_name.to_string())
                 })
                 .await?;
-            if let Err(error) = result
-                && let Some(workspace) = workspace.upgrade()
-            {
-                cx.update(|_window, cx| {
-                    show_error_toast(workspace, format!("tag -d {tag_name}"), error, cx)
-                })?;
+            match result {
+                Ok(()) => {
+                    this.update(cx, |this, cx| this.invalidate_state(cx)).ok();
+                }
+                Err(error) => {
+                    if let Some(workspace) = workspace.upgrade() {
+                        cx.update(|_window, cx| {
+                            show_error_toast(workspace, format!("tag -d {tag_name}"), error, cx)
+                        })?;
+                    }
+                }
             }
 
             anyhow::Ok(())
@@ -2761,10 +2785,19 @@ impl GitGraph {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
+        let git_graph = cx.weak_entity();
         workspace.update(cx, |workspace, cx| {
             let workspace_handle = cx.weak_entity();
             workspace.toggle_modal(window, cx, |window, cx| {
-                CreateRefModal::new(repository, kind, base, workspace_handle, window, cx)
+                CreateRefModal::new(
+                    repository,
+                    kind,
+                    base,
+                    workspace_handle,
+                    git_graph,
+                    window,
+                    cx,
+                )
             });
         });
     }
@@ -2779,7 +2812,7 @@ impl GitGraph {
             return;
         };
         let workspace = self.workspace.clone();
-        cx.spawn_in(window, async move |_, cx| {
+        cx.spawn_in(window, async move |this, cx| {
             let answer = cx.update(|window, cx| {
                 window.prompt(
                     PromptLevel::Warning,
@@ -2848,17 +2881,22 @@ impl GitGraph {
                 }
             };
 
-            if let Err(error) = result
-                && let Some(workspace) = workspace.upgrade()
-            {
-                cx.update(|_window, cx| {
-                    show_error_toast(
-                        workspace,
-                        delete_branch_command(is_remote, &branch_name, attempted_force),
-                        error,
-                        cx,
-                    )
-                })?;
+            match result {
+                Ok(()) => {
+                    this.update(cx, |this, cx| this.invalidate_state(cx)).ok();
+                }
+                Err(error) => {
+                    if let Some(workspace) = workspace.upgrade() {
+                        cx.update(|_window, cx| {
+                            show_error_toast(
+                                workspace,
+                                delete_branch_command(is_remote, &branch_name, attempted_force),
+                                error,
+                                cx,
+                            )
+                        })?;
+                    }
+                }
             }
 
             anyhow::Ok(())
