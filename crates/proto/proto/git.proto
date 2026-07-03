@@ -211,6 +211,7 @@ message GitCreateTag {
   uint64 repository_id = 2;
   string tag_name = 3;
   string target = 4;
+  optional string message = 5;
 }
 
 message GitDeleteTag {

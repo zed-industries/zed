@@ -1333,6 +1333,9 @@ enum CreateRefKind {
 
 struct CreateRefModal {
     editor: Entity<Editor>,
+    /// Only present when creating a tag: a non-empty message creates an
+    /// annotated tag, an empty one a lightweight tag.
+    message_editor: Option<Entity<Editor>>,
     repository: Entity<Repository>,
     workspace: WeakEntity<Workspace>,
     kind: CreateRefKind,
@@ -1365,8 +1368,20 @@ impl CreateRefModal {
             editor.set_placeholder_text(placeholder, window, cx);
             editor
         });
+        let message_editor = (kind == CreateRefKind::Tag).then(|| {
+            cx.new(|cx| {
+                let mut editor = Editor::single_line(window, cx);
+                editor.set_placeholder_text(
+                    "Message (optional, creates an annotated tag)",
+                    window,
+                    cx,
+                );
+                editor
+            })
+        });
         Self {
             editor,
+            message_editor,
             repository,
             workspace,
             kind,
@@ -1392,12 +1407,19 @@ impl CreateRefModal {
                 }),
                 format!("switch -c {name} {base}"),
             ),
-            CreateRefKind::Tag => (
-                self.repository.update(cx, |repository, _| {
-                    repository.create_tag(name.clone(), base.to_string())
-                }),
-                format!("tag {name} {base}"),
-            ),
+            CreateRefKind::Tag => {
+                let message = self.message_editor.as_ref().and_then(|editor| {
+                    let text = editor.read(cx).text(cx).trim().to_string();
+                    (!text.is_empty()).then_some(text)
+                });
+                let flag = if message.is_some() { "-a " } else { "" };
+                (
+                    self.repository.update(cx, |repository, _| {
+                        repository.create_tag(name.clone(), base.to_string(), message)
+                    }),
+                    format!("tag {flag}{name} {base}"),
+                )
+            }
         };
         cx.spawn(async move |_, cx| {
             if let Ok(Err(error)) = receiver.await
@@ -1444,6 +1466,17 @@ impl Render for CreateRefModal {
                     .border_color(cx.theme().colors().border_variant)
                     .child(self.editor.clone()),
             )
+            .when_some(self.message_editor.clone(), |this, message_editor| {
+                this.child(
+                    div()
+                        .py_2()
+                        .px_3()
+                        .bg(cx.theme().colors().editor_background)
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .child(message_editor),
+                )
+            })
     }
 }
 

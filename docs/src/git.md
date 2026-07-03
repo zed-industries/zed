@@ -114,6 +114,8 @@ The Git Graph ({#action git_graph::Open}) visualizes your repository's commit hi
 - On a commit: check out the commit, create a branch or tag from it, cherry-pick it, or revert it.
 - On a tag label: check out the tag, create a branch from it, or delete it.
 
+When creating a tag, the message field is optional: providing one creates an annotated tag, leaving it empty creates a lightweight tag.
+
 If an operation fails — for example, a merge or cherry-pick with conflicts — Zed shows the error, and any conflicts can be resolved from the Git Panel as usual. You can also add your own entries to this menu with [custom Git commands](./tasks.md#custom-git-commands).
 
 ## Fetch, Push, and Pull

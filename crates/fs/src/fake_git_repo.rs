@@ -949,7 +949,12 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn create_tag(&self, _name: String, _target: String) -> BoxFuture<'_, Result<()>> {
+    fn create_tag(
+        &self,
+        _name: String,
+        _target: String,
+        _message: Option<String>,
+    ) -> BoxFuture<'_, Result<()>> {
         async { Ok(()) }.boxed()
     }
 

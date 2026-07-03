@@ -3231,10 +3231,11 @@ impl GitStore {
         let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
         let tag_name = envelope.payload.tag_name;
         let target = envelope.payload.target;
+        let message = envelope.payload.message;
 
         repository_handle
             .update(&mut cx, |repository_handle, _| {
-                repository_handle.create_tag(tag_name, target)
+                repository_handle.create_tag(tag_name, target, message)
             })
             .await??;
 
@@ -8171,15 +8172,17 @@ impl Repository {
         &mut self,
         tag_name: String,
         target: String,
+        message: Option<String>,
     ) -> oneshot::Receiver<Result<()>> {
         let id = self.id;
+        let flag = if message.is_some() { "-a " } else { "" };
         self.send_job(
             "create_tag",
-            Some(format!("git tag {tag_name} {target}").into()),
+            Some(format!("git tag {flag}{tag_name} {target}").into()),
             move |repo, _cx| async move {
                 match repo {
                     RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                        backend.create_tag(tag_name, target).await
+                        backend.create_tag(tag_name, target, message).await
                     }
                     RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
                         client
@@ -8188,6 +8191,7 @@ impl Repository {
                                 repository_id: id.to_proto(),
                                 tag_name,
                                 target,
+                                message,
                             })
                             .await?;
 
