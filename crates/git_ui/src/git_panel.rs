@@ -470,6 +470,15 @@ enum RowMark {
     Directory(TreeKey),
 }
 
+/// A live shift-range gesture. Marks are recomputed as the base set plus
+/// everything between the anchor and the cursor on every extension, so
+/// reversing direction shrinks the range instead of growing it.
+struct MarkRangeGesture {
+    anchor_ix: usize,
+    base_files: HashSet<RepoPath>,
+    base_directories: HashSet<TreeKey>,
+}
+
 /// Tracks, while walking `entries` in display order, whether the current row
 /// sits inside a directory that is part of the multi-selection.
 #[derive(Default)]
@@ -830,6 +839,7 @@ pub struct GitPanel {
     selected_entry: Option<usize>,
     marked_entries: HashSet<RepoPath>,
     marked_directories: HashSet<TreeKey>,
+    mark_range_gesture: Option<MarkRangeGesture>,
     tracked_count: usize,
     tracked_staged_count: usize,
     update_visible_entries_task: Task<()>,
@@ -1113,6 +1123,7 @@ impl GitPanel {
                 selected_entry: None,
                 marked_entries: HashSet::default(),
                 marked_directories: HashSet::default(),
+                mark_range_gesture: None,
                 tracked_count: 0,
                 tracked_staged_count: 0,
                 update_visible_entries_task: Task::ready(()),
@@ -1154,6 +1165,7 @@ impl GitPanel {
     fn clear_marks(&mut self) {
         self.marked_entries.clear();
         self.marked_directories.clear();
+        self.mark_range_gesture = None;
     }
 
     fn clear_marks_and_select(&mut self, ix: usize, cx: &mut Context<Self>) {
@@ -1186,6 +1198,7 @@ impl GitPanel {
     }
 
     fn toggle_mark(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.mark_range_gesture = None;
         if let Some(mark) = self.row_mark(ix) {
             if !self.has_marks()
                 && let Some(previous) = self.selected_entry.filter(|&previous| previous != ix)
@@ -1278,27 +1291,6 @@ impl GitPanel {
         self.marked_file_entries()
     }
 
-    /// Whether the header renders as part of the multi-selection: true when
-    /// its section has at least one file and every file in the section is
-    /// either marked or inside a marked directory.
-    fn header_is_marked(&self, header_ix: usize) -> bool {
-        let mut coverage = MarkedDirectoryCoverage::default();
-        let mut saw_file = false;
-        for entry in self.entries.iter().skip(header_ix + 1) {
-            if matches!(entry, GitListEntry::Header(_)) {
-                break;
-            }
-            let covered = coverage.observe(entry, &self.marked_directories);
-            if let Some(status_entry) = entry.status_entry() {
-                saw_file = true;
-                if !covered && !self.marked_entries.contains(&status_entry.repo_path) {
-                    return false;
-                }
-            }
-        }
-        saw_file
-    }
-
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         if self.active_tab == GitPanelTab::Changes && self.has_marks() {
             self.clear_marks();
@@ -1308,13 +1300,24 @@ impl GitPanel {
         }
     }
 
-    fn extend_marks_to_selection(&mut self, origin_ix: usize) {
-        if !self.has_marks() {
-            self.mark_row(origin_ix);
+    /// Extends or shrinks the live shift-range: marks become the gesture's
+    /// base set plus everything between the gesture's anchor and `target_ix`.
+    /// `origin_ix` anchors a new gesture when none is active.
+    fn apply_range_gesture(&mut self, origin_ix: usize, target_ix: usize) {
+        if self.mark_range_gesture.is_none() {
+            self.mark_range_gesture = Some(MarkRangeGesture {
+                anchor_ix: origin_ix,
+                base_files: self.marked_entries.clone(),
+                base_directories: self.marked_directories.clone(),
+            });
         }
-        if let Some(selected) = self.selected_entry {
-            self.mark_row(selected);
-        }
+        let Some(gesture) = &self.mark_range_gesture else {
+            return;
+        };
+        let anchor_ix = gesture.anchor_ix;
+        self.marked_entries = gesture.base_files.clone();
+        self.marked_directories = gesture.base_directories.clone();
+        self.mark_range(anchor_ix, target_ix);
     }
 
     pub fn select_entry_by_path(
@@ -1601,6 +1604,7 @@ impl GitPanel {
         };
 
         if let Some(first_entry) = first_entry {
+            self.mark_range_gesture = None;
             self.selected_entry = Some(first_entry);
             self.scroll_to_selected_entry(cx);
         }
@@ -1675,7 +1679,11 @@ impl GitPanel {
         }
 
         if window.modifiers().shift {
-            self.extend_marks_to_selection(selected_entry);
+            if let Some(target_ix) = self.selected_entry {
+                self.apply_range_gesture(selected_entry, target_ix);
+            }
+        } else {
+            self.mark_range_gesture = None;
         }
         self.scroll_to_selected_entry(cx);
     }
@@ -1731,13 +1739,18 @@ impl GitPanel {
         }
 
         if window.modifiers().shift {
-            self.extend_marks_to_selection(selected_entry);
+            if let Some(target_ix) = self.selected_entry {
+                self.apply_range_gesture(selected_entry, target_ix);
+            }
+        } else {
+            self.mark_range_gesture = None;
         }
         self.scroll_to_selected_entry(cx);
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, _window: &mut Window, cx: &mut Context<Self>) {
         if self.entries.last().is_some() {
+            self.mark_range_gesture = None;
             self.selected_entry = Some(self.entries.len() - 1);
             self.scroll_to_selected_entry(cx);
         }
@@ -4757,6 +4770,8 @@ impl GitPanel {
             }
             GitPanelViewMode::Flat => self.marked_directories.clear(),
         }
+        // The rebuild may have reordered rows, invalidating the anchor index.
+        self.mark_range_gesture = None;
 
         self.select_first_entry_if_none(window, cx);
         self.select_last_entry_if_out_of_bounds(window, cx);
@@ -6778,13 +6793,6 @@ impl GitPanel {
         let section = header.header;
         let weak = cx.weak_entity();
 
-        let marked_bg_alpha = 0.12;
-        let base_bg = if self.header_is_marked(ix) {
-            cx.theme().status().info.alpha(marked_bg_alpha)
-        } else {
-            cx.theme().colors().ghost_element_background
-        };
-
         h_flex()
             .id(id)
             .cursor_pointer()
@@ -6795,7 +6803,6 @@ impl GitPanel {
             .pr_1()
             .gap_2()
             .justify_between()
-            .bg(base_bg)
             .hover(|s| s.bg(cx.theme().colors().ghost_element_hover))
             .border_1()
             .border_r_2()
@@ -7190,7 +7197,7 @@ impl GitPanel {
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     if event.modifiers().shift {
                         let anchor_ix = this.selected_entry.unwrap_or(ix);
-                        this.mark_range(anchor_ix, ix);
+                        this.apply_range_gesture(anchor_ix, ix);
                         this.selected_entry = Some(ix);
                         cx.notify();
                     } else if event.modifiers().secondary() {
@@ -7377,7 +7384,7 @@ impl GitPanel {
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     if event.modifiers().shift {
                         let anchor_ix = this.selected_entry.unwrap_or(ix);
-                        this.mark_range(anchor_ix, ix);
+                        this.apply_range_gesture(anchor_ix, ix);
                         this.selected_entry = Some(ix);
                         cx.notify();
                     } else if event.modifiers().secondary() {
@@ -11162,43 +11169,80 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_header_marked_when_all_section_files_marked(cx: &mut TestAppContext) {
+    async fn test_shift_range_shrinks_when_reversed(cx: &mut TestAppContext) {
         init_test(cx);
         let (_fs, _project, panel, mut cx) = setup_flat_marks_fixture(cx).await;
 
         panel.update_in(&mut cx, |panel, _window, _cx| {
-            let header_ix = |panel: &GitPanel, section: Section| {
-                panel
-                    .entries
-                    .iter()
-                    .position(|entry| {
-                        matches!(entry, GitListEntry::Header(header) if header.header == section)
-                    })
-                    .expect("section header should exist")
-            };
-            let tracked_ix = header_ix(panel, Section::Tracked);
-            let new_ix = header_ix(panel, Section::New);
+            // A mark from before the gesture must survive the whole gesture.
+            panel.marked_entries.insert(repo_path("new1.txt"));
+            let a_ix = entry_index_for_repo_path(panel, &repo_path("a.txt")).unwrap();
+            panel.selected_entry = Some(a_ix);
+        });
 
-            assert!(
-                !panel.header_is_marked(tracked_ix),
-                "no marks: the header is not marked",
+        cx.simulate_modifiers_change(Modifiers {
+            shift: true,
+            ..Default::default()
+        });
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.select_next(&menu::SelectNext, window, cx);
+            panel.select_next(&menu::SelectNext, window, cx);
+            assert_eq!(
+                panel.marked_entries,
+                HashSet::from_iter([
+                    repo_path("a.txt"),
+                    repo_path("b.txt"),
+                    repo_path("c.txt"),
+                    repo_path("new1.txt"),
+                ]),
+                "shift+down twice should mark the anchor and two more rows",
             );
 
-            panel.marked_entries =
-                HashSet::from_iter([repo_path("a.txt"), repo_path("b.txt"), repo_path("c.txt")]);
-            assert!(
-                panel.header_is_marked(tracked_ix),
-                "marking every tracked file should mark the Tracked header",
-            );
-            assert!(
-                !panel.header_is_marked(new_ix),
-                "the Untracked header has no marked files",
+            panel.select_previous(&menu::SelectPrevious, window, cx);
+            assert_eq!(
+                panel.marked_entries,
+                HashSet::from_iter([
+                    repo_path("a.txt"),
+                    repo_path("b.txt"),
+                    repo_path("new1.txt"),
+                ]),
+                "shift+up should shrink the range back toward the anchor",
             );
 
-            panel.marked_entries.remove(&repo_path("b.txt"));
-            assert!(
-                !panel.header_is_marked(tracked_ix),
-                "a partially marked section should not mark its header",
+            panel.select_previous(&menu::SelectPrevious, window, cx);
+            assert_eq!(
+                panel.marked_entries,
+                HashSet::from_iter([repo_path("a.txt"), repo_path("new1.txt")]),
+                "shrinking to the anchor leaves only the anchor and prior marks",
+            );
+        });
+
+        // Releasing shift and navigating ends the gesture; the next shift
+        // press starts a new range anchored at the current cursor.
+        cx.simulate_modifiers_change(Modifiers::default());
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.select_next(&menu::SelectNext, window, cx);
+            assert_eq!(
+                panel.marked_entries,
+                HashSet::from_iter([repo_path("a.txt"), repo_path("new1.txt")]),
+                "plain navigation must not change the marks",
+            );
+        });
+        cx.simulate_modifiers_change(Modifiers {
+            shift: true,
+            ..Default::default()
+        });
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.select_next(&menu::SelectNext, window, cx);
+            assert_eq!(
+                panel.marked_entries,
+                HashSet::from_iter([
+                    repo_path("a.txt"),
+                    repo_path("b.txt"),
+                    repo_path("c.txt"),
+                    repo_path("new1.txt"),
+                ]),
+                "a new gesture anchors at the row plain navigation moved to",
             );
         });
     }
@@ -11255,11 +11299,6 @@ mod tests {
                         .is_some_and(|directory| directory.key == src.key)
                 })
                 .unwrap();
-            let header_ix = panel
-                .entries
-                .iter()
-                .position(|entry| matches!(entry, GitListEntry::Header(_)))
-                .unwrap();
 
             panel.marked_entries =
                 HashSet::from_iter([repo_path("src/a.rs"), repo_path("src/nested/c.rs")]);
@@ -11286,17 +11325,8 @@ mod tests {
                 HashSet::from_iter([repo_path("src/a.rs"), repo_path("src/nested/c.rs")]),
                 "operations expand a selected directory to its recursive descendants",
             );
-            assert!(
-                !panel.header_is_marked(header_ix),
-                "the section still has a file outside the selection",
-            );
 
             panel.marked_entries.insert(repo_path("top.txt"));
-            assert!(
-                panel.header_is_marked(header_ix),
-                "files covered by a selected directory count toward the header",
-            );
-
             panel.toggle_mark(src_ix, cx);
             assert_eq!(
                 panel.marked_directories,
