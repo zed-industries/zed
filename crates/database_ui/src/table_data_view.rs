@@ -1,10 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
+use std::time::Duration;
 
 use database_client::{
     ColumnInfo, DatabaseClient, EditCell, Filter, FilterOp, RowDelete, RowInsert, RowKey,
-    RowUpdate, RowsPage, SelectSpec, Sort, SortDirection, TableEdits, TableRef, TableStructure,
+    RowUpdate, Sort, SortDirection, TableEdits, TableRef, TableStructure,
 };
 use gpui::{
     Anchor, AnyElement, App, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
@@ -20,6 +21,8 @@ use util::ResultExt as _;
 use workspace::{Workspace, item::Item};
 
 use crate::DatabaseSettings;
+use crate::UI_MAX_QUERY_ROWS;
+use crate::query_state::{QueryState, render_sql};
 
 actions!(
     database,
@@ -221,11 +224,22 @@ fn column_info_from_name(name: &String) -> ColumnInfo {
     }
 }
 
+/// The result of running the current page's SQL, holding just what the grid
+/// needs to render: column names, row values, and whether more rows exist
+/// beyond this page. Replaces the server-side `RowsPage` probe now that rows
+/// come from [`DatabaseClient::run_query`] rather than `fetch_rows`.
+struct PageData {
+    columns: Vec<String>,
+    rows: Vec<Vec<Option<String>>>,
+    has_more: bool,
+}
+
 /// A workspace tab showing the rows and structure of a single database table.
 ///
-/// The data grid supports server-side sorting and offset pagination through the
-/// [`SelectSpec`] handed to [`DatabaseClient::fetch_rows`]; the structure tab is
-/// fetched lazily on first display and cached until an explicit refresh.
+/// The data grid supports sorting and offset pagination by rendering a
+/// [`QueryState`] to SQL text and running it through
+/// [`DatabaseClient::run_query`]; the structure tab is fetched lazily on first
+/// display and cached until an explicit refresh.
 pub struct TableDataView {
     focus_handle: FocusHandle,
     client: Arc<dyn DatabaseClient>,
@@ -251,10 +265,10 @@ pub struct TableDataView {
     /// The in-flight state of the most recent save.
     save_state: SaveState,
     mode: ViewMode,
-    spec: SelectSpec,
+    query: QueryState,
     /// Wrapped in `Arc` so the render hot path (scroll re-renders) hands the
     /// rows to `uniform_list` by cheap clone instead of deep-copying every cell.
-    page: Option<Arc<RowsPage>>,
+    page: Option<Arc<PageData>>,
     structure: Option<TableStructure>,
     load_state: LoadState,
     interaction: Entity<TableInteractionState>,
@@ -269,6 +283,9 @@ pub struct TableDataView {
     draft_op: FilterOp,
     /// The value input for the filter builder (ignored for `IsNull`).
     draft_value: Entity<InputField>,
+    /// The row count and wall-clock duration of the most recent successful
+    /// query run, shown in the footer. `None` before the first page loads.
+    last_run: Option<(usize, Duration)>,
     /// Held separately from `_structure_task` so a structure load and a data
     /// reload can be in flight at the same time without one aborting the other.
     _data_task: Option<Task<()>>,
@@ -287,7 +304,7 @@ impl TableDataView {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        let limit = DatabaseSettings::get_global(cx).page_size.max(1) as usize;
+        let page_size = DatabaseSettings::get_global(cx).page_size.max(1) as usize;
         cx.new(|cx| {
             let interaction = cx.new(|cx| TableInteractionState::new(cx));
             let draft_value = cx.new(|cx| InputField::new(window, cx, "Value"));
@@ -295,6 +312,7 @@ impl TableDataView {
                 focus_handle: cx.focus_handle(),
                 client,
                 connection,
+                query: QueryState::for_table(table.clone(), page_size),
                 table,
                 is_view,
                 editable: false,
@@ -303,10 +321,6 @@ impl TableDataView {
                 editing_cell: None,
                 save_state: SaveState::Idle,
                 mode: ViewMode::Data,
-                spec: SelectSpec {
-                    limit,
-                    ..Default::default()
-                },
                 page: None,
                 structure: None,
                 load_state: LoadState::Idle,
@@ -316,11 +330,12 @@ impl TableDataView {
                 draft_column: None,
                 draft_op: FilterOp::Eq,
                 draft_value,
+                last_run: None,
                 _data_task: None,
                 _structure_task: None,
                 _save_task: None,
             };
-            view.reload_data(cx);
+            view.restart_query(window, cx);
             // Load the structure eagerly alongside the first page so the primary
             // key (hence editability) is known without switching to the
             // Structure tab.
@@ -337,11 +352,26 @@ impl TableDataView {
         &self.connection
     }
 
-    pub fn spec(&self) -> &SelectSpec {
-        &self.spec
+    pub fn query(&self) -> &QueryState {
+        &self.query
     }
 
-    pub fn page(&self) -> Option<&RowsPage> {
+    /// The SQL text that the current [`QueryState`] renders to; this is what
+    /// the next reload will execute.
+    pub fn current_sql(&self) -> String {
+        render_sql(&self.query)
+    }
+
+    /// The row count and wall-clock duration of the most recent successful
+    /// query run, if any page has loaded yet.
+    pub fn last_run(&self) -> Option<(usize, Duration)> {
+        self.last_run
+    }
+
+    /// Test-only: exposes the loaded page so tests can assert on row/column
+    /// data without reaching into the private `page` field.
+    #[cfg(test)]
+    fn page(&self) -> Option<&PageData> {
         self.page.as_deref()
     }
 
@@ -818,7 +848,7 @@ impl TableDataView {
     /// No-op when the buffer is empty or a save is already in flight. On success
     /// the buffer and inline editor are cleared and the page is reloaded; on
     /// failure the buffer is kept and the error is surfaced in `save_state`.
-    pub fn save_edits(&mut self, cx: &mut Context<Self>) {
+    pub fn save_edits(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.save_state == SaveState::Saving {
             return;
         }
@@ -853,9 +883,9 @@ impl TableDataView {
             client.apply_edits(&table, &columns, &edits).await
         });
 
-        self._save_task = Some(cx.spawn(async move |this, cx| {
+        self._save_task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
-            this.update(cx, |this, cx| {
+            this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(counts) => {
                         this.edits.clear();
@@ -864,7 +894,7 @@ impl TableDataView {
                             "Saved: {} updated, {} inserted, {} deleted",
                             counts.updated, counts.inserted, counts.deleted
                         ));
-                        this.reload_data(cx);
+                        this.restart_query(window, cx);
                     }
                     Err(error) => {
                         this.save_state = SaveState::Error(format!("{error:#}"));
@@ -937,11 +967,11 @@ impl TableDataView {
 
     /// Cycles the sort on `column` (None -> Asc -> Desc -> None), resets the
     /// page offset, and reloads the current page.
-    pub fn toggle_sort(&mut self, column: &str, cx: &mut Context<Self>) {
+    pub fn toggle_sort(&mut self, column: &str, window: &mut Window, cx: &mut Context<Self>) {
         // Commit and close any open editor before the rows on screen change, so
         // its next commit cannot land on a different (now-hidden) row.
         self.finish_editing(cx);
-        let next = match &self.spec.sort {
+        let next = match &self.query.sort {
             Some(sort) if sort.column == column => match sort.direction {
                 SortDirection::Asc => Some(Sort {
                     column: column.to_string(),
@@ -954,55 +984,60 @@ impl TableDataView {
                 direction: SortDirection::Asc,
             }),
         };
-        self.spec.sort = next;
-        self.spec.offset = 0;
-        self.reload_data(cx);
+        self.query.sort = next;
+        self.query.offset = 0;
+        self.restart_query(window, cx);
     }
 
     /// Appends `filter` to the active filter set, resets the page offset, and
     /// reloads the current page.
-    pub fn add_filter(&mut self, filter: Filter, cx: &mut Context<Self>) {
+    pub fn add_filter(&mut self, filter: Filter, window: &mut Window, cx: &mut Context<Self>) {
         self.finish_editing(cx);
-        self.spec.filters.push(filter);
-        self.spec.offset = 0;
-        self.reload_data(cx);
+        self.query.filters.push(filter);
+        self.query.offset = 0;
+        self.restart_query(window, cx);
     }
 
     /// Removes the filter at `index`, resets the page offset, and reloads. An
     /// out-of-bounds index is a no-op.
-    pub fn remove_filter(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index >= self.spec.filters.len() {
+    pub fn remove_filter(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if index >= self.query.filters.len() {
             log::debug!(
                 "remove_filter: index {index} out of bounds ({} filters)",
-                self.spec.filters.len()
+                self.query.filters.len()
             );
             return;
         }
         self.finish_editing(cx);
-        self.spec.filters.remove(index);
-        self.spec.offset = 0;
-        self.reload_data(cx);
+        self.query.filters.remove(index);
+        self.query.offset = 0;
+        self.restart_query(window, cx);
     }
 
-    /// Advances to the next page when the current page reports more rows.
-    pub fn next_page(&mut self, cx: &mut Context<Self>) {
+    /// Advances to the next page when the current page reports more rows. In
+    /// custom-query mode (before any page has been run, so `limit` is not yet
+    /// set) this establishes the first page at the settings page size.
+    pub fn next_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let has_more = self.page.as_ref().is_some_and(|page| page.has_more);
         if !has_more {
             return;
         }
         self.finish_editing(cx);
-        self.spec.offset += self.spec.limit;
-        self.reload_data(cx);
+        let page_size = DatabaseSettings::get_global(cx).page_size.max(1) as usize;
+        let limit = *self.query.limit.get_or_insert(page_size);
+        self.query.offset += limit;
+        self.restart_query(window, cx);
     }
 
     /// Moves back one page, clamping the offset at zero. No-op at the first page.
-    pub fn prev_page(&mut self, cx: &mut Context<Self>) {
-        if self.spec.offset == 0 {
+    pub fn prev_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.query.offset == 0 {
             return;
         }
         self.finish_editing(cx);
-        self.spec.offset = self.spec.offset.saturating_sub(self.spec.limit);
-        self.reload_data(cx);
+        let limit = self.query.limit.unwrap_or(1);
+        self.query.offset = self.query.offset.saturating_sub(limit);
+        self.restart_query(window, cx);
     }
 
     /// Switches between the data and structure tabs, fetching the structure the
@@ -1023,34 +1058,57 @@ impl TableDataView {
     /// active (even if a prior fetch failed and left it `None`) ensures Retry
     /// actually re-issues the request instead of showing "Loading structure…"
     /// forever.
-    fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.finish_editing(cx);
-        self.reload_data(cx);
+    fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.restart_query(window, cx);
         if self.structure.is_some() || self.mode == ViewMode::Structure {
             self.reload_structure(cx);
         }
     }
 
-    fn reload_data(&mut self, cx: &mut Context<Self>) {
+    /// The single reload entry point: commits any open cell edit, then renders
+    /// the current [`QueryState`] to SQL and spawns the run. Every mutator that
+    /// changes what is on screen (sort, filter, paging, refresh, save) funnels
+    /// through this one method rather than issuing its own query.
+    fn restart_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.finish_editing(cx);
+        // Once the SQL bar (Task 4) owns editable text, this is where the
+        // editor's buffer is resynchronized from `self.query` when the two have
+        // diverged; until then there is no editor to sync, so `window` is only
+        // needed to spawn the task below.
+
+        let sql = self.current_sql();
+        let database = self.table.database.clone();
+        let client = self.client.clone();
+        let limit = self.query.limit;
+
         self.load_state = LoadState::Loading;
         cx.notify();
 
-        let client = self.client.clone();
-        let table = self.table.clone();
-        let spec = self.spec.clone();
-        let task =
-            gpui_tokio::Tokio::spawn_result(
-                cx,
-                async move { client.fetch_rows(&table, &spec).await },
-            );
-
-        self._data_task = Some(cx.spawn(async move |this, cx| {
-            let result = task.await;
-            this.update(cx, |this, cx| {
+        self._data_task = Some(cx.spawn_in(window, async move |this, cx| {
+            let started = std::time::Instant::now();
+            let spawned = cx.update(|_, cx| {
+                gpui_tokio::Tokio::spawn_result(cx, async move {
+                    client.run_query(&database, &sql, UI_MAX_QUERY_ROWS).await
+                })
+            });
+            let result = match spawned {
+                Ok(task) => task.await,
+                Err(error) => Err(error),
+            };
+            let elapsed = started.elapsed();
+            this.update_in(cx, |this, _window, cx| {
                 match result {
-                    Ok(page) => {
-                        this.set_column_widths(page.columns.len(), cx);
-                        this.page = Some(Arc::new(page));
+                    Ok(result) => {
+                        let has_more = result.truncated
+                            || limit.is_some_and(|limit| result.rows.len() == limit);
+                        let row_count = result.rows.len();
+                        this.set_column_widths(result.columns.len(), cx);
+                        this.page = Some(Arc::new(PageData {
+                            columns: result.columns,
+                            rows: result.rows,
+                            has_more,
+                        }));
+                        this.last_run = Some((row_count, elapsed));
                         this.load_state = LoadState::Idle;
                     }
                     Err(error) => {
@@ -1438,7 +1496,7 @@ impl TableDataView {
 
     fn render_header(&self, index: usize, column: &str, cx: &Context<Self>) -> AnyElement {
         let sorted = self
-            .spec
+            .query
             .sort
             .as_ref()
             .filter(|sort| sort.column == column)
@@ -1472,8 +1530,8 @@ impl TableDataView {
                     ButtonStyle::Subtle
                 })
                 .tooltip(Tooltip::text(tooltip))
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.toggle_sort(&column, cx);
+                .on_click(cx.listener(move |this, _event, window, cx| {
+                    this.toggle_sort(&column, window, cx);
                 })),
             )
             .into_any_element()
@@ -1616,6 +1674,7 @@ impl TableDataView {
                 op: self.draft_op,
                 value,
             },
+            window,
             cx,
         );
         self.filter_builder_open = false;
@@ -1627,7 +1686,7 @@ impl TableDataView {
 
     fn render_filter_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let chips = self
-            .spec
+            .query
             .filters
             .iter()
             .enumerate()
@@ -1688,7 +1747,9 @@ impl TableDataView {
                 )
                 .icon_size(IconSize::XSmall)
                 .tooltip(Tooltip::text("Remove filter"))
-                .on_click(cx.listener(move |this, _, _, cx| this.remove_filter(index, cx))),
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.remove_filter(index, window, cx)),
+                ),
             )
             .into_any_element()
     }
@@ -1784,14 +1845,14 @@ impl TableDataView {
         let (summary, has_more) = match &self.page {
             Some(page) if page.rows.is_empty() => ("No rows".to_string(), false),
             Some(page) => {
-                let start = self.spec.offset + 1;
-                let end = self.spec.offset + page.rows.len();
+                let start = self.query.offset + 1;
+                let end = self.query.offset + page.rows.len();
                 let suffix = if page.has_more { "+" } else { "" };
                 (format!("rows {start}–{end}{suffix}"), page.has_more)
             }
             None => (String::new(), false),
         };
-        let at_start = self.spec.offset == 0;
+        let at_start = self.query.offset == 0;
 
         h_flex()
             .w_full()
@@ -1813,20 +1874,24 @@ impl TableDataView {
                             .icon_size(IconSize::Small)
                             .disabled(at_start)
                             .tooltip(Tooltip::text("Previous page"))
-                            .on_click(cx.listener(|this, _, _, cx| this.prev_page(cx))),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.prev_page(window, cx)),
+                            ),
                     )
                     .child(
                         IconButton::new("db-refresh", IconName::RotateCw)
                             .icon_size(IconSize::Small)
                             .tooltip(Tooltip::text("Refresh"))
-                            .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                            .on_click(cx.listener(|this, _, window, cx| this.refresh(window, cx))),
                     )
                     .child(
                         IconButton::new("db-next-page", IconName::ChevronRight)
                             .icon_size(IconSize::Small)
                             .disabled(!has_more)
                             .tooltip(Tooltip::text("Next page"))
-                            .on_click(cx.listener(|this, _, _, cx| this.next_page(cx))),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.next_page(window, cx)),
+                            ),
                     ),
             )
             .into_any_element()
@@ -1943,7 +2008,7 @@ impl TableDataView {
                         .size(ButtonSize::Compact)
                         .style(ButtonStyle::Filled)
                         .disabled(saving)
-                        .on_click(cx.listener(|this, _, _, cx| this.save_edits(cx))),
+                        .on_click(cx.listener(|this, _, window, cx| this.save_edits(window, cx))),
                 )
             }))
             .into_any_element(),
@@ -1959,7 +2024,7 @@ impl TableDataView {
             .child(Label::new(message.to_string()).color(Color::Error))
             .child(
                 Button::new("db-retry", "Retry")
-                    .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
+                    .on_click(cx.listener(|this, _, window, cx| this.refresh(window, cx))),
             )
             .into_any_element()
     }
@@ -1980,10 +2045,10 @@ impl Render for TableDataView {
         v_flex()
             .key_context("TableDataView")
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(|this, _: &NextPage, _, cx| this.next_page(cx)))
-            .on_action(cx.listener(|this, _: &PrevPage, _, cx| this.prev_page(cx)))
+            .on_action(cx.listener(|this, _: &NextPage, window, cx| this.next_page(window, cx)))
+            .on_action(cx.listener(|this, _: &PrevPage, window, cx| this.prev_page(window, cx)))
             .on_action(cx.listener(|this, _: &ToggleStructure, _, cx| this.toggle_structure(cx)))
-            .on_action(cx.listener(|this, _: &RefreshData, _, cx| this.refresh(cx)))
+            .on_action(cx.listener(|this, _: &RefreshData, window, cx| this.refresh(window, cx)))
             .on_action(
                 cx.listener(|this, _: &CommitCellEdit, window, cx| {
                     this.commit_cell_edit(window, cx)
@@ -2124,7 +2189,7 @@ mod tests {
 
     use database_client::fake::FakeDatabaseClient;
     use database_client::{
-        ColumnInfo, DatabaseClient, Filter, FilterOp, RowKey, SortDirection, TableRef,
+        ColumnInfo, DatabaseClient, Filter, FilterOp, QueryResult, RowKey, SortDirection, TableRef,
     };
     use gpui::{TestAppContext, VisualTestContext};
 
@@ -2150,6 +2215,51 @@ mod tests {
             schema: "public".into(),
             name: "users".into(),
         }
+    }
+
+    /// Builds a canned `QueryResult` of `id`/`name` rows, `count` of them, for
+    /// seeding the fake so a page comes back with exactly `count` rows (e.g. to
+    /// drive the `has_more == rows.len() == limit` heuristic).
+    fn rows_result(count: usize) -> QueryResult {
+        QueryResult {
+            columns: vec!["id".into(), "name".into()],
+            rows: (0..count)
+                .map(|i| vec![Some((i + 1).to_string()), Some(format!("row{i}"))])
+                .collect(),
+            truncated: false,
+            command_tag: None,
+        }
+    }
+
+    /// The default three-row `id`/`name` page (row 2 has a NULL `name`) used by
+    /// the editing tests, matching the fake's structure (an `id` primary key).
+    fn default_rows_result() -> QueryResult {
+        QueryResult {
+            columns: vec!["id".into(), "name".into()],
+            rows: vec![
+                vec![Some("1".into()), Some("Alice".into())],
+                vec![Some("2".into()), Some("Bob".into())],
+                vec![Some("3".into()), None],
+            ],
+            truncated: false,
+            command_tag: Some("SELECT 3".into()),
+        }
+    }
+
+    /// A fake client seeded with [`default_rows_result`], the row shape the
+    /// editing tests key their `RowKey`s and assertions against.
+    fn fake_with_default_rows() -> Arc<FakeDatabaseClient> {
+        let mut fake = FakeDatabaseClient::new();
+        fake.query_result = default_rows_result();
+        Arc::new(fake)
+    }
+
+    /// Returns the SQL text of the most recent `run_query` call, if any.
+    fn last_run_query_sql(fake: &FakeDatabaseClient) -> Option<String> {
+        fake.calls()
+            .iter()
+            .rev()
+            .find_map(|call| call.split_once("sql=").map(|(_, sql)| sql.to_string()))
     }
 
     /// Drives the deterministic scheduler while giving the real tokio runtime a
@@ -2194,15 +2304,17 @@ mod tests {
 
         view.read_with(cx, |view, _| {
             assert!(view.page().is_some(), "first page should be loaded");
-            assert_eq!(view.spec().limit, 100, "limit comes from page_size setting");
+            assert_eq!(
+                view.query().limit,
+                Some(100),
+                "limit comes from page_size setting"
+            );
             assert_eq!(view.load_state(), &LoadState::Idle);
         });
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
         assert!(
-            fake.calls()
-                .iter()
-                .any(|call| call.starts_with("fetch_rows users")),
-            "fetch_rows should have been called: {:?}",
-            fake.calls()
+            last.ends_with(r#"SELECT * FROM "public"."users" LIMIT 100 OFFSET 0;"#),
+            "unexpected generated SQL: {last}"
         );
     }
 
@@ -2210,7 +2322,9 @@ mod tests {
     async fn sort_click_resets_offset_and_reloads(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
-        let fake = Arc::new(FakeDatabaseClient::new());
+        let mut fake = FakeDatabaseClient::new();
+        fake.query_result = rows_result(100);
+        let fake = Arc::new(fake);
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
@@ -2221,37 +2335,45 @@ mod tests {
 
         // Advance to a non-zero offset first so the reset is observable, and
         // let that load settle so its fetch is recorded before we sort.
-        view.update(cx, |view, cx| view.next_page(cx));
+        view.update_in(cx, |view, window, cx| view.next_page(window, cx));
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
-                view.spec().offset == 100 && view.load_state() == &LoadState::Idle
+                view.query().offset == 100 && view.load_state() == &LoadState::Idle
             })
         })
         .await;
 
-        view.update(cx, |view, cx| view.toggle_sort("name", cx));
+        view.update_in(cx, |view, window, cx| view.toggle_sort("name", window, cx));
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
-                view.spec().sort.is_some() && view.load_state() == &LoadState::Idle
+                view.query().sort.is_some() && view.load_state() == &LoadState::Idle
             })
         })
         .await;
 
         view.read_with(cx, |view, _| {
-            let sort = view.spec().sort.as_ref().expect("sort should be set");
+            let sort = view.query().sort.as_ref().expect("sort should be set");
             assert_eq!(sort.column, "name");
             assert_eq!(sort.direction, SortDirection::Asc);
-            assert_eq!(view.spec().offset, 0, "sorting resets offset to 0");
+            assert_eq!(view.query().offset, 0, "sorting resets offset to 0");
         });
 
-        let fetch_calls = fake
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
+        assert!(
+            last.ends_with(
+                r#"SELECT * FROM "public"."users" ORDER BY "name" ASC LIMIT 100 OFFSET 0;"#
+            ),
+            "unexpected generated SQL: {last}"
+        );
+
+        let run_calls = fake
             .calls()
             .into_iter()
-            .filter(|call| call.starts_with("fetch_rows"))
+            .filter(|call| call.starts_with("run_query"))
             .count();
         assert!(
-            fetch_calls >= 3,
-            "expected initial + next_page + sort fetches, got {fetch_calls}"
+            run_calls >= 3,
+            "expected initial + next_page + sort runs, got {run_calls}"
         );
     }
 
@@ -2259,7 +2381,10 @@ mod tests {
     async fn next_prev_page_updates_offset(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
-        let fake = Arc::new(FakeDatabaseClient::new());
+        let mut fake = FakeDatabaseClient::new();
+        // Exactly `limit` rows -> has_more == true, so next_page advances.
+        fake.query_result = rows_result(100);
+        let fake = Arc::new(fake);
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
@@ -2268,42 +2393,41 @@ mod tests {
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
-        // has_more == true in the fake, so next_page advances by the limit.
         // Wait for each load to settle so its fetch is recorded (the abort-on-
         // supersede behaviour would otherwise drop an in-flight fetch).
-        view.update(cx, |view, cx| view.next_page(cx));
+        view.update_in(cx, |view, window, cx| view.next_page(window, cx));
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
-                view.spec().offset == 100 && view.load_state() == &LoadState::Idle
+                view.query().offset == 100 && view.load_state() == &LoadState::Idle
             })
         })
         .await;
-        view.read_with(cx, |view, _| assert_eq!(view.spec().offset, 100));
+        view.read_with(cx, |view, _| assert_eq!(view.query().offset, 100));
 
-        view.update(cx, |view, cx| view.prev_page(cx));
+        view.update_in(cx, |view, window, cx| view.prev_page(window, cx));
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
-                view.spec().offset == 0 && view.load_state() == &LoadState::Idle
+                view.query().offset == 0 && view.load_state() == &LoadState::Idle
             })
         })
         .await;
-        view.read_with(cx, |view, _| assert_eq!(view.spec().offset, 0));
+        view.read_with(cx, |view, _| assert_eq!(view.query().offset, 0));
 
         // prev_page at offset 0 is a no-op.
         let before = fake
             .calls()
             .into_iter()
-            .filter(|call| call.starts_with("fetch_rows"))
+            .filter(|call| call.starts_with("run_query"))
             .count();
-        view.update(cx, |view, cx| view.prev_page(cx));
+        view.update_in(cx, |view, window, cx| view.prev_page(window, cx));
         cx.run_until_parked();
         let after = fake
             .calls()
             .into_iter()
-            .filter(|call| call.starts_with("fetch_rows"))
+            .filter(|call| call.starts_with("run_query"))
             .count();
         assert_eq!(before, after, "prev_page at offset 0 should not refetch");
-        view.read_with(cx, |view, _| assert_eq!(view.spec().offset, 0));
+        view.read_with(cx, |view, _| assert_eq!(view.query().offset, 0));
     }
 
     #[gpui::test]
@@ -2381,12 +2505,12 @@ mod tests {
         let fetches_before = fake
             .calls()
             .into_iter()
-            .filter(|call| call.starts_with("fetch_rows"))
+            .filter(|call| call.starts_with("run_query"))
             .count();
 
         // refresh() must reload the data (not just the cached structure) and end
         // Idle with a page still present.
-        view.update(cx, |view, cx| view.refresh(cx));
+        view.update_in(cx, |view, window, cx| view.refresh(window, cx));
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
         })
@@ -2395,7 +2519,7 @@ mod tests {
         let fetches_after = fake
             .calls()
             .into_iter()
-            .filter(|call| call.starts_with("fetch_rows"))
+            .filter(|call| call.starts_with("run_query"))
             .count();
         assert!(
             fetches_after > fetches_before,
@@ -2442,7 +2566,7 @@ mod tests {
             .filter(|call| call.starts_with("table_structure"))
             .count();
 
-        view.update(cx, |view, cx| view.refresh(cx));
+        view.update_in(cx, |view, window, cx| view.refresh(window, cx));
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| view.structure().is_some())
         })
@@ -2536,7 +2660,9 @@ mod tests {
     async fn add_filter_resets_offset_and_reloads(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
-        let fake = Arc::new(FakeDatabaseClient::new());
+        let mut fake = FakeDatabaseClient::new();
+        fake.query_result = rows_result(100);
+        let fake = Arc::new(fake);
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
@@ -2547,40 +2673,43 @@ mod tests {
 
         // Advance to a non-zero offset so the reset is observable, letting the
         // load settle before we add a filter.
-        view.update(cx, |view, cx| view.next_page(cx));
+        view.update_in(cx, |view, window, cx| view.next_page(window, cx));
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
-                view.spec().offset == 100 && view.load_state() == &LoadState::Idle
+                view.query().offset == 100 && view.load_state() == &LoadState::Idle
             })
         })
         .await;
 
-        view.update(cx, |view, cx| {
+        view.update_in(cx, |view, window, cx| {
             view.add_filter(
                 Filter {
                     column: "name".into(),
                     op: FilterOp::Contains,
                     value: "ali".into(),
                 },
+                window,
                 cx,
             )
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
-                view.spec().filters.len() == 1 && view.load_state() == &LoadState::Idle
+                view.query().filters.len() == 1 && view.load_state() == &LoadState::Idle
             })
         })
         .await;
 
         view.read_with(cx, |view, _| {
-            assert_eq!(view.spec().filters.len(), 1, "filter should be stored");
-            assert_eq!(view.spec().offset, 0, "adding a filter resets the offset");
+            assert_eq!(view.query().filters.len(), 1, "filter should be stored");
+            assert_eq!(view.query().offset, 0, "adding a filter resets the offset");
         });
 
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
         assert!(
-            fake.calls().iter().any(|call| call.contains("filters=1")),
-            "adding a filter should trigger a fetch with filters=1: {:?}",
-            fake.calls()
+            last.ends_with(
+                r#"SELECT * FROM "public"."users" WHERE "name"::text ILIKE '%ali%' LIMIT 100 OFFSET 0;"#
+            ),
+            "unexpected generated SQL: {last}"
         );
     }
 
@@ -2597,19 +2726,20 @@ mod tests {
         });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
-        view.update(cx, |view, cx| {
+        view.update_in(cx, |view, window, cx| {
             view.add_filter(
                 Filter {
                     column: "name".into(),
                     op: FilterOp::Eq,
                     value: "Alice".into(),
                 },
+                window,
                 cx,
             )
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
-                view.spec().filters.len() == 1 && view.load_state() == &LoadState::Idle
+                view.query().filters.len() == 1 && view.load_state() == &LoadState::Idle
             })
         })
         .await;
@@ -2618,36 +2748,36 @@ mod tests {
         let before = fake
             .calls()
             .into_iter()
-            .filter(|call| call.starts_with("fetch_rows"))
+            .filter(|call| call.starts_with("run_query"))
             .count();
-        view.update(cx, |view, cx| view.remove_filter(5, cx));
+        view.update_in(cx, |view, window, cx| view.remove_filter(5, window, cx));
         cx.run_until_parked();
         let after = fake
             .calls()
             .into_iter()
-            .filter(|call| call.starts_with("fetch_rows"))
+            .filter(|call| call.starts_with("run_query"))
             .count();
         assert_eq!(
             before, after,
             "out-of-bounds remove_filter should not refetch"
         );
-        view.read_with(cx, |view, _| assert_eq!(view.spec().filters.len(), 1));
+        view.read_with(cx, |view, _| assert_eq!(view.query().filters.len(), 1));
 
-        view.update(cx, |view, cx| view.remove_filter(0, cx));
+        view.update_in(cx, |view, window, cx| view.remove_filter(0, window, cx));
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
-                view.spec().filters.is_empty() && view.load_state() == &LoadState::Idle
+                view.query().filters.is_empty() && view.load_state() == &LoadState::Idle
             })
         })
         .await;
 
         view.read_with(cx, |view, _| {
-            assert!(view.spec().filters.is_empty(), "filter should be removed");
+            assert!(view.query().filters.is_empty(), "filter should be removed");
         });
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
         assert!(
-            fake.calls().iter().any(|call| call.contains("filters=0")),
-            "removing the filter should trigger a fetch with filters=0: {:?}",
-            fake.calls()
+            last.ends_with(r#"SELECT * FROM "public"."users" LIMIT 100 OFFSET 0;"#),
+            "removing the filter should trigger a query without a WHERE clause: {last}"
         );
     }
 
@@ -2779,7 +2909,7 @@ mod tests {
     async fn buffer_edits_change_pending_count(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
-        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake_with_default_rows();
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
@@ -2830,7 +2960,7 @@ mod tests {
     async fn begin_edit_cell_gated_by_pk_and_editability(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
-        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake_with_default_rows();
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
@@ -2900,7 +3030,7 @@ mod tests {
     async fn commit_cell_edit_buffers_update(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
-        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake_with_default_rows();
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
@@ -2946,7 +3076,7 @@ mod tests {
     async fn set_editing_cell_null_buffers_null(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
-        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake_with_default_rows();
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
@@ -3001,9 +3131,9 @@ mod tests {
         })
         .await;
 
-        view.update(cx, |view, cx| {
+        view.update_in(cx, |view, window, cx| {
             assert_eq!(view.pending_change_count(), 0);
-            view.save_edits(cx);
+            view.save_edits(window, cx);
         });
         cx.run_until_parked();
 
@@ -3021,7 +3151,7 @@ mod tests {
     async fn save_applies_and_clears(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
-        let fake = Arc::new(FakeDatabaseClient::new());
+        let fake = fake_with_default_rows();
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
@@ -3035,11 +3165,11 @@ mod tests {
         })
         .await;
 
-        view.update(cx, |view, cx| {
+        view.update_in(cx, |view, window, cx| {
             let key = view.row_key_for(0).expect("row 0 should yield a RowKey");
             view.set_cell_value(key, "name", "Alicia".into(), cx);
             assert_eq!(view.pending_change_count(), 1);
-            view.save_edits(cx);
+            view.save_edits(window, cx);
         });
 
         wait_until(cx, |cx| {
@@ -3054,13 +3184,13 @@ mod tests {
             "save must call apply_edits with one update: {:?}",
             fake.calls()
         );
-        // A successful save reloads the page (a fresh fetch follows the apply).
-        let fetches = fake
+        // A successful save reloads the page (a fresh run follows the apply).
+        let runs = fake
             .calls()
             .into_iter()
-            .filter(|call| call.starts_with("fetch_rows"))
+            .filter(|call| call.starts_with("run_query"))
             .count();
-        assert!(fetches >= 2, "save success should reload the page");
+        assert!(runs >= 2, "save success should reload the page");
         view.read_with(cx, |view, _| {
             assert_eq!(view.pending_change_count(), 0, "buffer cleared on success");
             assert!(matches!(view.save_state(), SaveState::Done(_)));
@@ -3087,14 +3217,14 @@ mod tests {
         })
         .await;
 
-        view.update(cx, |view, cx| {
+        view.update_in(cx, |view, window, cx| {
             let key = RowKey {
                 columns: vec!["id".into()],
                 values: vec![Some("1".into())],
             };
             view.set_cell_value(key, "name", "Alicia".into(), cx);
             assert_eq!(view.pending_change_count(), 1);
-            view.save_edits(cx);
+            view.save_edits(window, cx);
         });
 
         wait_until(cx, |cx| {
@@ -3163,7 +3293,7 @@ mod tests {
         // insert in the applied edits (u=0 i=1 d=0).
         init_test(cx);
         cx.executor().allow_parking();
-        let fake = Arc::new(FakeDatabaseClient::new());
+        let fake = fake_with_default_rows();
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
@@ -3203,7 +3333,7 @@ mod tests {
             assert_eq!(cell, &database_client::EditCell::Value("42".into()));
         });
 
-        view.update(cx, |view, cx| view.save_edits(cx));
+        view.update_in(cx, |view, window, cx| view.save_edits(window, cx));
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| view.pending_change_count() == 0)
         })
@@ -3223,7 +3353,7 @@ mod tests {
         // Deleting an existing page row and saving applies exactly one delete.
         init_test(cx);
         cx.executor().allow_parking();
-        let fake = Arc::new(FakeDatabaseClient::new());
+        let fake = fake_with_default_rows();
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
@@ -3237,12 +3367,12 @@ mod tests {
         })
         .await;
 
-        view.update(cx, |view, cx| {
+        view.update_in(cx, |view, window, cx| {
             let key = view.row_key_for(0).expect("row 0 should yield a RowKey");
             view.delete_row(key, cx);
             assert_eq!(view.pending_change_count(), 1);
             assert_eq!(view.edits().deletes().len(), 1);
-            view.save_edits(cx);
+            view.save_edits(window, cx);
         });
 
         wait_until(cx, |cx| {
@@ -3301,7 +3431,7 @@ mod tests {
         // reloads the page.
         init_test(cx);
         cx.executor().allow_parking();
-        let fake = Arc::new(FakeDatabaseClient::new());
+        let fake = fake_with_default_rows();
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
@@ -3315,7 +3445,7 @@ mod tests {
         })
         .await;
 
-        view.update(cx, |view, cx| {
+        view.update_in(cx, |view, window, cx| {
             // Update row 0 (id=1), delete row 1 (id=2), insert a new row.
             let update_key = view.row_key_for(0).expect("row 0 should yield a RowKey");
             view.set_cell_value(update_key, "name", "Alicia".into(), cx);
@@ -3330,7 +3460,7 @@ mod tests {
             assert_eq!(edits.inserts.len(), 1, "one insert section entry");
             assert_eq!(edits.deletes.len(), 1, "one delete section entry");
 
-            view.save_edits(cx);
+            view.save_edits(window, cx);
         });
 
         wait_until(cx, |cx| {
@@ -3345,12 +3475,12 @@ mod tests {
             "mixed edits must apply as u=1 i=1 d=1: {:?}",
             fake.calls()
         );
-        let fetches = fake
+        let runs = fake
             .calls()
             .into_iter()
-            .filter(|call| call.starts_with("fetch_rows"))
+            .filter(|call| call.starts_with("run_query"))
             .count();
-        assert!(fetches >= 2, "a successful save should reload the page");
+        assert!(runs >= 2, "a successful save should reload the page");
         view.read_with(cx, |view, _| {
             assert_eq!(view.pending_change_count(), 0, "buffer cleared on success");
             assert!(matches!(view.save_state(), SaveState::Done(_)));
@@ -3364,7 +3494,7 @@ mod tests {
         // to write into whatever row later lands at the same display position.
         init_test(cx);
         cx.executor().allow_parking();
-        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake_with_default_rows();
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
@@ -3388,7 +3518,7 @@ mod tests {
         });
 
         // A sort (page-changing op) must finish the editor first.
-        view.update(cx, |view, cx| view.toggle_sort("name", cx));
+        view.update_in(cx, |view, window, cx| view.toggle_sort("name", window, cx));
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
         })
@@ -3419,7 +3549,10 @@ mod tests {
         // reload via next_page must also close the editor and commit its edit.
         init_test(cx);
         cx.executor().allow_parking();
-        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+        let mut fake = FakeDatabaseClient::new();
+        // next_page is gated on has_more, which needs a full page of rows.
+        fake.query_result = rows_result(100);
+        let client: Arc<dyn DatabaseClient> = Arc::new(fake);
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
@@ -3438,7 +3571,7 @@ mod tests {
             editing.field.update(cx, |field, cx| {
                 field.set_text("Alicia", window, cx);
             });
-            view.next_page(cx);
+            view.next_page(window, cx);
             assert!(
                 view.editing_cell().is_none(),
                 "paging must close the inline editor"
@@ -3457,7 +3590,7 @@ mod tests {
         // snapshot, rather than dropping the typed text.
         init_test(cx);
         cx.executor().allow_parking();
-        let fake = Arc::new(FakeDatabaseClient::new());
+        let fake = fake_with_default_rows();
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
@@ -3478,7 +3611,7 @@ mod tests {
                 field.set_text("Alicia", window, cx);
             });
             // Save with the editor still open: the edit must be committed.
-            view.save_edits(cx);
+            view.save_edits(window, cx);
             assert!(
                 view.editing_cell().is_none(),
                 "saving closes the inline editor"
@@ -3506,7 +3639,7 @@ mod tests {
         // that was applied.
         init_test(cx);
         cx.executor().allow_parking();
-        let fake = Arc::new(FakeDatabaseClient::new());
+        let fake = fake_with_default_rows();
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
@@ -3520,10 +3653,10 @@ mod tests {
         })
         .await;
 
-        view.update(cx, |view, cx| {
+        view.update_in(cx, |view, window, cx| {
             let key = view.row_key_for(0).expect("row 0 should yield a RowKey");
             view.set_cell_value(key, "name", "Alicia".into(), cx);
-            view.save_edits(cx);
+            view.save_edits(window, cx);
             // The save is now in flight (state == Saving). Every buffer mutation
             // must be a no-op until it settles.
             assert_eq!(view.save_state(), &SaveState::Saving);
@@ -3570,7 +3703,7 @@ mod tests {
         // apply would carry both a delete and an update for the same key and fail.
         init_test(cx);
         cx.executor().allow_parking();
-        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake_with_default_rows();
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
@@ -3610,7 +3743,7 @@ mod tests {
         // so a later page swap cannot commit an update for the now-deleted key.
         init_test(cx);
         cx.executor().allow_parking();
-        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake_with_default_rows();
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
@@ -3642,7 +3775,7 @@ mod tests {
         // update.
         init_test(cx);
         cx.executor().allow_parking();
-        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake_with_default_rows();
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
@@ -3694,7 +3827,7 @@ mod tests {
         // build_table_edits must not emit the update: the delete wins.
         init_test(cx);
         cx.executor().allow_parking();
-        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake_with_default_rows();
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {

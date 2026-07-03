@@ -1,8 +1,3 @@
-// This module is the SQL-rendering foundation for the table page redesign;
-// callers land in Tasks 3-7, so its public surface is unused within the
-// crate until then.
-#![allow(dead_code)]
-
 use database_client::{Filter, FilterOp, Sort, SortDirection, TableRef, quote_ident};
 
 /// The source of rows for a [`QueryState`]: either a concrete table/view, or

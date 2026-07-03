@@ -16,6 +16,10 @@ pub use table_data_view::{TableDataView, open_table_tab};
 use gpui::App;
 use workspace::Workspace;
 
+/// The maximum number of rows the UI requests for a single query. Results
+/// beyond this are truncated server-side and flagged in the status line.
+pub(crate) const UI_MAX_QUERY_ROWS: usize = 1000;
+
 pub fn init(cx: &mut App) {
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {

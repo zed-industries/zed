@@ -17,6 +17,8 @@ use ui::{
 use util::ResultExt as _;
 use workspace::{Workspace, item::Item};
 
+use crate::UI_MAX_QUERY_ROWS;
+
 actions!(
     database,
     [
@@ -26,10 +28,6 @@ actions!(
         CancelQuery,
     ]
 );
-
-/// The maximum number of rows the UI requests for a single query. Results
-/// beyond this are truncated server-side and flagged in the status line.
-const UI_MAX_QUERY_ROWS: usize = 1000;
 
 /// The default column width for the resizable results grid.
 const COLUMN_WIDTH: f32 = 180.;
