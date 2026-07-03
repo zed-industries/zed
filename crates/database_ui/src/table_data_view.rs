@@ -9,14 +9,14 @@ use database_client::{
 };
 use editor::{Editor, EditorEvent, EditorMode};
 use gpui::{
-    Anchor, AnyElement, App, Context, ElementId, Entity, EventEmitter, FocusHandle, Focusable,
-    Subscription, Task, WeakEntity, Window, actions,
+    Anchor, AnyElement, App, Context, DismissEvent, ElementId, Entity, EventEmitter, FocusHandle,
+    Focusable, SharedString, Subscription, Task, WeakEntity, Window, actions,
 };
 use language::{Buffer, LanguageRegistry};
 use multi_buffer::MultiBuffer;
 use settings::Settings as _;
 use ui::{
-    AbsoluteLength, ColumnWidthConfig, ContextMenu, PopoverMenu, ResizableColumnsState, Table,
+    AbsoluteLength, ColumnWidthConfig, PopoverMenu, ResizableColumnsState, Table,
     TableInteractionState, TableResizeBehavior, Tooltip, prelude::*,
 };
 use ui_input::InputField;
@@ -293,14 +293,6 @@ pub struct TableDataView {
     /// Recreated whenever the rendered column set changes so the grid keeps the
     /// right number of resize handles.
     column_widths: Option<Entity<ResizableColumnsState>>,
-    /// Whether the inline filter-builder row is expanded under the header.
-    filter_builder_open: bool,
-    /// The column selected in the filter builder, if any.
-    draft_column: Option<String>,
-    /// The operator selected in the filter builder.
-    draft_op: FilterOp,
-    /// The value input for the filter builder (ignored for `IsNull`).
-    draft_value: Entity<InputField>,
     /// The row count and wall-clock duration of the most recent successful
     /// query run, shown in the footer. `None` before the first page loads.
     last_run: Option<(usize, Duration)>,
@@ -330,7 +322,6 @@ impl TableDataView {
         let initial_sql = render_sql(&query);
         cx.new(|cx| {
             let interaction = cx.new(|cx| TableInteractionState::new(cx));
-            let draft_value = cx.new(|cx| InputField::new(window, cx, "Value"));
 
             let sql_editor = cx.new(|cx| {
                 let buffer = cx.new(|cx| {
@@ -409,10 +400,6 @@ impl TableDataView {
                 load_state: LoadState::Idle,
                 interaction,
                 column_widths: None,
-                filter_builder_open: false,
-                draft_column: None,
-                draft_op: FilterOp::Eq,
-                draft_value,
                 last_run: None,
                 _data_task: None,
                 _structure_task: None,
@@ -1088,12 +1075,32 @@ impl TableDataView {
         self.restart_query(window, cx);
     }
 
-    /// Appends `filter` to the active filter set, resets the page offset, and
-    /// reloads the current page.
-    pub fn add_filter(&mut self, filter: Filter, window: &mut Window, cx: &mut Context<Self>) {
-        self.finish_editing(cx);
-        self.query.filters.push(filter);
+    /// Applies a filter created or edited via [`FilterPopover`]: `Some(index)`
+    /// replaces the filter at that position (a no-op if `index` is out of
+    /// bounds), `None` appends `filter` as a new one. Either way resets the
+    /// page offset and reloads the current page.
+    pub fn apply_filter_edit(
+        &mut self,
+        index: Option<usize>,
+        filter: Filter,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match index {
+            Some(index) => {
+                let Some(existing) = self.query.filters.get_mut(index) else {
+                    log::debug!(
+                        "apply_filter_edit: index {index} out of bounds ({} filters)",
+                        self.query.filters.len()
+                    );
+                    return;
+                };
+                *existing = filter;
+            }
+            None => self.query.filters.push(filter),
+        }
         self.query.offset = 0;
+        self.finish_editing(cx);
         self.restart_query(window, cx);
     }
 
@@ -1642,39 +1649,90 @@ impl TableDataView {
             .as_ref()
             .filter(|sort| sort.column == column)
             .map(|sort| sort.direction);
-        let indicator = match sorted {
-            Some(SortDirection::Asc) => "↑",
-            Some(SortDirection::Desc) => "↓",
-            None => "↕",
-        };
-        let tooltip = match sorted {
+        let sort_tooltip = match sorted {
             Some(SortDirection::Asc) => "Sorted ascending. Click to sort descending",
             Some(SortDirection::Desc) => "Sorted descending. Click to clear sorting",
             None => "Not sorted. Click to sort ascending",
         };
+        let existing_filter_index = self
+            .query
+            .filters
+            .iter()
+            .position(|filter| filter.column == column);
+        let has_filter = existing_filter_index.is_some();
         let column = column.to_string();
+        let group = SharedString::from(format!("db-header-{index}"));
+
+        let sort_label = {
+            let column = column.clone();
+            div()
+                .id(ElementId::NamedInteger(
+                    "db-sort-label".into(),
+                    index as u64,
+                ))
+                .flex_1()
+                .min_w_0()
+                .cursor_pointer()
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .child(Label::new(column.clone())),
+                        )
+                        .when_some(sorted, |this, direction| {
+                            this.child(Icon::new(match direction {
+                                SortDirection::Asc => IconName::ArrowUp,
+                                SortDirection::Desc => IconName::ArrowDown,
+                            }))
+                        }),
+                )
+                .tooltip(Tooltip::text(sort_tooltip))
+                .on_click(cx.listener(move |this, _event, window, cx| {
+                    this.toggle_sort(&column, window, cx);
+                }))
+        };
+
+        let funnel = PopoverMenu::new(("db-col-filter", index))
+            .trigger(
+                IconButton::new(("db-col-filter-icon", index), IconName::Filter)
+                    .icon_size(IconSize::XSmall)
+                    .tooltip(Tooltip::text("Filter this column"))
+                    .toggle_state(has_filter)
+                    .when(!has_filter, |this| this.visible_on_hover(group.clone())),
+            )
+            .anchor(Anchor::TopLeft)
+            .menu({
+                let table_view = cx.weak_entity();
+                let existing = existing_filter_index.and_then(|filter_index| {
+                    self.query
+                        .filters
+                        .get(filter_index)
+                        .cloned()
+                        .map(|filter| (filter_index, filter))
+                });
+                move |window, cx| {
+                    let existing = existing
+                        .as_ref()
+                        .map(|(filter_index, filter)| (*filter_index, filter));
+                    Some(cx.new(|cx| {
+                        FilterPopover::new(column.clone(), existing, table_view.clone(), window, cx)
+                    }))
+                }
+            });
 
         h_flex()
+            .group(group)
             .justify_between()
             .items_center()
             .w_full()
-            .child(Label::new(column.clone()))
-            .child(
-                Button::new(
-                    ElementId::NamedInteger("db-sort".into(), index as u64),
-                    indicator,
-                )
-                .size(ButtonSize::Compact)
-                .style(if sorted.is_some() {
-                    ButtonStyle::Filled
-                } else {
-                    ButtonStyle::Subtle
-                })
-                .tooltip(Tooltip::text(tooltip))
-                .on_click(cx.listener(move |this, _event, window, cx| {
-                    this.toggle_sort(&column, window, cx);
-                })),
-            )
+            .child(sort_label)
+            .child(funnel)
             .into_any_element()
     }
 
@@ -1776,88 +1834,40 @@ impl TableDataView {
             .into_any_element()
     }
 
-    /// The column names offered in the filter builder, taken from the current
-    /// page's header row (empty until the first page loads).
-    fn available_columns(&self) -> Vec<String> {
-        self.page
-            .as_ref()
-            .map(|page| page.columns.clone())
-            .unwrap_or_default()
-    }
-
-    /// Whether the current draft is complete enough to apply: a column must be
-    /// chosen, and non-`IsNull`/`IsNotNull` operators additionally require a
-    /// value.
-    fn draft_apply_enabled(&self, cx: &App) -> bool {
-        let has_column = self.draft_column.is_some();
-        let needs_value = !matches!(self.draft_op, FilterOp::IsNull | FilterOp::IsNotNull);
-        let has_value = !self.draft_value.read(cx).text(cx).trim().is_empty();
-        has_column && (!needs_value || has_value)
-    }
-
-    /// Commits the current draft as a new filter, closing and clearing the
-    /// builder. No-op if the draft is incomplete.
-    fn apply_draft_filter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.draft_apply_enabled(cx) {
-            return;
+    /// Renders the chips row under the SQL bar: one chip per active filter,
+    /// clicking it reopens a prefilled [`FilterPopover`] to edit it, plus a
+    /// sort chip when a sort is active. Returns `None` when there is nothing
+    /// to show, so the caller can skip rendering the row entirely.
+    fn render_chips_row(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.query.filters.is_empty() && self.query.sort.is_none() {
+            return None;
         }
-        let Some(column) = self.draft_column.clone() else {
-            return;
-        };
-        let value = if matches!(self.draft_op, FilterOp::IsNull | FilterOp::IsNotNull) {
-            String::new()
-        } else {
-            self.draft_value.read(cx).text(cx)
-        };
-        self.add_filter(
-            Filter {
-                column,
-                op: self.draft_op,
-                value,
-            },
-            window,
-            cx,
-        );
-        self.filter_builder_open = false;
-        self.draft_column = None;
-        self.draft_op = FilterOp::Eq;
-        self.draft_value
-            .update(cx, |field, cx| field.clear(window, cx));
-    }
 
-    fn render_filter_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let chips = self
+        let filter_chips = self
             .query
             .filters
             .iter()
             .enumerate()
             .map(|(index, filter)| self.render_filter_chip(index, filter, cx));
+        let sort_chip = self
+            .query
+            .sort
+            .as_ref()
+            .map(|sort| self.render_sort_chip(sort, cx));
 
-        let mut bar = h_flex()
-            .w_full()
-            .px_2()
-            .py_1()
-            .gap_1()
-            .flex_wrap()
-            .border_b_1()
-            .border_color(cx.theme().colors().border)
-            .children(chips)
-            .child(
-                Button::new("db-add-filter", "+ Filter")
-                    .size(ButtonSize::Compact)
-                    .style(ButtonStyle::Subtle)
-                    .toggle_state(self.filter_builder_open)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.filter_builder_open = !this.filter_builder_open;
-                        cx.notify();
-                    })),
-            );
-
-        if self.filter_builder_open {
-            bar = bar.child(self.render_filter_builder(window, cx));
-        }
-
-        bar.into_any_element()
+        Some(
+            h_flex()
+                .w_full()
+                .px_2()
+                .py_1()
+                .gap_1()
+                .flex_wrap()
+                .border_b_1()
+                .border_color(cx.theme().colors().border)
+                .children(filter_chips)
+                .children(sort_chip)
+                .into_any_element(),
+        )
     }
 
     fn render_filter_chip(&self, index: usize, filter: &Filter, cx: &Context<Self>) -> AnyElement {
@@ -1871,6 +1881,8 @@ impl TableDataView {
                 filter.value
             )
         };
+        let column = filter.column.clone();
+        let filter = filter.clone();
 
         h_flex()
             .gap_1()
@@ -1880,7 +1892,29 @@ impl TableDataView {
             .bg(cx.theme().colors().element_background)
             .border_1()
             .border_color(cx.theme().colors().border)
-            .child(Label::new(text).size(LabelSize::Small))
+            .child(
+                PopoverMenu::new(("db-filter-chip", index))
+                    .trigger(
+                        Button::new(("db-filter-chip-trigger", index), text)
+                            .size(ButtonSize::Compact)
+                            .style(ButtonStyle::Transparent),
+                    )
+                    .anchor(Anchor::TopLeft)
+                    .menu({
+                        let table_view = cx.weak_entity();
+                        move |window, cx| {
+                            Some(cx.new(|cx| {
+                                FilterPopover::new(
+                                    column.clone(),
+                                    Some((index, &filter)),
+                                    table_view.clone(),
+                                    window,
+                                    cx,
+                                )
+                            }))
+                        }
+                    }),
+            )
             .child(
                 IconButton::new(
                     ElementId::NamedInteger("db-filter-remove".into(), index as u64),
@@ -1895,88 +1929,33 @@ impl TableDataView {
             .into_any_element()
     }
 
-    fn render_filter_builder(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let columns = self.available_columns();
-        let column_label = self
-            .draft_column
-            .clone()
-            .unwrap_or_else(|| "Column".to_string());
-
-        let column_dropdown = PopoverMenu::new("db-filter-column")
-            .trigger(
-                Button::new("db-filter-column-trigger", column_label).size(ButtonSize::Compact),
-            )
-            .anchor(Anchor::TopLeft)
-            .menu({
-                let this = cx.weak_entity();
-                move |window, cx| {
-                    let this = this.clone();
-                    let columns = columns.clone();
-                    Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
-                        for column in &columns {
-                            let column = column.clone();
-                            let this = this.clone();
-                            menu = menu.entry(column.clone(), None, move |_, cx| {
-                                this.update(cx, |this, cx| {
-                                    this.draft_column = Some(column.clone());
-                                    cx.notify();
-                                })
-                                .log_err();
-                            });
-                        }
-                        menu
-                    }))
-                }
-            });
-
-        let op_dropdown = PopoverMenu::new("db-filter-op")
-            .trigger(
-                Button::new(
-                    "db-filter-op-trigger",
-                    filter_op_label(self.draft_op).to_string(),
-                )
-                .size(ButtonSize::Compact),
-            )
-            .anchor(Anchor::TopLeft)
-            .menu({
-                let this = cx.weak_entity();
-                move |window, cx| {
-                    let this = this.clone();
-                    Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
-                        for op in all_filter_ops() {
-                            let this = this.clone();
-                            menu = menu.entry(filter_op_label(op), None, move |_, cx| {
-                                this.update(cx, |this, cx| {
-                                    this.draft_op = op;
-                                    cx.notify();
-                                })
-                                .log_err();
-                            });
-                        }
-                        menu
-                    }))
-                }
-            });
-
-        let apply_enabled = self.draft_apply_enabled(cx);
-        let show_value = !matches!(self.draft_op, FilterOp::IsNull | FilterOp::IsNotNull);
+    /// Renders the sort chip (`"{column} asc|desc"`); its `×` clears the sort
+    /// directly, mirroring how a filter chip's `×` calls `remove_filter`.
+    fn render_sort_chip(&self, sort: &Sort, cx: &Context<Self>) -> AnyElement {
+        let direction = match sort.direction {
+            SortDirection::Asc => "asc",
+            SortDirection::Desc => "desc",
+        };
+        let text = format!("{} {direction}", sort.column);
 
         h_flex()
             .gap_1()
-            .items_center()
-            .child(column_dropdown)
-            .child(op_dropdown)
-            .when(show_value, |this| {
-                this.child(div().w_40().child(self.draft_value.clone()))
-            })
+            .px_1p5()
+            .py_0p5()
+            .rounded_sm()
+            .bg(cx.theme().colors().element_background)
+            .border_1()
+            .border_color(cx.theme().colors().border)
+            .child(Label::new(text).size(LabelSize::Small))
             .child(
-                Button::new("db-filter-apply", "Apply")
-                    .size(ButtonSize::Compact)
-                    .style(ButtonStyle::Filled)
-                    .disabled(!apply_enabled)
+                IconButton::new("db-sort-remove", IconName::Close)
+                    .icon_size(IconSize::XSmall)
+                    .tooltip(Tooltip::text("Clear sort"))
                     .on_click(cx.listener(|this, _, window, cx| {
-                        this.apply_draft_filter(window, cx);
-                        cx.notify();
+                        this.query.sort = None;
+                        this.query.offset = 0;
+                        this.finish_editing(cx);
+                        this.restart_query(window, cx);
                     })),
             )
             .into_any_element()
@@ -2264,6 +2243,121 @@ impl TableDataView {
     }
 }
 
+/// A small popover for adding or editing a single [`Filter`] on one column,
+/// anchored to a header funnel icon or a filter chip. Delegates focus to its
+/// value input (see `Focusable` impl below) so `PopoverMenu` can focus it
+/// automatically without a manual focus call.
+pub struct FilterPopover {
+    column: String,
+    op: FilterOp,
+    value_field: Entity<InputField>,
+    existing_index: Option<usize>,
+    table_view: WeakEntity<TableDataView>,
+}
+
+impl FilterPopover {
+    fn new(
+        column: String,
+        existing: Option<(usize, &Filter)>,
+        table_view: WeakEntity<TableDataView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let existing_filter = existing.map(|(_, filter)| filter);
+        let value_field = cx.new(|cx| {
+            let field = InputField::new(window, cx, "Value");
+            if let Some(filter) = existing_filter {
+                field.set_text(&filter.value, window, cx);
+            }
+            field
+        });
+        Self {
+            column,
+            op: existing_filter.map_or(FilterOp::Eq, |filter| filter.op),
+            value_field,
+            existing_index: existing.map(|(index, _)| index),
+            table_view,
+        }
+    }
+
+    /// Commits the popover's current operator/value as a [`Filter`] on
+    /// `self.column`, via [`TableDataView::apply_filter_edit`], then closes
+    /// the popover.
+    fn apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let value = if matches!(self.op, FilterOp::IsNull | FilterOp::IsNotNull) {
+            String::new()
+        } else {
+            self.value_field.read(cx).text(cx)
+        };
+        let filter = Filter {
+            column: self.column.clone(),
+            op: self.op,
+            value,
+        };
+        let existing_index = self.existing_index;
+        // `update_in` re-enters `App::with_window` for the target entity's
+        // window; since this popover's own window update is already on the
+        // stack for the *same* window, that re-entry fails ("entity has no
+        // current window"). Reuse the `Window` already borrowed by this
+        // callback instead of asking GPUI to look it up again.
+        self.table_view
+            .update(cx, |table, cx| {
+                table.apply_filter_edit(existing_index, filter, window, cx);
+            })
+            .log_err();
+        cx.emit(DismissEvent);
+    }
+}
+
+impl EventEmitter<DismissEvent> for FilterPopover {}
+
+impl Focusable for FilterPopover {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.value_field.focus_handle(cx)
+    }
+}
+
+impl Render for FilterPopover {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let show_value = !matches!(self.op, FilterOp::IsNull | FilterOp::IsNotNull);
+
+        v_flex()
+            .key_context("DatabaseFilterPopover")
+            .occlude()
+            .elevation_2(cx)
+            .w_72()
+            .p_2()
+            .gap_2()
+            .on_action(cx.listener(|this, _: &menu::Confirm, window, cx| this.apply(window, cx)))
+            .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| cx.emit(DismissEvent)))
+            .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(DismissEvent)))
+            .child(Label::new(self.column.clone()).size(LabelSize::Small))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .flex_wrap()
+                    .children(all_filter_ops().map(|op| {
+                        Button::new(("filter-op", op as usize), filter_op_label(op))
+                            .size(ButtonSize::Compact)
+                            .toggle_state(self.op == op)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.op = op;
+                                cx.notify();
+                            }))
+                    })),
+            )
+            .when(show_value, |this| this.child(self.value_field.clone()))
+            .child(
+                h_flex().justify_end().child(
+                    Button::new("filter-apply", "Apply")
+                        .style(ButtonStyle::Filled)
+                        .size(ButtonSize::Compact)
+                        .on_click(cx.listener(|this, _, window, cx| this.apply(window, cx))),
+                ),
+            )
+    }
+}
+
 impl Render for TableDataView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match (&self.load_state, self.mode) {
@@ -2274,7 +2368,7 @@ impl Render for TableDataView {
         let in_data =
             self.mode == ViewMode::Data && !matches!(self.load_state, LoadState::Error(_));
         let sql_bar = self.render_sql_bar(window, cx);
-        let filter_bar = in_data.then(|| self.render_filter_bar(window, cx));
+        let chips_row = in_data.then(|| self.render_chips_row(cx)).flatten();
         let edit_toolbar = in_data.then(|| self.render_edit_toolbar(cx)).flatten();
 
         v_flex()
@@ -2327,7 +2421,7 @@ impl Render for TableDataView {
             )
             .child(sql_bar)
             .children(edit_toolbar)
-            .children(filter_bar)
+            .children(chips_row)
             .child(v_flex().flex_1().size_full().overflow_hidden().child(body))
             .when(in_data, |this| this.child(self.render_footer(cx)))
     }
@@ -2436,11 +2530,11 @@ mod tests {
     use database_client::{
         ColumnInfo, DatabaseClient, Filter, FilterOp, QueryResult, RowKey, SortDirection, TableRef,
     };
-    use gpui::{Focusable, TestAppContext, VisualTestContext};
+    use gpui::{AppContext as _, Focusable, TestAppContext, VisualTestContext};
 
     use super::{
-        LoadState, SaveState, TableDataView, ViewMode, all_filter_ops, compute_editable,
-        filter_op_label,
+        FilterPopover, LoadState, SaveState, TableDataView, ViewMode, all_filter_ops,
+        compute_editable, filter_op_label,
     };
     use crate::query_state::{QueryBase, render_sql};
 
@@ -2904,7 +2998,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn add_filter_resets_offset_and_reloads(cx: &mut TestAppContext) {
+    async fn apply_filter_edit_none_adds_resets_offset_and_reloads(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
         let mut fake = FakeDatabaseClient::new();
@@ -2929,7 +3023,8 @@ mod tests {
         .await;
 
         view.update_in(cx, |view, window, cx| {
-            view.add_filter(
+            view.apply_filter_edit(
+                None,
                 Filter {
                     column: "name".into(),
                     op: FilterOp::Contains,
@@ -2961,7 +3056,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn remove_filter_reloads_without_filters(cx: &mut TestAppContext) {
+    async fn apply_filter_edit_some_replaces_not_appends(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
         let fake = Arc::new(FakeDatabaseClient::new());
@@ -2974,7 +3069,152 @@ mod tests {
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
         view.update_in(cx, |view, window, cx| {
-            view.add_filter(
+            view.apply_filter_edit(
+                None,
+                Filter {
+                    column: "name".into(),
+                    op: FilterOp::Eq,
+                    value: "Alice".into(),
+                },
+                window,
+                cx,
+            )
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.query().filters.len() == 1 && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.apply_filter_edit(
+                Some(0),
+                Filter {
+                    column: "name".into(),
+                    op: FilterOp::NotEq,
+                    value: "Bob".into(),
+                },
+                window,
+                cx,
+            )
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.query().filters.len(),
+                1,
+                "replacing an existing filter should not append"
+            );
+            assert_eq!(view.query().filters[0].op, FilterOp::NotEq);
+            assert_eq!(view.query().filters[0].value, "Bob");
+        });
+
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
+        assert!(
+            last.ends_with(
+                r#"SELECT * FROM "public"."users" WHERE "name" <> 'Bob' LIMIT 100 OFFSET 0;"#
+            ),
+            "unexpected generated SQL: {last}"
+        );
+    }
+
+    #[gpui::test]
+    async fn apply_filter_edit_out_of_bounds_index_is_noop(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.apply_filter_edit(
+                Some(3),
+                Filter {
+                    column: "name".into(),
+                    op: FilterOp::Eq,
+                    value: "Alice".into(),
+                },
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        view.read_with(cx, |view, _| {
+            assert!(
+                view.query().filters.is_empty(),
+                "an out-of-bounds replace index should not add a filter"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn apply_filter_edit_is_null_needs_no_value(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.apply_filter_edit(
+                None,
+                Filter {
+                    column: "name".into(),
+                    op: FilterOp::IsNull,
+                    value: String::new(),
+                },
+                window,
+                cx,
+            )
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.query().filters.len() == 1 && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
+        assert!(
+            last.ends_with(
+                r#"SELECT * FROM "public"."users" WHERE "name" IS NULL LIMIT 100 OFFSET 0;"#
+            ),
+            "unexpected generated SQL: {last}"
+        );
+    }
+
+    #[gpui::test]
+    async fn remove_filter_via_chip_close_reloads_without_filters(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.apply_filter_edit(
+                None,
                 Filter {
                     column: "name".into(),
                     op: FilterOp::Eq,
@@ -3026,6 +3266,155 @@ mod tests {
             last.ends_with(r#"SELECT * FROM "public"."users" LIMIT 100 OFFSET 0;"#),
             "removing the filter should trigger a query without a WHERE clause: {last}"
         );
+    }
+
+    #[gpui::test]
+    async fn clearing_sort_chip_removes_order_by(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        view.update_in(cx, |view, window, cx| view.toggle_sort("name", window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.query().sort.is_some() && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        // The sort chip's `×` clears the sort directly rather than cycling it,
+        // mirroring how a filter chip's `×` calls `remove_filter` directly.
+        view.update_in(cx, |view, window, cx| {
+            view.query.sort = None;
+            view.query.offset = 0;
+            view.finish_editing(cx);
+            view.restart_query(window, cx);
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.query().sort.is_none() && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
+        assert!(
+            !last.contains("ORDER BY"),
+            "clearing the sort chip should drop ORDER BY: {last}"
+        );
+    }
+
+    #[gpui::test]
+    async fn filter_popover_apply_without_existing_index_adds_filter(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        let weak_view = view.downgrade();
+        let popover = cx.update(|window, cx| {
+            cx.new(|cx| FilterPopover::new("name".to_string(), None, weak_view.clone(), window, cx))
+        });
+        popover.update_in(cx, |popover, window, cx| {
+            popover.op = FilterOp::Eq;
+            popover
+                .value_field
+                .update(cx, |field, cx| field.set_text("Alice", window, cx));
+            popover.apply(window, cx);
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.query().filters.len() == 1 && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.query().filters[0].column, "name");
+            assert_eq!(view.query().filters[0].op, FilterOp::Eq);
+            assert_eq!(view.query().filters[0].value, "Alice");
+        });
+    }
+
+    #[gpui::test]
+    async fn filter_popover_apply_with_existing_index_replaces_filter(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.apply_filter_edit(
+                None,
+                Filter {
+                    column: "name".into(),
+                    op: FilterOp::Eq,
+                    value: "Alice".into(),
+                },
+                window,
+                cx,
+            )
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.query().filters.len() == 1 && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        let existing = view.read_with(cx, |view, _| view.query().filters[0].clone());
+        let weak_view = view.downgrade();
+        let popover = cx.update(|window, cx| {
+            cx.new(|cx| {
+                FilterPopover::new(
+                    "name".to_string(),
+                    Some((0, &existing)),
+                    weak_view.clone(),
+                    window,
+                    cx,
+                )
+            })
+        });
+        popover.update_in(cx, |popover, window, cx| {
+            popover.op = FilterOp::NotEq;
+            popover
+                .value_field
+                .update(cx, |field, cx| field.set_text("Bob", window, cx));
+            popover.apply(window, cx);
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.query().filters.len(),
+                1,
+                "applying with an existing index should replace, not append"
+            );
+            assert_eq!(view.query().filters[0].op, FilterOp::NotEq);
+            assert_eq!(view.query().filters[0].value, "Bob");
+        });
     }
 
     #[gpui::test]
