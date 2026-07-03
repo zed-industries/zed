@@ -928,4 +928,101 @@ mod tests {
             .await
             .expect("drop test table");
     }
+
+    /// An insert whose value map is empty (the user added a row and left every
+    /// cell unset) must apply as `INSERT ... DEFAULT VALUES`, filling the
+    /// `serial` primary key and the `default`-bearing column from their
+    /// defaults, so the row is created rather than the batch being rejected.
+    #[tokio::test]
+    #[ignore = "requires live postgres: ZED_DB_TEST_HOST/PASSWORD"]
+    async fn apply_edits_empty_insert_uses_default_values() {
+        let host = std::env::var("ZED_DB_TEST_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let database = std::env::var("ZED_DB_TEST_DATABASE").unwrap_or_else(|_| "shop".into());
+        let password = std::env::var("ZED_DB_TEST_PASSWORD").unwrap_or_else(|_| "postgres".into());
+
+        // Direct connection drives table setup, teardown, and verification so the
+        // assertions are independent of the code under test.
+        let setup = setup_connection(&host, &database, &password).await;
+        setup
+            .simple_query("DROP TABLE IF EXISTS zed_default_insert_test")
+            .await
+            .expect("drop pre-existing test table");
+        // A `serial` PK and a `default`-bearing, nullable column, so an
+        // all-default insert is valid on its own.
+        setup
+            .simple_query(
+                "CREATE TABLE zed_default_insert_test (\
+                   id serial PRIMARY KEY, \
+                   label text DEFAULT 'unset')",
+            )
+            .await
+            .expect("create test table");
+
+        let config = ConnectionConfig {
+            name: "test".into(),
+            host: host.clone(),
+            port: 5432,
+            database: database.clone(),
+            user: "postgres".into(),
+        };
+        let client = PostgresClient::new(
+            config,
+            password.clone(),
+            Duration::from_secs(30),
+            SessionMode::ReadWrite,
+        );
+        let table = TableRef {
+            database: database.clone(),
+            schema: "public".into(),
+            name: "zed_default_insert_test".into(),
+        };
+        let columns = client
+            .columns(&table)
+            .await
+            .expect("load test table columns");
+
+        // One insert with an empty value map: everything defaults.
+        let edits = TableEdits {
+            updates: vec![],
+            inserts: vec![RowInsert { values: vec![] }],
+            deletes: vec![],
+        };
+        let counts = client
+            .apply_edits(&table, &columns, &edits)
+            .await
+            .expect("apply_edits with an all-default insert succeeds");
+        assert_eq!(
+            counts,
+            AppliedCounts {
+                updated: 0,
+                inserted: 1,
+                deleted: 0,
+            }
+        );
+
+        // Verify a row appeared with the defaulted column value.
+        let rows = setup
+            .query(
+                "SELECT count(*)::int, min(label) FROM zed_default_insert_test",
+                &[],
+            )
+            .await
+            .expect("read back rows");
+        let count: i32 = rows[0].get(0);
+        let label: Option<String> = rows[0].get(1);
+        assert_eq!(
+            count, 1,
+            "the all-default insert must create exactly one row"
+        );
+        assert_eq!(
+            label.as_deref(),
+            Some("unset"),
+            "the defaulted column must take its default"
+        );
+
+        setup
+            .simple_query("DROP TABLE zed_default_insert_test")
+            .await
+            .expect("drop test table");
+    }
 }

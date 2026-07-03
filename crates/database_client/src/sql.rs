@@ -178,15 +178,27 @@ pub fn build_update(
     Ok(BuiltStatement { sql, params })
 }
 
-/// Builds an `INSERT` statement covering only the columns in `insert.values`
-/// (rejecting an empty value list).
+/// Builds an `INSERT` statement covering only the columns in `insert.values`.
+///
+/// When `insert.values` is empty (the user added a row and left every cell
+/// unset), this emits `INSERT INTO ... DEFAULT VALUES` so every column takes its
+/// default. Columns without a default (e.g. a `NOT NULL` column) still error at
+/// runtime and roll the batch back, surfacing the Postgres error to the user.
 pub fn build_insert(
     table: &TableRef,
     columns: &[ColumnInfo],
     insert: &RowInsert,
 ) -> anyhow::Result<BuiltStatement> {
     if insert.values.is_empty() {
-        bail!("insert must set at least one column");
+        let sql = format!(
+            "INSERT INTO {}.{} DEFAULT VALUES",
+            quote_ident(&table.schema),
+            quote_ident(&table.name),
+        );
+        return Ok(BuiltStatement {
+            sql,
+            params: vec![],
+        });
     }
     let mut params = Vec::new();
     let mut idents = Vec::with_capacity(insert.values.len());
@@ -570,10 +582,12 @@ mod tests {
     }
 
     #[test]
-    fn build_insert_rejects_empty() {
+    fn build_insert_empty_uses_default_values() {
         let columns = edit_columns();
         let insert = RowInsert { values: vec![] };
-        assert!(build_insert(&users_table(), &columns, &insert).is_err());
+        let built = build_insert(&users_table(), &columns, &insert).unwrap();
+        assert_eq!(built.sql, "INSERT INTO \"public\".\"users\" DEFAULT VALUES");
+        assert!(built.params.is_empty());
     }
 
     #[test]
