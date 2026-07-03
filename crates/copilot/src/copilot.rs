@@ -48,17 +48,17 @@ pub use crate::copilot_edit_prediction_delegate::CopilotEditPredictionDelegate;
 actions!(
     copilot,
     [
-        /// Requests a code completion suggestion from Copilot.
+        /// Requests a code completion suggestion from Copilot Edit Predictions.
         Suggest,
-        /// Cycles to the next Copilot suggestion.
+        /// Cycles to the next Copilot Edit Predictions suggestion.
         NextSuggestion,
-        /// Cycles to the previous Copilot suggestion.
+        /// Cycles to the previous Copilot Edit Predictions suggestion.
         PreviousSuggestion,
-        /// Reinstalls the Copilot language server.
+        /// Reinstalls the Copilot Edit Predictions language server.
         Reinstall,
-        /// Signs in to GitHub Copilot.
+        /// Signs in to GitHub Copilot Edit Predictions.
         SignIn,
-        /// Signs out of GitHub Copilot.
+        /// Signs out of GitHub Copilot Edit Predictions.
         SignOut
     ]
 );

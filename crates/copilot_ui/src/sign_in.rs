@@ -17,7 +17,7 @@ use workspace::{AppState, Toast, Workspace, notifications::NotificationId};
 
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
 const ERROR_LABEL: &str =
-    "Copilot had issues starting. You can try reinstalling it and signing in again.";
+    "Copilot Edit Predictions had issues starting. You can try reinstalling it and signing in again.";
 
 struct CopilotStatusToast;
 
@@ -27,13 +27,15 @@ pub fn initiate_sign_in(copilot: Entity<Copilot>, window: &mut Window, cx: &mut 
 }
 
 pub fn initiate_sign_out(copilot: Entity<Copilot>, window: &mut Window, cx: &mut App) {
-    copilot_toast(Some("Signing out of Copilot…"), window, cx);
+    copilot_toast(Some("Signing out of Copilot Edit Predictions…"), window, cx);
 
     let sign_out_task = copilot.update(cx, |copilot, cx| copilot.sign_out(cx));
     window
         .spawn(cx, async move |cx| match sign_out_task.await {
             Ok(()) => {
-                cx.update(|window, cx| copilot_toast(Some("Signed out of Copilot"), window, cx))
+                cx.update(|window, cx| {
+                    copilot_toast(Some("Signed out of Copilot Edit Predictions"), window, cx)
+                })
             }
             Err(err) => cx.update(|window, cx| {
                 if let Some(workspace) = Workspace::for_window(window, cx) {
@@ -138,9 +140,9 @@ pub fn initiate_sign_in_impl(
         Status::Starting { task } => {
             copilot_toast(
                 Some(if is_reinstall {
-                    "Copilot is reinstalling…"
+                    "Copilot Edit Predictions is reinstalling…"
                 } else {
-                    "Copilot is starting…"
+                    "Copilot Edit Predictions is starting…"
                 }),
                 window,
                 cx,
@@ -151,7 +153,7 @@ pub fn initiate_sign_in_impl(
                     task.await;
                     cx.update(|window, cx| match copilot.read(cx).status() {
                         Status::Authorized => {
-                            copilot_toast(Some("Copilot has started."), window, cx)
+                            copilot_toast(Some("Copilot Edit Predictions has started."), window, cx)
                         }
                         _ => {
                             copilot_toast(None, window, cx);
@@ -279,9 +281,12 @@ impl CopilotCodeVerification {
             .gap_2p5()
             .items_center()
             .text_center()
-            .child(Headline::new("Use GitHub Copilot in Zed").size(HeadlineSize::Large))
             .child(
-                Label::new("Using Copilot requires an active subscription on GitHub.")
+                Headline::new("Use GitHub Copilot Edit Predictions in Zed")
+                    .size(HeadlineSize::Large),
+            )
+            .child(
+                Label::new("Using Copilot edit predictions requires an active subscription on GitHub.")
                     .color(Color::Muted),
             )
             .child(Self::render_device_code(data, cx))
@@ -363,8 +368,8 @@ impl CopilotCodeVerification {
             .gap_2()
             .text_center()
             .justify_center()
-            .child(Headline::new("Copilot Enabled!").size(HeadlineSize::Large))
-            .child(Label::new("You're all set to use GitHub Copilot.").color(Color::Muted))
+            .child(Headline::new("Copilot Edit Predictions Enabled!").size(HeadlineSize::Large))
+            .child(Label::new("You're all set to use Copilot edit predictions.").color(Color::Muted))
             .child(
                 Button::new("copilot-enabled-done-button", "Done")
                     .full_width()
@@ -380,7 +385,7 @@ impl CopilotCodeVerification {
             .as_deref()
             .unwrap_or(COPILOT_SIGN_UP_URL)
             .to_owned();
-        let description = "Enable Copilot by connecting your existing license once you have subscribed or renewed your subscription.";
+        let description = "Enable Copilot edit predictions by connecting your existing license once you have subscribed or renewed your subscription.";
 
         v_flex()
             .gap_2()
@@ -414,7 +419,7 @@ impl CopilotCodeVerification {
             .child(Headline::new("An Error Happened").size(HeadlineSize::Large))
             .child(Label::new(ERROR_LABEL).color(Color::Muted))
             .child(
-                Button::new("copilot-subscribe-button", "Reinstall Copilot and Sign In")
+                Button::new("copilot-subscribe-button", "Reinstall Copilot Edit Predictions and Sign In")
                     .full_width()
                     .style(ButtonStyle::Outlined)
                     .size(ButtonSize::Medium)
@@ -595,9 +600,9 @@ impl CopilotChatCodeVerification {
             .gap_2p5()
             .items_center()
             .text_center()
-            .child(Headline::new("Use GitHub Copilot in Zed").size(HeadlineSize::Large))
+            .child(Headline::new("Use GitHub Copilot Chat in Zed").size(HeadlineSize::Large))
             .child(
-                Label::new("Using Copilot requires an active subscription on GitHub.")
+                Label::new("Using Copilot Chat requires an active subscription on GitHub.")
                     .color(Color::Muted),
             )
             .child(Self::render_device_code(&device_flow.user_code, cx))
@@ -638,8 +643,8 @@ impl CopilotChatCodeVerification {
             .gap_2()
             .text_center()
             .justify_center()
-            .child(Headline::new("Copilot Enabled!").size(HeadlineSize::Large))
-            .child(Label::new("You're all set to use GitHub Copilot.").color(Color::Muted))
+            .child(Headline::new("Copilot Chat Enabled!").size(HeadlineSize::Large))
+            .child(Label::new("You're all set to use Copilot Chat.").color(Color::Muted))
             .child(
                 Button::new("copilot-chat-enabled-done-button", "Done")
                     .full_width()
@@ -843,10 +848,15 @@ impl ConfigurationView {
     }
 
     fn loading_message(&self) -> Option<SharedString> {
+        let product = if self.edit_prediction {
+            "Copilot Edit Predictions"
+        } else {
+            "Copilot Chat"
+        };
         if self.is_starting() {
-            Some("Starting Copilot…".into())
+            Some(format!("Starting {product}…").into())
         } else if self.is_signing_in() {
-            Some("Signing into Copilot…".into())
+            Some(format!("Signing into {product}…").into())
         } else {
             None
         }
@@ -950,10 +960,11 @@ impl ConfigurationView {
         };
 
         let start_label = "To use Copilot for edit predictions, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot subscription.".into();
-        let no_status_label = "Copilot requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different edit predictions provider.".into();
+        let no_status_label = "Copilot Edit Predictions requires an active GitHub Copilot subscription. Please ensure Copilot Edit Predictions is configured and try again, or use a different edit predictions provider.".into();
 
         if let Some(msg) = self.loading_message() {
             container(
+
                 start_label,
                 self.render_loading_button(msg, true).into_any_element(),
             )
@@ -980,8 +991,8 @@ impl ConfigurationView {
     }
 
     fn render_for_chat(&self) -> impl IntoElement {
-        let start_label = "To use Zed's agent with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
-        let no_status_label = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different LLM provider.";
+        let start_label = "To use Zed's agent with GitHub Copilot Chat, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
+        let no_status_label = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot Chat is configured and try again, or use a different LLM provider.";
 
         let (label, button) = if let Some(msg) = self.loading_message() {
             (
@@ -990,7 +1001,7 @@ impl ConfigurationView {
             )
         } else if self.is_error() {
             (
-                ERROR_LABEL,
+                "Copilot Chat had an issue signing in. Please try again.",
                 self.render_sign_in_button(false).into_any_element(),
             )
         } else if self.has_no_status() {

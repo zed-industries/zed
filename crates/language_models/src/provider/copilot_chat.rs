@@ -153,7 +153,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         let title = if is_authenticated {
             None
         } else {
-            Some("Configure Copilot".into())
+            Some("Configure Copilot Chat".into())
         };
         let description = if is_authenticated {
             None

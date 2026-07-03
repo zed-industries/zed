@@ -115,10 +115,13 @@ impl Render for EditPredictionButton {
                                         workspace.show_toast(
                                             Toast::new(
                                                 NotificationId::unique::<CopilotErrorToast>(),
-                                                format!("Copilot can't be started: {}", e),
+                                                format!(
+                                                    "Copilot Edit Predictions can't be started: {}",
+                                                    e
+                                                ),
                                             )
                                             .on_click(
-                                                "Reinstall Copilot",
+                                                "Reinstall Copilot Edit Predictions",
                                                 move |window, cx| {
                                                     copilot_ui::reinstall_and_sign_in(
                                                         copilot.clone(),
@@ -133,7 +136,7 @@ impl Render for EditPredictionButton {
                                 }
                             }))
                             .tooltip(|_window, cx| {
-                                Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx)
+                                Tooltip::for_action("GitHub Copilot Edit Predictions", &ToggleMenu, cx)
                             }),
                     );
                 }
@@ -173,7 +176,13 @@ impl Render for EditPredictionButton {
                         .anchor(Anchor::BottomRight)
                         .trigger_with_tooltip(
                             IconButton::new("copilot-icon", icon),
-                            |_window, cx| Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx),
+                            |_window, cx| {
+                                Tooltip::for_action(
+                                    "GitHub Copilot Edit Predictions",
+                                    &ToggleMenu,
+                                    cx,
+                                )
+                            },
                         )
                         .with_handle(self.popover_menu_handle.clone()),
                 )
@@ -648,7 +657,7 @@ impl EditPredictionButton {
         let project = self.project.clone();
         ContextMenu::build(window, cx, |menu, _, cx| {
             let menu = menu
-                .entry("Sign In to Copilot", None, move |window, cx| {
+                .entry("Sign In to Copilot Edit Predictions", None, move |window, cx| {
                     telemetry::event!(
                         "Edit Prediction Menu Action",
                         action = "sign_in",
@@ -662,7 +671,7 @@ impl EditPredictionButton {
                         copilot_ui::initiate_sign_in(copilot, window, cx);
                     }
                 })
-                .entry("Disable Copilot", None, {
+                .entry("Disable Copilot Edit Predictions", None, {
                     let fs = fs.clone();
                     move |_window, cx| {
                         telemetry::event!(
