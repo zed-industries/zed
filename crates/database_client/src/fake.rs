@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 
 use crate::*;
 
@@ -273,13 +273,28 @@ impl DatabaseClient for FakeDatabaseClient {
         Ok(self.write_preview.clone())
     }
 
-    async fn commit_write(&self, database: &str, sql: &str) -> Result<WriteOutcome> {
+    async fn commit_write(
+        &self,
+        database: &str,
+        sql: &str,
+        expected_rows_affected: Option<u64>,
+    ) -> Result<WriteOutcome> {
         self.check_error()?;
-        self.record(format!("commit_write {database} sql={sql}"));
+        self.record(format!(
+            "commit_write {database} sql={sql} expected_rows_affected={expected_rows_affected:?}"
+        ));
         if let Ok(slot) = self.commit_write_error.lock()
             && let Some(message) = slot.as_ref()
         {
             return Err(anyhow!("{message}"));
+        }
+        if let Some(expected) = expected_rows_affected
+            && expected != self.write_outcome.rows_affected
+        {
+            bail!(
+                "aborted: rows_affected mismatch (expected {expected}, actual {})",
+                self.write_outcome.rows_affected
+            );
         }
         Ok(self.write_outcome.clone())
     }
@@ -480,15 +495,12 @@ mod tests {
         };
         let fake = Arc::new(fake);
         let result = fake
-            .commit_write("app", "INSERT INTO t (id) VALUES (3)")
+            .commit_write("app", "INSERT INTO t (id) VALUES (3)", None)
             .await
             .unwrap();
         assert_eq!(result, fake.write_outcome);
-        assert!(
-            fake.calls()
-                .iter()
-                .any(|call| call == "commit_write app sql=INSERT INTO t (id) VALUES (3)")
-        );
+        assert!(fake.calls().iter().any(|call| call
+            == "commit_write app sql=INSERT INTO t (id) VALUES (3) expected_rows_affected=None"));
     }
 
     #[tokio::test]
@@ -496,11 +508,66 @@ mod tests {
         let fake = FakeDatabaseClient::new();
         fake.set_commit_write_error(Some("boom".into()));
         let error = fake
-            .commit_write("app", "DELETE FROM t WHERE id=1")
+            .commit_write("app", "DELETE FROM t WHERE id=1", None)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("boom"));
         // Other methods unaffected.
         assert!(fake.list_databases().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn fake_commit_write_aborts_on_rows_affected_mismatch() {
+        let mut fake = FakeDatabaseClient::new();
+        fake.write_outcome = WriteOutcome {
+            rows_affected: 2,
+            columns: vec!["id".into()],
+            returned: vec![vec![Some("1".into())], vec![Some("2".into())]],
+        };
+        let fake = Arc::new(fake);
+        let error = fake
+            .commit_write("app", "DELETE FROM t WHERE id>0", Some(1))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("aborted"));
+        assert!(error.to_string().contains("mismatch"));
+        assert!(
+            fake.calls()
+                .iter()
+                .any(|call| call.contains("expected_rows_affected=Some(1)"))
+        );
+    }
+
+    #[tokio::test]
+    async fn fake_commit_write_matching_expected_rows_succeeds() {
+        let mut fake = FakeDatabaseClient::new();
+        fake.write_outcome = WriteOutcome {
+            rows_affected: 1,
+            columns: vec!["id".into()],
+            returned: vec![vec![Some("1".into())]],
+        };
+        let fake = Arc::new(fake);
+        let result = fake
+            .commit_write("app", "DELETE FROM t WHERE id=1", Some(1))
+            .await
+            .unwrap();
+        assert_eq!(result, fake.write_outcome);
+    }
+
+    #[tokio::test]
+    async fn fake_commit_write_explicit_error_takes_precedence_over_mismatch() {
+        let mut fake = FakeDatabaseClient::new();
+        fake.write_outcome = WriteOutcome {
+            rows_affected: 2,
+            columns: vec!["id".into()],
+            returned: vec![vec![Some("1".into())], vec![Some("2".into())]],
+        };
+        fake.set_commit_write_error(Some("explicit boom".into()));
+        let fake = Arc::new(fake);
+        let error = fake
+            .commit_write("app", "DELETE FROM t WHERE id>0", Some(1))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("explicit boom"));
     }
 }

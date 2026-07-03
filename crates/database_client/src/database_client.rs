@@ -213,7 +213,16 @@ pub trait DatabaseClient: Send + Sync {
     ) -> Result<WritePreview>;
     /// Runs a single INSERT/UPDATE/DELETE statement inside a transaction that is
     /// committed on success (or rolled back and the error returned on failure).
-    async fn commit_write(&self, database: &str, sql: &str) -> Result<WriteOutcome>;
+    ///
+    /// Commits `sql` as a single write. If `expected_rows_affected` is `Some(n)`
+    /// and the statement affects a different number of rows, the transaction is
+    /// rolled back and an error is returned (the approved preview is stale).
+    async fn commit_write(
+        &self,
+        database: &str,
+        sql: &str,
+        expected_rows_affected: Option<u64>,
+    ) -> Result<WriteOutcome>;
     /// Sends a cancel signal to the server for all in-flight queries of this client.
     async fn cancel_running(&self) -> Result<()>;
 }

@@ -594,7 +594,12 @@ impl DatabaseClient for PostgresClient {
 
     /// Runs a single write statement inside a transaction that is committed on
     /// success, or rolled back with the error returned on failure.
-    async fn commit_write(&self, database: &str, sql: &str) -> Result<WriteOutcome> {
+    async fn commit_write(
+        &self,
+        database: &str,
+        sql: &str,
+        expected_rows_affected: Option<u64>,
+    ) -> Result<WriteOutcome> {
         if self.mode == SessionMode::ReadOnly {
             bail!("commit_write requires a read-write session");
         }
@@ -621,6 +626,21 @@ impl DatabaseClient for PostgresClient {
                 return Err(error);
             }
         };
+
+        if let Some(expected) = expected_rows_affected {
+            if capture.rows_affected != expected {
+                if let Err(rollback_error) = client.simple_query("ROLLBACK").await {
+                    log::warn!("failed to roll back write transaction: {rollback_error}");
+                }
+                bail!(
+                    "aborted: the statement affected {} row(s) but {} were approved in the \
+                     preview; the data changed since propose_write — re-run propose_write to \
+                     re-preview and approve",
+                    capture.rows_affected,
+                    expected
+                );
+            }
+        }
 
         client
             .simple_query("COMMIT")
@@ -940,7 +960,7 @@ mod tests {
         assert!(error.to_string().contains("read-write session"));
 
         let error = client
-            .commit_write("unreachable", "DELETE FROM t WHERE id=1")
+            .commit_write("unreachable", "DELETE FROM t WHERE id=1", None)
             .await
             .unwrap_err();
         assert!(error.to_string().contains("read-write session"));
@@ -1519,6 +1539,7 @@ mod tests {
             .commit_write(
                 &database,
                 "INSERT INTO zed_commit_write_test (id, name) VALUES (1, 'persisted')",
+                Some(1),
             )
             .await
             .expect("commit_write succeeds");

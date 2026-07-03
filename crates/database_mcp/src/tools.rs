@@ -360,13 +360,14 @@ impl ToolHost {
 
         let client = self.write_client(&config, &proposal.database)?;
         let outcome = client
-            .commit_write(&proposal.database, &proposal.sql)
+            .commit_write(
+                &proposal.database,
+                &proposal.sql,
+                Some(proposal.previewed_rows_affected),
+            )
             .await?;
 
-        Ok(apply_write_result_to_json(
-            &outcome,
-            proposal.previewed_rows_affected,
-        ))
+        Ok(apply_write_result_to_json(&outcome))
     }
 
     /// Looks up a configured connection by name.
@@ -532,15 +533,11 @@ fn propose_write_result_to_json(
     })
 }
 
-fn apply_write_result_to_json(
-    outcome: &WriteOutcome,
-    previewed_rows_affected: u64,
-) -> serde_json::Value {
+fn apply_write_result_to_json(outcome: &WriteOutcome) -> serde_json::Value {
     serde_json::json!({
         "rows_affected": outcome.rows_affected,
         "columns": outcome.columns,
         "returned": outcome.returned,
-        "rows_affected_matches_preview": outcome.rows_affected == previewed_rows_affected,
     })
 }
 
@@ -1166,12 +1163,9 @@ mod tests {
         assert_eq!(result["rows_affected"], 1);
         assert_eq!(result["columns"], serde_json::json!(["id"]));
         assert_eq!(result["returned"], serde_json::json!([["1"]]));
-        assert_eq!(result["rows_affected_matches_preview"], true);
         assert!(
-            write_fake
-                .calls()
-                .iter()
-                .any(|call| call == &format!("commit_write app sql={sql}"))
+            write_fake.calls().iter().any(|call| call
+                == &format!("commit_write app sql={sql} expected_rows_affected=Some(1)"))
         );
 
         // A second apply with the same (now-consumed) token must fail.
@@ -1214,7 +1208,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn apply_write_reports_rows_affected_mismatch() {
+    async fn apply_write_aborts_on_rows_affected_mismatch() {
         let read_fake = Arc::new(FakeDatabaseClient::new());
         let mut write_fake = FakeDatabaseClient::new();
         write_fake.write_preview = WritePreview {
@@ -1248,12 +1242,57 @@ mod tests {
             .unwrap();
         let token = proposal["token"].as_str().unwrap().to_string();
 
+        // The committed row count (2) differs from what was previewed and
+        // approved (3), so apply_write must abort rather than return a
+        // merely-advisory mismatch flag.
+        let error = host
+            .call("apply_write", &serde_json::json!({ "token": token }))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("mismatch"));
+    }
+
+    #[tokio::test]
+    async fn apply_write_commits_when_rows_affected_matches_preview() {
+        let read_fake = Arc::new(FakeDatabaseClient::new());
+        let mut write_fake = FakeDatabaseClient::new();
+        write_fake.write_preview = WritePreview {
+            rows_affected: 2,
+            columns: vec!["id".into()],
+            before: Some(vec![vec![Some("1".into())], vec![Some("2".into())]]),
+            after: None,
+            preview_truncated: false,
+            note: None,
+        };
+        write_fake.write_outcome = WriteOutcome {
+            rows_affected: 2,
+            columns: vec!["id".into()],
+            returned: vec![vec![Some("1".into())], vec![Some("2".into())]],
+        };
+        let write_fake = Arc::new(write_fake);
+        let mut host = host_with_writes(
+            vec![config("primary")],
+            200,
+            read_fake,
+            write_fake,
+            HashSet::from(["primary".to_string()]),
+        );
+
+        let proposal = host
+            .call(
+                "propose_write",
+                &serde_json::json!({ "connection": "primary", "sql": "DELETE FROM t WHERE id>0" }),
+            )
+            .await
+            .unwrap();
+        let token = proposal["token"].as_str().unwrap().to_string();
+
         let result = host
             .call("apply_write", &serde_json::json!({ "token": token }))
             .await
             .unwrap();
         assert_eq!(result["rows_affected"], 2);
-        assert_eq!(result["rows_affected_matches_preview"], false);
+        assert_eq!(result["returned"], serde_json::json!([["1"], ["2"]]));
     }
 
     #[tokio::test]
