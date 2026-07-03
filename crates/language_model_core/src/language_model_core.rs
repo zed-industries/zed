@@ -56,6 +56,7 @@ pub enum LanguageModelCompletionEvent {
     },
     ReasoningDetails(serde_json::Value),
     UsageUpdate(TokenUsage),
+    Compaction(CompactionContent),
 }
 
 impl LanguageModelCompletionEvent {
@@ -88,6 +89,14 @@ impl LanguageModelCompletionEvent {
 pub enum LanguageModelCompletionError {
     #[error("prompt too large for context window")]
     PromptTooLarge { tokens: Option<u64> },
+    /// The model requires the user to consent to the upstream provider
+    /// retaining inference logs (see `LanguageModel::requires_data_retention`)
+    /// and that consent has not been given.
+    #[error(
+        "{model_name} cannot be offered with Zero Data Retention. \
+        Anthropic will retain inference logs."
+    )]
+    DataRetentionConsentRequired { model_name: String },
     #[error("missing {provider} API key")]
     NoApiKey { provider: LanguageModelProviderName },
     #[error("{provider}'s API rate limit exceeded")]
@@ -166,6 +175,8 @@ pub enum LanguageModelCompletionError {
     },
     #[error("stream from {provider} ended unexpectedly")]
     StreamEndedUnexpectedly { provider: LanguageModelProviderName },
+    #[error("payment required to use this language model; please upgrade your account")]
+    PaymentRequired,
     #[error(transparent)]
     Other(#[from] anyhow::Error),
 }
@@ -467,6 +478,42 @@ pub enum ReasoningEffort {
     Medium,
     High,
     XHigh,
+    Max,
+}
+
+impl ReasoningEffort {
+    pub const OPENAI_COMPATIBLE_SELECTABLE: [Self; 6] = [
+        Self::Minimal,
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::XHigh,
+        Self::Max,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "None",
+            Self::Minimal => "Minimal",
+            Self::Low => "Low",
+            Self::Medium => "Medium",
+            Self::High => "High",
+            Self::XHigh => "Extra High",
+            Self::Max => "Max",
+        }
+    }
+
+    pub fn value(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Minimal => "minimal",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "xhigh",
+            Self::Max => "max",
+        }
+    }
 }
 
 #[cfg(test)]

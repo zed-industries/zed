@@ -739,6 +739,7 @@ pub fn hover_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
             .mt(rems(1.))
             .mb_0(),
         table_columns_min_size: true,
+        soft_break_as_hard_break: true,
         ..Default::default()
     }
 }
@@ -797,10 +798,15 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     }
 }
 
-pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) {
+pub fn open_markdown_url(
+    workspace: Option<Entity<Workspace>>,
+    link: SharedString,
+    window: &mut Window,
+    cx: &mut App,
+) {
     if let Ok(uri) = Url::parse(&link)
         && uri.scheme() == "file"
-        && let Some(workspace) = Workspace::for_window(window, cx)
+        && let Some(workspace) = workspace
     {
         workspace.update(cx, |workspace, cx| {
             let task = workspace.open_abs_path(
@@ -847,7 +853,14 @@ pub fn open_markdown_url(link: SharedString, window: &mut Window, cx: &mut App) 
         });
         return;
     }
-    cx.open_url(&link);
+
+    if let Some(workspace) = workspace {
+        workspace.update(cx, |workspace, cx| {
+            workspace.open_url_or_file(&link, None, window, cx);
+        });
+    } else {
+        cx.open_url(&link);
+    }
 }
 
 #[derive(Default)]
@@ -1033,6 +1046,7 @@ impl InfoPopover {
     ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let this = cx.entity().downgrade();
+        let this2 = this.clone();
         let bounds_cell = self.last_bounds.clone();
         div()
             .id("info_popover")
@@ -1083,7 +1097,17 @@ impl InfoPopover {
                                     wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                                     border: false,
                                 })
-                                .on_url_click(open_markdown_url)
+                                .on_url_click(move |link, window, cx| {
+                                    open_markdown_url(
+                                        this2
+                                            .read_with(cx, |editor, _| editor.workspace())
+                                            .ok()
+                                            .flatten(),
+                                        link,
+                                        window,
+                                        cx,
+                                    )
+                                })
                                 .p_2(),
                         ),
                 )
@@ -1250,6 +1274,46 @@ mod tests {
 
     fn get_hover_popover_delay(cx: &gpui::TestAppContext) -> u64 {
         cx.read(|cx: &App| -> u64 { EditorSettings::get_global(cx).hover_popover_delay.0 })
+    }
+
+    #[gpui::test]
+    fn test_hover_markdown_preserves_soft_breaks(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let cx = cx.add_empty_window();
+        let text = concat!(
+            "class super(object)\n",
+            "|  super(type) -> unbound super object\n",
+            "|  super(type, obj) -> bound super object"
+        );
+        let markdown = cx.new(|cx| Markdown::new(text.into(), None, None, cx));
+        cx.run_until_parked();
+
+        let rendered = MarkdownElement::rendered_text(markdown, cx, hover_markdown_style);
+
+        // The two soft breaks must render as real newline characters rather
+        // than being collapsed into spaces.
+        assert_eq!(
+            rendered.matches('\n').count(),
+            2,
+            "expected two hard line breaks, got {rendered:?}"
+        );
+        let lines: Vec<&str> = rendered.split('\n').collect();
+        assert_eq!(
+            lines,
+            [
+                "class super(object)",
+                "|  super(type) -> unbound super object",
+                "|  super(type, obj) -> bound super object",
+            ]
+        );
+        // The two spaces after each `|` continuation marker are preserved verbatim.
+        assert!(lines[1].starts_with("|  super"));
+        assert!(lines[2].starts_with("|  super"));
+        // No tabs are introduced anywhere in the rendered output.
+        assert!(!rendered.contains('\t'));
+        // And the full rendering matches the source exactly.
+        assert_eq!(rendered, text);
     }
 
     impl InfoPopover {

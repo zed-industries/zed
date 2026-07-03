@@ -181,7 +181,7 @@ pub async fn open_remote_project(
                 workspace.update(cx, |workspace, cx| {
                     for item in open_results.iter().flatten() {
                         if let Err(e) = item {
-                            workspace.show_error(&e, cx);
+                            workspace.show_error(format!("{e}"), cx);
                         }
                     }
                 });
