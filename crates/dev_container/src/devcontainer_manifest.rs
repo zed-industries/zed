@@ -2667,54 +2667,77 @@ chmod +x ./install.sh
     Ok(script)
 }
 
+struct ParsedFromLine<'a> {
+    image: &'a str,
+    alias: Option<&'a str>,
+}
+
+/// Parses a `FROM` instruction into its image and optional stage alias,
+/// skipping flags like `--platform=...`. Returns `None` for non-`FROM` lines.
+fn parse_from_line(line: &str) -> Option<ParsedFromLine<'_>> {
+    let mut tokens = line.split_whitespace();
+    if !tokens.next()?.eq_ignore_ascii_case("FROM") {
+        return None;
+    }
+    let image = tokens.find(|token| !token.starts_with("--"))?;
+    let alias = match (tokens.next(), tokens.next()) {
+        (Some(keyword), Some(alias)) if keyword.eq_ignore_ascii_case("as") => Some(alias),
+        _ => None,
+    };
+    Some(ParsedFromLine { image, alias })
+}
+
 fn dockerfile_inject_alias(
     dockerfile_content: &str,
     alias: &str,
     build_target: Option<String>,
 ) -> String {
-    let from_lines: Vec<(usize, &str)> = dockerfile_content
+    let from_lines: Vec<(usize, ParsedFromLine)> = dockerfile_content
         .lines()
         .enumerate()
-        .filter(|(_, line)| line.starts_with("FROM"))
+        .filter_map(|(index, line)| parse_from_line(line).map(|parsed| (index, parsed)))
         .collect();
 
     let target_entry = match &build_target {
-        Some(target) => from_lines.iter().rfind(|(_, line)| {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            parts.len() >= 3
-                && parts
-                    .get(parts.len() - 2)
-                    .map_or(false, |p| p.eq_ignore_ascii_case("as"))
-                && parts
-                    .last()
-                    .map_or(false, |p| p.eq_ignore_ascii_case(target))
+        Some(target) => from_lines.iter().rfind(|(_, parsed)| {
+            parsed
+                .alias
+                .is_some_and(|alias| alias.eq_ignore_ascii_case(target))
         }),
         None => from_lines.last(),
     };
 
-    let Some(&(line_idx, from_line)) = target_entry else {
+    let Some((line_idx, parsed)) = target_entry else {
+        match &build_target {
+            Some(target) => log::warn!(
+                "Build target stage {target:?} not found in Dockerfile; leaving it unmodified"
+            ),
+            None => log::warn!("No FROM instruction found in Dockerfile; leaving it unmodified"),
+        }
         return dockerfile_content.to_string();
     };
 
-    let parts: Vec<&str> = from_line.split_whitespace().collect();
-    let has_alias = parts.len() >= 3
-        && parts
-            .get(parts.len() - 2)
-            .map_or(false, |p| p.eq_ignore_ascii_case("as"));
-
-    if has_alias {
-        let Some(existing_alias) = parts.last() else {
-            return dockerfile_content.to_string();
-        };
+    if let Some(existing_alias) = parsed.alias {
         format!("{dockerfile_content}\nFROM {existing_alias} AS {alias}")
     } else {
         let lines: Vec<&str> = dockerfile_content.lines().collect();
+        // Appending ` AS {alias}` to a line ending in a `\` continuation would
+        // corrupt the instruction, so leave the Dockerfile unmodified.
+        if lines
+            .get(*line_idx)
+            .is_some_and(|line| line.trim_end().ends_with('\\'))
+        {
+            log::warn!(
+                "FROM instruction spans multiple lines via `\\` continuation; cannot inject stage alias, leaving Dockerfile unmodified"
+            );
+            return dockerfile_content.to_string();
+        }
         let mut result = String::new();
         for (i, line) in lines.iter().enumerate() {
             if i > 0 {
                 result.push('\n');
             }
-            if i == line_idx {
+            if i == *line_idx {
                 result.push_str(&format!("{line} AS {alias}"));
             } else {
                 result.push_str(line);
@@ -2728,67 +2751,36 @@ fn dockerfile_inject_alias(
 }
 
 fn image_from_dockerfile(dockerfile_contents: String, target: &Option<String>) -> Option<String> {
-    // Build a map of lowercase_alias -> base_image for all named FROM stages so we can
-    // resolve chains like `FROM base AS development` where "base" is itself a stage alias.
-    let alias_map: HashMap<String, String> = dockerfile_contents
+    let stages: Vec<ParsedFromLine> = dockerfile_contents
         .lines()
-        .filter(|line| line.starts_with("FROM"))
-        .filter_map(|from_line| {
-            let parts: Vec<&str> = from_line.split_whitespace().collect();
-            if parts.len() >= 4
-                && parts
-                    .get(parts.len() - 2)
-                    .map_or(false, |p| p.eq_ignore_ascii_case("as"))
-            {
-                let alias = parts.last()?.to_lowercase();
-                let base_image = parts.get(1)?.to_string();
-                Some((alias, base_image))
-            } else {
-                None
-            }
-        })
+        .filter_map(parse_from_line)
         .collect();
 
-    let start_image = dockerfile_contents
-        .lines()
-        .filter(|line| line.starts_with("FROM"))
-        .rfind(|from_line| match &target {
-            Some(target) => {
-                let parts = from_line.split_whitespace().collect::<Vec<&str>>();
-                parts.len() >= 4
-                    && parts
-                        .get(parts.len() - 2)
-                        .map_or(false, |p| p.eq_ignore_ascii_case("as"))
-                    && parts
-                        .last()
-                        .map_or(false, |p| p.eq_ignore_ascii_case(target))
-            }
-            None => true,
-        })
-        .and_then(|from_line| {
-            from_line
-                .split_whitespace()
-                .collect::<Vec<&str>>()
-                .get(1)
-                .map(|s| s.to_string())
-        })?;
+    let start_index = match target {
+        Some(target) => stages.iter().rposition(|stage| {
+            stage
+                .alias
+                .is_some_and(|alias| alias.eq_ignore_ascii_case(target))
+        })?,
+        None => stages.len().checked_sub(1)?,
+    };
 
-    // Follow the alias chain to a concrete image. The step bound guards against cycles
-    // in malformed Dockerfiles — a valid acyclic chain visits each alias at most once.
-    let max_steps = alias_map.len() + 1;
-    let mut current = start_image;
-    for _ in 0..max_steps {
-        match alias_map.get(&current.to_lowercase()) {
-            Some(next_image) => current = next_image.clone(),
-            None => return Some(current),
+    // Follow alias chains (`FROM base AS development`) to a concrete image.
+    // Docker only resolves names to stages defined earlier in the file, so
+    // resolving strictly backwards is correct and cannot cycle.
+    let mut index = start_index;
+    loop {
+        let image = stages.get(index)?.image;
+        let previous_stage = stages.get(..index)?.iter().rposition(|stage| {
+            stage
+                .alias
+                .is_some_and(|alias| alias.eq_ignore_ascii_case(image))
+        });
+        match previous_stage {
+            Some(previous_index) => index = previous_index,
+            None => return Some(image.to_string()),
         }
     }
-
-    log::warn!(
-        "Dockerfile alias chain appears cyclic; could not resolve base image for target {:?}",
-        target
-    );
-    None
 }
 
 fn get_remote_user_from_config(
@@ -2873,8 +2865,8 @@ mod test {
         devcontainer_json::MountDefinition,
         devcontainer_manifest::{
             ConfigStatus, DevContainerManifest, DockerBuildResources, DockerComposeResources,
-            DockerInspect, extract_feature_id, find_primary_service, get_remote_user_from_config,
-            image_from_dockerfile, resolve_compose_dockerfile,
+            DockerInspect, dockerfile_inject_alias, extract_feature_id, find_primary_service,
+            get_remote_user_from_config, image_from_dockerfile, resolve_compose_dockerfile,
         },
         docker::{
             DockerClient, DockerComposeConfig, DockerComposeService, DockerComposeServiceBuild,
@@ -5542,10 +5534,42 @@ FROM ${IMAGE} AS production
     }
 
     #[test]
-    fn test_image_from_dockerfile_detects_cycle() {
+    fn test_image_from_dockerfile_stage_alias_shadows_external_image() {
+        // The first `a` is an external image: stage `a` isn't defined yet.
+        // Target `a` builds from stage `b`, whose base is that external `a`.
         let dockerfile = "FROM a AS b\nFROM b AS a".to_string();
         assert_eq!(
             image_from_dockerfile(dockerfile, &Some("a".to_string())),
+            Some("a".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_only_resolves_earlier_stages() {
+        // The first `ubuntu` is the external image, not the later stage.
+        let dockerfile = "FROM ubuntu AS build\nFROM debian AS ubuntu".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("build".to_string())),
+            Some("ubuntu".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_skips_platform_flag() {
+        let dockerfile =
+            "FROM --platform=linux/amd64 ubuntu:24.04 AS base\nFROM base AS development"
+                .to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("development".to_string())),
+            Some("ubuntu:24.04".to_string())
+        );
+    }
+
+    #[test]
+    fn test_image_from_dockerfile_missing_target() {
+        let dockerfile = "FROM ubuntu:24.04 AS base".to_string();
+        assert_eq!(
+            image_from_dockerfile(dockerfile, &Some("nonexistent".to_string())),
             None
         );
     }
@@ -5732,13 +5756,62 @@ FROM docker.io/hexpm/elixir:1.21-erlang-28.4.1-debian-trixie-20260316-slim AS de
     }
 
     #[test]
-    fn test_aliases_dockerfile_with_pre_existing_aliases_for_build() {}
+    fn test_aliases_dockerfile_with_pre_existing_aliases_for_build() {
+        let dockerfile = "FROM ubuntu:24.04 AS base\nFROM base AS development";
+
+        assert_eq!(
+            dockerfile_inject_alias(dockerfile, "dev_container_auto_added_stage_label", None),
+            "FROM ubuntu:24.04 AS base\nFROM base AS development\nFROM development AS dev_container_auto_added_stage_label"
+        );
+    }
 
     #[test]
-    fn test_aliases_dockerfile_with_no_aliases_for_build() {}
+    fn test_aliases_dockerfile_with_no_aliases_for_build() {
+        let dockerfile = "FROM --platform=linux/amd64 ubuntu:24.04\nRUN echo ok";
+
+        assert_eq!(
+            dockerfile_inject_alias(dockerfile, "dev_container_auto_added_stage_label", None),
+            "FROM --platform=linux/amd64 ubuntu:24.04 AS dev_container_auto_added_stage_label\nRUN echo ok"
+        );
+    }
 
     #[test]
-    fn test_aliases_dockerfile_with_build_target_specified() {}
+    fn test_aliases_dockerfile_with_build_target_specified() {
+        let dockerfile = "FROM ubuntu:24.04 AS development\nFROM ubuntu:22.04 AS production";
+
+        assert_eq!(
+            dockerfile_inject_alias(
+                dockerfile,
+                "dev_container_auto_added_stage_label",
+                Some("development".to_string())
+            ),
+            "FROM ubuntu:24.04 AS development\nFROM ubuntu:22.04 AS production\nFROM development AS dev_container_auto_added_stage_label"
+        );
+    }
+
+    #[test]
+    fn test_aliases_dockerfile_with_missing_build_target_is_unmodified() {
+        let dockerfile = "FROM ubuntu:24.04 AS development";
+
+        assert_eq!(
+            dockerfile_inject_alias(
+                dockerfile,
+                "dev_container_auto_added_stage_label",
+                Some("nonexistent".to_string())
+            ),
+            dockerfile
+        );
+    }
+
+    #[test]
+    fn test_aliases_dockerfile_with_line_continuation_is_unmodified() {
+        let dockerfile = "FROM ubuntu:24.04 \\\n    --platform=linux/amd64\nRUN echo ok";
+
+        assert_eq!(
+            dockerfile_inject_alias(dockerfile, "dev_container_auto_added_stage_label", None),
+            dockerfile
+        );
+    }
 
     pub(crate) struct RecordedExecCommand {
         pub(crate) _container_id: String,
