@@ -16,12 +16,15 @@ pub const MODELS_DEV_MAX_RESPONSE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
 pub enum ApiProtocol {
     #[default]
+    #[serde(rename = "anthropic")]
     Anthropic,
+    #[serde(rename = "openai_responses", alias = "open_ai_responses")]
     OpenAiResponses,
+    #[serde(rename = "openai_chat", alias = "open_ai_chat")]
     OpenAiChat,
+    #[serde(rename = "google")]
     Google,
 }
 
