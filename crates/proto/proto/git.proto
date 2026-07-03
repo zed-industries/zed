@@ -199,6 +199,30 @@ message GitRenameBranch {
   string new_name = 4;
 }
 
+message GitMerge {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string ref_name = 3;
+}
+
+message GitCherryPick {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string commit = 3;
+}
+
+message GitRevert {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string commit = 3;
+}
+
+message GitCheckoutCommit {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string commit = 3;
+}
+
 message GitCreateRemote {
   uint64 project_id = 1;
   uint64 repository_id = 2;

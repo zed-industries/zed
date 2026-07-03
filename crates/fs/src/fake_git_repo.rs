@@ -930,6 +930,25 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn merge(&self, _ref_name: String) -> BoxFuture<'_, Result<()>> {
+        async { Ok(()) }.boxed()
+    }
+
+    fn cherry_pick(&self, _commit: String) -> BoxFuture<'_, Result<()>> {
+        async { Ok(()) }.boxed()
+    }
+
+    fn revert(&self, _commit: String) -> BoxFuture<'_, Result<()>> {
+        async { Ok(()) }.boxed()
+    }
+
+    fn checkout_commit(&self, _commit: String) -> BoxFuture<'_, Result<()>> {
+        self.with_state_async(true, |state| {
+            state.current_branch_name = None;
+            Ok(())
+        })
+    }
+
     fn delete_branch(
         &self,
         _is_remote: bool,

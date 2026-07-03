@@ -8,6 +8,7 @@ use crate::{
 use collections::{BTreeMap, HashMap, IndexSet};
 use editor::Editor;
 use file_icons::FileIcons;
+use futures::channel::oneshot;
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     commit::ParsedCommitMessage,
@@ -48,7 +49,7 @@ use std::{
     sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
-use task::{ResolvedTask, TaskContext, TaskTemplate, TaskVariables, VariableName};
+use task::{ResolvedTask, TaskContext, TaskVariables, VariableName};
 use theme::AccentColors;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
@@ -2564,49 +2565,83 @@ impl GitGraph {
             .ok();
     }
 
-    fn schedule_builtin_git_command(
-        &mut self,
-        label: String,
-        args: Vec<String>,
-        commit_sha: Oid,
-        ref_name: Option<&str>,
-        window: &mut Window,
+    /// Detaches a repository operation, surfacing its error (if any) as a
+    /// toast labeled with the git subcommand that failed.
+    fn detach_op_with_error_toast(
+        &self,
+        command_label: String,
+        receiver: oneshot::Receiver<Result<(), anyhow::Error>>,
         cx: &mut Context<Self>,
     ) {
-        let Some(task_context) = self.git_task_context(commit_sha, ref_name, cx) else {
-            return;
-        };
-        let task_template = TaskTemplate {
-            label,
-            command: "git".to_string(),
-            args,
-            ..TaskTemplate::default()
-        };
-        let Some(resolved_task) = task_template.resolve_task("git_graph_command", &task_context)
-        else {
-            return;
-        };
-        self.schedule_git_task(TaskSourceKind::UserInput, resolved_task, window, cx);
+        let workspace = self.workspace.clone();
+        cx.spawn(async move |_, cx| {
+            if let Ok(Err(error)) = receiver.await
+                && let Some(workspace) = workspace.upgrade()
+            {
+                cx.update(|cx| show_error_toast(workspace, command_label, error, cx));
+            }
+        })
+        .detach();
     }
 
     fn checkout_ref(&mut self, ref_name: SharedString, cx: &mut Context<Self>) {
         let Some(repository) = self.get_repository(cx) else {
             return;
         };
-        let workspace = self.workspace.clone();
         let receiver = repository.update(cx, |repository, _| {
             repository.change_branch(ref_name.to_string())
         });
-        cx.spawn(async move |_, cx| {
-            if let Ok(Err(error)) = receiver.await
-                && let Some(workspace) = workspace.upgrade()
-            {
-                cx.update(|cx| {
-                    show_error_toast(workspace, format!("switch {ref_name}"), error, cx)
-                });
-            }
-        })
-        .detach();
+        self.detach_op_with_error_toast(format!("switch {ref_name}"), receiver, cx);
+    }
+
+    fn merge_ref(&mut self, ref_name: SharedString, cx: &mut Context<Self>) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let receiver =
+            repository.update(cx, |repository, _| repository.merge(ref_name.to_string()));
+        self.detach_op_with_error_toast(format!("merge {ref_name}"), receiver, cx);
+    }
+
+    fn cherry_pick_commit(&mut self, commit_sha: Oid, cx: &mut Context<Self>) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let receiver = repository.update(cx, |repository, _| {
+            repository.cherry_pick(commit_sha.to_string())
+        });
+        self.detach_op_with_error_toast(
+            format!("cherry-pick {}", commit_sha.display_short()),
+            receiver,
+            cx,
+        );
+    }
+
+    fn revert_commit(&mut self, commit_sha: Oid, cx: &mut Context<Self>) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let receiver =
+            repository.update(cx, |repository, _| repository.revert(commit_sha.to_string()));
+        self.detach_op_with_error_toast(
+            format!("revert {}", commit_sha.display_short()),
+            receiver,
+            cx,
+        );
+    }
+
+    fn checkout_commit(&mut self, commit_sha: Oid, cx: &mut Context<Self>) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let receiver = repository.update(cx, |repository, _| {
+            repository.checkout_commit(commit_sha.to_string())
+        });
+        self.detach_op_with_error_toast(
+            format!("checkout --detach {}", commit_sha.display_short()),
+            receiver,
+            cx,
+        );
     }
 
     fn create_branch_from(
@@ -2860,15 +2895,8 @@ impl GitGraph {
                                     ContextMenuEntry::new(format!("Merge into {head_branch}"))
                                         .handler(window.handler_for(
                                             &git_graph,
-                                            move |this, window, cx| {
-                                                this.schedule_builtin_git_command(
-                                                    format!("git merge {merge_branch}"),
-                                                    vec!["merge".into(), "$ZED_GIT_REF".into()],
-                                                    sha,
-                                                    Some(merge_branch.as_ref()),
-                                                    window,
-                                                    cx,
-                                                );
+                                            move |this, _window, cx| {
+                                                this.merge_ref(merge_branch.clone(), cx);
                                             },
                                         ))
                                 }
@@ -2907,19 +2935,11 @@ impl GitGraph {
                                     }),
                                 );
                             } else {
-                                let checkout_label = format!("git checkout {sha_short}");
                                 menu = menu.entry(
                                     "Check Out Commit",
                                     None,
-                                    window.handler_for(&git_graph, move |this, window, cx| {
-                                        this.schedule_builtin_git_command(
-                                            checkout_label.clone(),
-                                            vec!["checkout".into(), "$ZED_GIT_SHA".into()],
-                                            sha,
-                                            None,
-                                            window,
-                                            cx,
-                                        );
+                                    window.handler_for(&git_graph, move |this, _window, cx| {
+                                        this.checkout_commit(sha, cx);
                                     }),
                                 );
 
@@ -2932,35 +2952,19 @@ impl GitGraph {
                                     }),
                                 );
 
-                                let cherry_pick_label = format!("git cherry-pick {sha_short}");
                                 menu = menu.entry(
                                     "Cherry-Pick Commit",
                                     None,
-                                    window.handler_for(&git_graph, move |this, window, cx| {
-                                        this.schedule_builtin_git_command(
-                                            cherry_pick_label.clone(),
-                                            vec!["cherry-pick".into(), "$ZED_GIT_SHA".into()],
-                                            sha,
-                                            None,
-                                            window,
-                                            cx,
-                                        );
+                                    window.handler_for(&git_graph, move |this, _window, cx| {
+                                        this.cherry_pick_commit(sha, cx);
                                     }),
                                 );
 
-                                let revert_label = format!("git revert {sha_short}");
                                 menu = menu.entry(
                                     "Revert Commit",
                                     None,
-                                    window.handler_for(&git_graph, move |this, window, cx| {
-                                        this.schedule_builtin_git_command(
-                                            revert_label.clone(),
-                                            vec!["revert".into(), "$ZED_GIT_SHA".into()],
-                                            sha,
-                                            None,
-                                            window,
-                                            cx,
-                                        );
+                                    window.handler_for(&git_graph, move |this, _window, cx| {
+                                        this.revert_commit(sha, cx);
                                     }),
                                 );
                             }
@@ -7425,7 +7429,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_builtin_git_command_resolves_sha_and_repository_cwd(cx: &mut TestAppContext) {
+    async fn test_checkout_commit_detaches_head(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -7437,6 +7441,7 @@ mod tests {
             }),
         )
         .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
 
         let commit_sha = Oid::try_from("abcdef1234567890abcdef1234567890abcdef12")
             .expect("commit SHA should be valid");
@@ -7456,14 +7461,6 @@ mod tests {
             project
                 .active_repository(cx)
                 .expect("project should have an active repository")
-        });
-        let task_inventory = project.read_with(cx, |project, cx| {
-            project
-                .task_store()
-                .read(cx)
-                .task_inventory()
-                .cloned()
-                .expect("project should have a task inventory")
         });
 
         let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
@@ -7489,41 +7486,24 @@ mod tests {
         });
         cx.run_until_parked();
 
-        git_graph.update_in(cx, |git_graph, window, cx| {
-            git_graph.schedule_builtin_git_command(
-                format!("git cherry-pick {}", commit_sha.display_short()),
-                vec!["cherry-pick".into(), "$ZED_GIT_SHA".into()],
-                commit_sha,
-                None,
-                window,
-                cx,
+        repository.read_with(&*cx, |repository, _| {
+            assert!(
+                repository.snapshot().branch.is_some(),
+                "a branch should be checked out initially"
             );
+        });
+
+        git_graph.update_in(cx, |git_graph, _window, cx| {
+            git_graph.checkout_commit(commit_sha, cx);
         });
         cx.run_until_parked();
 
-        let (task_source_kind, resolved_task) = task_inventory.read_with(&*cx, |inventory, _| {
-            inventory
-                .last_scheduled_task(None)
-                .expect("built-in Git command should be scheduled")
+        repository.read_with(&*cx, |repository, _| {
+            assert!(
+                repository.snapshot().branch.is_none(),
+                "HEAD should be detached after checking out a commit"
+            );
         });
-
-        assert!(
-            matches!(task_source_kind, TaskSourceKind::UserInput),
-            "built-in Git commands should be scheduled as one-shot tasks"
-        );
-        assert_eq!(resolved_task.resolved_label, "git cherry-pick abcdef1");
-        assert_eq!(resolved_task.resolved.command, Some("git".to_string()));
-        assert_eq!(
-            resolved_task.resolved.args,
-            vec![
-                "cherry-pick".to_string(),
-                "abcdef1234567890abcdef1234567890abcdef12".to_string(),
-            ]
-        );
-        assert_eq!(
-            resolved_task.resolved.cwd,
-            Some(Path::new("/project").to_path_buf())
-        );
     }
 
     #[test]

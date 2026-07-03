@@ -114,7 +114,7 @@ The Git Graph ({#action git_graph::Open}) visualizes your repository's commit hi
 - On a commit: check out the commit, create a branch from it, cherry-pick it, or revert it.
 - On a tag label: create a branch from the tag.
 
-Merge, cherry-pick, revert, and detached checkouts run as tasks in the terminal, so their output is visible and any conflicts can be resolved from there. You can also add your own entries to this menu with [custom Git commands](./tasks.md#custom-git-commands).
+If an operation fails — for example, a merge or cherry-pick with conflicts — Zed shows the error, and any conflicts can be resolved from the Git Panel as usual. You can also add your own entries to this menu with [custom Git commands](./tasks.md#custom-git-commands).
 
 ## Fetch, Push, and Pull
 
