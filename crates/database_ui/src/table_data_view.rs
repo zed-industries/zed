@@ -327,10 +327,19 @@ pub struct TableDataView {
     /// Whether the SQL bar is collapsed to just its chevron row.
     sql_bar_collapsed: bool,
     /// Whether the SQL editor's text has diverged from `render_sql(&self.query)`
-    /// by a real (non-programmatic) edit. While `true` the bar is read-only with
-    /// respect to UI-driven query mutations (sort/filter/paging), since applying
-    /// them would silently discard the user's unsaved edit.
+    /// by a real (non-programmatic) edit. While `true`, row editing is
+    /// suspended (see `editable()`). UI-driven query mutators (sort/filter/
+    /// paging/refresh) do not silently apply on top of the stale query while
+    /// dirty: each one first runs the bar's current text (as `run_from_editor`
+    /// would - refreshing in place if unchanged, or promoting to a custom
+    /// query if hand-edited) and only then layers its own change on top, so
+    /// the user's typed SQL is never discarded by an unrelated click.
     sql_dirty: bool,
+    /// A non-navigational notice shown near the SQL bar, e.g. explaining why a
+    /// run was refused because it would have entered custom-query mode with a
+    /// non-empty edit buffer (see [`Self::run_from_editor`]). Cleared on the
+    /// next successful run.
+    pending_edits_notice: Option<String>,
     /// Set around programmatic `set_text` calls so the resulting `BufferEdited`
     /// event is not mistaken for a real user edit.
     suppress_editor_events: bool,
@@ -435,7 +444,17 @@ impl TableDataView {
                     return;
                 }
                 let text = this.sql_editor.read(cx).text(cx);
-                this.sql_dirty = text != render_sql(&this.query);
+                let now_dirty = text != render_sql(&this.query);
+                // Transitioning into dirty leaves the editable window (see
+                // `editable()`): finish (commit-if-changed) any inline cell
+                // editor still open now, while it is still allowed to write to
+                // the buffer, rather than leaving it interactively open on top
+                // of a row set the dirty SQL bar is about to replace (finding 3
+                // in the stage-3 review).
+                if now_dirty && !this.sql_dirty {
+                    this.finish_editing(cx);
+                }
+                this.sql_dirty = now_dirty;
                 cx.notify();
             });
 
@@ -455,6 +474,7 @@ impl TableDataView {
                 sql_editor,
                 sql_bar_collapsed: false,
                 sql_dirty: false,
+                pending_edits_notice: None,
                 suppress_editor_events: false,
                 page: None,
                 structure: None,
@@ -574,6 +594,12 @@ impl TableDataView {
     /// by a user edit not yet run.
     pub fn sql_dirty(&self) -> bool {
         self.sql_dirty
+    }
+
+    /// A notice to show near the SQL bar explaining why the last run was
+    /// refused, if any (see [`Self::run_from_editor`]).
+    pub fn pending_edits_notice(&self) -> Option<&str> {
+        self.pending_edits_notice.as_deref()
     }
 
     /// Whether the SQL bar is collapsed to just its chevron row.
@@ -820,6 +846,17 @@ impl TableDataView {
         }
     }
 
+    /// Test-only: exposes whether a buffered update would be layered onto the
+    /// cell for `row_key`/`column` under the same table-backed gate
+    /// `render_data_cell` applies, without going through the full render path.
+    #[cfg(test)]
+    fn cell_display_value_for_test(&self, row_key: &RowKey, column: &str) -> Option<String> {
+        if !matches!(self.query.base, QueryBase::Table(_)) {
+            return None;
+        }
+        self.cell_display_value(row_key, column, None)
+    }
+
     /// Opens the inline editor on the cell at `display_row`/`column_index`.
     ///
     /// No-op unless the table is editable, has a loaded page/structure, and the
@@ -948,10 +985,21 @@ impl TableDataView {
     /// The windowless core of [`commit_cell_edit`]. Committing only reads the
     /// editor field's text, so no [`Window`] is needed; this lets page-changing
     /// operations finish the editor without threading a window through.
+    ///
+    /// Defense-in-depth: if editing somehow became disallowed while the editor
+    /// was open (`editable()` is `false`), the editor is still closed but its
+    /// text is discarded rather than written to the buffer. The primary guard
+    /// against this is the `BufferEdited` handler finishing the editor at the
+    /// moment the bar goes dirty, while it is still editable; this branch only
+    /// guards against that invariant ever slipping (finding 3).
     fn commit_cell_edit_inner(&mut self, cx: &mut Context<Self>) {
         let Some(editing) = self.editing_cell.take() else {
             return;
         };
+        if !self.editable() {
+            cx.notify();
+            return;
+        }
         let value = editing.field.read(cx).text(cx);
         // Unchanged: the value equals what was shown (both non-NULL and equal),
         // or the cell was NULL and the field was left empty. Buffer nothing.
@@ -1016,10 +1064,18 @@ impl TableDataView {
     }
 
     /// Sets the cell currently being edited to NULL and closes the editor.
+    ///
+    /// Defense-in-depth: see [`Self::commit_cell_edit_inner`] — if editing
+    /// somehow became disallowed while the editor was open, the editor is
+    /// still closed but the NULL is not buffered.
     pub fn set_editing_cell_null(&mut self, cx: &mut Context<Self>) {
         let Some(editing) = self.editing_cell.take() else {
             return;
         };
+        if !self.editable() {
+            cx.notify();
+            return;
+        }
         match editing.target {
             EditTarget::Existing(row_key) => {
                 self.set_cell_null(row_key, &editing.column, cx);
@@ -1033,10 +1089,15 @@ impl TableDataView {
 
     /// Applies the buffered edits to the database in one transaction.
     ///
-    /// No-op when the buffer is empty or a save is already in flight. On success
-    /// the buffer and inline editor are cleared and the page is reloaded; on
-    /// failure the buffer is kept and the error is surfaced in `save_state`.
+    /// No-op when not editable (defense-in-depth: the buffer is supposed to be
+    /// empty whenever `!editable()`, see finding 2), the buffer is empty, or a
+    /// save is already in flight. On success the buffer and inline editor are
+    /// cleared and the page is reloaded; on failure the buffer is kept and the
+    /// error is surfaced in `save_state`.
     pub fn save_edits(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.editable() {
+            return;
+        }
         if self.save_state == SaveState::Saving {
             return;
         }
@@ -1155,7 +1216,14 @@ impl TableDataView {
 
     /// Cycles the sort on `column` (None -> Asc -> Desc -> None), resets the
     /// page offset, and reloads the current page.
+    ///
+    /// While the bar is dirty, first runs the bar's text (see
+    /// [`Self::commit_dirty_bar`]) and applies the sort on top of that result;
+    /// a refused run (finding 2) leaves the sort untouched.
     pub fn toggle_sort(&mut self, column: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.commit_dirty_bar(window, cx) {
+            return;
+        }
         // Commit and close any open editor before the rows on screen change, so
         // its next commit cannot land on a different (now-hidden) row.
         self.finish_editing(cx);
@@ -1181,6 +1249,10 @@ impl TableDataView {
     /// replaces the filter at that position (a no-op if `index` is out of
     /// bounds), `None` appends `filter` as a new one. Either way resets the
     /// page offset and reloads the current page.
+    ///
+    /// While the bar is dirty, first runs the bar's text (see
+    /// [`Self::commit_dirty_bar`]) and applies the filter on top of that
+    /// result; a refused run (finding 2) leaves the filter unapplied.
     pub fn apply_filter_edit(
         &mut self,
         index: Option<usize>,
@@ -1188,6 +1260,9 @@ impl TableDataView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.commit_dirty_bar(window, cx) {
+            return;
+        }
         match index {
             Some(index) => {
                 let Some(existing) = self.query.filters.get_mut(index) else {
@@ -1208,7 +1283,14 @@ impl TableDataView {
 
     /// Removes the filter at `index`, resets the page offset, and reloads. An
     /// out-of-bounds index is a no-op.
+    ///
+    /// While the bar is dirty, first runs the bar's text (see
+    /// [`Self::commit_dirty_bar`]); a refused run (finding 2) leaves the
+    /// filter list untouched.
     pub fn remove_filter(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.commit_dirty_bar(window, cx) {
+            return;
+        }
         if index >= self.query.filters.len() {
             log::debug!(
                 "remove_filter: index {index} out of bounds ({} filters)",
@@ -1225,7 +1307,14 @@ impl TableDataView {
     /// Advances to the next page when the current page reports more rows. In
     /// custom-query mode (before any page has been run, so `limit` is not yet
     /// set) this establishes the first page at the settings page size.
+    ///
+    /// While the bar is dirty, first runs the bar's text (see
+    /// [`Self::commit_dirty_bar`]) and evaluates `has_more` against that
+    /// freshly loaded page; a refused run (finding 2) leaves paging untouched.
     pub fn next_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.commit_dirty_bar(window, cx) {
+            return;
+        }
         let has_more = self.page.as_ref().is_some_and(|page| page.has_more);
         if !has_more {
             return;
@@ -1237,8 +1326,17 @@ impl TableDataView {
         self.restart_query(window, cx);
     }
 
-    /// Moves back one page, clamping the offset at zero. No-op at the first page.
+    /// Moves back one page, clamping the offset at zero. No-op at the first
+    /// page.
+    ///
+    /// While the bar is dirty, first runs the bar's text (see
+    /// [`Self::commit_dirty_bar`]) and evaluates the first-page guard against
+    /// that freshly loaded query; a refused run (finding 2) leaves paging
+    /// untouched.
     pub fn prev_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.commit_dirty_bar(window, cx) {
+            return;
+        }
         if self.query.offset == 0 {
             return;
         }
@@ -1251,7 +1349,14 @@ impl TableDataView {
     /// Changes the page size from the footer's page-size picker: commits any
     /// open cell editor, sets the new limit, resets to the first page, and
     /// reruns the query.
+    ///
+    /// While the bar is dirty, first runs the bar's text (see
+    /// [`Self::commit_dirty_bar`]) and applies the new page size on top of
+    /// that result; a refused run (finding 2) leaves the page size untouched.
     pub fn set_page_size(&mut self, page_size: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.commit_dirty_bar(window, cx) {
+            return;
+        }
         self.finish_editing(cx);
         self.query.limit = Some(page_size);
         self.query.offset = 0;
@@ -1276,7 +1381,15 @@ impl TableDataView {
     /// active (even if a prior fetch failed and left it `None`) ensures Retry
     /// actually re-issues the request instead of showing "Loading structure…"
     /// forever.
+    ///
+    /// While the bar is dirty, Refresh means "run what's in the bar" (see
+    /// [`Self::commit_dirty_bar`]), not "re-run the stale query" - otherwise it
+    /// would silently discard the user's unrun edit (finding 1). A refused run
+    /// (finding 2) leaves the query untouched and skips the reload.
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.commit_dirty_bar(window, cx) {
+            return;
+        }
         self.restart_query(window, cx);
         if self.structure.is_some() || self.mode == ViewMode::Structure {
             self.reload_structure(cx);
@@ -1289,9 +1402,20 @@ impl TableDataView {
     /// save) funnels through this one method rather than issuing its own query,
     /// which is what keeps the SQL bar's text always equal to the executed
     /// query — the invariant this view is built around.
+    ///
+    /// Skips resyncing the editor text when the bar is dirty: every mutator
+    /// that changes `self.query` runs `commit_dirty_bar` first, so by the time
+    /// it reaches here the bar is already clean. The one caller that can still
+    /// be dirty here is the save success handler, which reloads data with the
+    /// existing `self.query` after a save completes; if the user has since
+    /// started typing a new query, overwriting that unsaved text out from
+    /// under them would be exactly the bug finding 1 flags, so it is left
+    /// alone (only the data reloads).
     fn restart_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.finish_editing(cx);
-        self.sync_editor_text(window, cx);
+        if !self.sql_dirty {
+            self.sync_editor_text(window, cx);
+        }
 
         let sql = self.current_sql();
         let database = self.table.database.clone();
@@ -1357,16 +1481,58 @@ impl TableDataView {
     /// cell edit first, then either refreshes the existing query (when the text
     /// is unchanged from `current_sql()`) or, when the text was hand-edited,
     /// enters custom-query mode with a fresh overlay and runs that instead.
-    pub fn run_from_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.finish_editing(cx);
+    ///
+    /// Entering custom mode with a non-empty edit buffer is refused: there is
+    /// no way to reconcile buffered updates/inserts/deletes keyed against the
+    /// current table with a result set that may not even come from that table.
+    /// The buffer and the bar's dirty text are both left untouched and
+    /// [`Self::pending_edits_notice`] is set so the UI can explain why the run
+    /// did not happen (finding 2). Returns whether the run actually happened
+    /// (`false` when refused).
+    pub fn run_from_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let text = self.sql_editor.read(cx).text(cx);
         if text == self.current_sql() {
+            self.finish_editing(cx);
+            self.pending_edits_notice = None;
             self.restart_query(window, cx);
-            return;
+            return true;
         }
+        if self.edits.pending_change_count() > 0 {
+            let count = self.edits.pending_change_count();
+            let plural = if count == 1 { "change" } else { "changes" };
+            self.pending_edits_notice = Some(format!(
+                "Save or discard your {count} pending {plural} before running a custom query"
+            ));
+            cx.notify();
+            return false;
+        }
+        self.finish_editing(cx);
+        self.pending_edits_notice = None;
         self.query = QueryState::for_custom(text);
         self.sql_dirty = false;
         self.restart_query(window, cx);
+        true
+    }
+
+    /// The dirty-bar half of every UI query mutator (sort/filter/paging/
+    /// refresh): while the bar is clean this is a no-op that returns `true`
+    /// immediately. While dirty, it first runs the bar's hand-typed text
+    /// exactly as [`Self::run_from_editor`] would - refreshing in place if the
+    /// text is unchanged, or promoting to a custom query otherwise - and only
+    /// then lets the caller layer its own change on top of the result. This is
+    /// the "promote" model chosen for finding 1: a UI action taken while dirty
+    /// means "run what's in the bar, then do this", so the user's typed SQL is
+    /// never silently discarded by an unrelated click.
+    ///
+    /// Returns `false` when the run was refused (a non-empty edit buffer
+    /// blocked entering custom mode, per finding 2); callers must not apply
+    /// their own change in that case; the bar stays dirty and
+    /// [`Self::pending_edits_notice`] explains why.
+    fn commit_dirty_bar(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.sql_dirty {
+            return true;
+        }
+        self.run_from_editor(window, cx)
     }
 
     /// Leaves custom-query mode, rebuilding a plain [`QueryState::for_table`]
@@ -1514,7 +1680,14 @@ impl TableDataView {
         let page_row_count = page.rows.len();
         // Pending insert rows are rendered below the fetched page rows, sharing
         // the same virtualized list so column widths and scrolling stay aligned.
-        let insert_count = self.edits.inserts.len();
+        // Only shown for a table-backed query: a custom query's result set has
+        // no relation to the buffer's original table, so inserts must not be
+        // layered onto it (see finding 2 in the stage-3 review).
+        let insert_count = if matches!(self.query.base, QueryBase::Table(_)) {
+            self.edits.inserts.len()
+        } else {
+            0
+        };
         let total_row_count = page_row_count + insert_count;
 
         let created_background = created_cell_background(cx);
@@ -1594,7 +1767,14 @@ impl TableDataView {
                     .map(|(id, _)| *id)
             })
             .flatten();
-        let existing_key = (!is_insert).then(|| self.row_key_for(row_index)).flatten();
+        // Buffered deletes are only meaningful for a table-backed query: a
+        // custom query's columns may coincidentally line up with the original
+        // table's primary-key names, and matching against it would falsely
+        // strike through rows the custom query never marked (finding 2).
+        let is_table_backed = matches!(self.query.base, QueryBase::Table(_));
+        let existing_key = (!is_insert && is_table_backed)
+            .then(|| self.row_key_for(row_index))
+            .flatten();
         let marked_deleted = existing_key
             .as_ref()
             .is_some_and(|key| self.edits.deletes.contains(key));
@@ -1932,7 +2112,14 @@ impl TableDataView {
             .page
             .as_ref()
             .and_then(|page| page.columns.get(column_index).cloned());
-        let row_key = self.row_key_for(display_row);
+        // A buffered update is only meaningful for a table-backed query: a
+        // custom query's columns may coincidentally line up with the original
+        // table's primary-key names, and matching against it would falsely
+        // paint values/highlights the custom query never returned (finding 2).
+        let is_table_backed = matches!(self.query.base, QueryBase::Table(_));
+        let row_key = is_table_backed
+            .then(|| self.row_key_for(display_row))
+            .flatten();
         let buffered = match (&row_key, &column_name) {
             (Some(key), Some(column)) => self
                 .edits
@@ -2452,6 +2639,12 @@ impl TableDataView {
                     .icon_size(IconSize::XSmall)
                     .tooltip(Tooltip::text("Clear sort"))
                     .on_click(cx.listener(|this, _, window, cx| {
+                        // While dirty, run the bar's text first (finding 1) and
+                        // only clear the sort that results from it; a refused
+                        // run (finding 2) leaves the sort untouched.
+                        if !this.commit_dirty_bar(window, cx) {
+                            return;
+                        }
                         this.query.sort = None;
                         this.query.offset = 0;
                         this.finish_editing(cx);
@@ -2477,7 +2670,14 @@ impl TableDataView {
 
         let pending = self.pending_change_count();
         let saving = self.save_state == SaveState::Saving;
-        let dirty = pending > 0 || saving;
+        // A save already in flight keeps showing its progress/outcome even if
+        // the SQL bar is dirtied meanwhile (it cannot be *started* while
+        // `!editable()` - see `save_edits`'s own gate - but one already
+        // running should not vanish from the UI mid-flight). Otherwise
+        // Save/Discard require `editable()`, not just a non-empty buffer: a
+        // buffer left over from a mode the view has since left (finding 2)
+        // must not offer to apply against whatever the grid shows now.
+        let dirty = (pending > 0 && self.editable()) || saving;
         let show_edit_controls = self.editable();
 
         let add_row_button = show_edit_controls.then(|| {
@@ -2699,7 +2899,9 @@ impl TableDataView {
             .size(ButtonSize::Compact)
             .style(ButtonStyle::Filled)
             .tooltip(move |_window, cx| Tooltip::for_action("Run Query", &RunQuery, cx))
-            .on_click(cx.listener(|this, _, window, cx| this.run_from_editor(window, cx)));
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.run_from_editor(window, cx);
+            }));
 
         let mut bar = v_flex()
             .key_context("SqlQueryEditor")
@@ -2740,6 +2942,16 @@ impl TableDataView {
                                 this.reset_to_table_query(window, cx);
                             })),
                     ),
+            );
+        }
+
+        if let Some(notice) = self.pending_edits_notice.as_ref() {
+            bar = bar.child(
+                h_flex().w_full().px_2().pb_1().child(
+                    Label::new(notice.clone())
+                        .size(LabelSize::Small)
+                        .color(Color::Warning),
+                ),
             );
         }
 
@@ -4758,21 +4970,29 @@ mod tests {
     async fn save_error_keeps_buffer(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
-        let fake = Arc::new(FakeDatabaseClient::with_error("permission denied"));
+        // Structure and the first page must both succeed so the table is
+        // `editable()` (save_edits now gates on it, see finding 2); only
+        // `apply_edits` itself fails, to exercise the save error path.
+        let fake = fake_with_default_rows();
+        fake.set_apply_edits_error(Some("permission denied".into()));
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
         let view = cx.update(|window, cx| {
             TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
         });
-        // The fake fails every call, so structure never loads and editable stays
-        // false; buffer the update directly to exercise the save error path.
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
-                matches!(view.load_state(), LoadState::Error(_))
+                view.page().is_some() && view.structure().is_some()
             })
         })
         .await;
+        view.read_with(cx, |view, _| {
+            assert!(
+                view.editable(),
+                "sanity: a PK base table should be editable"
+            );
+        });
 
         view.update_in(cx, |view, window, cx| {
             let key = RowKey {
@@ -6285,5 +6505,504 @@ mod tests {
         let truncated = TableDataView::truncate_for_label(&long, 40);
         assert_eq!(truncated.chars().count(), 41, "40 chars plus the ellipsis");
         assert!(truncated.ends_with('…'));
+    }
+
+    // -- Fix cluster A: dirty/custom state machine & edit-buffer reconciliation --
+
+    #[gpui::test]
+    async fn toggle_sort_while_dirty_runs_bar_text_then_sorts(cx: &mut TestAppContext) {
+        // Finding 1: a UI mutator invoked while the bar is dirty must not
+        // silently discard the hand-typed text by reapplying the *old* query.
+        // The chosen model promotes the dirty text first (as `run_from_editor`
+        // would), then layers the mutator's own change on top.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let mut fake = FakeDatabaseClient::new();
+        fake.query_result = rows_result(5);
+        let fake = Arc::new(fake);
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor.update(cx, |editor, cx| {
+                editor.set_text("SELECT * FROM users WHERE id > 1", window, cx)
+            });
+        });
+        view.read_with(cx, |view, _| assert!(view.sql_dirty()));
+
+        view.update_in(cx, |view, window, cx| view.toggle_sort("name", window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert!(
+                matches!(view.query().base, QueryBase::Custom(_)),
+                "the dirty text should have been promoted to a custom base"
+            );
+            assert!(!view.sql_dirty(), "promoting the text clears dirtiness");
+            let sort = view.query().sort.as_ref().expect("sort should be applied");
+            assert_eq!(sort.column, "name");
+        });
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
+        assert!(
+            last.contains("WHERE id > 1"),
+            "the executed SQL must be built from the hand-typed text, not the stale query: {last}"
+        );
+        assert!(
+            last.contains("ORDER BY \"name\""),
+            "the sort should also have been applied on top: {last}"
+        );
+    }
+
+    #[gpui::test]
+    async fn refresh_while_dirty_runs_bar_text(cx: &mut TestAppContext) {
+        // Finding 1: Refresh at dirty must behave like Run, not like a re-run
+        // of the stale query.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor
+                .update(cx, |editor, cx| editor.set_text("SELECT 1", window, cx));
+        });
+        view.read_with(cx, |view, _| assert!(view.sql_dirty()));
+
+        view.update_in(cx, |view, window, cx| view.refresh(window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert!(
+                matches!(view.query().base, QueryBase::Custom(_)),
+                "Refresh at dirty must run the bar text, entering custom mode"
+            );
+            assert!(!view.sql_dirty());
+        });
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
+        assert_eq!(last, "SELECT 1");
+    }
+
+    #[gpui::test]
+    async fn save_success_does_not_clobber_dirty_bar_text(cx: &mut TestAppContext) {
+        // Finding 1: the save success handler must not resync the editor text
+        // (which would overwrite an unsaved hand-typed edit) while dirty.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = fake_with_default_rows();
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.begin_edit_cell(0, 1, window, cx);
+            let editing = view.editing_cell().expect("edit should be in progress");
+            editing.field.update(cx, |field, cx| {
+                field.set_text("Alicia", window, cx);
+            });
+            view.commit_cell_edit(window, cx);
+        });
+        view.read_with(cx, |view, _| assert_eq!(view.pending_change_count(), 1));
+
+        // Kick off the save while still editable (clean bar): it must be
+        // in flight, not yet resolved, when the user starts typing below.
+        view.update_in(cx, |view, window, cx| view.save_edits(window, cx));
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.save_state(), &SaveState::Saving);
+        });
+
+        // The user starts typing a new query in the bar without running it,
+        // racing the in-flight save's completion.
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor.update(cx, |editor, cx| {
+                editor.set_text("SELECT * FROM users -- work in progress", window, cx)
+            });
+        });
+        view.read_with(cx, |view, _| assert!(view.sql_dirty()));
+
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                matches!(view.save_state(), SaveState::Done(_))
+            })
+        })
+        .await;
+
+        view.read_with(cx, |view, cx| {
+            let editor_text = view.sql_editor.read(cx).text(cx);
+            assert_eq!(
+                editor_text, "SELECT * FROM users -- work in progress",
+                "the save success handler must not overwrite unsaved bar text"
+            );
+            assert!(
+                view.sql_dirty(),
+                "the bar should remain dirty since its text was not resynced"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn run_custom_with_pending_edits_is_blocked(cx: &mut TestAppContext) {
+        // Finding 2, part 1: entering custom mode with a non-empty edit buffer
+        // must not happen implicitly. The run is refused, the buffer survives,
+        // and a notice is shown instead.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = fake_with_default_rows();
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.begin_edit_cell(0, 1, window, cx);
+            let editing = view.editing_cell().expect("edit should be in progress");
+            editing.field.update(cx, |field, cx| {
+                field.set_text("Alicia", window, cx);
+            });
+            view.commit_cell_edit(window, cx);
+        });
+        view.read_with(cx, |view, _| assert_eq!(view.pending_change_count(), 1));
+
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor
+                .update(cx, |editor, cx| editor.set_text("SELECT 1", window, cx));
+            view.run_from_editor(window, cx);
+        });
+        cx.run_until_parked();
+
+        view.read_with(cx, |view, _| {
+            assert!(
+                matches!(view.query().base, QueryBase::Table(_)),
+                "the query must not have entered custom mode"
+            );
+            assert_eq!(
+                view.pending_change_count(),
+                1,
+                "the pending edit must survive the refused run"
+            );
+            assert!(
+                view.pending_edits_notice().is_some(),
+                "a notice should explain why the run was refused"
+            );
+        });
+        assert!(
+            fake.calls()
+                .iter()
+                .all(|call| !call.starts_with("run_query sql=SELECT 1")),
+            "the custom text must not have been executed: {:?}",
+            fake.calls()
+        );
+    }
+
+    #[gpui::test]
+    async fn refresh_of_unchanged_query_ignores_pending_edits(cx: &mut TestAppContext) {
+        // Finding 2, part 1 parenthetical: a plain refresh (bar text ==
+        // current_sql) is unaffected by the pending-edits gate, since it does
+        // not enter custom mode.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = fake_with_default_rows();
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.begin_edit_cell(0, 1, window, cx);
+            let editing = view.editing_cell().expect("edit should be in progress");
+            editing.field.update(cx, |field, cx| {
+                field.set_text("Alicia", window, cx);
+            });
+            view.commit_cell_edit(window, cx);
+        });
+        view.read_with(cx, |view, _| assert_eq!(view.pending_change_count(), 1));
+
+        view.update_in(cx, |view, window, cx| view.refresh(window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert!(matches!(view.query().base, QueryBase::Table(_)));
+            assert_eq!(
+                view.pending_change_count(),
+                1,
+                "refreshing the same query must not touch the buffer"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn change_controls_hidden_in_custom_mode(cx: &mut TestAppContext) {
+        // Finding 2, part 2: `editable()` gates the Save/Discard controls, not
+        // just `pending_change_count() > 0`. Since the buffer is now kept empty
+        // across a custom-mode transition (part 1), this exercises the
+        // defense-in-depth path directly by entering custom mode from a clean
+        // buffer, which must show no edit controls even before a buffer could
+        // ever be populated.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = fake_with_default_rows();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor
+                .update(cx, |editor, cx| editor.set_text("SELECT 1", window, cx));
+            view.run_from_editor(window, cx);
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.query().is_custom() && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert!(!view.editable(), "custom-mode results must be read-only");
+        });
+    }
+
+    #[gpui::test]
+    async fn save_edits_is_noop_when_not_editable(cx: &mut TestAppContext) {
+        // Finding 2, part 2: `save_edits` must early-return when `!editable()`,
+        // even if the buffer somehow carries a pending change (defense in
+        // depth against the buffer/mode ever desyncing again).
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = fake_with_default_rows();
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        // Buffer an update directly (bypassing the now-gated UI path) to
+        // simulate a buffer that is non-empty while not editable.
+        let key = view.read_with(cx, |view, _| view.row_key_for(0).unwrap());
+        view.update_in(cx, |view, _window, cx| {
+            view.set_cell_value(key, "name", "Alicia".into(), cx);
+        });
+        view.read_with(cx, |view, _| assert_eq!(view.pending_change_count(), 1));
+
+        // Make the bar dirty, which suspends `editable()` without touching the
+        // buffer directly.
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor
+                .update(cx, |editor, cx| editor.set_text("SELECT 1", window, cx));
+        });
+        view.read_with(cx, |view, _| assert!(!view.editable()));
+
+        view.update_in(cx, |view, window, cx| view.save_edits(window, cx));
+        cx.run_until_parked();
+
+        assert!(
+            !fake
+                .calls()
+                .iter()
+                .any(|call| call.starts_with("apply_edits")),
+            "save_edits must not apply while not editable: {:?}",
+            fake.calls()
+        );
+        view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.pending_change_count(),
+                1,
+                "the buffer must be left untouched by the refused save"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn custom_mode_does_not_render_insert_rows_or_buffered_overlays(cx: &mut TestAppContext) {
+        // Finding 2, part 3: even if the buffer were somehow non-empty while
+        // `base != Table` (belt-and-suspenders against a future desync), the
+        // grid must not layer insert rows or update/delete overlays that the
+        // custom query never returned.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = fake_with_default_rows();
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        let key = view.read_with(cx, |view, _| view.row_key_for(0).unwrap());
+        view.update_in(cx, |view, _window, cx| {
+            view.set_cell_value(key.clone(), "name", "Alicia".into(), cx);
+        });
+        view.read_with(cx, |view, _| assert_eq!(view.pending_change_count(), 1));
+
+        // Force a transition to custom mode while bypassing the run-time guard,
+        // to exercise the render-time defense directly regardless of how the
+        // buffer ended up non-empty.
+        view.update_in(cx, |view, window, cx| {
+            view.query.base = QueryBase::Custom("SELECT id, name FROM users".into());
+            view.restart_query(window, cx);
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert!(matches!(view.query().base, QueryBase::Custom(_)));
+            let value = view.cell_display_value_for_test(&key, "name");
+            assert_ne!(
+                value.as_deref(),
+                Some("Alicia"),
+                "a buffered update must not be layered onto a custom-mode grid"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn buffer_edited_while_open_editor_closes_it_and_blocks_commits(cx: &mut TestAppContext) {
+        // Finding 3: an already-open inline editor must not remain interactive
+        // once the bar goes dirty. Transitioning to dirty finishes (commits)
+        // the in-progress edit and closes the editor; further commit paths are
+        // then no-ops because `editable()` is false.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = fake_with_default_rows();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.begin_edit_cell(0, 1, window, cx);
+            let editing = view.editing_cell().expect("edit should be in progress");
+            editing.field.update(cx, |field, cx| {
+                field.set_text("Alicia", window, cx);
+            });
+        });
+        view.read_with(cx, |view, _| {
+            assert!(view.editing_cell().is_some(), "the editor should be open");
+        });
+
+        // Hand-edit the SQL bar without running it: this is the transition to
+        // dirty that must close the still-open cell editor.
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor
+                .update(cx, |editor, cx| editor.set_text("SELECT 1", window, cx));
+        });
+
+        view.read_with(cx, |view, _| {
+            assert!(view.sql_dirty());
+            assert!(
+                view.editing_cell().is_none(),
+                "going dirty must close the open inline editor"
+            );
+            assert_eq!(
+                view.pending_change_count(),
+                1,
+                "the in-progress edit should have been committed, not dropped"
+            );
+        });
+
+        // Further commit-path calls must be no-ops while not editable.
+        view.update_in(cx, |view, _window, cx| {
+            view.set_editing_cell_null(cx);
+        });
+        view.read_with(cx, |view, _| {
+            let key = RowKey {
+                columns: vec!["id".into()],
+                values: vec![Some("1".into())],
+            };
+            let cell = view
+                .edits()
+                .updates()
+                .get(&key)
+                .and_then(|row| row.get("name"));
+            assert_eq!(
+                cell,
+                Some(&database_client::EditCell::Value("Alicia".into())),
+                "set_editing_cell_null must not run with no open editor"
+            );
+        });
     }
 }

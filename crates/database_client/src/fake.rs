@@ -24,6 +24,11 @@ pub struct FakeDatabaseClient {
     /// When set, fails only `run_query` (unlike `error`, which fails every
     /// method including the eager `table_structure` load).
     run_query_error: Mutex<Option<String>>,
+    /// When set, fails only `apply_edits`, unlike `error` which fails every
+    /// method. Lets a test drive a table to a fully loaded, editable state
+    /// (structure and first page both succeed) and then exercise the save
+    /// error path in isolation.
+    apply_edits_error: Mutex<Option<String>>,
     calls: Mutex<Vec<String>>,
 }
 
@@ -83,6 +88,7 @@ impl FakeDatabaseClient {
             error: None,
             queued_results: Mutex::new(VecDeque::new()),
             run_query_error: Mutex::new(None),
+            apply_edits_error: Mutex::new(None),
             calls: Mutex::new(Vec::new()),
         }
     }
@@ -99,6 +105,14 @@ impl FakeDatabaseClient {
     /// which fails every method.
     pub fn set_run_query_error(&self, error: Option<String>) {
         if let Ok(mut slot) = self.run_query_error.lock() {
+            *slot = error;
+        }
+    }
+
+    /// Sets or clears an error that fails only `apply_edits`, unlike `error`
+    /// which fails every method.
+    pub fn set_apply_edits_error(&self, error: Option<String>) {
+        if let Ok(mut slot) = self.apply_edits_error.lock() {
             *slot = error;
         }
     }
@@ -190,6 +204,11 @@ impl DatabaseClient for FakeDatabaseClient {
         edits: &TableEdits,
     ) -> Result<AppliedCounts> {
         self.check_error()?;
+        if let Ok(slot) = self.apply_edits_error.lock()
+            && let Some(message) = slot.as_ref()
+        {
+            return Err(anyhow!("{message}"));
+        }
         self.record(format!(
             "apply_edits u={} i={} d={}",
             edits.updates.len(),
