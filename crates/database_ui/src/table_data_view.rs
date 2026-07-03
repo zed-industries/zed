@@ -80,20 +80,56 @@ fn all_filter_ops() -> [FilterOp; 7] {
 
 /// Formats the footer's row-range summary from the current page and query
 /// state: `rows {offset+1}–{offset+len}{"+" if more rows exist beyond this
-/// page}`, `"No rows"` for an empty page, or `"{len} rows"` for a custom query
-/// that has not yet acquired a `limit` (a fresh custom query has no page size
-/// to frame an offset against).
+/// page}`, `"No rows"` for an empty page, or `"{len} rows"` (or `"{len}+
+/// rows"` when the result was truncated) for a custom query that has not yet
+/// acquired a `limit` (a fresh custom query has no page size to frame an
+/// offset against). The `+` in the truncated case matters: without it the
+/// count reads as an exact total, but a custom query capped at
+/// `UI_MAX_QUERY_ROWS` may have far more matching rows that were never
+/// fetched (finding 5).
 fn footer_counter(offset: usize, row_count: usize, has_more: bool, limit: Option<usize>) -> String {
     if row_count == 0 {
         return "No rows".to_string();
     }
     if limit.is_none() {
-        return format!("{row_count} rows");
+        let suffix = if has_more { "+" } else { "" };
+        return format!("{row_count}{suffix} rows");
     }
     let start = offset + 1;
     let end = offset + row_count;
     let suffix = if has_more { "+" } else { "" };
     format!("rows {start}–{end}{suffix}")
+}
+
+/// The footer's save-outcome message and color, if any, given the current
+/// `save_state` and pending change count.
+///
+/// An error is always surfaced: a failed save leaves the buffer intact (see
+/// `save_edits`), so the error renders alongside the still-visible
+/// change-controls, telling the user why nothing was applied. A success
+/// message only makes sense once the buffer that produced it has actually
+/// cleared - showing "Saved" next to a fresh, unrelated pending change would
+/// misattribute the new edit as already saved (finding 4).
+fn footer_save_result(save_state: &SaveState, pending: usize) -> Option<(String, Color)> {
+    match save_state {
+        SaveState::Error(message) => Some((message.clone(), Color::Error)),
+        SaveState::Done(message) if pending == 0 => Some((message.clone(), Color::Success)),
+        _ => None,
+    }
+}
+
+/// The effective page size to use for a new or resized page: the configured
+/// `DatabaseSettings::page_size`, clamped to `[1, UI_MAX_QUERY_ROWS]`.
+///
+/// `run_query` never returns more than `UI_MAX_QUERY_ROWS` rows (the server
+/// truncates and reports `has_more`), so a `LIMIT` above that ceiling would
+/// render a page size the query can never actually satisfy: pagination would
+/// advance the offset by more than a page's worth of rows can ever be
+/// fetched, silently skipping the rows in between (finding 0). Clamping here,
+/// at every site that turns the setting into a `limit`, keeps the rendered
+/// `LIMIT` always achievable.
+fn configured_page_size(cx: &App) -> usize {
+    (DatabaseSettings::get_global(cx).page_size.max(1) as usize).min(UI_MAX_QUERY_ROWS)
 }
 
 /// Which of the two tabs of a table view is currently shown.
@@ -387,7 +423,7 @@ impl TableDataView {
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<Self> {
-        let page_size = DatabaseSettings::get_global(cx).page_size.max(1) as usize;
+        let page_size = configured_page_size(cx);
         let query = QueryState::for_table(table.clone(), page_size);
         let initial_sql = render_sql(&query);
         cx.new(|cx| {
@@ -1308,6 +1344,14 @@ impl TableDataView {
     /// custom-query mode (before any page has been run, so `limit` is not yet
     /// set) this establishes the first page at the settings page size.
     ///
+    /// A previously unpaginated query (fresh custom SQL that has never had a
+    /// `limit`) that overran `UI_MAX_QUERY_ROWS` has already shown up to that
+    /// many rows with no `OFFSET`; the first explicit page must therefore
+    /// continue after what is already on screen (`offset = page.rows.len()`)
+    /// rather than jump only `page_size` rows in, which would just re-show
+    /// rows already displayed (finding 11). Ordinary table pagination is
+    /// unaffected since `limit` is always `Some` there already.
+    ///
     /// While the bar is dirty, first runs the bar's text (see
     /// [`Self::commit_dirty_bar`]) and evaluates `has_more` against that
     /// freshly loaded page; a refused run (finding 2) leaves paging untouched.
@@ -1315,14 +1359,22 @@ impl TableDataView {
         if !self.commit_dirty_bar(window, cx) {
             return;
         }
-        let has_more = self.page.as_ref().is_some_and(|page| page.has_more);
-        if !has_more {
+        let Some(page) = self.page.as_ref() else {
+            return;
+        };
+        if !page.has_more {
             return;
         }
+        let was_unpaginated = self.query.limit.is_none();
+        let shown_rows = page.rows.len();
         self.finish_editing(cx);
-        let page_size = DatabaseSettings::get_global(cx).page_size.max(1) as usize;
+        let page_size = configured_page_size(cx);
         let limit = *self.query.limit.get_or_insert(page_size);
-        self.query.offset += limit;
+        if was_unpaginated {
+            self.query.offset = shown_rows;
+        } else {
+            self.query.offset += limit;
+        }
         self.restart_query(window, cx);
     }
 
@@ -1358,7 +1410,11 @@ impl TableDataView {
             return;
         }
         self.finish_editing(cx);
-        self.query.limit = Some(page_size);
+        // Clamped defensively (finding 0): `run_query` never returns more
+        // than `UI_MAX_QUERY_ROWS` rows, so a larger limit would render a
+        // page size pagination can never actually deliver, even though the
+        // picker itself already only offers clamped choices.
+        self.query.limit = Some(page_size.clamp(1, UI_MAX_QUERY_ROWS));
         self.query.offset = 0;
         self.restart_query(window, cx);
     }
@@ -1539,7 +1595,7 @@ impl TableDataView {
     /// query over this tab's table at the current page-size setting, and runs
     /// it. The SQL bar's text is resynced to the freshly generated SELECT.
     pub fn reset_to_table_query(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let page_size = DatabaseSettings::get_global(cx).page_size.max(1) as usize;
+        let page_size = configured_page_size(cx);
         self.query = QueryState::for_table(self.table.clone(), page_size);
         self.restart_query(window, cx);
     }
@@ -1560,15 +1616,23 @@ impl TableDataView {
         self._structure_task = Some(cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
+                // Structure and data loads run independently and can be in
+                // flight at the same time (see `refresh`), so this must not
+                // touch `load_state`: that field reflects only the data
+                // load's own success/error handler in `restart_query`.
+                // Writing `Idle` here used to race a concurrent data fetch
+                // and mask its error banner with a stale grid (finding 6);
+                // the Structure tab already renders its own "Loading
+                // structure…" placeholder from `structure.is_none()` and
+                // needs no separate load state.
                 match result {
                     Ok(structure) => {
                         this.editable = compute_editable(this.is_view, &structure.columns);
                         this.numeric_columns = numeric_column_names(&structure.columns);
                         this.structure = Some(structure);
-                        this.load_state = LoadState::Idle;
                     }
                     Err(error) => {
-                        this.load_state = LoadState::Error(format!("{error:#}"));
+                        log::error!("failed to load table structure: {error:#}");
                     }
                 }
                 cx.notify();
@@ -2721,6 +2785,9 @@ impl TableDataView {
                 )
         });
 
+        let save_result = footer_save_result(&self.save_state, pending)
+            .map(|(text, color)| Label::new(text).color(color).size(LabelSize::Small));
+
         let timing = self
             .last_run
             .map(|(count, elapsed)| format!("{count} rows · {} ms", elapsed.as_millis()));
@@ -2775,6 +2842,7 @@ impl TableDataView {
                     })
                     .children(add_row_button)
                     .children(change_controls)
+                    .children(save_result)
                     .when_some(self.read_only_reason(), |this, reason| {
                         this.child(
                             Label::new(reason)
@@ -2804,9 +2872,13 @@ impl TableDataView {
     /// that opens a menu of page-size choices. The option list is always
     /// `100`/`500`/`1000` plus the settings default when it is not already one
     /// of those three, so the configured default is always reachable even if
-    /// it is unusual (e.g. `250`).
+    /// it is unusual (e.g. `250`). The default is clamped to
+    /// `UI_MAX_QUERY_ROWS` (finding 0) before being considered, so a setting
+    /// above that ceiling never adds an unreachable option: `run_query` can
+    /// never return more rows than that, so a larger `LIMIT` could never be
+    /// satisfied.
     fn render_page_size_picker(&self, limit: usize, cx: &Context<Self>) -> AnyElement {
-        let default = DatabaseSettings::get_global(cx).page_size.max(1) as usize;
+        let default = configured_page_size(cx);
         let mut sizes = vec![100, 500, 1000];
         if !sizes.contains(&default) {
             sizes.push(default);
@@ -3304,15 +3376,17 @@ mod tests {
         ColumnInfo, DatabaseClient, Filter, FilterOp, QueryResult, RowKey, SortDirection, TableRef,
     };
     use gpui::{
-        AppContext as _, DismissEvent, Entity, Focusable, TestAppContext, VisualTestContext,
+        AppContext as _, DismissEvent, Entity, Focusable, TestAppContext, UpdateGlobal as _,
+        VisualTestContext,
     };
 
     use super::{
         EditTarget, FilterPopover, LoadState, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, SaveState,
         TableDataView, ViewMode, all_filter_ops, column_width_for_chars, compute_editable,
-        filter_op_label, footer_counter, numeric_column_names,
+        filter_op_label, footer_counter, footer_save_result, numeric_column_names,
     };
     use crate::query_state::{QueryBase, render_sql};
+    use ui::Color;
 
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -3547,6 +3621,67 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn next_page_on_unpaginated_truncated_custom_continues_after_shown_rows(
+        cx: &mut TestAppContext,
+    ) {
+        // Finding 11: a fresh custom query (limit == None) that overran
+        // UI_MAX_QUERY_ROWS has already shown that many rows with no OFFSET.
+        // The first explicit page must continue right after what is already
+        // on screen, not jump back to `page_size` rows in - which would just
+        // re-show rows 0..page_size that were already displayed.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let mut fake = FakeDatabaseClient::new();
+        fake.query_result = QueryResult {
+            columns: vec!["id".into()],
+            rows: (0..super::UI_MAX_QUERY_ROWS)
+                .map(|i| vec![Some(i.to_string())])
+                .collect(),
+            truncated: true,
+            command_tag: None,
+        };
+        let fake = Arc::new(fake);
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor.update(cx, |editor, cx| {
+                editor.set_text("SELECT id FROM t", window, cx)
+            });
+            view.run_from_editor(window, cx);
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.query().is_custom() && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.query().limit, None, "sanity: still unpaginated");
+            assert_eq!(view.query().offset, 0);
+        });
+
+        view.update_in(cx, |view, window, cx| view.next_page(window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.query().offset,
+                super::UI_MAX_QUERY_ROWS,
+                "must continue after the rows already shown, not jump to page_size"
+            );
+        });
+    }
+
+    #[gpui::test]
     async fn set_page_size_resets_offset_and_reruns_sql(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
@@ -3646,6 +3781,88 @@ mod tests {
         });
     }
 
+    /// Sets `DatabaseSettings.page_size` in the test settings store.
+    fn set_page_size_setting(cx: &mut TestAppContext, page_size: u32) {
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.database.get_or_insert_default().page_size = Some(page_size);
+                });
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn page_size_setting_above_ceiling_is_clamped_in_generated_sql(cx: &mut TestAppContext) {
+        // A `page_size` configured above UI_MAX_QUERY_ROWS must not produce a
+        // LIMIT the query can never actually satisfy (finding 0): run_query
+        // never returns more than UI_MAX_QUERY_ROWS rows, so any larger limit
+        // just leaves the extra rows permanently unreachable by pagination.
+        init_test(cx);
+        set_page_size_setting(cx, 5000);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.query().limit,
+                Some(super::UI_MAX_QUERY_ROWS),
+                "limit must be clamped to UI_MAX_QUERY_ROWS"
+            );
+        });
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
+        assert!(
+            last.contains("LIMIT 1000 OFFSET 0"),
+            "unexpected generated SQL: {last}"
+        );
+    }
+
+    #[gpui::test]
+    async fn configured_page_size_clamps_to_ceiling(cx: &mut TestAppContext) {
+        // `render_page_size_picker` builds its option list from
+        // `configured_page_size`, so clamping there is what keeps the picker
+        // from ever offering an unreachable choice above UI_MAX_QUERY_ROWS
+        // (finding 0).
+        init_test(cx);
+        set_page_size_setting(cx, 5000);
+        cx.update(|cx| {
+            assert_eq!(super::configured_page_size(cx), super::UI_MAX_QUERY_ROWS);
+        });
+    }
+
+    #[gpui::test]
+    async fn set_page_size_clamps_above_ceiling(cx: &mut TestAppContext) {
+        // Even a direct `set_page_size` call above UI_MAX_QUERY_ROWS (e.g. a
+        // stale picker entry) must clamp defensively (finding 0).
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        view.update_in(cx, |view, window, cx| view.set_page_size(5000, window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.query().limit, Some(super::UI_MAX_QUERY_ROWS));
+        });
+    }
+
     #[test]
     fn footer_counter_formats_row_range() {
         assert_eq!(footer_counter(0, 100, true, Some(100)), "rows 1–100+");
@@ -3663,6 +3880,53 @@ mod tests {
     fn footer_counter_custom_query_without_limit() {
         assert_eq!(footer_counter(0, 42, false, None), "42 rows");
         assert_eq!(footer_counter(0, 1, false, None), "1 rows");
+    }
+
+    #[test]
+    fn footer_counter_custom_query_truncated_shows_plus() {
+        // A fresh custom query with no `limit` that was truncated at
+        // UI_MAX_QUERY_ROWS must not present its row count as an exact total
+        // (finding 5): there may be more matching rows never fetched.
+        assert_eq!(footer_counter(0, 1000, true, None), "1000+ rows");
+    }
+
+    #[test]
+    fn footer_save_result_shows_error_regardless_of_pending() {
+        // A failed save keeps the buffer intact (see `save_edits`), so the
+        // error must render even while `change_controls` is also showing the
+        // still-pending count (finding 4).
+        let state = SaveState::Error("permission denied".to_string());
+        assert_eq!(
+            footer_save_result(&state, 1),
+            Some(("permission denied".to_string(), Color::Error))
+        );
+        assert_eq!(
+            footer_save_result(&state, 0),
+            Some(("permission denied".to_string(), Color::Error))
+        );
+    }
+
+    #[test]
+    fn footer_save_result_shows_done_only_once_buffer_is_clear() {
+        // A success message must appear once the buffer that produced it has
+        // cleared (pending == 0, finding 4)...
+        let state = SaveState::Done("Saved: 1 updated, 0 inserted, 0 deleted".to_string());
+        assert_eq!(
+            footer_save_result(&state, 0),
+            Some((
+                "Saved: 1 updated, 0 inserted, 0 deleted".to_string(),
+                Color::Success
+            ))
+        );
+        // ...but not once a fresh, unrelated edit has made the buffer dirty
+        // again, which would misattribute the new edit as already saved.
+        assert_eq!(footer_save_result(&state, 1), None);
+    }
+
+    #[test]
+    fn footer_save_result_hides_idle_and_saving() {
+        assert_eq!(footer_save_result(&SaveState::Idle, 0), None);
+        assert_eq!(footer_save_result(&SaveState::Saving, 0), None);
     }
 
     #[gpui::test]
@@ -3816,6 +4080,63 @@ mod tests {
             structure_calls_after > structure_calls_before,
             "refresh in Structure mode must refetch the structure even when it is None"
         );
+    }
+
+    #[gpui::test]
+    async fn reload_structure_does_not_clobber_data_load_error(cx: &mut TestAppContext) {
+        // Finding 6: `load_state` belongs to the data load alone. A failing
+        // data query must leave its error banner up even after a concurrent
+        // (or later-completing) structure reload succeeds - the old shared
+        // field let a late `reload_structure` success overwrite the data
+        // error with `Idle`, silently swapping the error banner for a stale
+        // grid.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        // Visit Structure once so `refresh` also reloads it (see `refresh`'s
+        // `structure.is_some()` gate).
+        view.update(cx, |view, cx| view.toggle_structure(cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.structure().is_some())
+        })
+        .await;
+        view.update(cx, |view, cx| view.toggle_structure(cx));
+        cx.run_until_parked();
+
+        // Now make only the data query fail; the structure fetch keeps
+        // succeeding.
+        fake.set_run_query_error(Some("syntax error".into()));
+        view.update_in(cx, |view, window, cx| view.refresh(window, cx));
+
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                matches!(view.load_state(), LoadState::Error(_))
+            })
+        })
+        .await;
+        // Give the (successful) structure reload every chance to complete and
+        // settle after the data error already landed.
+        cx.run_until_parked();
+
+        view.read_with(cx, |view, _| {
+            assert!(
+                matches!(view.load_state(), LoadState::Error(_)),
+                "a later-completing structure reload must not clear the data error, got {:?}",
+                view.load_state()
+            );
+            assert!(
+                view.structure().is_some(),
+                "the structure reload itself should still have succeeded"
+            );
+        });
     }
 
     #[gpui::test]
@@ -4934,6 +5255,12 @@ mod tests {
         })
         .await;
 
+        let runs_before_save = fake
+            .calls()
+            .iter()
+            .filter(|call| call.starts_with("run_query"))
+            .count();
+
         view.update_in(cx, |view, window, cx| {
             let key = view.row_key_for(0).expect("row 0 should yield a RowKey");
             view.set_cell_value(key, "name", "Alicia".into(), cx);
@@ -4941,8 +5268,20 @@ mod tests {
             view.save_edits(window, cx);
         });
 
+        // The success handler clears the buffer and merely spawns the
+        // reload's tokio task in the same update, so waiting on the buffer
+        // alone races that task: it can read as empty before `run_query` for
+        // the reload has actually executed. Wait for the reload to actually
+        // run instead (finding 7), then assert the settled state.
         wait_until(cx, |cx| {
-            view.read_with(cx, |view, _| view.pending_change_count() == 0)
+            view.read_with(cx, |_, _| {
+                let runs = fake
+                    .calls()
+                    .iter()
+                    .filter(|call| call.starts_with("run_query"))
+                    .count();
+                runs > runs_before_save
+            })
         })
         .await;
 
@@ -4953,13 +5292,6 @@ mod tests {
             "save must call apply_edits with one update: {:?}",
             fake.calls()
         );
-        // A successful save reloads the page (a fresh run follows the apply).
-        let runs = fake
-            .calls()
-            .into_iter()
-            .filter(|call| call.starts_with("run_query"))
-            .count();
-        assert!(runs >= 2, "save success should reload the page");
         view.read_with(cx, |view, _| {
             assert_eq!(view.pending_change_count(), 0, "buffer cleared on success");
             assert!(matches!(view.save_state(), SaveState::Done(_)));
