@@ -8,6 +8,7 @@
 
 mod protocol;
 mod tools;
+mod write_sql;
 
 use std::sync::Arc;
 use std::time::Duration;
