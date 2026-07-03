@@ -168,7 +168,7 @@ impl TerminalPanel {
                     )
                     .when(assistant_enabled, |this| {
                         this.when_some(split_context.clone(), |this, focus_handle| {
-                            this.child(cx.new(|_| InlineAssistTabBarButton { focus_handle }))
+                            this.child(InlineAssistTabBarButton { focus_handle })
                         })
                     })
                     .child(
@@ -1691,18 +1691,22 @@ impl workspace::TerminalProvider for TerminalProvider {
     }
 }
 
+#[derive(IntoElement)]
 struct InlineAssistTabBarButton {
     focus_handle: FocusHandle,
 }
 
-impl Render for InlineAssistTabBarButton {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let focus_handle = self.focus_handle.clone();
+impl RenderOnce for InlineAssistTabBarButton {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let focus_handle = self.focus_handle;
         IconButton::new("terminal_inline_assistant", IconName::ZedAssistant)
             .icon_size(IconSize::Small)
-            .on_click(cx.listener(|_, _, window, cx| {
-                window.dispatch_action(InlineAssist::default().boxed_clone(), cx);
-            }))
+            .on_click({
+                let focus_handle = focus_handle.clone();
+                move |_, window, cx| {
+                    focus_handle.dispatch_action(&InlineAssist::default(), window, cx);
+                }
+            })
             .tooltip(move |_window, cx| {
                 Tooltip::for_action_in("Inline Assist", &InlineAssist::default(), &focus_handle, cx)
             })
