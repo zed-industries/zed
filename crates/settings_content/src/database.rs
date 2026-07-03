@@ -35,4 +35,10 @@ pub struct DatabaseConnectionContent {
     pub database: String,
     /// User name.
     pub user: String,
+    /// Allow the MCP `apply_write` tool to commit INSERT/UPDATE/DELETE
+    /// statements to this connection. Off by default; leave unset for
+    /// read-only access.
+    ///
+    /// Default: false
+    pub allow_mcp_writes: Option<bool>,
 }

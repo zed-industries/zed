@@ -370,6 +370,7 @@ impl ConnectionModal {
             port: config.port,
             database: config.database.clone(),
             user: config.user.clone(),
+            allow_mcp_writes: None,
         };
         update_settings_file(self.fs.clone(), cx, move |settings, _| {
             let connections = settings
@@ -381,7 +382,14 @@ impl ConnectionModal {
                 .iter_mut()
                 .find(|entry| Some(&entry.name) == original_name.as_ref())
             {
-                *slot = content;
+                // The form has no `allow_mcp_writes` control, so preserve
+                // whatever was already set for this connection rather than
+                // silently clearing it on every edit.
+                let allow_mcp_writes = slot.allow_mcp_writes;
+                *slot = settings::DatabaseConnectionContent {
+                    allow_mcp_writes,
+                    ..content
+                };
             } else {
                 connections.push(content);
             }

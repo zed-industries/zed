@@ -135,6 +135,34 @@ fn parse_connections(settings: &serde_json::Value) -> Vec<ConnectionConfig> {
         .collect()
 }
 
+/// Extracts the names of connections whose `allow_mcp_writes` setting is
+/// `true`. The `apply_write` tool consults this to decide whether it may
+/// commit DML against a given connection; every other connection stays
+/// read-only. An absent `database.connections` section yields an empty set.
+///
+/// Not yet wired into `main()`: the `propose_write`/`apply_write` tools that
+/// consume this land in a later task, which should remove this `allow`.
+#[allow(dead_code)]
+fn parse_write_allowed(settings: &serde_json::Value) -> std::collections::HashSet<String> {
+    let Some(connections) = settings
+        .get("database")
+        .and_then(|database| database.get("connections"))
+        .and_then(|connections| connections.as_array())
+    else {
+        return std::collections::HashSet::new();
+    };
+    connections
+        .iter()
+        .filter(|connection| {
+            connection
+                .get("allow_mcp_writes")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false)
+        })
+        .filter_map(|connection| connection.get("name")?.as_str().map(str::to_string))
+        .collect()
+}
+
 fn parse_max_rows(settings: &serde_json::Value) -> usize {
     settings
         .get("database")
@@ -333,5 +361,26 @@ mod tests {
         // Must stay byte-for-byte identical to
         // `database_ui::connection_store::credentials_url`.
         assert_eq!(credentials_url("local-shop"), "zed-database://local-shop");
+    }
+
+    #[test]
+    fn parse_write_allowed_collects_only_flagged_connections() {
+        let settings = serde_json::json!({
+            "database": { "connections": [
+                { "name": "prod", "host": "h", "port": 5432, "database": "d", "user": "u" },
+                { "name": "dev", "host": "h", "port": 5432, "database": "d", "user": "u", "allow_mcp_writes": true },
+                { "name": "stage", "host": "h", "port": 5432, "database": "d", "user": "u", "allow_mcp_writes": false }
+            ]}
+        });
+        let allowed = parse_write_allowed(&settings);
+        assert!(allowed.contains("dev"));
+        assert!(!allowed.contains("prod"));
+        assert!(!allowed.contains("stage"));
+        assert_eq!(allowed.len(), 1);
+    }
+
+    #[test]
+    fn parse_write_allowed_empty_without_database_section() {
+        assert!(parse_write_allowed(&serde_json::json!({})).is_empty());
     }
 }

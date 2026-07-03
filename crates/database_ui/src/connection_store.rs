@@ -584,6 +584,7 @@ mod tests {
                             port: 5432,
                             database: "postgres".into(),
                             user: "postgres".into(),
+                            allow_mcp_writes: None,
                         }]);
                 });
             });
@@ -776,6 +777,7 @@ mod tests {
                             port: 5432,
                             database: "postgres".into(),
                             user: "postgres".into(),
+                            allow_mcp_writes: None,
                         },
                         settings::DatabaseConnectionContent {
                             name: "prod".into(),
@@ -783,6 +785,7 @@ mod tests {
                             port: 5432,
                             database: "postgres".into(),
                             user: "readonly".into(),
+                            allow_mcp_writes: None,
                         },
                     ]);
                 });
@@ -829,6 +832,7 @@ mod tests {
                             port: 5432,
                             database: "postgres".into(),
                             user: "postgres".into(),
+                            allow_mcp_writes: None,
                         }]);
                 });
             });
