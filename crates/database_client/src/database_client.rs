@@ -14,7 +14,7 @@ pub struct ConnectionConfig {
     pub name: String,
     pub host: String,
     pub port: u16,
-    pub database: String, // стартовая база
+    pub database: String, // the database to connect to on startup
     pub user: String,
 }
 
@@ -35,7 +35,8 @@ pub struct TableInfo {
 pub struct ColumnInfo {
     pub name: String,
     pub data_type: String, // information_schema.columns.data_type ("integer", "text", ...)
-    pub udt_name: String,  // udt_name ("int4", "text", ...) — для кастов параметров
+    pub udt_name: String,  // udt_name ("int4", "text", ...) — used to cast filter parameters
+    pub udt_schema: String, // udt_schema; schema-qualifies the udt so types outside search_path resolve
     pub is_nullable: bool,
     pub default: Option<String>,
     pub is_primary_key: bool,
@@ -52,7 +53,7 @@ pub struct ForeignKey {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexInfo {
     pub name: String,
-    pub definition: String, // pg_indexes.indexdef целиком
+    pub definition: String, // the full pg_indexes.indexdef
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -76,7 +77,7 @@ pub enum FilterOp {
 pub struct Filter {
     pub column: String,
     pub op: FilterOp,
-    pub value: String, // игнорируется для IsNull
+    pub value: String, // ignored for IsNull
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,16 +103,16 @@ pub struct SelectSpec {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RowsPage {
     pub columns: Vec<String>,
-    pub rows: Vec<Vec<Option<String>>>, // все значения текстом; None = NULL
-    pub has_more: bool,                 // запрашивали limit+1
+    pub rows: Vec<Vec<Option<String>>>, // all values as text; None = NULL
+    pub has_more: bool,                 // true when the limit+1 probe row was returned
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct QueryResult {
     pub columns: Vec<String>,
     pub rows: Vec<Vec<Option<String>>>,
-    pub truncated: bool,             // обрезано по max_rows
-    pub command_tag: Option<String>, // например "SELECT 42"
+    pub truncated: bool, // true when rows were dropped to respect max_rows
+    pub command_tag: Option<String>, // e.g. "SELECT 42"
 }
 
 #[async_trait::async_trait]

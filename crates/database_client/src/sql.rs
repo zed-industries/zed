@@ -44,7 +44,14 @@ pub fn build_select(
             FilterOp::IsNull => predicates.push(format!("{ident} IS NULL")),
             FilterOp::Contains => {
                 params.push(format!("%{}%", escape_like(&filter.value)));
-                predicates.push(format!("{ident}::text ILIKE ${} ESCAPE '\\'", params.len()));
+                // `E'\\'` is a single backslash regardless of the server's
+                // `standard_conforming_strings` setting; a bare `'\'` literal
+                // breaks parsing when that GUC is off. Backslash is already the
+                // default LIKE escape, so this preserves `escape_like`'s meaning.
+                predicates.push(format!(
+                    "{ident}::text ILIKE ${} ESCAPE E'\\\\'",
+                    params.len()
+                ));
             }
             FilterOp::Eq | FilterOp::NotEq | FilterOp::Gt | FilterOp::Lt => {
                 let op = match filter.op {
@@ -55,9 +62,16 @@ pub fn build_select(
                     FilterOp::Contains | FilterOp::IsNull => unreachable!(),
                 };
                 params.push(filter.value.clone());
+                // Bind the parameter as text (every param is a Rust `String`, which
+                // `postgres-types` only accepts for text-like types) and let the server
+                // cast it to the column's type. This keeps typed comparison semantics for
+                // Gt/Lt while avoiding a bind-time `WrongType` error on non-text columns.
+                // The cast is schema-qualified so types outside `search_path` (e.g. a
+                // `citext` extension installed into a dedicated schema) still resolve.
                 predicates.push(format!(
-                    "{ident} {op} ${}::{}",
+                    "{ident} {op} ${}::text::{}.{}",
                     params.len(),
+                    quote_ident(&column.udt_schema),
                     quote_ident(&column.udt_name)
                 ));
             }
@@ -95,7 +109,7 @@ pub const LIST_TABLES_SQL: &str = "SELECT table_name, table_type FROM informatio
      WHERE table_schema = $1 AND table_type IN ('BASE TABLE', 'VIEW') \
      ORDER BY table_name";
 
-pub const COLUMNS_SQL: &str = "SELECT c.column_name, c.data_type, c.udt_name, \
+pub const COLUMNS_SQL: &str = "SELECT c.column_name, c.data_type, c.udt_name, c.udt_schema, \
      c.is_nullable = 'YES' AS is_nullable, c.column_default, \
      EXISTS (SELECT 1 FROM information_schema.table_constraints tc \
        JOIN information_schema.key_column_usage kcu \
@@ -154,6 +168,7 @@ mod tests {
             name: name.to_string(),
             data_type: udt.to_string(),
             udt_name: udt.to_string(),
+            udt_schema: "pg_catalog".to_string(),
             is_nullable: true,
             default: None,
             is_primary_key: false,
@@ -217,10 +232,55 @@ mod tests {
         assert_eq!(
             built.sql,
             "SELECT \"id\"::text, \"name\"::text FROM \"public\".\"users\" \
-             WHERE \"id\" > $1::\"int4\" AND \"name\"::text ILIKE $2 ESCAPE '\\' AND \"name\" IS NULL \
+             WHERE \"id\" > $1::text::\"pg_catalog\".\"int4\" \
+             AND \"name\"::text ILIKE $2 ESCAPE E'\\\\' AND \"name\" IS NULL \
              ORDER BY \"name\" DESC LIMIT 51 OFFSET 100"
         );
         assert_eq!(built.params, vec!["5".to_string(), "%a\\%b%".to_string()]);
+    }
+
+    #[test]
+    fn build_select_casts_filter_params_through_text_schema_qualified() {
+        // Non-text columns must be compared by casting the text-bound parameter
+        // server-side to the column's schema-qualified type, so binding the
+        // parameter as a Rust String does not fail and typed comparison is kept.
+        let mut price = col("price", "numeric");
+        price.udt_schema = "pg_catalog".into();
+        let mut email = col("email", "citext");
+        email.udt_schema = "extensions".into();
+        let columns = vec![col("id", "int4"), price, email];
+        let spec = SelectSpec {
+            filters: vec![
+                Filter {
+                    column: "id".into(),
+                    op: FilterOp::Eq,
+                    value: "5".into(),
+                },
+                Filter {
+                    column: "price".into(),
+                    op: FilterOp::Lt,
+                    value: "9.99".into(),
+                },
+                Filter {
+                    column: "email".into(),
+                    op: FilterOp::NotEq,
+                    value: "a@b.com".into(),
+                },
+            ],
+            sort: None,
+            limit: 10,
+            offset: 0,
+        };
+        let built = build_select(&users_table(), &columns, &spec).unwrap();
+        assert_eq!(
+            built.sql,
+            "SELECT \"id\"::text, \"price\"::text, \"email\"::text FROM \"public\".\"users\" \
+             WHERE \"id\" = $1::text::\"pg_catalog\".\"int4\" \
+             AND \"price\" < $2::text::\"pg_catalog\".\"numeric\" \
+             AND \"email\" <> $3::text::\"extensions\".\"citext\" \
+             LIMIT 11 OFFSET 0"
+        );
+        assert_eq!(built.params, vec!["5", "9.99", "a@b.com"]);
     }
 
     #[test]
