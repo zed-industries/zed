@@ -58,8 +58,9 @@ pub struct HttpTransport {
     /// When set, the transport attaches `Authorization: Bearer` headers and
     /// handles 401 responses with token refresh + retry.
     token_provider: Option<Arc<dyn OAuthTokenProvider>>,
-    /// The challenge from the last 401 this transport gave up on. See
-    /// [`Transport::auth_challenge`].
+    /// The challenge from the last 401 this transport gave up on; cleared at
+    /// the start of each send so it always describes the most recent attempt.
+    /// See [`Transport::auth_challenge`].
     auth_challenge: SyncMutex<Option<WwwAuthenticate>>,
 }
 
@@ -147,6 +148,11 @@ impl HttpTransport {
 
     /// Send a message and handle the response based on content type.
     async fn send_message(&self, message: String) -> Result<()> {
+        // The same server instance can be restarted over this transport; a
+        // challenge recorded by a previous client generation must not be
+        // observed by the current one.
+        *self.auth_challenge.lock() = None;
+
         let is_notification =
             !message.contains("\"id\":") || message.contains("notifications/initialized");
 

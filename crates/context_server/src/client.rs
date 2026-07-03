@@ -63,14 +63,13 @@ pub(crate) struct Client {
     request_timeout: Option<Duration>,
     /// Single-slot side channel for the last transport-level error. When the
     /// output task encounters a send failure it stashes the error here and
-    /// exits; the next request to observe cancellation `.take()`s it so it can
-    /// propagate a typed error (e.g. `TransportError::AuthRequired`) instead
-    /// of a generic "cancelled". Only the `initialize` request may rely on
-    /// this: it is the sole in-flight request during startup, so the slot is
-    /// delivered to it deterministically. Once concurrent requests are in
-    /// flight, a single arbitrary one of them receives the stashed error.
-    /// Post-initialize consumers observe [`Self::wait_for_shutdown`] instead,
-    /// which does not depend on a request being in flight.
+    /// exits; the next request to observe cancellation `.take()`s it so it
+    /// can fail with the underlying cause (e.g. "connection refused") instead
+    /// of a generic "cancelled". This is best-effort diagnostics: with
+    /// concurrent requests in flight, a single arbitrary one receives the
+    /// stashed error. Nothing may depend on it for correctness —
+    /// authentication challenges are observed via [`Self::wait_for_shutdown`]
+    /// and [`Transport::auth_challenge`], which do not involve requests.
     last_transport_error: Arc<Mutex<Option<anyhow::Error>>>,
 }
 

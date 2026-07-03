@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use context_server::oauth::{self, McpOAuthTokenProvider, OAuthDiscovery, OAuthSession};
-use context_server::transport::{HttpTransport, TransportError};
+use context_server::transport::HttpTransport;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use credentials_provider::CredentialsProvider;
 use futures::future::Either;
@@ -1783,9 +1783,11 @@ async fn resolve_start_failure(
     configuration: Arc<ContextServerConfiguration>,
     cx: &AsyncApp,
 ) -> ContextServerState {
-    let www_authenticate = err.downcast_ref::<TransportError>().map(|e| match e {
-        TransportError::AuthRequired { www_authenticate } => www_authenticate.clone(),
-    });
+    // Read the challenge from the transport rather than downcasting `err`: it
+    // is recorded before the failed send's error propagates, so a 401 is
+    // recognized even when another error (e.g. the request timeout) wins the
+    // race to become the reported startup failure.
+    let www_authenticate = server.auth_challenge();
 
     // When the error is NOT a 401 but there is a cached OAuth session in the
     // keychain, the session is likely stale/expired and caused the failure
