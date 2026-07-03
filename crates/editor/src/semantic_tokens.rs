@@ -15,7 +15,7 @@ use project::{
     project_settings::ProjectSettings,
 };
 use settings::{
-    SemanticTokenColorOverride, SemanticTokenFontStyle, SemanticTokenFontWeight,
+    SemanticTokenColorOverride, SemanticTokenFontStyle, SemanticTokenFontWeight, SemanticTokenRule,
     SemanticTokenRules, Settings as _,
 };
 use text::BufferId;
@@ -142,7 +142,10 @@ impl Editor {
             );
         }
 
-        let Some((sema, project)) = self.semantics_provider.clone().zip(self.project.clone())
+        let Some((sema, project)) = self
+            .semantics_provider
+            .clone()
+            .zip(self.project.as_ref().map(|p| p.downgrade()))
         else {
             return;
         };
@@ -283,6 +286,9 @@ impl Editor {
                             .buffer(buffer_id)
                             .and_then(|buf| buf.read(cx).language().map(|l| l.name()));
 
+                        let Some(project) = project.upgrade() else {
+                            return;
+                        };
                         editor.display_map.update(cx, |display_map, cx| {
                             project.read(cx).lsp_store().update(cx, |lsp_store, cx| {
                                 let mut token_highlights = Vec::new();
@@ -295,13 +301,14 @@ impl Editor {
                                     ) else {
                                         continue;
                                     };
+                                    let theme = cx.theme().syntax();
                                     token_highlights.reserve(2 * server_tokens.len());
                                     token_highlights.extend(buffer_into_editor_highlights(
                                         &server_tokens,
                                         stylizer,
                                         &multi_buffer_snapshot,
                                         &mut interner,
-                                        cx,
+                                        theme,
                                     ));
                                 }
 
@@ -328,7 +335,7 @@ fn buffer_into_editor_highlights<'a, 'b>(
     stylizer: &'a SemanticTokenStylizer,
     multi_buffer_snapshot: &'a multi_buffer::MultiBufferSnapshot,
     interner: &'b mut HighlightStyleInterner,
-    cx: &'a App,
+    theme: &'a SyntaxTheme,
 ) -> impl Iterator<Item = SemanticTokenHighlight> + use<'a, 'b> {
     multi_buffer_snapshot
         .text_anchors_to_visible_anchors(
@@ -341,12 +348,7 @@ fn buffer_into_editor_highlights<'a, 'b>(
         .zip(buffer_tokens)
         .filter_map(|((multi_buffer_start, multi_buffer_end), token)| {
             let range = multi_buffer_start?..multi_buffer_end?;
-            let style = convert_token(
-                stylizer,
-                cx.theme().syntax(),
-                token.token_type,
-                token.token_modifiers,
-            )?;
+            let style = convert_token(stylizer, theme, token.token_type, token.token_modifiers)?;
             let style = interner.intern(style);
             Some(SemanticTokenHighlight {
                 range,
@@ -365,27 +367,19 @@ fn convert_token(
     modifiers: u32,
 ) -> Option<HighlightStyle> {
     let rules = stylizer.rules_for_token(token_type)?;
-    let matching: Vec<_> = rules
-        .iter()
-        .filter(|rule| {
-            rule.token_modifiers
-                .iter()
-                .all(|m| stylizer.has_modifier(modifiers, m))
-        })
-        .collect();
-
-    if let Some(rule) = matching.last() {
-        if rule.no_style_defined() {
-            return None;
-        }
+    let filter = |rule: &&SemanticTokenRule| {
+        rule.token_modifiers
+            .iter()
+            .all(|m| stylizer.has_modifier(modifiers, m))
+    };
+    let last = rules.last()?;
+    if last.no_style_defined() && filter(&last) {
+        return None;
     }
 
     let mut highlight = HighlightStyle::default();
-    let mut empty = true;
 
-    for rule in matching {
-        empty = false;
-
+    for rule in rules.into_iter().filter(filter) {
         let style = rule
             .style
             .iter()
@@ -400,7 +394,7 @@ fn convert_token(
                 highlight.$highlight_field = rule
                     .$rule_field
                     .map($transform)
-                    .or_else(|| style.and_then(|s| s.$highlight_field))
+                    .or_else(|| style.as_ref().and_then(|s| s.$highlight_field))
                     .or(highlight.$highlight_field)
             };
         }
@@ -460,8 +454,7 @@ fn convert_token(
             },
         );
     }
-
-    if empty { None } else { Some(highlight) }
+    Some(highlight)
 }
 
 #[cfg(test)]
@@ -577,6 +570,107 @@ mod tests {
         );
 
         assert_eq!(full_counter.load(atomic::Ordering::Acquire), 2);
+    }
+
+    #[gpui::test]
+    async fn lsp_semantic_tokens_dynamic_registration_requeries_open_document(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        update_test_language_settings(cx, &|language_settings| {
+            language_settings.languages.0.insert(
+                "Rust".into(),
+                LanguageSettingsContent {
+                    semantic_tokens: Some(SemanticTokens::Full),
+                    ..LanguageSettingsContent::default()
+                },
+            );
+        });
+
+        // The server advertises no semantic tokens capability up front; it only
+        // registers `textDocument/semanticTokens` dynamically, after the document
+        // is already open (as Roslyn does).
+        let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+
+        let full_counter = Arc::new(AtomicUsize::new(0));
+        let _full_request = cx
+            .set_request_handler::<lsp::request::SemanticTokensFullRequest, _, _>({
+                let full_counter = full_counter.clone();
+                move |_, _, _| {
+                    full_counter.fetch_add(1, atomic::Ordering::Release);
+                    async move {
+                        Ok(Some(lsp::SemanticTokensResult::Tokens(
+                            lsp::SemanticTokens {
+                                data: vec![0, 3, 4, 0, 0],
+                                result_id: None,
+                            },
+                        )))
+                    }
+                }
+            });
+
+        cx.set_state("ˇfn main() {}");
+        // Drain the refresh scheduled on open (while no capability exists yet), so a
+        // later request can only come from the dynamic-registration refresh itself.
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+        assert_eq!(
+            full_counter.load(atomic::Ordering::Acquire),
+            0,
+            "no semantic tokens should be requested before the capability is registered"
+        );
+        assert!(
+            extract_semantic_highlights(&cx.editor, &cx).is_empty(),
+            "no semantic highlights before the capability is registered"
+        );
+
+        cx.lsp
+            .request::<lsp::request::RegisterCapability>(
+                lsp::RegistrationParams {
+                    registrations: vec![lsp::Registration {
+                        id: "semantic-tokens".to_string(),
+                        method: "textDocument/semanticTokens".to_string(),
+                        register_options: Some(
+                            serde_json::to_value(lsp::SemanticTokensRegistrationOptions {
+                                text_document_registration_options:
+                                    lsp::TextDocumentRegistrationOptions {
+                                        document_selector: None,
+                                    },
+                                semantic_tokens_options: lsp::SemanticTokensOptions {
+                                    legend: lsp::SemanticTokensLegend {
+                                        token_types: vec!["function".into()],
+                                        token_modifiers: Vec::new(),
+                                    },
+                                    full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                                    ..lsp::SemanticTokensOptions::default()
+                                },
+                                static_registration_options: lsp::StaticRegistrationOptions {
+                                    id: None,
+                                },
+                            })
+                            .unwrap(),
+                        ),
+                    }],
+                },
+                lsp::DEFAULT_LSP_REQUEST_TIMEOUT,
+            )
+            .await
+            .into_response()
+            .expect("register capability request failed");
+
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+        assert!(
+            full_counter.load(atomic::Ordering::Acquire) >= 1,
+            "dynamic registration should re-query semantic tokens for the open document"
+        );
+
+        assert_eq!(
+            extract_semantic_highlights(&cx.editor, &cx),
+            vec![MultiBufferOffset(3)..MultiBufferOffset(7)],
+            "the open document should display semantic tokens after dynamic registration"
+        );
     }
 
     #[gpui::test]

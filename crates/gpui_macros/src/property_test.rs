@@ -1,7 +1,12 @@
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote, quote_spanned};
+use quote::{ToTokens, format_ident, quote, quote_spanned};
 use syn::{
-    FnArg, Ident, ItemFn, Type, parse2, punctuated::Punctuated, spanned::Spanned, token::Comma,
+    Expr, FnArg, Ident, ItemFn, MetaNameValue, Token, Type,
+    parse::{Parse, ParseStream},
+    parse2,
+    punctuated::Punctuated,
+    spanned::Spanned,
+    token::Comma,
 };
 
 pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
@@ -12,7 +17,13 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
         };
     };
 
+    let args = match parse2::<Args>(args) {
+        Ok(args) => args,
+        Err(e) => return e.to_compile_error(),
+    };
+
     let test_name = func.sig.ident.clone();
+    let test_ret_ty = func.sig.output.clone();
     let inner_fn_name = format_ident!("__{test_name}");
     let outer_fn_attributes = &func.attrs;
 
@@ -40,32 +51,93 @@ pub fn test(args: TokenStream, item: TokenStream) -> TokenStream {
     let run_test_body = match &asyncness {
         None => quote! {
             #cx_vars
-            #inner_fn_name(#inner_args);
+            let result = #inner_fn_name(#inner_args);
             #cx_teardowns
+            result
         },
         Some(_) => quote! {
             let foreground_executor = gpui::ForegroundExecutor::new(std::sync::Arc::new(dispatcher.clone()));
             #cx_vars
-            foreground_executor.block_test(#inner_fn_name(#inner_args));
+            let result = foreground_executor.block_test(#inner_fn_name(#inner_args));
             #cx_teardowns
+            result
         },
     };
+
+    let fixed_macro_invocation = args.render();
 
     quote! {
         #arg_errors
 
-        #[::gpui::proptest::property_test(proptest_path = "::gpui::proptest", #args)]
+        #fixed_macro_invocation
         #(#outer_fn_attributes)*
-        fn #test_name(#proptest_args) {
+        fn #test_name(#proptest_args) #test_ret_ty {
             #inner_fn
 
             ::gpui::run_test_once(
                 __seed,
-                Box::new(move |dispatcher| {
+                Box::new(move |dispatcher| #test_ret_ty {
                     #run_test_body
                 }),
             )
         }
+    }
+}
+
+struct Args {
+    config: Option<Expr>,
+    remaining_args: Vec<MetaNameValue>,
+    errors: TokenStream,
+}
+
+impl Args {
+    /// By default, proptest uses random seeds unless `$PROPTEST_SEED` is set.
+    /// Rather than managing both `$SEED` and `$PROPTEST_SEED`, we intercept
+    /// `config = ...` tokens and add a call to `gpui::apply_seed_to_config`.
+    fn render(&self) -> TokenStream {
+        let user_provided_config = match &self.config {
+            None => quote! { ::gpui::proptest::prelude::ProptestConfig::default() },
+            Some(config) => config.into_token_stream(),
+        };
+
+        let fixed_config = quote!(::gpui::apply_seed_to_proptest_config(#user_provided_config));
+        let remaining_args = &self.remaining_args;
+        let errors = &self.errors;
+
+        quote! {
+            #errors
+            #[::gpui::proptest::property_test(
+                proptest_path = "::gpui::proptest",
+                config = #fixed_config,
+                #(#remaining_args,)*
+            )]
+        }
+    }
+}
+
+impl Parse for Args {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let pairs = Punctuated::<MetaNameValue, Token![,]>::parse_terminated(input)?;
+
+        let mut config = None;
+        let mut remaining_args = vec![];
+        let mut errors = quote!();
+
+        for pair in pairs {
+            match pair.path.get_ident().map(Ident::to_string).as_deref() {
+                Some("config") => config = Some(pair.value),
+                Some("proptest_path") => errors.extend(quote_spanned! {pair.span() =>
+                    compile_error!("`gpui::property_test` overrides the `proptest_path` parameter")
+                }),
+                _ => remaining_args.push(pair),
+            }
+        }
+
+        Ok(Self {
+            config,
+            remaining_args,
+            errors,
+        })
     }
 }
 

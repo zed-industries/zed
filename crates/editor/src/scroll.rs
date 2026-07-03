@@ -86,8 +86,13 @@ impl SharedScrollAnchor {
         let snapshot = if let Some(display_map_id) = self.display_map_id
             && display_map_id != snapshot.display_map_id
         {
-            let companion_snapshot = snapshot.companion_snapshot().unwrap();
-            assert_eq!(companion_snapshot.display_map_id, display_map_id);
+            let companion_snapshot = snapshot
+                .companion_snapshot()
+                .expect("shared scroll anchor references a non native display map, but snapshot has no companion");
+            assert_eq!(
+                companion_snapshot.display_map_id, display_map_id,
+                "shared scroll anchor display map should match the snapshot's split companion"
+            );
             companion_snapshot
         } else {
             snapshot
@@ -100,8 +105,13 @@ impl SharedScrollAnchor {
         let snapshot = if let Some(display_map_id) = self.display_map_id
             && display_map_id != snapshot.display_map_id
         {
-            let companion_snapshot = snapshot.companion_snapshot().unwrap();
-            assert_eq!(companion_snapshot.display_map_id, display_map_id);
+            let companion_snapshot = snapshot
+                .companion_snapshot()
+                .expect("shared scroll anchor references a non native display map, but snapshot has no companion");
+            assert_eq!(
+                companion_snapshot.display_map_id, display_map_id,
+                "shared scroll anchor display map should match the snapshot's split companion"
+            );
             companion_snapshot
         } else {
             snapshot
@@ -201,8 +211,6 @@ pub struct ScrollManager {
     /// Each side separately clamps the x component using its own scroll_max_x when reading from the SharedScrollAnchor.
     scroll_max_x: Option<f64>,
     ongoing: OngoingScroll,
-    /// Number of sticky header lines currently being rendered for the current scroll position.
-    sticky_header_line_count: usize,
     /// The second element indicates whether the autoscroll request is local
     /// (true) or remote (false). Local requests are initiated by user actions,
     /// while remote requests come from external sources.
@@ -219,6 +227,7 @@ pub struct ScrollManager {
     visible_line_count: Option<f64>,
     visible_column_count: Option<f64>,
     forbid_vertical_scroll: bool,
+    notified_top_overscroll: bool,
     minimap_thumb_state: Option<ScrollbarThumbState>,
     _save_scroll_position_task: Task<()>,
 }
@@ -234,7 +243,6 @@ impl ScrollManager {
             anchor,
             scroll_max_x: None,
             ongoing: OngoingScroll::new(),
-            sticky_header_line_count: 0,
             autoscroll_request: None,
             show_scrollbars: true,
             hide_scrollbar_task: None,
@@ -243,6 +251,7 @@ impl ScrollManager {
             visible_line_count: None,
             visible_column_count: None,
             forbid_vertical_scroll: false,
+            notified_top_overscroll: false,
             minimap_thumb_state: None,
             _save_scroll_position_task: Task::ready(()),
         }
@@ -273,7 +282,6 @@ impl ScrollManager {
             this.display_map_id = Some(my_snapshot.display_map_id);
         });
         self.ongoing = other.ongoing;
-        self.sticky_header_line_count = other.sticky_header_line_count;
     }
 
     pub fn offset(&self, cx: &App) -> gpui::Point<f64> {
@@ -296,8 +304,14 @@ impl ScrollManager {
         let mut result = if let Some(display_map_id) = shared.display_map_id
             && display_map_id != snapshot.display_map_id
         {
-            let companion_snapshot = snapshot.companion_snapshot().unwrap();
-            assert_eq!(companion_snapshot.display_map_id, display_map_id);
+            let companion_snapshot = snapshot
+                .companion_snapshot()
+                .expect("shared scroll anchor references a non native display map, but the snapshot has no companion");
+            assert_eq!(
+                companion_snapshot.display_map_id, display_map_id,
+                "shared scroll anchor display map should match the companion used for native anchor conversion"
+            );
+
             let mut display_point = shared
                 .scroll_anchor
                 .anchor
@@ -339,6 +353,14 @@ impl ScrollManager {
         self.anchor = entity;
     }
 
+    pub fn unshare_scroll_anchor(&mut self, snapshot: &DisplaySnapshot, cx: &mut Context<Editor>) {
+        let scroll_anchor = self.native_anchor(snapshot, cx);
+        self.anchor = cx.new(|_| SharedScrollAnchor {
+            scroll_anchor,
+            display_map_id: Some(snapshot.display_map_id),
+        });
+    }
+
     pub fn ongoing_scroll(&self) -> OngoingScroll {
         self.ongoing
     }
@@ -346,6 +368,21 @@ impl ScrollManager {
     pub fn update_ongoing_scroll(&mut self, axis: Option<Axis>) {
         self.ongoing.last_event = Instant::now();
         self.ongoing.axis = axis;
+    }
+
+    pub fn should_notify_top_overscroll(&mut self, axis: Option<Axis>) -> bool {
+        let now = Instant::now();
+        let new_scroll = now.duration_since(self.ongoing.last_event) > SCROLL_EVENT_SEPARATION;
+        let axis_changed = self.ongoing.axis != axis;
+        let should_notify = !self.notified_top_overscroll || new_scroll || axis_changed;
+        self.ongoing.last_event = now;
+        self.ongoing.axis = axis;
+        self.notified_top_overscroll = true;
+        should_notify
+    }
+
+    pub fn reset_top_overscroll_notification(&mut self) {
+        self.notified_top_overscroll = false;
     }
 
     pub fn scroll_position(
@@ -358,14 +395,6 @@ impl ScrollManager {
             pos.x = pos.x.min(max_x);
         }
         pos
-    }
-
-    pub fn sticky_header_line_count(&self) -> usize {
-        self.sticky_header_line_count
-    }
-
-    pub fn set_sticky_header_line_count(&mut self, count: usize) {
-        self.sticky_header_line_count = count;
     }
 
     fn set_scroll_position(
@@ -457,6 +486,7 @@ impl ScrollManager {
             return WasScrolled(false);
         }
 
+        self.notified_top_overscroll = false;
         self.anchor.update(cx, |shared, _| {
             shared.scroll_anchor = adjusted_anchor;
             shared.display_map_id = Some(display_map.display_map_id);
@@ -633,6 +663,14 @@ impl ScrollManager {
 impl Editor {
     pub fn has_autoscroll_request(&self) -> bool {
         self.scroll_manager.has_autoscroll_request()
+    }
+
+    pub fn set_forbid_vertical_scroll(&mut self, forbid: bool) {
+        self.scroll_manager.set_forbid_vertical_scroll(forbid);
+    }
+
+    pub fn scroll_top_display_point(&self, snapshot: &DisplaySnapshot, cx: &App) -> DisplayPoint {
+        self.scroll_manager.scroll_top_display_point(snapshot, cx)
     }
 
     pub fn vertical_scroll_margin(&self) -> usize {
@@ -882,10 +920,8 @@ impl Editor {
         // configure the editor to only display a certain number of columns. If
         // that ever happens, this could probably be removed.
         let settings = AllLanguageSettings::get_global(cx);
-        if matches!(
-            settings.defaults.soft_wrap,
-            SoftWrap::PreferredLineLength | SoftWrap::Bounded
-        ) && (settings.defaults.preferred_line_length as f64) < visible_column_count
+        if matches!(settings.defaults.soft_wrap, SoftWrap::Bounded)
+            && (settings.defaults.preferred_line_length as f64) < visible_column_count
         {
             visible_column_count = settings.defaults.preferred_line_length as f64;
         }

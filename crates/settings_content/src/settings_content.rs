@@ -1,3 +1,4 @@
+mod action;
 mod agent;
 mod editor;
 mod extension;
@@ -12,6 +13,7 @@ mod theme;
 mod title_bar;
 mod workspace;
 
+pub use action::{ActionName, ActionWithArguments, CommandAliasTarget};
 pub use agent::*;
 pub use editor::*;
 pub use extension::*;
@@ -78,6 +80,35 @@ pub enum ParseStatus {
     Unchanged,
     /// Settings failed to parse
     Failed { error: String },
+}
+
+/// Determines when the mouse cursor should be hidden in response to keyboard
+/// input.
+///
+/// Default: on_typing_and_action
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum HideMouseMode {
+    /// Never hide the mouse cursor
+    Never,
+    /// Hide only when typing
+    OnTyping,
+    /// Hide on typing and on key bindings that resolve to an action
+    #[default]
+    OnTypingAndAction,
 }
 
 #[with_fallible_options]
@@ -147,12 +178,22 @@ pub struct SettingsContent {
     /// The settings for the image viewer.
     pub image_viewer: Option<ImageViewerSettingsContent>,
 
+    /// The settings for the markdown preview.
+    pub markdown_preview: Option<MarkdownPreviewSettingsContent>,
+
     pub repl: Option<ReplSettingsContent>,
 
     /// Whether or not to enable Helix mode.
     ///
     /// Default: false
     pub helix_mode: Option<bool>,
+
+    /// Determines when the mouse cursor should be hidden in response to
+    /// keyboard input. Applies globally across all input surfaces (editors,
+    /// terminals, palettes, etc.).
+    ///
+    /// Default: on_typing_and_action
+    pub hide_mouse: Option<HideMouseMode>,
 
     pub journal: Option<JournalSettingsContent>,
 
@@ -170,9 +211,6 @@ pub struct SettingsContent {
 
     pub project_panel: Option<ProjectPanelSettingsContent>,
 
-    /// Configuration for the Message Editor
-    pub message_editor: Option<MessageEditorSettings>,
-
     /// Configuration for Node-related features
     pub node: Option<NodeBinarySettings>,
 
@@ -180,6 +218,13 @@ pub struct SettingsContent {
 
     /// The URL of the Zed server to connect to.
     pub server_url: Option<String>,
+
+    /// The URL used as the key for credential storage.
+    ///
+    /// When set, credentials are stored under this URL instead of `server_url`.
+    /// This allows running multiple Zed instances side by side without them
+    /// overwriting each other's keychain entries.
+    pub credentials_url: Option<String>,
 
     /// Configuration for session-related features
     pub session: Option<SessionSettingsContent>,
@@ -211,6 +256,72 @@ pub struct SettingsContent {
     ///
     /// Default: 5
     pub modeline_lines: Option<usize>,
+
+    /// Local overrides for feature flags, keyed by flag name.
+    pub feature_flags: Option<FeatureFlagsMap>,
+
+    /// Settings for developer-oriented instrumentation tools (profilers,
+    /// tracers, etc.) that can be toggled at runtime.
+    pub instrumentation: Option<InstrumentationSettingsContent>,
+}
+
+/// Configuration for developer-oriented instrumentation tools that collect
+/// diagnostic data about a running Zed instance.
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct InstrumentationSettingsContent {
+    /// Configuration for the performance profiler, accessed via the
+    /// `zed: open performance profiler` action.
+    pub performance_profiler: Option<PerformanceProfilerSettingsContent>,
+}
+
+/// Configuration for the performance profiler which collects timing data
+/// for foreground and background executor tasks.
+#[with_fallible_options]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub struct PerformanceProfilerSettingsContent {
+    /// Whether to collect timing data for foreground and background executor
+    /// tasks. Enabling this may lead to increased memory usage, hence it's
+    /// disabled by default for regular builds.
+    ///
+    /// Default: false
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, MergeFrom)]
+#[serde(transparent)]
+pub struct FeatureFlagsMap(pub HashMap<String, String>);
+
+// A manual `JsonSchema` impl keeps this type's schema registered under a
+// unique name. The derived impl on a `#[serde(transparent)]` newtype around
+// `HashMap<String, String>` would inline to the map's own schema name (`Map_of_string`),
+// which is shared with every other `HashMap<String, String>` setting field in
+// `SettingsContent`. A named placeholder lets `json_schema_store` find and
+// replace just this field's schema at runtime without clobbering the others.
+impl JsonSchema for FeatureFlagsMap {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "FeatureFlagsMap".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+        })
+    }
+}
+
+impl std::ops::Deref for FeatureFlagsMap {
+    type Target = HashMap<String, String>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for FeatureFlagsMap {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 impl SettingsContent {
@@ -358,17 +469,6 @@ impl strum::VariantNames for BaseKeymapContent {
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct AudioSettingsContent {
-    /// Automatically increase or decrease you microphone's volume. This affects how
-    /// loud you sound to others.
-    ///
-    /// Recommended: off (default)
-    /// Microphones are too quite in zed, until everyone is on experimental
-    /// audio and has auto speaker volume on this will make you very loud
-    /// compared to other speakers.
-    #[serde(rename = "experimental.auto_microphone_volume")]
-    pub auto_microphone_volume: Option<bool>,
-    /// Remove background noises. Works great for typing, cars, dogs, AC. Does
-    /// not work well on music.
     /// Select specific output audio device.
     #[serde(rename = "experimental.output_audio_device")]
     pub output_audio_device: Option<AudioOutputDeviceName>,
@@ -421,6 +521,11 @@ pub struct TelemetrySettingsContent {
     ///
     /// Default: true
     pub metrics: Option<bool>,
+    /// Allow sending requests to Anthropic models that cannot be offered with
+    /// Zero Data Retention.
+    ///
+    /// Default: false
+    pub anthropic_retention: Option<bool>,
 }
 
 impl Default for TelemetrySettingsContent {
@@ -428,6 +533,7 @@ impl Default for TelemetrySettingsContent {
         Self {
             diagnostics: Some(true),
             metrics: Some(true),
+            anthropic_retention: Some(false),
         }
     }
 }
@@ -536,7 +642,7 @@ pub struct GitPanelSettingsContent {
     pub button: Option<bool>,
     /// Where to dock the panel.
     ///
-    /// Default: left
+    /// Default: right (Agentic layout), left (Classic layout)
     pub dock: Option<DockPosition>,
     /// Default width of the panel in pixels.
     ///
@@ -569,11 +675,15 @@ pub struct GitPanelSettingsContent {
     /// Default: main
     pub fallback_branch_name: Option<String>,
 
-    /// Whether to sort entries in the panel by path
-    /// or by status (the default).
+    /// How to sort entries in the git panel.
     ///
-    /// Default: false
-    pub sort_by_path: Option<bool>,
+    /// Default: path
+    pub sort_by: Option<GitPanelSortBy>,
+
+    /// How to group entries in the git panel.
+    ///
+    /// Default: status
+    pub group_by: Option<GitPanelGroupBy>,
 
     /// Whether to collapse untracked files in the diff panel.
     ///
@@ -599,6 +709,84 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: false
     pub starts_open: Option<bool>,
+
+    /// Maximum length of the commit message title before a warning is shown.
+    /// Set to 0 to disable.
+    ///
+    /// Default: 0
+    pub commit_title_max_length: Option<usize>,
+
+    /// Default action when clicking a changed file in the Git panel.
+    ///
+    /// Default: project_diff
+    pub entry_primary_click_action: Option<GitPanelClickBehavior>,
+}
+
+#[derive(
+    Default,
+    Copy,
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelClickBehavior {
+    /// Open the project diff, showing all changed files.
+    #[default]
+    ProjectDiff,
+    /// Open a single-file diff view.
+    FileDiff,
+    /// Open the file in the editor without a diff view.
+    ViewFile,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelSortBy {
+    #[default]
+    Path,
+    Name,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum GitPanelGroupBy {
+    None,
+    #[default]
+    Status,
 }
 
 #[derive(
@@ -639,23 +827,13 @@ pub struct PanelSettingsContent {
     pub button: Option<bool>,
     /// Where to dock the panel.
     ///
-    /// Default: left
+    /// Default: right (Agentic layout), left (Classic layout)
     pub dock: Option<DockPosition>,
     /// Default width of the panel in pixels.
     ///
     /// Default: 240
     #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
     pub default_width: Option<f32>,
-}
-
-#[with_fallible_options]
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug, PartialEq)]
-pub struct MessageEditorSettings {
-    /// Whether to automatically replace emoji shortcodes with emoji characters.
-    /// For example: typing `:wave:` gets replaced with `👋`.
-    ///
-    /// Default: false
-    pub auto_replace_emoji_shortcode: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -747,6 +925,9 @@ pub struct VimSettingsContent {
     pub custom_digraphs: Option<HashMap<String, Arc<str>>>,
     pub highlight_on_yank_duration: Option<u64>,
     pub cursor_shape: Option<CursorShapeSettings>,
+    /// When enabled, edit predictions are shown in Vim normal mode.
+    /// By default, edit predictions are only shown in insert and replace modes.
+    pub show_edit_predictions_in_normal_mode: Option<bool>,
 }
 
 #[derive(
@@ -881,7 +1062,7 @@ pub struct OutlinePanelSettingsContent {
     pub default_width: Option<f32>,
     /// The position of outline panel
     ///
-    /// Default: left
+    /// Default: right (Agentic layout), left (Classic layout)
     pub dock: Option<DockSide>,
     /// Whether to show file icons in the outline panel.
     ///
@@ -979,6 +1160,23 @@ pub enum LineIndicatorFormat {
     Long,
 }
 
+/// The settings for the markdown preview.
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
+pub struct MarkdownPreviewSettingsContent {
+    /// Whether to limit the width of the rendered markdown content. When
+    /// enabled, content is constrained to `max_width` and centered
+    /// horizontally within the preview pane, for optimal readability.
+    ///
+    /// Default: true
+    pub limit_content_width: Option<bool>,
+    /// The maximum width, in pixels, of the rendered markdown content when
+    /// `limit_content_width` is enabled.
+    ///
+    /// Default: 800
+    pub max_width: Option<f32>,
+}
+
 /// The settings for the image viewer.
 #[with_fallible_options]
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
@@ -1020,6 +1218,16 @@ pub struct RemoteSettingsContent {
     pub dev_container_connections: Option<Vec<DevContainerConnection>>,
     pub read_ssh_config: Option<bool>,
     pub use_podman: Option<bool>,
+    /// Whether to build dev container images with BuildKit.
+    ///
+    /// When unset, Zed auto-detects BuildKit by probing for the `buildx` CLI
+    /// plugin. Set to `false` to force the classic Docker builder, which is
+    /// required for Docker-compatible engines that lack an integrated BuildKit
+    /// (e.g. Apple Container via a Docker-API bridge), where BuildKit builds
+    /// cannot resolve locally-built images.
+    ///
+    /// Default: null (auto-detect)
+    pub dev_container_use_buildkit: Option<bool>,
 }
 
 #[with_fallible_options]

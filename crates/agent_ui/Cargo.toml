@@ -30,8 +30,10 @@ acp_thread.workspace = true
 action_log.workspace = true
 agent-client-protocol.workspace = true
 agent.workspace = true
+async-channel.workspace = true
 agent_servers.workspace = true
 agent_settings.workspace = true
+agent_skills.workspace = true
 ai_onboarding.workspace = true
 anyhow.workspace = true
 heapless.workspace = true
@@ -55,6 +57,7 @@ file_icons.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
+git_ui.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 gpui_tokio.workspace = true
@@ -67,6 +70,7 @@ language.workspace = true
 language_model.workspace = true
 language_models.workspace = true
 log.workspace = true
+lru.workspace = true
 lsp.workspace = true
 markdown.workspace = true
 menu.workspace = true
@@ -76,6 +80,7 @@ ordered-float.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 picker.workspace = true
+platform_title_bar.workspace = true
 postage.workspace = true
 project.workspace = true
 prompt_store.workspace = true
@@ -85,13 +90,13 @@ release_channel.workspace = true
 remote.workspace = true
 remote_connection.workspace = true
 rope.workspace = true
-rules_library.workspace = true
+sandbox.workspace = true
 schemars.workspace = true
+search.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings.workspace = true
-smol.workspace = true
 streaming_diff.workspace = true
 task.workspace = true
 telemetry.workspace = true
@@ -101,9 +106,9 @@ text.workspace = true
 theme.workspace = true
 theme_settings.workspace = true
 time.workspace = true
-time_format.workspace = true
 ui.workspace = true
 ui_input.workspace = true
+unicode-segmentation.workspace = true
 url.workspace = true
 util.workspace = true
 uuid.workspace = true
@@ -116,6 +121,7 @@ reqwest_client = { workspace = true, optional = true }
 [dev-dependencies]
 acp_thread = { workspace = true, features = ["test-support"] }
 agent = { workspace = true, features = ["test-support"] }
+agent_servers = { workspace = true, features = ["test-support"] }
 buffer_diff = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }
@@ -135,8 +141,12 @@ remote = { workspace = true, features = ["test-support"] }
 remote_connection = { workspace = true, features = ["test-support"] }
 remote_server = { workspace = true, features = ["test-support"] }
 
+search = { workspace = true, features = ["test-support"] }
 semver.workspace = true
+shlex.workspace = true
 reqwest_client.workspace = true
 tempfile.workspace = true
+vim.workspace = true
 tree-sitter-md.workspace = true
 unindent.workspace = true
+terminal = { workspace = true, features = ["test-support"] }

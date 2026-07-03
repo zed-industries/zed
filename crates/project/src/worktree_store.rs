@@ -12,7 +12,7 @@ use collections::HashMap;
 use fs::{Fs, copy_recursive};
 use futures::{FutureExt, future::Shared};
 use gpui::{
-    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task,
+    App, AppContext as _, AsyncApp, Context, Entity, EntityId, EventEmitter, Global, Task, TaskExt,
     WeakEntity,
 };
 use itertools::Either;
@@ -188,7 +188,6 @@ pub struct WorktreeStore {
     downstream_client: Option<(AnyProtoClient, u64)>,
     retain_worktrees: bool,
     worktrees: Vec<WorktreeHandle>,
-    worktrees_reordered: bool,
     scanning_enabled: bool,
     #[allow(clippy::type_complexity)]
     loading_worktrees:
@@ -236,7 +235,6 @@ impl WorktreeStore {
             loading_worktrees: Default::default(),
             downstream_client: None,
             worktrees: Vec::new(),
-            worktrees_reordered: false,
             scanning_enabled: true,
             retain_worktrees,
             initial_scan_complete: watch::channel_with(true),
@@ -257,7 +255,6 @@ impl WorktreeStore {
             loading_worktrees: Default::default(),
             downstream_client: None,
             worktrees: Vec::new(),
-            worktrees_reordered: false,
             scanning_enabled: true,
             retain_worktrees,
             initial_scan_complete: watch::channel_with(true),
@@ -436,7 +433,7 @@ impl WorktreeStore {
             Task::ready(Ok((tree, relative_path)))
         } else {
             let worktree = self.create_worktree(abs_path, visible, cx);
-            cx.background_spawn(async move { Ok((worktree.await?, RelPath::empty().into())) })
+            cx.background_spawn(async move { Ok((worktree.await?, RelPath::empty_arc())) })
         }
     }
 
@@ -830,6 +827,7 @@ impl WorktreeStore {
                         visible,
                         abs_path: response.canonicalized_path,
                         root_repo_common_dir: response.root_repo_common_dir,
+                        root_repo_is_linked_worktree: response.root_repo_is_linked_worktree,
                     },
                     client,
                     path_style,
@@ -891,18 +889,7 @@ impl WorktreeStore {
         } else {
             WorktreeHandle::Weak(worktree.downgrade())
         };
-        if self.worktrees_reordered {
-            self.worktrees.push(handle);
-        } else {
-            let i = match self
-                .worktrees
-                .binary_search_by_key(&Some(worktree.read(cx).abs_path()), |other| {
-                    other.upgrade().map(|worktree| worktree.read(cx).abs_path())
-                }) {
-                Ok(i) | Err(i) => i,
-            };
-            self.worktrees.insert(i, handle);
-        }
+        self.worktrees.push(handle);
 
         cx.emit(WorktreeStoreEvent::WorktreeAdded(worktree.clone()));
         self.send_project_updates(cx);
@@ -985,10 +972,6 @@ impl WorktreeStore {
                 worktree.abs_path().as_ref() == path
             }
         })
-    }
-
-    pub fn set_worktrees_reordered(&mut self, worktrees_reordered: bool) {
-        self.worktrees_reordered = worktrees_reordered;
     }
 
     fn upstream_client(&self) -> Option<(AnyProtoClient, u64)> {
@@ -1090,7 +1073,6 @@ impl WorktreeStore {
 
         let worktree_to_move = self.worktrees.remove(source_index);
         self.worktrees.insert(destination_index, worktree_to_move);
-        self.worktrees_reordered = true;
         cx.emit(WorktreeStoreEvent::WorktreeOrderChanged);
         cx.notify();
         Ok(())
@@ -1174,6 +1156,7 @@ impl WorktreeStore {
                     root_repo_common_dir: worktree
                         .root_repo_common_dir()
                         .map(|p| p.to_string_lossy().into_owned()),
+                    root_repo_is_linked_worktree: worktree.root_repo_is_linked_worktree(),
                 }
             })
             .collect()
@@ -1383,18 +1366,18 @@ impl WorktreeStore {
     pub fn paths(&self, cx: &App) -> WorktreePaths {
         let (mains, folders): (Vec<PathBuf>, Vec<PathBuf>) = self
             .visible_worktrees(cx)
-            .filter(|worktree| {
-                let worktree = worktree.read(cx);
-                // Remote worktrees that haven't received their first update
-                // don't have enough data to contribute yet.
-                !worktree.is_remote() || worktree.root_entry().is_some()
-            })
             .map(|worktree| {
                 let snapshot = worktree.read(cx).snapshot();
                 let folder_path = snapshot.abs_path().to_path_buf();
                 let main_path = snapshot
                     .root_repo_common_dir()
-                    .and_then(|dir| Some(dir.parent()?.to_path_buf()))
+                    .map(|dir| crate::git_store::repo_identity_path(dir))
+                    .filter(|repo_path| {
+                        snapshot.root_repo_is_linked_worktree()
+                            || *repo_path == folder_path.as_path()
+                            || !folder_path.starts_with(*repo_path)
+                    })
+                    .map(Path::to_path_buf)
                     .unwrap_or_else(|| folder_path.clone());
                 (main_path, folder_path)
             })

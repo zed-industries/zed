@@ -4,7 +4,7 @@ use git::stash::StashEntry;
 use gpui::{
     Action, AnyElement, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, WeakEntity, Window, actions, rems,
+    SharedString, Styled, Subscription, Task, TaskExt, WeakEntity, Window, actions, rems,
 };
 use picker::{Picker, PickerDelegate};
 use project::git_store::{Repository, RepositoryEvent};
@@ -46,10 +46,11 @@ pub fn create_embedded(
     repository: Option<Entity<Repository>>,
     workspace: WeakEntity<Workspace>,
     width: Rems,
+    show_footer: bool,
     window: &mut Window,
     cx: &mut Context<StashList>,
 ) -> StashList {
-    StashList::new_embedded(repository, workspace, width, window, cx)
+    StashList::new_embedded(repository, workspace, width, show_footer, window, cx)
 }
 
 pub struct StashList {
@@ -127,12 +128,14 @@ impl StashList {
         let delegate = StashListDelegate::new(repository, workspace, window, cx);
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
+                .initial_width(width)
                 .show_scrollbar(true)
-                .modal(!embedded)
+                .when(embedded, |picker| picker.embedded())
         });
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
+            picker.delegate.show_footer = !embedded;
         });
 
         Self {
@@ -147,10 +150,14 @@ impl StashList {
         repository: Option<Entity<Repository>>,
         workspace: WeakEntity<Workspace>,
         width: Rems,
+        show_footer: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut this = Self::new_inner(repository, workspace, width, true, window, cx);
+        this.picker.update(cx, |picker, _| {
+            picker.delegate.show_footer = show_footer;
+        });
         this._subscriptions
             .push(cx.subscribe(&this.picker, |_, _, _, cx| {
                 cx.emit(DismissEvent);
@@ -236,6 +243,7 @@ pub struct StashListDelegate {
     modifiers: Modifiers,
     focus_handle: FocusHandle,
     timezone: UtcOffset,
+    show_footer: bool,
 }
 
 impl StashListDelegate {
@@ -257,6 +265,7 @@ impl StashListDelegate {
             modifiers: Default::default(),
             focus_handle: cx.focus_handle(),
             timezone,
+            show_footer: false,
         }
     }
 
@@ -360,6 +369,10 @@ impl StashListDelegate {
 
 impl PickerDelegate for StashListDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "stash picker"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Select a stash…".into()
@@ -614,7 +627,7 @@ impl PickerDelegate for StashListDelegate {
     }
 
     fn render_footer(&self, _: &mut Window, cx: &mut Context<Picker<Self>>) -> Option<AnyElement> {
-        if self.matches.is_empty() {
+        if !self.show_footer || self.matches.is_empty() {
             return None;
         }
 

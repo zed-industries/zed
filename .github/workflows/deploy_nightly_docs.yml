@@ -1,0 +1,24 @@
+# Generated from xtask::workflows::deploy_nightly_docs
+# Rebuild with `cargo xtask workflows`.
+name: deploy_nightly_docs
+on:
+  push:
+    branches:
+    - main
+jobs:
+  deploy_docs:
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
+    permissions:
+      contents: read
+    uses: zed-industries/zed/.github/workflows/deploy_docs.yml@3f16f7b9082f8828e4d6ae207d2349b1ef932517
+    secrets:
+      DOCS_AMPLITUDE_API_KEY: ${{ secrets.DOCS_AMPLITUDE_API_KEY }}
+      DOCS_CONSENT_IO_INSTANCE: ${{ secrets.DOCS_CONSENT_IO_INSTANCE }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    with:
+      channel: nightly
+      checkout_ref: ${{ github.sha }}
+defaults:
+  run:
+    shell: bash -euxo pipefail {0}
