@@ -97,16 +97,27 @@ pub enum SaveState {
     Error(String),
 }
 
-/// The cell currently being edited inline. Task 4 only edits existing rows, so
-/// the target is identified by the row's [`RowKey`] and the column name; the
-/// `field` holds the live text input shown in the cell.
+/// Identifies which row an inline edit targets: an existing page row, addressed
+/// by its original primary-key values, or a pending insert row, addressed by its
+/// index into [`TableEditBuffer::inserts`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EditTarget {
+    /// An existing row, identified by its original primary-key values.
+    Existing(RowKey),
+    /// A pending insert row, identified by its index in the insert buffer.
+    New(usize),
+}
+
+/// The cell currently being edited inline. The target distinguishes an existing
+/// page row from a pending insert row; the `field` holds the live text input
+/// shown in the cell.
 pub struct EditingCell {
-    /// The primary-key values identifying the existing row being edited.
-    pub row_key: RowKey,
+    /// Which row (existing or new) this edit targets.
+    pub target: EditTarget,
     /// The name of the column being edited.
     pub column: String,
-    /// The display-row index in the current page, so the editor renders in the
-    /// right cell.
+    /// The display-row index (page row for `Existing`, insert index for `New`),
+    /// so the editor renders in the right cell.
     pub display_row: usize,
     /// The column index in the current page, so the editor renders in the right
     /// cell.
@@ -407,6 +418,56 @@ impl TableDataView {
         cx.notify();
     }
 
+    /// Buffers a value for `column` of the pending insert row at `index`. Unlike
+    /// existing rows, primary-key columns *are* settable here, since a new row
+    /// needs a supplied key. Out-of-bounds indices are a no-op.
+    pub fn set_new_cell_value(
+        &mut self,
+        index: usize,
+        column: &str,
+        value: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_new_cell(index, column, EditCell::Value(value), cx);
+    }
+
+    /// Buffers a NULL for `column` of the pending insert row at `index`.
+    /// Out-of-bounds indices are a no-op.
+    pub fn set_new_cell_null(&mut self, index: usize, column: &str, cx: &mut Context<Self>) {
+        self.set_new_cell(index, column, EditCell::Null, cx);
+    }
+
+    fn set_new_cell(&mut self, index: usize, column: &str, cell: EditCell, cx: &mut Context<Self>) {
+        let Some(row) = self.edits.inserts.get_mut(index) else {
+            log::debug!("ignoring edit of insert row {index}: index out of bounds");
+            return;
+        };
+        row.insert(column.to_string(), cell);
+        self.clear_finished_save_state();
+        cx.notify();
+    }
+
+    /// Removes the pending insert row at `index` from the buffer (a new,
+    /// not-yet-saved row is simply forgotten rather than recorded as a delete).
+    /// Also closes the inline editor if it targets a shifting row. Out-of-bounds
+    /// indices are a no-op.
+    pub fn delete_new_row(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index >= self.edits.inserts.len() {
+            log::debug!("delete_new_row: index {index} out of bounds");
+            return;
+        }
+        // Closing the editor avoids it pointing at a stale/shifted insert row.
+        if matches!(
+            self.editing_cell.as_ref().map(|editing| &editing.target),
+            Some(EditTarget::New(_))
+        ) {
+            self.editing_cell = None;
+        }
+        self.edits.inserts.remove(index);
+        self.clear_finished_save_state();
+        cx.notify();
+    }
+
     /// Marks the existing row identified by `row_key` for deletion, dropping any
     /// buffered update for that same row (a delete supersedes an update).
     pub fn delete_row(&mut self, row_key: RowKey, cx: &mut Context<Self>) {
@@ -499,7 +560,7 @@ impl TableDataView {
         field.focus_handle(cx).focus(window, cx);
 
         self.editing_cell = Some(EditingCell {
-            row_key,
+            target: EditTarget::Existing(row_key),
             column,
             display_row,
             column_index,
@@ -508,14 +569,71 @@ impl TableDataView {
         cx.notify();
     }
 
-    /// Commits the inline editor's text to the edit buffer as a value update and
-    /// closes the editor. No-op if no cell is being edited.
+    /// Opens the inline editor on a cell of the pending insert row at `index`.
+    ///
+    /// Unlike [`begin_edit_cell`], every column is editable here (including the
+    /// primary key), since a new row needs a supplied key. No-op unless the table
+    /// is editable, the page is loaded (for the column name), and `index` is in
+    /// bounds. The editor is pre-filled with any buffered value for the cell.
+    pub fn begin_edit_new_cell(
+        &mut self,
+        index: usize,
+        column_index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.editable {
+            return;
+        }
+        let Some(page) = self.page.clone() else {
+            return;
+        };
+        let Some(column) = page.columns.get(column_index).cloned() else {
+            return;
+        };
+        let Some(row) = self.edits.inserts.get(index) else {
+            return;
+        };
+        let current = match row.get(&column) {
+            Some(EditCell::Value(value)) => Some(value.clone()),
+            Some(EditCell::Null) | None => None,
+        };
+
+        let field = cx.new(|cx| {
+            let field = InputField::new(window, cx, "");
+            if let Some(value) = current.as_ref() {
+                field.set_text(value, window, cx);
+            }
+            field
+        });
+        field.focus_handle(cx).focus(window, cx);
+
+        self.editing_cell = Some(EditingCell {
+            target: EditTarget::New(index),
+            column,
+            display_row: index,
+            column_index,
+            field,
+        });
+        cx.notify();
+    }
+
+    /// Commits the inline editor's text to the edit buffer (an update for an
+    /// existing row, or a new-row cell for an insert row) and closes the editor.
+    /// No-op if no cell is being edited.
     pub fn commit_cell_edit(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(editing) = self.editing_cell.take() else {
             return;
         };
         let value = editing.field.read(cx).text(cx);
-        self.set_cell_value(editing.row_key, &editing.column, value, cx);
+        match editing.target {
+            EditTarget::Existing(row_key) => {
+                self.set_cell_value(row_key, &editing.column, value, cx);
+            }
+            EditTarget::New(index) => {
+                self.set_new_cell_value(index, &editing.column, value, cx);
+            }
+        }
         cx.notify();
     }
 
@@ -531,7 +649,14 @@ impl TableDataView {
         let Some(editing) = self.editing_cell.take() else {
             return;
         };
-        self.set_cell_null(editing.row_key, &editing.column, cx);
+        match editing.target {
+            EditTarget::Existing(row_key) => {
+                self.set_cell_null(row_key, &editing.column, cx);
+            }
+            EditTarget::New(index) => {
+                self.set_new_cell_null(index, &editing.column, cx);
+            }
+        }
         cx.notify();
     }
 
@@ -632,6 +757,13 @@ impl TableDataView {
             inserts,
             deletes,
         }
+    }
+
+    /// Test-only: exposes the assembled [`TableEdits`] so tests can assert on the
+    /// per-section counts without going through a save.
+    #[cfg(test)]
+    fn build_table_edits_for_test(&self) -> TableEdits {
+        self.build_table_edits()
     }
 
     /// Test-only: emulates a structure fetch that failed by clearing the cached
@@ -829,7 +961,14 @@ impl TableDataView {
             .collect();
 
         let column_count = page.columns.len();
-        let row_count = page.rows.len();
+        let page_row_count = page.rows.len();
+        // Pending insert rows are rendered below the fetched page rows, sharing
+        // the same virtualized list so column widths and scrolling stay aligned.
+        let insert_count = self.edits.inserts.len();
+        let total_row_count = page_row_count + insert_count;
+
+        let created_background = created_cell_background(cx);
+        let deleted_background = deleted_cell_background(cx);
 
         Table::new(column_count)
             .interactable(&self.interaction)
@@ -838,22 +977,112 @@ impl TableDataView {
             .header(headers)
             .uniform_list(
                 "db-rows",
-                row_count,
+                total_row_count,
                 cx.processor(move |this, range: Range<usize>, window, cx| {
                     range
-                        .filter_map(|row_index| {
-                            let row = page.rows.get(row_index)?;
-                            let cells: Vec<AnyElement> = (0..column_count)
-                                .map(|col| {
-                                    let value = row.get(col).and_then(|cell| cell.clone());
-                                    this.render_data_cell(row_index, col, value, window, cx)
-                                })
-                                .collect();
-                            Some(cells)
+                        .map(|row_index| {
+                            if row_index < page_row_count {
+                                (0..column_count)
+                                    .map(|col| {
+                                        let value = page
+                                            .rows
+                                            .get(row_index)
+                                            .and_then(|row| row.get(col))
+                                            .and_then(|cell| cell.clone());
+                                        this.render_data_cell(row_index, col, value, window, cx)
+                                    })
+                                    .collect()
+                            } else {
+                                let insert_index = row_index - page_row_count;
+                                (0..column_count)
+                                    .map(|col| {
+                                        this.render_insert_cell(insert_index, col, window, cx)
+                                    })
+                                    .collect()
+                            }
                         })
                         .collect()
                 }),
             )
+            .map_row(cx.processor(move |this, (row_index, row), _window, cx| {
+                this.map_data_row(
+                    row_index,
+                    row,
+                    page_row_count,
+                    created_background,
+                    deleted_background,
+                    cx,
+                )
+            }))
+            .into_any_element()
+    }
+
+    /// Wraps a rendered row to signal its edit state: a pending insert row gets a
+    /// created (green) tint, an existing row marked for deletion gets a red tint,
+    /// and every editable row carries a hover-revealed trash button that deletes
+    /// it (dropping a new row from the insert buffer, or marking an existing row
+    /// for deletion).
+    fn map_data_row(
+        &self,
+        row_index: usize,
+        row: gpui::Stateful<gpui::Div>,
+        page_row_count: usize,
+        created_background: gpui::Hsla,
+        deleted_background: gpui::Hsla,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let is_insert = row_index >= page_row_count;
+        let marked_deleted = if is_insert {
+            false
+        } else {
+            self.row_key_for(row_index)
+                .is_some_and(|key| self.edits.deletes.contains(&key))
+        };
+
+        let group_name = SharedString::from(format!("db-row-{row_index}"));
+        let delete_button = if self.editable {
+            let insert_index = row_index.saturating_sub(page_row_count);
+            Some(
+                h_flex()
+                    .absolute()
+                    .right_1()
+                    .top_0()
+                    .bottom_0()
+                    .items_center()
+                    .visible_on_hover(group_name.clone())
+                    .child(
+                        IconButton::new(
+                            ElementId::NamedInteger("db-row-delete".into(), row_index as u64),
+                            IconName::Trash,
+                        )
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text(if is_insert {
+                            "Discard this new row"
+                        } else if marked_deleted {
+                            "Row marked for deletion; discard edits to undo"
+                        } else {
+                            "Delete this row"
+                        }))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if is_insert {
+                                this.delete_new_row(insert_index, cx);
+                            } else if let Some(key) = this.row_key_for(row_index) {
+                                this.delete_row(key, cx);
+                            }
+                        })),
+                    ),
+            )
+        } else {
+            None
+        };
+
+        row.group(group_name)
+            .relative()
+            .when(is_insert, |row| row.bg(created_background))
+            .when(marked_deleted, |row| {
+                row.bg(deleted_background).line_through()
+            })
+            .children(delete_button)
             .into_any_element()
     }
 
@@ -869,24 +1098,14 @@ impl TableDataView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // The cell currently open in the inline editor.
+        // The cell currently open in the inline editor (only for existing rows;
+        // insert rows are rendered by `render_insert_cell`).
         if let Some(editing) = &self.editing_cell
+            && matches!(editing.target, EditTarget::Existing(_))
             && editing.display_row == display_row
             && editing.column_index == column_index
         {
-            return h_flex()
-                .w_full()
-                .gap_1()
-                .items_center()
-                .child(div().flex_1().child(editing.field.clone()))
-                .child(
-                    Button::new("db-cell-null", "∅ NULL")
-                        .size(ButtonSize::Compact)
-                        .style(ButtonStyle::Subtle)
-                        .tooltip(Tooltip::text("Set this cell to NULL"))
-                        .on_click(cx.listener(|this, _, _, cx| this.set_editing_cell_null(cx))),
-                )
-                .into_any_element();
+            return self.render_cell_editor(editing.field.clone(), cx);
         }
 
         let column_name = self
@@ -939,6 +1158,82 @@ impl TableDataView {
                         // A double-click opens the inline editor for this cell.
                         if event.click_count() >= 2 {
                             this.begin_edit_cell(display_row, column_index, window, cx);
+                        }
+                    }),
+                )
+                .into_any_element()
+        } else {
+            cell.into_any_element()
+        }
+    }
+
+    /// The inline editor UI shared by existing-row and new-row cells: the text
+    /// input alongside a button that sets the cell to NULL.
+    fn render_cell_editor(&self, field: Entity<InputField>, cx: &Context<Self>) -> AnyElement {
+        h_flex()
+            .w_full()
+            .gap_1()
+            .items_center()
+            .child(div().flex_1().child(field))
+            .child(
+                Button::new("db-cell-null", "∅ NULL")
+                    .size(ButtonSize::Compact)
+                    .style(ButtonStyle::Subtle)
+                    .tooltip(Tooltip::text("Set this cell to NULL"))
+                    .on_click(cx.listener(|this, _, _, cx| this.set_editing_cell_null(cx))),
+            )
+            .into_any_element()
+    }
+
+    /// Renders one cell of a pending insert row at `insert_index`. Every column
+    /// is editable (including the primary key), and the cell shows the buffered
+    /// value, a muted `NULL` for a buffered NULL, or a muted placeholder when the
+    /// column has not been set yet (so a column-default will apply on save).
+    fn render_insert_cell(
+        &self,
+        insert_index: usize,
+        column_index: usize,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if let Some(editing) = &self.editing_cell
+            && editing.target == EditTarget::New(insert_index)
+            && editing.column_index == column_index
+        {
+            return self.render_cell_editor(editing.field.clone(), cx);
+        }
+
+        let column_name = self
+            .page
+            .as_ref()
+            .and_then(|page| page.columns.get(column_index).cloned());
+        let buffered = column_name
+            .as_ref()
+            .and_then(|column| self.edits.inserts.get(insert_index)?.get(column));
+
+        let cell = div().w_full();
+        let cell = match buffered {
+            Some(EditCell::Value(value)) => cell
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(value.clone()),
+            Some(EditCell::Null) => cell.child(Label::new("NULL").color(Color::Muted).italic()),
+            None => cell.child(Label::new("default").color(Color::Muted).italic()),
+        };
+
+        if self.editable {
+            div()
+                .id(ElementId::NamedInteger(
+                    SharedString::from(format!("db-insert-cell-{column_index}")),
+                    insert_index as u64,
+                ))
+                .w_full()
+                .cursor_pointer()
+                .child(cell)
+                .on_click(
+                    cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                        if event.click_count() >= 2 {
+                            this.begin_edit_new_cell(insert_index, column_index, window, cx);
                         }
                     }),
                 )
@@ -1376,81 +1671,86 @@ impl TableDataView {
 
         let pending = self.pending_change_count();
         let saving = self.save_state == SaveState::Saving;
-        if pending == 0 && !saving {
-            // Still surface the last outcome (success/error) after the buffer
-            // empties, so the user sees confirmation or the failure reason.
-            let status = match &self.save_state {
+        let dirty = pending > 0 || saving;
+
+        // The "+ Row" button is always available on an editable table so a row
+        // can be added even when the buffer is otherwise empty.
+        let add_row_button = Button::new("db-add-row", "+ Row")
+            .size(ButtonSize::Compact)
+            .style(ButtonStyle::Subtle)
+            .disabled(saving)
+            .tooltip(Tooltip::text("Add a new row"))
+            .on_click(cx.listener(|this, _, _, cx| this.add_row(cx)));
+
+        // The left cluster shows the change count while dirty, otherwise the last
+        // save outcome (success/error) so the user still sees confirmation.
+        let status = if dirty {
+            let summary = if pending == 1 {
+                "1 change".to_string()
+            } else {
+                format!("{pending} changes")
+            };
+            Some((summary, Color::Default))
+        } else {
+            match &self.save_state {
                 SaveState::Done(message) => Some((message.clone(), Color::Success)),
                 SaveState::Error(message) => Some((message.clone(), Color::Error)),
                 _ => None,
-            };
-            let (text, color) = status?;
-            return Some(
-                h_flex()
-                    .w_full()
-                    .px_2()
-                    .py_1()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(Label::new(text).color(color).size(LabelSize::Small))
-                    .into_any_element(),
-            );
-        }
-
-        let summary = if pending == 1 {
-            "1 change".to_string()
-        } else {
-            format!("{pending} changes")
+            }
         };
-        let error =
-            matches!(self.save_state, SaveState::Error(_)).then(|| match &self.save_state {
+        let inline_error = (dirty && matches!(self.save_state, SaveState::Error(_))).then(|| {
+            match &self.save_state {
                 SaveState::Error(message) => message.clone(),
                 _ => String::new(),
-            });
+            }
+        });
+
+        let mut bar = h_flex()
+            .w_full()
+            .px_2()
+            .py_1()
+            .gap_2()
+            .items_center()
+            .justify_between()
+            .border_b_1()
+            .border_color(cx.theme().colors().border);
+        if dirty {
+            bar = bar.bg(modified_cell_background(cx));
+        }
 
         Some(
-            h_flex()
-                .w_full()
-                .px_2()
-                .py_1()
-                .gap_2()
-                .items_center()
-                .justify_between()
-                .border_b_1()
-                .border_color(cx.theme().colors().border)
-                .bg(modified_cell_background(cx))
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .items_center()
-                        .child(Label::new(summary).size(LabelSize::Small))
-                        .when_some(error, |this, message| {
-                            this.child(
-                                Label::new(message)
-                                    .color(Color::Error)
-                                    .size(LabelSize::Small),
-                            )
-                        }),
-                )
-                .child(
-                    h_flex()
-                        .gap_1()
-                        .child(
-                            Button::new("db-discard-edits", "Discard")
-                                .size(ButtonSize::Compact)
-                                .style(ButtonStyle::Subtle)
-                                .disabled(saving)
-                                .on_click(cx.listener(|this, _, _, cx| this.discard_edits(cx))),
+            bar.child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .when_some(status, |this, (text, color)| {
+                        this.child(Label::new(text).color(color).size(LabelSize::Small))
+                    })
+                    .when_some(inline_error, |this, message| {
+                        this.child(
+                            Label::new(message)
+                                .color(Color::Error)
+                                .size(LabelSize::Small),
                         )
-                        .child(
-                            Button::new("db-save-edits", "Save")
-                                .size(ButtonSize::Compact)
-                                .style(ButtonStyle::Filled)
-                                .disabled(saving)
-                                .on_click(cx.listener(|this, _, _, cx| this.save_edits(cx))),
-                        ),
+                    }),
+            )
+            .child(h_flex().gap_1().child(add_row_button).when(dirty, |this| {
+                this.child(
+                    Button::new("db-discard-edits", "Discard")
+                        .size(ButtonSize::Compact)
+                        .style(ButtonStyle::Subtle)
+                        .disabled(saving)
+                        .on_click(cx.listener(|this, _, _, cx| this.discard_edits(cx))),
                 )
-                .into_any_element(),
+                .child(
+                    Button::new("db-save-edits", "Save")
+                        .size(ButtonSize::Compact)
+                        .style(ButtonStyle::Filled)
+                        .disabled(saving)
+                        .on_click(cx.listener(|this, _, _, cx| this.save_edits(cx))),
+                )
+            }))
+            .into_any_element(),
         )
     }
 
@@ -1570,6 +1870,19 @@ impl Item for TableDataView {
 /// used for errors) at low opacity so the underlying value stays readable.
 fn modified_cell_background(cx: &App) -> gpui::Hsla {
     cx.theme().colors().version_control_modified.opacity(0.2)
+}
+
+/// The background tint for a pending insert (new) row. Reuses the version-control
+/// "added" accent (a green hue) at low opacity so the row reads as created.
+fn created_cell_background(cx: &App) -> gpui::Hsla {
+    cx.theme().colors().version_control_added.opacity(0.2)
+}
+
+/// The background tint for an existing row marked for deletion. Reuses the
+/// version-control "deleted" accent (a red hue) at low opacity so the row reads
+/// as pending removal without hiding its still-recoverable content.
+fn deleted_cell_background(cx: &App) -> gpui::Hsla {
+    cx.theme().colors().version_control_deleted.opacity(0.15)
 }
 
 /// Opens (or activates an existing) table data tab in the workspace's active
@@ -2643,6 +2956,206 @@ mod tests {
             );
             assert!(view.edits().updates.is_empty());
             assert_eq!(view.edits().deletes.len(), 1);
+        });
+    }
+
+    #[gpui::test]
+    async fn add_row_then_save_inserts(cx: &mut TestAppContext) {
+        // Adding a new row and setting one of its cells produces exactly one
+        // insert in the applied edits (u=0 i=1 d=0).
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.add_row(cx);
+            assert_eq!(view.pending_change_count(), 1);
+            // The new row's cells are editable via the same inline editor, and
+            // PK cells are editable for new rows (a value can be supplied).
+            view.begin_edit_new_cell(0, 0, window, cx);
+            let editing = view
+                .editing_cell()
+                .expect("editing the new row's id cell should begin an edit");
+            editing.field.update(cx, |field, cx| {
+                field.set_text("42", window, cx);
+            });
+            view.commit_cell_edit(window, cx);
+        });
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.edits().inserts().len(), 1);
+            let cell = view
+                .edits()
+                .inserts()
+                .first()
+                .and_then(|row| row.get("id"))
+                .expect("the new row's id cell should be buffered");
+            assert_eq!(cell, &database_client::EditCell::Value("42".into()));
+        });
+
+        view.update(cx, |view, cx| view.save_edits(cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.pending_change_count() == 0)
+        })
+        .await;
+
+        assert!(
+            fake.calls()
+                .iter()
+                .any(|call| call == "apply_edits u=0 i=1 d=0"),
+            "adding and saving a row must apply one insert: {:?}",
+            fake.calls()
+        );
+    }
+
+    #[gpui::test]
+    async fn delete_existing_row_then_save(cx: &mut TestAppContext) {
+        // Deleting an existing page row and saving applies exactly one delete.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update(cx, |view, cx| {
+            let key = view.row_key_for(0).expect("row 0 should yield a RowKey");
+            view.delete_row(key, cx);
+            assert_eq!(view.pending_change_count(), 1);
+            assert_eq!(view.edits().deletes().len(), 1);
+            view.save_edits(cx);
+        });
+
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.pending_change_count() == 0)
+        })
+        .await;
+
+        assert!(
+            fake.calls()
+                .iter()
+                .any(|call| call == "apply_edits u=0 i=0 d=1"),
+            "deleting and saving a row must apply one delete: {:?}",
+            fake.calls()
+        );
+    }
+
+    #[gpui::test]
+    async fn delete_new_row_removes_from_inserts(cx: &mut TestAppContext) {
+        // Deleting a not-yet-saved insert row drops it from the insert buffer
+        // rather than recording a delete.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update(cx, |view, cx| {
+            view.add_row(cx);
+            assert_eq!(view.edits().inserts().len(), 1);
+            view.delete_new_row(0, cx);
+            assert!(
+                view.edits().inserts().is_empty(),
+                "deleting a new row must drop it from inserts"
+            );
+            assert!(
+                view.edits().deletes().is_empty(),
+                "deleting a new row must not record a delete"
+            );
+            assert_eq!(view.pending_change_count(), 0);
+        });
+    }
+
+    #[gpui::test]
+    async fn mixed_edits_build_correct(cx: &mut TestAppContext) {
+        // One update, one insert, and one delete assemble into a TableEdits with
+        // one entry in each section; a successful save clears the buffer and
+        // reloads the page.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update(cx, |view, cx| {
+            // Update row 0 (id=1), delete row 1 (id=2), insert a new row.
+            let update_key = view.row_key_for(0).expect("row 0 should yield a RowKey");
+            view.set_cell_value(update_key, "name", "Alicia".into(), cx);
+            let delete_key = view.row_key_for(1).expect("row 1 should yield a RowKey");
+            view.delete_row(delete_key, cx);
+            view.add_row(cx);
+            view.set_new_cell_value(0, "name", "Zoe".into(), cx);
+            assert_eq!(view.pending_change_count(), 3);
+
+            let edits = view.build_table_edits_for_test();
+            assert_eq!(edits.updates.len(), 1, "one update section entry");
+            assert_eq!(edits.inserts.len(), 1, "one insert section entry");
+            assert_eq!(edits.deletes.len(), 1, "one delete section entry");
+
+            view.save_edits(cx);
+        });
+
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.pending_change_count() == 0)
+        })
+        .await;
+
+        assert!(
+            fake.calls()
+                .iter()
+                .any(|call| call == "apply_edits u=1 i=1 d=1"),
+            "mixed edits must apply as u=1 i=1 d=1: {:?}",
+            fake.calls()
+        );
+        let fetches = fake
+            .calls()
+            .into_iter()
+            .filter(|call| call.starts_with("fetch_rows"))
+            .count();
+        assert!(fetches >= 2, "a successful save should reload the page");
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.pending_change_count(), 0, "buffer cleared on success");
+            assert!(matches!(view.save_state(), SaveState::Done(_)));
         });
     }
 }
