@@ -474,7 +474,6 @@ pub struct SearchMatch {
     pub buffer: Entity<Buffer>,
     pub anchor_range: Range<Anchor>,
     pub range: Range<usize>,
-    pub relative_range: Range<usize>,
-    pub line_text: String,
+    pub match_start_byte_column: u32,
     pub line_number: u32,
 }
