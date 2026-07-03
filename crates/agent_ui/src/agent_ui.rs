@@ -67,7 +67,7 @@ use std::any::TypeId;
 use std::path::{Path, PathBuf};
 use workspace::Workspace;
 
-use crate::agent_configuration::{ConfigureContextServerModal, ManageProfilesModal};
+use crate::agent_configuration::ManageProfilesModal;
 pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
 pub use crate::agent_panel::{
     AgentPanel, AgentPanelEvent, AgentPanelTerminalInfo, MaxIdleRetainedThreads, TerminalId,
@@ -196,8 +196,6 @@ actions!(
         CycleFavoriteModels,
         /// Expands the message editor to full size.
         ExpandMessageEditor,
-        /// Adds a context server to the configuration.
-        AddContextServer,
         /// Archives the currently selected thread.
         ArchiveSelectedThread,
         /// Removes the currently selected thread.
@@ -262,6 +260,9 @@ actions!(
         RemoveFirstQueuedMessage,
         /// Edits the first message in the queue (the next one to be sent).
         EditFirstQueuedMessage,
+        /// Toggles steering for the first queued message: when on, it interrupts
+        /// the agent at its next step instead of waiting for it to finish.
+        ToggleSteerFirstQueuedMessage,
         /// Clears all messages from the queue.
         ClearMessageQueue,
         /// Opens the permission granularity dropdown for the current tool call.
@@ -584,16 +585,12 @@ pub fn init(
         init_language_model_settings(cx);
     }
     agent_panel::init(cx);
-    context_server_configuration::init(language_registry.clone(), fs.clone(), cx);
+    context_server_configuration::init(language_registry, fs.clone(), cx);
     thread_metadata_store::init(cx);
     terminal_thread_metadata_store::init(cx);
 
     inline_assistant::init(fs.clone(), prompt_builder.clone(), cx);
     terminal_inline_assistant::init(fs.clone(), prompt_builder, cx);
-    cx.observe_new(move |workspace, window, cx| {
-        ConfigureContextServerModal::register(workspace, language_registry.clone(), window, cx)
-    })
-    .detach();
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(
             move |workspace: &mut Workspace,
@@ -949,6 +946,7 @@ mod tests {
             inline_assistant_model: None,
             inline_assistant_use_streaming_tools: false,
             commit_message_model: None,
+            commit_message_include_project_rules: true,
             commit_message_instructions: None,
             thread_summary_model: None,
             inline_alternatives: vec![],

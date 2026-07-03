@@ -27,11 +27,11 @@ use futures::StreamExt;
 use pty_info::{ProcessIdGetter, PtyProcessInfo};
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use task::{HideStrategy, Shell, SpawnInTerminal};
+use task::{HideStrategy, Shell, ShellKind, SpawnInTerminal};
 use terminal_settings::{AlternateScroll, CursorShape as SettingsCursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
 use urlencoding;
-use util::{paths::PathStyle, truncate_and_trailoff};
+use util::{ResultExt as _, paths::PathStyle, truncate_and_trailoff};
 
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
@@ -42,7 +42,10 @@ use std::{
     ops::{BitOr, BitOrAssign, Deref, Range as StdRange},
     path::{Path, PathBuf},
     process::ExitStatus,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 use thiserror::Error;
@@ -64,12 +67,29 @@ use crate::alacritty::{
     display_only_term_config, find_from_terminal_point, full_content_range, last_non_empty_lines,
     make_content, new_term, open_pty, pty_options, pty_term_config, resize, screen_lines,
     scroll_display, scroll_to_point, search_matches, selection_text, set_default_cursor_style,
-    set_selection as set_term_selection, spawn_event_loop, toggle_vi_mode as toggle_term_vi_mode,
-    total_lines, update_selection as update_term_selection, update_selection_to_vi_cursor,
-    update_vi_cursor_for_scroll, vi_goto_point, vi_motion,
+    set_selection as set_term_selection, shrink_to_used, spawn_event_loop,
+    toggle_vi_mode as toggle_term_vi_mode, total_lines, update_selection as update_term_selection,
+    update_selection_to_vi_cursor, update_vi_cursor_for_scroll, vi_goto_point, vi_motion,
 };
 use crate::mappings::colors::to_vte_rgb;
 use crate::mappings::keys::to_esc_str;
+
+/// Process-wide flag set by headless hosts (e.g. the eval CLI) that have no
+/// controlling TTY. In such sandboxes PTY allocation and acquiring a
+/// controlling terminal fail with `ENOTTY`, so when this is set terminals run
+/// their command as a plain subprocess with piped output instead of through a
+/// PTY. The normal editor leaves it unset to preserve the interactive PTY
+/// experience.
+#[derive(Clone, Copy, Default)]
+pub struct HeadlessTerminal(pub bool);
+
+impl gpui::Global for HeadlessTerminal {}
+
+impl HeadlessTerminal {
+    pub fn is_enabled(cx: &App) -> bool {
+        cx.try_global::<Self>().is_some_and(|headless| headless.0)
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 enum Scroll {
@@ -96,6 +116,8 @@ enum ViMotion {
     WordRight,
     WordRightEnd,
     Bracket,
+    ParagraphUp,
+    ParagraphDown,
 }
 
 #[derive(Clone, Debug)]
@@ -848,6 +870,44 @@ impl Display for TerminalError {
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
 const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
 pub const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
+static NEXT_INIT_COMMAND_STARTUP_MARKER_ID: AtomicU64 = AtomicU64::new(1);
+
+const INIT_COMMAND_STARTUP_MARKER_PREFIX: &str = "__zed_init_command_ready_";
+const INIT_COMMAND_STARTUP_MARKER_SUFFIX: &str = "__";
+const INIT_COMMAND_STARTUP_MARKER_SEARCH_LINES: usize = 64;
+
+fn init_command_startup_marker(marker_id: u64) -> String {
+    format!("{INIT_COMMAND_STARTUP_MARKER_PREFIX}{marker_id}{INIT_COMMAND_STARTUP_MARKER_SUFFIX}")
+}
+
+fn init_command_startup_marker_command(shell_kind: ShellKind, marker_id: u64) -> String {
+    // Split the marker across the command so its echo can't satisfy the
+    // handshake; only the command's output contains the contiguous marker.
+    match shell_kind {
+        ShellKind::PowerShell | ShellKind::Pwsh => format!(
+            "Write-Output ('{INIT_COMMAND_STARTUP_MARKER_PREFIX}' + '{marker_id}' + '{INIT_COMMAND_STARTUP_MARKER_SUFFIX}')"
+        ),
+        ShellKind::Cmd => {
+            format!(
+                "<nul set /p zed_init_ready={INIT_COMMAND_STARTUP_MARKER_PREFIX}&echo {marker_id}{INIT_COMMAND_STARTUP_MARKER_SUFFIX}"
+            )
+        }
+        ShellKind::Nushell => {
+            format!(
+                "print $\"{INIT_COMMAND_STARTUP_MARKER_PREFIX}({marker_id}){INIT_COMMAND_STARTUP_MARKER_SUFFIX}\""
+            )
+        }
+        ShellKind::Posix
+        | ShellKind::Csh
+        | ShellKind::Tcsh
+        | ShellKind::Rc
+        | ShellKind::Fish
+        | ShellKind::Xonsh
+        | ShellKind::Elvish => format!(
+            "printf '%s%s%s\\n' {INIT_COMMAND_STARTUP_MARKER_PREFIX} {marker_id} {INIT_COMMAND_STARTUP_MARKER_SUFFIX}"
+        ),
+    }
+}
 
 pub struct TerminalBuilder {
     terminal: Terminal,
@@ -896,6 +956,7 @@ impl TerminalBuilder {
         let terminal = Terminal {
             task: None,
             terminal_type: TerminalType::DisplayOnly,
+            subprocess: None,
             completion_tx: None,
             term,
             term_config: config,
@@ -907,6 +968,7 @@ impl TerminalBuilder {
                 ..Default::default()
             },
             last_mouse: None,
+            mouse_down_position: None,
             matches: Vec::new(),
 
             selection_head: None,
@@ -935,6 +997,8 @@ impl TerminalBuilder {
             },
             child_exited: None,
             keyboard_input_sent: false,
+            init_command_startup_marker: None,
+            init_command_startup_tx: None,
             event_loop_task: Task::ready(Ok(())),
             background_executor: background_executor.clone(),
             path_style,
@@ -967,6 +1031,10 @@ impl TerminalBuilder {
     ) -> Task<Result<TerminalBuilder>> {
         let version = release_channel::AppVersion::global(cx);
         let background_executor = cx.background_executor().clone();
+        // Headless hosts (e.g. the eval CLI) have no controlling TTY, so PTY
+        // allocation / acquiring a controlling terminal fails with `ENOTTY`.
+        // When set, run the command as a plain subprocess instead.
+        let no_pty = HeadlessTerminal::is_enabled(cx);
         #[cfg(not(windows))]
         let child_signal_mask = match current_child_signal_mask()
             .context("failed to capture terminal child signal mask")
@@ -1050,26 +1118,6 @@ impl TerminalBuilder {
             // supported remoting into windows.
             let shell_kind = shell.shell_kind(cfg!(windows));
 
-            let alacritty_shell = shell_params.as_ref().map(|params| {
-                (
-                    params.program.clone(),
-                    params.args.clone().unwrap_or_default(),
-                )
-            });
-            let pty_options = pty_options(
-                alacritty_shell,
-                working_directory.clone(),
-                env.clone(),
-                // We pass in the foreground thread's signal mask to the child process via pty_options,
-                // so terminal construction can run on a background thread without breaking Ctrl-C and other signals
-                // otherwise the terminal would inherit the background executor's signal mask which blocks
-                // some terminal signals
-                #[cfg(not(windows))]
-                child_signal_mask,
-                #[cfg(windows)]
-                shell_kind.tty_escape_args(),
-            );
-
             let scrolling_history = if task.is_some() {
                 // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
                 // After the task finishes, we do not allow appending to that terminal, so small tasks output should not
@@ -1082,21 +1130,7 @@ impl TerminalBuilder {
             };
             let config = pty_term_config(scrolling_history, cursor_shape);
 
-            //Setup the pty...
-            let pty = match open_pty(&pty_options, TerminalBounds::default(), window_id) {
-                Ok(pty) => pty,
-                Err(error) => {
-                    bail!(TerminalError {
-                        directory: working_directory,
-                        program: shell_params.as_ref().map(|params| params.program.clone()),
-                        args: shell_params.as_ref().and_then(|params| params.args.clone()),
-                        title_override: terminal_title_override,
-                        source: error,
-                    });
-                }
-            };
-
-            //Spawn a task so the Alacritty EventLoop can communicate with us
+            //Spawn a task so the Alacritty EventLoop (or the subprocess reader) can communicate with us
             //TODO: Remove with a bounded sender which can be dispatched on &self
             let (events_tx, events_rx) = unbounded();
             //Set up the terminal...
@@ -1107,18 +1141,93 @@ impl TerminalBuilder {
                 alternate_scroll,
             );
 
-            let pty_info = PtyProcessInfo::new(ProcessIdGetter::from(&pty));
+            // When `no_pty` is set (headless hosts), run the task as a plain
+            // subprocess and pump its piped output into the same emulator the
+            // PTY path would feed.
+            let (terminal_type, subprocess) = if no_pty {
+                let (program, args) = match &shell_params {
+                    Some(params) => (
+                        params.program.clone(),
+                        params.args.clone().unwrap_or_default(),
+                    ),
+                    None => (util::shell::get_system_shell(), Vec::new()),
+                };
+                let subprocess = match spawn_task_subprocess(
+                    program,
+                    args,
+                    env.clone(),
+                    working_directory.clone(),
+                    term.clone(),
+                    events_tx,
+                    &background_executor,
+                ) {
+                    Ok(subprocess) => subprocess,
+                    Err(error) => {
+                        bail!(TerminalError {
+                            directory: working_directory,
+                            program: shell_params.as_ref().map(|params| params.program.clone()),
+                            args: shell_params.as_ref().and_then(|params| params.args.clone()),
+                            title_override: terminal_title_override,
+                            source: std::io::Error::other(format!("{error:#}")),
+                        });
+                    }
+                };
+                (TerminalType::DisplayOnly, Some(subprocess))
+            } else {
+                let alacritty_shell = shell_params.as_ref().map(|params| {
+                    (
+                        params.program.clone(),
+                        params.args.clone().unwrap_or_default(),
+                    )
+                });
+                let pty_options = pty_options(
+                    alacritty_shell,
+                    working_directory.clone(),
+                    env.clone(),
+                    // We pass in the foreground thread's signal mask to the child process via pty_options,
+                    // so terminal construction can run on a background thread without breaking Ctrl-C and other signals
+                    // otherwise the terminal would inherit the background executor's signal mask which blocks
+                    // some terminal signals
+                    #[cfg(not(windows))]
+                    child_signal_mask,
+                    #[cfg(windows)]
+                    shell_kind.tty_escape_args(),
+                );
 
-            //And connect them together
-            let pty_tx = spawn_event_loop(term.clone(), events_tx, pty, pty_options.drain_on_exit)?;
+                //Setup the pty...
+                let pty = match open_pty(&pty_options, TerminalBounds::default(), window_id) {
+                    Ok(pty) => pty,
+                    Err(error) => {
+                        bail!(TerminalError {
+                            directory: working_directory,
+                            program: shell_params.as_ref().map(|params| params.program.clone()),
+                            args: shell_params.as_ref().and_then(|params| params.args.clone()),
+                            title_override: terminal_title_override,
+                            source: error,
+                        });
+                    }
+                };
+
+                let pty_info = PtyProcessInfo::new(ProcessIdGetter::from(&pty));
+
+                //And connect them together
+                let pty_tx =
+                    spawn_event_loop(term.clone(), events_tx, pty, pty_options.drain_on_exit)?;
+
+                (
+                    TerminalType::Pty {
+                        pty_tx,
+                        info: Arc::new(pty_info),
+                    },
+                    None,
+                )
+            };
 
             let no_task = task.is_none();
             let terminal = Terminal {
                 task,
-                terminal_type: TerminalType::Pty {
-                    pty_tx,
-                    info: Arc::new(pty_info),
-                },
+                terminal_type,
+                subprocess,
                 completion_tx,
                 term,
                 term_config: config,
@@ -1127,6 +1236,7 @@ impl TerminalBuilder {
                 events: VecDeque::with_capacity(10), //Should never get this high.
                 last_content: Default::default(),
                 last_mouse: None,
+                mouse_down_position: None,
                 matches: Vec::new(),
 
                 selection_head: None,
@@ -1158,6 +1268,8 @@ impl TerminalBuilder {
                 },
                 child_exited: None,
                 keyboard_input_sent: false,
+                init_command_startup_marker: None,
+                init_command_startup_tx: None,
                 event_loop_task: Task::ready(Ok(())),
                 background_executor,
                 path_style,
@@ -1288,6 +1400,9 @@ enum TerminalType {
 
 pub struct Terminal {
     terminal_type: TerminalType,
+    /// Set for non-PTY terminals (see [`HeadlessTerminal`]); owns the spawned
+    /// subprocess and the task pumping its output into the grid.
+    subprocess: Option<SubprocessHandle>,
     completion_tx: Option<Sender<Option<ExitStatus>>>,
     term: Arc<AlacrittyTermLock>,
     term_config: AlacrittyTermConfig,
@@ -1295,6 +1410,9 @@ pub struct Terminal {
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
     last_mouse: Option<(Point, SelectionSide)>,
+    /// Window-relative position of the most recent left mouse-down. Used to
+    /// apply a drag threshold before starting a selection (see #58970).
+    mouse_down_position: Option<GpuiPoint<Pixels>>,
     pub matches: Vec<Range>,
     pub last_content: Content,
     pub selection_head: Option<Point>,
@@ -1317,6 +1435,8 @@ pub struct Terminal {
     activation_script: Vec<String>,
     child_exited: Option<ExitStatus>,
     keyboard_input_sent: bool,
+    init_command_startup_marker: Option<String>,
+    init_command_startup_tx: Option<Sender<()>>,
     event_loop_task: Task<Result<(), anyhow::Error>>,
     background_executor: BackgroundExecutor,
     path_style: PathStyle,
@@ -1369,6 +1489,12 @@ impl TaskStatus {
 }
 
 const FIND_HYPERLINK_THROTTLE_PX: Pixels = px(5.0);
+
+/// Minimum pointer movement before a left click begins a selection. This keeps
+/// a click that jitters by a pixel or two (such as the window-focusing click)
+/// from starting a selection and, with `copy_on_select` enabled, clobbering the
+/// clipboard. Mirrors the drag threshold used by gpui's `div` element.
+const SELECTION_DRAG_THRESHOLD: f64 = 2.0;
 
 impl Terminal {
     fn process_pty_event(&mut self, event: PtyEvent, cx: &mut Context<Self>) {
@@ -1429,6 +1555,7 @@ impl Terminal {
                 //NOOP, Handled in render
             }
             TerminalBackendEvent::Wakeup => {
+                self.detect_init_command_startup_marker();
                 cx.emit(Event::Wakeup);
 
                 if let TerminalType::Pty { info, .. } = &self.terminal_type {
@@ -1694,26 +1821,13 @@ impl Terminal {
     pub fn write_output(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         // Inject bytes directly into the terminal emulator and refresh the UI.
         // This bypasses the PTY/event loop for display-only terminals.
-        //
-        // We first convert LF to CRLF, to get the expected line wrapping in Alacritty.
-        // When output comes from piped commands (not a PTY) such as codex-acp, and that
-        // output only contains LF (\n) without a CR (\r) after it, such as the output
-        // of the `ls` command when running outside a PTY, Alacritty moves the cursor
-        // cursor down a line but does not move it back to the initial column. This makes
-        // the rendered output look ridiculous. To prevent this, we insert a CR (\r) before
-        // each LF that didn't already have one. (Alacritty doesn't have a setting for this.)
-        let mut converted = Vec::with_capacity(bytes.len());
-        let mut prev_byte = 0u8;
-        for &byte in bytes {
-            if byte == b'\n' && prev_byte != b'\r' {
-                converted.push(b'\r');
-            }
-            converted.push(byte);
-            prev_byte = byte;
-        }
+        let mut previous_byte_was_cr = false;
+        let converted = convert_lf_to_crlf(bytes, &mut previous_byte_was_cr);
 
         let mut term = self.term.lock();
         self.output_processor.advance(&mut *term, &converted);
+        drop(term);
+        self.detect_init_command_startup_marker();
         cx.emit(Event::Wakeup);
     }
 
@@ -1772,6 +1886,10 @@ impl Terminal {
 
     pub fn clear(&mut self) {
         self.events.push_back(InternalEvent::Clear)
+    }
+
+    pub fn shrink_to_used(&mut self) {
+        shrink_to_used(&mut self.term.lock());
     }
 
     pub fn scroll_line_up(&mut self) {
@@ -1861,7 +1979,70 @@ impl Terminal {
 
     pub fn input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
         self.keyboard_input_sent = true;
+        self.complete_init_command_startup_handshake();
         self.write_input(input);
+    }
+
+    /// Sends a shell-level marker command and returns a task that completes when
+    /// the marker appears in terminal output. Already complete for non-PTY
+    /// terminals or those whose child has exited.
+    ///
+    /// Call at most once per terminal: a second handshake drops the previous
+    /// `Sender`, which would write the init command twice.
+    pub fn start_init_command_startup_handshake(&mut self) -> Task<()> {
+        if !self.is_pty() || self.child_exited.is_some() {
+            return Task::ready(());
+        }
+
+        debug_assert!(
+            self.init_command_startup_tx.is_none(),
+            "start_init_command_startup_handshake called while a handshake is already in flight"
+        );
+
+        let (startup_tx, startup_rx) = async_channel::bounded(1);
+        let startup_task = self.background_executor.spawn(async move {
+            match startup_rx.recv().await {
+                Ok(()) | Err(_) => {}
+            }
+        });
+
+        let marker_id = NEXT_INIT_COMMAND_STARTUP_MARKER_ID.fetch_add(1, Ordering::Relaxed);
+        self.init_command_startup_marker = Some(init_command_startup_marker(marker_id));
+        self.init_command_startup_tx = Some(startup_tx);
+
+        let shell_kind = self.template.shell.shell_kind(self.path_style.is_windows());
+        let mut input = init_command_startup_marker_command(shell_kind, marker_id).into_bytes();
+        input.push(b'\x0d');
+        self.write_to_pty(input);
+
+        startup_task
+    }
+
+    fn detect_init_command_startup_marker(&mut self) {
+        let Some(marker) = self.init_command_startup_marker.as_deref() else {
+            return;
+        };
+
+        let has_marker = {
+            let term = self.term.lock_unfair();
+            last_non_empty_lines(&term, INIT_COMMAND_STARTUP_MARKER_SEARCH_LINES)
+                .iter()
+                .any(|line| line.contains(marker))
+        };
+
+        if has_marker {
+            self.complete_init_command_startup_handshake();
+        }
+    }
+
+    fn complete_init_command_startup_handshake(&mut self) {
+        self.init_command_startup_marker = None;
+        if let Some(startup_tx) = self.init_command_startup_tx.take() {
+            match startup_tx.try_send(()) {
+                Ok(()) | Err(async_channel::TrySendError::Full(())) => {}
+                Err(async_channel::TrySendError::Closed(())) => {}
+            }
+        }
     }
 
     /// Write a programmatically-generated command to the PTY as if it had been
@@ -1869,6 +2050,35 @@ impl Terminal {
     /// input.
     pub fn write_init_command(&mut self, input: impl Into<Cow<'static, [u8]>>) {
         self.write_input(input);
+    }
+
+    pub fn is_pty(&self) -> bool {
+        matches!(self.terminal_type, TerminalType::Pty { .. })
+    }
+
+    pub fn write_init_command_after_startup(
+        &mut self,
+        input: impl Into<Cow<'static, [u8]>>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        // Ends the handshake even if the marker was never seen (timeout
+        // fallback), so detection stops scanning on every wakeup.
+        self.complete_init_command_startup_handshake();
+
+        if self.keyboard_input_sent || self.child_exited.is_some() {
+            return false;
+        }
+
+        self.clear_for_init_command(cx);
+        self.write_init_command(input);
+        true
+    }
+
+    fn clear_for_init_command(&mut self, cx: &mut Context<Self>) {
+        let mut term = self.term.lock_unfair();
+        clear_saved_screen(&mut term);
+        self.last_content = make_content(&term, &self.last_content);
+        cx.emit(Event::Wakeup);
     }
 
     fn write_input(&mut self, input: impl Into<Cow<'static, [u8]>>) {
@@ -1922,6 +2132,8 @@ impl Terminal {
             "H" => Some(ViMotion::High),
             "M" => Some(ViMotion::Middle),
             "L" => Some(ViMotion::Low),
+            "{" => Some(ViMotion::ParagraphUp),
+            "}" => Some(ViMotion::ParagraphDown),
             _ => None,
         };
 
@@ -2184,6 +2396,16 @@ impl Terminal {
                 }
             }
 
+            // Ignore tiny pointer movements so that a click that jitters by a
+            // pixel or two (e.g. the window-focusing click) does not begin a
+            // selection. Mirrors the drag threshold used by gpui's `div`.
+            if self.selection_phase != SelectionPhase::Selecting
+                && let Some(mouse_down_position) = self.mouse_down_position
+                && (e.position - mouse_down_position).magnitude() <= SELECTION_DRAG_THRESHOLD
+            {
+                return;
+            }
+
             self.selection_phase = SelectionPhase::Selecting;
             // Alacritty has the same ordering, of first updating the selection
             // then scrolling 15ms later
@@ -2251,6 +2473,7 @@ impl Terminal {
         } else {
             match e.button {
                 MouseButton::Left => {
+                    self.mouse_down_position = Some(e.position);
                     let (point, side) = grid_point_and_side(
                         position,
                         self.last_content.terminal_bounds,
@@ -2351,6 +2574,7 @@ impl Terminal {
 
         self.selection_phase = SelectionPhase::Ended;
         self.last_mouse = None;
+        self.mouse_down_position = None;
     }
 
     ///Scroll the terminal
@@ -2526,12 +2750,20 @@ impl Terminal {
         if let Some(task) = self.task()
             && task.status == TaskStatus::Running
         {
-            if let TerminalType::Pty { info, .. } = &self.terminal_type {
-                // First kill the foreground process group (the command running in the shell)
-                info.kill_current_process();
-                // Then kill the shell itself so that the terminal exits properly
-                // and wait_for_completed_task can complete
-                info.kill_child_process();
+            match &self.terminal_type {
+                TerminalType::Pty { info, .. } => {
+                    // First kill the foreground process group (the command running in the shell)
+                    info.kill_current_process();
+                    // Then kill the shell itself so that the terminal exits properly
+                    // and wait_for_completed_task can complete
+                    info.kill_child_process();
+                }
+                TerminalType::DisplayOnly => {
+                    // Non-PTY task terminals own their subprocess directly.
+                    if let Some(subprocess) = &self.subprocess {
+                        subprocess.kill();
+                    }
+                }
             }
         }
     }
@@ -2577,6 +2809,7 @@ impl Terminal {
         if let Some(e) = exit_status {
             self.child_exited = Some(e);
         }
+        self.complete_init_command_startup_handshake();
         let task = match &mut self.task {
             Some(task) => task,
             None => {
@@ -2705,8 +2938,147 @@ fn task_summary(task: &TaskState, exit_status: Option<ExitStatus>) -> (bool, Str
     (success, task_line, command_line)
 }
 
+/// Converts bare LFs into CRLFs so output captured from a pipe (rather than a
+/// PTY) wraps correctly in Alacritty. A PTY's line discipline performs this
+/// `ONLCR` translation for us; piped output (e.g. `ls` run outside a PTY) only
+/// emits `\n`, which moves Alacritty's cursor down without returning it to
+/// column zero and makes the rendered output look misaligned. Alacritty has no
+/// setting for this, so we insert a `\r` before each `\n` that lacks one.
+fn convert_lf_to_crlf(bytes: &[u8], previous_byte_was_cr: &mut bool) -> Vec<u8> {
+    let mut converted = Vec::with_capacity(bytes.len());
+    for &byte in bytes {
+        if byte == b'\n' && !*previous_byte_was_cr {
+            converted.push(b'\r');
+        }
+        converted.push(byte);
+        *previous_byte_was_cr = byte == b'\r';
+    }
+    converted
+}
+
+/// Owns a non-PTY task subprocess and the background task pumping its output
+/// into the terminal emulator. Used by headless hosts (e.g. the eval CLI) where
+/// PTY allocation fails with `ENOTTY`. Dropping this kills the child.
+struct SubprocessHandle {
+    child: Arc<parking_lot::Mutex<Option<util::process::Child>>>,
+    _reader: Task<()>,
+}
+
+impl SubprocessHandle {
+    fn kill(&self) {
+        if let Some(child) = self.child.lock().as_mut() {
+            child.kill().log_err();
+        }
+    }
+}
+
+/// Spawns `program`/`args` as a plain subprocess with piped stdout/stderr and
+/// drives its output into `term`, mirroring what the Alacritty event loop does
+/// for a PTY but without one. Used when [`HeadlessTerminal`] is enabled.
+fn spawn_task_subprocess(
+    program: String,
+    args: Vec<String>,
+    env: HashMap<String, String>,
+    working_directory: Option<PathBuf>,
+    term: Arc<AlacrittyTermLock>,
+    events_tx: futures::channel::mpsc::UnboundedSender<PtyEvent>,
+    executor: &BackgroundExecutor,
+) -> Result<SubprocessHandle> {
+    use futures::io::AsyncReadExt as _;
+    use std::process::Stdio;
+
+    let mut command = util::command::new_std_command(&program);
+    command.args(&args);
+    command.envs(&env);
+    if let Some(directory) = &working_directory {
+        command.current_dir(directory);
+    }
+
+    let mut child =
+        util::process::Child::spawn(command, Stdio::null(), Stdio::piped(), Stdio::piped())?;
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let child = Arc::new(parking_lot::Mutex::new(Some(child)));
+
+    let reader = executor.spawn({
+        let child = child.clone();
+        let executor = executor.clone();
+        async move {
+            // stdout and stderr are pumped concurrently, each through its own
+            // parser; the shared term mutex serializes grid mutation.
+            type BoxedReader = Box<dyn futures::io::AsyncRead + Unpin + Send>;
+            let pump = |reader: Option<BoxedReader>| {
+                let term = term.clone();
+                let events_tx = events_tx.clone();
+                async move {
+                    let Some(mut reader) = reader else { return };
+                    let mut processor = Processor::<StdSyncHandler>::new();
+                    let mut buffer = [0u8; 8192];
+                    let mut previous_byte_was_cr = false;
+                    loop {
+                        match reader.read(&mut buffer).await {
+                            Ok(0) => return,
+                            Err(error) => {
+                                log::warn!("failed to read subprocess output: {error}");
+                                return;
+                            }
+                            Ok(count) => {
+                                let converted =
+                                    convert_lf_to_crlf(&buffer[..count], &mut previous_byte_was_cr);
+                                {
+                                    let mut term = term.lock();
+                                    processor.advance(&mut *term, &converted);
+                                }
+                                events_tx
+                                    .unbounded_send(PtyEvent::Event(TerminalBackendEvent::Wakeup))
+                                    .ok();
+                            }
+                        }
+                    }
+                }
+            };
+            let stdout = stdout.map(|reader| Box::new(reader) as BoxedReader);
+            let stderr = stderr.map(|reader| Box::new(reader) as BoxedReader);
+            futures::future::join(pump(stdout), pump(stderr)).await;
+
+            // Both pipes are closed, so the child has exited or is about to.
+            // Poll for its status without holding the lock across an await.
+            let status = loop {
+                let status = match child.lock().as_mut() {
+                    Some(child) => match child.try_status() {
+                        Ok(status) => status,
+                        Err(error) => {
+                            log::warn!("failed to get subprocess exit status: {error}");
+                            break None;
+                        }
+                    },
+                    None => Some(ExitStatus::default()),
+                };
+                match status {
+                    Some(status) => break Some(status),
+                    None => executor.timer(Duration::from_millis(20)).await,
+                }
+            };
+            child.lock().take();
+            let event = match status {
+                Some(status) => TerminalBackendEvent::ChildExit(status),
+                None => TerminalBackendEvent::Exit,
+            };
+            events_tx.unbounded_send(PtyEvent::Event(event)).ok();
+        }
+    });
+
+    Ok(SubprocessHandle {
+        child,
+        _reader: reader,
+    })
+}
+
 impl Drop for Terminal {
     fn drop(&mut self) {
+        if let Some(subprocess) = self.subprocess.take() {
+            subprocess.kill();
+        }
         if let TerminalType::Pty { pty_tx, info } =
             std::mem::replace(&mut self.terminal_type, TerminalType::DisplayOnly)
         {
@@ -2916,6 +3288,66 @@ mod tests {
     use task::{Shell, ShellBuilder};
 
     #[test]
+    fn test_init_command_startup_marker_commands_do_not_contain_marker() {
+        let marker_id = 42;
+        let marker = init_command_startup_marker(marker_id);
+
+        for shell_kind in [
+            ShellKind::Posix,
+            ShellKind::Csh,
+            ShellKind::Tcsh,
+            ShellKind::Rc,
+            ShellKind::Fish,
+            ShellKind::PowerShell,
+            ShellKind::Pwsh,
+            ShellKind::Nushell,
+            ShellKind::Cmd,
+            ShellKind::Xonsh,
+            ShellKind::Elvish,
+        ] {
+            let command = init_command_startup_marker_command(shell_kind, marker_id);
+            assert!(
+                !command.contains(&marker),
+                "startup marker command for {shell_kind:?} should not contain the full marker, got {command:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    async fn test_init_command_startup_marker_ignores_echoed_command(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(
+                SettingsCursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+        let marker_id = 4242;
+        let marker = init_command_startup_marker(marker_id);
+        let command = init_command_startup_marker_command(ShellKind::Posix, marker_id);
+        let (startup_tx, startup_rx) = async_channel::bounded(1);
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.init_command_startup_marker = Some(marker.clone());
+            terminal.init_command_startup_tx = Some(startup_tx);
+            terminal.write_output(command.as_bytes(), cx);
+        });
+        assert!(matches!(
+            startup_rx.try_recv(),
+            Err(async_channel::TryRecvError::Empty)
+        ));
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(marker.as_bytes(), cx);
+        });
+        assert!(startup_rx.try_recv().is_ok());
+    }
+
+    #[test]
     fn test_normalize_path_command_name() {
         assert_eq!(normalize_path_command_name("claude"), Some("claude".into()));
         assert_eq!(normalize_path_command_name("Cargo"), Some("cargo".into()));
@@ -3021,6 +3453,103 @@ mod tests {
         (terminal, completion_rx)
     }
 
+    /// Builds a non-PTY (`no_pty`) task terminal, exercising the path used by
+    /// headless hosts (e.g. the eval CLI) where PTY allocation fails with
+    /// `ENOTTY`. The command runs as a plain subprocess whose piped output is
+    /// pumped into the emulator.
+    #[cfg(not(target_os = "windows"))]
+    async fn build_test_subprocess_terminal(
+        cx: &mut TestAppContext,
+        program: String,
+        args: Vec<String>,
+    ) -> (Entity<Terminal>, Receiver<Option<ExitStatus>>) {
+        let (completion_tx, completion_rx) = async_channel::unbounded();
+        let task_state = TaskState {
+            status: TaskStatus::Running,
+            completion_rx: completion_rx.clone(),
+            spawned_task: SpawnInTerminal {
+                command: Some(program.clone()),
+                args: args.clone(),
+                ..Default::default()
+            },
+        };
+        let builder = cx
+            .update(|cx| {
+                cx.set_global(HeadlessTerminal(true));
+                TerminalBuilder::new(
+                    None,
+                    Some(task_state),
+                    task::Shell::WithArguments {
+                        program,
+                        args,
+                        title_override: None,
+                    },
+                    HashMap::default(),
+                    SettingsCursorShape::default(),
+                    AlternateScroll::On,
+                    None,
+                    vec![],
+                    0,
+                    false,
+                    0,
+                    Some(completion_tx),
+                    cx,
+                    vec![],
+                    PathStyle::local(),
+                )
+            })
+            .await
+            .unwrap();
+        let terminal = cx.new(|cx| builder.subscribe(cx));
+        (terminal, completion_rx)
+    }
+
+    #[test]
+    fn test_convert_lf_to_crlf_preserves_split_crlf() {
+        let mut previous_byte_was_cr = false;
+        assert_eq!(
+            convert_lf_to_crlf(b"one\n", &mut previous_byte_was_cr),
+            b"one\r\n"
+        );
+        assert!(!previous_byte_was_cr);
+
+        let mut previous_byte_was_cr = false;
+        assert_eq!(
+            convert_lf_to_crlf(b"two\r", &mut previous_byte_was_cr),
+            b"two\r"
+        );
+        assert!(previous_byte_was_cr);
+        assert_eq!(
+            convert_lf_to_crlf(b"\nthree", &mut previous_byte_was_cr),
+            b"\nthree"
+        );
+        assert!(!previous_byte_was_cr);
+    }
+
+    /// Regression test for the agent terminal failing with `Not a tty (os error
+    /// 25)` in headless/eval sandboxes: a `no_pty` task terminal must run
+    /// without a PTY, capture stdout, and report its exit status.
+    #[cfg(not(target_os = "windows"))]
+    #[gpui::test]
+    async fn test_no_pty_task_terminal_captures_output(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (program, args) = ShellBuilder::new(&Shell::System, false)
+            .non_interactive()
+            .build(Some("echo hello-from-subprocess".to_owned()), &[]);
+        let (terminal, completion_rx) = build_test_subprocess_terminal(cx, program, args).await;
+
+        assert!(
+            !terminal.update(cx, |term, _| term.is_pty()),
+            "no_pty terminal should not be PTY-backed"
+        );
+        assert_eq!(
+            completion_rx.recv().await.unwrap(),
+            Some(ExitStatus::default())
+        );
+        assert_content_eventually(&terminal, "hello-from-subprocess", cx).await;
+    }
+
     fn init_ctrl_click_hyperlink_test(cx: &mut TestAppContext, output: &[u8]) -> Entity<Terminal> {
         cx.update(|cx| {
             let settings_store = settings::SettingsStore::test(cx);
@@ -3103,6 +3632,83 @@ mod tests {
             click_count: 1,
         };
         terminal.mouse_up(&mouse_up, cx);
+    }
+
+    fn left_mouse_down_at(
+        terminal: &mut Terminal,
+        position: GpuiPoint<Pixels>,
+        cx: &mut Context<Terminal>,
+    ) {
+        let mouse_down = MouseDownEvent {
+            button: MouseButton::Left,
+            position,
+            modifiers: Modifiers::none(),
+            click_count: 1,
+            first_mouse: true,
+        };
+        terminal.mouse_down(&mouse_down, cx);
+    }
+
+    fn left_mouse_drag_to(
+        terminal: &mut Terminal,
+        position: GpuiPoint<Pixels>,
+        cx: &mut Context<Terminal>,
+    ) {
+        let region = terminal.last_content.terminal_bounds.bounds;
+        let drag_event = MouseMoveEvent {
+            position,
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::none(),
+        };
+        terminal.mouse_drag(&drag_event, region, cx);
+    }
+
+    /// A left click that jitters by a pixel or two (e.g. the window-focusing
+    /// click) must not begin a selection, otherwise `copy_on_select` would
+    /// overwrite the clipboard. Regression test for #58970.
+    #[gpui::test]
+    async fn test_terminal_click_jitter_does_not_start_selection(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"hello world\r\n");
+
+        terminal.update(cx, |terminal, cx| {
+            left_mouse_down_at(terminal, point(px(50.0), px(10.0)), cx);
+            terminal.events.clear();
+
+            // One pixel of movement is below the drag threshold.
+            left_mouse_drag_to(terminal, point(px(51.0), px(10.0)), cx);
+
+            assert!(
+                !terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::UpdateSelection(_))),
+                "a sub-threshold click jitter should not start a selection"
+            );
+            assert!(terminal.selection_phase == SelectionPhase::Ended);
+        });
+    }
+
+    /// A deliberate drag past the threshold must still start a selection.
+    #[gpui::test]
+    async fn test_terminal_deliberate_drag_starts_selection(cx: &mut TestAppContext) {
+        let terminal = init_ctrl_click_hyperlink_test(cx, b"hello world\r\n");
+
+        terminal.update(cx, |terminal, cx| {
+            left_mouse_down_at(terminal, point(px(50.0), px(10.0)), cx);
+            terminal.events.clear();
+
+            // Well beyond the drag threshold.
+            left_mouse_drag_to(terminal, point(px(90.0), px(10.0)), cx);
+
+            assert!(
+                terminal
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, InternalEvent::UpdateSelection(_))),
+                "a deliberate drag should start a selection"
+            );
+            assert!(terminal.selection_phase == SelectionPhase::Selecting);
+        });
     }
 
     #[gpui::test]
@@ -3518,6 +4124,110 @@ mod tests {
             terminal_bounds,
             ..Default::default()
         }
+    }
+
+    #[gpui::test]
+    async fn test_write_init_command_after_startup_clears_without_shell_command(
+        cx: &mut TestAppContext,
+    ) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(
+                SettingsCursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"startup output\nprompt", cx);
+        });
+
+        let wrote = terminal.update(cx, |terminal, cx| {
+            terminal.write_init_command_after_startup(b"agent\r".to_vec(), cx)
+        });
+        assert!(wrote);
+        let content = terminal.update(cx, |terminal, _| terminal.get_content());
+        assert!(
+            !content.contains("startup output"),
+            "startup output should be cleared internally before writing the init command"
+        );
+        let input_log = terminal.update(cx, |terminal, _| terminal.take_input_log());
+        assert_eq!(input_log, vec![b"agent\r".to_vec()]);
+    }
+
+    #[gpui::test]
+    async fn test_write_init_command_after_startup_skips_after_keyboard_input(
+        cx: &mut TestAppContext,
+    ) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(
+                SettingsCursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+
+        let wrote = terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"startup output\nprompt", cx);
+            terminal.input(b"user input".to_vec());
+            terminal.write_init_command_after_startup(b"agent\r".to_vec(), cx)
+        });
+        assert!(!wrote);
+        let content = terminal.update(cx, |terminal, _| terminal.get_content());
+        assert!(
+            content.contains("startup output"),
+            "startup output should be left alone when the init command is skipped"
+        );
+        let input_log = terminal.update(cx, |terminal, _| terminal.take_input_log());
+        assert_eq!(input_log, vec![b"user input".to_vec()]);
+    }
+
+    #[gpui::test]
+    async fn test_write_init_command_after_startup_skips_after_child_exit(cx: &mut TestAppContext) {
+        let terminal = cx.new(|cx| {
+            TerminalBuilder::new_display_only(
+                SettingsCursorShape::default(),
+                AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            )
+            .subscribe(cx)
+        });
+
+        terminal.update(cx, |terminal, cx| {
+            terminal.write_output(b"shell failed to start\nprompt", cx);
+            #[cfg(unix)]
+            let exit_status =
+                <ExitStatus as std::os::unix::process::ExitStatusExt>::from_raw(1 << 8);
+            #[cfg(windows)]
+            let exit_status = <ExitStatus as std::os::windows::process::ExitStatusExt>::from_raw(1);
+            terminal.register_task_finished(Some(exit_status), cx);
+        });
+
+        let wrote = terminal.update(cx, |terminal, cx| {
+            terminal.write_init_command_after_startup(b"agent\r".to_vec(), cx)
+        });
+        assert!(!wrote);
+        let content = terminal.update(cx, |terminal, _| terminal.get_content());
+        assert!(
+            content.contains("shell failed to start"),
+            "startup failure output should be preserved when the init command is skipped"
+        );
+        let input_log = terminal.update(cx, |terminal, _| terminal.take_input_log());
+        assert!(
+            input_log.is_empty(),
+            "init command should not be written after the child has exited, got {input_log:?}"
+        );
     }
 
     #[gpui::test]

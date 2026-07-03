@@ -84,6 +84,7 @@ pub use rename_tool::*;
 pub use skill_tool::*;
 pub use spawn_agent_tool::*;
 pub use symbol_locator::*;
+
 pub use terminal_tool::*;
 pub use tool_permissions::*;
 pub use web_search_tool::*;
@@ -135,6 +136,18 @@ macro_rules! tools {
                 }
             )*
             false
+        }
+
+        /// Returns whether the tool with the given name may be provided to an
+        /// agent in a restricted workspace. Unknown tools (e.g. MCP tools) are
+        /// considered allowed.
+        pub fn tool_allowed_in_restricted_mode(name: &str) -> bool {
+            $(
+                if name == <$tool>::NAME {
+                    return <$tool>::allow_in_restricted_mode();
+                }
+            )*
+            true
         }
 
         /// A list of all built-in tools
@@ -216,5 +229,27 @@ pub fn tool_feature_flag_enabled(tool_name: &str, cx: &App) -> bool {
             cx.has_flag::<CreateThreadToolFeatureFlag>()
         }
         _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fetch_and_terminal_are_forbidden_in_restricted_mode() {
+        assert!(!tool_allowed_in_restricted_mode(FetchTool::NAME));
+        assert!(!tool_allowed_in_restricted_mode(TerminalTool::NAME));
+
+        // Every other built-in tool, and unknown (e.g. MCP) tools, are allowed.
+        for name in ALL_TOOL_NAMES {
+            let expected = *name != FetchTool::NAME && *name != TerminalTool::NAME;
+            assert_eq!(
+                tool_allowed_in_restricted_mode(name),
+                expected,
+                "unexpected restricted-mode policy for tool `{name}`"
+            );
+        }
+        assert!(tool_allowed_in_restricted_mode("some_mcp_tool"));
     }
 }

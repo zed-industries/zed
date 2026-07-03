@@ -216,6 +216,7 @@ pub struct AgentSettings {
     pub inline_assistant_model: Option<LanguageModelSelection>,
     pub inline_assistant_use_streaming_tools: bool,
     pub commit_message_model: Option<LanguageModelSelection>,
+    pub commit_message_include_project_rules: bool,
     pub commit_message_instructions: Option<String>,
     pub thread_summary_model: Option<LanguageModelSelection>,
     pub inline_alternatives: Vec<LanguageModelSelection>,
@@ -422,12 +423,14 @@ pub struct SandboxPermissions {
     /// consumed (`agent::sandboxing`).
     pub network_hosts: Vec<String>,
     pub allow_fs_write_all: bool,
-    /// Auto-approve commands that request `unsandboxed: true`. Unlike
-    /// `disabled`, the sandbox stays on for commands that don't ask.
+    /// Persistently run agent terminal commands outside the OS sandbox. This is
+    /// the model-facing "off switch": when set, the sandboxed terminal tool is
+    /// not exposed and the system prompt omits the sandbox section, so the
+    /// model uses the plain `terminal` tool (on Windows, WSL sandbox setup is
+    /// skipped). Distinct from the model-requested `unsandboxed: true` escape
+    /// approved "once" or "for this thread", which keeps the sandboxed
+    /// tool/prompt in place — see `agent::sandboxing`.
     pub allow_unsandboxed: bool,
-    /// Turn terminal sandboxing off entirely: the sandboxed terminal tool is
-    /// not exposed and every command runs outside the sandbox.
-    pub disabled: bool,
     pub write_paths: Vec<PathBuf>,
 }
 
@@ -743,6 +746,9 @@ impl Settings for AgentSettings {
             inline_assistant_use_streaming_tools: agent
                 .inline_assistant_use_streaming_tools
                 .unwrap_or(true),
+            commit_message_include_project_rules: agent
+                .commit_message_include_project_rules
+                .unwrap(),
             commit_message_model: agent.commit_message_model,
             commit_message_instructions: agent.commit_message_instructions,
             thread_summary_model: agent.thread_summary_model,
@@ -814,7 +820,6 @@ fn compile_sandbox_permissions(
         network_hosts,
         allow_fs_write_all: content.allow_fs_write_all.unwrap_or(false),
         allow_unsandboxed: content.allow_unsandboxed.unwrap_or(false),
-        disabled: content.disabled.unwrap_or(false),
         write_paths,
     }
 }
@@ -1118,9 +1123,6 @@ mod tests {
         );
         assert!(!permissions.allow_fs_write_all);
         assert!(permissions.allow_unsandboxed);
-        // `allow_unsandboxed` is a per-request grant; it must not imply that
-        // sandboxing is disabled.
-        assert!(!permissions.disabled);
         assert_eq!(
             permissions.write_paths,
             vec![PathBuf::from("/tmp/build"), PathBuf::from("/var/log")]

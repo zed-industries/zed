@@ -246,6 +246,8 @@ impl Platform for WebPlatform {
         self.callbacks.borrow_mut().reopen = Some(callback);
     }
 
+    fn on_system_wake(&self, _callback: Box<dyn FnMut()>) {}
+
     fn set_menus(&self, _menus: Vec<Menu>, _keymap: &Keymap) {}
 
     fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {}

@@ -284,6 +284,15 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             "#,
             "d.rs": "fn d() {\n    D\n}",
         },
+        "e": {
+            ".editorconfig": r#"
+            [*.rs]
+                indent_size = 5
+                indent_style = space
+                max_line_length =
+            "#,
+            "e.rs": "fn e() {\n    E\n}",
+        },
         "README.json": "tabs are better\n",
     }));
 
@@ -315,6 +324,7 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
     let settings_b = settings_for("b/b.rs", cx).await;
     let settings_c = settings_for("c.js", cx).await;
     let settings_d = settings_for("d/d.rs", cx).await;
+    let settings_e = settings_for("e/e.rs", cx).await;
     let settings_readme = settings_for("README.json", cx).await;
     // .editorconfig overrides .zed/settings
     assert_eq!(Some(settings_a.tab_size), NonZeroU32::new(3));
@@ -329,6 +339,13 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
 
     // .editorconfig in subdirectory overrides .editorconfig in root
     assert_eq!(Some(settings_d.tab_size), NonZeroU32::new(1));
+
+    // Non-empty values in e/ are parsed and applied as usual.
+    assert_eq!(Some(settings_e.tab_size), NonZeroU32::new(5));
+    assert_eq!(settings_e.hard_tabs, false);
+    // An empty value opts out of the inherited `max_line_length = 120`,
+    // falling back to .zed/settings.json instead of rejecting the whole file.
+    assert_eq!(settings_e.preferred_line_length, 64);
 
     // "indent_size" is not set, so "tab_width" is used
     assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
@@ -2248,6 +2265,131 @@ async fn test_rescan_fs_change_is_reported_to_language_servers_as_changed(
             uri: lsp::Uri::from_file_path(path!("/the-root/Cargo.lock")).unwrap(),
             typ: lsp::FileChangeType::CHANGED,
         }]
+    );
+}
+
+#[gpui::test]
+async fn test_dynamic_semantic_tokens_registration(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/the-root"),
+        json!({
+            "a.rs": "fn main() {}",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/the-root").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            name: "the-language-server",
+            // Crucially, no `semantic_tokens_provider` is advertised statically; the
+            // server only offers it through dynamic registration (as Roslyn does).
+            ..Default::default()
+        },
+    );
+
+    let _buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/the-root/a.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    let server_id = fake_server.server.server_id();
+    cx.executor().run_until_parked();
+
+    let semantic_tokens_provider = |cx: &mut gpui::TestAppContext| {
+        project.read_with(cx, |project, cx| {
+            project
+                .lsp_store()
+                .read(cx)
+                .lsp_server_capabilities
+                .get(&server_id)
+                .and_then(|capabilities| capabilities.semantic_tokens_provider.clone())
+        })
+    };
+
+    assert!(
+        semantic_tokens_provider(cx).is_none(),
+        "server should not advertise semantic tokens before dynamic registration"
+    );
+
+    fake_server
+        .request::<lsp::request::RegisterCapability>(
+            lsp::RegistrationParams {
+                registrations: vec![lsp::Registration {
+                    id: "semantic-tokens".to_string(),
+                    method: "textDocument/semanticTokens".to_string(),
+                    register_options: serde_json::to_value(
+                        lsp::SemanticTokensRegistrationOptions {
+                            text_document_registration_options:
+                                lsp::TextDocumentRegistrationOptions {
+                                    document_selector: None,
+                                },
+                            semantic_tokens_options: lsp::SemanticTokensOptions {
+                                legend: lsp::SemanticTokensLegend {
+                                    token_types: vec!["keyword".into(), "variable".into()],
+                                    token_modifiers: vec![],
+                                },
+                                full: Some(lsp::SemanticTokensFullOptions::Bool(true)),
+                                ..Default::default()
+                            },
+                            static_registration_options: lsp::StaticRegistrationOptions {
+                                id: None,
+                            },
+                        },
+                    )
+                    .ok(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let provider = semantic_tokens_provider(cx)
+        .expect("semantic tokens provider should be set after dynamic registration");
+    // The capability round-trips through capability-sync serialization, which may
+    // normalize the registration options into plain options; either shape is fine
+    // as long as the legend survives.
+    let legend = match provider {
+        lsp::SemanticTokensServerCapabilities::SemanticTokensOptions(options) => options.legend,
+        lsp::SemanticTokensServerCapabilities::SemanticTokensRegistrationOptions(options) => {
+            options.semantic_tokens_options.legend
+        }
+    };
+    assert_eq!(
+        legend.token_types,
+        vec!["keyword".into(), "variable".into()],
+    );
+
+    fake_server
+        .request::<lsp::request::UnregisterCapability>(
+            lsp::UnregistrationParams {
+                unregisterations: vec![lsp::Unregistration {
+                    id: "semantic-tokens".to_string(),
+                    method: "textDocument/semanticTokens".to_string(),
+                }],
+            },
+            DEFAULT_LSP_REQUEST_TIMEOUT,
+        )
+        .await
+        .into_response()
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    assert!(
+        semantic_tokens_provider(cx).is_none(),
+        "semantic tokens provider should be cleared after unregistration"
     );
 }
 
@@ -11174,6 +11316,96 @@ async fn test_git_repository_status(cx: &mut gpui::TestAppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_git_repository_status_removes_directory_descendants(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    cx.executor().allow_parking();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "project": {
+                ".git": {},
+                "ci2": {
+                    "Dockerfile.namespace": "untracked",
+                },
+            },
+        }),
+    )
+    .await;
+    fs.set_status_for_repo(
+        path!("/root/project/.git").as_ref(),
+        &[("ci2/Dockerfile.namespace", FileStatus::Untracked)],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root/project").as_ref()], cx).await;
+
+    let tree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project.repositories(cx).values().next().unwrap().clone()
+    });
+
+    repository.read_with(cx, |repository, _| {
+        assert_eq!(
+            repository.cached_status().collect::<Vec<_>>(),
+            [StatusEntry {
+                repo_path: repo_path("ci2/Dockerfile.namespace"),
+                status: FileStatus::Untracked,
+                diff_stat: None,
+            }]
+        );
+    });
+
+    fs.pause_events();
+    fs.create_dir(path!("/root/project/ci3").as_ref())
+        .await
+        .unwrap();
+    fs.copy_file(
+        path!("/root/project/ci2/Dockerfile.namespace").as_ref(),
+        path!("/root/project/ci3/Dockerfile.namespace").as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fs.remove_dir(
+        path!("/root/project/ci2").as_ref(),
+        RemoveOptions {
+            recursive: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    fs.clear_buffered_events();
+    fs.unpause_events_and_flush();
+    fs.emit_fs_event(path!("/root/project/ci2"), Some(PathEventKind::Removed));
+    fs.emit_fs_event(path!("/root/project/ci3"), Some(PathEventKind::Created));
+
+    tree.flush_fs_events(cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.executor().run_until_parked();
+
+    repository.read_with(cx, |repository, _| {
+        assert_eq!(
+            repository.cached_status().collect::<Vec<_>>(),
+            [StatusEntry {
+                repo_path: repo_path("ci3/Dockerfile.namespace"),
+                status: FileStatus::Untracked,
+                diff_stat: None,
+            }]
+        );
+    });
+}
+
 #[cfg(target_os = "linux")]
 #[gpui::test(retries = 5)]
 async fn test_git_events_after_project_excludes_dot_git(cx: &mut gpui::TestAppContext) {
@@ -11835,6 +12067,188 @@ async fn test_project_group_keys_remain_distinct_for_sibling_repo_subdirectories
             .map(|path| path.as_path())
             .collect::<Vec<_>>(),
         vec![Path::new(path!("/root/my-repo/packages/b"))]
+    );
+}
+
+fn project_group_key_paths(project: &Entity<Project>, cx: &TestAppContext) -> Vec<PathBuf> {
+    project.read_with(cx, |project, cx| {
+        ProjectGroupKey::from_project(project, cx)
+            .path_list()
+            .ordered_paths()
+            .cloned()
+            .collect()
+    })
+}
+
+fn project_worktree_paths(
+    project: &Entity<Project>,
+    cx: &TestAppContext,
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    project.read_with(cx, |project, cx| {
+        let paths = project.worktree_paths(cx);
+        (
+            paths.folder_path_list().ordered_paths().cloned().collect(),
+            paths
+                .main_worktree_path_list()
+                .ordered_paths()
+                .cloned()
+                .collect(),
+        )
+    })
+}
+
+#[gpui::test]
+async fn test_project_group_keys_match_for_bare_repo_linked_worktrees(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "monty": {
+                ".git": "gitdir: ./.bare\n",
+                ".bare": {
+                    "HEAD": "ref: refs/heads/main\n",
+                    "worktrees": {
+                        "main": {
+                            "commondir": "../..",
+                            "gitdir": "/root/monty/main/.git",
+                        },
+                        "feature-a": {
+                            "commondir": "../..",
+                            "gitdir": "/root/monty/feature-a/.git",
+                        },
+                        "feature-b": {
+                            "commondir": "../..",
+                            "gitdir": "/root/monty/feature-b/.git",
+                        },
+                    },
+                },
+                "main": {
+                    ".git": "gitdir: /root/monty/.bare/worktrees/main\n",
+                    "file.txt": "main",
+                },
+                "feature-a": {
+                    ".git": "gitdir: /root/monty/.bare/worktrees/feature-a\n",
+                    "file.txt": "a",
+                },
+                "feature-b": {
+                    ".git": "gitdir: /root/monty/.bare/worktrees/feature-b\n",
+                    "file.txt": "b",
+                },
+            },
+        }),
+    )
+    .await;
+
+    let project_root = Project::test(fs.clone(), [path!("/root/monty").as_ref()], cx).await;
+    let project_main = Project::test(fs.clone(), [path!("/root/monty/main").as_ref()], cx).await;
+    let project_a = Project::test(fs.clone(), [path!("/root/monty/feature-a").as_ref()], cx).await;
+    let project_b = Project::test(fs, [path!("/root/monty/feature-b").as_ref()], cx).await;
+
+    project_root
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    project_main
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    project_a
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    project_b
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    for project in [&project_root, &project_main, &project_a, &project_b] {
+        assert_eq!(
+            project_group_key_paths(project, cx),
+            vec![PathBuf::from(path!("/root/monty"))]
+        );
+    }
+
+    assert_eq!(
+        project_worktree_paths(&project_root, cx),
+        (
+            vec![PathBuf::from(path!("/root/monty"))],
+            vec![PathBuf::from(path!("/root/monty"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_main, cx),
+        (
+            vec![PathBuf::from(path!("/root/monty/main"))],
+            vec![PathBuf::from(path!("/root/monty"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_a, cx),
+        (
+            vec![PathBuf::from(path!("/root/monty/feature-a"))],
+            vec![PathBuf::from(path!("/root/monty"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_b, cx),
+        (
+            vec![PathBuf::from(path!("/root/monty/feature-b"))],
+            vec![PathBuf::from(path!("/root/monty"))],
+        )
+    );
+}
+
+#[gpui::test]
+async fn test_project_group_key_groups_nested_linked_worktree_under_main_repo(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "my-repo": {
+                ".git": {},
+                "file.txt": "content",
+            },
+        }),
+    )
+    .await;
+
+    let linked_worktree_path = PathBuf::from(path!("/root/my-repo/.zed/worktrees/feature"));
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/root/my-repo/.git")),
+        false,
+        git::repository::Worktree {
+            path: linked_worktree_path.clone(),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "abc123".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+
+    let project = Project::test(fs, [linked_worktree_path.as_path()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    assert_eq!(
+        project_group_key_paths(&project, cx),
+        vec![PathBuf::from(path!("/root/my-repo"))]
+    );
+    assert_eq!(
+        project_worktree_paths(&project, cx),
+        (
+            vec![PathBuf::from(path!("/root/my-repo/.zed/worktrees/feature"))],
+            vec![PathBuf::from(path!("/root/my-repo"))],
+        )
     );
 }
 

@@ -30,6 +30,7 @@ use gpui::{
     point, px, size, transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
+use markdown_preview::markdown_preview_view::MarkdownPreviewView;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use notifications::status_toast::StatusToast;
 use project::{
@@ -60,10 +61,9 @@ use std::{
 };
 use theme_settings::ThemeSettings;
 use ui::{
-    Color, ContextMenu, ContextMenuEntry, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, Indicator, KeyBinding, Label, LabelSize, ListItem,
-    ListItemSpacing, ProjectEmptyState, ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate,
-    Tooltip, WithScrollbar, prelude::*, v_flex,
+    ContextMenu, DecoratedIcon, IconDecoration, IconDecorationKind, IndentGuideColors,
+    IndentGuideLayout, Indicator, KeyBinding, ListItem, ListItemSpacing, ProjectEmptyState,
+    ScrollAxes, ScrollableHandle, Scrollbars, StickyCandidate, Tooltip, WithScrollbar, prelude::*,
 };
 use util::{
     ResultExt, TakeUntilExt, TryFutureExt,
@@ -339,8 +339,12 @@ actions!(
         CollapseSelectedEntry,
         /// Collapses the selected entry and its children in the project tree.
         CollapseSelectedEntryAndChildren,
+        /// Expands the selected entry and its children in the project tree.
+        ExpandSelectedEntryAndChildren,
         /// Collapses all entries in the project tree.
         CollapseAllEntries,
+        /// Expands all entries in the project tree.
+        ExpandAllEntries,
         /// Creates a new directory.
         NewDirectory,
         /// Creates a new file.
@@ -405,6 +409,8 @@ actions!(
         Undo,
         /// Redoes the last undone file operation.
         Redo,
+        /// Opens a markdown preview for the selected file.
+        OpenMarkdownPreview,
     ]
 );
 
@@ -495,6 +501,14 @@ pub fn init(cx: &mut App) {
             if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
                 panel.update(cx, |panel, cx| {
                     panel.collapse_all_entries(action, window, cx);
+                });
+            }
+        });
+
+        workspace.register_action(|workspace, action: &ExpandAllEntries, window, cx| {
+            if let Some(panel) = workspace.panel::<ProjectPanel>(cx) {
+                panel.update(cx, |panel, cx| {
+                    panel.expand_all_entries(action, window, cx);
                 });
             }
         });
@@ -626,6 +640,16 @@ fn get_item_color(is_sticky: bool, cx: &App) -> ItemColors {
     }
 }
 
+enum DeleteEntryOutcome {
+    /// Entry was successfully trashed, returning the `Change` that can be
+    /// recorded to the undo stack.
+    Trashed(Change),
+    /// Entry was successfully deleted, or there was nothing to delete.
+    Deleted,
+    /// Deleting or trashing the entry failed at the OS level.
+    Failed,
+}
+
 impl ProjectPanel {
     fn new(
         workspace: &mut Workspace,
@@ -717,40 +741,12 @@ impl ProjectPanel {
                         cx.notify();
                     }
                     project::Event::ExpandedAllForEntry(worktree_id, entry_id) => {
-                        if let Some((worktree, expanded_dir_ids)) = project
-                            .read(cx)
-                            .worktree_for_id(*worktree_id, cx)
-                            .zip(this.state.expanded_dir_ids.get_mut(worktree_id))
-                        {
-                            let worktree = worktree.read(cx);
-
-                            let Some(entry) = worktree.entry_for_id(*entry_id) else {
-                                return;
-                            };
-                            let include_ignored_dirs = !entry.is_ignored;
-
-                            let mut dirs_to_expand = vec![*entry_id];
-                            while let Some(current_id) = dirs_to_expand.pop() {
-                                let Some(current_entry) = worktree.entry_for_id(current_id) else {
-                                    continue;
-                                };
-                                for child in worktree.child_entries(&current_entry.path) {
-                                    if !child.is_dir() || (include_ignored_dirs && child.is_ignored)
-                                    {
-                                        continue;
-                                    }
-
-                                    dirs_to_expand.push(child.id);
-
-                                    if let Err(ix) = expanded_dir_ids.binary_search(&child.id) {
-                                        expanded_dir_ids.insert(ix, child.id);
-                                    }
-                                    this.state.unfolded_dir_ids.insert(child.id);
-                                }
-                            }
-                            this.update_visible_entries(None, false, false, window, cx);
-                            cx.notify();
-                        }
+                        this.synchronously_expand_all_directories(
+                            *worktree_id,
+                            *entry_id,
+                            window,
+                            cx,
+                        );
                     }
                     _ => {}
                 },
@@ -1091,6 +1087,7 @@ impl ProjectPanel {
             let is_remote = project.is_remote();
             let is_collab = project.is_via_collab();
             let is_local = project.is_local() || project.is_via_wsl_with_host_interop(cx);
+            let is_markdown = !is_dir && MarkdownPreviewView::is_markdown_path(&*entry.path);
 
             let settings = ProjectPanelSettings::get_global(cx);
             let visible_worktrees_count = project.visible_worktrees(cx).count();
@@ -1116,11 +1113,13 @@ impl ProjectPanel {
             };
 
             let has_pasteable_content = self.has_pasteable_content(cx);
-            let entity = cx.entity();
             let context_menu = ContextMenu::build(window, cx, |menu, _, cx| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
-                        menu.when(is_dir, |menu| {
+                        menu.when(is_markdown, |menu| {
+                            menu.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
+                        })
+                        .when(is_dir, |menu| {
                             menu.action("Search Inside", Box::new(NewSearchInDirectory))
                         })
                     } else {
@@ -1137,6 +1136,9 @@ impl ProjectPanel {
                                 menu.action("Open in Default App", Box::new(OpenWithSystem))
                             })
                             .action("Open in Terminal", Box::new(OpenInTerminal))
+                            .when(is_markdown, |menu| {
+                                menu.action("Open Markdown Preview", Box::new(OpenMarkdownPreview))
+                            })
                             .when(is_dir, |menu| {
                                 menu.separator()
                                     .action("Find in Folder…", Box::new(NewSearchInDirectory))
@@ -1213,22 +1215,17 @@ impl ProjectPanel {
                                     .action("Remove from Project", Box::new(RemoveFromProject))
                             })
                             .when(is_dir && !is_root, |menu| {
-                                menu.separator().action(
-                                    "Collapse All",
-                                    Box::new(CollapseSelectedEntryAndChildren),
-                                )
+                                menu.separator()
+                                    .action("Expand All", Box::new(ExpandSelectedEntryAndChildren))
+                                    .action(
+                                        "Collapse All",
+                                        Box::new(CollapseSelectedEntryAndChildren),
+                                    )
                             })
                             .when(is_dir && is_root, |menu| {
-                                let entity = entity.clone();
-                                menu.separator().item(
-                                    ContextMenuEntry::new("Collapse All").handler(
-                                        move |window, cx| {
-                                            entity.update(cx, |this, cx| {
-                                                this.collapse_all_for_root(window, cx);
-                                            });
-                                        },
-                                    ),
-                                )
+                                menu.separator()
+                                    .action("Expand All", Box::new(ExpandAllEntries))
+                                    .action("Collapse All", Box::new(CollapseAllEntries))
                             })
                     }
                 })
@@ -1411,31 +1408,59 @@ impl ProjectPanel {
         }
     }
 
-    /// Handles "Collapse All" from the context menu when a root directory is selected.
-    /// With a single visible worktree, keeps the root expanded (matching CollapseAllEntries behavior).
-    /// With multiple visible worktrees, collapses the root and all its children.
-    fn collapse_all_for_root(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((worktree, entry)) = self.selected_entry(cx) else {
-            return;
-        };
-
-        let is_root = worktree.root_entry().map(|e| e.id) == Some(entry.id);
-        if !is_root {
-            return;
-        }
-
-        let worktree_id = worktree.id();
-        let root_id = entry.id;
-
+    fn collapse_worktree_expanded_dirs(
+        &mut self,
+        worktree_id: WorktreeId,
+        root_id: ProjectEntryId,
+        cx: &App,
+    ) {
+        let single_worktree = self.project.read(cx).visible_worktrees(cx).count() == 1;
         if let Some(expanded_dir_ids) = self.state.expanded_dir_ids.get_mut(&worktree_id) {
-            if self.project.read(cx).visible_worktrees(cx).count() == 1 {
+            if single_worktree {
                 expanded_dir_ids.retain(|id| id == &root_id);
             } else {
                 expanded_dir_ids.clear();
             }
         }
+    }
 
-        self.update_visible_entries(Some((worktree_id, root_id)), false, false, window, cx);
+    fn all_worktree_roots(&self, cx: &App) -> Vec<(WorktreeId, ProjectEntryId)> {
+        self.project
+            .read(cx)
+            .visible_worktrees(cx)
+            .filter_map(|worktree| {
+                let worktree = worktree.read(cx);
+                Some((worktree.id(), worktree.root_entry()?.id))
+            })
+            .collect()
+    }
+
+    fn expand_worktree_roots(
+        &mut self,
+        roots: Vec<(WorktreeId, ProjectEntryId)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for (worktree_id, root_id) in roots {
+            self.expand_all_for_entry(worktree_id, root_id, cx);
+            self.synchronously_expand_all_directories_internal(worktree_id, root_id, cx);
+        }
+
+        self.update_visible_entries(None, false, false, window, cx);
+        cx.notify();
+    }
+
+    fn collapse_worktree_roots(
+        &mut self,
+        roots: Vec<(WorktreeId, ProjectEntryId)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        for (worktree_id, root_id) in roots {
+            self.collapse_worktree_expanded_dirs(worktree_id, root_id, cx);
+        }
+
+        self.update_visible_entries(None, false, false, window, cx);
         cx.notify();
     }
 
@@ -1445,37 +1470,98 @@ impl ProjectPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
-        // (which is it's default behavior when there's no entry for a worktree in expanded_dir_ids).
-        let multiple_worktrees = self.project.read(cx).visible_worktrees(cx).count() > 1;
-        let project = self.project.read(cx);
+        let roots = self.all_worktree_roots(cx);
+        self.collapse_worktree_roots(roots, window, cx);
+    }
 
-        self.state
-            .expanded_dir_ids
-            .iter_mut()
-            .for_each(|(worktree_id, expanded_entries)| {
-                if multiple_worktrees {
-                    *expanded_entries = Default::default();
-                    return;
-                }
+    fn expand_all_entries(
+        &mut self,
+        _: &ExpandAllEntries,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let roots = self.all_worktree_roots(cx);
+        self.expand_worktree_roots(roots, window, cx);
+    }
 
-                let root_entry_id = project
-                    .worktree_for_id(*worktree_id, cx)
-                    .map(|worktree| worktree.read(cx).snapshot())
-                    .and_then(|worktree_snapshot| {
-                        worktree_snapshot.root_entry().map(|entry| entry.id)
-                    });
+    fn expand_all_for_entry_and_refresh(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.expand_all_for_entry(worktree_id, entry_id, cx);
+        self.synchronously_expand_all_directories(worktree_id, entry_id, window, cx);
+    }
 
-                match root_entry_id {
-                    Some(id) => {
-                        expanded_entries.retain(|entry_id| entry_id == &id);
-                    }
-                    None => *expanded_entries = Default::default(),
-                };
-            });
+    fn expand_selected_entry_and_children(
+        &mut self,
+        _: &ExpandSelectedEntryAndChildren,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((worktree, entry)) = self.selected_entry(cx) {
+            let worktree_id = worktree.id();
+            let entry_id = entry.id;
+            self.expand_all_for_entry_and_refresh(worktree_id, entry_id, window, cx);
+        }
+    }
 
+    fn synchronously_expand_all_directories(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.synchronously_expand_all_directories_internal(worktree_id, entry_id, cx);
         self.update_visible_entries(None, false, false, window, cx);
         cx.notify();
+    }
+
+    fn synchronously_expand_all_directories_internal(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        cx: &mut Context<Self>,
+    ) {
+        let project = self.project.read(cx);
+        let Some((worktree, expanded_dir_ids)) = project
+            .worktree_for_id(worktree_id, cx)
+            .zip(self.state.expanded_dir_ids.get_mut(&worktree_id))
+        else {
+            return;
+        };
+
+        let worktree = worktree.read(cx);
+        let Some(entry) = worktree.entry_for_id(entry_id) else {
+            return;
+        };
+        let include_ignored_dirs = !entry.is_ignored;
+
+        if let Err(ix) = expanded_dir_ids.binary_search(&entry_id) {
+            expanded_dir_ids.insert(ix, entry_id);
+        }
+
+        let mut dirs_to_expand = vec![entry_id];
+        while let Some(current_id) = dirs_to_expand.pop() {
+            let Some(current_entry) = worktree.entry_for_id(current_id) else {
+                continue;
+            };
+            for child in worktree.child_entries(&current_entry.path) {
+                if !child.is_dir() || (include_ignored_dirs && child.is_ignored) {
+                    continue;
+                }
+
+                dirs_to_expand.push(child.id);
+
+                if let Err(ix) = expanded_dir_ids.binary_search(&child.id) {
+                    expanded_dir_ids.insert(ix, child.id);
+                }
+                self.state.unfolded_dir_ids.insert(child.id);
+            }
+        }
     }
 
     fn toggle_expanded(
@@ -1683,6 +1769,29 @@ impl ProjectPanel {
             window,
             cx,
         );
+    }
+
+    fn open_markdown_preview(
+        &mut self,
+        _: &OpenMarkdownPreview,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((worktree, entry)) = self.selected_entry(cx) else {
+            return;
+        };
+        if !entry.is_file() || !MarkdownPreviewView::is_markdown_path(&*entry.path) {
+            return;
+        }
+        let project_path = ProjectPath {
+            worktree_id: worktree.id(),
+            path: entry.path.clone(),
+        };
+        self.workspace
+            .update(cx, |workspace, cx| {
+                MarkdownPreviewView::open_for_project_path(project_path, workspace, window, cx);
+            })
+            .ok();
     }
 
     fn open_internal(
@@ -1961,6 +2070,32 @@ impl ProjectPanel {
             }
             Ok(())
         }))
+    }
+
+    async fn resolve_delete_entry(
+        task: Option<Task<Result<Option<fs::TrashedEntry>>>>,
+        worktree_id: WorktreeId,
+        trash: bool,
+    ) -> DeleteEntryOutcome {
+        let Some(task) = task else {
+            // If there's no task to be awaited on, it means that the entry, or
+            // worktree, were likely already deleted.
+            return DeleteEntryOutcome::Deleted;
+        };
+
+        match task.await {
+            Ok(Some(trashed_entry)) if trash => {
+                DeleteEntryOutcome::Trashed(Change::Trashed(worktree_id, trashed_entry))
+            }
+            Err(err) => {
+                log::error!(
+                    "Failed to {} an entry: {err:#}",
+                    if trash { "trash" } else { "delete" }
+                );
+                DeleteEntryOutcome::Failed
+            }
+            Ok(_) => DeleteEntryOutcome::Deleted,
+        }
     }
 
     fn discard_edit_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2251,7 +2386,7 @@ impl ProjectPanel {
             let file_name = entry.path.file_name()?.to_string();
 
             let answer = if !action.skip_prompt {
-                let prompt = format!("Discard changes to {}?", file_name);
+                let prompt = format!("Discard changes to {}?", MarkdownInlineCode(&file_name));
                 Some(window.prompt(PromptLevel::Info, &prompt, None, &["Restore", "Cancel"], cx))
             } else {
                 None
@@ -2471,7 +2606,7 @@ impl ProjectPanel {
                                 .iter()
                                 .map(|(_, _, path)| MarkdownInlineCode(path).to_string())
                                 .take(CUTOFF_POINT)
-                                .collect::<Vec<_>>();
+                                .collect::<Vec<String>>();
                             paths.truncate(CUTOFF_POINT);
                             if truncated_path_counts == 1 {
                                 paths.push(".. 1 file not shown".into());
@@ -2522,27 +2657,35 @@ impl ProjectPanel {
                 }
 
                 let mut changes = Vec::new();
+                let total_count = file_paths.len();
+                let mut failed_count = 0;
 
-                for (entry_id, worktree_id, _) in file_paths {
-                    let trashed_entry = panel
-                        .update(cx, |panel, cx| {
-                            panel
-                                .project
-                                .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
-                                .context("no such entry")
-                        })??
-                        .await?;
+                let tasks = panel.update(cx, |panel, cx| {
+                    panel.project.update(cx, |project, cx| {
+                        file_paths
+                            .into_iter()
+                            .map(|(entry_id, worktree_id, _)| {
+                                (worktree_id, project.delete_entry(entry_id, trash, cx))
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })?;
 
-                    // Keep track of trashed change so that we can then record
-                    // all of the changes at once, such that undoing and redoing
-                    // restores or trashes all files in batch.
-                    if trash && let Some(trashed_entry) = trashed_entry {
-                        changes.push(Change::Trashed(worktree_id, trashed_entry));
+                for (worktree_id, task) in tasks {
+                    match Self::resolve_delete_entry(task, worktree_id, trash).await {
+                        DeleteEntryOutcome::Deleted => {}
+                        DeleteEntryOutcome::Trashed(change) => changes.push(change),
+                        DeleteEntryOutcome::Failed => failed_count += 1,
                     }
                 }
+
                 panel.update_in(cx, |panel, window, cx| {
                     if trash {
                         panel.undo_manager.record(changes).log_err();
+                    }
+
+                    if failed_count > 0 {
+                        panel.show_remove_failure_toast(trash, total_count, failed_count, cx);
                     }
 
                     if let Some(next_selection) = next_selection {
@@ -2562,6 +2705,39 @@ impl ProjectPanel {
             .detach_and_log_err(cx);
             Some(())
         });
+    }
+
+    /// Displays a toast notification, informing that the application was not
+    /// able to delete/trash some of the files the user intended to
+    /// delete/trash.
+    fn show_remove_failure_toast(
+        &self,
+        trash: bool,
+        total_count: usize,
+        failed_count: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let message = match (trash, total_count) {
+            (true, 1) => format!("Failed to trash {failed_count} of {total_count} file."),
+            (true, _) => format!("Failed to trash {failed_count} of {total_count} files."),
+            (false, 1) => format!("Failed to delete {failed_count} of {total_count} file."),
+            (false, _) => format!("Failed to delete {failed_count} of {total_count} files."),
+        };
+
+        let toast = StatusToast::new(message, cx, |this, _| {
+            this.icon(
+                Icon::new(IconName::XCircle)
+                    .size(IconSize::Small)
+                    .color(Color::Error),
+            )
+            .dismiss_button(true)
+        });
+
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.toggle_status_toast(toast, cx);
+            })
+            .ok();
     }
 
     fn find_next_selection_after_deletion(
@@ -4442,7 +4618,7 @@ impl ProjectPanel {
                             "already exists in the destination folder. ",
                             "Do you want to replace it?"
                         ),
-                        filename
+                        MarkdownInlineCode(filename)
                     );
                     let answer = cx
                         .update(|window, cx| {
@@ -5369,6 +5545,7 @@ impl ProjectPanel {
         &self,
         entry_id: ProjectEntryId,
         details: EntryDetails,
+        marked_selections: Arc<[SelectedEntry]>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
@@ -5405,24 +5582,12 @@ impl ProjectPanel {
         let diagnostic_count = details.diagnostic_count;
         let item_colors = get_item_color(is_sticky, cx);
 
-        let canonical_path = details
-            .canonical_path
-            .as_ref()
-            .map(|f| f.to_string_lossy().into_owned());
+        let canonical_path = details.canonical_path.clone();
         let path_style = self.project.read(cx).path_style(cx);
         let path = details.path.clone();
-        let path_for_external_paths = path.clone();
-        let path_for_dragged_selection = path.clone();
 
         let depth = details.depth;
         let worktree_id = details.worktree_id;
-        let dragged_selection = DraggedSelection {
-            active_selection: SelectedEntry {
-                worktree_id: selection.worktree_id,
-                entry_id: selection.entry_id,
-            },
-            marked_selections: Arc::from(self.marked_entries.clone()),
-        };
 
         let bg_color = if is_marked {
             item_colors.marked
@@ -5530,6 +5695,13 @@ impl ProjectPanel {
                     },
                 )
                 .when(settings.drag_and_drop, |this| {
+                    let path_for_external_paths = path.clone();
+                    let path_for_dragged_selection = path.clone();
+                    let dragged_selection = DraggedSelection {
+                        active_selection: selection,
+                        marked_selections: marked_selections.clone(),
+                    };
+
                     this.on_drag_move::<ExternalPaths>(cx.listener(
                         move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
                             let is_current_target =
@@ -5855,7 +6027,7 @@ impl ProjectPanel {
                                     .id("symlink_icon")
                                     .tooltip(move |_window, cx| {
                                         Tooltip::with_meta(
-                                            path.to_string(),
+                                            path.to_string_lossy().into_owned(),
                                             None,
                                             "Symbolic Link",
                                             cx,
@@ -6567,6 +6739,7 @@ impl ProjectPanel {
 
         // already checked if non empty above
         let last_item_index = sticky_parents.len() - 1;
+        let marked_selections: Arc<[SelectedEntry]> = Arc::from(self.marked_entries.clone());
         sticky_parents
             .iter()
             .enumerate()
@@ -6588,24 +6761,30 @@ impl ProjectPanel {
                     window,
                     cx,
                 );
-                self.render_entry(entry.id, details, window, cx)
-                    .when(index == last_item_index, |this| {
-                        let shadow_color_top = hsla(0.0, 0.0, 0.0, 0.1);
-                        let shadow_color_bottom = hsla(0.0, 0.0, 0.0, 0.);
-                        let sticky_shadow = div()
-                            .absolute()
-                            .left_0()
-                            .bottom_neg_1p5()
-                            .h_1p5()
-                            .w_full()
-                            .bg(linear_gradient(
-                                0.,
-                                linear_color_stop(shadow_color_top, 1.),
-                                linear_color_stop(shadow_color_bottom, 0.),
-                            ));
-                        this.child(sticky_shadow)
-                    })
-                    .into_any()
+                self.render_entry(
+                    entry.id,
+                    details,
+                    Arc::clone(&marked_selections),
+                    window,
+                    cx,
+                )
+                .when(index == last_item_index, |this| {
+                    let shadow_color_top = hsla(0.0, 0.0, 0.0, 0.1);
+                    let shadow_color_bottom = hsla(0.0, 0.0, 0.0, 0.);
+                    let sticky_shadow = div()
+                        .absolute()
+                        .left_0()
+                        .bottom_neg_1p5()
+                        .h_1p5()
+                        .w_full()
+                        .bg(linear_gradient(
+                            0.,
+                            linear_color_stop(shadow_color_top, 1.),
+                            linear_color_stop(shadow_color_bottom, 0.),
+                        ));
+                    this.child(sticky_shadow)
+                })
+                .into_any()
             })
             .collect()
     }
@@ -6761,11 +6940,14 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::expand_selected_entry))
                 .on_action(cx.listener(Self::collapse_selected_entry))
                 .on_action(cx.listener(Self::collapse_all_entries))
+                .on_action(cx.listener(Self::expand_all_entries))
                 .on_action(cx.listener(Self::collapse_selected_entry_and_children))
+                .on_action(cx.listener(Self::expand_selected_entry_and_children))
                 .on_action(cx.listener(Self::open))
                 .on_action(cx.listener(Self::open_permanent))
                 .on_action(cx.listener(Self::open_split_vertical))
                 .on_action(cx.listener(Self::open_split_horizontal))
+                .on_action(cx.listener(Self::open_markdown_preview))
                 .on_action(cx.listener(Self::confirm))
                 .on_action(cx.listener(Self::cancel))
                 .on_action(cx.listener(Self::copy_path))
@@ -6815,12 +6997,20 @@ impl Render for ProjectPanel {
                                 cx.processor(|this, range: Range<usize>, window, cx| {
                                     this.rendered_entries_len = range.end - range.start;
                                     let mut items = Vec::with_capacity(this.rendered_entries_len);
+                                    let marked_selections: Arc<[SelectedEntry]> =
+                                        Arc::from(this.marked_entries.clone());
                                     this.for_each_visible_entry(
                                         range,
                                         window,
                                         cx,
                                         &mut |id, details, window, cx| {
-                                            items.push(this.render_entry(id, details, window, cx));
+                                            items.push(this.render_entry(
+                                                id,
+                                                details,
+                                                Arc::clone(&marked_selections),
+                                                window,
+                                                cx,
+                                            ));
                                         },
                                     );
                                     items

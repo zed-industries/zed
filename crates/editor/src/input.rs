@@ -1141,6 +1141,12 @@ impl Editor {
             return;
         }
         self.transact(window, cx, |this, window, cx| {
+            this.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(&mut |_, selection| {
+                    selection.reversed = false;
+                });
+            });
+
             this.select_to_end_of_line(
                 &SelectToEndOfLine {
                     stop_at_soft_wraps: false,
@@ -1162,6 +1168,12 @@ impl Editor {
             return;
         }
         self.transact(window, cx, |this, window, cx| {
+            this.change_selections(Default::default(), window, cx, |s| {
+                s.move_with(&mut |_, selection| {
+                    selection.reversed = false;
+                });
+            });
+
             this.select_to_end_of_line(
                 &SelectToEndOfLine {
                     stop_at_soft_wraps: false,
