@@ -257,7 +257,67 @@ function sign_app_binaries() {
         ln -s /Applications ${dmg_source_directory}
 
         echo "Creating final DMG at ${dmg_file_path} using ${dmg_source_directory}"
-        hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
+
+        # Optional installer-window design. When these assets are present the DMG
+        # is styled (custom background + icon layout) via Finder/AppleScript;
+        # otherwise a plain DMG window is produced.
+        dmg_volume_name="Zed"
+        dmg_mount_point="/Volumes/${dmg_volume_name}"
+        dmg_rw_path="${dmg_target_directory}/Zed-${arch_suffix}-rw.dmg"
+        dmg_background_path="crates/zed/resources/dmg/background.png"
+        dmg_background_2x_path="crates/zed/resources/dmg/background@2x.png"
+
+        if [ -f "${dmg_background_path}" ]; then
+            echo "Styling DMG window using ${dmg_background_path}"
+
+            # Finder records the window/icon layout into the image, so we need a
+            # read-write image first and convert to compressed UDZO at the end.
+            rm -f "${dmg_rw_path}"
+            hdiutil create -volname "${dmg_volume_name}" -srcfolder "${dmg_source_directory}" -ov -format UDRW "${dmg_rw_path}"
+
+            # Detach any stale mount left over from a previous run, then attach.
+            hdiutil detach "${dmg_mount_point}" -force >/dev/null 2>&1 || true
+            hdiutil attach "${dmg_rw_path}" -noautoopen -mountpoint "${dmg_mount_point}"
+
+            mkdir -p "${dmg_mount_point}/.background"
+            cp "${dmg_background_path}" "${dmg_mount_point}/.background/background.png"
+            # Finder automatically uses the @2x variant on Retina displays.
+            if [ -f "${dmg_background_2x_path}" ]; then
+                cp "${dmg_background_2x_path}" "${dmg_mount_point}/.background/background@2x.png"
+            fi
+
+            # Window/icon coordinates are tentative placeholders; tweak to match
+            # the Figma design. Window bounds are {left, top, right, bottom}, so
+            # these produce a 660x400 window. Icon positions are within it.
+            osascript <<APPLESCRIPT
+tell application "Finder"
+    tell disk "${dmg_volume_name}"
+        open
+        set current view of container window to icon view
+        set toolbar visible of container window to false
+        set statusbar visible of container window to false
+        set the bounds of container window to {200, 120, 860, 520}
+        set view_options to the icon view options of container window
+        set arrangement of view_options to not arranged
+        set icon size of view_options to 128
+        set background picture of view_options to file ".background:background.png"
+        set position of item "Zed.app" of container window to {180, 200}
+        set position of item "Applications" of container window to {480, 200}
+        update without registering applications
+        delay 1
+        close
+    end tell
+end tell
+APPLESCRIPT
+
+            sync
+            hdiutil detach "${dmg_mount_point}" -force
+            hdiutil convert "${dmg_rw_path}" -format UDZO -ov -o "${dmg_file_path}"
+            rm -f "${dmg_rw_path}"
+        else
+            echo "No DMG background found at ${dmg_background_path}; creating plain DMG"
+            hdiutil create -volname "${dmg_volume_name}" -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
+        fi
 
         # If someone runs this bundle script locally, a symlink will be placed in `dmg_source_directory`.
         # This symlink causes CPU issues with Zed if the Zed codebase is the project being worked on, so we simply remove it for now.
