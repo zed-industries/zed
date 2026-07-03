@@ -495,6 +495,8 @@ impl Server {
             .add_request_handler(forward_mutating_project_request::<proto::GitCherryPick>)
             .add_request_handler(forward_mutating_project_request::<proto::GitRevert>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCheckoutCommit>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitCreateTag>)
+            .add_request_handler(forward_mutating_project_request::<proto::GitDeleteTag>)
             .add_request_handler(forward_mutating_project_request::<proto::GitCreateRemote>)
             .add_request_handler(forward_mutating_project_request::<proto::GitRemoveRemote>)
             .add_request_handler(forward_read_only_project_request::<proto::GitGetWorktrees>)

@@ -110,9 +110,9 @@ To view File History:
 
 The Git Graph ({#action git_graph::Open}) visualizes your repository's commit history across branches. Right-clicking a commit or a ref label opens a context menu with common Git operations:
 
-- On a branch label: check out the branch, merge it into the current branch, create a new branch from it, or delete it.
-- On a commit: check out the commit, create a branch from it, cherry-pick it, or revert it.
-- On a tag label: create a branch from the tag.
+- On a branch label: check out the branch, merge or squash-merge it into the current branch, create a new branch or tag from it, or delete it.
+- On a commit: check out the commit, create a branch or tag from it, cherry-pick it, or revert it.
+- On a tag label: check out the tag, create a branch from it, or delete it.
 
 If an operation fails — for example, a merge or cherry-pick with conflicts — Zed shows the error, and any conflicts can be resolved from the Git Panel as usual. You can also add your own entries to this menu with [custom Git commands](./tasks.md#custom-git-commands).
 

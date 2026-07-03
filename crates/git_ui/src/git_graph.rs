@@ -1325,38 +1325,51 @@ struct GitGraphContextMenu {
     _subscription: Subscription,
 }
 
-struct CreateBranchModal {
+#[derive(Clone, Copy, PartialEq)]
+enum CreateRefKind {
+    Branch,
+    Tag,
+}
+
+struct CreateRefModal {
     editor: Entity<Editor>,
     repository: Entity<Repository>,
     workspace: WeakEntity<Workspace>,
+    kind: CreateRefKind,
     base: SharedString,
 }
 
-impl EventEmitter<DismissEvent> for CreateBranchModal {}
-impl ModalView for CreateBranchModal {}
-impl Focusable for CreateBranchModal {
+impl EventEmitter<DismissEvent> for CreateRefModal {}
+impl ModalView for CreateRefModal {}
+impl Focusable for CreateRefModal {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.editor.focus_handle(cx)
     }
 }
 
-impl CreateBranchModal {
+impl CreateRefModal {
     fn new(
         repository: Entity<Repository>,
+        kind: CreateRefKind,
         base: SharedString,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let placeholder = match kind {
+            CreateRefKind::Branch => "Branch name",
+            CreateRefKind::Tag => "Tag name",
+        };
         let editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Branch name", window, cx);
+            editor.set_placeholder_text(placeholder, window, cx);
             editor
         });
         Self {
             editor,
             repository,
             workspace,
+            kind,
             base,
         }
     }
@@ -1366,27 +1379,31 @@ impl CreateBranchModal {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
-        let branch_name = self.editor.read(cx).text(cx).trim().to_string();
-        if branch_name.is_empty() {
+        let name = self.editor.read(cx).text(cx).trim().to_string();
+        if name.is_empty() {
             return;
         }
         let base = self.base.clone();
         let workspace = self.workspace.clone();
-        let receiver = self.repository.update(cx, |repository, _| {
-            repository.create_branch(branch_name.clone(), Some(base.to_string()))
-        });
+        let (receiver, command_label) = match self.kind {
+            CreateRefKind::Branch => (
+                self.repository.update(cx, |repository, _| {
+                    repository.create_branch(name.clone(), Some(base.to_string()))
+                }),
+                format!("switch -c {name} {base}"),
+            ),
+            CreateRefKind::Tag => (
+                self.repository.update(cx, |repository, _| {
+                    repository.create_tag(name.clone(), base.to_string())
+                }),
+                format!("tag {name} {base}"),
+            ),
+        };
         cx.spawn(async move |_, cx| {
             if let Ok(Err(error)) = receiver.await
                 && let Some(workspace) = workspace.upgrade()
             {
-                cx.update(|cx| {
-                    show_error_toast(
-                        workspace,
-                        format!("switch -c {branch_name} {base}"),
-                        error,
-                        cx,
-                    )
-                });
+                cx.update(|cx| show_error_toast(workspace, command_label, error, cx));
             }
         })
         .detach();
@@ -1394,10 +1411,17 @@ impl CreateBranchModal {
     }
 }
 
-impl Render for CreateBranchModal {
+impl Render for CreateRefModal {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (icon, title) = match self.kind {
+            CreateRefKind::Branch => (
+                IconName::GitBranch,
+                format!("Create branch from {}", self.base),
+            ),
+            CreateRefKind::Tag => (IconName::Bookmark, format!("Create tag at {}", self.base)),
+        };
         v_flex()
-            .key_context("GitGraphCreateBranchModal")
+            .key_context("GitGraphCreateRefModal")
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .elevation_2(cx)
@@ -1408,11 +1432,8 @@ impl Render for CreateBranchModal {
                     .pt_2()
                     .pb_1()
                     .gap_1p5()
-                    .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))
-                    .child(
-                        Label::new(format!("Create branch from {}", self.base))
-                            .size(LabelSize::Small),
-                    ),
+                    .child(Icon::new(icon).size(IconSize::XSmall))
+                    .child(Label::new(title).size(LabelSize::Small)),
             )
             .child(
                 div()
@@ -2594,13 +2615,62 @@ impl GitGraph {
         self.detach_op_with_error_toast(format!("switch {ref_name}"), receiver, cx);
     }
 
-    fn merge_ref(&mut self, ref_name: SharedString, cx: &mut Context<Self>) {
+    fn merge_ref(&mut self, ref_name: SharedString, squash: bool, cx: &mut Context<Self>) {
         let Some(repository) = self.get_repository(cx) else {
             return;
         };
-        let receiver =
-            repository.update(cx, |repository, _| repository.merge(ref_name.to_string()));
-        self.detach_op_with_error_toast(format!("merge {ref_name}"), receiver, cx);
+        let receiver = repository.update(cx, |repository, _| {
+            repository.merge(ref_name.to_string(), squash)
+        });
+        let flag = if squash { "--squash " } else { "" };
+        self.detach_op_with_error_toast(format!("merge {flag}{ref_name}"), receiver, cx);
+    }
+
+    fn checkout_tag(&mut self, tag_name: SharedString, cx: &mut Context<Self>) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let receiver = repository.update(cx, |repository, _| {
+            repository.checkout_commit(tag_name.to_string())
+        });
+        self.detach_op_with_error_toast(format!("checkout --detach {tag_name}"), receiver, cx);
+    }
+
+    fn delete_tag(&mut self, tag_name: SharedString, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let workspace = self.workspace.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            let answer = cx.update(|window, cx| {
+                window.prompt(
+                    PromptLevel::Warning,
+                    &format!("Delete tag \"{tag_name}\"?"),
+                    None,
+                    &["Delete", "Cancel"],
+                    cx,
+                )
+            })?;
+            if answer.await != Ok(0) {
+                return anyhow::Ok(());
+            }
+
+            let result = repository
+                .update(cx, |repository, _| {
+                    repository.delete_tag(tag_name.to_string())
+                })
+                .await?;
+            if let Err(error) = result
+                && let Some(workspace) = workspace.upgrade()
+            {
+                cx.update(|_window, cx| {
+                    show_error_toast(workspace, format!("tag -d {tag_name}"), error, cx)
+                })?;
+            }
+
+            anyhow::Ok(())
+        })
+        .detach();
     }
 
     fn cherry_pick_commit(&mut self, commit_sha: Oid, cx: &mut Context<Self>) {
@@ -2621,8 +2691,9 @@ impl GitGraph {
         let Some(repository) = self.get_repository(cx) else {
             return;
         };
-        let receiver =
-            repository.update(cx, |repository, _| repository.revert(commit_sha.to_string()));
+        let receiver = repository.update(cx, |repository, _| {
+            repository.revert(commit_sha.to_string())
+        });
         self.detach_op_with_error_toast(
             format!("revert {}", commit_sha.display_short()),
             receiver,
@@ -2644,8 +2715,9 @@ impl GitGraph {
         );
     }
 
-    fn create_branch_from(
+    fn create_ref_from(
         &mut self,
+        kind: CreateRefKind,
         base: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -2659,7 +2731,7 @@ impl GitGraph {
         workspace.update(cx, |workspace, cx| {
             let workspace_handle = cx.weak_entity();
             workspace.toggle_modal(window, cx, |window, cx| {
-                CreateBranchModal::new(repository, base, workspace_handle, window, cx)
+                CreateRefModal::new(repository, kind, base, workspace_handle, window, cx)
             });
         });
     }
@@ -2889,27 +2961,56 @@ impl GitGraph {
                                     )),
                             );
 
-                            menu = menu.item(match head_branch_name.clone() {
-                                Some(head_branch) if !is_checked_out => {
-                                    let merge_branch = branch_name.clone();
-                                    ContextMenuEntry::new(format!("Merge into {head_branch}"))
-                                        .handler(window.handler_for(
+                            for squash in [false, true] {
+                                menu = menu.item(match head_branch_name.clone() {
+                                    Some(head_branch) if !is_checked_out => {
+                                        let merge_branch = branch_name.clone();
+                                        let label = if squash {
+                                            format!("Squash Merge into {head_branch}")
+                                        } else {
+                                            format!("Merge into {head_branch}")
+                                        };
+                                        ContextMenuEntry::new(label).handler(window.handler_for(
                                             &git_graph,
                                             move |this, _window, cx| {
-                                                this.merge_ref(merge_branch.clone(), cx);
+                                                this.merge_ref(merge_branch.clone(), squash, cx);
                                             },
                                         ))
-                                }
-                                _ => ContextMenuEntry::new("Merge into Current Branch")
+                                    }
+                                    _ => ContextMenuEntry::new(if squash {
+                                        "Squash Merge into Current Branch"
+                                    } else {
+                                        "Merge into Current Branch"
+                                    })
                                     .disabled(true),
-                            });
+                                });
+                            }
 
                             let create_base = branch_name.clone();
                             menu = menu.entry(
                                 "Create Branch from Here…",
                                 None,
                                 window.handler_for(&git_graph, move |this, window, cx| {
-                                    this.create_branch_from(create_base.clone(), window, cx);
+                                    this.create_ref_from(
+                                        CreateRefKind::Branch,
+                                        create_base.clone(),
+                                        window,
+                                        cx,
+                                    );
+                                }),
+                            );
+
+                            let tag_base = branch_name.clone();
+                            menu = menu.entry(
+                                "Create Tag…",
+                                None,
+                                window.handler_for(&git_graph, move |this, window, cx| {
+                                    this.create_ref_from(
+                                        CreateRefKind::Tag,
+                                        tag_base.clone(),
+                                        window,
+                                        cx,
+                                    );
                                 }),
                             );
 
@@ -2927,11 +3028,34 @@ impl GitGraph {
                         }
                         None => {
                             if let Some(tag_name) = ref_name.clone() {
+                                let checkout_tag = tag_name.clone();
+                                menu = menu.entry(
+                                    "Check Out Tag",
+                                    None,
+                                    window.handler_for(&git_graph, move |this, _window, cx| {
+                                        this.checkout_tag(checkout_tag.clone(), cx);
+                                    }),
+                                );
+
+                                let create_base = tag_name.clone();
                                 menu = menu.entry(
                                     "Create Branch from Here…",
                                     None,
                                     window.handler_for(&git_graph, move |this, window, cx| {
-                                        this.create_branch_from(tag_name.clone(), window, cx);
+                                        this.create_ref_from(
+                                            CreateRefKind::Branch,
+                                            create_base.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                                );
+
+                                menu = menu.entry(
+                                    "Delete Tag…",
+                                    None,
+                                    window.handler_for(&git_graph, move |this, window, cx| {
+                                        this.delete_tag(tag_name.clone(), window, cx);
                                     }),
                                 );
                             } else {
@@ -2948,7 +3072,26 @@ impl GitGraph {
                                     "Create Branch from Here…",
                                     None,
                                     window.handler_for(&git_graph, move |this, window, cx| {
-                                        this.create_branch_from(create_base.clone(), window, cx);
+                                        this.create_ref_from(
+                                            CreateRefKind::Branch,
+                                            create_base.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                                );
+
+                                let tag_base = SharedString::from(sha.to_string());
+                                menu = menu.entry(
+                                    "Create Tag…",
+                                    None,
+                                    window.handler_for(&git_graph, move |this, window, cx| {
+                                        this.create_ref_from(
+                                            CreateRefKind::Tag,
+                                            tag_base.clone(),
+                                            window,
+                                            cx,
+                                        );
                                     }),
                                 );
 

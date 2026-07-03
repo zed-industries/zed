@@ -494,7 +494,9 @@ message Envelope {
     GitMerge git_merge = 462;
     GitCherryPick git_cherry_pick = 463;
     GitRevert git_revert = 464;
-    GitCheckoutCommit git_checkout_commit = 465; // current max
+    GitCheckoutCommit git_checkout_commit = 465;
+    GitCreateTag git_create_tag = 466;
+    GitDeleteTag git_delete_tag = 467; // current max
   }
 
   reserved 87 to 88;

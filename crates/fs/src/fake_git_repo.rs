@@ -930,7 +930,7 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
-    fn merge(&self, _ref_name: String) -> BoxFuture<'_, Result<()>> {
+    fn merge(&self, _ref_name: String, _squash: bool) -> BoxFuture<'_, Result<()>> {
         async { Ok(()) }.boxed()
     }
 
@@ -947,6 +947,14 @@ impl GitRepository for FakeGitRepository {
             state.current_branch_name = None;
             Ok(())
         })
+    }
+
+    fn create_tag(&self, _name: String, _target: String) -> BoxFuture<'_, Result<()>> {
+        async { Ok(()) }.boxed()
+    }
+
+    fn delete_tag(&self, _name: String) -> BoxFuture<'_, Result<()>> {
+        async { Ok(()) }.boxed()
     }
 
     fn delete_branch(

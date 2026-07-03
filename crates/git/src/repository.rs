@@ -867,8 +867,9 @@ pub trait GitRepository: Send + Sync {
         force: bool,
     ) -> BoxFuture<'_, Result<()>>;
 
-    /// Merges the given commit-ish into the current branch.
-    fn merge(&self, ref_name: String) -> BoxFuture<'_, Result<()>>;
+    /// Merges the given commit-ish into the current branch. A squash merge
+    /// stages the changes without committing them.
+    fn merge(&self, ref_name: String, squash: bool) -> BoxFuture<'_, Result<()>>;
 
     /// Cherry-picks the given commit onto the current branch.
     fn cherry_pick(&self, commit: String) -> BoxFuture<'_, Result<()>>;
@@ -878,6 +879,12 @@ pub trait GitRepository: Send + Sync {
 
     /// Checks out the given commit-ish with a detached HEAD.
     fn checkout_commit(&self, commit: String) -> BoxFuture<'_, Result<()>>;
+
+    /// Creates a lightweight tag pointing at the given commit-ish.
+    fn create_tag(&self, name: String, target: String) -> BoxFuture<'_, Result<()>>;
+
+    /// Deletes the given local tag.
+    fn delete_tag(&self, name: String) -> BoxFuture<'_, Result<()>>;
 
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
 
@@ -2213,13 +2220,14 @@ impl GitRepository for RealGitRepository {
             .boxed()
     }
 
-    fn merge(&self, ref_name: String) -> BoxFuture<'_, Result<()>> {
+    fn merge(&self, ref_name: String, squash: bool) -> BoxFuture<'_, Result<()>> {
         let git_binary = self.git_binary_in_worktree();
 
         self.executor
             .spawn(async move {
                 let git_binary = git_binary?;
-                git_binary.run(&["merge", "--no-edit", &ref_name]).await?;
+                let flag = if squash { "--squash" } else { "--no-edit" };
+                git_binary.run(&["merge", flag, &ref_name]).await?;
                 anyhow::Ok(())
             })
             .boxed()
@@ -2256,6 +2264,30 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git_binary = git_binary?;
                 git_binary.run(&["checkout", "--detach", &commit]).await?;
+                anyhow::Ok(())
+            })
+            .boxed()
+    }
+
+    fn create_tag(&self, name: String, target: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary_in_worktree();
+
+        self.executor
+            .spawn(async move {
+                let git_binary = git_binary?;
+                git_binary.run(&["tag", &name, &target]).await?;
+                anyhow::Ok(())
+            })
+            .boxed()
+    }
+
+    fn delete_tag(&self, name: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary_in_worktree();
+
+        self.executor
+            .spawn(async move {
+                let git_binary = git_binary?;
+                git_binary.run(&["tag", "-d", &name]).await?;
                 anyhow::Ok(())
             })
             .boxed()
@@ -4422,11 +4454,44 @@ mod tests {
         .unwrap();
         let git = repository.git_binary_in_worktree().unwrap();
 
-        repository.merge("feature".to_string()).await.unwrap();
+        repository
+            .merge("feature".to_string(), false)
+            .await
+            .unwrap();
         assert!(
             repo_dir.path().join("feature.txt").exists(),
             "merging the feature branch should bring its files into main"
         );
+
+        git_command(repo_dir.path(), ["switch", "-c", "squashed"]);
+        fs::write(repo_dir.path().join("squashed.txt"), "squashed\n").unwrap();
+        git_command(repo_dir.path(), ["add", "squashed.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "squashed"]);
+        git_command(repo_dir.path(), ["switch", "main"]);
+
+        repository
+            .merge("squashed".to_string(), true)
+            .await
+            .unwrap();
+        assert!(
+            repo_dir.path().join("squashed.txt").exists(),
+            "squash merging should bring the branch's files into the working tree"
+        );
+        let staged = git.run(&["diff", "--cached", "--name-only"]).await.unwrap();
+        assert!(
+            staged.contains("squashed.txt"),
+            "squash merging should stage the changes without committing them"
+        );
+        git_command(repo_dir.path(), ["commit", "-m", "squash feature"]);
+
+        repository
+            .create_tag("v1.0".to_string(), "HEAD".to_string())
+            .await
+            .unwrap();
+        assert_eq!(git.run(&["tag", "-l", "v1.0"]).await.unwrap(), "v1.0");
+
+        repository.delete_tag("v1.0".to_string()).await.unwrap();
+        assert_eq!(git.run(&["tag", "-l", "v1.0"]).await.unwrap(), "");
 
         git_command(repo_dir.path(), ["switch", "-c", "side"]);
         fs::write(repo_dir.path().join("side.txt"), "side\n").unwrap();
@@ -4448,7 +4513,10 @@ mod tests {
             "reverting the cherry-picked commit should remove its files"
         );
 
-        let first_sha = git.run(&["rev-list", "--max-parents=0", "HEAD"]).await.unwrap();
+        let first_sha = git
+            .run(&["rev-list", "--max-parents=0", "HEAD"])
+            .await
+            .unwrap();
         repository.checkout_commit(first_sha.clone()).await.unwrap();
         assert_eq!(
             git.run(&["branch", "--show-current"]).await.unwrap(),
