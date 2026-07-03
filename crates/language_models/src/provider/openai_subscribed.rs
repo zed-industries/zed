@@ -729,6 +729,11 @@ async fn do_oauth_flow(
         .query_pairs_mut()
         .append_pair("client_id", CLIENT_ID)
         .append_pair("redirect_uri", &redirect_uri)
+        // Deliberately excludes `api.connectors.read api.connectors.invoke`
+        // (which Codex CLI requests): extra scopes inflate the
+        // access-token JWT, and the serialized credentials must fit within
+        // Windows Credential Manager's 2560-byte blob limit
+        // (CRED_MAX_CREDENTIAL_BLOB_SIZE). See #58541.
         .append_pair("scope", "openid profile email offline_access")
         .append_pair("response_type", "code")
         .append_pair("code_challenge", &challenge)
