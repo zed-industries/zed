@@ -171,38 +171,152 @@ fn render_cell(column: &ColumnInfo, cell: &crate::EditCell, params: &mut Vec<Str
 }
 
 /// Returns true if `sql` contains a top-level `RETURNING` keyword (a whole
-/// word, case-insensitive, outside string/quoted-identifier spans). Used to
-/// decide whether [`with_returning`] needs to append a clause.
+/// word, case-insensitive, outside string/quoted-identifier/dollar-quoted
+/// spans and comments). Used to decide whether [`with_returning`] needs to
+/// append a clause.
+///
+/// Scans by `char_indices()` (never slices at a byte offset that wasn't
+/// yielded as a char boundary by the iterator), so it is safe on any UTF-8
+/// input, including multi-byte characters inside string literals.
+///
+/// Recognizes and skips over: `'...'` string literals (with `''`
+/// escaping), `"..."` quoted identifiers, `$$...$$` and `$tag$...$tag$`
+/// dollar-quoted strings, `-- ...` line comments, and `/* ... */` block
+/// comments. Does not attempt to parse subquery structure, so a
+/// `RETURNING` that is only valid inside a nested subquery (rare, and
+/// generally not valid Postgres syntax there anyway) is out of scope.
 fn has_top_level_returning(sql: &str) -> bool {
-    let bytes = sql.as_bytes();
-    let mut in_string = false;
-    let mut in_ident = false;
-    let mut index = 0;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        match byte {
-            b'\'' if !in_ident => in_string = !in_string,
-            b'"' if !in_string => in_ident = !in_ident,
-            _ if !in_string
-                && !in_ident
-                && sql[index..].len() >= "RETURNING".len()
-                && sql[index..index + "RETURNING".len()].eq_ignore_ascii_case("RETURNING")
-                && sql[..index]
-                    .chars()
-                    .next_back()
-                    .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'))
-                && sql[index + "RETURNING".len()..]
-                    .chars()
-                    .next()
-                    .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_')) =>
-            {
-                return true;
+    const KEYWORD: &str = "RETURNING";
+    let chars: Vec<(usize, char)> = sql.char_indices().collect();
+    let mut position = 0;
+    while position < chars.len() {
+        let (_, ch) = chars[position];
+        match ch {
+            '\'' => {
+                position += 1;
+                position = skip_past_delimited(&chars, position, '\'');
             }
-            _ => {}
+            '"' => {
+                position += 1;
+                position = skip_past_delimited(&chars, position, '"');
+            }
+            '$' => {
+                if let Some(next_position) = skip_dollar_quoted(&chars, position) {
+                    position = next_position;
+                } else {
+                    position += 1;
+                }
+            }
+            '-' if chars.get(position + 1).is_some_and(|&(_, c)| c == '-') => {
+                position += 2;
+                while position < chars.len() && chars[position].1 != '\n' {
+                    position += 1;
+                }
+            }
+            '/' if chars.get(position + 1).is_some_and(|&(_, c)| c == '*') => {
+                position += 2;
+                while position < chars.len()
+                    && !(chars[position].1 == '*'
+                        && chars.get(position + 1).is_some_and(|&(_, c)| c == '/'))
+                {
+                    position += 1;
+                }
+                // Skip the closing `*/` itself, if present.
+                position = (position + 2).min(chars.len());
+            }
+            _ => {
+                let keyword_len = KEYWORD.chars().count();
+                let matches_keyword = position + keyword_len <= chars.len()
+                    && chars[position..position + keyword_len]
+                        .iter()
+                        .map(|&(_, c)| c)
+                        .zip(KEYWORD.chars())
+                        .all(|(a, b)| a.eq_ignore_ascii_case(&b));
+                let preceded_by_word_char = position > 0 && is_word_char(chars[position - 1].1);
+                let followed_by_word_char = chars
+                    .get(position + keyword_len)
+                    .is_some_and(|&(_, c)| is_word_char(c));
+                if matches_keyword && !preceded_by_word_char && !followed_by_word_char {
+                    return true;
+                }
+                position += 1;
+            }
         }
-        index += 1;
     }
     false
+}
+
+/// Returns true if `ch` counts as part of a SQL identifier/keyword for the
+/// purposes of word-boundary checks (so `RETURNINGX`/`xRETURNING` are not
+/// mistaken for the keyword).
+fn is_word_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+/// Advances `position` past a `'...'`/`"..."`-style delimited span whose
+/// opening delimiter has already been consumed, honoring the SQL convention
+/// that a doubled delimiter (`''`/`""`) inside the span is an escaped
+/// literal delimiter rather than the closing one. Returns the index just
+/// past the closing delimiter, or `chars.len()` if the span is unterminated.
+fn skip_past_delimited(chars: &[(usize, char)], mut position: usize, delimiter: char) -> usize {
+    while position < chars.len() {
+        if chars[position].1 == delimiter {
+            if chars
+                .get(position + 1)
+                .is_some_and(|&(_, c)| c == delimiter)
+            {
+                position += 2;
+                continue;
+            }
+            return position + 1;
+        }
+        position += 1;
+    }
+    position
+}
+
+/// If a dollar-quoted string (`$$...$$` or `$tag$...$tag$`) starts at
+/// `position` (which must point at a `$`), returns the index just past its
+/// closing delimiter (or past the end of input, if unterminated). Returns
+/// `None` if `position` is not the start of a valid dollar-quote opening
+/// delimiter (e.g. a bare `$` used as an operator, or `$1` parameter
+/// placeholder syntax, which is not a dollar-quote).
+fn skip_dollar_quoted(chars: &[(usize, char)], position: usize) -> Option<usize> {
+    let mut tag_end = position + 1;
+    while chars
+        .get(tag_end)
+        .is_some_and(|&(_, c)| c.is_ascii_alphabetic() || c == '_')
+    {
+        tag_end += 1;
+    }
+    if chars.get(tag_end).is_none_or(|&(_, c)| c != '$') {
+        return None;
+    }
+    let opening_end = tag_end + 1;
+    let tag: Vec<char> = chars[position + 1..tag_end]
+        .iter()
+        .map(|&(_, c)| c)
+        .collect();
+    let mut search_position = opening_end;
+    while search_position < chars.len() {
+        if chars[search_position].1 == '$' {
+            let candidate_end = search_position + 1 + tag.len() + 1;
+            if candidate_end <= chars.len() {
+                let candidate: Vec<char> = chars[search_position..candidate_end]
+                    .iter()
+                    .map(|&(_, c)| c)
+                    .collect();
+                let mut expected = vec!['$'];
+                expected.extend(&tag);
+                expected.push('$');
+                if candidate == expected {
+                    return Some(candidate_end);
+                }
+            }
+        }
+        search_position += 1;
+    }
+    Some(chars.len())
 }
 
 /// Applies the deterministic transform used by both `preview_write` and
@@ -557,6 +671,66 @@ mod tests {
             with_returning("UPDATE t SET note = 'see RETURNING docs' WHERE id=1"),
             "UPDATE t SET note = 'see RETURNING docs' WHERE id=1 RETURNING *"
         );
+    }
+
+    #[test]
+    fn with_returning_does_not_panic_on_non_ascii_literal() {
+        // A UTF-8 multi-byte character (in a string literal value) must not
+        // land the byte-index scanner mid-codepoint and panic on a
+        // non-char-boundary slice.
+        assert_eq!(
+            with_returning("UPDATE t SET name = 'café' WHERE id = 1"),
+            "UPDATE t SET name = 'café' WHERE id = 1 RETURNING *"
+        );
+    }
+
+    #[test]
+    fn with_returning_does_not_panic_on_cyrillic_literal() {
+        assert_eq!(
+            with_returning("INSERT INTO t (name) VALUES ('привет')"),
+            "INSERT INTO t (name) VALUES ('привет') RETURNING *"
+        );
+    }
+
+    #[test]
+    fn with_returning_does_not_panic_on_emoji_literal() {
+        assert_eq!(
+            with_returning("UPDATE t SET note = '🎉party' WHERE id = 1"),
+            "UPDATE t SET note = '🎉party' WHERE id = 1 RETURNING *"
+        );
+    }
+
+    #[test]
+    fn has_top_level_returning_true_for_insert_returning_id() {
+        assert!(has_top_level_returning(
+            "INSERT INTO t VALUES (1) RETURNING id"
+        ));
+    }
+
+    #[test]
+    fn has_top_level_returning_false_for_returning_inside_literal() {
+        assert!(!has_top_level_returning(
+            "UPDATE t SET note='say RETURNING now' WHERE id=1"
+        ));
+    }
+
+    #[test]
+    fn has_top_level_returning_false_for_dollar_quoted_string() {
+        assert!(!has_top_level_returning(
+            "INSERT INTO t VALUES ($$has RETURNING inside$$)"
+        ));
+    }
+
+    #[test]
+    fn has_top_level_returning_false_for_tagged_dollar_quoted_string() {
+        assert!(!has_top_level_returning(
+            "INSERT INTO t VALUES ($tag$has RETURNING inside$tag$)"
+        ));
+    }
+
+    #[test]
+    fn has_top_level_returning_false_for_leading_block_comment() {
+        assert!(!has_top_level_returning("/* RETURNING */ DELETE FROM t"));
     }
 
     #[test]
