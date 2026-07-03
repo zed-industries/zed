@@ -510,6 +510,30 @@ impl TableDataView {
         self.editable && !self.sql_dirty && matches!(self.query.base, QueryBase::Table(_))
     }
 
+    /// A short, human-readable reason the table's rows cannot be edited right
+    /// now, shown as a muted label in the footer; `None` when editing is
+    /// possible or when a reason is already surfaced elsewhere (the
+    /// "Custom query · read-only" badge in the SQL bar covers the custom-query
+    /// and dirty-SQL cases). Distinct from `!editable()`: this stays `None`
+    /// until the structure has loaded, since "no primary key" cannot be
+    /// claimed before the columns are known.
+    fn read_only_reason(&self) -> Option<&'static str> {
+        if self.mode != ViewMode::Data
+            || self.sql_dirty
+            || !matches!(self.query.base, QueryBase::Table(_))
+        {
+            return None;
+        }
+        let structure = self.structure.as_ref()?;
+        if self.is_view {
+            Some("Read-only: view")
+        } else if !structure.columns.iter().any(|column| column.is_primary_key) {
+            Some("Read-only: no primary key")
+        } else {
+            None
+        }
+    }
+
     /// Whether the SQL bar's text has diverged from `render_sql(&self.query)`
     /// by a user edit not yet run.
     pub fn sql_dirty(&self) -> bool {
@@ -2431,7 +2455,14 @@ impl TableDataView {
                         this.child(self.render_page_size_picker(limit, cx))
                     })
                     .children(add_row_button)
-                    .children(change_controls),
+                    .children(change_controls)
+                    .when_some(self.read_only_reason(), |this, reason| {
+                        this.child(
+                            Label::new(reason)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                    }),
             )
             .child(
                 h_flex()
@@ -4043,6 +4074,144 @@ mod tests {
 
         view.read_with(cx, |view, _| {
             assert!(!view.editable(), "a view should never be editable");
+        });
+    }
+
+    #[gpui::test]
+    async fn read_only_reason_none_before_structure_loads(cx: &mut TestAppContext) {
+        // Before the structure loads, `editable` is `false` (see
+        // `compute_editable`'s default), but that is not yet known to be "no
+        // primary key" - it could still turn out to have one. The footer must
+        // stay silent rather than falsely claim read-only.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+
+        view.read_with(cx, |view, _| {
+            assert!(
+                view.structure().is_none(),
+                "structure should not have loaded synchronously"
+            );
+            assert_eq!(
+                view.read_only_reason(),
+                None,
+                "no reason should be shown before the structure is known"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn read_only_reason_for_view(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), true, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.structure().is_some())
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.read_only_reason(), Some("Read-only: view"));
+        });
+    }
+
+    #[gpui::test]
+    async fn read_only_reason_for_missing_primary_key(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let mut fake = FakeDatabaseClient::new();
+        fake.structure.columns = vec![col("name", false), col("email", false)];
+        let client: Arc<dyn DatabaseClient> = Arc::new(fake);
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.structure().is_some())
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.read_only_reason(), Some("Read-only: no primary key"));
+        });
+    }
+
+    #[gpui::test]
+    async fn read_only_reason_none_for_editable_table(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.structure().is_some())
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert!(view.editable(), "sanity: PK base table should be editable");
+            assert_eq!(view.read_only_reason(), None);
+        });
+    }
+
+    #[gpui::test]
+    async fn read_only_reason_none_in_custom_query_mode(cx: &mut TestAppContext) {
+        // Custom-query mode already surfaces its own "Custom query · read-only"
+        // badge in the SQL bar; the footer label must not duplicate it.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor
+                .update(cx, |editor, cx| editor.set_text("SELECT 1", window, cx));
+        });
+        view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.read_only_reason(),
+                None,
+                "a dirty SQL bar defers to its own affordance, not the footer label"
+            );
+        });
+
+        view.update_in(cx, |view, window, cx| view.run_from_editor(window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert!(view.query().is_custom());
+            assert_eq!(
+                view.read_only_reason(),
+                None,
+                "custom-query mode already has its own read-only badge"
+            );
         });
     }
 
