@@ -14,6 +14,7 @@ use language_model::{
     SubPageProviderSettings, env_var,
 };
 use opencode::{ApiProtocol, OPENCODE_API_URL, OpenCodeSubscription};
+pub use settings::OpenCodeApiProtocol;
 pub use settings::OpenCodeAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::sync::{Arc, LazyLock};
@@ -263,12 +264,12 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
         }
 
         for model in &settings.available_models {
-            let protocol = match model.protocol.as_str() {
-                "anthropic" => ApiProtocol::Anthropic,
-                "openai_responses" => ApiProtocol::OpenAiResponses,
-                "openai_chat" => ApiProtocol::OpenAiChat,
-                "google" => ApiProtocol::Google,
-                _ => ApiProtocol::OpenAiChat, // default fallback
+            let protocol = match model.protocol {
+                Some(OpenCodeApiProtocol::Anthropic) => ApiProtocol::Anthropic,
+                Some(OpenCodeApiProtocol::OpenAiResponses) => ApiProtocol::OpenAiResponses,
+                Some(OpenCodeApiProtocol::OpenAiChat) => ApiProtocol::OpenAiChat,
+                Some(OpenCodeApiProtocol::Google) => ApiProtocol::Google,
+                None => ApiProtocol::OpenAiChat, // default fallback
             };
             let subscription = match model.subscription {
                 Some(settings::OpenCodeModelSubscription::Go) => OpenCodeSubscription::Go,
