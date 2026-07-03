@@ -5240,6 +5240,7 @@ impl GitPanel {
                             .child(
                                 div()
                                     .p_2()
+                                    .pb_0()
                                     .flex_grow_1()
                                     .on_action(|&zed_actions::editor::MoveUp, _, cx| {
                                         cx.stop_propagation();
