@@ -54,10 +54,32 @@ impl merge_from::MergeFrom for AllLanguageSettingsContent {
 
         // A user's global settings override the default global settings and
         // all default language-specific settings.
-        //
         self.defaults.merge_from(&other.defaults);
+        let globally_disabled_servers = other.defaults.language_servers.as_ref().map(|servers| {
+            servers
+                .iter()
+                .filter(|entry| entry.starts_with('!'))
+                .cloned()
+                .collect::<Vec<_>>()
+        });
         for language_settings in self.languages.0.values_mut() {
+            let language_server_overrides = language_settings.language_servers.clone();
             language_settings.merge_from(&other.defaults);
+            if let Some(mut language_server_overrides) = language_server_overrides {
+                if let Some(disabled) = &globally_disabled_servers {
+                    let insert_before = language_server_overrides
+                        .iter()
+                        .position(|entry| entry == REST_OF_LANGUAGE_SERVERS)
+                        .unwrap_or(language_server_overrides.len());
+                    for disabled_server in disabled {
+                        if !language_server_overrides.contains(disabled_server) {
+                            language_server_overrides
+                                .insert(insert_before, disabled_server.clone());
+                        }
+                    }
+                }
+                language_settings.language_servers = Some(language_server_overrides);
+            }
         }
 
         // A user's language-specific settings override default language-specific settings.
@@ -389,6 +411,8 @@ pub enum SoftWrap {
     #[serde(alias = "preferred_line_length")]
     Bounded,
 }
+
+pub const REST_OF_LANGUAGE_SERVERS: &str = "...";
 
 /// The settings for a particular language.
 #[with_fallible_options]
@@ -1157,7 +1181,7 @@ pub enum IndentGuideBackgroundColoring {
 #[cfg(test)]
 mod test {
 
-    use crate::{ParseStatus, fallible_options};
+    use crate::{ParseStatus, fallible_options, merge_from::MergeFrom};
 
     use super::*;
 
@@ -1226,6 +1250,231 @@ mod test {
         let raw_auto = "{\"formatter\": {}}";
         let (_, result) = fallible_options::parse_json::<LanguageSettingsContent>(raw_auto);
         assert!(matches!(result, ParseStatus::Failed { .. }));
+    }
+
+    #[test]
+    fn test_language_servers_merge_preserves_per_language_config() {
+        let mut base = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "!typescript-language-server".into(),
+                            "vtsls".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        let user = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![
+                    "!tailwindcss-language-server".into(),
+                    "!eslint".into(),
+                    REST_OF_LANGUAGE_SERVERS.into(),
+                ]),
+                ..LanguageSettingsContent::default()
+            },
+            ..AllLanguageSettingsContent::default()
+        };
+
+        base.merge_from(&user);
+
+        let ts_servers = base.languages.0["TypeScript"]
+            .language_servers
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            ts_servers,
+            &vec![
+                "!typescript-language-server".to_string(),
+                "vtsls".to_string(),
+                "!eslint".to_string(),
+                "!tailwindcss-language-server".to_string(),
+                REST_OF_LANGUAGE_SERVERS.to_string(),
+            ]
+        );
+
+        let default_servers = base.defaults.language_servers.as_ref().unwrap();
+        assert_eq!(
+            default_servers,
+            &vec![
+                "!tailwindcss-language-server".to_string(),
+                "!eslint".to_string(),
+                REST_OF_LANGUAGE_SERVERS.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_language_servers_merge_no_per_language_config_uses_global() {
+        let mut base = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "Rust".into(),
+                    LanguageSettingsContent {
+                        tab_size: Some(std::num::NonZeroU32::new(4).unwrap()),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        let user = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec!["!eslint".into(), REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            ..AllLanguageSettingsContent::default()
+        };
+
+        base.merge_from(&user);
+
+        let rust_servers = base.languages.0["Rust"].language_servers.as_ref().unwrap();
+        assert_eq!(
+            rust_servers,
+            &vec!["!eslint".to_string(), REST_OF_LANGUAGE_SERVERS.to_string(),]
+        );
+    }
+
+    #[test]
+    fn test_language_servers_merge_user_per_language_overrides() {
+        let mut base = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "!typescript-language-server".into(),
+                            "vtsls".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        let user = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec!["!eslint".into(), REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "deno".into(),
+                            "!vtsls".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        base.merge_from(&user);
+
+        let ts_servers = base.languages.0["TypeScript"]
+            .language_servers
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            ts_servers,
+            &vec![
+                "deno".to_string(),
+                "!vtsls".to_string(),
+                REST_OF_LANGUAGE_SERVERS.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_user_per_language_config_overrides_default_disables() {
+        let mut base = AllLanguageSettingsContent {
+            defaults: LanguageSettingsContent {
+                language_servers: Some(vec![REST_OF_LANGUAGE_SERVERS.into()]),
+                ..LanguageSettingsContent::default()
+            },
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "!typescript-language-server".into(),
+                            "vtsls".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        let user = AllLanguageSettingsContent {
+            languages: LanguageToSettingsMap(
+                [(
+                    "TypeScript".into(),
+                    LanguageSettingsContent {
+                        language_servers: Some(vec![
+                            "typescript-language-server".into(),
+                            REST_OF_LANGUAGE_SERVERS.into(),
+                        ]),
+                        ..LanguageSettingsContent::default()
+                    },
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..AllLanguageSettingsContent::default()
+        };
+
+        base.merge_from(&user);
+
+        let ts_servers = base.languages.0["TypeScript"]
+            .language_servers
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            ts_servers,
+            &vec![
+                "typescript-language-server".to_string(),
+                REST_OF_LANGUAGE_SERVERS.to_string(),
+            ]
+        );
     }
 
     #[test]

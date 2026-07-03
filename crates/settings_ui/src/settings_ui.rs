@@ -948,10 +948,9 @@ pub struct SettingsWindow {
     pub(crate) regex_validation_error: Option<String>,
     pub(crate) sandbox_host_validation_error: Option<String>,
     last_copied_link_path: Option<&'static str>,
-    /// Cached configuration views per provider, created lazily. Holds the
-    /// provider's chosen presentation ([`Inline`] or [`SubPage`]).
+    /// Cached configuration views per provider, created lazily.
     pub(crate) provider_configuration_views:
-        HashMap<language_model::LanguageModelProviderId, language_model::ProviderConfigurationView>,
+        HashMap<language_model::LanguageModelProviderId, gpui::AnyView>,
     /// The provider whose configuration sub-page is currently open, if any.
     pub(crate) configuring_provider: Option<language_model::LanguageModelProviderId>,
     /// Directory path of the skill whose share link was most recently copied,
