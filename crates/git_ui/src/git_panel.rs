@@ -4787,8 +4787,7 @@ impl GitPanel {
                 this.generate_commit_message(cx);
             }));
 
-        // let button = if can_commit && has_commit_model_configuration_error {
-        let button = if true {
+        let button = if can_commit && has_commit_model_configuration_error {
             button.hoverable_tooltip(move |_window, cx| {
                 cx.new(|_| GenerateCommitMessageConfigurationTooltip).into()
             })
