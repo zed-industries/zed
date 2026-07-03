@@ -1428,7 +1428,7 @@ impl CreateRefModal {
         cx.spawn(async move |_, cx| match receiver.await {
             Ok(Ok(())) => {
                 git_graph
-                    .update(cx, |git_graph, cx| git_graph.invalidate_state(cx))
+                    .update(cx, |git_graph, cx| git_graph.reload_graph(cx))
                     .ok();
             }
             Ok(Err(error)) => {
@@ -1524,6 +1524,17 @@ impl GitGraph {
         self.context_menu = None;
         cx.emit(ItemEvent::Edit);
         cx.notify();
+    }
+
+    /// Drops the repository's cached graph data and rebuilds the view. Unlike
+    /// `invalidate_state` alone, this forces `git log` to re-run, which is
+    /// required after operations (such as tag edits) that change refs without
+    /// emitting a repository event.
+    fn reload_graph(&mut self, cx: &mut Context<Self>) {
+        if let Some(repository) = self.get_repository(cx) {
+            repository.update(cx, |repository, _| repository.invalidate_graph_data());
+        }
+        self.invalidate_state(cx);
     }
 
     /// Computes the height of a single commit row in the git graph.
@@ -2644,7 +2655,7 @@ impl GitGraph {
                     // Refresh the graph right away rather than waiting for the
                     // file watcher to notice the change; ref updates like tag
                     // edits produce no repository event at all.
-                    this.update(cx, |this, cx| this.invalidate_state(cx)).ok();
+                    this.update(cx, |this, cx| this.reload_graph(cx)).ok();
                 }
                 Ok(Err(error)) => {
                     if let Some(workspace) = workspace.upgrade() {
@@ -2714,7 +2725,7 @@ impl GitGraph {
                 .await?;
             match result {
                 Ok(()) => {
-                    this.update(cx, |this, cx| this.invalidate_state(cx)).ok();
+                    this.update(cx, |this, cx| this.reload_graph(cx)).ok();
                 }
                 Err(error) => {
                     if let Some(workspace) = workspace.upgrade() {
@@ -2883,7 +2894,7 @@ impl GitGraph {
 
             match result {
                 Ok(()) => {
-                    this.update(cx, |this, cx| this.invalidate_state(cx)).ok();
+                    this.update(cx, |this, cx| this.reload_graph(cx)).ok();
                 }
                 Err(error) => {
                     if let Some(workspace) = workspace.upgrade() {
