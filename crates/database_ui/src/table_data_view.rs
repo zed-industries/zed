@@ -232,6 +232,37 @@ fn compute_editable(is_view: bool, columns: &[ColumnInfo]) -> bool {
     !is_view && has_primary_key
 }
 
+/// The `udt_name`s treated as numeric for grid right-alignment purposes.
+const NUMERIC_UDT_NAMES: &[&str] = &[
+    "int2", "int4", "int8", "numeric", "float4", "float8", "money", "oid",
+];
+
+/// Names of columns whose `udt_name` is numeric, used to right-align their
+/// values in the data grid. Pure so the mapping can be unit-tested without a
+/// live structure fetch.
+fn numeric_column_names(columns: &[ColumnInfo]) -> HashSet<String> {
+    columns
+        .iter()
+        .filter(|column| NUMERIC_UDT_NAMES.contains(&column.udt_name.as_str()))
+        .map(|column| column.name.clone())
+        .collect()
+}
+
+/// The minimum and maximum auto-measured column width, in pixels.
+const MIN_COLUMN_WIDTH: f32 = 60.0;
+const MAX_COLUMN_WIDTH: f32 = 480.0;
+
+/// Converts a measured character count into a column width in pixels: the
+/// widest content (`advance` per character times `chars`) plus the grid's
+/// horizontal cell padding (`4px` per side, see `render_cell` in
+/// `ui::data_table`) and a small slack margin, clamped to a sane range so a
+/// single very wide value cannot blow out the whole table and an empty
+/// column still has room for its header and resize handle.
+fn column_width_for_chars(advance_px: f32, chars: usize) -> f32 {
+    let content_width = advance_px * chars as f32;
+    (content_width + 8. + 12.).clamp(MIN_COLUMN_WIDTH, MAX_COLUMN_WIDTH)
+}
+
 /// A bare [`ColumnInfo`] carrying only a name, used as a fallback when the full
 /// structure has not loaded. The `text` cast is a safe default for PostgreSQL,
 /// which will coerce a text parameter to the target column type on assignment.
@@ -307,6 +338,10 @@ pub struct TableDataView {
     /// rows to `uniform_list` by cheap clone instead of deep-copying every cell.
     page: Option<Arc<PageData>>,
     structure: Option<TableStructure>,
+    /// Names of `structure`'s columns whose `udt_name` is numeric, kept in
+    /// sync with `structure` so the grid can right-align them without
+    /// re-scanning the column list on every cell render.
+    numeric_columns: HashSet<String>,
     load_state: LoadState,
     interaction: Entity<TableInteractionState>,
     /// Recreated whenever the rendered column set changes so the grid keeps the
@@ -423,6 +458,7 @@ impl TableDataView {
                 suppress_editor_events: false,
                 page: None,
                 structure: None,
+                numeric_columns: HashSet::new(),
                 load_state: LoadState::Idle,
                 interaction,
                 column_widths: None,
@@ -1277,18 +1313,19 @@ impl TableDataView {
                 Err(error) => Err(error),
             };
             let elapsed = started.elapsed();
-            this.update_in(cx, |this, _window, cx| {
+            this.update_in(cx, |this, window, cx| {
                 match result {
                     Ok(result) => {
                         let has_more = result.truncated
                             || limit.is_some_and(|limit| result.rows.len() == limit);
                         let row_count = result.rows.len();
-                        this.set_column_widths(result.columns.len(), cx);
-                        this.page = Some(Arc::new(PageData {
+                        let page = PageData {
                             columns: result.columns,
                             rows: result.rows,
                             has_more,
-                        }));
+                        };
+                        this.set_column_widths(&page, window, cx);
+                        this.page = Some(Arc::new(page));
                         this.last_run = Some((row_count, elapsed));
                         this.load_state = LoadState::Idle;
                     }
@@ -1360,6 +1397,7 @@ impl TableDataView {
                 match result {
                     Ok(structure) => {
                         this.editable = compute_editable(this.is_view, &structure.columns);
+                        this.numeric_columns = numeric_column_names(&structure.columns);
                         this.structure = Some(structure);
                         this.load_state = LoadState::Idle;
                     }
@@ -1375,7 +1413,12 @@ impl TableDataView {
 
     /// Recreates the resizable-columns state when the number of data columns
     /// changes, so the grid renders the correct number of resize handles.
-    fn set_column_widths(&mut self, cols: usize, cx: &mut Context<Self>) {
+    /// When it does (re)create the state, seeds it with widths measured from
+    /// the page's header and values instead of a flat default, so wide values
+    /// are not clipped on first paint. When the column count is unchanged the
+    /// existing entity (and any manual resizes the user made) is left alone.
+    fn set_column_widths(&mut self, page: &PageData, window: &mut Window, cx: &mut Context<Self>) {
+        let cols = page.columns.len();
         if cols == 0 {
             self.column_widths = None;
             return;
@@ -1387,13 +1430,69 @@ impl TableDataView {
         if matches {
             return;
         }
+        let widths = self
+            .measured_column_widths(page, window, cx)
+            .unwrap_or_else(|| vec![px(COLUMN_WIDTH); cols]);
         self.column_widths = Some(cx.new(|_cx| {
             ResizableColumnsState::new(
                 cols,
-                vec![AbsoluteLength::Pixels(px(COLUMN_WIDTH)); cols],
+                widths
+                    .into_iter()
+                    .map(AbsoluteLength::Pixels)
+                    .collect::<Vec<_>>(),
                 vec![TableResizeBehavior::Resizable; cols],
             )
         }));
+    }
+
+    /// Measures each column's width from its header name and the first 100
+    /// rows' values, using the buffer font's per-character advance (exact for
+    /// a monospace font, a reasonable approximation otherwise). Returns `None`
+    /// only if the page has no columns; a `Window`/text-system failure falls
+    /// back to a fixed per-character advance rather than failing the whole
+    /// measurement.
+    fn measured_column_widths(
+        &self,
+        page: &PageData,
+        window: &Window,
+        cx: &App,
+    ) -> Option<Vec<Pixels>> {
+        if page.columns.is_empty() {
+            return None;
+        }
+        const FALLBACK_ADVANCE: f32 = 8.;
+        const SAMPLE_ROWS: usize = 100;
+        const NULL_CHAR_COUNT: usize = 4; // "NULL"
+
+        let settings = theme::theme_settings(cx);
+        let font = settings.buffer_font(cx).clone();
+        let font_size = TextSize::default().rems(cx).to_pixels(window.rem_size());
+        let font_id = window.text_system().resolve_font(&font);
+        let advance = match window.text_system().em_advance(font_id, font_size) {
+            Ok(advance) => f32::from(advance),
+            Err(error) => {
+                log::debug!("em_advance failed, falling back to fixed char width: {error:#}");
+                FALLBACK_ADVANCE
+            }
+        };
+
+        let widths = page
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(col, name)| {
+                let mut max_chars = name.chars().count();
+                for row in page.rows.iter().take(SAMPLE_ROWS) {
+                    let chars = match row.get(col).and_then(|cell| cell.as_ref()) {
+                        Some(value) => value.chars().count(),
+                        None => NULL_CHAR_COUNT,
+                    };
+                    max_chars = max_chars.max(chars);
+                }
+                px(column_width_for_chars(advance, max_chars))
+            })
+            .collect();
+        Some(widths)
     }
 
     fn render_data(&mut self, cx: &mut Context<Self>) -> AnyElement {
@@ -1424,6 +1523,7 @@ impl TableDataView {
         Table::new(column_count)
             .interactable(&self.interaction)
             .striped()
+            .header_background(cx.theme().colors().title_bar_background)
             .width_config(ColumnWidthConfig::Resizable(widths))
             .header(headers)
             .uniform_list(
@@ -1862,7 +1962,15 @@ impl TableDataView {
         let context_menu_column = column_name.clone().unwrap_or_default();
         let context_menu_value = display.clone();
 
-        let mut cell = div().w_full();
+        let right_align = column_name
+            .as_ref()
+            .is_some_and(|column| self.numeric_columns.contains(column))
+            && matches!(self.query.base, QueryBase::Table(_));
+
+        let mut cell = div()
+            .w_full()
+            .font_buffer(cx)
+            .when(right_align, |this| this.text_right());
         if modified {
             cell = cell.bg(modified_cell_background(cx)).rounded_sm().px_1();
         }
@@ -1961,7 +2069,15 @@ impl TableDataView {
             .and_then(|page| page.columns.get(column_index).cloned());
         let buffered = column_name.as_ref().and_then(|column| row.get(column));
 
-        let cell = div().w_full();
+        let right_align = column_name
+            .as_ref()
+            .is_some_and(|column| self.numeric_columns.contains(column))
+            && matches!(self.query.base, QueryBase::Table(_));
+
+        let cell = div()
+            .w_full()
+            .font_buffer(cx)
+            .when(right_align, |this| this.text_right());
         let cell = match buffered {
             Some(EditCell::Value(value)) => cell
                 .whitespace_nowrap()
@@ -2117,7 +2233,7 @@ impl TableDataView {
             .into_any_element()
     }
 
-    fn render_structure(&self) -> AnyElement {
+    fn render_structure(&self, cx: &Context<Self>) -> AnyElement {
         let Some(structure) = self.structure.as_ref() else {
             return v_flex()
                 .p_4()
@@ -2125,14 +2241,17 @@ impl TableDataView {
                 .into_any_element();
         };
 
-        let mut table = Table::new(6).striped().header(vec![
-            "Name".into_any_element(),
-            "Type".into_any_element(),
-            "Nullable".into_any_element(),
-            "Default".into_any_element(),
-            "PK".into_any_element(),
-            "FK".into_any_element(),
-        ]);
+        let mut table = Table::new(6)
+            .striped()
+            .header_background(cx.theme().colors().title_bar_background)
+            .header(vec![
+                "Name".into_any_element(),
+                "Type".into_any_element(),
+                "Nullable".into_any_element(),
+                "Default".into_any_element(),
+                "PK".into_any_element(),
+                "FK".into_any_element(),
+            ]);
 
         for column in &structure.columns {
             let foreign_key = structure
@@ -2786,7 +2905,7 @@ impl Render for TableDataView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match (&self.load_state, self.mode) {
             (LoadState::Error(message), _) => self.render_error(&message.clone(), cx),
-            (_, ViewMode::Structure) => self.render_structure(),
+            (_, ViewMode::Structure) => self.render_structure(cx),
             (_, ViewMode::Data) => self.render_data(cx),
         };
         let in_data =
@@ -2977,8 +3096,9 @@ mod tests {
     };
 
     use super::{
-        EditTarget, FilterPopover, LoadState, SaveState, TableDataView, ViewMode, all_filter_ops,
-        compute_editable, filter_op_label, footer_counter,
+        EditTarget, FilterPopover, LoadState, MAX_COLUMN_WIDTH, MIN_COLUMN_WIDTH, SaveState,
+        TableDataView, ViewMode, all_filter_ops, column_width_for_chars, compute_editable,
+        filter_op_label, footer_counter, numeric_column_names,
     };
     use crate::query_state::{QueryBase, render_sql};
 
@@ -4033,6 +4153,59 @@ mod tests {
         assert!(!compute_editable(false, &[]));
     }
 
+    fn col_with_udt(name: &str, udt_name: &str) -> ColumnInfo {
+        ColumnInfo {
+            name: name.into(),
+            data_type: udt_name.into(),
+            udt_name: udt_name.into(),
+            udt_schema: "pg_catalog".into(),
+            is_nullable: true,
+            default: None,
+            is_primary_key: false,
+        }
+    }
+
+    #[gpui::test]
+    fn numeric_column_names_covers_numeric_udts(_cx: &mut TestAppContext) {
+        let columns = vec![
+            col_with_udt("id", "int4"),
+            col_with_udt("balance", "numeric"),
+            col_with_udt("name", "text"),
+            col_with_udt("tags", "varchar"),
+        ];
+        let numeric = numeric_column_names(&columns);
+        assert!(numeric.contains("id"));
+        assert!(numeric.contains("balance"));
+        assert!(!numeric.contains("name"));
+        assert!(!numeric.contains("tags"));
+        assert_eq!(numeric.len(), 2);
+    }
+
+    #[gpui::test]
+    fn numeric_column_names_empty_for_no_columns(_cx: &mut TestAppContext) {
+        assert!(numeric_column_names(&[]).is_empty());
+    }
+
+    #[gpui::test]
+    fn column_width_for_chars_typical_case(_cx: &mut TestAppContext) {
+        // advance=8px, 10 chars -> 80 + 8 + 12 = 100, within the clamp range.
+        assert_eq!(column_width_for_chars(8., 10), 100.);
+    }
+
+    #[gpui::test]
+    fn column_width_for_chars_clamps_to_minimum(_cx: &mut TestAppContext) {
+        // A short header (e.g. "id", 2 chars) should still clamp up to 60.
+        assert_eq!(column_width_for_chars(8., 2), MIN_COLUMN_WIDTH);
+        assert_eq!(column_width_for_chars(8., 0), MIN_COLUMN_WIDTH);
+    }
+
+    #[gpui::test]
+    fn column_width_for_chars_clamps_to_maximum(_cx: &mut TestAppContext) {
+        // A very long value should clamp down to 480 rather than blowing out
+        // the table width.
+        assert_eq!(column_width_for_chars(8., 1000), MAX_COLUMN_WIDTH);
+    }
+
     #[gpui::test]
     async fn editable_gate_true_for_pk_table(cx: &mut TestAppContext) {
         // The fake's structure has an `id` primary key, and `is_view = false`
@@ -4239,6 +4412,53 @@ mod tests {
                 ViewMode::Data,
                 "eager structure load must not change the active mode"
             );
+        });
+    }
+
+    #[gpui::test]
+    async fn column_widths_created_on_page_load(cx: &mut TestAppContext) {
+        // After the first page loads, `column_widths` should exist with one
+        // width per column (measured from header/values, not necessarily the
+        // flat default) and no panics should occur while measuring or
+        // rendering with a numeric column and a long text value present.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let mut fake = FakeDatabaseClient::new();
+        fake.query_result = QueryResult {
+            columns: vec!["id".into(), "name".into()],
+            rows: vec![
+                vec![
+                    Some("1".into()),
+                    Some("a very long value that should widen this column considerably".into()),
+                ],
+                vec![Some("2".into()), None],
+            ],
+            truncated: false,
+            command_tag: Some("SELECT 2".into()),
+        };
+        let client: Arc<dyn DatabaseClient> = Arc::new(fake);
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update(cx, |view, cx| {
+            let widths = view
+                .column_widths
+                .as_ref()
+                .expect("column_widths should be created after the first page loads");
+            assert_eq!(widths.read(cx).cols(), 2, "one width per data column");
+            // `id` is numeric per the fake's structure, so it should have
+            // ended up in `numeric_columns` for right-alignment.
+            assert!(view.numeric_columns.contains("id"));
+            assert!(!view.numeric_columns.contains("name"));
         });
     }
 

@@ -25,6 +25,7 @@ log.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 settings.workspace = true
+theme.workspace = true
 ui.workspace = true
 ui_input.workspace = true
 util.workspace = true
