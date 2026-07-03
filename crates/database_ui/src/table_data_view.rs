@@ -78,6 +78,24 @@ fn all_filter_ops() -> [FilterOp; 7] {
     ]
 }
 
+/// Formats the footer's row-range summary from the current page and query
+/// state: `rows {offset+1}–{offset+len}{"+" if more rows exist beyond this
+/// page}`, `"No rows"` for an empty page, or `"{len} rows"` for a custom query
+/// that has not yet acquired a `limit` (a fresh custom query has no page size
+/// to frame an offset against).
+fn footer_counter(offset: usize, row_count: usize, has_more: bool, limit: Option<usize>) -> String {
+    if row_count == 0 {
+        return "No rows".to_string();
+    }
+    if limit.is_none() {
+        return format!("{row_count} rows");
+    }
+    let start = offset + 1;
+    let end = offset + row_count;
+    let suffix = if has_more { "+" } else { "" };
+    format!("rows {start}–{end}{suffix}")
+}
+
 /// Which of the two tabs of a table view is currently shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ViewMode {
@@ -1167,6 +1185,16 @@ impl TableDataView {
         self.finish_editing(cx);
         let limit = self.query.limit.unwrap_or(1);
         self.query.offset = self.query.offset.saturating_sub(limit);
+        self.restart_query(window, cx);
+    }
+
+    /// Changes the page size from the footer's page-size picker: commits any
+    /// open cell editor, sets the new limit, resets to the first page, and
+    /// reruns the query.
+    pub fn set_page_size(&mut self, page_size: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.finish_editing(cx);
+        self.query.limit = Some(page_size);
+        self.query.offset = 0;
         self.restart_query(window, cx);
     }
 
@@ -2290,167 +2318,51 @@ impl TableDataView {
             .into_any_element()
     }
 
+    /// The footer shown under the data grid: left-to-right, page navigation,
+    /// the row-range counter, the page-size picker, edit controls (`+ Row` and,
+    /// while dirty, the change count with Save/Discard), then right-aligned the
+    /// last query's row count and timing plus a Refresh button. Combines what
+    /// used to be a separate pagination footer and edit toolbar into one row
+    /// (see the stage-3 table-page-redesign spec).
     fn render_footer(&self, cx: &Context<Self>) -> AnyElement {
-        let (summary, has_more) = match &self.page {
-            Some(page) if page.rows.is_empty() => ("No rows".to_string(), false),
-            Some(page) => {
-                let start = self.query.offset + 1;
-                let end = self.query.offset + page.rows.len();
-                let suffix = if page.has_more { "+" } else { "" };
-                (format!("rows {start}–{end}{suffix}"), page.has_more)
-            }
-            None => (String::new(), false),
+        let (row_count, has_more) = match &self.page {
+            Some(page) => (page.rows.len(), page.has_more),
+            None => (0, false),
         };
+        let summary = footer_counter(self.query.offset, row_count, has_more, self.query.limit);
         let at_start = self.query.offset == 0;
-
-        h_flex()
-            .w_full()
-            .px_2()
-            .py_1()
-            .justify_between()
-            .border_t_1()
-            .border_color(cx.theme().colors().border)
-            .child(
-                Label::new(summary)
-                    .color(Color::Muted)
-                    .size(LabelSize::Small),
-            )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        IconButton::new("db-prev-page", IconName::ChevronLeft)
-                            .icon_size(IconSize::Small)
-                            .disabled(at_start)
-                            .tooltip(Tooltip::text("Previous page"))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.prev_page(window, cx)),
-                            ),
-                    )
-                    .child(
-                        IconButton::new("db-refresh", IconName::RotateCw)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Refresh"))
-                            .on_click(cx.listener(|this, _, window, cx| this.refresh(window, cx))),
-                    )
-                    .child(
-                        IconButton::new("db-next-page", IconName::ChevronRight)
-                            .icon_size(IconSize::Small)
-                            .disabled(!has_more)
-                            .tooltip(Tooltip::text("Next page"))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.next_page(window, cx)),
-                            ),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    /// The bar shown in the tab header area while there are pending edits (a
-    /// change count plus Save/Discard), or, for a read-only table, a muted banner
-    /// explaining why editing is off. Returns `None` when there is nothing to
-    /// show (an editable table with no pending edits), including while a custom
-    /// query is active — that read-only reason is communicated by the SQL bar's
-    /// own badge instead of this toolbar.
-    fn render_edit_toolbar(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        if self.query.is_custom() {
-            return None;
-        }
-        if !self.editable() {
-            // Only explain read-only once the structure has loaded, so the banner
-            // does not flash before editability is known.
-            let reason = if self.structure.is_none() {
-                return None;
-            } else if self.is_view {
-                "Read-only: this is a view"
-            } else {
-                "Read-only: table has no primary key"
-            };
-            return Some(
-                h_flex()
-                    .w_full()
-                    .px_2()
-                    .py_1()
-                    .border_b_1()
-                    .border_color(cx.theme().colors().border)
-                    .child(
-                        Label::new(reason)
-                            .color(Color::Muted)
-                            .size(LabelSize::Small),
-                    )
-                    .into_any_element(),
-            );
-        }
 
         let pending = self.pending_change_count();
         let saving = self.save_state == SaveState::Saving;
         let dirty = pending > 0 || saving;
+        let show_edit_controls = self.editable();
 
-        // The "+ Row" button is always available on an editable table so a row
-        // can be added even when the buffer is otherwise empty.
-        let add_row_button = Button::new("db-add-row", "+ Row")
-            .size(ButtonSize::Compact)
-            .style(ButtonStyle::Subtle)
-            .disabled(saving)
-            .tooltip(Tooltip::text("Add a new row"))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.add_row(cx);
-            }));
+        let add_row_button = show_edit_controls.then(|| {
+            Button::new("db-add-row", "+ Row")
+                .size(ButtonSize::Compact)
+                .style(ButtonStyle::Subtle)
+                .disabled(saving)
+                .tooltip(Tooltip::text("Add a new row"))
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.add_row(cx);
+                }))
+        });
 
-        // The left cluster shows the change count while dirty, otherwise the last
-        // save outcome (success/error) so the user still sees confirmation.
-        let status = if dirty {
-            let summary = if pending == 1 {
+        let change_controls = dirty.then(|| {
+            let change_label = if pending == 1 {
                 "1 change".to_string()
             } else {
                 format!("{pending} changes")
             };
-            Some((summary, Color::Default))
-        } else {
-            match &self.save_state {
-                SaveState::Done(message) => Some((message.clone(), Color::Success)),
-                SaveState::Error(message) => Some((message.clone(), Color::Error)),
-                _ => None,
-            }
-        };
-        let inline_error = (dirty && matches!(self.save_state, SaveState::Error(_))).then(|| {
-            match &self.save_state {
-                SaveState::Error(message) => message.clone(),
-                _ => String::new(),
-            }
-        });
-
-        let mut bar = h_flex()
-            .w_full()
-            .px_2()
-            .py_1()
-            .gap_2()
-            .items_center()
-            .justify_between()
-            .border_b_1()
-            .border_color(cx.theme().colors().border);
-        if dirty {
-            bar = bar.bg(modified_cell_background(cx));
-        }
-
-        Some(
-            bar.child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .when_some(status, |this, (text, color)| {
-                        this.child(Label::new(text).color(color).size(LabelSize::Small))
-                    })
-                    .when_some(inline_error, |this, message| {
-                        this.child(
-                            Label::new(message)
-                                .color(Color::Error)
-                                .size(LabelSize::Small),
-                        )
-                    }),
-            )
-            .child(h_flex().gap_1().child(add_row_button).when(dirty, |this| {
-                this.child(
+            h_flex()
+                .gap_1()
+                .items_center()
+                .child(
+                    Label::new(change_label)
+                        .color(Color::Default)
+                        .size(LabelSize::Small),
+                )
+                .child(
                     Button::new("db-discard-edits", "Discard")
                         .size(ButtonSize::Compact)
                         .style(ButtonStyle::Subtle)
@@ -2464,9 +2376,122 @@ impl TableDataView {
                         .disabled(saving)
                         .on_click(cx.listener(|this, _, window, cx| this.save_edits(window, cx))),
                 )
-            }))
-            .into_any_element(),
-        )
+        });
+
+        let timing = self
+            .last_run
+            .map(|(count, elapsed)| format!("{count} rows · {} ms", elapsed.as_millis()));
+
+        let mut footer = h_flex()
+            .w_full()
+            .px_2()
+            .py_1()
+            .gap_2()
+            .items_center()
+            .justify_between()
+            .border_t_1()
+            .border_color(cx.theme().colors().border);
+        if dirty {
+            footer = footer.bg(modified_cell_background(cx));
+        }
+
+        footer
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                IconButton::new("db-prev-page", IconName::ChevronLeft)
+                                    .icon_size(IconSize::Small)
+                                    .disabled(at_start)
+                                    .tooltip(Tooltip::text("Previous page"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.prev_page(window, cx)
+                                    })),
+                            )
+                            .child(
+                                IconButton::new("db-next-page", IconName::ChevronRight)
+                                    .icon_size(IconSize::Small)
+                                    .disabled(!has_more)
+                                    .tooltip(Tooltip::text("Next page"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.next_page(window, cx)
+                                    })),
+                            ),
+                    )
+                    .child(
+                        Label::new(summary)
+                            .color(Color::Muted)
+                            .size(LabelSize::Small),
+                    )
+                    .when_some(self.query.limit, |this, limit| {
+                        this.child(self.render_page_size_picker(limit, cx))
+                    })
+                    .children(add_row_button)
+                    .children(change_controls),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .when_some(timing, |this, text| {
+                        this.child(Label::new(text).color(Color::Muted).size(LabelSize::Small))
+                    })
+                    .child(
+                        IconButton::new("db-refresh", IconName::RotateCw)
+                            .icon_size(IconSize::Small)
+                            .tooltip(Tooltip::text("Refresh"))
+                            .on_click(cx.listener(|this, _, window, cx| this.refresh(window, cx))),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// The page-size picker shown in the footer: a `"{limit} / page"` trigger
+    /// that opens a menu of page-size choices. The option list is always
+    /// `100`/`500`/`1000` plus the settings default when it is not already one
+    /// of those three, so the configured default is always reachable even if
+    /// it is unusual (e.g. `250`).
+    fn render_page_size_picker(&self, limit: usize, cx: &Context<Self>) -> AnyElement {
+        let default = DatabaseSettings::get_global(cx).page_size.max(1) as usize;
+        let mut sizes = vec![100, 500, 1000];
+        if !sizes.contains(&default) {
+            sizes.push(default);
+            sizes.sort_unstable();
+        }
+
+        PopoverMenu::new("db-page-size")
+            .trigger(
+                Button::new("db-page-size-trigger", format!("{limit} / page"))
+                    .size(ButtonSize::Compact)
+                    .style(ButtonStyle::Subtle),
+            )
+            .anchor(Anchor::TopLeft)
+            .menu({
+                let table_view = cx.weak_entity();
+                move |window, cx| {
+                    let table_view = table_view.clone();
+                    let sizes = sizes.clone();
+                    Some(ContextMenu::build(window, cx, move |mut menu, _, _| {
+                        for size in &sizes {
+                            let size = *size;
+                            let table_view = table_view.clone();
+                            menu = menu.entry(format!("{size} / page"), None, move |window, cx| {
+                                table_view
+                                    .update(cx, |table, cx| {
+                                        table.set_page_size(size, window, cx);
+                                    })
+                                    .log_err();
+                            });
+                        }
+                        menu
+                    }))
+                }
+            })
+            .into_any_element()
     }
 
     fn render_error(&self, message: &str, cx: &Context<Self>) -> AnyElement {
@@ -2737,7 +2762,6 @@ impl Render for TableDataView {
             self.mode == ViewMode::Data && !matches!(self.load_state, LoadState::Error(_));
         let sql_bar = self.render_sql_bar(window, cx);
         let chips_row = in_data.then(|| self.render_chips_row(cx)).flatten();
-        let edit_toolbar = in_data.then(|| self.render_edit_toolbar(cx)).flatten();
 
         v_flex()
             .key_context("TableDataView")
@@ -2788,7 +2812,6 @@ impl Render for TableDataView {
                     .child(self.render_toggle(cx)),
             )
             .child(sql_bar)
-            .children(edit_toolbar)
             .children(chips_row)
             .child(v_flex().flex_1().size_full().overflow_hidden().child(body))
             .when(in_data, |this| this.child(self.render_footer(cx)))
@@ -2924,7 +2947,7 @@ mod tests {
 
     use super::{
         EditTarget, FilterPopover, LoadState, SaveState, TableDataView, ViewMode, all_filter_ops,
-        compute_editable, filter_op_label,
+        compute_editable, filter_op_label, footer_counter,
     };
     use crate::query_state::{QueryBase, render_sql};
 
@@ -3158,6 +3181,125 @@ mod tests {
             .count();
         assert_eq!(before, after, "prev_page at offset 0 should not refetch");
         view.read_with(cx, |view, _| assert_eq!(view.query().offset, 0));
+    }
+
+    #[gpui::test]
+    async fn set_page_size_resets_offset_and_reruns_sql(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let mut fake = FakeDatabaseClient::new();
+        fake.query_result = rows_result(100);
+        let fake = Arc::new(fake);
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        // Advance to offset 200 first so the reset to 0 is observable.
+        view.update_in(cx, |view, window, cx| view.next_page(window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.query().offset == 100 && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+        view.update_in(cx, |view, window, cx| view.next_page(window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.query().offset == 200 && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| view.set_page_size(500, window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.query().limit == Some(500) && view.load_state() == &LoadState::Idle
+            })
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.query().limit, Some(500));
+            assert_eq!(view.query().offset, 0);
+        });
+        let last = last_run_query_sql(&fake).expect("run_query should have been called");
+        assert!(
+            last.ends_with(r#"SELECT * FROM "public"."users" LIMIT 500 OFFSET 0;"#),
+            "unexpected generated SQL: {last}"
+        );
+    }
+
+    #[gpui::test]
+    async fn set_page_size_commits_open_editor(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = fake_with_default_rows();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.begin_edit_cell(0, 1, window, cx);
+            let editing = view.editing_cell().expect("edit should be open");
+            editing.field.update(cx, |field, cx| {
+                field.set_text("Alicia", window, cx);
+            });
+        });
+
+        view.update_in(cx, |view, window, cx| view.set_page_size(500, window, cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            assert!(
+                view.editing_cell().is_none(),
+                "changing the page size must close the inline editor"
+            );
+            let key = RowKey {
+                columns: vec!["id".into()],
+                values: vec![Some("1".into())],
+            };
+            let cell = view
+                .edits()
+                .updates()
+                .get(&key)
+                .and_then(|row| row.get("name"))
+                .expect("the in-progress edit should be committed keyed by RowKey");
+            assert_eq!(cell, &database_client::EditCell::Value("Alicia".into()));
+        });
+    }
+
+    #[test]
+    fn footer_counter_formats_row_range() {
+        assert_eq!(footer_counter(0, 100, true, Some(100)), "rows 1–100+");
+        assert_eq!(footer_counter(0, 100, false, Some(100)), "rows 1–100");
+        assert_eq!(footer_counter(200, 50, false, Some(100)), "rows 201–250");
+    }
+
+    #[test]
+    fn footer_counter_empty_page_is_no_rows() {
+        assert_eq!(footer_counter(0, 0, false, Some(100)), "No rows");
+        assert_eq!(footer_counter(100, 0, false, None), "No rows");
+    }
+
+    #[test]
+    fn footer_counter_custom_query_without_limit() {
+        assert_eq!(footer_counter(0, 42, false, None), "42 rows");
+        assert_eq!(footer_counter(0, 1, false, None), "1 rows");
     }
 
     #[gpui::test]
