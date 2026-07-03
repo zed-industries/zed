@@ -13,6 +13,7 @@ use crate::{
 use agent_settings::{AgentSettings, UserAgentsMd};
 use anyhow::Context as _;
 use askpass::AskPassDelegate;
+use client::zed_urls;
 use collections::{BTreeMap, HashMap, HashSet};
 use db::kvp::KeyValueStore;
 use editor::{Editor, EditorElement, EditorMode, MultiBuffer, MultiBufferOffset, SizingBehavior};
@@ -4786,7 +4787,8 @@ impl GitPanel {
                 this.generate_commit_message(cx);
             }));
 
-        let button = if can_commit && has_commit_model_configuration_error {
+        // let button = if can_commit && has_commit_model_configuration_error {
+        let button = if true {
             button.hoverable_tooltip(move |_window, cx| {
                 cx.new(|_| GenerateCommitMessageConfigurationTooltip).into()
             })
@@ -7167,28 +7169,18 @@ impl Render for GenerateCommitMessageConfigurationTooltip {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         ui::tooltip_container(cx, |container, _cx| {
             container
-                .flex_shrink_0()
-                .w(rems_from_px(288.))
-                .min_h(rems_from_px(72.))
-                .justify_between()
-                .child(v_flex().flex_1().w_full().child(Label::new(
-                    "Configure an LLM provider to generate commit messages",
-                )))
+                .gap_1p5()
+                .child(Label::new(
+                    "Configure an LLM provider to generate commit messages.",
+                ))
                 .child(
                     h_flex()
-                        .pt_1()
-                        .gap_2()
-                        .items_end()
-                        .w_full()
+                        .gap_1()
                         .child(
-                            ButtonLike::new("configure-commit-message-provider")
-                                .size(ButtonSize::None)
-                                .child(
-                                    Label::new("Configure Provider")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Accent)
-                                        .underline(),
-                                )
+                            Button::new("configure-commit-message-provider", "Configure Provider")
+                                .style(ButtonStyle::Filled)
+                                .layer(ElevationIndex::ModalSurface)
+                                .label_size(LabelSize::Small)
                                 .on_click(|_, window, cx| {
                                     window.dispatch_action(
                                         zed_actions::OpenSettingsAt {
@@ -7201,11 +7193,17 @@ impl Render for GenerateCommitMessageConfigurationTooltip {
                                 }),
                         )
                         .child(
-                            ui::ButtonLink::new(
-                                "See Docs",
-                                "https://zed.dev/docs/ai/llm-providers",
-                            )
-                            .label_size(LabelSize::Small),
+                            Button::new("llm-provider-docs", "See Docs")
+                                .style(ButtonStyle::OutlinedGhost)
+                                .end_icon(
+                                    Icon::new(IconName::ArrowUpRight)
+                                        .color(Color::Muted)
+                                        .size(IconSize::Small),
+                                )
+                                .label_size(LabelSize::Small)
+                                .on_click(move |_, _, cx| {
+                                    cx.open_url(&zed_urls::llm_provider_docs(cx))
+                                }),
                         ),
                 )
         })
