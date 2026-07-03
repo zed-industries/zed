@@ -1281,6 +1281,29 @@ impl TableDataView {
         self.restart_query(window, cx);
     }
 
+    /// The `sort_label`'s `on_click` handler (see `render_header`): toggles
+    /// sort for `column` on a single click. Always stops propagation and
+    /// ignores multi-clicks, because the header cell wrapping this label
+    /// (`render_header_cell` in `crates/ui/src/components/data_table.rs`) has
+    /// its own `on_click` that resets the column's manual width on a double
+    /// click; letting the click bubble would toggle the sort a second time
+    /// (and reload) on top of that reset (finding 13). A plain method rather
+    /// than an inline closure so this can be exercised directly with a
+    /// hand-built `ClickEvent`, without simulating real window input.
+    fn handle_sort_label_click(
+        &mut self,
+        column: &str,
+        event: &gpui::ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.stop_propagation();
+        if event.click_count() > 1 {
+            return;
+        }
+        self.toggle_sort(column, window, cx);
+    }
+
     /// Applies a filter created or edited via [`FilterPopover`]: `Some(index)`
     /// replaces the filter at that position (a no-op if `index` is out of
     /// bounds), `None` appends `filter` as a new one. Either way resets the
@@ -1921,6 +1944,89 @@ impl TableDataView {
         }
     }
 
+    /// Adds a new `column = value` filter (the cell context menu's "Filter:
+    /// ..." entry for a non-NULL cell). Appends rather than replaces, like
+    /// every other quick-filter entry - see [`Self::apply_filter_edit`].
+    fn filter_by_cell_value(
+        &mut self,
+        column: String,
+        value: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_filter_edit(
+            None,
+            Filter {
+                column,
+                op: FilterOp::Eq,
+                value,
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Adds a new `column <> value` filter (the cell context menu's
+    /// "Exclude: ..." entry for a non-NULL cell).
+    fn exclude_cell_value(
+        &mut self,
+        column: String,
+        value: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_filter_edit(
+            None,
+            Filter {
+                column,
+                op: FilterOp::NotEq,
+                value,
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Adds a new `column IS NULL` filter (the cell context menu's "Filter:
+    /// ... IS NULL" entry for a NULL cell).
+    fn filter_by_cell_is_null(
+        &mut self,
+        column: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_filter_edit(
+            None,
+            Filter {
+                column,
+                op: FilterOp::IsNull,
+                value: String::new(),
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Adds a new `column IS NOT NULL` filter (the cell context menu's
+    /// "Exclude: ... IS NOT NULL" entry for a NULL cell).
+    fn exclude_cell_is_not_null(
+        &mut self,
+        column: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_filter_edit(
+            None,
+            Filter {
+                column,
+                op: FilterOp::IsNotNull,
+                value: String::new(),
+            },
+            window,
+            cx,
+        );
+    }
+
     /// Deploys the right-click menu for a data cell at `position`, offering
     /// quick filters on the cell's value, a "View value" popup, and (when
     /// editable) an "Edit cell" entry.
@@ -1961,13 +2067,9 @@ impl TableDataView {
                         move |window, cx| {
                             table_view
                                 .update(cx, |table, cx| {
-                                    table.apply_filter_edit(
-                                        None,
-                                        Filter {
-                                            column: column.clone(),
-                                            op: FilterOp::Eq,
-                                            value: value.clone(),
-                                        },
+                                    table.filter_by_cell_value(
+                                        column.clone(),
+                                        value.clone(),
                                         window,
                                         cx,
                                     );
@@ -1981,13 +2083,9 @@ impl TableDataView {
                         move |window, cx| {
                             table_view
                                 .update(cx, |table, cx| {
-                                    table.apply_filter_edit(
-                                        None,
-                                        Filter {
-                                            column: column.clone(),
-                                            op: FilterOp::NotEq,
-                                            value: value.clone(),
-                                        },
+                                    table.exclude_cell_value(
+                                        column.clone(),
+                                        value.clone(),
                                         window,
                                         cx,
                                     );
@@ -2003,16 +2101,7 @@ impl TableDataView {
                         move |window, cx| {
                             table_view
                                 .update(cx, |table, cx| {
-                                    table.apply_filter_edit(
-                                        None,
-                                        Filter {
-                                            column: column.clone(),
-                                            op: FilterOp::IsNull,
-                                            value: String::new(),
-                                        },
-                                        window,
-                                        cx,
-                                    );
+                                    table.filter_by_cell_is_null(column.clone(), window, cx);
                                 })
                                 .log_err();
                         }
@@ -2023,16 +2112,7 @@ impl TableDataView {
                         move |window, cx| {
                             table_view
                                 .update(cx, |table, cx| {
-                                    table.apply_filter_edit(
-                                        None,
-                                        Filter {
-                                            column: column.clone(),
-                                            op: FilterOp::IsNotNull,
-                                            value: String::new(),
-                                        },
-                                        window,
-                                        cx,
-                                    );
+                                    table.exclude_cell_is_not_null(column.clone(), window, cx);
                                 })
                                 .log_err();
                         }
@@ -2431,7 +2511,7 @@ impl TableDataView {
                                 .min_w_0()
                                 .whitespace_nowrap()
                                 .text_ellipsis()
-                                .child(Label::new(column.clone())),
+                                .child(Label::new(column.clone()).weight(gpui::FontWeight::MEDIUM)),
                         )
                         .when_some(sorted, |this, direction| {
                             this.child(Icon::new(match direction {
@@ -2441,9 +2521,11 @@ impl TableDataView {
                         }),
                 )
                 .tooltip(Tooltip::text(sort_tooltip))
-                .on_click(cx.listener(move |this, _event, window, cx| {
-                    this.toggle_sort(&column, window, cx);
-                }))
+                .on_click(
+                    cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                        this.handle_sort_label_click(&column, event, window, cx);
+                    }),
+                )
         };
 
         let funnel = PopoverMenu::new(("db-col-filter", index))
@@ -2496,12 +2578,24 @@ impl TableDataView {
             .striped()
             .header_background(cx.theme().colors().title_bar_background)
             .header(vec![
-                "Name".into_any_element(),
-                "Type".into_any_element(),
-                "Nullable".into_any_element(),
-                "Default".into_any_element(),
-                "PK".into_any_element(),
-                "FK".into_any_element(),
+                Label::new("Name")
+                    .weight(gpui::FontWeight::MEDIUM)
+                    .into_any_element(),
+                Label::new("Type")
+                    .weight(gpui::FontWeight::MEDIUM)
+                    .into_any_element(),
+                Label::new("Nullable")
+                    .weight(gpui::FontWeight::MEDIUM)
+                    .into_any_element(),
+                Label::new("Default")
+                    .weight(gpui::FontWeight::MEDIUM)
+                    .into_any_element(),
+                Label::new("PK")
+                    .weight(gpui::FontWeight::MEDIUM)
+                    .into_any_element(),
+                Label::new("FK")
+                    .weight(gpui::FontWeight::MEDIUM)
+                    .into_any_element(),
             ]);
 
         for column in &structure.columns {
@@ -2954,16 +3048,50 @@ impl TableDataView {
         }));
 
         if self.sql_bar_collapsed {
+            // The expanded bar's own "Custom query · read-only" badge (below)
+            // is what lets `read_only_reason` stay `None` for the custom/dirty
+            // cases - but that badge is part of the content this branch skips
+            // rendering. Without a stand-in here, collapsing the bar while in
+            // one of those states silently drops the only explanation for why
+            // +Row/editing disappeared (finding 12).
+            let show_custom_indicator = self.query.is_custom() || self.sql_dirty;
             return h_flex()
                 .w_full()
                 .px_2()
                 .py_1()
-                .gap_1()
+                .gap_2()
                 .items_center()
                 .border_b_1()
                 .border_color(cx.theme().colors().border)
-                .child(chevron)
-                .child(Label::new("SQL").size(LabelSize::Small).color(Color::Muted))
+                .debug_selector(|| "db-sql-bar".into())
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .items_center()
+                        .child(chevron)
+                        .child(Label::new("SQL").size(LabelSize::Small).color(Color::Muted)),
+                )
+                .when(show_custom_indicator, |this| {
+                    this.child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .debug_selector(|| "db-sql-bar-custom-indicator".into())
+                            .child(
+                                Label::new("Custom · read-only")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Warning),
+                            )
+                            .child(
+                                Button::new("db-reset-query-collapsed", "Reset to table query")
+                                    .size(ButtonSize::Compact)
+                                    .style(ButtonStyle::Subtle)
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.reset_to_table_query(window, cx);
+                                    })),
+                            ),
+                    )
+                })
                 .into_any_element();
         }
 
@@ -2981,6 +3109,7 @@ impl TableDataView {
             .w_full()
             .border_b_1()
             .border_color(cx.theme().colors().border)
+            .debug_selector(|| "db-sql-bar".into())
             .child(
                 h_flex()
                     .w_full()
@@ -3032,15 +3161,19 @@ impl TableDataView {
 }
 
 /// A small popover for adding or editing a single [`Filter`] on one column,
-/// anchored to a header funnel icon or a filter chip. Delegates focus to its
-/// value input (see `Focusable` impl below) so `PopoverMenu` can focus it
-/// automatically without a manual focus call.
+/// anchored to a header funnel icon or a filter chip. `Focusable` returns the
+/// popover's own root handle (tracked in `render` below) rather than the
+/// value input's, since `PopoverMenu` focuses that handle once at deploy time
+/// and it must stay attached to the dispatch tree even when the value input
+/// is absent for `IsNull`/`IsNotNull` (see `show_value`). The value input is
+/// focused separately, only while it is actually rendered.
 pub struct FilterPopover {
     column: String,
     op: FilterOp,
     value_field: Entity<InputField>,
     existing_index: Option<usize>,
     table_view: WeakEntity<TableDataView>,
+    focus_handle: FocusHandle,
 }
 
 impl FilterPopover {
@@ -3059,12 +3192,17 @@ impl FilterPopover {
             }
             field
         });
+        let op = existing_filter.map_or(FilterOp::Eq, |filter| filter.op);
+        if !matches!(op, FilterOp::IsNull | FilterOp::IsNotNull) {
+            value_field.focus_handle(cx).focus(window, cx);
+        }
         Self {
             column,
-            op: existing_filter.map_or(FilterOp::Eq, |filter| filter.op),
+            op,
             value_field,
             existing_index: existing.map(|(index, _)| index),
             table_view,
+            focus_handle: cx.focus_handle(),
         }
     }
 
@@ -3100,8 +3238,8 @@ impl FilterPopover {
 impl EventEmitter<DismissEvent> for FilterPopover {}
 
 impl Focusable for FilterPopover {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.value_field.focus_handle(cx)
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -3111,6 +3249,7 @@ impl Render for FilterPopover {
 
         v_flex()
             .key_context("DatabaseFilterPopover")
+            .track_focus(&self.focus_handle)
             .occlude()
             .elevation_2(cx)
             .w_72()
@@ -3128,8 +3267,11 @@ impl Render for FilterPopover {
                         Button::new(("filter-op", op as usize), filter_op_label(op))
                             .size(ButtonSize::Compact)
                             .toggle_state(self.op == op)
-                            .on_click(cx.listener(move |this, _, _, cx| {
+                            .on_click(cx.listener(move |this, _, window, cx| {
                                 this.op = op;
+                                if !matches!(op, FilterOp::IsNull | FilterOp::IsNotNull) {
+                                    this.value_field.focus_handle(cx).focus(window, cx);
+                                }
                                 cx.notify();
                             }))
                     })),
@@ -3180,7 +3322,13 @@ impl Render for ValuePopover {
                     .id("db-value-scroll")
                     .overflow_y_scroll()
                     .max_h_72()
-                    .child(Label::new(self.value.clone()).size(LabelSize::Small)),
+                    .child(
+                        div()
+                            .font_buffer(cx)
+                            .text_ui_sm(cx)
+                            .whitespace_normal()
+                            .child(self.value.clone()),
+                    ),
             )
     }
 }
@@ -3194,7 +3342,11 @@ impl Render for TableDataView {
         };
         let in_data =
             self.mode == ViewMode::Data && !matches!(self.load_state, LoadState::Error(_));
-        let sql_bar = self.render_sql_bar(window, cx);
+        // The SQL bar is a Data-page element per spec: on Structure it would
+        // stay editable and runnable (Run executes a query with the grid
+        // hidden, silently promoting the tab into custom-query mode) even
+        // though nothing on Structure shows the result (finding 16).
+        let sql_bar = in_data.then(|| self.render_sql_bar(window, cx));
         let chips_row = in_data.then(|| self.render_chips_row(cx)).flatten();
 
         v_flex()
@@ -3245,7 +3397,7 @@ impl Render for TableDataView {
                     )))
                     .child(self.render_toggle(cx)),
             )
-            .child(sql_bar)
+            .children(sql_bar)
             .children(chips_row)
             .child(v_flex().flex_1().size_full().overflow_hidden().child(body))
             .when(in_data, |this| this.child(self.render_footer(cx)))
@@ -3376,8 +3528,9 @@ mod tests {
         ColumnInfo, DatabaseClient, Filter, FilterOp, QueryResult, RowKey, SortDirection, TableRef,
     };
     use gpui::{
-        AppContext as _, DismissEvent, Entity, Focusable, TestAppContext, UpdateGlobal as _,
-        VisualTestContext,
+        AppContext as _, ClickEvent, DismissEvent, Entity, Focusable, IntoElement, MouseButton,
+        MouseClickEvent, MouseDownEvent, MouseUpEvent, TestAppContext, UpdateGlobal as _,
+        VisualTestContext, point, px, size,
     };
 
     use super::{
@@ -6459,19 +6612,13 @@ mod tests {
             assert!(view.context_menu_open(), "right-click should open a menu");
         });
 
-        // Simulate clicking "Filter: name = 'Alice'" by calling the same code
-        // path the menu entry closure calls.
+        // Call the same handler the "Filter: name = 'Alice'" menu entry's
+        // closure calls, rather than constructing a `Filter` by hand: a
+        // wiring bug in the closure (wrong op, a value silently swapped for
+        // the truncated label text) would go undetected if the test built
+        // its own `Filter` instead of exercising the real code path.
         view.update_in(cx, |view, window, cx| {
-            view.apply_filter_edit(
-                None,
-                Filter {
-                    column: "name".into(),
-                    op: FilterOp::Eq,
-                    value: "Alice".into(),
-                },
-                window,
-                cx,
-            );
+            view.filter_by_cell_value("name".into(), "Alice".into(), window, cx);
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
@@ -6484,8 +6631,8 @@ mod tests {
             assert_eq!(view.query().filters[0].value, "Alice");
         });
         let last = last_run_query_sql(&fake).expect("run_query should have been called");
-        assert!(
-            last.contains(r#""name" = 'Alice'"#),
+        assert_eq!(
+            last, r#"SELECT * FROM "public"."users" WHERE "name" = 'Alice' LIMIT 100 OFFSET 0;"#,
             "unexpected generated SQL: {last}"
         );
     }
@@ -6507,17 +6654,9 @@ mod tests {
         });
         view.read_with(cx, |view, _| assert!(view.context_menu_open()));
 
+        // Call the "Exclude: name ≠ 'Alice'" entry's real handler.
         view.update_in(cx, |view, window, cx| {
-            view.apply_filter_edit(
-                None,
-                Filter {
-                    column: "name".into(),
-                    op: FilterOp::NotEq,
-                    value: "Alice".into(),
-                },
-                window,
-                cx,
-            );
+            view.exclude_cell_value("name".into(), "Alice".into(), window, cx);
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
@@ -6525,8 +6664,8 @@ mod tests {
         .await;
 
         let last = last_run_query_sql(&fake).expect("run_query should have been called");
-        assert!(
-            last.contains(r#""name" <> 'Alice'"#),
+        assert_eq!(
+            last, r#"SELECT * FROM "public"."users" WHERE "name" <> 'Alice' LIMIT 100 OFFSET 0;"#,
             "unexpected generated SQL: {last}"
         );
         view.read_with(cx, |view, _| {
@@ -6552,17 +6691,9 @@ mod tests {
         });
         view.read_with(cx, |view, _| assert!(view.context_menu_open()));
 
+        // Call the "Filter: name IS NULL" entry's real handler.
         view.update_in(cx, |view, window, cx| {
-            view.apply_filter_edit(
-                None,
-                Filter {
-                    column: "name".into(),
-                    op: FilterOp::IsNull,
-                    value: String::new(),
-                },
-                window,
-                cx,
-            );
+            view.filter_by_cell_is_null("name".into(), window, cx);
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
@@ -6573,8 +6704,8 @@ mod tests {
             assert_eq!(view.query().filters[0].op, FilterOp::IsNull);
         });
         let last = last_run_query_sql(&fake).expect("run_query should have been called");
-        assert!(
-            last.contains(r#""name" IS NULL"#),
+        assert_eq!(
+            last, r#"SELECT * FROM "public"."users" WHERE "name" IS NULL LIMIT 100 OFFSET 0;"#,
             "unexpected generated SQL: {last}"
         );
     }
@@ -6585,16 +6716,20 @@ mod tests {
         let (fake, view, cx) = view_with_default_rows(cx).await;
 
         view.update_in(cx, |view, window, cx| {
-            view.apply_filter_edit(
+            view.deploy_cell_context_menu(
+                gpui::Point::default(),
+                "name".into(),
                 None,
-                Filter {
-                    column: "name".into(),
-                    op: FilterOp::IsNotNull,
-                    value: String::new(),
-                },
+                None,
                 window,
                 cx,
             );
+        });
+        view.read_with(cx, |view, _| assert!(view.context_menu_open()));
+
+        // Call the "Exclude: name IS NOT NULL" entry's real handler.
+        view.update_in(cx, |view, window, cx| {
+            view.exclude_cell_is_not_null("name".into(), window, cx);
         });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
@@ -6605,8 +6740,8 @@ mod tests {
             assert_eq!(view.query().filters[0].op, FilterOp::IsNotNull);
         });
         let last = last_run_query_sql(&fake).expect("run_query should have been called");
-        assert!(
-            last.contains(r#""name" IS NOT NULL"#),
+        assert_eq!(
+            last, r#"SELECT * FROM "public"."users" WHERE "name" IS NOT NULL LIMIT 100 OFFSET 0;"#,
             "unexpected generated SQL: {last}"
         );
     }
@@ -7336,5 +7471,286 @@ mod tests {
                 "set_editing_cell_null must not run with no open editor"
             );
         });
+    }
+
+    // -- Fix cluster C: UI polish, SQL-bar gating, and context-menu test rigor --
+
+    fn mouse_click_event(click_count: usize) -> ClickEvent {
+        ClickEvent::Mouse(MouseClickEvent {
+            down: MouseDownEvent {
+                button: MouseButton::Left,
+                click_count,
+                ..Default::default()
+            },
+            up: MouseUpEvent {
+                button: MouseButton::Left,
+                click_count,
+                ..Default::default()
+            },
+        })
+    }
+
+    #[gpui::test]
+    async fn sort_label_single_click_toggles_sort(cx: &mut TestAppContext) {
+        // Finding 13: a plain single click must still toggle sort exactly
+        // once (the click-count guard must not swallow ordinary clicks).
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.handle_sort_label_click("name", &mouse_click_event(1), window, cx);
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        view.read_with(cx, |view, _| {
+            let sort = view.query().sort.as_ref().expect("sort should be applied");
+            assert_eq!(sort.column, "name");
+            assert_eq!(sort.direction, SortDirection::Asc);
+        });
+    }
+
+    #[gpui::test]
+    async fn sort_label_double_click_does_not_toggle_twice(cx: &mut TestAppContext) {
+        // Finding 13: the header cell wrapping this label resets the
+        // column's manual width on `click_count > 1`; the label's own
+        // handler must ignore multi-clicks rather than toggling sort again
+        // on top of a single click already having run (which would leave
+        // sort cleared instead of ascending, and reload the query twice).
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.handle_sort_label_click("name", &mouse_click_event(2), window, cx);
+        });
+
+        view.read_with(cx, |view, _| {
+            assert!(
+                view.query().sort.is_none(),
+                "a multi-click must not toggle sort at all"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn filter_popover_focus_handle_is_root_not_value_field(cx: &mut TestAppContext) {
+        // Finding 15: `PopoverMenu` focuses whatever `Focusable::focus_handle`
+        // returns once at deploy time, and that handle must stay attached to
+        // the dispatch tree even when the value input isn't rendered
+        // (`IsNull`/`IsNotNull`). Delegating to `value_field`'s handle would
+        // point at an element missing from the tree in that case.
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+        let weak_view = view.downgrade();
+
+        let popover = cx.update(|window, cx| {
+            cx.new(|cx| FilterPopover::new("name".to_string(), None, weak_view.clone(), window, cx))
+        });
+
+        popover.update(cx, |popover, cx| {
+            let root_handle = popover.focus_handle.clone();
+            assert_eq!(
+                popover.focus_handle(cx),
+                root_handle,
+                "Focusable must return the popover's own root handle"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn filter_popover_focuses_value_field_when_shown(cx: &mut TestAppContext) {
+        // Finding 15: the value input must still receive keyboard focus
+        // while it's visible, even though `Focusable` no longer delegates to
+        // it directly.
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+        let weak_view = view.downgrade();
+
+        let popover = cx.update(|window, cx| {
+            cx.new(|cx| FilterPopover::new("name".to_string(), None, weak_view.clone(), window, cx))
+        });
+
+        popover.update_in(cx, |popover, window, cx| {
+            assert!(
+                popover.value_field.focus_handle(cx).is_focused(window),
+                "the value field should be focused when constructed with a value-showing op"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn filter_popover_is_null_does_not_focus_absent_value_field(cx: &mut TestAppContext) {
+        // Finding 15: constructing a popover already in `IsNull`/`IsNotNull`
+        // (e.g. editing an existing IS NULL filter) must not focus the
+        // value field, since it is not rendered for those operators - only
+        // the popover's own root handle should hold focus in that case.
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+        let weak_view = view.downgrade();
+
+        let existing_filter = Filter {
+            column: "name".into(),
+            op: FilterOp::IsNull,
+            value: String::new(),
+        };
+        let popover = cx.update(|window, cx| {
+            cx.new(|cx| {
+                FilterPopover::new(
+                    "name".to_string(),
+                    Some((0, &existing_filter)),
+                    weak_view.clone(),
+                    window,
+                    cx,
+                )
+            })
+        });
+
+        popover.update_in(cx, |popover, window, cx| {
+            assert!(
+                !popover.value_field.focus_handle(cx).is_focused(window),
+                "the value field must not hold focus for an IsNull popover"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn sql_bar_hidden_on_structure_tab(cx: &mut TestAppContext) {
+        // Finding 16: the SQL bar is a Data-page element; it must not be part
+        // of the render tree on Structure, where Run would execute a query
+        // with the grid hidden and silently promote the tab into
+        // custom-query mode with no visible result.
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        cx.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("db-sql-bar").is_some(),
+            "the SQL bar should render on the Data tab"
+        );
+
+        view.update(cx, |view, cx| view.toggle_structure(cx));
+        cx.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("db-sql-bar").is_none(),
+            "the SQL bar must not render on the Structure tab"
+        );
+
+        view.update(cx, |view, cx| view.toggle_structure(cx));
+        cx.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("db-sql-bar").is_some(),
+            "the SQL bar should render again after returning to the Data tab"
+        );
+    }
+
+    #[gpui::test]
+    async fn collapsed_sql_bar_shows_custom_indicator_and_reset(cx: &mut TestAppContext) {
+        // Finding 12: `read_only_reason` intentionally stays `None` for the
+        // custom/dirty cases because the expanded bar's own badge is
+        // supposed to cover it - but that badge is part of the content the
+        // collapsed branch skips rendering. Collapsing the bar in one of
+        // those states must not silently drop the only explanation for why
+        // +Row/editing disappeared.
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        view.update(cx, |view, _cx| {
+            view.sql_bar_collapsed = true;
+        });
+        cx.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("db-sql-bar").is_some(),
+            "the collapsed bar container should still render"
+        );
+        assert!(
+            cx.debug_bounds("db-sql-bar-custom-indicator").is_none(),
+            "a clean, table-backed query should show no custom/read-only indicator"
+        );
+
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor
+                .update(cx, |editor, cx| editor.set_text("SELECT 1", window, cx));
+        });
+        view.read_with(cx, |view, _| assert!(view.sql_dirty()));
+
+        cx.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("db-sql-bar").is_some(),
+            "the collapsed bar container should still render"
+        );
+        assert!(
+            cx.debug_bounds("db-sql-bar-custom-indicator").is_some(),
+            "a dirty, unrun SQL bar must still surface the custom/read-only indicator when collapsed"
+        );
+    }
+
+    #[gpui::test]
+    async fn value_popover_renders_without_panicking(cx: &mut TestAppContext) {
+        // Finding 9: smoke-test that switching the popover's value text to a
+        // monospaced container doesn't break rendering, including for a long
+        // value that must wrap.
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        let long_value = "x".repeat(400);
+        view.update_in(cx, |view, window, cx| {
+            view.open_value_popover(gpui::Point::default(), long_value, window, cx);
+        });
+
+        let popover = view.read_with(cx, |view, _| {
+            view.value_popover
+                .as_ref()
+                .expect("popover should be set")
+                .0
+                .clone()
+        });
+        cx.draw(point(px(0.), px(0.)), size(px(400.), px(400.)), |_, _| {
+            popover.clone().into_any_element()
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn data_grid_renders_without_panicking(cx: &mut TestAppContext) {
+        // Finding 10: smoke-test that the header's medium-weight column
+        // names don't break the Data-tab render.
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        cx.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    async fn structure_table_renders_without_panicking(cx: &mut TestAppContext) {
+        // Finding 10: smoke-test that the Structure table's medium-weight
+        // header labels don't break its render.
+        let cx = &mut cx.clone();
+        let (_fake, view, cx) = view_with_default_rows(cx).await;
+
+        view.update(cx, |view, cx| view.toggle_structure(cx));
+        cx.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        cx.run_until_parked();
     }
 }
