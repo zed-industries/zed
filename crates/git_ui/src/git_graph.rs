@@ -1,6 +1,8 @@
 use crate::{
+    branch_picker::{delete_branch_command, force_delete_prompt_for_branch_delete_error},
     commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
     commit_view::CommitView,
+    git_panel::show_error_toast,
     git_status_icon,
 };
 use collections::{BTreeMap, HashMap, IndexSet};
@@ -19,7 +21,7 @@ use git::{
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength,
     DismissEvent, DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable,
-    Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollStrategy,
+    Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, PromptLevel, ScrollStrategy,
     ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
     px, uniform_list,
@@ -46,7 +48,7 @@ use std::{
     sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
-use task::{ResolvedTask, TaskContext, TaskVariables, VariableName};
+use task::{ResolvedTask, TaskContext, TaskTemplate, TaskVariables, VariableName};
 use theme::AccentColors;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
@@ -1322,6 +1324,107 @@ struct GitGraphContextMenu {
     _subscription: Subscription,
 }
 
+struct CreateBranchModal {
+    editor: Entity<Editor>,
+    repository: Entity<Repository>,
+    workspace: WeakEntity<Workspace>,
+    base: SharedString,
+}
+
+impl EventEmitter<DismissEvent> for CreateBranchModal {}
+impl ModalView for CreateBranchModal {}
+impl Focusable for CreateBranchModal {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.editor.focus_handle(cx)
+    }
+}
+
+impl CreateBranchModal {
+    fn new(
+        repository: Entity<Repository>,
+        base: SharedString,
+        workspace: WeakEntity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let editor = cx.new(|cx| {
+            let mut editor = Editor::single_line(window, cx);
+            editor.set_placeholder_text("Branch name", window, cx);
+            editor
+        });
+        Self {
+            editor,
+            repository,
+            workspace,
+            base,
+        }
+    }
+
+    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.emit(DismissEvent);
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut Context<Self>) {
+        let branch_name = self.editor.read(cx).text(cx).trim().to_string();
+        if branch_name.is_empty() {
+            return;
+        }
+        let base = self.base.clone();
+        let workspace = self.workspace.clone();
+        let receiver = self.repository.update(cx, |repository, _| {
+            repository.create_branch(branch_name.clone(), Some(base.to_string()))
+        });
+        cx.spawn(async move |_, cx| {
+            if let Ok(Err(error)) = receiver.await
+                && let Some(workspace) = workspace.upgrade()
+            {
+                cx.update(|cx| {
+                    show_error_toast(
+                        workspace,
+                        format!("switch -c {branch_name} {base}"),
+                        error,
+                        cx,
+                    )
+                });
+            }
+        })
+        .detach();
+        cx.emit(DismissEvent);
+    }
+}
+
+impl Render for CreateBranchModal {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .key_context("GitGraphCreateBranchModal")
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .elevation_2(cx)
+            .w(rems(34.))
+            .child(
+                h_flex()
+                    .px_3()
+                    .pt_2()
+                    .pb_1()
+                    .gap_1p5()
+                    .child(Icon::new(IconName::GitBranch).size(IconSize::XSmall))
+                    .child(
+                        Label::new(format!("Create branch from {}", self.base))
+                            .size(LabelSize::Small),
+                    ),
+            )
+            .child(
+                div()
+                    .py_2()
+                    .px_3()
+                    .bg(cx.theme().colors().editor_background)
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(self.editor.clone()),
+            )
+    }
+}
+
 pub struct GitGraph {
     focus_handle: FocusHandle,
     search_state: SearchState,
@@ -2461,6 +2564,168 @@ impl GitGraph {
             .ok();
     }
 
+    fn schedule_builtin_git_command(
+        &mut self,
+        label: String,
+        args: Vec<String>,
+        commit_sha: Oid,
+        ref_name: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(task_context) = self.git_task_context(commit_sha, ref_name, cx) else {
+            return;
+        };
+        let task_template = TaskTemplate {
+            label,
+            command: "git".to_string(),
+            args,
+            ..TaskTemplate::default()
+        };
+        let Some(resolved_task) = task_template.resolve_task("git_graph_command", &task_context)
+        else {
+            return;
+        };
+        self.schedule_git_task(TaskSourceKind::UserInput, resolved_task, window, cx);
+    }
+
+    fn checkout_ref(&mut self, ref_name: SharedString, cx: &mut Context<Self>) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let workspace = self.workspace.clone();
+        let receiver = repository.update(cx, |repository, _| {
+            repository.change_branch(ref_name.to_string())
+        });
+        cx.spawn(async move |_, cx| {
+            if let Ok(Err(error)) = receiver.await
+                && let Some(workspace) = workspace.upgrade()
+            {
+                cx.update(|cx| {
+                    show_error_toast(workspace, format!("switch {ref_name}"), error, cx)
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn create_branch_from(
+        &mut self,
+        base: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        workspace.update(cx, |workspace, cx| {
+            let workspace_handle = cx.weak_entity();
+            workspace.toggle_modal(window, cx, |window, cx| {
+                CreateBranchModal::new(repository, base, workspace_handle, window, cx)
+            });
+        });
+    }
+
+    fn delete_branch(
+        &mut self,
+        branch_name: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let workspace = self.workspace.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            let answer = cx.update(|window, cx| {
+                window.prompt(
+                    PromptLevel::Warning,
+                    &format!("Delete branch \"{branch_name}\"?"),
+                    None,
+                    &["Delete", "Cancel"],
+                    cx,
+                )
+            })?;
+            if answer.await != Ok(0) {
+                return anyhow::Ok(());
+            }
+
+            let scan = repository
+                .update(cx, |repository, _| repository.branches())
+                .await??;
+            // The branch may have been deleted or renamed since the graph was
+            // loaded, in which case there is nothing left to delete.
+            let Some(branch) = scan
+                .branches
+                .iter()
+                .find(|branch| branch.name() == branch_name.as_ref())
+                .cloned()
+            else {
+                return Ok(());
+            };
+            if branch.is_head {
+                return Ok(());
+            }
+
+            let is_remote = branch.is_remote();
+            let branch_name = branch.name().to_string();
+            let initial_result = repository
+                .update(cx, |repository, _| {
+                    repository.delete_branch(is_remote, branch_name.clone(), false)
+                })
+                .await?;
+
+            let (result, attempted_force) = match initial_result {
+                Ok(()) => (Ok(()), false),
+                Err(error) => {
+                    if let Some(prompt_message) =
+                        force_delete_prompt_for_branch_delete_error(&error, &branch_name)
+                    {
+                        let answer = cx.update(|window, cx| {
+                            window.prompt(
+                                PromptLevel::Warning,
+                                &prompt_message,
+                                None,
+                                &["Force Delete", "Cancel"],
+                                cx,
+                            )
+                        })?;
+                        if answer.await != Ok(0) {
+                            return Ok(());
+                        }
+                        let retry = repository
+                            .update(cx, |repository, _| {
+                                repository.delete_branch(is_remote, branch_name.clone(), true)
+                            })
+                            .await?;
+                        (retry, true)
+                    } else {
+                        (Err(error), false)
+                    }
+                }
+            };
+
+            if let Err(error) = result
+                && let Some(workspace) = workspace.upgrade()
+            {
+                cx.update(|_window, cx| {
+                    show_error_toast(
+                        workspace,
+                        delete_branch_command(is_remote, &branch_name, attempted_force),
+                        error,
+                        cx,
+                    )
+                })?;
+            }
+
+            anyhow::Ok(())
+        })
+        .detach();
+    }
+
     fn deploy_entry_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -2478,6 +2743,23 @@ impl GitGraph {
             .git_task_context(sha, ref_name.as_deref(), cx)
             .map(|task_context| self.git_context_menu_tasks(&task_context, cx))
             .unwrap_or_default();
+
+        let head_branch_name = self.get_repository(cx).and_then(|repository| {
+            repository
+                .read(cx)
+                .snapshot()
+                .branch
+                .as_ref()
+                .map(|branch| SharedString::from(branch.name().to_string()))
+        });
+        let is_tag = ref_name.as_ref().is_some_and(|ref_name| {
+            commit
+                .data
+                .tag_names()
+                .iter()
+                .any(|tag_name| *tag_name == ref_name.as_ref())
+        });
+        let is_checked_out = ref_name.is_some() && ref_name == head_branch_name;
 
         let header = match &ref_name {
             Some(ref_name) => format!("Ref {ref_name}"),
@@ -2555,6 +2837,136 @@ impl GitGraph {
                             }),
                         }
                     })
+                })
+                .separator()
+                .map(|mut menu| {
+                    match ref_name.clone().filter(|_| !is_tag) {
+                        Some(branch_name) => {
+                            let checkout_branch = branch_name.clone();
+                            menu = menu.item(
+                                ContextMenuEntry::new("Check Out Branch")
+                                    .disabled(is_checked_out)
+                                    .handler(window.handler_for(
+                                        &git_graph,
+                                        move |this, _window, cx| {
+                                            this.checkout_ref(checkout_branch.clone(), cx);
+                                        },
+                                    )),
+                            );
+
+                            menu = menu.item(match head_branch_name.clone() {
+                                Some(head_branch) if !is_checked_out => {
+                                    let merge_branch = branch_name.clone();
+                                    ContextMenuEntry::new(format!("Merge into {head_branch}"))
+                                        .handler(window.handler_for(
+                                            &git_graph,
+                                            move |this, window, cx| {
+                                                this.schedule_builtin_git_command(
+                                                    format!("git merge {merge_branch}"),
+                                                    vec!["merge".into(), "$ZED_GIT_REF".into()],
+                                                    sha,
+                                                    Some(merge_branch.as_ref()),
+                                                    window,
+                                                    cx,
+                                                );
+                                            },
+                                        ))
+                                }
+                                _ => ContextMenuEntry::new("Merge into Current Branch")
+                                    .disabled(true),
+                            });
+
+                            let create_base = branch_name.clone();
+                            menu = menu.entry(
+                                "Create Branch from Here…",
+                                None,
+                                window.handler_for(&git_graph, move |this, window, cx| {
+                                    this.create_branch_from(create_base.clone(), window, cx);
+                                }),
+                            );
+
+                            let delete_branch = branch_name;
+                            menu = menu.item(
+                                ContextMenuEntry::new("Delete Branch…")
+                                    .disabled(is_checked_out)
+                                    .handler(window.handler_for(
+                                        &git_graph,
+                                        move |this, window, cx| {
+                                            this.delete_branch(delete_branch.clone(), window, cx);
+                                        },
+                                    )),
+                            );
+                        }
+                        None => {
+                            if let Some(tag_name) = ref_name.clone() {
+                                menu = menu.entry(
+                                    "Create Branch from Here…",
+                                    None,
+                                    window.handler_for(&git_graph, move |this, window, cx| {
+                                        this.create_branch_from(tag_name.clone(), window, cx);
+                                    }),
+                                );
+                            } else {
+                                let checkout_label = format!("git checkout {sha_short}");
+                                menu = menu.entry(
+                                    "Check Out Commit",
+                                    None,
+                                    window.handler_for(&git_graph, move |this, window, cx| {
+                                        this.schedule_builtin_git_command(
+                                            checkout_label.clone(),
+                                            vec!["checkout".into(), "$ZED_GIT_SHA".into()],
+                                            sha,
+                                            None,
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                                );
+
+                                let create_base = SharedString::from(sha.to_string());
+                                menu = menu.entry(
+                                    "Create Branch from Here…",
+                                    None,
+                                    window.handler_for(&git_graph, move |this, window, cx| {
+                                        this.create_branch_from(create_base.clone(), window, cx);
+                                    }),
+                                );
+
+                                let cherry_pick_label = format!("git cherry-pick {sha_short}");
+                                menu = menu.entry(
+                                    "Cherry-Pick Commit",
+                                    None,
+                                    window.handler_for(&git_graph, move |this, window, cx| {
+                                        this.schedule_builtin_git_command(
+                                            cherry_pick_label.clone(),
+                                            vec!["cherry-pick".into(), "$ZED_GIT_SHA".into()],
+                                            sha,
+                                            None,
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                                );
+
+                                let revert_label = format!("git revert {sha_short}");
+                                menu = menu.entry(
+                                    "Revert Commit",
+                                    None,
+                                    window.handler_for(&git_graph, move |this, window, cx| {
+                                        this.schedule_builtin_git_command(
+                                            revert_label.clone(),
+                                            vec!["revert".into(), "$ZED_GIT_SHA".into()],
+                                            sha,
+                                            None,
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                                );
+                            }
+                        }
+                    }
+                    menu
                 })
                 .map(|mut menu| {
                     menu = menu.separator().header("Custom Commands");
@@ -7009,6 +7421,108 @@ mod tests {
         assert_eq!(
             resolved_task.resolved.args,
             vec!["checkout".to_string(), "feature-x".to_string()]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_builtin_git_command_resolves_sha_and_repository_cwd(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let commit_sha = Oid::try_from("abcdef1234567890abcdef1234567890abcdef12")
+            .expect("commit SHA should be valid");
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![Arc::new(InitialGraphCommitData {
+                sha: commit_sha,
+                parents: SmallVec::new(),
+                ref_names: Vec::new(),
+            })],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("project should have an active repository")
+        });
+        let task_inventory = project.read_with(cx, |project, cx| {
+            project
+                .task_store()
+                .read(cx)
+                .task_inventory()
+                .cloned()
+                .expect("project should have a task inventory")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(&*cx, |multi_workspace, _| {
+            multi_workspace.workspace().clone()
+        });
+        let workspace_weak = workspace.downgrade();
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.update_in(cx, |git_graph, window, cx| {
+            git_graph.schedule_builtin_git_command(
+                format!("git cherry-pick {}", commit_sha.display_short()),
+                vec!["cherry-pick".into(), "$ZED_GIT_SHA".into()],
+                commit_sha,
+                None,
+                window,
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        let (task_source_kind, resolved_task) = task_inventory.read_with(&*cx, |inventory, _| {
+            inventory
+                .last_scheduled_task(None)
+                .expect("built-in Git command should be scheduled")
+        });
+
+        assert!(
+            matches!(task_source_kind, TaskSourceKind::UserInput),
+            "built-in Git commands should be scheduled as one-shot tasks"
+        );
+        assert_eq!(resolved_task.resolved_label, "git cherry-pick abcdef1");
+        assert_eq!(resolved_task.resolved.command, Some("git".to_string()));
+        assert_eq!(
+            resolved_task.resolved.args,
+            vec![
+                "cherry-pick".to_string(),
+                "abcdef1234567890abcdef1234567890abcdef12".to_string(),
+            ]
+        );
+        assert_eq!(
+            resolved_task.resolved.cwd,
+            Some(Path::new("/project").to_path_buf())
         );
     }
 

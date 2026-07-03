@@ -106,6 +106,16 @@ To view File History:
 - Right-click on an editor tab and select "View File History"
 - Use the Command Palette and search for "file history"
 
+## Git Graph
+
+The Git Graph ({#action git_graph::Open}) visualizes your repository's commit history across branches. Right-clicking a commit or a ref label opens a context menu with common Git operations:
+
+- On a branch label: check out the branch, merge it into the current branch, create a new branch from it, or delete it.
+- On a commit: check out the commit, create a branch from it, cherry-pick it, or revert it.
+- On a tag label: create a branch from the tag.
+
+Merge, cherry-pick, revert, and detached checkouts run as tasks in the terminal, so their output is visible and any conflicts can be resolved from there. You can also add your own entries to this menu with [custom Git commands](./tasks.md#custom-git-commands).
+
 ## Fetch, Push, and Pull
 
 Fetch, push, or pull from your Git repository in Zed via the buttons available on the Git Panel or via the Command Palette by looking at the respective actions: {#action git::Fetch}, {#action git::Push}, and {#action git::Pull}.
