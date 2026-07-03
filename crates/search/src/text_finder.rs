@@ -16,10 +16,7 @@ use project::ProjectPath;
 use settings::SeedQuerySetting;
 use text::Anchor;
 use ui::Window;
-use workspace::{
-    DismissDecision, ItemHandle, ModalView, Workspace, WorkspaceDb, WorkspaceId,
-    searchable::SearchableItemHandle,
-};
+use workspace::{DismissDecision, ItemHandle, ModalView, Workspace, WorkspaceDb, WorkspaceId};
 
 mod delegate;
 mod render;
