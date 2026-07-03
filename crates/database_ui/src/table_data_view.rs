@@ -590,7 +590,7 @@ impl TableDataView {
     /// Appends an empty new row to the insert buffer, returning its stable
     /// [`InsertId`].
     pub fn add_row(&mut self, cx: &mut Context<Self>) -> Option<InsertId> {
-        if self.is_saving() {
+        if !self.editable() || self.is_saving() {
             return None;
         }
         let id = InsertId(self.next_insert_id);
@@ -667,7 +667,7 @@ impl TableDataView {
     /// buffered update for that same row (a delete supersedes an update). Also
     /// closes the inline editor if it is open on that row.
     pub fn delete_row(&mut self, row_key: RowKey, cx: &mut Context<Self>) {
-        if self.is_saving() {
+        if !self.editable() || self.is_saving() {
             return;
         }
         // The editor for the row being deleted would otherwise commit an update
@@ -2048,7 +2048,7 @@ impl TableDataView {
         if self.query.is_custom() {
             return None;
         }
-        if !self.editable {
+        if !self.editable() {
             // Only explain read-only once the structure has loaded, so the banner
             // does not flash before editability is known.
             let reason = if self.structure.is_none() {
@@ -3593,6 +3593,61 @@ mod tests {
             "adding and saving a row must apply one insert: {:?}",
             fake.calls()
         );
+    }
+
+    #[gpui::test]
+    async fn dirty_sql_bar_blocks_row_mutations(cx: &mut TestAppContext) {
+        // A dirty SQL bar suspends editability (see `editable()`), so `add_row`
+        // and `delete_row` must be no-ops even though the query base is still
+        // `Table` and no save is in flight.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = fake_with_default_rows();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), false, None, window, cx)
+        });
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                view.page().is_some() && view.structure().is_some()
+            })
+        })
+        .await;
+
+        view.update_in(cx, |view, window, cx| {
+            view.sql_editor
+                .update(cx, |editor, cx| editor.set_text("SELECT 1", window, cx));
+        });
+        view.read_with(cx, |view, _| {
+            assert!(
+                view.sql_dirty(),
+                "hand-editing the bar should mark it dirty"
+            );
+            assert!(
+                !view.editable(),
+                "a dirty SQL bar should suspend row editing"
+            );
+        });
+
+        view.update(cx, |view, cx| {
+            let added = view.add_row(cx);
+            assert!(
+                added.is_none(),
+                "add_row must not insert a row while the SQL bar is dirty"
+            );
+            assert!(view.edits().inserts().is_empty());
+
+            let key = RowKey {
+                columns: vec!["id".into()],
+                values: vec![Some("1".into())],
+            };
+            view.delete_row(key, cx);
+            assert!(
+                view.edits().deletes.is_empty(),
+                "delete_row must not mark a delete while the SQL bar is dirty"
+            );
+        });
     }
 
     #[gpui::test]
