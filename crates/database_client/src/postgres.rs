@@ -85,7 +85,11 @@ impl PostgresClient {
         }
     }
 
-    fn build_config(&self, database: &str) -> tokio_postgres::Config {
+    /// Builds the `tokio_postgres::Config` shared by both the cached-connection
+    /// path and the dedicated-connection path. `mode` selects the session options
+    /// (see [`session_options`]); the cache path passes `self.mode` while
+    /// [`PostgresClient::connect_dedicated`] forces [`SessionMode::ReadWrite`].
+    fn build_config(&self, database: &str, mode: SessionMode) -> tokio_postgres::Config {
         let mut config = tokio_postgres::Config::new();
         config
             .host(&self.config.host)
@@ -95,13 +99,13 @@ impl PostgresClient {
             .dbname(database)
             .application_name("zed-database")
             .connect_timeout(CONNECT_TIMEOUT)
-            .options(session_options(self.statement_timeout, self.mode));
+            .options(session_options(self.statement_timeout, mode));
         config
     }
 
     /// Opens a fresh connection to `database`, spawning its background driver.
     async fn connect(&self, database: &str) -> Result<Arc<Client>> {
-        let config = self.build_config(database);
+        let config = self.build_config(database, self.mode);
         let (client, connection) = config
             .connect(NoTls)
             .await
@@ -113,6 +117,31 @@ impl PostgresClient {
             }
         });
         Ok(Arc::new(client))
+    }
+
+    /// Opens a fresh, uncached read-write connection to `database` for a single
+    /// transaction, spawning its background driver. Unlike [`PostgresClient::connect`]
+    /// this is never stored in the client cache, so its transaction is fully
+    /// isolated from concurrent reads on the shared cached connection. The
+    /// returned client's driver task ends when the client is dropped.
+    ///
+    /// This is used by [`apply_edits`] so a concurrent read (e.g. a user-triggered
+    /// reload during the save window) can never interleave into the open edit
+    /// transaction. It always uses [`SessionMode::ReadWrite`] because it is the
+    /// write path; callers must still enforce the read-only bail themselves.
+    async fn connect_dedicated(&self, database: &str) -> Result<Client> {
+        let config = self.build_config(database, SessionMode::ReadWrite);
+        let (client, connection) = config
+            .connect(NoTls)
+            .await
+            .with_context(|| format!("connecting to database {database}"))?;
+        let database = database.to_string();
+        tokio::spawn(async move {
+            if let Err(error) = connection.await {
+                log::warn!("postgres connection to {database} closed with error: {error}");
+            }
+        });
+        Ok(client)
     }
 
     /// Returns a cached client for `database`, reconnecting if the cached one is closed.
@@ -373,7 +402,13 @@ impl DatabaseClient for PostgresClient {
     /// concurrently, and the whole batch is rolled back). The transaction body
     /// runs in [`execute_edits`], whose `Result` is matched here so that a
     /// best-effort `ROLLBACK` always runs on the error path — never leaving a
-    /// dangling open transaction on the cached connection — while success commits.
+    /// dangling open transaction — while success commits.
+    ///
+    /// The transaction runs on a fresh dedicated connection (see
+    /// [`PostgresClient::connect_dedicated`]) rather than the shared cached one, so
+    /// a concurrent read on the cached connection can never interleave into this
+    /// open transaction (seeing dirty rows or hitting "current transaction is
+    /// aborted"). The dedicated connection is dropped when this method returns.
     async fn apply_edits(
         &self,
         table: &TableRef,
@@ -384,7 +419,7 @@ impl DatabaseClient for PostgresClient {
             bail!("apply_edits requires a read-write session");
         }
 
-        let client = self.client_for(&table.database).await?;
+        let client = self.connect_dedicated(&table.database).await?;
         let _cancel = self.register_cancel(&client);
 
         client
@@ -401,8 +436,9 @@ impl DatabaseClient for PostgresClient {
                 Ok(counts)
             }
             Err(error) => {
-                // Best-effort rollback: closing the aborted transaction keeps the
-                // cached connection usable. The original error is what the caller
+                // Best-effort rollback: closing the aborted transaction is tidy but
+                // not strictly required, since the dedicated connection is dropped
+                // when this method returns. The original error is what the caller
                 // needs, so a rollback failure is only logged.
                 if let Err(rollback_error) = client.simple_query("ROLLBACK").await {
                     log::warn!("failed to roll back edit transaction: {rollback_error}");
