@@ -54,7 +54,8 @@ use ui::{
     Divider, HeaderResizeInfo, HighlightedLabel, ListItem, ListItemSpacing,
     RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
     TableRenderContext, TableResizeBehavior, Tooltip, WithScrollbar, bind_redistributable_columns,
-    prelude::*, render_redistributable_columns_resize_handles, render_table_header,
+    prelude::*, redistribute_hidden_fractions, redistribute_hidden_widths,
+    render_redistributable_columns_resize_handles, render_table_header,
     table_row::TableRow,
 };
 use workspace::{
@@ -1332,6 +1333,9 @@ pub struct GitGraph {
     context_menu: Option<GitGraphContextMenu>,
     table_interaction_state: Entity<TableInteractionState>,
     column_widths: Entity<RedistributableColumnsState>,
+    /// Per-column visibility mask owned by the view (not the resize state) so columns can be
+    /// hidden regardless of whether the table is resizable. `true` means the column is hidden.
+    column_visibility: TableRow<bool>,
     selected_entry_idx: Option<usize>,
     hovered_entry_idx: Option<usize>,
     graph_canvas_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -1393,21 +1397,32 @@ impl GitGraph {
     }
 
     fn preview_column_fractions(&self, window: &Window, cx: &App) -> [f32; 5] {
-        let fractions = self
+        let raw = self
             .column_widths
             .read(cx)
             .preview_fractions(window.rem_size());
+        let fractions = redistribute_hidden_fractions(&raw, Some(&self.column_visibility));
+
+        // Hidden columns occupy no space in the layout, so report them as zero here even though
+        // the shared redistribution helper preserves their stored width for when they return.
+        let value = |idx: usize| {
+            if self.column_visibility.get(idx).copied().unwrap_or(false) {
+                0.0
+            } else {
+                fractions[idx]
+            }
+        };
 
         let is_path_history = matches!(self.log_source, LogSource::Path(_));
-        let graph_fraction = if is_path_history { 0.0 } else { fractions[0] };
+        let graph_fraction = if is_path_history { 0.0 } else { value(0) };
         let offset = if is_path_history { 0 } else { 1 };
 
         [
             graph_fraction,
-            fractions[offset],
-            fractions[offset + 1],
-            fractions[offset + 2],
-            fractions[offset + 3],
+            value(offset),
+            value(offset + 1),
+            value(offset + 2),
+            value(offset + 3),
         ]
     }
 
@@ -1435,10 +1450,13 @@ impl GitGraph {
     }
 
     fn graph_viewport_width(&self, window: &Window, cx: &App) -> Pixels {
-        self.column_widths
-            .read(cx)
-            .preview_column_width(0, window)
-            .unwrap_or_else(|| self.graph_canvas_content_width())
+        let container = self.column_widths.read(cx).cached_container_width();
+        let graph_fraction = self.preview_column_fractions(window, cx)[0];
+        if container > px(0.) && graph_fraction > 0.0 {
+            container * graph_fraction
+        } else {
+            self.graph_canvas_content_width()
+        }
     }
 
     pub fn new(
@@ -1521,6 +1539,14 @@ impl GitGraph {
                 )
             })
         };
+        let column_visibility = TableRow::from_element(
+            false,
+            if matches!(log_source, LogSource::Path(_)) {
+                TABLE_COLUMN_COUNT
+            } else {
+                TABLE_COLUMN_COUNT + 1
+            },
+        );
         let mut row_height = Self::row_height(window, cx);
 
         cx.observe_global_in::<settings::SettingsStore>(window, move |this, window, cx| {
@@ -1554,6 +1580,7 @@ impl GitGraph {
             context_menu: None,
             table_interaction_state,
             column_widths,
+            column_visibility,
             selected_entry_idx: None,
             hovered_entry_idx: None,
             graph_canvas_bounds: Rc::new(Cell::new(None)),
@@ -2633,6 +2660,12 @@ impl GitGraph {
         cx.notify();
     }
 
+    fn toggle_column_visibility(&mut self, col_idx: usize) {
+        if let Some(slot) = self.column_visibility.as_mut_slice().get_mut(col_idx) {
+            *slot = !*slot;
+        }
+    }
+
     fn deploy_header_context_menu(
         &mut self,
         position: Point<Pixels>,
@@ -2646,7 +2679,7 @@ impl GitGraph {
             &["Graph", "Description", "Date", "Author", "Commit"]
         };
 
-        let filter = self.column_widths.read(cx).column_filter().clone();
+        let filter = self.column_visibility.clone();
         let visible_count = filter
             .as_slice()
             .iter()
@@ -2659,23 +2692,18 @@ impl GitGraph {
             context_menu = context_menu.context(focus_handle).header("Columns");
             for (col_idx, label) in columns.iter().enumerate() {
                 let is_visible = !filter.get(col_idx).copied().unwrap_or(false);
-                // Don't allow hiding the last remaining visible column.
+                // Disable hiding the last remaining visible column.
                 let can_toggle = !is_visible || visible_count > 1;
                 let git_graph = git_graph.clone();
-                context_menu = context_menu.toggleable_entry(
+                context_menu = context_menu.toggleable_entry_disabled_when(
                     label.to_string(),
                     is_visible,
+                    !can_toggle,
                     IconPosition::End,
                     None,
                     move |_window, cx| {
-                        if !can_toggle {
-                            return;
-                        }
                         git_graph.update(cx, |this, cx| {
-                            this.column_widths.update(cx, |state, cx| {
-                                state.toggle_column_filtered(col_idx);
-                                cx.notify();
-                            });
+                            this.toggle_column_visibility(col_idx);
                             cx.notify();
                         });
                     },
@@ -3821,23 +3849,25 @@ impl Render for GitGraph {
             let header_resize_info =
                 HeaderResizeInfo::from_redistributable(&self.column_widths, cx);
 
-            let column_filter = self.column_widths.read(cx).column_filter().clone();
+            let column_filter = self.column_visibility.clone();
 
             // The graph column (index 0) only exists in the non-path-history layout and is
             // rendered as a separate canvas outside the table.
             let graph_visible =
-                is_path_history || !self.column_widths.read(cx).is_column_filtered(0);
+                is_path_history || !column_filter.get(0usize).copied().unwrap_or(false);
 
             let table_offset = if is_path_history { 0 } else { 1 };
-            let table_filter = TableRow::from_vec(
-                column_filter.as_slice()[table_offset..table_offset + TABLE_COLUMN_COUNT].to_vec(),
-                TABLE_COLUMN_COUNT,
+            let table_filter = column_filter
+                .as_slice()
+                .get(table_offset..table_offset + TABLE_COLUMN_COUNT)
+                .map(|slice| TableRow::from_vec(slice.to_vec(), TABLE_COLUMN_COUNT))
+                .unwrap_or_else(|| TableRow::from_element(false, TABLE_COLUMN_COUNT));
+            let header_widths = redistribute_hidden_widths(
+                &self.column_widths.read(cx).widths_to_render(),
+                Some(&column_filter),
             );
-            let header_context = TableRenderContext::for_column_widths(
-                Some(self.column_widths.read(cx).widths_to_render()),
-                true,
-            )
-            .with_column_filter(Some(column_filter));
+            let header_context = TableRenderContext::for_column_widths(Some(header_widths), true)
+                .with_column_filter(Some(column_filter));
 
             let [
                 graph_fraction,
@@ -4085,6 +4115,7 @@ impl Render for GitGraph {
                                     )
                                     .child(render_redistributable_columns_resize_handles(
                                         &self.column_widths,
+                                        Some(&self.column_visibility),
                                         window,
                                         cx,
                                     )),

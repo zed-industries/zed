@@ -8,7 +8,7 @@ use crate::{
     ScrollableHandle, Scrollbars, SharedString, StatefulInteractiveElement, Styled, StyledExt as _,
     StyledTypography, TableResizeBehavior, Window, WithScrollbar, bind_redistributable_columns,
     div, example_group_with_title, h_flex, px, render_column_resize_divider,
-    render_redistributable_columns_resize_handles, single_example,
+    redistribute_hidden_widths, render_redistributable_columns_resize_handles, single_example,
     table_row::{IntoTableRow as _, TableRow},
     v_flex,
 };
@@ -309,17 +309,6 @@ impl ColumnWidthConfig {
                         .map_cloned(|abs| Length::Definite(DefiniteLength::Absolute(abs))),
                 )
             }
-        }
-    }
-
-    /// Per-column visibility mask. `true` at an index means that column is filtered out (hidden).
-    /// Only `Redistributable` columns currently support filtering.
-    pub fn column_filter(&self, cx: &App) -> Option<TableRow<bool>> {
-        match self {
-            ColumnWidthConfig::Redistributable { columns_state, .. } => {
-                Some(columns_state.read(cx).column_filter().clone())
-            }
-            _ => None,
         }
     }
 
@@ -894,15 +883,15 @@ impl TableRenderContext {
             show_row_borders: table.show_row_borders,
             show_row_hover: table.show_row_hover,
             total_row_count: table.rows.len(),
-            column_widths: table.column_width_config.widths_to_render(cx),
+            column_widths: table
+                .column_width_config
+                .widths_to_render(cx)
+                .map(|widths| redistribute_hidden_widths(&widths, table.column_filter.as_ref())),
             map_row: table.map_row.clone(),
             use_ui_font: table.use_ui_font,
             disable_base_cell_style: table.disable_base_cell_style,
             pinned_cols: table.pinned_cols,
-            column_filter: table
-                .column_filter
-                .clone()
-                .or_else(|| table.column_width_config.column_filter(cx)),
+            column_filter: table.column_filter.clone(),
             h_scroll_handle,
         }
     }
@@ -1157,6 +1146,7 @@ impl RenderOnce for Table {
                         None,
                         Some(render_redistributable_columns_resize_handles(
                             columns_state,
+                            self.column_filter.as_ref(),
                             window,
                             cx,
                         )),
