@@ -392,6 +392,7 @@ impl CompletionsMenu {
                 match_start: None,
                 snippet_deduplication_key: None,
                 icon_path: None,
+                icon_color: None,
                 documentation: None,
                 confirm: None,
                 insert_text_mode: None,
@@ -896,9 +897,18 @@ impl CompletionsMenu {
                     let documentation = &completion.documentation;
 
                     let mut len = completion.label.text.chars().count();
-                    if let Some(CompletionDocumentation::SingleLine(text)) = documentation {
-                        if show_completion_documentation {
-                            len += text.chars().count();
+                    if show_completion_documentation {
+                        match documentation {
+                            Some(CompletionDocumentation::SingleLine(text)) => {
+                                len += text.chars().count();
+                            }
+                            Some(CompletionDocumentation::SingleLineAndMultiLinePlainText {
+                                single_line,
+                                ..
+                            }) => {
+                                len += single_line.chars().count();
+                            }
+                            _ => {}
                         }
                     }
 
@@ -1081,7 +1091,11 @@ impl CompletionsMenu {
                                 completion.icon_path.as_ref().map(|path| {
                                     Icon::from_path(path)
                                         .size(IconSize::XSmall)
-                                        .color(Color::Muted)
+                                        .color(
+                                            completion
+                                                .icon_color
+                                                .map_or(Color::Muted, Color::Custom),
+                                        )
                                         .into_any_element()
                                 })
                             });
@@ -1256,6 +1270,7 @@ impl CompletionsMenu {
         window: &mut Window,
         cx: &mut Context<Editor>,
     ) -> Div {
+        let editor = cx.weak_entity();
         div().child(
             MarkdownElement::new(markdown, hover_markdown_style(window, cx))
                 .code_block_renderer(markdown::CodeBlockRenderer::Default {
@@ -1263,7 +1278,17 @@ impl CompletionsMenu {
                     wrap_button_visibility: markdown::WrapButtonVisibility::Hidden,
                     border: false,
                 })
-                .on_url_click(open_markdown_url),
+                .on_url_click(move |link, window, cx| {
+                    open_markdown_url(
+                        editor
+                            .read_with(cx, |editor, _| editor.workspace())
+                            .ok()
+                            .flatten(),
+                        link,
+                        window,
+                        cx,
+                    )
+                }),
         )
     }
 

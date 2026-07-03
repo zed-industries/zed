@@ -1469,6 +1469,22 @@ impl Vim {
                 } else {
                     mode = "waiting".to_string();
                 }
+            } else if matches!(
+                active_operator,
+                Operator::HelixNext { .. } | Operator::HelixPrevious { .. }
+            ) {
+                // Helix `[`/`]` take a curated, keymap-dispatched selector key
+                // rather than a motion over a range, so they keep `operator_id`
+                // set (so `vim_operator == helix_next/previous` context must
+                // resolve) but must not use the `operator` mode, as that adds
+                // `VimControl` and the `vim_mode == operator` context, whose `g
+                // ...` bindings would make a single-key follow-up like `g` a
+                // multi-key prefix and leave `] g` waiting for more input.
+                // Setting the mode to `waiting` carries none of those
+                // conflicting bindings and still provides bindings for
+                // `escape`/`ctrl-c` to `ClearOperators`.
+                operator_id = active_operator.id();
+                mode = "waiting".to_string();
             } else {
                 operator_id = active_operator.id();
                 mode = "operator".to_string();
@@ -2066,7 +2082,7 @@ impl Vim {
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                     self.visual_replace(text, window, cx)
                 }
-                Mode::HelixNormal => self.helix_replace(&text, window, cx),
+                Mode::HelixNormal | Mode::HelixSelect => self.helix_replace(&text, window, cx),
                 _ => self.clear_operator(window, cx),
             },
             Some(Operator::Digraph { first_char }) => {
@@ -2233,7 +2249,7 @@ impl Vim {
             input_enabled: self.editor_input_enabled(),
             expects_character_input: self.expects_character_input(),
             autoindent: self.should_autoindent(),
-            cursor_offset_on_selection: self.mode.is_visual() || self.mode.is_helix(),
+            cursor_offset_on_selection: self.mode.has_selection(),
             line_mode: matches!(self.mode, Mode::VisualLine),
             hide_edit_predictions: !matches!(self.mode, Mode::Insert | Mode::Replace)
                 && !(self.mode.is_normal()

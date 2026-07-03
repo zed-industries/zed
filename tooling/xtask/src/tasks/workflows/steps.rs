@@ -150,6 +150,16 @@ pub fn checkout_repo() -> CheckoutStep {
     CheckoutStep::default()
 }
 
+// Audit mode: logs egress, blocks nothing. Namespace requires v2.19.0+.
+pub fn harden_runner() -> Step<Use> {
+    named::uses(
+        "step-security",
+        "harden-runner",
+        "9af89fc71515a100421586dfdb3dc9c984fbf411", // v2.19.4
+    )
+    .add_with(("egress-policy", "audit"))
+}
+
 pub fn setup_pnpm() -> Step<Use> {
     named::uses(
         "pnpm",
@@ -163,9 +173,10 @@ pub fn setup_node() -> Step<Use> {
     named::uses(
         "actions",
         "setup-node",
-        "49933ea5288caeca8642d1e84afbd3f7d6820020", // v4
+        "48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e", // v6.4
     )
-    .add_with(("node-version", "20"))
+    .add_with(("node-version", "24"))
+    .add_with(("check-latest", true))
 }
 
 pub fn setup_sentry() -> Step<Use> {
@@ -752,11 +763,6 @@ pub fn download_artifact() -> DownloadArtifactStep {
         name: function_name(1),
         ..Default::default()
     }
-}
-
-pub fn git_checkout(ref_name: &dyn std::fmt::Display) -> Step<Run> {
-    named::bash(r#"git fetch origin "$REF_NAME" && git checkout "$REF_NAME""#)
-        .add_env(("REF_NAME", ref_name.to_string()))
 }
 
 /// Non-exhaustive list of the permissions to be set for a GitHub app token.
