@@ -7368,6 +7368,7 @@ dependencies = [
  "async-channel 2.5.0",
  "buffer_diff",
  "call",
+ "client",
  "collections",
  "component",
  "ctor",
