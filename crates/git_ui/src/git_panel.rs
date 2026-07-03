@@ -5239,8 +5239,9 @@ impl GitPanel {
                             .items_stretch()
                             .child(
                                 div()
-                                    .p_2()
-                                    .pb_0()
+                                    .pt_2()
+                                    .px_2()
+                                    .when(!self.commit_editor_expanded, |el| el.mb_neg_2p5())
                                     .flex_grow_1()
                                     .on_action(|&zed_actions::editor::MoveUp, _, cx| {
                                         cx.stop_propagation();
@@ -5325,7 +5326,8 @@ impl GitPanel {
                                 el.border_color(cx.theme().colors().border_variant)
                             })
                             .w_full()
-                            .p_2()
+                            .h_9()
+                            .px_2()
                             .justify_between()
                             .child(
                                 self.render_generate_commit_message_button(cx)
