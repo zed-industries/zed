@@ -170,6 +170,132 @@ fn render_cell(column: &ColumnInfo, cell: &crate::EditCell, params: &mut Vec<Str
     }
 }
 
+/// Returns true if `sql` contains a top-level `RETURNING` keyword (a whole
+/// word, case-insensitive, outside string/quoted-identifier spans). Used to
+/// decide whether [`with_returning`] needs to append a clause.
+fn has_top_level_returning(sql: &str) -> bool {
+    let bytes = sql.as_bytes();
+    let mut in_string = false;
+    let mut in_ident = false;
+    let mut index = 0;
+    while index < bytes.len() {
+        let byte = bytes[index];
+        match byte {
+            b'\'' if !in_ident => in_string = !in_string,
+            b'"' if !in_string => in_ident = !in_ident,
+            _ if !in_string
+                && !in_ident
+                && sql[index..].len() >= "RETURNING".len()
+                && sql[index..index + "RETURNING".len()].eq_ignore_ascii_case("RETURNING")
+                && sql[..index]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'))
+                && sql[index + "RETURNING".len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_')) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    false
+}
+
+/// Applies the deterministic transform used by both `preview_write` and
+/// `commit_write` so the previewed and committed statements always match: if
+/// `sql` already has a top-level `RETURNING` clause, it is used as-is;
+/// otherwise ` RETURNING *` is appended.
+pub fn with_returning(sql: &str) -> String {
+    if has_top_level_returning(sql) {
+        sql.to_string()
+    } else {
+        format!("{sql} RETURNING *")
+    }
+}
+
+/// Escapes a string as a single-quoted SQL literal, doubling inner single
+/// quotes.
+///
+/// Correctness relies on the session having `standard_conforming_strings=on`,
+/// which `postgres::session_options` pins for every session this crate opens;
+/// without it, backslashes in `value` would be reinterpreted as escapes by the
+/// server instead of being taken literally.
+fn escape_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+/// Renders a value as a literal cast to the column's type, for embedding in a
+/// statement run through the simple query protocol (which has no bind
+/// parameters). Mirrors [`param_cast`]'s `::text::type` cast but with the
+/// value inlined via [`escape_literal`] instead of a `$n` placeholder.
+fn literal_cast(column: &ColumnInfo, value: &str) -> String {
+    format!(
+        "{}::text::{}.{}",
+        escape_literal(value),
+        quote_ident(&column.udt_schema),
+        quote_ident(&column.udt_name)
+    )
+}
+
+/// Builds a `SELECT * FROM "schema"."table" WHERE (pk1, pk2, ...) IN
+/// ((v11, v12, ...), ...)` statement fetching the before-image of rows by
+/// their primary-key values, casting each value through the PK column's type
+/// the same way [`param_cast`] does for edits. `pk_rows` is one tuple of PK
+/// values per row, in `pk_columns` order. Returns `None` if `pk_rows` is empty
+/// (nothing to fetch).
+///
+/// Unlike the other statement builders in this module, the returned SQL has
+/// every value inlined as an escaped literal (via [`literal_cast`]) rather
+/// than a bind parameter: the before-image fetch runs through the simple
+/// query protocol (see `postgres::fetch_update_before_image`) so its result
+/// columns — of whatever type the target table happens to have — come back as
+/// text, matching how every other arbitrary-shaped result set (`run_query`,
+/// write previews) is decoded in this crate. The extended protocol used
+/// elsewhere in this module always has a compile-time-known Rust type for
+/// each result column, which does not hold for `SELECT *` on a user table.
+pub fn build_pk_in_select(
+    table: &TableRef,
+    pk_columns: &[&ColumnInfo],
+    pk_rows: &[Vec<Option<String>>],
+) -> anyhow::Result<Option<String>> {
+    if pk_columns.is_empty() || pk_rows.is_empty() {
+        return Ok(None);
+    }
+    let mut tuples = Vec::with_capacity(pk_rows.len());
+    for pk_values in pk_rows {
+        if pk_values.len() != pk_columns.len() {
+            bail!("primary key row width mismatch");
+        }
+        let mut literals = Vec::with_capacity(pk_columns.len());
+        for (column, value) in pk_columns.iter().zip(pk_values) {
+            let Some(value) = value else {
+                // A NULL primary-key value cannot match any row via `=`, so
+                // this row can never be found by the before-fetch; the caller's
+                // row-count check will then discard `before` and note why.
+                bail!("primary key value must not be null");
+            };
+            literals.push(literal_cast(column, value));
+        }
+        tuples.push(format!("({})", literals.join(", ")));
+    }
+    let pk_idents: Vec<String> = pk_columns
+        .iter()
+        .map(|column| quote_ident(&column.name))
+        .collect();
+    let sql = format!(
+        "SELECT * FROM {}.{} WHERE ({}) IN ({})",
+        quote_ident(&table.schema),
+        quote_ident(&table.name),
+        pk_idents.join(", "),
+        tuples.join(", "),
+    );
+    Ok(Some(sql))
+}
+
 pub const LIST_DATABASES_SQL: &str =
     "SELECT datname FROM pg_database WHERE NOT datistemplate AND datallowconn ORDER BY datname";
 
@@ -389,5 +515,134 @@ mod tests {
             set: vec![("nope".into(), EditCell::Value("x".into()))],
         };
         assert!(build_update(&users_table(), &columns, &update).is_err());
+    }
+
+    #[test]
+    fn with_returning_appends_when_absent() {
+        assert_eq!(
+            with_returning("DELETE FROM t WHERE id=1"),
+            "DELETE FROM t WHERE id=1 RETURNING *"
+        );
+    }
+
+    #[test]
+    fn with_returning_respects_existing_clause() {
+        assert_eq!(
+            with_returning("INSERT INTO t VALUES (1) RETURNING id"),
+            "INSERT INTO t VALUES (1) RETURNING id"
+        );
+    }
+
+    #[test]
+    fn with_returning_is_case_insensitive() {
+        assert_eq!(
+            with_returning("update t set a=1 where id=1 returning a"),
+            "update t set a=1 where id=1 returning a"
+        );
+    }
+
+    #[test]
+    fn with_returning_does_not_match_word_containing_returning() {
+        // A column or alias literally named e.g. `xreturning` must not be
+        // mistaken for the keyword.
+        assert_eq!(
+            with_returning("UPDATE t SET xreturning = 1 WHERE id=1"),
+            "UPDATE t SET xreturning = 1 WHERE id=1 RETURNING *"
+        );
+    }
+
+    #[test]
+    fn with_returning_ignores_returning_inside_string_literal() {
+        assert_eq!(
+            with_returning("UPDATE t SET note = 'see RETURNING docs' WHERE id=1"),
+            "UPDATE t SET note = 'see RETURNING docs' WHERE id=1 RETURNING *"
+        );
+    }
+
+    #[test]
+    fn build_pk_in_select_single_column() {
+        let columns = edit_columns();
+        let pk = columns
+            .iter()
+            .filter(|c| c.is_primary_key)
+            .collect::<Vec<_>>();
+        let rows = vec![vec![Some("1".into())], vec![Some("2".into())]];
+        let sql = build_pk_in_select(&users_table(), &pk, &rows)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            sql,
+            "SELECT * FROM \"public\".\"users\" WHERE (\"id\") IN (('1'::text::\"pg_catalog\".\"int4\"), ('2'::text::\"pg_catalog\".\"int4\"))"
+        );
+    }
+
+    #[test]
+    fn build_pk_in_select_composite_key() {
+        let columns = [pk_col("a", "int4"), pk_col("b", "text"), col("c", "text")];
+        let pk = columns
+            .iter()
+            .filter(|c| c.is_primary_key)
+            .collect::<Vec<_>>();
+        let rows = vec![vec![Some("1".into()), Some("x".into())]];
+        let sql = build_pk_in_select(&users_table(), &pk, &rows)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            sql,
+            "SELECT * FROM \"public\".\"users\" WHERE (\"a\", \"b\") IN (('1'::text::\"pg_catalog\".\"int4\", 'x'::text::\"pg_catalog\".\"text\"))"
+        );
+    }
+
+    #[test]
+    fn build_pk_in_select_escapes_single_quotes_in_pk_value() {
+        let columns = edit_columns();
+        let pk = columns
+            .iter()
+            .filter(|c| c.is_primary_key)
+            .collect::<Vec<_>>();
+        let rows = vec![vec![Some("o'brien".into())]];
+        let sql = build_pk_in_select(&users_table(), &pk, &rows)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            sql,
+            "SELECT * FROM \"public\".\"users\" WHERE (\"id\") IN (('o''brien'::text::\"pg_catalog\".\"int4\"))"
+        );
+    }
+
+    #[test]
+    fn build_pk_in_select_empty_rows_returns_none() {
+        let columns = edit_columns();
+        let pk = columns
+            .iter()
+            .filter(|c| c.is_primary_key)
+            .collect::<Vec<_>>();
+        assert!(
+            build_pk_in_select(&users_table(), &pk, &[])
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn build_pk_in_select_rejects_width_mismatch() {
+        let columns = edit_columns();
+        let pk = columns
+            .iter()
+            .filter(|c| c.is_primary_key)
+            .collect::<Vec<_>>();
+        let rows = vec![vec![Some("1".into()), Some("extra".into())]];
+        assert!(build_pk_in_select(&users_table(), &pk, &rows).is_err());
+    }
+
+    #[test]
+    fn build_pk_in_select_rejects_null_pk_value() {
+        let columns = edit_columns();
+        let pk = columns
+            .iter()
+            .filter(|c| c.is_primary_key)
+            .collect::<Vec<_>>();
+        let rows = vec![vec![None]];
+        assert!(build_pk_in_select(&users_table(), &pk, &rows).is_err());
     }
 }

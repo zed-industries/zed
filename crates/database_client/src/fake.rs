@@ -29,6 +29,16 @@ pub struct FakeDatabaseClient {
     /// (structure and first page both succeed) and then exercise the save
     /// error path in isolation.
     apply_edits_error: Mutex<Option<String>>,
+    /// Canned response for `preview_write`.
+    pub write_preview: WritePreview,
+    /// Canned response for `commit_write`.
+    pub write_outcome: WriteOutcome,
+    /// When set, fails only `preview_write`, unlike `error` which fails every
+    /// method.
+    preview_write_error: Mutex<Option<String>>,
+    /// When set, fails only `commit_write`, unlike `error` which fails every
+    /// method.
+    commit_write_error: Mutex<Option<String>>,
     calls: Mutex<Vec<String>>,
 }
 
@@ -89,6 +99,10 @@ impl FakeDatabaseClient {
             queued_results: Mutex::new(VecDeque::new()),
             run_query_error: Mutex::new(None),
             apply_edits_error: Mutex::new(None),
+            write_preview: WritePreview::default(),
+            write_outcome: WriteOutcome::default(),
+            preview_write_error: Mutex::new(None),
+            commit_write_error: Mutex::new(None),
             calls: Mutex::new(Vec::new()),
         }
     }
@@ -113,6 +127,22 @@ impl FakeDatabaseClient {
     /// which fails every method.
     pub fn set_apply_edits_error(&self, error: Option<String>) {
         if let Ok(mut slot) = self.apply_edits_error.lock() {
+            *slot = error;
+        }
+    }
+
+    /// Sets or clears an error that fails only `preview_write`, unlike `error`
+    /// which fails every method.
+    pub fn set_preview_write_error(&self, error: Option<String>) {
+        if let Ok(mut slot) = self.preview_write_error.lock() {
+            *slot = error;
+        }
+    }
+
+    /// Sets or clears an error that fails only `commit_write`, unlike `error`
+    /// which fails every method.
+    pub fn set_commit_write_error(&self, error: Option<String>) {
+        if let Ok(mut slot) = self.commit_write_error.lock() {
             *slot = error;
         }
     }
@@ -222,10 +252,51 @@ impl DatabaseClient for FakeDatabaseClient {
         })
     }
 
+    async fn preview_write(
+        &self,
+        database: &str,
+        sql: &str,
+        kind: WriteKind,
+        _update_target: Option<TableRef>,
+        _max_rows: usize,
+    ) -> Result<WritePreview> {
+        self.check_error()?;
+        self.record(format!(
+            "preview_write {database} kind={} sql={sql}",
+            write_kind_label(kind)
+        ));
+        if let Ok(slot) = self.preview_write_error.lock()
+            && let Some(message) = slot.as_ref()
+        {
+            return Err(anyhow!("{message}"));
+        }
+        Ok(self.write_preview.clone())
+    }
+
+    async fn commit_write(&self, database: &str, sql: &str) -> Result<WriteOutcome> {
+        self.check_error()?;
+        self.record(format!("commit_write {database} sql={sql}"));
+        if let Ok(slot) = self.commit_write_error.lock()
+            && let Some(message) = slot.as_ref()
+        {
+            return Err(anyhow!("{message}"));
+        }
+        Ok(self.write_outcome.clone())
+    }
+
     async fn cancel_running(&self) -> Result<()> {
         self.check_error()?;
         self.record("cancel_running");
         Ok(())
+    }
+}
+
+/// Renders a [`WriteKind`] for the `preview_write` call-log line.
+fn write_kind_label(kind: WriteKind) -> &'static str {
+    match kind {
+        WriteKind::Insert => "insert",
+        WriteKind::Update => "update",
+        WriteKind::Delete => "delete",
     }
 }
 
@@ -346,5 +417,90 @@ mod tests {
             name: "users".into(),
         };
         assert!(fake.table_structure(&table).await.is_ok()); // other methods unaffected
+    }
+
+    #[tokio::test]
+    async fn fake_preview_write_returns_canned_value_and_records_exact_sql() {
+        let mut fake = FakeDatabaseClient::new();
+        fake.write_preview = WritePreview {
+            rows_affected: 2,
+            columns: vec!["id".into(), "name".into()],
+            before: Some(vec![vec![Some("1".into()), Some("old".into())]]),
+            after: Some(vec![vec![Some("1".into()), Some("new".into())]]),
+            preview_truncated: false,
+            note: None,
+        };
+        let fake = Arc::new(fake);
+        let table = TableRef {
+            database: "app".into(),
+            schema: "public".into(),
+            name: "users".into(),
+        };
+        let result = fake
+            .preview_write(
+                "app",
+                "UPDATE users SET name = 'new' WHERE id = 1",
+                WriteKind::Update,
+                Some(table),
+                100,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result, fake.write_preview);
+        assert!(fake.calls().iter().any(|call| call
+            == "preview_write app kind=update sql=UPDATE users SET name = 'new' WHERE id = 1"));
+    }
+
+    #[tokio::test]
+    async fn fake_preview_write_error_knob_is_isolated() {
+        let fake = FakeDatabaseClient::new();
+        fake.set_preview_write_error(Some("boom".into()));
+        let error = fake
+            .preview_write(
+                "app",
+                "DELETE FROM t WHERE id=1",
+                WriteKind::Delete,
+                None,
+                100,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("boom"));
+        // Other methods unaffected.
+        assert!(fake.list_databases().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn fake_commit_write_returns_canned_value_and_records_exact_sql() {
+        let mut fake = FakeDatabaseClient::new();
+        fake.write_outcome = WriteOutcome {
+            rows_affected: 1,
+            columns: vec!["id".into()],
+            returned: vec![vec![Some("3".into())]],
+        };
+        let fake = Arc::new(fake);
+        let result = fake
+            .commit_write("app", "INSERT INTO t (id) VALUES (3)")
+            .await
+            .unwrap();
+        assert_eq!(result, fake.write_outcome);
+        assert!(
+            fake.calls()
+                .iter()
+                .any(|call| call == "commit_write app sql=INSERT INTO t (id) VALUES (3)")
+        );
+    }
+
+    #[tokio::test]
+    async fn fake_commit_write_error_knob_is_isolated() {
+        let fake = FakeDatabaseClient::new();
+        fake.set_commit_write_error(Some("boom".into()));
+        let error = fake
+            .commit_write("app", "DELETE FROM t WHERE id=1")
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("boom"));
+        // Other methods unaffected.
+        assert!(fake.list_databases().await.is_ok());
     }
 }

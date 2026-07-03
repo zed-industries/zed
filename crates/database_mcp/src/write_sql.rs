@@ -10,19 +10,13 @@
 //!
 //! `#[allow(dead_code)]` below is temporary: nothing calls into this module
 //! yet because the `propose_write`/`apply_write` tools that use it land in
-//! task 4 (`.superpowers/sdd/task-4-brief.md`), which also replaces the
-//! locally-defined `WriteKind` with a re-export of `database_client::WriteKind`.
-//! Remove the attribute when that call site is wired up.
+//! task 5 (`.superpowers/sdd/task-4-brief.md`). Remove the attribute when
+//! that call site is wired up.
 #![allow(dead_code)]
 
 use anyhow::{Result, bail};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WriteKind {
-    Insert,
-    Update,
-    Delete,
-}
+pub use database_client::WriteKind;
 
 /// Classifies a single DML statement. Errs (with a user-facing message) for
 /// SELECT/WITH/DDL, empty input, or more than one statement.

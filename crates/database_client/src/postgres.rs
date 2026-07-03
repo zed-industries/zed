@@ -14,7 +14,8 @@ use crate::sql::{
 };
 use crate::{
     AppliedCounts, ColumnInfo, ConnectionConfig, DatabaseClient, ForeignKey, IndexInfo,
-    QueryResult, TableEdits, TableInfo, TableRef, TableStructure,
+    QueryResult, TableEdits, TableInfo, TableRef, TableStructure, WriteKind, WriteOutcome,
+    WritePreview,
 };
 
 /// How long to wait for a TCP connection to a database before giving up, so a
@@ -208,6 +209,93 @@ impl PostgresClient {
             });
         }
         Ok(columns)
+    }
+
+    /// Fetches the before-image of an `UPDATE` preview's affected rows by
+    /// primary key, run *after* the preview transaction has already been
+    /// rolled back so the values read are the original (pre-update) ones.
+    ///
+    /// Returns `(Some(rows), None)` only when every safety condition holds:
+    /// `update_target` was parsed, the target table has primary-key columns,
+    /// every PK column appears in `returning_columns`, and the number of rows
+    /// found by PK equals the number of rows returned by the statement. Any
+    /// other case (unparsed target, no PK, PK not in the RETURNING columns, a
+    /// PK value that changed so the post-update PK no longer matches the
+    /// original row, or a fetch-count mismatch for any other reason) returns
+    /// `(None, Some(note))` rather than risk showing a wrong or partial
+    /// before-image.
+    async fn fetch_update_before_image(
+        &self,
+        update_target: Option<TableRef>,
+        returning_columns: &[String],
+        returning_rows: &[Vec<Option<String>>],
+    ) -> Result<(Option<Vec<Vec<Option<String>>>>, Option<String>)> {
+        const UNAVAILABLE_NOTE: &str =
+            "before-image unavailable (no primary key, PK changed, or unparsed target)";
+
+        let Some(target) = update_target else {
+            return Ok((None, Some(UNAVAILABLE_NOTE.to_string())));
+        };
+
+        let structure = self.table_structure(&target).await?;
+        let pk_columns: Vec<&ColumnInfo> = structure
+            .columns
+            .iter()
+            .filter(|column| column.is_primary_key)
+            .collect();
+        if pk_columns.is_empty() {
+            return Ok((None, Some(UNAVAILABLE_NOTE.to_string())));
+        }
+
+        let pk_indexes: Option<Vec<usize>> = pk_columns
+            .iter()
+            .map(|pk| returning_columns.iter().position(|name| name == &pk.name))
+            .collect();
+        let Some(pk_indexes) = pk_indexes else {
+            return Ok((None, Some(UNAVAILABLE_NOTE.to_string())));
+        };
+
+        let mut pk_rows = Vec::with_capacity(returning_rows.len());
+        for row in returning_rows {
+            let mut key = Vec::with_capacity(pk_indexes.len());
+            for &index in &pk_indexes {
+                let Some(value) = row.get(index) else {
+                    return Ok((None, Some(UNAVAILABLE_NOTE.to_string())));
+                };
+                key.push(value.clone());
+            }
+            pk_rows.push(key);
+        }
+
+        let Some(select_sql) = sql::build_pk_in_select(&target, &pk_columns, &pk_rows)? else {
+            // No rows were returned by the statement at all (rows_affected=0);
+            // an empty before-image is correct, not an error.
+            return Ok((Some(Vec::new()), None));
+        };
+
+        let client = self.client_for(&target.database).await?;
+        let _cancel = self.register_cancel(&client);
+        // Run through the simple query protocol, like `run_query` and the
+        // write statements: the target table's columns are of arbitrary,
+        // not-known-ahead-of-time types, and only the simple query protocol
+        // returns them already in text format ready for `Option<String>`
+        // decoding. `select_sql` has its PK values embedded as escaped
+        // literals (see `sql::build_pk_in_select`) rather than bind
+        // parameters, since the simple query protocol has none.
+        let messages = client
+            .simple_query(&select_sql)
+            .await
+            .context("fetching update before-image")?;
+        let capture = parse_write_messages(messages)?;
+
+        if capture.rows.len() != returning_rows.len() {
+            // A PK changed (post-update PK no longer matches the original row)
+            // or some other mismatch: showing a partial/wrong before-image
+            // would be misleading, so omit it entirely per the safety rule.
+            return Ok((None, Some(UNAVAILABLE_NOTE.to_string())));
+        }
+
+        Ok((Some(capture.rows), None))
     }
 }
 
@@ -419,6 +507,133 @@ impl DatabaseClient for PostgresClient {
         }
     }
 
+    /// Runs a single write statement inside a transaction that is always rolled
+    /// back, so the database is left unchanged, and reports the before/after
+    /// row images the statement would have produced.
+    ///
+    /// Like [`Self::apply_edits`], this runs on a fresh [`Self::connect_dedicated`]
+    /// connection (never registered in `cancel_tokens`) so a concurrent read on
+    /// the shared cached connection can never interleave into the open
+    /// transaction, and never leaves it visible to other sessions since it is
+    /// always rolled back.
+    async fn preview_write(
+        &self,
+        database: &str,
+        sql: &str,
+        kind: WriteKind,
+        update_target: Option<TableRef>,
+        max_rows: usize,
+    ) -> Result<WritePreview> {
+        if self.mode == SessionMode::ReadOnly {
+            bail!("preview_write requires a read-write session");
+        }
+
+        let client = self.connect_dedicated(database).await?;
+        let statement = sql::with_returning(sql);
+
+        let begin_and_run = async {
+            client
+                .simple_query("BEGIN")
+                .await
+                .context("beginning write preview transaction")?;
+            client
+                .simple_query(&statement)
+                .await
+                .context("running write statement")
+                .and_then(parse_write_messages)
+        };
+
+        let capture = match begin_and_run.await {
+            Ok(capture) => capture,
+            Err(error) => {
+                if let Err(rollback_error) = client.simple_query("ROLLBACK").await {
+                    log::warn!("failed to roll back write preview transaction: {rollback_error}");
+                }
+                return Err(error);
+            }
+        };
+
+        // Always roll back before returning: the preview must never persist,
+        // whether or not a before-image fetch follows.
+        if let Err(rollback_error) = client.simple_query("ROLLBACK").await {
+            log::warn!("failed to roll back write preview transaction: {rollback_error}");
+        }
+
+        let (after_rows, preview_truncated_after) = truncate_rows(capture.rows, max_rows);
+
+        let (before, note) = match kind {
+            WriteKind::Insert | WriteKind::Delete => (None, None),
+            WriteKind::Update => {
+                self.fetch_update_before_image(update_target, &capture.columns, &after_rows)
+                    .await?
+            }
+        };
+        let (before, preview_truncated_before) = match before {
+            Some(before_rows) => {
+                let (rows, truncated) = truncate_rows(before_rows, max_rows);
+                (Some(rows), truncated)
+            }
+            None => (None, false),
+        };
+
+        let (before, after) = match kind {
+            WriteKind::Insert => (None, Some(after_rows)),
+            WriteKind::Delete => (Some(after_rows), None),
+            WriteKind::Update => (before, Some(after_rows)),
+        };
+
+        Ok(WritePreview {
+            rows_affected: capture.rows_affected,
+            columns: capture.columns,
+            before,
+            after,
+            preview_truncated: preview_truncated_after || preview_truncated_before,
+            note,
+        })
+    }
+
+    /// Runs a single write statement inside a transaction that is committed on
+    /// success, or rolled back with the error returned on failure.
+    async fn commit_write(&self, database: &str, sql: &str) -> Result<WriteOutcome> {
+        if self.mode == SessionMode::ReadOnly {
+            bail!("commit_write requires a read-write session");
+        }
+
+        let client = self.connect_dedicated(database).await?;
+        let statement = sql::with_returning(sql);
+
+        client
+            .simple_query("BEGIN")
+            .await
+            .context("beginning write transaction")?;
+
+        let capture = match client
+            .simple_query(&statement)
+            .await
+            .context("running write statement")
+            .and_then(parse_write_messages)
+        {
+            Ok(capture) => capture,
+            Err(error) => {
+                if let Err(rollback_error) = client.simple_query("ROLLBACK").await {
+                    log::warn!("failed to roll back write transaction: {rollback_error}");
+                }
+                return Err(error);
+            }
+        };
+
+        client
+            .simple_query("COMMIT")
+            .await
+            .context("committing write transaction")?;
+
+        Ok(WriteOutcome {
+            rows_affected: capture.rows_affected,
+            columns: capture.columns,
+            returned: capture.rows,
+        })
+    }
+
     async fn cancel_running(&self) -> Result<()> {
         let tokens: Vec<CancelToken> = {
             let mut guard = self
@@ -586,6 +801,76 @@ fn parse_query_messages(
     })
 }
 
+/// The captured result of running a single write statement: the columns and
+/// rows from its `RETURNING` clause (untruncated — callers that need a row
+/// cap truncate afterward, since `rows_affected` must stay exact regardless),
+/// plus the affected-row count reported by `CommandComplete`.
+struct WriteCapture {
+    columns: Vec<String>,
+    rows: Vec<Vec<Option<String>>>,
+    rows_affected: u64,
+}
+
+/// Like [`parse_query_messages`] but for a single write statement: captures
+/// every `RETURNING` row (no `max_rows` cap) and the `rows_affected` count
+/// from `CommandComplete`, which reflects rows matched by the statement even
+/// when `RETURNING` produces fewer/no rows worth displaying.
+fn parse_write_messages(messages: Vec<SimpleQueryMessage>) -> Result<WriteCapture> {
+    let mut columns = Vec::new();
+    let mut rows: Vec<Vec<Option<String>>> = Vec::new();
+    let mut rows_affected = 0u64;
+
+    for message in messages {
+        match message {
+            SimpleQueryMessage::RowDescription(description) => {
+                columns = description
+                    .iter()
+                    .map(|column| column.name().to_string())
+                    .collect();
+                rows.clear();
+            }
+            SimpleQueryMessage::Row(row) => {
+                if columns.is_empty() {
+                    columns = row
+                        .columns()
+                        .iter()
+                        .map(|column| column.name().to_string())
+                        .collect();
+                }
+                let mut values = Vec::with_capacity(row.len());
+                for index in 0..row.len() {
+                    values.push(row.try_get(index)?.map(|value| value.to_string()));
+                }
+                rows.push(values);
+            }
+            SimpleQueryMessage::CommandComplete(count) => {
+                rows_affected = count;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(WriteCapture {
+        columns,
+        rows,
+        rows_affected,
+    })
+}
+
+/// Truncates `rows` to `max_rows`, returning whether truncation occurred.
+fn truncate_rows(
+    rows: Vec<Vec<Option<String>>>,
+    max_rows: usize,
+) -> (Vec<Vec<Option<String>>>, bool) {
+    if rows.len() > max_rows {
+        let mut rows = rows;
+        rows.truncate(max_rows);
+        (rows, true)
+    } else {
+        (rows, false)
+    }
+}
+
 /// Extracts the leading SQL verb (uppercased) to reconstruct a command tag,
 /// since `simple_query` only reports the affected row count.
 fn command_verb(sql: &str) -> String {
@@ -620,6 +905,45 @@ mod tests {
         let options = session_options(Duration::from_secs(30), SessionMode::ReadWrite);
         assert!(!options.contains("default_transaction_read_only=on"));
         assert!(options.contains("statement_timeout=30000"));
+    }
+
+    /// The read-only guard on `preview_write`/`commit_write` must bail before
+    /// attempting any connection, so this is verifiable without a live server
+    /// (an actually-attempted connect to an unreachable host would instead
+    /// fail with a connection error, not the intended guard message).
+    #[tokio::test]
+    async fn preview_write_and_commit_write_reject_read_only_session() {
+        let config = ConnectionConfig {
+            name: "test".into(),
+            host: "127.0.0.1".into(),
+            port: 5432,
+            database: "unreachable".into(),
+            user: "postgres".into(),
+        };
+        let client = PostgresClient::new(
+            config,
+            "unused".into(),
+            Duration::from_secs(30),
+            SessionMode::ReadOnly,
+        );
+
+        let error = client
+            .preview_write(
+                "unreachable",
+                "DELETE FROM t WHERE id=1",
+                WriteKind::Delete,
+                None,
+                100,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("read-write session"));
+
+        let error = client
+            .commit_write("unreachable", "DELETE FROM t WHERE id=1")
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("read-write session"));
     }
 
     #[test]
@@ -1000,6 +1324,342 @@ mod tests {
 
         setup
             .simple_query("DROP TABLE zed_default_insert_test")
+            .await
+            .expect("drop test table");
+    }
+
+    /// `preview_write` of an `UPDATE` must return both a before-image (the
+    /// original row, fetched by primary key after rollback) and an after-image
+    /// (the RETURNING row from inside the rolled-back transaction), and must
+    /// NOT modify the row: a follow-up SELECT through an independent connection
+    /// must still show the original value.
+    #[tokio::test]
+    #[ignore = "requires live postgres: ZED_DB_TEST_HOST/PASSWORD"]
+    async fn preview_write_update_returns_before_after_and_does_not_persist() {
+        let host = std::env::var("ZED_DB_TEST_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let database = std::env::var("ZED_DB_TEST_DATABASE").unwrap_or_else(|_| "shop".into());
+        let password = std::env::var("ZED_DB_TEST_PASSWORD").unwrap_or_else(|_| "postgres".into());
+
+        let setup = setup_connection(&host, &database, &password).await;
+        setup
+            .simple_query("DROP TABLE IF EXISTS zed_preview_update_test")
+            .await
+            .expect("drop pre-existing test table");
+        setup
+            .simple_query(
+                "CREATE TABLE zed_preview_update_test (id int PRIMARY KEY, name text); \
+                 INSERT INTO zed_preview_update_test (id, name) VALUES (1, 'original')",
+            )
+            .await
+            .expect("create and seed test table");
+
+        let config = ConnectionConfig {
+            name: "test".into(),
+            host: host.clone(),
+            port: 5432,
+            database: database.clone(),
+            user: "postgres".into(),
+        };
+        let client = PostgresClient::new(
+            config,
+            password.clone(),
+            Duration::from_secs(30),
+            SessionMode::ReadWrite,
+        );
+        let target = TableRef {
+            database: database.clone(),
+            schema: "public".into(),
+            name: "zed_preview_update_test".into(),
+        };
+
+        let preview = client
+            .preview_write(
+                &database,
+                "UPDATE zed_preview_update_test SET name = 'changed' WHERE id = 1",
+                WriteKind::Update,
+                Some(target),
+                100,
+            )
+            .await
+            .expect("preview_write succeeds");
+
+        assert_eq!(preview.rows_affected, 1);
+        assert!(preview.note.is_none(), "PK is present; no note expected");
+        let name_index = preview
+            .columns
+            .iter()
+            .position(|name| name == "name")
+            .expect("name column present");
+        let after = preview.after.expect("after-image present for UPDATE");
+        assert_eq!(after[0][name_index].as_deref(), Some("changed"));
+        let before = preview.before.expect("before-image present for UPDATE");
+        assert_eq!(before[0][name_index].as_deref(), Some("original"));
+
+        // The row must be untouched: verify via the independent setup connection.
+        let rows = setup
+            .query("SELECT name FROM zed_preview_update_test WHERE id = 1", &[])
+            .await
+            .expect("read back row");
+        let name: String = rows[0].get(0);
+        assert_eq!(name, "original", "preview must not persist the UPDATE");
+
+        setup
+            .simple_query("DROP TABLE zed_preview_update_test")
+            .await
+            .expect("drop test table");
+    }
+
+    /// `preview_write` of a `DELETE` must return the doomed rows as `before`
+    /// and must NOT delete them: the row must still exist afterward.
+    #[tokio::test]
+    #[ignore = "requires live postgres: ZED_DB_TEST_HOST/PASSWORD"]
+    async fn preview_write_delete_leaves_row_intact() {
+        let host = std::env::var("ZED_DB_TEST_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let database = std::env::var("ZED_DB_TEST_DATABASE").unwrap_or_else(|_| "shop".into());
+        let password = std::env::var("ZED_DB_TEST_PASSWORD").unwrap_or_else(|_| "postgres".into());
+
+        let setup = setup_connection(&host, &database, &password).await;
+        setup
+            .simple_query("DROP TABLE IF EXISTS zed_preview_delete_test")
+            .await
+            .expect("drop pre-existing test table");
+        setup
+            .simple_query(
+                "CREATE TABLE zed_preview_delete_test (id int PRIMARY KEY, name text); \
+                 INSERT INTO zed_preview_delete_test (id, name) VALUES (1, 'doomed')",
+            )
+            .await
+            .expect("create and seed test table");
+
+        let config = ConnectionConfig {
+            name: "test".into(),
+            host: host.clone(),
+            port: 5432,
+            database: database.clone(),
+            user: "postgres".into(),
+        };
+        let client = PostgresClient::new(
+            config,
+            password.clone(),
+            Duration::from_secs(30),
+            SessionMode::ReadWrite,
+        );
+
+        let preview = client
+            .preview_write(
+                &database,
+                "DELETE FROM zed_preview_delete_test WHERE id = 1",
+                WriteKind::Delete,
+                None,
+                100,
+            )
+            .await
+            .expect("preview_write succeeds");
+
+        assert_eq!(preview.rows_affected, 1);
+        assert!(preview.after.is_none(), "DELETE has no after-image");
+        let name_index = preview
+            .columns
+            .iter()
+            .position(|name| name == "name")
+            .expect("name column present");
+        let before = preview.before.expect("before-image present for DELETE");
+        assert_eq!(before[0][name_index].as_deref(), Some("doomed"));
+
+        // The row must still exist: verify via the independent setup connection.
+        let rows = setup
+            .query(
+                "SELECT count(*)::int FROM zed_preview_delete_test WHERE id = 1",
+                &[],
+            )
+            .await
+            .expect("read back row");
+        let count: i32 = rows[0].get(0);
+        assert_eq!(count, 1, "preview must not persist the DELETE");
+
+        setup
+            .simple_query("DROP TABLE zed_preview_delete_test")
+            .await
+            .expect("drop test table");
+    }
+
+    /// `commit_write` must actually persist its statement, unlike `preview_write`.
+    #[tokio::test]
+    #[ignore = "requires live postgres: ZED_DB_TEST_HOST/PASSWORD"]
+    async fn commit_write_persists_the_statement() {
+        let host = std::env::var("ZED_DB_TEST_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let database = std::env::var("ZED_DB_TEST_DATABASE").unwrap_or_else(|_| "shop".into());
+        let password = std::env::var("ZED_DB_TEST_PASSWORD").unwrap_or_else(|_| "postgres".into());
+
+        let setup = setup_connection(&host, &database, &password).await;
+        setup
+            .simple_query("DROP TABLE IF EXISTS zed_commit_write_test")
+            .await
+            .expect("drop pre-existing test table");
+        setup
+            .simple_query("CREATE TABLE zed_commit_write_test (id int PRIMARY KEY, name text)")
+            .await
+            .expect("create test table");
+
+        let config = ConnectionConfig {
+            name: "test".into(),
+            host: host.clone(),
+            port: 5432,
+            database: database.clone(),
+            user: "postgres".into(),
+        };
+        let client = PostgresClient::new(
+            config,
+            password.clone(),
+            Duration::from_secs(30),
+            SessionMode::ReadWrite,
+        );
+
+        let outcome = client
+            .commit_write(
+                &database,
+                "INSERT INTO zed_commit_write_test (id, name) VALUES (1, 'persisted')",
+            )
+            .await
+            .expect("commit_write succeeds");
+        assert_eq!(outcome.rows_affected, 1);
+
+        let rows = setup
+            .query("SELECT name FROM zed_commit_write_test WHERE id = 1", &[])
+            .await
+            .expect("read back row");
+        assert_eq!(rows.len(), 1, "commit_write must persist the INSERT");
+        let name: String = rows[0].get(0);
+        assert_eq!(name, "persisted");
+
+        setup
+            .simple_query("DROP TABLE zed_commit_write_test")
+            .await
+            .expect("drop test table");
+    }
+
+    /// A table without a primary key must produce `before == None` with the
+    /// safety note, rather than guessing which row to fetch.
+    #[tokio::test]
+    #[ignore = "requires live postgres: ZED_DB_TEST_HOST/PASSWORD"]
+    async fn preview_write_update_without_primary_key_omits_before_image() {
+        let host = std::env::var("ZED_DB_TEST_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let database = std::env::var("ZED_DB_TEST_DATABASE").unwrap_or_else(|_| "shop".into());
+        let password = std::env::var("ZED_DB_TEST_PASSWORD").unwrap_or_else(|_| "postgres".into());
+
+        let setup = setup_connection(&host, &database, &password).await;
+        setup
+            .simple_query("DROP TABLE IF EXISTS zed_preview_no_pk_test")
+            .await
+            .expect("drop pre-existing test table");
+        setup
+            .simple_query(
+                "CREATE TABLE zed_preview_no_pk_test (id int, name text); \
+                 INSERT INTO zed_preview_no_pk_test (id, name) VALUES (1, 'original')",
+            )
+            .await
+            .expect("create and seed test table");
+
+        let config = ConnectionConfig {
+            name: "test".into(),
+            host: host.clone(),
+            port: 5432,
+            database: database.clone(),
+            user: "postgres".into(),
+        };
+        let client = PostgresClient::new(
+            config,
+            password.clone(),
+            Duration::from_secs(30),
+            SessionMode::ReadWrite,
+        );
+        let target = TableRef {
+            database: database.clone(),
+            schema: "public".into(),
+            name: "zed_preview_no_pk_test".into(),
+        };
+
+        let preview = client
+            .preview_write(
+                &database,
+                "UPDATE zed_preview_no_pk_test SET name = 'changed' WHERE id = 1",
+                WriteKind::Update,
+                Some(target),
+                100,
+            )
+            .await
+            .expect("preview_write succeeds");
+
+        assert_eq!(preview.rows_affected, 1);
+        assert!(
+            preview.before.is_none(),
+            "no primary key: before-image must be omitted"
+        );
+        assert!(preview.note.is_some(), "note must explain the omission");
+
+        setup
+            .simple_query("DROP TABLE zed_preview_no_pk_test")
+            .await
+            .expect("drop test table");
+    }
+
+    /// An `UPDATE` whose `WHERE` matches no rows must produce `rows_affected
+    /// == 0` with empty (not omitted-with-note) before/after images, since
+    /// there is nothing wrong with the target — it simply matched nothing.
+    #[tokio::test]
+    #[ignore = "requires live postgres: ZED_DB_TEST_HOST/PASSWORD"]
+    async fn preview_write_update_matching_no_rows_returns_empty_images() {
+        let host = std::env::var("ZED_DB_TEST_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+        let database = std::env::var("ZED_DB_TEST_DATABASE").unwrap_or_else(|_| "shop".into());
+        let password = std::env::var("ZED_DB_TEST_PASSWORD").unwrap_or_else(|_| "postgres".into());
+
+        let setup = setup_connection(&host, &database, &password).await;
+        setup
+            .simple_query("DROP TABLE IF EXISTS zed_preview_zero_rows_test")
+            .await
+            .expect("drop pre-existing test table");
+        setup
+            .simple_query("CREATE TABLE zed_preview_zero_rows_test (id int PRIMARY KEY, name text)")
+            .await
+            .expect("create empty test table");
+
+        let config = ConnectionConfig {
+            name: "test".into(),
+            host: host.clone(),
+            port: 5432,
+            database: database.clone(),
+            user: "postgres".into(),
+        };
+        let client = PostgresClient::new(
+            config,
+            password.clone(),
+            Duration::from_secs(30),
+            SessionMode::ReadWrite,
+        );
+        let target = TableRef {
+            database: database.clone(),
+            schema: "public".into(),
+            name: "zed_preview_zero_rows_test".into(),
+        };
+
+        let preview = client
+            .preview_write(
+                &database,
+                "UPDATE zed_preview_zero_rows_test SET name = 'changed' WHERE id = 999",
+                WriteKind::Update,
+                Some(target),
+                100,
+            )
+            .await
+            .expect("preview_write succeeds");
+
+        assert_eq!(preview.rows_affected, 0);
+        assert!(preview.note.is_none(), "no ambiguity: no note expected");
+        assert_eq!(preview.before, Some(Vec::new()));
+        assert_eq!(preview.after, Some(Vec::new()));
+
+        setup
+            .simple_query("DROP TABLE zed_preview_zero_rows_test")
             .await
             .expect("drop test table");
     }

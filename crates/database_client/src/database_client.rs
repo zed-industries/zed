@@ -149,6 +149,38 @@ pub struct AppliedCounts {
     pub deleted: usize,
 }
 
+/// The DML kind of a write statement submitted through the MCP write tools.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteKind {
+    Insert,
+    Update,
+    Delete,
+}
+
+/// The result of transactionally previewing a write: the statement was run and
+/// then rolled back, so the database is unchanged. See
+/// [`DatabaseClient::preview_write`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WritePreview {
+    pub rows_affected: u64,
+    pub columns: Vec<String>,
+    // Per spec: Insert -> after=Some, before=None; Delete -> before=Some (the
+    // rows that would be deleted), after=None; Update -> after=Some (post-update
+    // via RETURNING), before=Some (pre-update via PK) or None with a note.
+    pub before: Option<Vec<Vec<Option<String>>>>,
+    pub after: Option<Vec<Vec<Option<String>>>>,
+    pub preview_truncated: bool,
+    pub note: Option<String>,
+}
+
+/// The result of committing a write: the statement was run and committed.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WriteOutcome {
+    pub rows_affected: u64,
+    pub columns: Vec<String>,
+    pub returned: Vec<Vec<Option<String>>>,
+}
+
 #[async_trait::async_trait]
 pub trait DatabaseClient: Send + Sync {
     async fn test_connection(&self) -> Result<()>;
@@ -165,6 +197,23 @@ pub trait DatabaseClient: Send + Sync {
         columns: &[ColumnInfo],
         edits: &TableEdits,
     ) -> Result<AppliedCounts>;
+    /// Runs a single INSERT/UPDATE/DELETE statement inside a transaction that is
+    /// always rolled back, so the database is left unchanged, and returns the
+    /// before/after row images that the statement would have produced. Requires
+    /// a [`SessionMode::ReadWrite`] session (mirrors [`Self::apply_edits`]'s
+    /// guard) even though nothing is persisted, since the statement still runs
+    /// against the server.
+    async fn preview_write(
+        &self,
+        database: &str,
+        sql: &str,
+        kind: WriteKind,
+        update_target: Option<TableRef>,
+        max_rows: usize,
+    ) -> Result<WritePreview>;
+    /// Runs a single INSERT/UPDATE/DELETE statement inside a transaction that is
+    /// committed on success (or rolled back and the error returned on failure).
+    async fn commit_write(&self, database: &str, sql: &str) -> Result<WriteOutcome>;
     /// Sends a cancel signal to the server for all in-flight queries of this client.
     async fn cancel_running(&self) -> Result<()>;
 }
