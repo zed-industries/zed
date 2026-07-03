@@ -607,7 +607,7 @@ impl Model {
     }
 
     pub fn supports_xhigh_adaptive_thinking(&self) -> bool {
-        matches!(self, Self::ClaudeOpus4_8)
+        matches!(self, Self::ClaudeOpus4_8 | Self::ClaudeFable5)
     }
 
     pub fn thinking_mode(&self) -> BedrockModelMode {
@@ -1069,7 +1069,7 @@ mod tests {
         assert!(Model::ClaudeSonnet4_6.supports_adaptive_thinking());
         assert!(Model::ClaudeFable5.supports_adaptive_thinking());
         assert!(!Model::ClaudeOpus4_7.supports_xhigh_adaptive_thinking());
-        assert!(!Model::ClaudeFable5.supports_xhigh_adaptive_thinking());
+        assert!(Model::ClaudeFable5.supports_xhigh_adaptive_thinking());
         assert!(Model::ClaudeOpus4_8.supports_xhigh_adaptive_thinking());
         assert_eq!(BedrockAdaptiveThinkingEffort::XHigh.as_str(), "xhigh");
 
