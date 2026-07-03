@@ -1,10 +1,67 @@
 use anyhow::{Context as _, bail};
 
-use crate::{ColumnInfo, FilterOp, SelectSpec, SortDirection, TableRef};
+use crate::{
+    ColumnInfo, FilterOp, RowDelete, RowInsert, RowKey, RowUpdate, SelectSpec, SortDirection,
+    TableRef,
+};
 
 pub struct BuiltSelect {
     pub sql: String,
     pub params: Vec<String>,
+}
+
+pub struct BuiltStatement {
+    pub sql: String,
+    pub params: Vec<String>,
+}
+
+/// Renders a `$index` parameter placeholder cast to the column's type.
+///
+/// Every parameter is bound as a Rust `String` (which `postgres-types` only
+/// accepts for text-like types), so the value is cast through `text` to the
+/// column's schema-qualified type server-side. The schema qualification lets
+/// types outside `search_path` (e.g. an extension type in a dedicated schema)
+/// still resolve.
+fn param_cast(column: &ColumnInfo, index: usize) -> String {
+    format!(
+        "${index}::text::{}.{}",
+        quote_ident(&column.udt_schema),
+        quote_ident(&column.udt_name)
+    )
+}
+
+/// Looks up a column by name, erroring if it does not exist.
+fn find_column<'a>(columns: &'a [ColumnInfo], name: &str) -> anyhow::Result<&'a ColumnInfo> {
+    columns
+        .iter()
+        .find(|column| column.name == name)
+        .with_context(|| format!("unknown column: {name}"))
+}
+
+/// Builds the `WHERE` clause matching a row by its `RowKey`, pushing one typed
+/// parameter per key column. Errors on an empty key or an unknown column.
+fn build_key_predicate(
+    columns: &[ColumnInfo],
+    key: &RowKey,
+    params: &mut Vec<String>,
+) -> anyhow::Result<String> {
+    if key.columns.is_empty() {
+        bail!("row key must not be empty");
+    }
+    let mut predicates = Vec::with_capacity(key.columns.len());
+    for (name, value) in key.columns.iter().zip(&key.values) {
+        let column = find_column(columns, name)?;
+        let Some(value) = value else {
+            bail!("row key value for column {name} must not be null");
+        };
+        params.push(value.clone());
+        predicates.push(format!(
+            "{} = {}",
+            quote_ident(&column.name),
+            param_cast(column, params.len())
+        ));
+    }
+    Ok(predicates.join(" AND "))
 }
 
 pub fn build_select(
@@ -15,12 +72,6 @@ pub fn build_select(
     if spec.limit == 0 {
         bail!("page size must be greater than zero");
     }
-    let find_column = |name: &str| -> anyhow::Result<&ColumnInfo> {
-        columns
-            .iter()
-            .find(|column| column.name == name)
-            .with_context(|| format!("unknown column: {name}"))
-    };
 
     let select_list = columns
         .iter()
@@ -38,7 +89,7 @@ pub fn build_select(
     let mut params = Vec::new();
     let mut predicates = Vec::new();
     for filter in &spec.filters {
-        let column = find_column(&filter.column)?;
+        let column = find_column(columns, &filter.column)?;
         let ident = quote_ident(&column.name);
         match filter.op {
             FilterOp::IsNull => predicates.push(format!("{ident} IS NULL")),
@@ -62,18 +113,11 @@ pub fn build_select(
                     FilterOp::Contains | FilterOp::IsNull => unreachable!(),
                 };
                 params.push(filter.value.clone());
-                // Bind the parameter as text (every param is a Rust `String`, which
-                // `postgres-types` only accepts for text-like types) and let the server
-                // cast it to the column's type. This keeps typed comparison semantics for
-                // Gt/Lt while avoiding a bind-time `WrongType` error on non-text columns.
-                // The cast is schema-qualified so types outside `search_path` (e.g. a
-                // `citext` extension installed into a dedicated schema) still resolve.
-                predicates.push(format!(
-                    "{ident} {op} ${}::text::{}.{}",
-                    params.len(),
-                    quote_ident(&column.udt_schema),
-                    quote_ident(&column.udt_name)
-                ));
+                // Bind the parameter as text and let the server cast it to the
+                // column's type (see `param_cast`). This keeps typed comparison
+                // semantics for Gt/Lt while avoiding a bind-time `WrongType`
+                // error on non-text columns.
+                predicates.push(format!("{ident} {op} {}", param_cast(column, params.len())));
             }
         }
     }
@@ -83,7 +127,7 @@ pub fn build_select(
     }
 
     if let Some(sort) = &spec.sort {
-        let column = find_column(&sort.column)?;
+        let column = find_column(columns, &sort.column)?;
         let direction = match sort.direction {
             SortDirection::Asc => "ASC",
             SortDirection::Desc => "DESC",
@@ -96,6 +140,100 @@ pub fn build_select(
 
     sql.push_str(&format!(" LIMIT {} OFFSET {}", spec.limit + 1, spec.offset));
     Ok(BuiltSelect { sql, params })
+}
+
+/// Builds an `UPDATE` statement. The `SET` clause covers the columns in
+/// `update.set` (rejecting primary-key columns and an empty set); the `WHERE`
+/// clause matches the row by `update.key`. `SET` value parameters are ordered
+/// first, followed by the `WHERE` key parameters.
+pub fn build_update(
+    table: &TableRef,
+    columns: &[ColumnInfo],
+    update: &RowUpdate,
+) -> anyhow::Result<BuiltStatement> {
+    if update.set.is_empty() {
+        bail!("update must set at least one column");
+    }
+    let mut params = Vec::new();
+    let mut assignments = Vec::with_capacity(update.set.len());
+    for (name, cell) in &update.set {
+        let column = find_column(columns, name)?;
+        if column.is_primary_key {
+            bail!("cannot update primary key column: {name}");
+        }
+        assignments.push(format!(
+            "{} = {}",
+            quote_ident(&column.name),
+            render_cell(column, cell, &mut params)
+        ));
+    }
+    let where_clause = build_key_predicate(columns, &update.key, &mut params)?;
+    let sql = format!(
+        "UPDATE {}.{} SET {} WHERE {}",
+        quote_ident(&table.schema),
+        quote_ident(&table.name),
+        assignments.join(", "),
+        where_clause,
+    );
+    Ok(BuiltStatement { sql, params })
+}
+
+/// Builds an `INSERT` statement covering only the columns in `insert.values`
+/// (rejecting an empty value list).
+pub fn build_insert(
+    table: &TableRef,
+    columns: &[ColumnInfo],
+    insert: &RowInsert,
+) -> anyhow::Result<BuiltStatement> {
+    if insert.values.is_empty() {
+        bail!("insert must set at least one column");
+    }
+    let mut params = Vec::new();
+    let mut idents = Vec::with_capacity(insert.values.len());
+    let mut values = Vec::with_capacity(insert.values.len());
+    for (name, cell) in &insert.values {
+        let column = find_column(columns, name)?;
+        idents.push(quote_ident(&column.name));
+        values.push(render_cell(column, cell, &mut params));
+    }
+    let sql = format!(
+        "INSERT INTO {}.{} ({}) VALUES ({})",
+        quote_ident(&table.schema),
+        quote_ident(&table.name),
+        idents.join(", "),
+        values.join(", "),
+    );
+    Ok(BuiltStatement { sql, params })
+}
+
+/// Builds a `DELETE` statement matching the row by `delete.key` (rejecting an
+/// empty key).
+pub fn build_delete(
+    table: &TableRef,
+    columns: &[ColumnInfo],
+    delete: &RowDelete,
+) -> anyhow::Result<BuiltStatement> {
+    let mut params = Vec::new();
+    let where_clause = build_key_predicate(columns, &delete.key, &mut params)?;
+    let sql = format!(
+        "DELETE FROM {}.{} WHERE {}",
+        quote_ident(&table.schema),
+        quote_ident(&table.name),
+        where_clause,
+    );
+    Ok(BuiltStatement { sql, params })
+}
+
+/// Renders an `EditCell`: `Value` pushes a text parameter cast to the column's
+/// type and returns the placeholder; `Null` returns a literal `NULL`.
+fn render_cell(column: &ColumnInfo, cell: &crate::EditCell, params: &mut Vec<String>) -> String {
+    match cell {
+        crate::EditCell::Value(value) => {
+            params.push(value.clone());
+            param_cast(column, params.len())
+        }
+        crate::EditCell::Null => "NULL".to_string(),
+    }
 }
 
 pub const LIST_DATABASES_SQL: &str =
@@ -161,7 +299,9 @@ pub fn escape_like(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Filter, FilterOp, Sort, SortDirection};
+    use crate::{
+        EditCell, Filter, FilterOp, RowDelete, RowInsert, RowKey, RowUpdate, Sort, SortDirection,
+    };
 
     fn col(name: &str, udt: &str) -> ColumnInfo {
         ColumnInfo {
@@ -172,6 +312,13 @@ mod tests {
             is_nullable: true,
             default: None,
             is_primary_key: false,
+        }
+    }
+
+    fn pk_col(name: &str, udt: &str) -> ColumnInfo {
+        ColumnInfo {
+            is_primary_key: true,
+            ..col(name, udt)
         }
     }
 
@@ -331,5 +478,114 @@ mod tests {
         assert_eq!(escape_like("a_b"), "a\\_b");
         assert_eq!(escape_like("back\\slash"), "back\\\\slash");
         assert_eq!(escape_like("plain"), "plain");
+    }
+
+    fn edit_columns() -> Vec<ColumnInfo> {
+        vec![
+            pk_col("id", "int4"),
+            col("name", "text"),
+            col("age", "int4"),
+        ]
+    }
+
+    #[test]
+    fn build_update_sets_and_where() {
+        let columns = edit_columns();
+        let update = RowUpdate {
+            key: RowKey {
+                columns: vec!["id".into()],
+                values: vec![Some("7".into())],
+            },
+            set: vec![
+                ("name".into(), EditCell::Value("Ann".into())),
+                ("age".into(), EditCell::Null),
+            ],
+        };
+        let built = build_update(&users_table(), &columns, &update).unwrap();
+        assert_eq!(
+            built.sql,
+            "UPDATE \"public\".\"users\" SET \"name\" = $1::text::\"pg_catalog\".\"text\", \"age\" = NULL WHERE \"id\" = $2::text::\"pg_catalog\".\"int4\""
+        );
+        assert_eq!(built.params, vec!["Ann".to_string(), "7".to_string()]);
+    }
+
+    #[test]
+    fn build_insert_only_given_columns() {
+        let columns = edit_columns();
+        let insert = RowInsert {
+            values: vec![
+                ("name".into(), EditCell::Value("Bob".into())),
+                ("id".into(), EditCell::Value("9".into())),
+            ],
+        };
+        let built = build_insert(&users_table(), &columns, &insert).unwrap();
+        assert_eq!(
+            built.sql,
+            "INSERT INTO \"public\".\"users\" (\"name\", \"id\") VALUES ($1::text::\"pg_catalog\".\"text\", $2::text::\"pg_catalog\".\"int4\")"
+        );
+        assert_eq!(built.params, vec!["Bob".to_string(), "9".to_string()]);
+    }
+
+    #[test]
+    fn build_delete_by_pk() {
+        let columns = edit_columns();
+        let delete = RowDelete {
+            key: RowKey {
+                columns: vec!["id".into()],
+                values: vec![Some("3".into())],
+            },
+        };
+        let built = build_delete(&users_table(), &columns, &delete).unwrap();
+        assert_eq!(
+            built.sql,
+            "DELETE FROM \"public\".\"users\" WHERE \"id\" = $1::text::\"pg_catalog\".\"int4\""
+        );
+        assert_eq!(built.params, vec!["3".to_string()]);
+    }
+
+    #[test]
+    fn build_update_rejects_pk_in_set() {
+        let columns = edit_columns();
+        let update = RowUpdate {
+            key: RowKey {
+                columns: vec!["id".into()],
+                values: vec![Some("7".into())],
+            },
+            set: vec![("id".into(), EditCell::Value("8".into()))],
+        };
+        assert!(build_update(&users_table(), &columns, &update).is_err());
+    }
+
+    #[test]
+    fn build_update_rejects_empty_set() {
+        let columns = edit_columns();
+        let update = RowUpdate {
+            key: RowKey {
+                columns: vec!["id".into()],
+                values: vec![Some("7".into())],
+            },
+            set: vec![],
+        };
+        assert!(build_update(&users_table(), &columns, &update).is_err());
+    }
+
+    #[test]
+    fn build_insert_rejects_empty() {
+        let columns = edit_columns();
+        let insert = RowInsert { values: vec![] };
+        assert!(build_insert(&users_table(), &columns, &insert).is_err());
+    }
+
+    #[test]
+    fn build_update_rejects_unknown_column() {
+        let columns = edit_columns();
+        let update = RowUpdate {
+            key: RowKey {
+                columns: vec!["id".into()],
+                values: vec![Some("7".into())],
+            },
+            set: vec![("nope".into(), EditCell::Value("x".into()))],
+        };
+        assert!(build_update(&users_table(), &columns, &update).is_err());
     }
 }

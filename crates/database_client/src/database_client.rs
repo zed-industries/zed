@@ -115,6 +115,53 @@ pub struct QueryResult {
     pub command_tag: Option<String>, // e.g. "SELECT 42"
 }
 
+/// A cell value in a row edit. `Value` binds a text parameter cast to the
+/// column's type; `Null` emits a literal `NULL` with no parameter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditCell {
+    Value(String),
+    Null,
+}
+
+/// Identifies a row by its primary-key column names and their original values.
+/// `Hash` is derived because it is used as a `HashMap`/`HashSet` key when
+/// buffering edits.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RowKey {
+    pub columns: Vec<String>,
+    pub values: Vec<Option<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowUpdate {
+    pub key: RowKey,
+    pub set: Vec<(String, EditCell)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowInsert {
+    pub values: Vec<(String, EditCell)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RowDelete {
+    pub key: RowKey,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TableEdits {
+    pub updates: Vec<RowUpdate>,
+    pub inserts: Vec<RowInsert>,
+    pub deletes: Vec<RowDelete>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AppliedCounts {
+    pub updated: usize,
+    pub inserted: usize,
+    pub deleted: usize,
+}
+
 #[async_trait::async_trait]
 pub trait DatabaseClient: Send + Sync {
     async fn test_connection(&self) -> Result<()>;
