@@ -4774,34 +4774,38 @@ impl GitPanel {
 
         let editor_focus_handle = self.commit_editor.focus_handle(cx);
 
-        Some(
-            IconButton::new("generate-commit-message", IconName::AiEdit)
-                .shape(ui::IconButtonShape::Square)
-                .icon_color(if has_commit_model_configuration_error {
-                    Color::Disabled
+        let button = IconButton::new("generate-commit-message", IconName::AiEdit)
+            .shape(ui::IconButtonShape::Square)
+            .icon_color(if has_commit_model_configuration_error {
+                Color::Disabled
+            } else {
+                Color::Muted
+            })
+            .disabled(!can_commit || has_commit_model_configuration_error)
+            .on_click(cx.listener(move |this, _event, _window, cx| {
+                this.generate_commit_message(cx);
+            }));
+
+        let button = if can_commit && has_commit_model_configuration_error {
+            button.hoverable_tooltip(move |_window, cx| {
+                cx.new(|_| GenerateCommitMessageConfigurationTooltip).into()
+            })
+        } else {
+            button.tooltip(move |_window, cx| {
+                if !can_commit {
+                    Tooltip::simple("No Changes to Commit", cx)
                 } else {
-                    Color::Muted
-                })
-                .tooltip(move |_window, cx| {
-                    if !can_commit {
-                        Tooltip::simple("No Changes to Commit", cx)
-                    } else if has_commit_model_configuration_error {
-                        Tooltip::simple("Configure an LLM provider to generate commit messages", cx)
-                    } else {
-                        Tooltip::for_action_in(
-                            "Generate Commit Message",
-                            &git::GenerateCommitMessage,
-                            &editor_focus_handle,
-                            cx,
-                        )
-                    }
-                })
-                .disabled(!can_commit || has_commit_model_configuration_error)
-                .on_click(cx.listener(move |this, _event, _window, cx| {
-                    this.generate_commit_message(cx);
-                }))
-                .into_any_element(),
-        )
+                    Tooltip::for_action_in(
+                        "Generate Commit Message",
+                        &git::GenerateCommitMessage,
+                        &editor_focus_handle,
+                        cx,
+                    )
+                }
+            })
+        };
+
+        Some(button.into_any_element())
     }
 
     pub(crate) fn render_co_authors(&self, cx: &Context<Self>) -> Option<AnyElement> {
@@ -7154,6 +7158,57 @@ impl GitPanel {
         if self.amend_pending {
             self.load_last_commit_message(cx);
         }
+    }
+}
+
+struct GenerateCommitMessageConfigurationTooltip;
+
+impl Render for GenerateCommitMessageConfigurationTooltip {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        ui::tooltip_container(cx, |container, _cx| {
+            container
+                .flex_shrink_0()
+                .w(rems_from_px(288.))
+                .min_h(rems_from_px(72.))
+                .justify_between()
+                .child(v_flex().flex_1().w_full().child(Label::new(
+                    "Configure an LLM provider to generate commit messages",
+                )))
+                .child(
+                    h_flex()
+                        .pt_1()
+                        .gap_2()
+                        .items_end()
+                        .w_full()
+                        .child(
+                            ButtonLike::new("configure-commit-message-provider")
+                                .size(ButtonSize::None)
+                                .child(
+                                    Label::new("Configure Provider")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Accent)
+                                        .underline(),
+                                )
+                                .on_click(|_, window, cx| {
+                                    window.dispatch_action(
+                                        zed_actions::OpenSettingsAt {
+                                            path: "llm_providers".to_string(),
+                                            target: None,
+                                        }
+                                        .boxed_clone(),
+                                        cx,
+                                    );
+                                }),
+                        )
+                        .child(
+                            ui::ButtonLink::new(
+                                "See Docs",
+                                "https://zed.dev/docs/ai/llm-providers",
+                            )
+                            .label_size(LabelSize::Small),
+                        ),
+                )
+        })
     }
 }
 
