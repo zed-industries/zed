@@ -930,3 +930,15 @@ pub mod notebook {
         ]
     );
 }
+
+pub mod git_panel {
+    use gpui::actions;
+
+    actions!(
+        git_panel,
+        [
+            /// Toggles focus on the git panel.
+            ToggleFocus,
+        ]
+    );
+}
