@@ -505,13 +505,20 @@ async fn execute_statement(client: &Client, statement: &BuiltStatement) -> Resul
 
 /// Builds the `-c` options string for a session's `statement_timeout` and,
 /// for [`SessionMode::ReadOnly`], `default_transaction_read_only`.
+///
+/// Both modes also pin `standard_conforming_strings=on`: `query_state::render_sql`
+/// inlines filter values as string literals via `escape_literal`/`escape_like_pattern`,
+/// and that escaping is only correct when this setting is on. Pinning it here makes
+/// the escaping correct regardless of the server's configured default.
 fn session_options(statement_timeout: Duration, mode: SessionMode) -> String {
     let timeout_ms = statement_timeout.as_millis();
     match mode {
-        SessionMode::ReadOnly => {
-            format!("-c default_transaction_read_only=on -c statement_timeout={timeout_ms}")
+        SessionMode::ReadOnly => format!(
+            "-c default_transaction_read_only=on -c standard_conforming_strings=on -c statement_timeout={timeout_ms}"
+        ),
+        SessionMode::ReadWrite => {
+            format!("-c standard_conforming_strings=on -c statement_timeout={timeout_ms}")
         }
-        SessionMode::ReadWrite => format!("-c statement_timeout={timeout_ms}"),
     }
 }
 
@@ -613,6 +620,18 @@ mod tests {
         let options = session_options(Duration::from_secs(30), SessionMode::ReadWrite);
         assert!(!options.contains("default_transaction_read_only=on"));
         assert!(options.contains("statement_timeout=30000"));
+    }
+
+    #[test]
+    fn session_options_pin_standard_conforming_strings() {
+        // query_state::render_sql inlines values as string literals
+        // (escape_literal/escape_like_pattern); that escaping is only correct
+        // when the session has standard_conforming_strings=on, so both modes
+        // must pin it regardless of the server's default.
+        let read_only = session_options(Duration::from_secs(30), SessionMode::ReadOnly);
+        let read_write = session_options(Duration::from_secs(30), SessionMode::ReadWrite);
+        assert!(read_only.contains("standard_conforming_strings=on"));
+        assert!(read_write.contains("standard_conforming_strings=on"));
     }
 
     #[tokio::test]

@@ -62,11 +62,21 @@ impl QueryState {
 }
 
 /// Escapes a string as a single-quoted SQL literal, doubling inner single quotes.
+///
+/// Correctness relies on the session having `standard_conforming_strings=on`,
+/// which is pinned in `postgres::session_options` for every session this crate
+/// opens; without it, backslashes in `value` would be reinterpreted as escapes
+/// by the server instead of being taken literally.
 pub fn escape_literal(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
 /// Escapes `\`, `%`, and `_` for use inside a `LIKE`/`ILIKE` pattern.
+///
+/// Correctness relies on the session having `standard_conforming_strings=on`,
+/// which is pinned in `postgres::session_options` for every session this crate
+/// opens; without it, the backslashes inserted here would be reinterpreted by
+/// the server instead of matching literal `%`/`_` characters.
 fn escape_like_pattern(value: &str) -> String {
     value
         .replace('\\', "\\\\")
