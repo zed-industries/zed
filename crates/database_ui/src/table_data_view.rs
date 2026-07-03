@@ -84,10 +84,16 @@ pub enum LoadState {
 pub struct TableDataView {
     focus_handle: FocusHandle,
     client: Arc<dyn DatabaseClient>,
+    /// The name of the connection this tab's `client` belongs to. Two tables
+    /// with identical coordinates on different connections must not alias to one
+    /// tab, so this is part of the tab dedup key (see [`open_table_tab`]).
+    connection: String,
     table: TableRef,
     mode: ViewMode,
     spec: SelectSpec,
-    page: Option<RowsPage>,
+    /// Wrapped in `Arc` so the render hot path (scroll re-renders) hands the
+    /// rows to `uniform_list` by cheap clone instead of deep-copying every cell.
+    page: Option<Arc<RowsPage>>,
     structure: Option<TableStructure>,
     load_state: LoadState,
     interaction: Entity<TableInteractionState>,
@@ -102,12 +108,16 @@ pub struct TableDataView {
     draft_op: FilterOp,
     /// The value input for the filter builder (ignored for `IsNull`).
     draft_value: Entity<InputField>,
-    _load_task: Option<Task<()>>,
+    /// Held separately from `_structure_task` so a structure load and a data
+    /// reload can be in flight at the same time without one aborting the other.
+    _data_task: Option<Task<()>>,
+    _structure_task: Option<Task<()>>,
 }
 
 impl TableDataView {
     pub fn new(
         client: Arc<dyn DatabaseClient>,
+        connection: String,
         table: TableRef,
         window: &mut Window,
         cx: &mut App,
@@ -119,6 +129,7 @@ impl TableDataView {
             let mut view = Self {
                 focus_handle: cx.focus_handle(),
                 client,
+                connection,
                 table,
                 mode: ViewMode::Data,
                 spec: SelectSpec {
@@ -134,7 +145,8 @@ impl TableDataView {
                 draft_column: None,
                 draft_op: FilterOp::Eq,
                 draft_value,
-                _load_task: None,
+                _data_task: None,
+                _structure_task: None,
             };
             view.reload_data(cx);
             view
@@ -145,12 +157,16 @@ impl TableDataView {
         &self.table
     }
 
+    pub fn connection(&self) -> &str {
+        &self.connection
+    }
+
     pub fn spec(&self) -> &SelectSpec {
         &self.spec
     }
 
     pub fn page(&self) -> Option<&RowsPage> {
-        self.page.as_ref()
+        self.page.as_deref()
     }
 
     pub fn structure(&self) -> Option<&TableStructure> {
@@ -163,6 +179,14 @@ impl TableDataView {
 
     pub fn mode(&self) -> ViewMode {
         self.mode
+    }
+
+    /// Test-only: emulates a structure fetch that failed by clearing the cached
+    /// structure while leaving `mode` untouched, so tests can exercise the
+    /// Structure-mode retry path.
+    #[cfg(test)]
+    fn clear_structure_for_test(&mut self) {
+        self.structure = None;
     }
 
     /// Cycles the sort on `column` (None -> Asc -> Desc -> None), resets the
@@ -241,10 +265,14 @@ impl TableDataView {
         cx.notify();
     }
 
-    /// Re-fetches the current page and, if it was already loaded, the structure.
+    /// Re-fetches the current page and, if the structure tab has ever been
+    /// shown, the structure. Reloading structure when the Structure tab is
+    /// active (even if a prior fetch failed and left it `None`) ensures Retry
+    /// actually re-issues the request instead of showing "Loading structure…"
+    /// forever.
     fn refresh(&mut self, cx: &mut Context<Self>) {
         self.reload_data(cx);
-        if self.structure.is_some() {
+        if self.structure.is_some() || self.mode == ViewMode::Structure {
             self.reload_structure(cx);
         }
     }
@@ -262,17 +290,17 @@ impl TableDataView {
                 async move { client.fetch_rows(&table, &spec).await },
             );
 
-        self._load_task = Some(cx.spawn(async move |this, cx| {
+        self._data_task = Some(cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(page) => {
                         this.set_column_widths(page.columns.len(), cx);
-                        this.page = Some(page);
+                        this.page = Some(Arc::new(page));
                         this.load_state = LoadState::Idle;
                     }
                     Err(error) => {
-                        this.load_state = LoadState::Error(error.to_string());
+                        this.load_state = LoadState::Error(format!("{error:#}"));
                     }
                 }
                 cx.notify();
@@ -290,7 +318,7 @@ impl TableDataView {
                 async move { client.table_structure(&table).await },
             );
 
-        self._load_task = Some(cx.spawn(async move |this, cx| {
+        self._structure_task = Some(cx.spawn(async move |this, cx| {
             let result = task.await;
             this.update(cx, |this, cx| {
                 match result {
@@ -299,7 +327,7 @@ impl TableDataView {
                         this.load_state = LoadState::Idle;
                     }
                     Err(error) => {
-                        this.load_state = LoadState::Error(error.to_string());
+                        this.load_state = LoadState::Error(format!("{error:#}"));
                     }
                 }
                 cx.notify();
@@ -347,7 +375,7 @@ impl TableDataView {
             .collect();
 
         let column_count = page.columns.len();
-        let rows = Arc::new(page.rows);
+        let row_count = page.rows.len();
 
         Table::new(column_count)
             .interactable(&self.interaction)
@@ -356,11 +384,11 @@ impl TableDataView {
             .header(headers)
             .uniform_list(
                 "db-rows",
-                rows.len(),
+                row_count,
                 cx.processor(move |_this, range: Range<usize>, _window, _cx| {
                     range
                         .filter_map(|row_index| {
-                            let row = rows.get(row_index)?;
+                            let row = page.rows.get(row_index)?;
                             let cells: Vec<AnyElement> = (0..column_count)
                                 .map(|col| render_cell(row.get(col).and_then(|cell| cell.clone())))
                                 .collect();
@@ -869,10 +897,12 @@ fn render_cell(value: Option<String>) -> AnyElement {
 }
 
 /// Opens (or activates an existing) table data tab in the workspace's active
-/// pane, de-duplicating by [`TableRef`].
+/// pane, de-duplicating by connection name plus [`TableRef`] (identical table
+/// coordinates on different connections must not alias to one tab).
 pub fn open_table_tab(
     workspace: &WeakEntity<Workspace>,
     client: Arc<dyn DatabaseClient>,
+    connection: String,
     table: TableRef,
     window: &mut Window,
     cx: &mut App,
@@ -883,8 +913,12 @@ pub fn open_table_tab(
                 .active_pane()
                 .read(cx)
                 .items_of_type::<TableDataView>()
-                .find(|view| view.read(cx).table() == &table);
-            let view = existing.unwrap_or_else(|| TableDataView::new(client, table, window, cx));
+                .find(|view| {
+                    let view = view.read(cx);
+                    view.connection() == connection && view.table() == &table
+                });
+            let view = existing
+                .unwrap_or_else(|| TableDataView::new(client, connection, table, window, cx));
             workspace.active_pane().update(cx, |pane, cx| {
                 if let Some(index) = pane.index_for_item(&view) {
                     pane.activate_item(index, true, true, window, cx);
@@ -959,7 +993,9 @@ mod tests {
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
-        let view = cx.update(|window, cx| TableDataView::new(client, table_ref(), window, cx));
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+        });
 
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
@@ -985,7 +1021,9 @@ mod tests {
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
-        let view = cx.update(|window, cx| TableDataView::new(client, table_ref(), window, cx));
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+        });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
         // Advance to a non-zero offset first so the reset is observable, and
@@ -1032,7 +1070,9 @@ mod tests {
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
-        let view = cx.update(|window, cx| TableDataView::new(client, table_ref(), window, cx));
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+        });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
         // has_more == true in the fake, so next_page advances by the limit.
@@ -1081,7 +1121,9 @@ mod tests {
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
-        let view = cx.update(|window, cx| TableDataView::new(client, table_ref(), window, cx));
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+        });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
         view.update(cx, |view, cx| view.toggle_structure(cx));
@@ -1119,6 +1161,149 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn refresh_reloads_data_even_with_cached_structure(cx: &mut TestAppContext) {
+        // Regression: a data reload and a structure reload used to share one
+        // task field, so refresh() with a cached structure aborted its own data
+        // fetch. They now use separate fields and must coexist.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        // Cache the structure, then return to the Data tab.
+        view.update(cx, |view, cx| view.toggle_structure(cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.structure().is_some())
+        })
+        .await;
+        view.update(cx, |view, cx| view.toggle_structure(cx));
+        cx.run_until_parked();
+
+        let fetches_before = fake
+            .calls()
+            .into_iter()
+            .filter(|call| call.starts_with("fetch_rows"))
+            .count();
+
+        // refresh() must reload the data (not just the cached structure) and end
+        // Idle with a page still present.
+        view.update(cx, |view, cx| view.refresh(cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.load_state() == &LoadState::Idle)
+        })
+        .await;
+
+        let fetches_after = fake
+            .calls()
+            .into_iter()
+            .filter(|call| call.starts_with("fetch_rows"))
+            .count();
+        assert!(
+            fetches_after > fetches_before,
+            "refresh must issue a new data fetch (before={fetches_before}, after={fetches_after})"
+        );
+        view.read_with(cx, |view, _| {
+            assert!(view.page().is_some(), "data page must survive the refresh");
+            assert!(
+                view.structure().is_some(),
+                "cached structure must also be reloaded"
+            );
+            assert_eq!(view.load_state(), &LoadState::Idle);
+        });
+    }
+
+    #[gpui::test]
+    async fn refresh_in_structure_mode_refetches_after_error(cx: &mut TestAppContext) {
+        // Regression: a failed structure fetch leaves structure=None while mode
+        // is Structure; refresh()/Retry used to skip the structure reload because
+        // structure.is_some() was false, stranding "Loading structure…" forever.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let client: Arc<dyn DatabaseClient> = fake.clone();
+
+        let cx = cx.add_empty_window();
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+        });
+        wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
+
+        // Switch to Structure (mode=Structure, structure will load).
+        view.update(cx, |view, cx| view.toggle_structure(cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.structure().is_some())
+        })
+        .await;
+
+        // Simulate the failed-fetch state: mode is Structure but structure=None.
+        view.update(cx, |view, _cx| view.clear_structure_for_test());
+        let structure_calls_before = fake
+            .calls()
+            .into_iter()
+            .filter(|call| call.starts_with("table_structure"))
+            .count();
+
+        view.update(cx, |view, cx| view.refresh(cx));
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| view.structure().is_some())
+        })
+        .await;
+
+        let structure_calls_after = fake
+            .calls()
+            .into_iter()
+            .filter(|call| call.starts_with("table_structure"))
+            .count();
+        assert!(
+            structure_calls_after > structure_calls_before,
+            "refresh in Structure mode must refetch the structure even when it is None"
+        );
+    }
+
+    #[gpui::test]
+    async fn tab_dedup_distinguishes_connections(cx: &mut TestAppContext) {
+        // Regression: dedup keyed only on TableRef, so identical table
+        // coordinates on different connections aliased to one tab. The dedup key
+        // now includes the connection name.
+        init_test(cx);
+        cx.executor().allow_parking();
+        let client: Arc<dyn DatabaseClient> = Arc::new(FakeDatabaseClient::new());
+
+        let cx = cx.add_empty_window();
+        let staging = cx.update(|window, cx| {
+            TableDataView::new(client.clone(), "staging".into(), table_ref(), window, cx)
+        });
+        let prod = cx.update(|window, cx| {
+            TableDataView::new(client, "prod".into(), table_ref(), window, cx)
+        });
+
+        staging.read_with(cx, |staging, _| {
+            prod.read_with(cx, |prod, _| {
+                assert_eq!(
+                    staging.table(),
+                    prod.table(),
+                    "the two tabs share table coordinates"
+                );
+                assert_ne!(
+                    staging.connection(),
+                    prod.connection(),
+                    "but differ by connection, so they must not alias to one tab"
+                );
+                // The dedup predicate used by open_table_tab.
+                let same_tab =
+                    staging.connection() == prod.connection() && staging.table() == prod.table();
+                assert!(!same_tab, "different connections must yield different tabs");
+            });
+        });
+    }
+
+    #[gpui::test]
     async fn load_error_is_surfaced(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
@@ -1126,7 +1311,9 @@ mod tests {
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
-        let view = cx.update(|window, cx| TableDataView::new(client, table_ref(), window, cx));
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+        });
         wait_until(cx, |cx| {
             view.read_with(cx, |view, _| {
                 matches!(view.load_state(), LoadState::Error(_))
@@ -1153,7 +1340,9 @@ mod tests {
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
-        let view = cx.update(|window, cx| TableDataView::new(client, table_ref(), window, cx));
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+        });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
         // Advance to a non-zero offset so the reset is observable, letting the
@@ -1203,7 +1392,9 @@ mod tests {
         let client: Arc<dyn DatabaseClient> = fake.clone();
 
         let cx = cx.add_empty_window();
-        let view = cx.update(|window, cx| TableDataView::new(client, table_ref(), window, cx));
+        let view = cx.update(|window, cx| {
+            TableDataView::new(client, "local".into(), table_ref(), window, cx)
+        });
         wait_until(cx, |cx| view.read_with(cx, |view, _| view.page().is_some())).await;
 
         view.update(cx, |view, cx| {

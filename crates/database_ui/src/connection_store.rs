@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use database_client::{ConnectionConfig, DatabaseClient, TableInfo};
-use gpui::{App, Context, EventEmitter};
+use gpui::{Context, EventEmitter};
 use settings::{Settings, SettingsStore};
 
 use crate::DatabaseSettings;
@@ -14,12 +14,17 @@ pub enum ConnectionStoreEvent {
     ConnectionError { name: String, message: String },
 }
 
-/// Constructs a [`DatabaseClient`] from a connection config and its password.
+/// Constructs a [`DatabaseClient`] from a connection config, its password, and
+/// the statement timeout to apply.
 ///
-/// Production wires this to [`crate::default_client_factory`], which builds a
-/// `PostgresClient`. Tests inject a factory returning a `FakeDatabaseClient`.
+/// The timeout is passed per-call (rather than captured once) so a change to
+/// `query_timeout_seconds` in settings takes effect on the next connect without
+/// restarting the app; callers read the current value from settings at connect
+/// time. Production wires this to [`crate::default_client_factory`], which
+/// builds a `PostgresClient`. Tests inject a factory returning a
+/// `FakeDatabaseClient`.
 pub type ClientFactory =
-    Arc<dyn Fn(&ConnectionConfig, &str) -> Arc<dyn DatabaseClient> + Send + Sync>;
+    Arc<dyn Fn(&ConnectionConfig, &str, Duration) -> Arc<dyn DatabaseClient> + Send + Sync>;
 
 /// The keychain lookup URL for a connection's password.
 pub fn credentials_url(connection_name: &str) -> String {
@@ -60,6 +65,12 @@ pub struct ConnectionState {
     pub status: ConnectionStatus,
     /// `None` until `connect` has successfully listed the databases.
     pub databases: Option<Vec<DatabaseNode>>,
+    /// Bumped every time the connection state is invalidated (a new connect
+    /// begins, a config edit resets it, or a refresh discards the tree). An
+    /// in-flight connect continuation only writes its result back if this still
+    /// matches the value it captured at spawn time, so a superseded or stale
+    /// attempt can never clobber newer state.
+    generation: u64,
 }
 
 impl ConnectionState {
@@ -69,6 +80,7 @@ impl ConnectionState {
             client: None,
             status: ConnectionStatus::Disconnected,
             databases: None,
+            generation: 0,
         }
     }
 }
@@ -136,11 +148,15 @@ impl ConnectionStore {
             {
                 Some(existing) => {
                     // A config edit (host/port/etc.) invalidates the live tree.
+                    // Bumping the generation ensures an in-flight connect for the
+                    // old config cannot later mark this connection Connected with
+                    // the stale server's databases.
                     if &existing.config != config {
                         existing.config = config.clone();
                         existing.client = None;
                         existing.status = ConnectionStatus::Disconnected;
                         existing.databases = None;
+                        existing.generation = existing.generation.wrapping_add(1);
                         changed = true;
                     }
                 }
@@ -173,6 +189,11 @@ impl ConnectionStore {
         if self.connections[index].status == ConnectionStatus::Connecting {
             return;
         }
+        // Bump the generation and mark Connecting up front so a second connect
+        // (or a refresh) issued while the keychain read is in flight is guarded,
+        // and a stale keychain-read continuation cannot clobber newer state.
+        self.connections[index].generation = self.connections[index].generation.wrapping_add(1);
+        let generation = self.connections[index].generation;
         self.connections[index].status = ConnectionStatus::Connecting;
         cx.notify();
 
@@ -187,8 +208,9 @@ impl ConnectionStore {
                     Ok(password) => password,
                     Err(error) => {
                         this.update(cx, |this, cx| {
-                            this.set_error(
+                            this.set_error_for_generation(
                                 &connection_name,
+                                generation,
                                 format!("saved password is not valid UTF-8: {error}"),
                                 cx,
                             );
@@ -199,8 +221,9 @@ impl ConnectionStore {
                 },
                 Ok(None) => {
                     this.update(cx, |this, cx| {
-                        this.set_error(
+                        this.set_error_for_generation(
                             &connection_name,
+                            generation,
                             "no saved password — edit the connection".to_string(),
                             cx,
                         );
@@ -210,9 +233,10 @@ impl ConnectionStore {
                 }
                 Err(error) => {
                     this.update(cx, |this, cx| {
-                        this.set_error(
+                        this.set_error_for_generation(
                             &connection_name,
-                            format!("failed to read keychain: {error}"),
+                            generation,
+                            format!("failed to read keychain: {error:#}"),
                             cx,
                         );
                     })
@@ -222,7 +246,12 @@ impl ConnectionStore {
             };
 
             this.update(cx, |this, cx| {
-                this.connect_with_password(&connection_name, password, cx);
+                this.connect_with_password_for_generation(
+                    &connection_name,
+                    generation,
+                    password,
+                    cx,
+                );
             })
             .ok();
         })
@@ -241,8 +270,41 @@ impl ConnectionStore {
         let Some(index) = self.connection_index(connection_name) else {
             return;
         };
+        // A connect is already in flight for this connection; do not start a
+        // second racing chain (last-writer-wins would flap the state).
+        if self.connections[index].status == ConnectionStatus::Connecting {
+            return;
+        }
+        // Bump the generation so any earlier in-flight attempt for this
+        // connection is superseded and its continuation becomes a no-op.
+        self.connections[index].generation = self.connections[index].generation.wrapping_add(1);
+        let generation = self.connections[index].generation;
+        self.connect_with_password_for_generation(connection_name, generation, password, cx);
+    }
 
-        let client = (self.client_factory)(&self.connections[index].config, &password);
+    /// Connect core shared by the keychain path and [`Self::connect_with_password`].
+    /// The caller is responsible for having already bumped the connection's
+    /// generation (and, for the keychain path, set the `Connecting` status);
+    /// `generation` is the value captured at that point and gates the write-back.
+    fn connect_with_password_for_generation(
+        &mut self,
+        connection_name: &str,
+        generation: u64,
+        password: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(index) = self.connection_index(connection_name) else {
+            return;
+        };
+        // A newer attempt superseded this one between spawn and here.
+        if self.connections[index].generation != generation {
+            return;
+        }
+
+        // Read the timeout fresh at connect time so a settings change is picked
+        // up without an app restart.
+        let timeout = Duration::from_secs(DatabaseSettings::get_global(cx).query_timeout_seconds);
+        let client = (self.client_factory)(&self.connections[index].config, &password, timeout);
         self.connections[index].client = Some(client.clone());
         self.connections[index].status = ConnectionStatus::Connecting;
         cx.notify();
@@ -258,6 +320,11 @@ impl ConnectionStore {
             this.update(cx, |this, cx| match result {
                 Ok(database_names) => {
                     if let Some(connection) = this.connection_mut(&connection_name) {
+                        // A newer attempt (or a config edit / refresh) has
+                        // superseded this one; discard the stale result.
+                        if connection.generation != generation {
+                            return;
+                        }
                         connection.status = ConnectionStatus::Connected;
                         connection.databases = Some(
                             database_names
@@ -274,7 +341,12 @@ impl ConnectionStore {
                     cx.notify();
                 }
                 Err(error) => {
-                    this.set_error(&connection_name, error.to_string(), cx);
+                    this.set_error_for_generation(
+                        &connection_name,
+                        generation,
+                        format!("{error:#}"),
+                        cx,
+                    );
                 }
             })
             .ok();
@@ -324,7 +396,7 @@ impl ConnectionStore {
                             );
                         }
                         Err(error) => {
-                            database_node.error = Some(error.to_string());
+                            database_node.error = Some(format!("{error:#}"));
                         }
                     }
                 }
@@ -375,7 +447,7 @@ impl ConnectionStore {
                             schema_node.tables = Some(tables);
                         }
                         Err(error) => {
-                            schema_node.error = Some(error.to_string());
+                            schema_node.error = Some(format!("{error:#}"));
                         }
                     }
                 }
@@ -387,11 +459,18 @@ impl ConnectionStore {
     }
 
     /// Discards the connection's cached tree and reconnects from scratch.
+    ///
+    /// Bumping the generation invalidates any connect attempt already in flight
+    /// so it becomes a no-op instead of racing the fresh one: without this, a
+    /// refresh issued mid-connect would leave two chains writing status/databases
+    /// last-writer-wins (a stale error could then flip a live connection to
+    /// `Error`). The subsequent `connect` starts the single authoritative chain.
     pub fn refresh(&mut self, connection_name: &str, cx: &mut Context<Self>) {
         if let Some(connection) = self.connection_mut(connection_name) {
             connection.client = None;
             connection.databases = None;
             connection.status = ConnectionStatus::Disconnected;
+            connection.generation = connection.generation.wrapping_add(1);
         } else {
             return;
         }
@@ -409,6 +488,26 @@ impl ConnectionStore {
             message,
         });
         cx.notify();
+    }
+
+    /// Sets the error status only if the connection's generation still matches
+    /// `generation`, so a stale connect attempt cannot flip a connection that a
+    /// newer attempt has already reconfigured or connected.
+    fn set_error_for_generation(
+        &mut self,
+        connection_name: &str,
+        generation: u64,
+        message: String,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(connection) = self.connection_mut(connection_name) {
+            if connection.generation != generation {
+                return;
+            }
+        } else {
+            return;
+        }
+        self.set_error(connection_name, message, cx);
     }
 
     fn connection_mut(&mut self, connection_name: &str) -> Option<&mut ConnectionState> {
@@ -441,18 +540,20 @@ impl ConnectionStore {
 
 impl EventEmitter<ConnectionStoreEvent> for ConnectionStore {}
 
-/// The default production client factory: builds a `PostgresClient` configured
-/// with the current query timeout from [`DatabaseSettings`].
-pub fn default_client_factory(cx: &App) -> ClientFactory {
-    let timeout = Duration::from_secs(DatabaseSettings::get_global(cx).query_timeout_seconds);
-    Arc::new(move |config: &ConnectionConfig, password: &str| {
-        Arc::new(database_client::postgres::PostgresClient::new(
-            config.clone(),
-            password.to_string(),
-            timeout,
-            database_client::SessionMode::ReadWrite,
-        )) as Arc<dyn DatabaseClient>
-    })
+/// The default production client factory: builds a `PostgresClient` with the
+/// statement timeout supplied by the caller at connect time (read fresh from
+/// [`DatabaseSettings`]), so timeout changes apply without an app restart.
+pub fn default_client_factory() -> ClientFactory {
+    Arc::new(
+        move |config: &ConnectionConfig, password: &str, timeout: Duration| {
+            Arc::new(database_client::postgres::PostgresClient::new(
+                config.clone(),
+                password.to_string(),
+                timeout,
+                database_client::SessionMode::ReadWrite,
+            )) as Arc<dyn DatabaseClient>
+        },
+    )
 }
 
 #[cfg(test)]
@@ -518,7 +619,8 @@ mod tests {
         set_one_connection(cx);
 
         let fake = Arc::new(FakeDatabaseClient::new());
-        let factory: ClientFactory = Arc::new(move |_, _| fake.clone() as Arc<dyn DatabaseClient>);
+        let factory: ClientFactory =
+            Arc::new(move |_, _, _| fake.clone() as Arc<dyn DatabaseClient>);
         let store = cx.new(|cx| ConnectionStore::new(factory, cx));
         store.update(cx, |store, cx| {
             store.connect_with_password("local", "pw".into(), cx)
@@ -553,7 +655,8 @@ mod tests {
         set_one_connection(cx);
 
         let fake = Arc::new(FakeDatabaseClient::with_error("connection refused"));
-        let factory: ClientFactory = Arc::new(move |_, _| fake.clone() as Arc<dyn DatabaseClient>);
+        let factory: ClientFactory =
+            Arc::new(move |_, _, _| fake.clone() as Arc<dyn DatabaseClient>);
         let store = cx.new(|cx| ConnectionStore::new(factory, cx));
         store.update(cx, |store, cx| {
             store.connect_with_password("local", "pw".into(), cx)
@@ -583,7 +686,8 @@ mod tests {
         set_one_connection(cx);
 
         let fake = Arc::new(FakeDatabaseClient::new());
-        let factory: ClientFactory = Arc::new(move |_, _| fake.clone() as Arc<dyn DatabaseClient>);
+        let factory: ClientFactory =
+            Arc::new(move |_, _, _| fake.clone() as Arc<dyn DatabaseClient>);
         let store = cx.new(|cx| ConnectionStore::new(factory, cx));
         store.update(cx, |store, cx| {
             store.connect_with_password("local", "pw".into(), cx)
@@ -654,7 +758,8 @@ mod tests {
         set_one_connection(cx);
 
         let fake = Arc::new(FakeDatabaseClient::new());
-        let factory: ClientFactory = Arc::new(move |_, _| fake.clone() as Arc<dyn DatabaseClient>);
+        let factory: ClientFactory =
+            Arc::new(move |_, _, _| fake.clone() as Arc<dyn DatabaseClient>);
         let store = cx.new(|cx| ConnectionStore::new(factory, cx));
         store.read_with(cx, |store, _| {
             assert_eq!(store.connections().len(), 1);
@@ -689,5 +794,100 @@ mod tests {
             assert_eq!(store.connections().len(), 2);
             assert_eq!(store.connections()[1].config.name, "prod");
         });
+    }
+
+    #[gpui::test]
+    async fn stale_connect_continuation_does_not_clobber_reconfigured_state(
+        cx: &mut TestAppContext,
+    ) {
+        // Regression: a superseded connect's continuation wrote back by name with
+        // no generation check, so an in-flight attempt for the old config could
+        // mark a just-reconfigured connection Connected with a stale database
+        // list. Editing the config mid-connect must invalidate that attempt.
+        init_test(cx);
+        cx.executor().allow_parking();
+        set_one_connection(cx);
+
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let factory: ClientFactory =
+            Arc::new(move |_, _, _| fake.clone() as Arc<dyn DatabaseClient>);
+        let store = cx.new(|cx| ConnectionStore::new(factory, cx));
+
+        // Start a connect, then immediately edit the connection's host via
+        // settings (bumps the generation and resets to Disconnected) before the
+        // in-flight task's continuation runs.
+        store.update(cx, |store, cx| {
+            store.connect_with_password("local", "pw".into(), cx)
+        });
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|settings_store, cx| {
+                settings_store.update_user_settings(cx, |settings| {
+                    settings.database.get_or_insert_default().connections =
+                        Some(vec![settings::DatabaseConnectionContent {
+                            name: "local".into(),
+                            host: "10.0.0.9".into(),
+                            port: 5432,
+                            database: "postgres".into(),
+                            user: "postgres".into(),
+                        }]);
+                });
+            });
+        });
+
+        // Let the stale in-flight attempt resolve.
+        cx.run_until_parked();
+
+        store.read_with(cx, |store, _| {
+            let connection = &store.connections()[0];
+            assert_eq!(
+                connection.config.host, "10.0.0.9",
+                "the reconfigured host must be retained"
+            );
+            assert_ne!(
+                connection.status,
+                ConnectionStatus::Connected,
+                "the stale attempt must not mark the reconfigured connection Connected"
+            );
+            assert!(
+                connection.databases.is_none(),
+                "the stale database list must not be applied"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn concurrent_connect_is_guarded(cx: &mut TestAppContext) {
+        // A second connect issued while one is in flight must be a no-op (no
+        // second racing chain), guarded on the Connecting status.
+        init_test(cx);
+        cx.executor().allow_parking();
+        set_one_connection(cx);
+
+        let fake = Arc::new(FakeDatabaseClient::new());
+        let factory: ClientFactory =
+            Arc::new(move |_, _, _| fake.clone() as Arc<dyn DatabaseClient>);
+        let store = cx.new(|cx| ConnectionStore::new(factory, cx));
+
+        let generation_after_two_connects = store.update(cx, |store, cx| {
+            store.connect_with_password("local", "pw".into(), cx);
+            let first_generation = store.connections()[0].generation;
+            // Second connect while status is Connecting must bail without
+            // bumping the generation again.
+            store.connect_with_password("local", "pw".into(), cx);
+            assert_eq!(
+                store.connections()[0].generation,
+                first_generation,
+                "a guarded second connect must not bump the generation"
+            );
+            first_generation
+        });
+        assert!(generation_after_two_connects >= 1);
+
+        wait_until(cx, |cx| {
+            store.read_with(cx, |store, _| {
+                store.connections()[0].status == ConnectionStatus::Connected
+            })
+        })
+        .await;
     }
 }

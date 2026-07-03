@@ -54,7 +54,9 @@ pub struct SqlQueryView {
     database: String,
     editor: Entity<Editor>,
     run_state: RunState,
-    result: Option<QueryResult>,
+    /// Wrapped in `Arc` so the render hot path (scroll re-renders) hands the
+    /// rows to `uniform_list` by cheap clone instead of deep-copying every cell.
+    result: Option<Arc<QueryResult>>,
     /// The wall-clock duration of the last completed run, shown in the status line.
     elapsed: Option<Duration>,
     /// A short status message shown when there is no result to summarize
@@ -96,12 +98,15 @@ impl SqlQueryView {
                 if sql.is_none() {
                     log::debug!("SQL language unavailable; query editor stays plain text");
                 }
+                // Closing the tab before the language resolves releases the
+                // entity; that is the expected race, so ignore it rather than
+                // logging a spurious error on every quick close.
                 this.update(cx, |this: &mut Self, cx| {
                     if let Some(buffer) = this.editor.read(cx).buffer().read(cx).as_singleton() {
                         buffer.update(cx, |buffer, cx| buffer.set_language(sql, cx));
                     }
                 })
-                .log_err();
+                .ok();
             })
             .detach();
 
@@ -124,7 +129,7 @@ impl SqlQueryView {
     }
 
     pub fn result(&self) -> Option<&QueryResult> {
-        self.result.as_ref()
+        self.result.as_deref()
     }
 
     pub fn error(&self) -> Option<&str> {
@@ -171,12 +176,12 @@ impl SqlQueryView {
                 match outcome {
                     Ok((result, elapsed)) => {
                         this.set_column_widths(result.columns.len(), cx);
-                        this.result = Some(result);
+                        this.result = Some(Arc::new(result));
                         this.elapsed = Some(elapsed);
                         this.run_state = RunState::Idle;
                     }
                     Err(error) => {
-                        this.run_state = RunState::Error(error.to_string());
+                        this.run_state = RunState::Error(format!("{error:#}"));
                     }
                 }
                 cx.notify();
@@ -315,6 +320,7 @@ impl SqlQueryView {
         if result.columns.is_empty() {
             let summary = result
                 .command_tag
+                .clone()
                 .unwrap_or_else(|| "Query completed".to_string());
             return v_flex()
                 .size_full()
@@ -335,7 +341,7 @@ impl SqlQueryView {
             .collect();
 
         let column_count = result.columns.len();
-        let rows = Arc::new(result.rows);
+        let row_count = result.rows.len();
 
         Table::new(column_count)
             .interactable(&self.interaction)
@@ -344,11 +350,11 @@ impl SqlQueryView {
             .header(headers)
             .uniform_list(
                 "db-query-rows",
-                rows.len(),
+                row_count,
                 cx.processor(move |_this, range: Range<usize>, _window, _cx| {
                     range
                         .filter_map(|row_index| {
-                            let row = rows.get(row_index)?;
+                            let row = result.rows.get(row_index)?;
                             let cells: Vec<AnyElement> = (0..column_count)
                                 .map(|col| render_cell(row.get(col).and_then(|cell| cell.clone())))
                                 .collect();

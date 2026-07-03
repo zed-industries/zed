@@ -122,9 +122,16 @@ impl DatabasePanel {
         let fs = workspace.app_state().fs.clone();
         let workspace_handle = cx.entity().downgrade();
         cx.new(|cx| {
-            let client_factory: ClientFactory = default_client_factory(cx);
+            let client_factory: ClientFactory = default_client_factory();
             let store = cx.new(|cx| ConnectionStore::new(client_factory, cx));
-            let mut subscriptions = vec![cx.observe(&store, |_, _, cx| cx.notify())];
+            let mut subscriptions = vec![cx.observe(&store, |this: &mut Self, _, cx| {
+                // Connections may have been removed or renamed via settings;
+                // drop expanded-tree ids that no longer belong to any connection
+                // so re-adding a same-named connection does not come back
+                // pre-expanded (and the set does not leak dead ids).
+                this.prune_expanded(cx);
+                cx.notify();
+            })];
             subscriptions.push(cx.subscribe(&store, Self::on_store_event));
             DatabasePanel {
                 workspace: workspace_handle,
@@ -161,6 +168,27 @@ impl DatabasePanel {
 
     fn is_expanded(&self, node: &TreeNodeId) -> bool {
         self.expanded.contains(node)
+    }
+
+    /// Drops any expanded-tree ids whose connection no longer exists in the
+    /// store, so removing (or renaming) a connection does not leave dead ids in
+    /// the set forever or auto-expand a same-named connection re-added later.
+    fn prune_expanded(&mut self, cx: &App) {
+        let live: HashSet<&str> = self
+            .store
+            .read(cx)
+            .connections()
+            .iter()
+            .map(|connection| connection.config.name.as_str())
+            .collect();
+        self.expanded.retain(|node| {
+            let connection = match node {
+                TreeNodeId::Connection(connection) => connection,
+                TreeNodeId::Database(connection, _) => connection,
+                TreeNodeId::Schema(connection, _, _) => connection,
+            };
+            live.contains(connection.as_str())
+        });
     }
 
     /// Walks the store's tree, emitting only the rows that are currently
@@ -329,7 +357,14 @@ impl DatabasePanel {
             schema: schema.to_string(),
             name: info.name.clone(),
         };
-        crate::open_table_tab(&self.workspace, client, table, window, cx);
+        crate::open_table_tab(
+            &self.workspace,
+            client,
+            connection.to_string(),
+            table,
+            window,
+            cx,
+        );
     }
 
     fn deploy_connection_context_menu(
@@ -429,7 +464,7 @@ impl DatabasePanel {
             .iter()
             .map(|connection| connection.config.name.clone())
             .collect();
-        let client_factory = default_client_factory(cx);
+        let client_factory = default_client_factory();
         let fs = self.fs.clone();
         self.workspace
             .update(cx, |workspace, cx| {
@@ -846,7 +881,10 @@ impl Panel for DatabasePanel {
     }
 
     fn position_is_valid(&self, position: DockPosition) -> bool {
-        matches!(position, DockPosition::Left | DockPosition::Right)
+        // `position()` is hard-coded to Left and `set_position` does not persist
+        // a move, so only advertise Left as valid; advertising Right would offer
+        // a "Dock Right" menu entry that silently does nothing.
+        matches!(position, DockPosition::Left)
     }
 
     fn set_position(&mut self, _: DockPosition, _: &mut Window, _: &mut Context<Self>) {}
@@ -868,6 +906,10 @@ impl Panel for DatabasePanel {
     }
 
     fn activation_priority(&self) -> u32 {
-        6
+        // Must be unique across panels that can share a dock (Dock::add_panel
+        // panics in debug builds on a collision). 0-3, 5-7 are taken by other
+        // panels; OutlinePanel already uses 6, and its dock is user-configurable
+        // so it can land in the same dock as this (hard-coded Left) panel.
+        4
     }
 }

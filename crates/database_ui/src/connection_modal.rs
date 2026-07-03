@@ -6,7 +6,7 @@ use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, ParentElement,
     Render, Styled, Window, rems,
 };
-use settings::update_settings_file;
+use settings::{Settings as _, update_settings_file};
 use ui::{Headline, HeadlineSize, prelude::*};
 use ui_input::InputField;
 use util::ResultExt as _;
@@ -83,14 +83,16 @@ fn validate(
     let port = if port_text.is_empty() {
         DEFAULT_PORT
     } else {
+        // Port 0 parses as a valid u16 but is not a connectable TCP port, so
+        // reject it explicitly to honor the "between 1 and 65535" contract.
         match port_text.parse::<u16>() {
-            Ok(port) => port,
-            Err(_) => {
+            Ok(0) | Err(_) => {
                 return Err(FieldError {
                     field: FormField::Port,
                     message: "Port must be a number between 1 and 65535".into(),
                 });
             }
+            Ok(port) => port,
         }
     };
 
@@ -148,6 +150,9 @@ pub struct ConnectionModal {
     client_factory: ClientFactory,
     fs: Arc<dyn Fs>,
     test_status: TestStatus,
+    /// Set when persisting the password to the keychain fails on Save. The modal
+    /// stays open and shows this so the user knows the credential was not stored.
+    save_error: Option<String>,
 }
 
 impl ConnectionModal {
@@ -226,6 +231,7 @@ impl ConnectionModal {
             client_factory,
             fs,
             test_status: TestStatus::Idle,
+            save_error: None,
         }
     }
 
@@ -315,9 +321,12 @@ impl ConnectionModal {
         };
 
         let password = self.password_field.read(cx).text(cx);
-        // The factory builds the client with the configured statement timeout
-        // (see `default_client_factory`), so the probe is bounded there.
-        let client = (self.client_factory)(&config, &password);
+        // Read the statement timeout fresh from settings so the probe is bounded
+        // by the current value (see `default_client_factory`).
+        let timeout = std::time::Duration::from_secs(
+            crate::DatabaseSettings::get_global(cx).query_timeout_seconds,
+        );
+        let client = (self.client_factory)(&config, &password, timeout);
 
         self.test_status = TestStatus::Testing;
         cx.notify();
@@ -329,7 +338,7 @@ impl ConnectionModal {
             this.update(cx, |this, cx| {
                 this.test_status = match result {
                     Ok(()) => TestStatus::Ok,
-                    Err(error) => TestStatus::Failed(error.to_string()),
+                    Err(error) => TestStatus::Failed(format!("{error:#}")),
                 };
                 cx.notify();
             })
@@ -340,6 +349,7 @@ impl ConnectionModal {
 
     fn save(&mut self, cx: &mut Context<Self>) {
         self.clear_field_errors(cx);
+        self.save_error = None;
         let values = self.form_values(cx);
         let config = match validate(&values, &self.names_to_check()) {
             Ok(config) => config,
@@ -383,20 +393,32 @@ impl ConnectionModal {
         //   trust-auth server (which needs no password) still connects rather
         //   than failing on `Ok(None)` from the keychain.
         let is_edit = self.existing.is_some();
-        if !(is_edit && password.is_empty()) {
-            let url = credentials_url(&config.name);
-            let user = config.user;
-            let provider = zed_credentials_provider::global(cx);
-            cx.spawn(async move |_, cx| {
-                provider
-                    .write_credentials(&url, &user, password.as_bytes(), cx)
-                    .await
-                    .log_err();
-            })
-            .detach();
+        if is_edit && password.is_empty() {
+            // Nothing to persist; the settings edit above is enough.
+            cx.emit(DismissEvent);
+            return;
         }
 
-        cx.emit(DismissEvent);
+        let url = credentials_url(&config.name);
+        let user = config.user;
+        let provider = zed_credentials_provider::global(cx);
+        // Dismiss only once the credential is actually stored. A failed write
+        // keeps the modal open and shows the error, rather than reporting a
+        // save that silently dropped the password.
+        cx.spawn(async move |this, cx| {
+            let write = provider
+                .write_credentials(&url, &user, password.as_bytes(), cx)
+                .await;
+            this.update(cx, |this, cx| match write {
+                Ok(()) => cx.emit(DismissEvent),
+                Err(error) => {
+                    this.save_error = Some(format!("Failed to save password: {error:#}"));
+                    cx.notify();
+                }
+            })
+            .log_err();
+        })
+        .detach();
     }
 }
 
@@ -421,23 +443,33 @@ impl Render for ConnectionModal {
         };
         let testing = matches!(self.test_status, TestStatus::Testing);
 
-        let status_label = match &self.test_status {
-            TestStatus::Idle => None,
-            TestStatus::Testing => Some(
-                Label::new("Testing…")
-                    .color(Color::Muted)
-                    .into_any_element(),
-            ),
-            TestStatus::Ok => Some(
-                Label::new("Connection OK")
-                    .color(Color::Success)
-                    .into_any_element(),
-            ),
-            TestStatus::Failed(message) => Some(
-                Label::new(message.clone())
+        // A save error takes precedence over the test-connection status so the
+        // user sees why the modal did not close.
+        let status_label = if let Some(save_error) = &self.save_error {
+            Some(
+                Label::new(save_error.clone())
                     .color(Color::Error)
                     .into_any_element(),
-            ),
+            )
+        } else {
+            match &self.test_status {
+                TestStatus::Idle => None,
+                TestStatus::Testing => Some(
+                    Label::new("Testing…")
+                        .color(Color::Muted)
+                        .into_any_element(),
+                ),
+                TestStatus::Ok => Some(
+                    Label::new("Connection OK")
+                        .color(Color::Success)
+                        .into_any_element(),
+                ),
+                TestStatus::Failed(message) => Some(
+                    Label::new(message.clone())
+                        .color(Color::Error)
+                        .into_any_element(),
+                ),
+            }
         };
 
         v_flex()
@@ -570,6 +602,15 @@ mod tests {
     fn out_of_range_port_is_rejected() {
         let error = validate(&values("local", "host", "70000", "db", "user"), &[])
             .expect_err("out-of-range port should be rejected");
+        assert_eq!(error.field, FormField::Port);
+    }
+
+    #[test]
+    fn zero_port_is_rejected() {
+        // Port 0 parses as a valid u16 but is not connectable; the validation
+        // message promises 1..=65535, so it must be rejected.
+        let error = validate(&values("local", "host", "0", "db", "user"), &[])
+            .expect_err("port 0 should be rejected");
         assert_eq!(error.field, FormField::Port);
     }
 

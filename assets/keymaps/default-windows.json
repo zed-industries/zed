@@ -1101,6 +1101,14 @@
     },
   },
   {
+    "context": "SqlQueryEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-enter": "database::RunQuery",
+      "enter": "editor::Newline",
+    },
+  },
+  {
     "context": "DebugPanel",
     "use_key_equivalents": true,
     "bindings": {
