@@ -5308,13 +5308,12 @@ impl GitPanel {
                     .child(
                         h_flex()
                             .id("commit-footer")
+                            .w_full()
+                            .p_1p5()
                             .border_t_1()
                             .when(editor_is_long, |el| {
                                 el.border_color(cx.theme().colors().border_variant)
                             })
-                            .w_full()
-                            .px_2()
-                            .py_1p5()
                             .justify_between()
                             .child(
                                 self.render_generate_commit_message_button(cx)
