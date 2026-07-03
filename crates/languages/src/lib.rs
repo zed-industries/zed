@@ -55,7 +55,9 @@ pub static LANGUAGE_GIT_COMMIT: std::sync::LazyLock<Arc<Language>> =
 
 pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime, cx: &mut App) {
     #[cfg(feature = "load-grammars")]
-    languages.register_native_grammars(grammars::native_grammars());
+    let native_grammars = grammars::native_grammars();
+    #[cfg(feature = "load-grammars")]
+    languages.register_native_grammars(native_grammars.clone());
 
     let bash_lsp_adapter = Arc::new(bash::BashLspAdapter::new(node.clone()));
     let c_lsp_adapter = Arc::new(c::CLspAdapter);
@@ -168,6 +170,12 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
             manifest_name: Some(SharedString::new_static("pyproject.toml").into()),
             semantic_token_rules: Some(python::semantic_token_rules()),
         },
+        #[cfg(not(feature = "load-grammars"))]
+        LanguageInfo {
+            name: "r",
+            adapters: vec![],
+            ..Default::default()
+        },
         LanguageInfo {
             name: "rust",
             adapters: vec![rust_lsp_adapter],
@@ -230,6 +238,16 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
             registration.semantic_token_rules,
             cx,
         );
+    }
+
+    #[cfg(feature = "load-grammars")]
+    {
+        if let Some((_, grammar)) = native_grammars
+            .into_iter()
+            .find(|(grammar_name, _)| *grammar_name == "r")
+        {
+            register_preloaded_language(&languages, "r", grammar);
+        }
     }
 
     // Register globally available language servers.
@@ -323,6 +341,19 @@ pub fn init(languages: Arc<LanguageRegistry>, fs: Arc<dyn Fs>, node: NodeRuntime
     ];
     for provider in manifest_providers {
         project::ManifestProvidersStore::global(cx).register(provider);
+    }
+}
+
+#[cfg(feature = "load-grammars")]
+fn register_preloaded_language(
+    languages: &LanguageRegistry,
+    name: &'static str,
+    grammar: tree_sitter::Language,
+) {
+    match Language::new(load_config(name), Some(grammar)).with_queries(grammars::load_queries(name))
+    {
+        Ok(language) => languages.add(Arc::new(language)),
+        Err(error) => log::error!("failed to preload language {name}: {error:?}"),
     }
 }
 
