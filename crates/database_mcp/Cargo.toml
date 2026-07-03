@@ -20,6 +20,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-std", "io-util", "process"] }
+uuid = { workspace = true }
 
 [dev-dependencies]
 database_client = { workspace = true, features = ["test-support"] }

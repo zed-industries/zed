@@ -4994,6 +4994,7 @@ dependencies = [
  "serde_json_lenient",
  "tempfile",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

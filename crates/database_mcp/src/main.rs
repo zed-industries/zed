@@ -7,6 +7,7 @@
 //! diagnostics go to stderr.
 
 mod protocol;
+mod token_store;
 mod tools;
 mod write_sql;
 
