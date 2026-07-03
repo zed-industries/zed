@@ -1181,7 +1181,7 @@ enum CompletionError {
     Other(#[from] anyhow::Error),
 }
 
-pub(crate) enum ThreadModel {
+pub enum ThreadModel {
     Ready(Arc<dyn LanguageModel>),
     Unresolved(SelectedModel),
     Unset,
@@ -1944,6 +1944,10 @@ impl Thread {
 
     pub fn model(&self) -> Option<&Arc<dyn LanguageModel>> {
         self.model.as_model()
+    }
+
+    pub fn thread_model(&self) -> &ThreadModel {
+        &&self.model
     }
 
     pub(crate) fn ensure_model(

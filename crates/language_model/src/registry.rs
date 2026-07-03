@@ -44,6 +44,8 @@ impl std::fmt::Debug for ConfigurationError {
 
 #[derive(Default)]
 pub struct LanguageModelRegistry {
+    /// True if the user has *NO* default model configured in settings
+    should_use_fallback: bool,
     default_model: Option<ConfiguredModel>,
     /// This model is automatically configured by a user's environment after
     /// authenticating all providers. It's only used when `default_model` is not set.
@@ -149,6 +151,10 @@ impl LanguageModelRegistry {
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake_model(&self) -> Arc<dyn LanguageModel> {
         self.default_model.as_ref().unwrap().model.clone()
+    }
+
+    pub fn set_should_use_fallback(&mut self, value: bool) {
+        self.should_use_fallback = value;
     }
 
     pub fn register_provider<T: LanguageModelProvider + LanguageModelProviderState>(
@@ -417,9 +423,13 @@ impl LanguageModelRegistry {
             return None;
         }
 
-        self.default_model
-            .clone()
-            .or_else(|| self.available_fallback_model.clone())
+        self.default_model.clone().or_else(|| {
+            if self.should_use_fallback {
+                self.available_fallback_model.clone()
+            } else {
+                None
+            }
+        })
     }
 
     pub fn default_fast_model(&self, cx: &App) -> Option<ConfiguredModel> {

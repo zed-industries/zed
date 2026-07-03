@@ -47,8 +47,8 @@ use editor::{Editor, SelectionEffects, scroll::Autoscroll};
 use feature_flags::FeatureFlagAppExt as _;
 use fs::Fs;
 use gpui::{
-    Action, App, Context, Entity, ImageSource, Resource, SharedString, SharedUri, TaskExt, Window,
-    actions,
+    Action, App, Context, Entity, ImageSource, ReadGlobal as _, Resource, SharedString, SharedUri,
+    TaskExt, Window, actions,
 };
 use language::{
     LanguageRegistry,
@@ -880,6 +880,12 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         }
     }
 
+    let should_use_fallback = SettingsStore::global(cx)
+        .raw_user_settings()
+        .and_then(|user| user.content.agent.as_ref())
+        .and_then(|agent| agent.default_model.as_ref())
+        .is_none();
+
     let default = settings.default_model.as_ref().map(to_selected_model);
     let inline_assistant = settings
         .inline_assistant_model
@@ -905,6 +911,7 @@ fn update_active_language_model_from_settings(cx: &mut App) {
         registry.select_commit_message_model(commit_message.as_ref(), cx);
         registry.select_thread_summary_model(thread_summary.as_ref(), cx);
         registry.select_inline_alternative_models(inline_alternatives, cx);
+        registry.set_should_use_fallback(should_use_fallback);
     });
 }
 

@@ -169,6 +169,8 @@ pub fn update_environment_fallback_model(cx: &mut App) {
                 .iter()
                 .filter(|provider| provider.is_authenticated(cx))
                 .find_map(|provider| {
+                    dbg!(provider.id());
+                    dbg!(provider.recommended_models(cx).len());
                     let model = provider
                         .default_model(cx)
                         .or_else(|| provider.recommended_models(cx).first().cloned())?;
@@ -179,6 +181,8 @@ pub fn update_environment_fallback_model(cx: &mut App) {
                 })
         }
     };
+
+    dbg!(&fallback_model.as_ref().map(|s| (s.model.id(), s.provider.id())));
     registry.update(cx, |registry, cx| {
         registry.set_environment_fallback_model(fallback_model, cx);
     });

@@ -10671,13 +10671,17 @@ impl ThreadView {
                 false,
                 cx,
             ),
-            ThreadError::NoModelSelected => self.render_error_callout(
-                "No Model Selected",
-                "Select a model from the model picker below to get started.".into(),
-                false,
-                false,
-                cx,
-            ),
+            ThreadError::NoModelSelected => self
+                .render_model_not_available_error(cx)
+                .unwrap_or_else(|| {
+                    self.render_error_callout(
+                        "No Model Selected",
+                        "Select a model from the model picker below to get started.".into(),
+                        false,
+                        false,
+                        cx,
+                    )
+                }),
             ThreadError::ApiError { provider } => self.render_error_callout(
                 "API Error",
                 format!(
@@ -10776,6 +10780,74 @@ impl ThreadView {
                 )
             })
             .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_model_not_available_error(&self, cx: &mut Context<Self>) -> Option<Callout> {
+        let thread = self.as_native_thread(cx)?;
+
+        let (title, description): (SharedString, SharedString) =
+            match thread.read(cx).thread_model() {
+                agent::ThreadModel::Ready(_) => { dbg!("MODEL Ready"); return None },
+                agent::ThreadModel::Unresolved(selected_model) => {
+                    if let Some(provider) = LanguageModelRegistry::global(cx)
+                        .read(cx)
+                        .provider(&&selected_model.provider)
+                    {
+                        if !provider.is_authenticated(cx) {
+                            (
+                                format!("Failed to authenticate with {} provider", provider.name())
+                                    .into(),
+                                "Open the settings to configure the selected provider".into(),
+                            )
+                        } else {
+                            (
+                                format!("Model {} was not found", selected_model.model.0).into(),
+                                "You may need to reconfigure authentication for this provider"
+                                    .into(),
+                            )
+                        }
+                    } else {
+                        (
+                            format!("Provider {} was not found", selected_model.provider).into(),
+                            "Open the settings to configure providers".into(),
+                        )
+                    }
+                }
+                agent::ThreadModel::Unset => (
+                    "No model selected".into(),
+                    "Select a model from the model picker below to get started.".into(),
+                ),
+            };
+
+        let callout = Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title(title)
+            .description(description)
+            .actions_slot(
+                h_flex()
+                    .gap_0p5()
+                    .child(self.open_llm_providers_settings_button(cx)),
+            )
+            .dismiss_action(self.dismiss_error_button(cx));
+
+        Some(callout)
+    }
+
+    fn open_llm_providers_settings_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("configure-llm-provider", "Configure")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Filled)
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.clear_thread_error(cx);
+                window.dispatch_action(
+                    Box::new(zed_actions::OpenSettingsAt {
+                        path: "llm_providers".to_string(),
+                        target: None,
+                    }),
+                    cx,
+                );
+            }))
     }
 
     fn render_prompt_too_large_error(&self, cx: &mut Context<Self>) -> Callout {
