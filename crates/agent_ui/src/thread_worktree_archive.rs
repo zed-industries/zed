@@ -1448,6 +1448,20 @@ mod tests {
                 .await,
             "linked worktree directory should be removed from FakeFs"
         );
+
+        // The worktree was moved into `.trash` and deleted in the background;
+        // once the trash is empty the `.trash` directory itself is removed.
+        assert!(
+            !fs.is_dir(Path::new("/worktrees/project/.trash")).await,
+            "trash directory should be cleaned up after the background delete"
+        );
+
+        // Empty ancestors between the worktree and the managed base directory
+        // are pruned as before.
+        assert!(
+            !fs.is_dir(Path::new("/worktrees/project/feature")).await,
+            "empty parent directory should be pruned"
+        );
     }
 
     #[gpui::test]
@@ -1536,6 +1550,134 @@ mod tests {
         let task = cx.update(|cx| cx.spawn(async move |cx| remove_root(root, cx).await));
         task.await
             .expect("remove_root should succeed even when directory is already gone");
+    }
+
+    #[gpui::test]
+    async fn test_remove_root_restores_worktree_when_git_cleanup_fails(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".git": {},
+                "src": { "main.rs": "fn main() {}" }
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+        fs.insert_branches(Path::new("/project/.git"), &["main", "feature"]);
+
+        fs.add_linked_worktree_for_repo(
+            Path::new("/project/.git"),
+            true,
+            GitWorktree {
+                path: PathBuf::from("/worktrees/project/feature/project"),
+                ref_name: Some("refs/heads/feature".into()),
+                sha: "abc123".into(),
+                is_main: false,
+                is_bare: false,
+            },
+        )
+        .await;
+
+        let project = Project::test(
+            fs.clone(),
+            [
+                Path::new("/project"),
+                Path::new("/worktrees/project/feature/project"),
+            ],
+            cx,
+        )
+        .await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let multi_workspace =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace
+            .read_with(cx, |mw, _cx| mw.workspace().clone())
+            .unwrap();
+
+        cx.run_until_parked();
+
+        let root = workspace
+            .read_with(cx, |_workspace, cx| {
+                build_root_plan(
+                    Path::new("/worktrees/project/feature/project"),
+                    None,
+                    std::slice::from_ref(&workspace),
+                    cx,
+                )
+            })
+            .expect("should produce a root plan for the linked worktree");
+
+        // Delete the worktree's admin metadata so that `git worktree remove`
+        // fails *after* the worktree directory has been moved to the trash.
+        fs.remove_dir(
+            Path::new("/project/.git/worktrees/feature"),
+            fs::RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        let task = cx.update(|cx| cx.spawn(async move |cx| remove_root(root, cx).await));
+        let result = task.await;
+        assert!(
+            result.is_err(),
+            "remove_root should return an error when git metadata cleanup fails"
+        );
+
+        cx.run_until_parked();
+
+        // The worktree directory must have been renamed back to its original
+        // location, intact.
+        let worktree_path = Path::new("/worktrees/project/feature/project");
+        assert!(
+            fs.is_dir(worktree_path).await,
+            "worktree directory should be restored after the failed git cleanup"
+        );
+        assert!(
+            fs.is_file(&worktree_path.join(".git")).await,
+            "restored worktree should still contain its .git file"
+        );
+
+        // No trash entry should be left behind — only the `.gitignore` marker
+        // remains in the trash directory.
+        let trash_entries =
+            read_dir_paths(fs.as_ref(), Path::new("/worktrees/project/.trash")).await;
+        assert_eq!(
+            trash_entries,
+            vec![PathBuf::from("/worktrees/project/.trash/.gitignore")],
+            "trash should contain only the .gitignore marker after the rename-back"
+        );
+
+        // After rollback, the worktree should be re-added to the project.
+        let has_worktree = project.read_with(cx, |project, cx| {
+            project
+                .worktrees(cx)
+                .any(|wt| wt.read(cx).abs_path().as_ref() == worktree_path)
+        });
+        assert!(
+            has_worktree,
+            "rollback should have re-added the worktree to the project"
+        );
+    }
+
+    async fn read_dir_paths(fs: &dyn fs::Fs, path: &Path) -> Vec<PathBuf> {
+        use futures::StreamExt as _;
+
+        let mut paths = Vec::new();
+        let mut entries = fs.read_dir(path).await.expect("failed to read dir");
+        while let Some(entry) = entries.next().await {
+            paths.push(entry.expect("failed to read dir entry"));
+        }
+        paths.sort();
+        paths
     }
 
     #[gpui::test]

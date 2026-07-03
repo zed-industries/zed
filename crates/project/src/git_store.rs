@@ -19,7 +19,7 @@ use buffer_diff::{BufferDiff, BufferDiffEvent};
 use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
-use fs::{Fs, RemoveOptions};
+use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::{
     FutureExt, SinkExt, Stream, StreamExt,
     channel::{
@@ -78,7 +78,7 @@ use std::{
         Arc,
         atomic::{self, AtomicU64},
     },
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use sum_tree::{Edit, SumTree, TreeMap};
 use task::Shell;
@@ -107,6 +107,9 @@ pub struct GitStore {
         HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
     diffs: HashMap<BufferId, Entity<BufferGitState>>,
     shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
+    /// Managed worktree base directories whose `.trash` has already been
+    /// swept for leftover entries during this session.
+    swept_worktree_trash: HashSet<PathBuf>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -648,6 +651,7 @@ impl GitStore {
             loading_diffs: HashMap::default(),
             shared_diffs: HashMap::default(),
             diffs: HashMap::default(),
+            swept_worktree_trash: HashSet::default(),
         }
     }
 
@@ -1790,6 +1794,41 @@ impl GitStore {
         cx.emit(GitStoreEvent::JobsUpdated)
     }
 
+    /// Sweeps leftover entries out of the `.trash` directory inside the
+    /// repository's managed worktrees directory (see
+    /// [`Repository::remove_worktree`]) the first time a repository using
+    /// that directory is registered in this session.
+    fn schedule_worktree_trash_sweep(
+        &mut self,
+        repository: &Entity<Repository>,
+        fs: Arc<dyn Fs>,
+        cx: &mut Context<Self>,
+    ) {
+        // Skip on the fake filesystem. The sweep issues background filesystem
+        // operations during repository registration, and on `FakeFs` those
+        // consume the deterministic test scheduler's RNG, perturbing the
+        // completion ordering of unrelated async work in other tests. The
+        // sweep logic itself is covered directly via `sweep_worktree_trash`.
+        if fs.is_fake() {
+            return;
+        }
+        let snapshot = repository.read(cx).snapshot();
+        let repository_anchor_path = snapshot
+            .main_worktree_abs_path()
+            .unwrap_or(snapshot.common_dir_abs_path.as_ref());
+        let setting = &ProjectSettings::get_global(cx).git.worktree_directory;
+        let Ok(worktrees_base) =
+            worktrees_directory_for_repo(repository_anchor_path, setting, PathStyle::local())
+        else {
+            return;
+        };
+        if !self.swept_worktree_trash.insert(worktrees_base.clone()) {
+            return;
+        }
+        cx.background_spawn(sweep_worktree_trash(fs, worktrees_base))
+            .detach();
+    }
+
     fn repository_is_trusted(&self, repository_id: RepositoryId, cx: &mut Context<Self>) -> bool {
         let Some(worktree_ids) = self.worktree_ids.get(&repository_id) else {
             return false;
@@ -1913,6 +1952,7 @@ impl GitStore {
                     .push(cx.subscribe(&repo, Self::on_repository_event));
                 self._subscriptions
                     .push(cx.subscribe(&repo, Self::on_jobs_updated));
+                self.schedule_worktree_trash_sweep(&repo, fs.clone(), cx);
                 self.repositories.insert(id, repo);
                 self.worktree_ids.insert(id, HashSet::from([worktree_id]));
                 cx.emit(GitStoreEvent::RepositoryAdded);
@@ -7739,41 +7779,6 @@ impl Repository {
             move |repo, cx| async move {
                 match repo {
                     RepositoryState::Local(LocalRepositoryState { backend, fs, .. }) => {
-                        // When forcing, delete the worktree directory ourselves before
-                        // invoking git. `git worktree remove` can remove the admin
-                        // metadata in `.git/worktrees/<name>` but fail to delete the
-                        // working directory (it continues past directory-removal errors),
-                        // leaving an orphaned folder on disk. Deleting first guarantees
-                        // the directory is gone, and `git worktree remove --force`
-                        // tolerates a missing working tree while cleaning up the admin
-                        // entry. We keep this inside the `Local` arm so that for remote
-                        // projects the deletion runs on the remote machine (where the
-                        // `GitRemoveWorktree` RPC is handled against the local repo on
-                        // the headless server) using its own filesystem.
-                        //
-                        // After a successful removal, also delete any empty ancestor
-                        // directories between the worktree path and the configured
-                        // base directory used when creating linked worktrees.
-                        //
-                        // Non-force removals are left untouched before git runs:
-                        // `git worktree remove` must see the dirty working tree to
-                        // refuse the operation.
-                        if force {
-                            fs.remove_dir(
-                                &path,
-                                RemoveOptions {
-                                    recursive: true,
-                                    ignore_if_not_exists: true,
-                                },
-                            )
-                            .await
-                            .with_context(|| {
-                                format!("failed to delete worktree directory '{}'", path.display())
-                            })?;
-                        }
-
-                        backend.remove_worktree(path.clone(), force).await?;
-
                         let managed_worktree_base = cx.update(|cx| {
                             let setting = &ProjectSettings::get_global(cx).git.worktree_directory;
                             worktrees_directory_for_repo(
@@ -7784,6 +7789,95 @@ impl Repository {
                             .log_err()
                         });
 
+                        // When forcing, get the worktree directory out of the way
+                        // ourselves before invoking git. `git worktree remove` can
+                        // remove the admin metadata in `.git/worktrees/<name>` but fail
+                        // to delete the working directory (it continues past
+                        // directory-removal errors), leaving an orphaned folder on
+                        // disk. We keep this inside the `Local` arm so that for remote
+                        // projects the deletion runs on the remote machine (where the
+                        // `GitRemoveWorktree` RPC is handled against the local repo on
+                        // the headless server) using its own filesystem.
+                        //
+                        // Worktrees inside the managed worktrees directory are renamed
+                        // into a `.trash` sibling and deleted in the background rather
+                        // than deleted in place: recursive deletion races with
+                        // concurrent processes still writing into the worktree (a
+                        // `cargo check` spawned by rust-analyzer, user terminals, ...)
+                        // and fails with `ENOTEMPTY`, whereas `rename` is atomic and
+                        // succeeds even with live writers. Stray writes keep landing
+                        // in the trash entry, where they're harmless, until the
+                        // writers wind down and the retrying background delete
+                        // succeeds.
+                        //
+                        // After a successful removal, also delete any empty ancestor
+                        // directories between the worktree path and the configured
+                        // base directory used when creating linked worktrees.
+                        //
+                        // Non-force removals are left untouched before git runs:
+                        // `git worktree remove` must see the dirty working tree to
+                        // refuse the operation.
+                        let mut trash_path = None;
+                        if force {
+                            if let Some(base) = managed_worktree_base
+                                .as_ref()
+                                .filter(|base| path.starts_with(base))
+                            {
+                                match move_worktree_to_trash(
+                                    fs.as_ref(),
+                                    cx.background_executor(),
+                                    &path,
+                                    base,
+                                )
+                                .await
+                                {
+                                    Ok(renamed) => trash_path = renamed,
+                                    Err(error) => log::warn!(
+                                        "failed to move worktree '{}' to trash, falling back \
+                                         to in-place deletion: {error:#}",
+                                        path.display()
+                                    ),
+                                }
+                            }
+
+                            if trash_path.is_none() {
+                                fs.remove_dir(
+                                    &path,
+                                    RemoveOptions {
+                                        recursive: true,
+                                        ignore_if_not_exists: true,
+                                    },
+                                )
+                                .await
+                                .with_context(|| {
+                                    format!(
+                                        "failed to delete worktree directory '{}'",
+                                        path.display()
+                                    )
+                                })?;
+                            }
+                        }
+
+                        if let Err(error) = backend.remove_worktree(path.clone(), force).await {
+                            // Restoring the directory is only valid while the admin
+                            // metadata still exists and references the original path,
+                            // which is the case here because `git worktree remove`
+                            // failed.
+                            if let Some(trash_path) = &trash_path {
+                                if let Err(restore_error) =
+                                    fs.rename(trash_path, &path, RenameOptions::default()).await
+                                {
+                                    log::error!(
+                                        "failed to restore worktree '{}' from '{}' after git \
+                                         worktree remove failed: {restore_error:#}",
+                                        path.display(),
+                                        trash_path.display(),
+                                    );
+                                }
+                            }
+                            return Err(error);
+                        }
+
                         if let Some(managed_worktree_base) = managed_worktree_base {
                             remove_empty_managed_worktree_ancestors(
                                 fs.as_ref(),
@@ -7791,6 +7885,16 @@ impl Repository {
                                 &managed_worktree_base,
                             )
                             .await;
+                        }
+
+                        if let Some(trash_path) = trash_path {
+                            let executor = cx.background_executor().clone();
+                            executor
+                                .clone()
+                                .spawn(async move {
+                                    delete_trashed_worktree(fs, &executor, &trash_path).await;
+                                })
+                                .detach();
                         }
 
                         Ok(())
@@ -8976,6 +9080,256 @@ async fn remove_empty_managed_worktree_ancestors(fs: &dyn Fs, child_path: &Path,
     }
 }
 
+/// Name of the directory, inside the managed worktrees directory of a repo,
+/// that worktrees are moved into before being deleted in the background.
+pub const WORKTREE_TRASH_DIR_NAME: &str = ".trash";
+
+/// Minimum age of a trash entry before [`sweep_worktree_trash`] deletes it.
+///
+/// The generous threshold guarantees the sweep never deletes an entry that
+/// another Zed instance renamed moments ago and may still rename back to roll
+/// back a failed `git worktree remove` (a window that is only seconds wide).
+const WORKTREE_TRASH_SWEEP_MIN_AGE: Duration = Duration::from_secs(60 * 60);
+
+const WORKTREE_TRASH_RENAME_ATTEMPTS: usize = 3;
+const WORKTREE_TRASH_DELETE_ATTEMPTS: usize = 10;
+const WORKTREE_TRASH_DELETE_MAX_DELAY: Duration = Duration::from_secs(30);
+
+/// Atomically moves a worktree directory into the `.trash` directory next to
+/// the other worktrees of its repo, returning the new path.
+///
+/// Unlike recursive deletion — which unlinks children and then `rmdir`s each
+/// directory, and therefore fails with `ENOTEMPTY` when a concurrent process
+/// creates files in between — a rename is a single atomic operation that
+/// succeeds even with live writers, and the sibling location guarantees the
+/// same filesystem. Returns `None` when the directory is already gone.
+async fn move_worktree_to_trash(
+    fs: &dyn Fs,
+    executor: &BackgroundExecutor,
+    worktree_path: &Path,
+    worktrees_base: &Path,
+) -> Result<Option<PathBuf>> {
+    let Some(metadata) = fs.metadata(worktree_path).await? else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        metadata.is_dir,
+        "worktree path '{}' is not a directory",
+        worktree_path.display()
+    );
+    let worktree_name = worktree_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .with_context(|| format!("worktree path '{}' has no name", worktree_path.display()))?;
+
+    let trash_dir = worktrees_base.join(WORKTREE_TRASH_DIR_NAME);
+    fs.create_dir(&trash_dir).await?;
+    // Keep git from ever picking up trash contents when the managed worktrees
+    // directory is configured to live inside a repository's working tree.
+    // Live worktrees are protected by their `.git` files (git treats them as
+    // nested repos), but for a trash entry that boundary dangles once
+    // `git worktree remove` deletes the admin metadata.
+    let gitignore_path = trash_dir.join(".gitignore");
+    if fs.metadata(&gitignore_path).await.ok().flatten().is_none() {
+        fs.write(&gitignore_path, b"*").await.log_err();
+    }
+
+    // The timestamp both makes the name unique and lets `sweep_worktree_trash`
+    // determine the entry's age without relying on filesystem metadata.
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_millis();
+    let trash_path = trash_dir.join(format!("{worktree_name}-{timestamp}"));
+
+    let mut attempt = 1;
+    loop {
+        match fs
+            .rename(worktree_path, &trash_path, RenameOptions::default())
+            .await
+        {
+            Ok(()) => return Ok(Some(trash_path)),
+            Err(_) if fs.metadata(worktree_path).await.ok().flatten().is_none() => {
+                return Ok(None);
+            }
+            // On Windows, renaming a directory while another process holds an
+            // open handle into it can fail transiently with `ACCESS_DENIED`.
+            Err(error) if attempt < WORKTREE_TRASH_RENAME_ATTEMPTS => {
+                log::debug!(
+                    "failed to move worktree '{}' to trash (attempt {attempt}), retrying: \
+                     {error:#}",
+                    worktree_path.display()
+                );
+                attempt += 1;
+                executor.timer(Duration::from_millis(100)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Deletes a trashed worktree directory in the background, retrying with
+/// backoff: processes that were writing into the worktree when it was removed
+/// keep writing into the trash entry until they wind down, which can make
+/// early attempts fail with `ENOTEMPTY`. If the retry budget is exhausted the
+/// entry is left behind for [`sweep_worktree_trash`] in a later session.
+async fn delete_trashed_worktree(
+    fs: Arc<dyn Fs>,
+    executor: &BackgroundExecutor,
+    trash_path: &Path,
+) {
+    let mut delay = Duration::from_secs(1);
+    for attempt in 1..=WORKTREE_TRASH_DELETE_ATTEMPTS {
+        if attempt > 1 {
+            executor.timer(delay).await;
+            delay = (delay * 2).min(WORKTREE_TRASH_DELETE_MAX_DELAY);
+        }
+        match fs
+            .remove_dir(
+                trash_path,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await
+        {
+            Ok(()) => {
+                if let Some(trash_dir) = trash_path.parent() {
+                    remove_worktree_trash_dir_if_empty(fs.as_ref(), trash_dir).await;
+                }
+                return;
+            }
+            Err(error) => log::warn!(
+                "failed to delete trashed worktree '{}' (attempt {attempt} of {}): {error:#}",
+                trash_path.display(),
+                WORKTREE_TRASH_DELETE_ATTEMPTS
+            ),
+        }
+    }
+    log::error!(
+        "giving up on deleting trashed worktree '{}'; it will be removed by a sweep in a \
+         later session",
+        trash_path.display()
+    );
+}
+
+/// Removes the `.trash` directory once nothing but the `.gitignore` marker is
+/// left in it, so that removing the last worktree of a repo doesn't leak an
+/// empty directory.
+async fn remove_worktree_trash_dir_if_empty(fs: &dyn Fs, trash_dir: &Path) {
+    let Ok(mut entries) = fs.read_dir(trash_dir).await else {
+        return;
+    };
+    while let Some(entry) = entries.next().await {
+        match entry {
+            Ok(path) => {
+                if path.file_name().is_none_or(|name| name != ".gitignore") {
+                    return;
+                }
+            }
+            Err(_) => return,
+        }
+    }
+    // Delete the `.gitignore` and then the directory non-recursively, so that
+    // an entry concurrently renamed into the trash can never be deleted here;
+    // worst case the directory survives with (or briefly without) its
+    // `.gitignore`, and the next trash operation re-creates what's missing.
+    fs.remove_file(
+        &trash_dir.join(".gitignore"),
+        RemoveOptions {
+            recursive: false,
+            ignore_if_not_exists: true,
+        },
+    )
+    .await
+    .log_err();
+    if let Err(error) = fs
+        .remove_dir(
+            trash_dir,
+            RemoveOptions {
+                recursive: false,
+                ignore_if_not_exists: true,
+            },
+        )
+        .await
+    {
+        log::debug!(
+            "did not remove worktree trash directory '{}': {error:#}",
+            trash_dir.display()
+        );
+    }
+}
+
+/// Deletes leftover trash entries from sessions that quit mid-delete or
+/// exhausted their retry budget (see [`delete_trashed_worktree`]).
+///
+/// Entries younger than [`WORKTREE_TRASH_SWEEP_MIN_AGE`] — per the timestamp
+/// embedded in their name by [`move_worktree_to_trash`] — are left alone.
+async fn sweep_worktree_trash(fs: Arc<dyn Fs>, worktrees_base: PathBuf) {
+    let trash_dir = worktrees_base.join(WORKTREE_TRASH_DIR_NAME);
+    let Ok(mut entries) = fs.read_dir(&trash_dir).await else {
+        return;
+    };
+    let mut entry_paths = Vec::new();
+    while let Some(entry) = entries.next().await {
+        match entry {
+            Ok(path) => entry_paths.push(path),
+            Err(error) => {
+                log::warn!(
+                    "failed to list worktree trash directory '{}': {error:#}",
+                    trash_dir.display()
+                );
+                return;
+            }
+        }
+    }
+
+    let now_millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::ZERO)
+        .as_millis();
+    for entry_path in entry_paths {
+        let Some(name) = entry_path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if name == ".gitignore" {
+            continue;
+        }
+        let Some(timestamp) = name
+            .rsplit_once('-')
+            .and_then(|(_, timestamp)| timestamp.parse::<u128>().ok())
+        else {
+            log::warn!(
+                "skipping unrecognized entry in worktree trash directory: {}",
+                entry_path.display()
+            );
+            continue;
+        };
+        if now_millis.saturating_sub(timestamp) < WORKTREE_TRASH_SWEEP_MIN_AGE.as_millis() {
+            continue;
+        }
+        match fs
+            .remove_dir(
+                &entry_path,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await
+        {
+            Ok(()) => log::info!("swept leftover trashed worktree: {}", entry_path.display()),
+            Err(error) => log::warn!(
+                "failed to sweep leftover trashed worktree '{}': {error:#}",
+                entry_path.display()
+            ),
+        }
+    }
+
+    remove_worktree_trash_dir_if_empty(fs.as_ref(), &trash_dir).await;
+}
+
 /// Returns the repository's identity path given its common Git directory.
 ///
 /// This is the canonical, on-disk path used for project grouping and as the
@@ -9436,6 +9790,151 @@ mod tests {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
         });
+    }
+
+    #[gpui::test]
+    async fn test_sweep_worktree_trash_removes_stale_and_keeps_fresh(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        // A leftover trash entry from an old session (timestamp 1000ms after
+        // the epoch) and a fresh one (named with the current time), as
+        // `move_worktree_to_trash` would create them.
+        fs.insert_tree(
+            Path::new("/worktrees/project/.trash"),
+            json!({
+                ".gitignore": "*",
+                "feature-1000": { "leftover.txt": "stale" },
+            }),
+        )
+        .await;
+        let now_millis = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        let fresh_path = PathBuf::from(format!("/worktrees/project/.trash/feature-{now_millis}"));
+        fs.insert_tree(&fresh_path, json!({ "in-use.txt": "fresh" }))
+            .await;
+
+        let fs_dyn: Arc<dyn Fs> = fs.clone();
+        sweep_worktree_trash(fs_dyn, PathBuf::from("/worktrees/project")).await;
+
+        assert!(
+            !fs.is_dir(Path::new("/worktrees/project/.trash/feature-1000"))
+                .await,
+            "stale trash entry should be swept"
+        );
+        assert!(
+            fs.is_dir(&fresh_path).await,
+            "fresh trash entry should be left alone by the sweep"
+        );
+        assert!(
+            fs.is_file(Path::new("/worktrees/project/.trash/.gitignore"))
+                .await,
+            "the .gitignore marker should remain while the trash is non-empty"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_move_worktree_to_trash_and_delete(cx: &mut TestAppContext) {
+        // Directly exercises the trash helpers, asserting the parts the
+        // `remove_root`-level tests don't: the timestamped trash name, the
+        // `.gitignore` contents, and the "already gone" short-circuit. The
+        // actual ENOTEMPTY race and the delete retry loop can't be reproduced
+        // with FakeFs (it serializes filesystem ops), so those stay
+        // manual-only.
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/worktrees/project/feature"),
+            json!({
+                "Cargo.toml": "[package]",
+                "target": { "seed": "x" },
+            }),
+        )
+        .await;
+
+        let executor = cx.executor();
+        let fs_dyn: Arc<dyn Fs> = fs.clone();
+        let worktrees_base = PathBuf::from("/worktrees/project");
+        let worktree_path = worktrees_base.join("feature");
+
+        let trash_path =
+            move_worktree_to_trash(fs_dyn.as_ref(), &executor, &worktree_path, &worktrees_base)
+                .await
+                .expect("rename to trash should not error")
+                .expect("worktree directory should have been moved");
+
+        assert!(
+            !fs.is_dir(&worktree_path).await,
+            "original worktree path should be gone after the rename"
+        );
+        let trash_dir = worktrees_base.join(WORKTREE_TRASH_DIR_NAME);
+        assert!(
+            trash_path.starts_with(&trash_dir),
+            "trashed worktree should live under the .trash directory"
+        );
+        let trash_name = trash_path.file_name().unwrap().to_str().unwrap();
+        let timestamp_suffix = trash_name
+            .strip_prefix("feature-")
+            .expect("trash name should be the worktree name plus a suffix");
+        assert!(
+            timestamp_suffix.parse::<u128>().is_ok(),
+            "trash name suffix should be a millisecond timestamp, got {trash_name:?}"
+        );
+        assert!(
+            fs.is_file(&trash_path.join("Cargo.toml")).await,
+            "worktree contents should have moved into the trash entry intact"
+        );
+        assert_eq!(
+            fs.load(&trash_dir.join(".gitignore")).await.unwrap(),
+            "*",
+            "the trash directory should self-ignore its contents"
+        );
+
+        // A second worktree that is already gone short-circuits to `None`
+        // instead of erroring (mirrors `ignore_if_not_exists`).
+        let already_gone = move_worktree_to_trash(
+            fs_dyn.as_ref(),
+            &executor,
+            &worktrees_base.join("missing"),
+            &worktrees_base,
+        )
+        .await
+        .expect("a missing worktree should not be an error");
+        assert!(
+            already_gone.is_none(),
+            "a missing worktree should not produce a trash entry"
+        );
+
+        delete_trashed_worktree(fs_dyn.clone(), &executor, &trash_path).await;
+
+        assert!(
+            !fs.is_dir(&trash_path).await,
+            "background delete should remove the trashed worktree"
+        );
+        assert!(
+            !fs.is_dir(&trash_dir).await,
+            ".trash directory should be removed once it is empty"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sweep_worktree_trash_removes_empty_trash_dir(cx: &mut TestAppContext) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/worktrees/project/.trash"),
+            json!({
+                ".gitignore": "*",
+                "feature-1000": { "leftover.txt": "stale" },
+            }),
+        )
+        .await;
+
+        let fs_dyn: Arc<dyn Fs> = fs.clone();
+        sweep_worktree_trash(fs_dyn, PathBuf::from("/worktrees/project")).await;
+
+        assert!(
+            !fs.is_dir(Path::new("/worktrees/project/.trash")).await,
+            "the trash directory should be removed entirely once the sweep empties it"
+        );
     }
 
     #[gpui::test]
