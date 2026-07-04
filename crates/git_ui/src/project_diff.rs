@@ -49,6 +49,10 @@ actions!(
         LeaderAndFollower,
         /// Compare with a specific branch
         CompareWithBranch,
+        /// Toggles showing the branch diff (relative to the default branch's
+        /// merge base) in the editor gutter and project panel, instead of
+        /// working changes.
+        ToggleBranchDiffIndicators,
     ]
 );
 
@@ -86,6 +90,15 @@ impl ProjectDiff {
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
+        workspace.register_action(
+            |workspace, _: &ToggleBranchDiffIndicators, _window, cx| {
+                let git_store = workspace.project().read(cx).git_store().clone();
+                git_store.update(cx, |git_store, cx| {
+                    let enabled = git_store.branch_diff_indicators_enabled();
+                    git_store.set_branch_diff_indicators_enabled(!enabled, cx);
+                });
+            },
+        );
         workspace::register_serializable_item::<ProjectDiff>(cx);
     }
 

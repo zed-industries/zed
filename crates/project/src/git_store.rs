@@ -108,7 +108,35 @@ pub struct GitStore {
     diffs: HashMap<BufferId, Entity<BufferGitState>>,
     buffer_ids_by_index_text_buffer_id: HashMap<BufferId, BufferId>,
     shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
+    /// When `Some`, branch-diff-indicators mode is active: the gutter and panel
+    /// show changes vs. each repo's default-branch merge base, not vs. HEAD.
+    branch_diff_indicators: Option<BranchDiffIndicators>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// Per-repository state backing the branch-diff-indicators mode.
+#[derive(Default)]
+struct BranchDiffIndicators {
+    repos: HashMap<RepositoryId, RepoBranchDiff>,
+}
+
+/// One repository's merge-base diff and merged statuses for the mode.
+#[derive(Default)]
+struct RepoBranchDiff {
+    /// Resolved default branch ref (e.g. `origin/main`). `None` means the
+    /// default branch could not be resolved, so this repository degrades to
+    /// normal working-changes indicators.
+    base_ref: Option<SharedString>,
+    /// HEAD sha the current `tree_diff` was computed against, for change
+    /// detection.
+    head_sha: Option<SharedString>,
+    /// Committed changes between the merge base and HEAD. `None` while loading
+    /// or when degraded.
+    tree_diff: Option<Arc<TreeDiff>>,
+    /// Working-tree statuses merged with `tree_diff`, used to color the project
+    /// panel. `None` when degraded (panel then shows real working status).
+    merged_statuses: Option<SumTree<StatusEntry>>,
+    _refresh: Option<Task<()>>,
 }
 
 #[derive(Default)]
@@ -382,6 +410,45 @@ impl sum_tree::KeyedItem for StatusEntry {
     }
 }
 
+/// Merges a repository's working-tree statuses with its merge-base tree diff
+/// into per-path statuses relative to the merge base.
+fn build_merged_statuses(
+    snapshot: &RepositorySnapshot,
+    tree_diff: &TreeDiff,
+) -> SumTree<StatusEntry> {
+    let mut items = Vec::new();
+    let mut seen = HashSet::new();
+    for entry in snapshot.statuses_by_path.iter() {
+        seen.insert(entry.repo_path.clone());
+        let tree_status = tree_diff.entries.get(&entry.repo_path);
+        if let Some(status) = diff_buffer_list::merge_statuses(Some(entry.status), tree_status)
+            && status.has_changes()
+        {
+            items.push(StatusEntry {
+                repo_path: entry.repo_path.clone(),
+                status,
+                diff_stat: entry.diff_stat,
+            });
+        }
+    }
+    for (repo_path, tree_status) in tree_diff.entries.iter() {
+        if seen.contains(repo_path) {
+            continue;
+        }
+        if let Some(status) = diff_buffer_list::merge_statuses(None, Some(tree_status))
+            && status.has_changes()
+        {
+            items.push(StatusEntry {
+                repo_path: repo_path.clone(),
+                status,
+                diff_stat: None,
+            });
+        }
+    }
+    items.sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
+    SumTree::from_iter(items, ())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RepositoryId(pub u64);
 
@@ -598,6 +665,9 @@ pub enum GitStoreEvent {
     JobsUpdated,
     ConflictsUpdated,
     GlobalConfigurationUpdated,
+    /// The branch-diff-indicators mode was toggled, or its computed diff for
+    /// some repository changed.
+    BranchDiffIndicatorsChanged,
 }
 
 impl EventEmitter<RepositoryEvent> for Repository {}
@@ -745,6 +815,7 @@ impl GitStore {
             shared_diffs: HashMap::default(),
             diffs: HashMap::default(),
             buffer_ids_by_index_text_buffer_id: HashMap::default(),
+            branch_diff_indicators: None,
         }
     }
 
@@ -1787,7 +1858,17 @@ impl GitStore {
         cx: &App,
     ) -> Option<FileStatus> {
         let (repo, repo_path) = self.repository_and_path_for_project_path(project_path, cx)?;
-        Some(repo.read(cx).status_for_path(&repo_path)?.status)
+        let working_status = repo.read(cx).status_for_path(&repo_path).map(|s| s.status);
+        if let Some(indicators) = self.branch_diff_indicators.as_ref()
+            && let Some(state) = indicators.repos.get(&repo.read(cx).id)
+            && let Some(tree_diff) = state.tree_diff.as_ref()
+        {
+            return diff_buffer_list::merge_statuses(
+                working_status,
+                tree_diff.entries.get(&repo_path),
+            );
+        }
+        working_status
     }
 
     pub fn checkpoint(&self, cx: &mut App) -> Task<Result<GitStoreCheckpoint>> {
@@ -2166,6 +2247,29 @@ impl GitStore {
                 .ok();
             }
         }
+        if self.branch_diff_indicators.is_some() {
+            match event {
+                RepositoryEvent::HeadChanged => {
+                    let new_head = repo_snapshot
+                        .head_commit
+                        .as_ref()
+                        .map(|commit| commit.sha.clone());
+                    let old_head = self
+                        .branch_diff_indicators
+                        .as_ref()
+                        .and_then(|indicators| indicators.repos.get(&id))
+                        .and_then(|state| state.head_sha.clone());
+                    if new_head != old_head {
+                        self.refresh_branch_diff_for_repo(id, cx);
+                    }
+                }
+                RepositoryEvent::StatusesChanged => {
+                    self.rebuild_branch_merged_statuses(id, cx);
+                }
+                _ => {}
+            }
+        }
+
         cx.emit(GitStoreEvent::RepositoryUpdated(
             id,
             event.clone(),
@@ -2303,6 +2407,7 @@ impl GitStore {
                 self.repositories.insert(id, repo);
                 self.worktree_ids.insert(id, HashSet::from([worktree_id]));
                 cx.emit(GitStoreEvent::RepositoryAdded);
+                self.refresh_branch_diff_for_repo(id, cx);
                 self.active_repo_id.get_or_insert_with(|| {
                     cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
                     id
@@ -2314,6 +2419,9 @@ impl GitStore {
             if self.active_repo_id == Some(id) {
                 self.active_repo_id = None;
                 cx.emit(GitStoreEvent::ActiveRepositoryChanged(None));
+            }
+            if let Some(indicators) = self.branch_diff_indicators.as_mut() {
+                indicators.repos.remove(&id);
             }
             self.repositories.remove(&id);
             if let Some(updates_tx) = updates_tx.as_ref() {
@@ -2734,6 +2842,8 @@ impl GitStore {
                 |repo, cx| repo.apply_remote_update(update, cx)
             })?;
 
+            this.refresh_branch_diff_for_repo(id, cx);
+
             this.active_repo_id.get_or_insert_with(|| {
                 cx.emit(GitStoreEvent::ActiveRepositoryChanged(Some(id)));
                 id
@@ -2755,6 +2865,9 @@ impl GitStore {
         this.update(&mut cx, |this, cx| {
             let mut update = envelope.payload;
             let id = RepositoryId::from_proto(update.id);
+            if let Some(indicators) = this.branch_diff_indicators.as_mut() {
+                indicators.repos.remove(&id);
+            }
             this.repositories.remove(&id);
             if let Some((client, project_id)) = this.downstream_client() {
                 update.project_id = project_id.to_proto();
@@ -4218,6 +4331,170 @@ impl GitStore {
             .iter()
             .map(|(id, repo)| (*id, repo.read(cx).snapshot.clone()))
             .collect()
+    }
+
+    /// Whether branch-diff-indicators mode is currently active.
+    pub fn branch_diff_indicators_enabled(&self) -> bool {
+        self.branch_diff_indicators.is_some()
+    }
+
+    /// Turns branch-diff-indicators mode on or off, refreshing every repository.
+    pub fn set_branch_diff_indicators_enabled(
+        &mut self,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if enabled == self.branch_diff_indicators.is_some() {
+            return;
+        }
+        if enabled {
+            self.branch_diff_indicators = Some(BranchDiffIndicators::default());
+            let repo_ids = self.repositories.keys().copied().collect::<Vec<_>>();
+            for repo_id in repo_ids {
+                self.refresh_branch_diff_for_repo(repo_id, cx);
+            }
+        } else {
+            self.branch_diff_indicators = None;
+        }
+        cx.emit(GitStoreEvent::BranchDiffIndicatorsChanged);
+    }
+
+    /// Merge-base diff base for a buffer in this mode: `Some((repo, oid))` to
+    /// diff against blob `oid` (`None` oid = added), or `None` to use HEAD.
+    pub fn branch_diff_base_for_buffer(
+        &self,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Option<(Entity<Repository>, Option<git::Oid>)> {
+        let indicators = self.branch_diff_indicators.as_ref()?;
+        let (repo, repo_path) = self.repository_and_path_for_buffer_id(buffer_id, cx)?;
+        let state = indicators.repos.get(&repo.read(cx).id)?;
+        let tree_diff = state.tree_diff.as_ref()?;
+        let oid = match tree_diff.entries.get(&repo_path)? {
+            TreeDiffStatus::Added => None,
+            TreeDiffStatus::Modified { old } | TreeDiffStatus::Deleted { old } => Some(*old),
+        };
+        Some((repo, oid))
+    }
+
+    /// Like `repo_snapshots`, but in this mode substitutes merge-base-relative
+    /// statuses for panel coloring. The underlying snapshots are never mutated.
+    pub fn display_repo_snapshots(&self, cx: &App) -> HashMap<RepositoryId, RepositorySnapshot> {
+        let mut snapshots = self.repo_snapshots(cx);
+        if let Some(indicators) = self.branch_diff_indicators.as_ref() {
+            for (id, snapshot) in snapshots.iter_mut() {
+                if let Some(state) = indicators.repos.get(id)
+                    && let Some(merged) = state.merged_statuses.clone()
+                {
+                    snapshot.statuses_by_path = merged;
+                }
+            }
+        }
+        snapshots
+    }
+
+    /// Resolves the default branch and reloads the merge-base tree diff for one
+    /// repository, then rebuilds its merged statuses and notifies listeners.
+    fn refresh_branch_diff_for_repo(&mut self, repo_id: RepositoryId, cx: &mut Context<Self>) {
+        if self.branch_diff_indicators.is_none() {
+            return;
+        }
+        let Some(repo) = self.repositories.get(&repo_id).cloned() else {
+            return;
+        };
+        let head_sha = repo
+            .read(cx)
+            .snapshot
+            .head_commit
+            .as_ref()
+            .map(|commit| commit.sha.clone());
+
+        let task = cx.spawn(async move |this, cx| {
+            let result = Self::load_branch_tree_diff(repo, cx).await;
+            this.update(cx, |this, cx| {
+                let Some(state) = this
+                    .branch_diff_indicators
+                    .as_mut()
+                    .and_then(|indicators| indicators.repos.get_mut(&repo_id))
+                else {
+                    return;
+                };
+                match result {
+                    Ok(Some((base_ref, tree_diff))) => {
+                        state.base_ref = Some(base_ref);
+                        state.tree_diff = Some(Arc::new(tree_diff));
+                    }
+                    Ok(None) => {
+                        state.base_ref = None;
+                        state.tree_diff = None;
+                    }
+                    Err(error) => {
+                        log::warn!("failed to compute branch diff indicators: {error:#}");
+                        state.base_ref = None;
+                        state.tree_diff = None;
+                    }
+                }
+                this.rebuild_branch_merged_statuses(repo_id, cx);
+                cx.emit(GitStoreEvent::BranchDiffIndicatorsChanged);
+            })
+            .ok();
+        });
+
+        if let Some(indicators) = self.branch_diff_indicators.as_mut() {
+            let state = indicators.repos.entry(repo_id).or_default();
+            state.head_sha = head_sha;
+            state._refresh = Some(task);
+        }
+    }
+
+    /// Resolves the repository's default branch and returns its merge-base tree
+    /// diff, or `None` when no default branch could be determined.
+    async fn load_branch_tree_diff(
+        repo: Entity<Repository>,
+        cx: &mut AsyncApp,
+    ) -> Result<Option<(SharedString, TreeDiff)>> {
+        let default_branch = repo
+            .update(cx, |repo, _| repo.default_branch(true))
+            .await??;
+        let Some(base_ref) = default_branch else {
+            return Ok(None);
+        };
+        let tree_diff = repo
+            .update(cx, |repo, cx| {
+                repo.diff_tree(
+                    DiffTreeType::MergeBase {
+                        base: base_ref.clone(),
+                        head: "HEAD".into(),
+                    },
+                    cx,
+                )
+            })
+            .await??;
+        Ok(Some((base_ref, tree_diff)))
+    }
+
+    /// Recomputes a repository's merged (working + merge-base) statuses used for
+    /// panel coloring; clears them when the repository is degraded.
+    fn rebuild_branch_merged_statuses(&mut self, repo_id: RepositoryId, cx: &App) {
+        let tree_diff = match self
+            .branch_diff_indicators
+            .as_ref()
+            .and_then(|indicators| indicators.repos.get(&repo_id))
+        {
+            Some(state) => state.tree_diff.clone(),
+            None => return,
+        };
+        let merged = tree_diff.and_then(|tree_diff| {
+            let repo = self.repositories.get(&repo_id)?;
+            Some(build_merged_statuses(&repo.read(cx).snapshot, &tree_diff))
+        });
+        if let Some(state) = self
+            .branch_diff_indicators
+            .as_mut()
+            .and_then(|indicators| indicators.repos.get_mut(&repo_id))
+        {
+            state.merged_statuses = merged;
+        }
     }
 
     fn coalesce_repo_paths(mut paths: Vec<RepoPath>) -> Vec<RepoPath> {
@@ -10023,6 +10300,134 @@ mod tests {
             assert!(
                 diff.base_text_exists(),
                 "regular file should have a git diff base"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_branch_diff_indicators_mode(cx: &mut TestAppContext) {
+        use util::rel_path::rel_path;
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                // Working tree matches HEAD (no uncommitted changes), but differs
+                // from the merge base, so it's only visible in branch-diff mode.
+                "committed.txt": "head\n",
+            }),
+        )
+        .await;
+
+        fs.set_head_and_index_for_repo(
+            Path::new("/project/.git"),
+            &[("committed.txt", "head\n".into())],
+        );
+        fs.set_merge_base_content_for_repo(
+            Path::new("/project/.git"),
+            &[("committed.txt", "base\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        project
+            .update(cx, |project, cx| project.git_scans_complete(cx))
+            .await;
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let git_store = project.read_with(cx, |project, _| project.git_store().clone());
+
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, rel_path("committed.txt")), cx)
+            })
+            .await
+            .unwrap();
+        let buffer_id = buffer.read_with(cx, |buffer, _| buffer.remote_id());
+
+        // With the mode off, there is no working change, so the uncommitted diff
+        // has HEAD ("head") as its base and no branch base override.
+        let uncommitted_diff = project
+            .update(cx, |project, cx| {
+                project.open_uncommitted_diff(buffer.clone(), cx)
+            })
+            .await
+            .unwrap();
+        uncommitted_diff.read_with(cx, |diff, cx| {
+            assert_eq!(diff.base_text_string(cx).as_deref(), Some("head\n"));
+        });
+        git_store.read_with(cx, |git_store, cx| {
+            assert!(
+                git_store
+                    .branch_diff_base_for_buffer(buffer_id, cx)
+                    .is_none()
+            );
+            assert!(
+                git_store
+                    .project_path_git_status(&(worktree_id, rel_path("committed.txt")).into(), cx)
+                    .is_none()
+            );
+        });
+
+        // Enable branch-diff-indicators mode.
+        git_store.update(cx, |git_store, cx| {
+            git_store.set_branch_diff_indicators_enabled(true, cx);
+        });
+        cx.run_until_parked();
+
+        // Now the buffer diffs against the merge-base blob ("base") ...
+        let (repo, oid) = git_store
+            .read_with(cx, |git_store, cx| {
+                git_store.branch_diff_base_for_buffer(buffer_id, cx)
+            })
+            .expect("file changed on branch should have a branch diff base");
+        let branch_diff = git_store
+            .update(cx, |git_store, cx| {
+                git_store.open_diff_since(oid, buffer.clone(), repo, cx)
+            })
+            .await
+            .unwrap();
+        branch_diff.read_with(cx, |diff, cx| {
+            assert_eq!(diff.base_text_string(cx).as_deref(), Some("base\n"));
+        });
+
+        // ... and the file shows as changed for the panel, even though the
+        // working tree is clean.
+        git_store.read_with(cx, |git_store, cx| {
+            let status = git_store
+                .project_path_git_status(&(worktree_id, rel_path("committed.txt")).into(), cx)
+                .expect("branch change should surface as a status");
+            assert!(status.has_changes());
+
+            let snapshots = git_store.display_repo_snapshots(cx);
+            let has_entry = snapshots.values().any(|snapshot| {
+                snapshot
+                    .statuses_by_path
+                    .iter()
+                    .any(|entry| entry.repo_path == repo_path("committed.txt"))
+            });
+            assert!(has_entry, "merged statuses should include the branch change");
+        });
+
+        // Disable and confirm we're back to working-changes semantics.
+        git_store.update(cx, |git_store, cx| {
+            git_store.set_branch_diff_indicators_enabled(false, cx);
+        });
+        cx.run_until_parked();
+        git_store.read_with(cx, |git_store, cx| {
+            assert!(
+                git_store
+                    .branch_diff_base_for_buffer(buffer_id, cx)
+                    .is_none()
+            );
+            assert!(
+                git_store
+                    .project_path_git_status(&(worktree_id, rel_path("committed.txt")).into(), cx)
+                    .is_none()
             );
         });
     }

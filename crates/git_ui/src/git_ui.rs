@@ -5,6 +5,7 @@ use editor::{Editor, actions::DiffClipboardWithSelectionData};
 use workspace::{Toast, notifications::NotificationId};
 
 mod blame_ui;
+mod branch_diff_indicator;
 pub mod clone;
 
 use git::{
@@ -64,6 +65,7 @@ pub mod worktree_picker;
 pub mod worktree_service;
 
 pub use blame_ui::GitBlameStatus;
+pub use branch_diff_indicator::BranchDiffIndicator;
 pub use conflict_view::MergeConflictIndicator;
 
 pub fn get_provider_icon(name: &str) -> IconName {

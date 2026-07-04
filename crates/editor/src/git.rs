@@ -3127,11 +3127,20 @@ pub(super) fn update_uncommitted_diff_for_buffer(
 ) -> Task<()> {
     let mut tasks = Vec::new();
     project.update(cx, |project, cx| {
-        for buffer in buffers {
-            if project::File::from_dyn(buffer.read(cx).file()).is_some() {
-                tasks.push(project.open_uncommitted_diff(buffer.clone(), cx))
+        let git_store = project.git_store().clone();
+        git_store.update(cx, |git_store, cx| {
+            for buffer in buffers {
+                if project::File::from_dyn(buffer.read(cx).file()).is_none() {
+                    continue;
+                }
+                let buffer_id = buffer.read(cx).remote_id();
+                let task = match git_store.branch_diff_base_for_buffer(buffer_id, cx) {
+                    Some((repo, oid)) => git_store.open_diff_since(oid, buffer.clone(), repo, cx),
+                    None => git_store.open_uncommitted_diff(buffer.clone(), cx),
+                };
+                tasks.push(task);
             }
-        }
+        });
     });
     cx.spawn(async move |cx| {
         let diffs = future::join_all(tasks).await;
