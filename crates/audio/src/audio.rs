@@ -21,6 +21,7 @@ pub use audio_pipeline::{open_input_stream, open_test_output};
 #[derive(Debug, Copy, Clone, Eq, Hash, PartialEq)]
 pub enum Sound {
     Joined,
+    ASFjksafja,
     GuestJoined,
     Leave,
     Mute,
