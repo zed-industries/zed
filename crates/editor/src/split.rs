@@ -425,6 +425,24 @@ struct LhsEditor {
 }
 
 impl SplittableEditor {
+    fn lhs_blame_revisions(
+        rhs_blame_revisions: &crate::BlameRevisions,
+    ) -> Option<crate::BlameRevisions> {
+        rhs_blame_revisions
+            .blame_base_text
+            .then(|| crate::BlameRevisions {
+                blame_base_text: false,
+                base_text_revision: None,
+                buffer_revision: Some(
+                    rhs_blame_revisions
+                        .base_text_revision
+                        .clone()
+                        .unwrap_or(git::repository::BlameRevision::Revision("HEAD".to_string())),
+                ),
+                hide_blame_on_added_rows: false,
+            })
+    }
+
     pub fn rhs_editor(&self) -> &Entity<Editor> {
         &self.rhs_editor
     }
@@ -468,6 +486,31 @@ impl SplittableEditor {
         });
         self.update_editors(cx, |editor, cx| {
             editor.set_render_diff_hunk_controls(empty_controls.clone(), cx);
+        });
+    }
+
+    pub fn set_blame_revisions(
+        &self,
+        revisions: crate::BlameRevisions,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.rhs_editor.update(cx, |editor, cx| {
+            editor.set_blame_revisions(revisions, window, cx);
+        });
+        self.sync_lhs_blame_revisions(window, cx);
+    }
+
+    fn sync_lhs_blame_revisions(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(lhs) = &self.lhs else {
+            return;
+        };
+        let rhs_blame_revisions = self.rhs_editor.read(cx).blame_revisions().clone();
+        let Some(lhs_blame_revisions) = Self::lhs_blame_revisions(&rhs_blame_revisions) else {
+            return;
+        };
+        lhs.editor.update(cx, |editor, cx| {
+            editor.set_blame_revisions(lhs_blame_revisions, window, cx);
         });
     }
 
@@ -644,23 +687,6 @@ impl SplittableEditor {
             });
         });
 
-        // The left side renders the diff base content, so blame it at the right
-        // side's base revision (`None` means HEAD).
-        let rhs_blame_revisions = self.rhs_editor.read(cx).blame_revisions().clone();
-        if rhs_blame_revisions.blame_base_text {
-            let lhs_blame_revisions = crate::BlameRevisions {
-                blame_base_text: false,
-                base_text_revision: None,
-                buffer_revision: Some(rhs_blame_revisions.base_text_revision.unwrap_or(
-                    git::repository::BlameRevision::Revision("HEAD".to_string()),
-                )),
-                hide_blame_on_added_rows: false,
-            };
-            lhs_editor.update(cx, |editor, cx| {
-                editor.set_blame_revisions(lhs_blame_revisions, window, cx);
-            });
-        }
-
         let mut subscriptions = vec![cx.subscribe_in(
             &lhs_editor,
             window,
@@ -787,6 +813,7 @@ impl SplittableEditor {
         });
 
         self.lhs = Some(lhs);
+        self.sync_lhs_blame_revisions(window, cx);
 
         self.sync_lhs_for_paths(all_paths, cx);
 

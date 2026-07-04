@@ -93,6 +93,34 @@ pub struct ProjectDiff {
 }
 
 impl ProjectDiff {
+    fn blame_revisions_for_diff_base(diff_base: &DiffBase) -> BlameRevisions {
+        let (base_text_revision, hide_blame_on_added_rows) = match diff_base {
+            DiffBase::Head => (None, true),
+            DiffBase::Merge { base_ref } => {
+                (
+                    Some(git::repository::BlameRevision::MergeBaseWithHead {
+                        base_ref: base_ref.to_string(),
+                    }),
+                    false,
+                )
+            }
+        };
+        BlameRevisions {
+            blame_base_text: true,
+            base_text_revision,
+            buffer_revision: None,
+            hide_blame_on_added_rows,
+        }
+    }
+
+    fn sync_blame_revisions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let blame_revisions =
+            Self::blame_revisions_for_diff_base(self.branch_diff.read(cx).diff_base());
+        self.editor.update(cx, |editor, cx| {
+            editor.set_blame_revisions(blame_revisions, window, cx);
+        });
+    }
+
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
         workspace.register_action(Self::deploy);
         workspace.register_action(Self::deploy_branch_diff);
@@ -543,31 +571,6 @@ impl ProjectDiff {
         let editor_subscription = cx.subscribe_in(&editor, window, Self::handle_editor_event);
 
         let primary_editor = editor.read(cx).rhs_editor().clone();
-
-        // Blame deleted lines against the diff base so they show the commit that
-        // last touched them, instead of nothing. Working-tree lines keep using
-        // the default working-tree blame.
-        let base_text_revision = match branch_diff.read(cx).diff_base() {
-            // `None` defaults to `HEAD`, which is the base text in this mode.
-            DiffBase::Head => None,
-            // The base text is the merge base of `HEAD` and `base_ref`, so blame
-            // it there rather than at the tip of `base_ref`.
-            DiffBase::Merge { base_ref } => Some(git::repository::BlameRevision::MergeBaseWithHead {
-                base_ref: base_ref.to_string(),
-            }),
-        };
-        primary_editor.update(cx, |primary_editor, cx| {
-            primary_editor.set_blame_revisions(
-                BlameRevisions {
-                    blame_base_text: true,
-                    base_text_revision,
-                    buffer_revision: None,
-                    hide_blame_on_added_rows: true,
-                },
-                window,
-                cx,
-            );
-        });
         let review_comment_subscription =
             cx.subscribe(&primary_editor, |this, _editor, event: &EditorEvent, cx| {
                 if let EditorEvent::ReviewCommentsChanged { total_count } = event {
@@ -587,6 +590,7 @@ impl ProjectDiff {
                     })
                 }
                 BranchDiffEvent::DiffBaseChanged => {
+                    this.sync_blame_revisions(window, cx);
                     this.pending_scroll.take();
                     this._task = window.spawn(cx, {
                         let this = cx.weak_entity();
@@ -631,7 +635,7 @@ impl ProjectDiff {
             async |cx| Self::refresh(this, cx).await
         });
 
-        Self {
+        let mut this = Self {
             project,
             workspace: workspace.downgrade(),
             branch_diff,
@@ -646,7 +650,9 @@ impl ProjectDiff {
                 branch_diff_subscription,
                 Subscription::join(editor_subscription, review_comment_subscription),
             ),
-        }
+        };
+        this.sync_blame_revisions(window, cx);
+        this
     }
 
     pub fn diff_base<'a>(&'a self, cx: &'a App) -> &'a DiffBase {
@@ -3132,6 +3138,116 @@ mod tests {
 
         assert_eq!(active_base_ref, "origin/main");
         assert_eq!(base_refs, vec!["origin/main", "topic"]);
+    }
+
+    #[gpui::test]
+    async fn test_branch_diff_updates_blame_revisions_when_diff_base_changes(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "a.txt": "changed",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let diff = cx
+            .update(|window, cx| {
+                let Some(repository) = project.read(cx).active_repository(cx) else {
+                    return Task::ready(Err(anyhow!("No active repository")));
+                };
+                ProjectDiff::new_with_branch_base(
+                    project.clone(),
+                    workspace,
+                    "origin/main".into(),
+                    repository,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        diff.update_in(cx, |diff, window, cx| {
+            diff.editor.update(cx, |editor, cx| {
+                editor.split(window, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let (rhs_blame_revisions, lhs_blame_revisions) = diff.read_with(cx, |diff, cx| {
+            let editor = diff.editor.read(cx);
+            let rhs_blame_revisions = editor.rhs_editor().read(cx).blame_revisions().clone();
+            let lhs_blame_revisions = editor
+                .lhs_editor()
+                .unwrap()
+                .read(cx)
+                .blame_revisions()
+                .clone();
+            (rhs_blame_revisions, lhs_blame_revisions)
+        });
+
+        assert_eq!(
+            rhs_blame_revisions.base_text_revision,
+            Some(git::repository::BlameRevision::MergeBaseWithHead {
+                base_ref: "origin/main".to_string(),
+            })
+        );
+        assert!(!rhs_blame_revisions.hide_blame_on_added_rows);
+        assert_eq!(
+            lhs_blame_revisions.buffer_revision,
+            Some(git::repository::BlameRevision::MergeBaseWithHead {
+                base_ref: "origin/main".to_string(),
+            })
+        );
+
+        diff.update(cx, |diff, cx| {
+            diff.branch_diff.update(cx, |branch_diff, cx| {
+                branch_diff.set_diff_base(
+                    DiffBase::Merge {
+                        base_ref: "topic".into(),
+                    },
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        let (rhs_blame_revisions, lhs_blame_revisions) = diff.read_with(cx, |diff, cx| {
+            let editor = diff.editor.read(cx);
+            let rhs_blame_revisions = editor.rhs_editor().read(cx).blame_revisions().clone();
+            let lhs_blame_revisions = editor
+                .lhs_editor()
+                .unwrap()
+                .read(cx)
+                .blame_revisions()
+                .clone();
+            (rhs_blame_revisions, lhs_blame_revisions)
+        });
+
+        assert_eq!(
+            rhs_blame_revisions.base_text_revision,
+            Some(git::repository::BlameRevision::MergeBaseWithHead {
+                base_ref: "topic".to_string(),
+            })
+        );
+        assert!(!rhs_blame_revisions.hide_blame_on_added_rows);
+        assert_eq!(
+            lhs_blame_revisions.buffer_revision,
+            Some(git::repository::BlameRevision::MergeBaseWithHead {
+                base_ref: "topic".to_string(),
+            })
+        );
     }
 
     #[gpui::test]

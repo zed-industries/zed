@@ -667,7 +667,13 @@ impl GitBlame {
                                         blame.map(Some)
                                     });
                                 blame_futures.push(Box::pin(async move {
-                                    (base_id, base_snapshot, base_edits, base_blame.await, remote_url)
+                                    (
+                                        base_id,
+                                        base_snapshot,
+                                        base_edits,
+                                        base_blame.await,
+                                        remote_url,
+                                    )
                                 }));
                             }
                         }
@@ -1272,8 +1278,8 @@ mod tests {
             })
             .await
             .unwrap();
-        let base_text_buffer_id = uncommitted_diff
-            .read_with(cx, |diff, cx| diff.base_text_buffer().read(cx).remote_id());
+        let base_text_buffer_id =
+            uncommitted_diff.read_with(cx, |diff, cx| diff.base_text_buffer().read(cx).remote_id());
 
         let multi_buffer = cx.new(|cx| {
             let mut multi_buffer = MultiBuffer::singleton(buffer.clone(), cx);

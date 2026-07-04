@@ -291,8 +291,7 @@ impl CommitView {
         // lines (the diff base text) at the parent commit, so each line shows the
         // commit that introduced it rather than "not committed yet".
         let buffer_revision = git::repository::BlameRevision::Revision(commit_sha.to_string());
-        let base_text_revision =
-            git::repository::BlameRevision::Revision(format!("{commit_sha}^"));
+        let base_text_revision = git::repository::BlameRevision::Revision(format!("{commit_sha}^"));
         editor
             .read(cx)
             .rhs_editor()
