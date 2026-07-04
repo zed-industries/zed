@@ -292,22 +292,18 @@ impl CommitView {
         // commit that introduced it rather than "not committed yet".
         let buffer_revision = git::repository::BlameRevision::Revision(commit_sha.to_string());
         let base_text_revision = git::repository::BlameRevision::Revision(format!("{commit_sha}^"));
-        editor
-            .read(cx)
-            .rhs_editor()
-            .clone()
-            .update(cx, |primary_editor, cx| {
-                primary_editor.set_blame_revisions(
-                    BlameRevisions {
-                        blame_base_text: true,
-                        base_text_revision: Some(base_text_revision),
-                        buffer_revision: Some(buffer_revision),
-                        hide_blame_on_added_rows: true,
-                    },
-                    window,
-                    cx,
-                );
-            });
+        editor.update(cx, |editor, cx| {
+            editor.set_blame_revisions(
+                BlameRevisions {
+                    blame_base_text: true,
+                    base_text_revision: Some(base_text_revision),
+                    buffer_revision: Some(buffer_revision),
+                    hide_blame_on_added_rows: true,
+                },
+                window,
+                cx,
+            );
+        });
 
         let first_worktree_id = project
             .read(cx)

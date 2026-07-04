@@ -614,16 +614,12 @@ impl GitBlame {
 
                         let main_blame: Task<Result<Option<Blame>>> =
                             match (&repository, &revisions.buffer_revision) {
-                                (Some((repo, repo_path)), Some(revision)) => {
-                                    let receiver = repo.update(cx, |repo, _| {
-                                        repo.blame_path(repo_path.clone(), revision.clone())
-                                    });
-                                    cx.background_spawn(async move {
-                                        let blame =
-                                            receiver.await.map_err(|e| anyhow::anyhow!(e))?;
-                                        blame.map(Some)
-                                    })
-                                }
+                                (Some((repo, repo_path)), Some(revision)) => blame_path_at_revision(
+                                    repo,
+                                    repo_path.clone(),
+                                    revision.clone(),
+                                    cx,
+                                ),
                                 (Some(_), None) => project.update(cx, |project, cx| {
                                     project.blame_buffer(&buffer, None, cx)
                                 }),
@@ -657,15 +653,8 @@ impl GitBlame {
                                 let revision = revisions.base_text_revision.clone().unwrap_or(
                                     git::repository::BlameRevision::Revision("HEAD".to_string()),
                                 );
-                                let receiver = repo.update(cx, |repo, _| {
-                                    repo.blame_path(repo_path.clone(), revision)
-                                });
-                                let base_blame: Task<Result<Option<Blame>>> =
-                                    cx.background_spawn(async move {
-                                        let blame =
-                                            receiver.await.map_err(|e| anyhow::anyhow!(e))?;
-                                        blame.map(Some)
-                                    });
+                                let base_blame =
+                                    blame_path_at_revision(&repo, repo_path, revision, cx);
                                 blame_futures.push(Box::pin(async move {
                                     (
                                         base_id,
@@ -795,6 +784,19 @@ impl GitBlame {
 }
 
 const REGENERATE_ON_EDIT_DEBOUNCE_INTERVAL: Duration = Duration::from_secs(2);
+
+fn blame_path_at_revision(
+    repository: &Entity<Repository>,
+    repo_path: git::repository::RepoPath,
+    revision: git::repository::BlameRevision,
+    cx: &mut App,
+) -> Task<Result<Option<Blame>>> {
+    let receiver = repository.update(cx, |repo, _| repo.blame_path(repo_path, revision));
+    cx.background_spawn(async move {
+        let blame = receiver.await.map_err(|e| anyhow::anyhow!(e))?;
+        blame.map(Some)
+    })
+}
 
 /// Resolves the repository and repo-relative path used to blame `buffer`,
 /// covering buffers registered in the project, synthetic buffers that carry a
