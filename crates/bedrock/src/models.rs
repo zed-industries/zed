@@ -809,9 +809,6 @@ impl Model {
                 "apac",
             ) => Ok(format!("{}.{}", region_group, model_id)),
 
-            // Models that require an inference profile (no on-demand direct invocation)
-            // and only have US and global profiles. Fall back to the global profile
-            // when no regional profile is available.
             (Self::ClaudeFable5 | Self::ClaudeSonnet5, _) => Ok(format!("global.{}", model_id)),
 
             // Default: use model ID directly
@@ -884,9 +881,6 @@ mod tests {
 
     #[test]
     fn test_inference_profile_only_models_fall_back_to_global() -> anyhow::Result<()> {
-        // Claude Fable 5 and Claude Sonnet 5 cannot be invoked with on-demand
-        // throughput and only have US and global inference profiles, so regions
-        // without a regional profile must fall back to the global profile.
         assert_eq!(
             Model::ClaudeFable5.cross_region_inference_id("eu-west-1", false)?,
             "global.anthropic.claude-fable-5"
