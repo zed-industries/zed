@@ -1221,7 +1221,7 @@ pub struct MarkdownElement {
     markdown: Entity<Markdown>,
     style: MarkdownStyle,
     code_block_renderer: CodeBlockRenderer,
-    on_url_click: Option<Box<dyn Fn(SharedString, &mut Window, &mut App)>>,
+    on_url_click: Option<Rc<dyn Fn(SharedString, &mut Window, &mut App)>>,
     code_span_link: Option<CodeSpanLinkCallback>,
     on_source_click: Option<SourceClickCallback>,
     on_checkbox_toggle: Option<CheckboxToggleCallback>,
@@ -1280,7 +1280,7 @@ impl MarkdownElement {
         mut self,
         handler: impl Fn(SharedString, &mut Window, &mut App) + 'static,
     ) -> Self {
-        self.on_url_click = Some(Box::new(handler));
+        self.on_url_click = Some(Rc::new(handler));
         self
     }
 
@@ -1378,18 +1378,58 @@ impl MarkdownElement {
         width: Option<DefiniteLength>,
         height: Option<DefiniteLength>,
     ) {
-        let image_element = div().min_w_0().child(
-            img(source)
-                .id(("markdown-image", range.start))
-                .min_w_0()
-                .max_w_full()
-                .rounded_md()
-                .mr_1()
-                .mb_1()
-                .when_some(height, |this, height| this.h(height))
-                .when_some(width, |this, width| this.w(width))
-                .with_fallback(move || image_fallback_element(dest_url.clone(), alt_text.clone())),
-        );
+        let enclosing_link_url = (builder.link_depth > 0)
+            .then(|| builder.rendered_links.last())
+            .flatten()
+            .map(|link| link.destination_url.clone());
+        let fallback_opens_image_url = enclosing_link_url.is_none();
+
+        let image_element = {
+            let wrapper = div().id(("markdown-image-link", range.start)).min_w_0();
+            let wrapper = if !self.style.prevent_mouse_interaction
+                && let Some(url) = enclosing_link_url
+            {
+                let click_url = url.clone();
+                let markdown = self.markdown.clone();
+                let url_click = self.on_url_click.clone();
+                wrapper
+                    .cursor_pointer()
+                    .on_click(move |_, window, cx| {
+                        if let Some(ref on_url_click) = url_click {
+                            on_url_click(click_url.clone(), window, cx);
+                        } else {
+                            cx.open_url(&click_url);
+                        }
+                    })
+                    .capture_any_mouse_down(move |event, _window, cx| {
+                        if event.button == MouseButton::Right {
+                            markdown.update(cx, |md, _| {
+                                md.capture_for_context_menu(Some(url.clone()), None)
+                            });
+                        }
+                    })
+            } else {
+                wrapper
+            };
+            wrapper.child(
+                img(source)
+                    .id(("markdown-image", range.start))
+                    .min_w_0()
+                    .max_w_full()
+                    .rounded_md()
+                    .mr_1()
+                    .mb_1()
+                    .when_some(height, |this, height| this.h(height))
+                    .when_some(width, |this, width| this.w(width))
+                    .with_fallback(move || {
+                        image_fallback_element(
+                            dest_url.clone(),
+                            alt_text.clone(),
+                            fallback_opens_image_url,
+                        )
+                    }),
+            )
+        };
 
         builder.push_image_child(image_element);
     }
@@ -2795,7 +2835,11 @@ fn collect_image_alt_text(
     }
 }
 
-fn image_fallback_element(dest_url: SharedString, alt_text: Option<SharedString>) -> AnyElement {
+fn image_fallback_element(
+    dest_url: SharedString,
+    alt_text: Option<SharedString>,
+    open_image_url_on_click: bool,
+) -> AnyElement {
     let link_label = alt_text
         .filter(|alt| !alt.is_empty())
         .unwrap_or_else(|| dest_url.clone());
@@ -2804,13 +2848,15 @@ fn image_fallback_element(dest_url: SharedString, alt_text: Option<SharedString>
 
     div()
         .id("image-fallback")
-        .cursor_pointer()
         .min_w_0()
         .child(Label::new(label).color(Color::Warning).underline())
         .tooltip(Tooltip::text(
             "Image failed to load. Open `zed: log` for more details.",
         ))
-        .on_click(move |_, _, cx| cx.open_url(&dest_url))
+        .when(open_image_url_on_click, |this| {
+            this.cursor_pointer()
+                .on_click(move |_, _, cx| cx.open_url(&dest_url))
+        })
         .into_any_element()
 }
 
@@ -5287,6 +5333,98 @@ mod tests {
                 style.container_style.text.font_size
             );
         });
+    }
+
+    fn failing_image_source() -> ImageSource {
+        ImageSource::Custom(Arc::new(|_, _| {
+            Some(Err(gpui::ImageCacheError::Asset(
+                "failed to load image".into(),
+            )))
+        }))
+    }
+
+    fn loaded_image_source() -> ImageSource {
+        let buffer = image::ImageBuffer::from_pixel(16, 16, image::Rgba([0, 0, 0, 255]));
+        ImageSource::Render(Arc::new(gpui::RenderImage::new(SmallVec::from_elem(
+            image::Frame::new(buffer),
+            1,
+        ))))
+    }
+
+    fn open_markdown_image_test_window<'a>(
+        source: &str,
+        image_source: ImageSource,
+        cx: &'a mut TestAppContext,
+    ) -> &'a mut gpui::VisualTestContext {
+        struct ImageTestView {
+            markdown: Entity<Markdown>,
+            image_source: ImageSource,
+        }
+
+        impl Render for ImageTestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let image_source = self.image_source.clone();
+                div().size_full().child(
+                    MarkdownElement::new(self.markdown.clone(), MarkdownStyle::default())
+                        .image_resolver(move |_| Some(image_source.clone())),
+                )
+            }
+        }
+
+        ensure_theme_initialized(cx);
+
+        let source = source.to_string();
+        let (_, cx) = cx.add_window_view(|_, cx| ImageTestView {
+            markdown: cx.new(|cx| Markdown::new(source.into(), None, None, cx)),
+            image_source,
+        });
+        cx.run_until_parked();
+        cx
+    }
+
+    #[gpui::test]
+    fn test_clicking_image_fallback_opens_image_url(cx: &mut TestAppContext) {
+        let cx = open_markdown_image_test_window(
+            "![alt text](https://example.com/image.png)",
+            failing_image_source(),
+            cx,
+        );
+
+        cx.simulate_click(point(px(8.), px(8.)), gpui::Modifiers::default());
+        assert_eq!(
+            cx.opened_url(),
+            Some("https://example.com/image.png".to_string())
+        );
+    }
+
+    #[gpui::test]
+    fn test_clicking_image_fallback_inside_link_opens_link_url(cx: &mut TestAppContext) {
+        let cx = open_markdown_image_test_window(
+            "[![alt text](https://example.com/image.png)](https://example.com/link)",
+            failing_image_source(),
+            cx,
+        );
+
+        cx.simulate_click(point(px(8.), px(8.)), gpui::Modifiers::default());
+        assert_eq!(
+            cx.opened_url(),
+            Some("https://example.com/link".to_string())
+        );
+    }
+
+    #[gpui::test]
+    fn test_clicking_loaded_image_inside_link_opens_link_url(cx: &mut TestAppContext) {
+        let cx = open_markdown_image_test_window(
+            "[![alt text](https://example.com/image.png)](https://example.com/link)",
+            loaded_image_source(),
+            cx,
+        );
+
+        cx.simulate_click(point(px(8.), px(8.)), gpui::Modifiers::default());
+        assert_eq!(
+            cx.opened_url(),
+            Some("https://example.com/link".to_string())
+        );
     }
 
     #[track_caller]

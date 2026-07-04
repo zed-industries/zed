@@ -26,8 +26,7 @@ use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
 use gpui::{
-    AnyView, App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, TaskExt, Window,
-    actions,
+    App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, TaskExt, Window, actions,
 };
 use gpui_tokio::Tokio;
 use http_client::HttpClient;
@@ -36,8 +35,8 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    TokenUsage, env_var,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, ProviderSettingsView,
+    RateLimiter, Role, SubPageProviderSettings, TokenUsage, env_var,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -461,12 +460,6 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         IconOrSvg::Icon(IconName::AiBedrock)
     }
 
-    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
-        Some(InlineDescription::Text(
-            "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials.".into(),
-        ))
-    }
-
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
         Some(self.create_language_model(bedrock::Model::default()))
     }
@@ -523,18 +516,17 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        cx.new(|cx| ConfigurationView::new(self.state.clone(), window, cx))
-            .into()
-    }
-
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state.update(cx, |state, cx| state.reset_auth(cx))
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
+        let state = self.state.clone();
+        Some(ProviderSettingsView::SubPage(
+            SubPageProviderSettings::new(move |window, cx| {
+                cx.new(|cx| ConfigurationView::new(state.clone(), window, cx))
+                    .into()
+            })
+            .description(InlineDescription::Text(
+                "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials.".into(),
+            )),
+        ))
     }
 }
 
@@ -676,6 +668,18 @@ impl LanguageModel for BedrockModel {
 
     fn supports_thinking(&self) -> bool {
         self.model.supports_thinking()
+    }
+
+    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
+        if self
+            .model
+            .id()
+            .starts_with(anthropic::FABLE_MODEL_ID_PREFIX)
+        {
+            Some(anthropic::FABLE_FALLBACK_MODEL_ID)
+        } else {
+            None
+        }
     }
 
     fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
@@ -1021,7 +1025,7 @@ pub fn into_bedrock(
                         }
                     })
                     .collect();
-                if message.cache && supports_caching {
+                if message.cache && supports_caching && !bedrock_message_content.is_empty() {
                     bedrock_message_content.push(BedrockInnerContent::CachePoint(
                         CachePointBlock::builder()
                             .r#type(CachePointType::Default)
@@ -1741,5 +1745,93 @@ impl ConfigurationView {
                 .size(LabelSize::Small)
                 .color(Color::Muted)
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language_model::LanguageModelRequestMessage;
+
+    fn into_bedrock_request(messages: Vec<LanguageModelRequestMessage>) -> bedrock::Request {
+        into_bedrock(
+            LanguageModelRequest {
+                messages,
+                ..Default::default()
+            },
+            "claude-sonnet-4-5".to_string(),
+            1.0,
+            4096,
+            BedrockModelMode::Default,
+            true,
+            true,
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_cache_marked_message_that_filters_to_empty_is_dropped() {
+        let request = into_bedrock_request(vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("What's the weather?".into())],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Thinking {
+                    text: "Let me think about this...".into(),
+                    signature: None,
+                }],
+                cache: true,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Summarize this conversation.".into())],
+                cache: false,
+                reasoning_details: None,
+            },
+        ]);
+
+        for message in &request.messages {
+            assert!(
+                message
+                    .content()
+                    .iter()
+                    .any(|block| !matches!(block, BedrockInnerContent::CachePoint(_))),
+                "message must not consist solely of cache points: {:?}",
+                message
+            );
+        }
+        assert!(
+            request
+                .messages
+                .iter()
+                .all(|message| *message.role() == bedrock::BedrockRole::User),
+            "the assistant message stripped to empty content should be dropped entirely"
+        );
+    }
+
+    #[test]
+    fn test_cache_marked_message_with_content_gets_cache_point() {
+        let request = into_bedrock_request(vec![LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::Text("What's the weather?".into())],
+            cache: true,
+            reasoning_details: None,
+        }]);
+
+        assert_eq!(request.messages.len(), 1);
+        assert!(
+            matches!(
+                request.messages[0].content().last(),
+                Some(BedrockInnerContent::CachePoint(_))
+            ),
+            "a cache-marked message with content should end with a cache point"
+        );
     }
 }
