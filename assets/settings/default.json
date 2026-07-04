@@ -89,6 +89,14 @@
     // Values are clamped to the [0.0, 1.0] range.
     "inactive_opacity": 1.0,
   },
+  // Styling settings applied to the focused dock panel.
+  "active_panel_modifiers": {
+    // Inset border size of the focused dock panel, in pixels.
+    "border_size": 0.0,
+    // Opacity of unfocused dock panels. 0 means transparent, 1 means opaque.
+    // Values are clamped to the [0.0, 1.0] range.
+    "inactive_opacity": 1.0,
+  },
   // Layout mode of the bottom dock. Defaults to "contained"
   //   choices: contained, full, left_aligned, right_aligned
   "bottom_dock_layout": "contained",
