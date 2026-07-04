@@ -36,6 +36,26 @@ pub trait NumberFieldType: Display + Copy + Clone + Sized + PartialOrd + FromStr
     fn max_value() -> Self;
     fn saturating_add(self, rhs: Self) -> Self;
     fn saturating_sub(self, rhs: Self) -> Self;
+    /// Snaps `self` to the next tick above it in the grid defined by `step`.
+    /// On-grid values move exactly one step; off-grid values snap to the
+    /// next tick (e.g. `1.01` with step `0.1` becomes `1.1`, not `1.11`).
+    /// Default is plain `saturating_add`, kept for integer step=1 fields
+    /// where every value is on-grid.
+    fn snap_up(self, step: Self) -> Self {
+        self.saturating_add(step)
+    }
+    /// See `snap_up`; direction reversed. `1.01` with step `0.1` becomes `1.0`.
+    fn snap_down(self, step: Self) -> Self {
+        self.saturating_sub(step)
+    }
+    /// Round-trips the value through its display format to strip accumulated
+    /// floating-point noise (e.g. `1.8 + 0.1` -> `1.9`, not `1.9000002`).
+    /// Integer types are unaffected because their format is exact.
+    fn canonicalize(value: Self) -> Self {
+        Self::default_format(&value)
+            .parse::<Self>()
+            .unwrap_or(value)
+    }
 }
 
 macro_rules! impl_newtype_numeric_stepper_float {
@@ -67,6 +87,34 @@ macro_rules! impl_newtype_numeric_stepper_float {
 
             fn saturating_sub(self, rhs: Self) -> Self {
                 $type((self.0 - rhs.0).max(Self::min_value().0))
+            }
+
+            fn snap_up(self, step: Self) -> Self {
+                // When self/step lands near an integer (e.g. 1.3/0.1 =
+                // 12.9999... in f32), a naive floor() gives one tick too
+                // few and we get stuck. Treat "very close to a tick" as
+                // on-grid; otherwise snap up. The ratio is computed in
+                // f64 so the 1e-4 tolerance stays comfortable for large
+                // ratios (float divide error grows with the quotient).
+                let ratio = self.0 as f64 / step.0 as f64;
+                let rounded = ratio.round();
+                let next = if (ratio - rounded).abs() < 1e-4 {
+                    rounded + 1.0
+                } else {
+                    ratio.ceil()
+                };
+                $type((next as f32 * step.0).clamp(Self::min_value().0, Self::max_value().0))
+            }
+
+            fn snap_down(self, step: Self) -> Self {
+                let ratio = self.0 as f64 / step.0 as f64;
+                let rounded = ratio.round();
+                let next = if (ratio - rounded).abs() < 1e-4 {
+                    rounded - 1.0
+                } else {
+                    ratio.floor()
+                };
+                $type((next as f32 * step.0).clamp(Self::min_value().0, Self::max_value().0))
             }
         }
     };
@@ -234,6 +282,31 @@ macro_rules! impl_numeric_stepper_float {
             fn saturating_sub(self, rhs: Self) -> Self {
                 (self - rhs).clamp(Self::min_value(), Self::max_value())
             }
+
+            fn snap_up(self, step: Self) -> Self {
+                // Ratio in f64 so quotient error stays under the 1e-4
+                // tolerance even for large ratios (f32 quotient error is
+                // ~1.2e-7 * ratio, which would overshoot near ratio 800).
+                let ratio = self as f64 / step as f64;
+                let rounded = ratio.round();
+                let next = if (ratio - rounded).abs() < 1e-4 {
+                    rounded + 1.0
+                } else {
+                    ratio.ceil()
+                };
+                (next as $type * step).clamp(Self::min_value(), Self::max_value())
+            }
+
+            fn snap_down(self, step: Self) -> Self {
+                let ratio = self as f64 / step as f64;
+                let rounded = ratio.round();
+                let next = if (ratio - rounded).abs() < 1e-4 {
+                    rounded - 1.0
+                } else {
+                    ratio.floor()
+                };
+                (next as $type * step).clamp(Self::min_value(), Self::max_value())
+            }
         }
     };
 }
@@ -329,6 +402,12 @@ impl<T: NumberFieldType> NumberField<T> {
         self
     }
 
+    /// Overrides the step used for a plain click on the +/- buttons.
+    pub fn step(mut self, step: T) -> Self {
+        self.step = step;
+        self
+    }
+
     pub fn mode(self, mode: NumberFieldMode, cx: &mut App) -> Self {
         self.mode.write(cx, mode);
         self
@@ -417,10 +496,10 @@ impl<T: NumberFieldType> RenderOnce for NumberField<T> {
         let change_value = {
             move |current: T, step: T, direction: ValueChangeDirection| -> T {
                 let new_value = match direction {
-                    ValueChangeDirection::Increment => current.saturating_add(step),
-                    ValueChangeDirection::Decrement => current.saturating_sub(step),
+                    ValueChangeDirection::Increment => current.snap_up(step),
+                    ValueChangeDirection::Decrement => current.snap_down(step),
                 };
-                clamp_value(new_value)
+                T::canonicalize(clamp_value(new_value))
             }
         };
 
@@ -865,5 +944,67 @@ impl Component for NumberField<usize> {
                 ),
             ])
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NumberFieldType;
+
+    fn close(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
+    }
+
+    #[test]
+    fn snap_up_f32_moves_off_apparent_on_grid_values() {
+        // Regression: `1.3_f32 / 0.1_f32` yields 12.9999... in float, so a
+        // naive floor()+1 gave 13 (i.e. 1.3 again). We should land on 1.4.
+        assert!(close(f32::snap_up(1.3, 0.1), 1.4));
+        // Same shape at 2.1 — stored slightly below 21 ticks.
+        assert!(close(f32::snap_up(2.1, 0.1), 2.2));
+        // And a canonically on-grid value should also advance one tick.
+        assert!(close(f32::snap_up(1.0, 0.1), 1.1));
+    }
+
+    #[test]
+    fn snap_up_f32_snaps_off_grid_values_to_next_tick() {
+        // 1.01 is off-grid: should snap to the next tick above (1.1), not
+        // add step to yield 1.11.
+        assert!(close(f32::snap_up(1.01, 0.1), 1.1));
+    }
+
+    #[test]
+    fn snap_down_f32_moves_off_apparent_on_grid_values() {
+        assert!(close(f32::snap_down(1.3, 0.1), 1.2));
+        assert!(close(f32::snap_down(2.1, 0.1), 2.0));
+        assert!(close(f32::snap_down(1.0, 0.1), 0.9));
+    }
+
+    #[test]
+    fn snap_down_f32_snaps_off_grid_values_to_previous_tick() {
+        assert!(close(f32::snap_down(1.01, 0.1), 1.0));
+    }
+
+    #[test]
+    fn snap_int_defaults_are_saturating_add_sub() {
+        // Integer types don't override `snap_up`/`snap_down`, so the
+        // default trait impl (plain add/sub) is what runs — grid-aware
+        // behavior isn't wired for them, only for the float impls.
+        assert_eq!(i32::snap_up(10, 1), 11);
+        assert_eq!(i32::snap_down(10, 1), 9);
+        assert_eq!(i32::snap_up(800, 50), 850);
+        assert_eq!(i32::snap_down(800, 50), 750);
+    }
+
+    #[test]
+    fn canonicalize_f32_strips_step_noise() {
+        // Round-trip through `{:.2}` should collapse accumulated add-noise
+        // (e.g. 1.8 + 0.1 in f32 ≈ 1.9000001) back to the intended tick.
+        // Also verify large ratios stay stable after canonicalization —
+        // pairs the f64-ratio fix in `snap_up`/`snap_down`.
+        assert!(close(f32::canonicalize(1.9000001_f32), 1.9));
+        assert!(close(f32::canonicalize(2.1000001_f32), 2.1));
+        // Values that are already clean pass through unchanged.
+        assert!(close(f32::canonicalize(1.0), 1.0));
     }
 }

@@ -63,9 +63,15 @@ pub struct ThemeSettings {
     /// The font family to use for code in the markdown preview.
     /// Falls back to the buffer font family if unset.
     markdown_preview_code_font_family: Option<SharedString>,
+    /// The font family to use for headings in the markdown preview.
+    /// Falls back to the body font family if unset.
+    markdown_preview_heading_font_family: Option<SharedString>,
     /// The font size to use for rendering in the markdown preview.
     /// Falls back to the UI font size if unset.
     markdown_preview_font_size: Option<Pixels>,
+    /// The font size to use for code in the markdown preview.
+    /// Falls back to the preview body font size if unset.
+    markdown_preview_code_font_size: Option<Pixels>,
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.
     pub markdown_preview_theme: Option<ThemeSelection>,
@@ -449,6 +455,25 @@ impl ThemeSettings {
             .unwrap_or(&self.buffer_font.family)
     }
 
+    /// Returns the user-configured heading font family, or `None` when
+    /// unset. Preview headings inherit the body font family when this
+    /// returns `None`, so callers only need to act on `Some`.
+    pub fn markdown_preview_heading_font_family_setting(&self) -> Option<&SharedString> {
+        self.markdown_preview_heading_font_family.as_ref()
+    }
+
+    /// Returns the markdown preview code font size.
+    ///
+    /// Falls back to the preview body font size when unset. Keeping the
+    /// fallback aligned with the body preserves defaults byte-identical
+    /// to `main` (where preview code text tracked the body font size),
+    /// so users only see a change when they opt in explicitly.
+    pub fn markdown_preview_code_font_size(&self, cx: &App) -> Pixels {
+        self.markdown_preview_code_font_size
+            .map(clamp_font_size)
+            .unwrap_or_else(|| self.markdown_preview_font_size(cx))
+    }
+
     /// Returns the markdown preview font size.
     ///
     /// Note: the fallback deliberately uses `self.ui_font_size` instead of `ui_font_size(cx)`,
@@ -748,7 +773,14 @@ impl settings::Settings for ThemeSettings {
                 .markdown_preview_code_font_family
                 .as_ref()
                 .map(|f| f.0.clone().into()),
+            markdown_preview_heading_font_family: content
+                .markdown_preview_heading_font_family
+                .as_ref()
+                .map(|f| f.0.clone().into()),
             markdown_preview_font_size: content.markdown_preview_font_size.map(|s| s.into_gpui()),
+            markdown_preview_code_font_size: content
+                .markdown_preview_code_font_size
+                .map(|s| s.into_gpui()),
             markdown_preview_theme: content
                 .markdown_preview_theme
                 .clone()

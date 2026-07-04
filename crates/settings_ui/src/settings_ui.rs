@@ -421,6 +421,9 @@ struct SettingsFieldMetadata {
     display_clear_button: bool,
     confirm_on_focus_out: bool,
     treat_missing_text_as_empty: bool,
+    /// Override the step used by the +/- buttons of a number field. The
+    /// value is parsed into the field's numeric type via `FromStr`.
+    number_field_step: Option<f64>,
 }
 
 pub fn init(cx: &mut App) {
@@ -541,6 +544,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::MultiCursorModifier>(render_dropdown)
         .add_basic_renderer::<settings::HideMouseMode>(render_dropdown)
         .add_basic_renderer::<settings::CurrentLineHighlight>(render_dropdown)
+        .add_basic_renderer::<settings::HeadingBorder>(render_dropdown)
         .add_basic_renderer::<settings::ShowWhitespaceSetting>(render_dropdown)
         .add_basic_renderer::<settings::SoftWrap>(render_dropdown)
         .add_basic_renderer::<settings::AutoIndentMode>(render_dropdown)
@@ -4935,7 +4939,7 @@ fn render_toggle_button<B: Into<bool> + From<bool> + Copy>(
 fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
     field: SettingField<T>,
     file: SettingsUiFile,
-    _metadata: Option<&SettingsFieldMetadata>,
+    metadata: Option<&SettingsFieldMetadata>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -4947,12 +4951,17 @@ fn render_editable_number_field<T: NumberFieldType + Send + Sync>(
         .map(|p| format!("numeric_stepper_{}", p))
         .unwrap_or_else(|| "numeric_stepper".to_string());
 
+    let step_override = metadata
+        .and_then(|metadata| metadata.number_field_step)
+        .and_then(|step| format!("{}", step).parse::<T>().ok());
+
     NumberField::new(id, value, window, cx)
         .mode(NumberFieldMode::Edit, cx)
         .tab_index(0_isize)
         .when_some(a11y_label_for_json_path(field.json_path), |this, label| {
             this.aria_label(label)
         })
+        .when_some(step_override, |this, step| this.step(step))
         .on_change({
             move |value, window, cx| {
                 let value = *value;

@@ -16,8 +16,8 @@ use gpui::{
 };
 use language::LanguageRegistry;
 use markdown::{
-    CodeBlockRenderer, CopyButtonVisibility, Markdown, MarkdownElement, MarkdownFont,
-    MarkdownOptions, MarkdownStyle,
+    CodeBlockRenderer, CopyButtonVisibility, HeadingLevelStyles, Markdown, MarkdownElement,
+    MarkdownFont, MarkdownOptions, MarkdownStyle,
 };
 use project::search::SearchQuery;
 use project::{Project, ProjectPath};
@@ -35,9 +35,10 @@ use workspace::searchable::{
 use workspace::{ItemId, Pane, Workspace, WorkspaceId, delete_unloaded_items};
 use zed_actions::{DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize};
 
-use crate::markdown_preview_settings::MarkdownPreviewSettings;
+use crate::markdown_preview_settings::{self, MarkdownPreviewSettings};
 use crate::{
-    OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide, ScrollDown, ScrollDownByItem,
+    OpenFollowingPreview, OpenPreview, OpenPreviewSettings, OpenPreviewToTheSide, ScrollDown,
+    ScrollDownByItem,
 };
 use crate::{ScrollPageDown, ScrollPageUp, ScrollToBottom, ScrollToTop, ScrollUp, ScrollUpByItem};
 
@@ -689,6 +690,21 @@ impl MarkdownPreviewView {
         }
     }
 
+    fn open_preview_settings(
+        &mut self,
+        _: &OpenPreviewSettings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.dispatch_action(
+            Box::new(zed_actions::OpenSettingsAt {
+                path: "markdown_preview".to_string(),
+                target: None,
+            }),
+            cx,
+        );
+    }
+
     fn scroll_by_amount(&self, distance: Pixels) {
         let offset = self.scroll_handle.offset();
         self.scroll_handle
@@ -831,7 +847,7 @@ impl MarkdownPreviewView {
             }
         }
 
-        let markdown_style = if let Some(theme) = preview_theme {
+        let mut markdown_style = if let Some(theme) = preview_theme {
             MarkdownStyle::themed_with_overrides(
                 MarkdownFont::Preview,
                 theme.colors(),
@@ -842,6 +858,8 @@ impl MarkdownPreviewView {
         } else {
             MarkdownStyle::themed(MarkdownFont::Preview, window, cx)
         };
+
+        apply_preview_style_overrides(&mut markdown_style, cx);
 
         let mut markdown_element = MarkdownElement::new(self.markdown.clone(), markdown_style)
             .code_block_renderer(CodeBlockRenderer::Default {
@@ -1080,6 +1098,103 @@ impl Focusable for MarkdownPreviewView {
 impl EventEmitter<MarkdownPreviewEvent> for MarkdownPreviewView {}
 impl EventEmitter<SearchEvent> for MarkdownPreviewView {}
 
+fn apply_preview_style_overrides(style: &mut MarkdownStyle, cx: &App) {
+    let settings = MarkdownPreviewSettings::get_global(cx);
+
+    // These fields are always `None` on the incoming `MarkdownStyle`
+    // (they exist so that render code can `.unwrap_or(...)` the built-in
+    // defaults), so a plain assignment is equivalent to `.or(...)` here.
+    style.body_line_height = settings.line_height;
+    style.paragraph_margin_bottom = settings.paragraph_spacing;
+    // Lists are a peer block element to paragraphs, so the single
+    // `paragraph_spacing` knob also drives the list-block bottom margin.
+    // Deliberately opt-in: when unset, no list-block margin is applied,
+    // keeping the default render identical to before this setting existed.
+    if let Some(spacing) = settings.paragraph_spacing {
+        style.list_margin_bottom = Some(spacing);
+    }
+    style.list_item_margin_bottom = settings.list_item_spacing;
+
+    // Per-level heading overrides: font size, font weight (bold),
+    // borders (above/below), and per-level margins.
+    let headings = settings.headings;
+    let base_level_styles = style.heading_level_styles.clone().unwrap_or_default();
+    let apply_level = |base: Option<gpui::TextStyleRefinement>,
+                       level: &markdown_preview_settings::HeadingLevel|
+     -> Option<gpui::TextStyleRefinement> {
+        if level.font_size.is_none() && level.bold.is_none() {
+            return base;
+        }
+        let mut refinement = base.unwrap_or_default();
+        if let Some(size) = level.font_size {
+            refinement.font_size = Some(size.into());
+        }
+        if let Some(weight) = level.font_weight() {
+            refinement.font_weight = Some(weight);
+        }
+        Some(refinement)
+    };
+    style.heading_level_styles = Some(HeadingLevelStyles {
+        h1: apply_level(base_level_styles.h1, &headings.h1),
+        h2: apply_level(base_level_styles.h2, &headings.h2),
+        h3: apply_level(base_level_styles.h3, &headings.h3),
+        h4: apply_level(base_level_styles.h4, &headings.h4),
+        h5: apply_level(base_level_styles.h5, &headings.h5),
+        h6: apply_level(base_level_styles.h6, &headings.h6),
+    });
+
+    apply_level_borders(&mut style.heading_level_borders.h1, &headings.h1);
+    apply_level_borders(&mut style.heading_level_borders.h2, &headings.h2);
+    apply_level_borders(&mut style.heading_level_borders.h3, &headings.h3);
+    apply_level_borders(&mut style.heading_level_borders.h4, &headings.h4);
+    apply_level_borders(&mut style.heading_level_borders.h5, &headings.h5);
+    apply_level_borders(&mut style.heading_level_borders.h6, &headings.h6);
+
+    apply_level_margins(&mut style.heading_level_margins.h1, &headings.h1);
+    apply_level_margins(&mut style.heading_level_margins.h2, &headings.h2);
+    apply_level_margins(&mut style.heading_level_margins.h3, &headings.h3);
+    apply_level_margins(&mut style.heading_level_margins.h4, &headings.h4);
+    apply_level_margins(&mut style.heading_level_margins.h5, &headings.h5);
+    apply_level_margins(&mut style.heading_level_margins.h6, &headings.h6);
+
+    // Stamp the heading font family onto the top-level `heading.text`
+    // refinement. `push_markdown_heading` pushes that refinement onto the
+    // builder's text_style stack, and TextRuns are built from the stack —
+    // so this is what actually reaches the rendered glyphs. Per-level
+    // `heading_level_styles.font_family` is *not* consulted at run-build
+    // time (the div's style only carries font_size through GPUI's window
+    // text-style stack).
+    if let Some(family) = ThemeSettings::get_global(cx)
+        .markdown_preview_heading_font_family_setting()
+        .cloned()
+    {
+        style.heading.text.font_family = Some(family);
+    }
+}
+
+fn apply_level_borders(
+    slot: &mut markdown::HeadingLevelBorder,
+    level: &markdown_preview_settings::HeadingLevel,
+) {
+    use settings::settings_content::HeadingBorder;
+    if let Some(border) = level.border {
+        slot.above = matches!(border, HeadingBorder::Above);
+        slot.below = matches!(border, HeadingBorder::Below);
+    }
+}
+
+fn apply_level_margins(
+    slot: &mut markdown::HeadingLevelMargin,
+    level: &markdown_preview_settings::HeadingLevel,
+) {
+    if let Some(top) = level.spacing_before {
+        slot.top = Some(top);
+    }
+    if let Some(bottom) = level.spacing_after {
+        slot.bottom = Some(bottom);
+    }
+}
+
 impl Item for MarkdownPreviewView {
     type Event = MarkdownPreviewEvent;
 
@@ -1241,6 +1356,7 @@ impl Render for MarkdownPreviewView {
             .on_action(cx.listener(MarkdownPreviewView::increase_font_size))
             .on_action(cx.listener(MarkdownPreviewView::decrease_font_size))
             .on_action(cx.listener(MarkdownPreviewView::reset_font_size))
+            .on_action(cx.listener(MarkdownPreviewView::open_preview_settings))
             .w_full()
             .flex_1()
             .min_h_0()

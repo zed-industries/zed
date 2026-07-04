@@ -81,7 +81,54 @@ If you would like to use distinct themes for light mode/dark mode that can be se
   "markdown_preview_font_family": null,
   // Controls the font family for code blocks in the markdown preview.
   // If not specified, it falls back to the editor font family.
-  "markdown_preview_code_font_family": null
+  "markdown_preview_code_font_family": null,
+  // Controls the font family for headings (H1..H6) in the markdown preview.
+  // If not specified, it falls back to the body font family.
+  "markdown_preview_heading_font_family": null,
+  // Controls the font size for code (code blocks and inline code) in the
+  // markdown preview. If not specified, it falls back to the preview body
+  // font size.
+  "markdown_preview_code_font_size": null
+```
+
+### Markdown preview typography and spacing
+
+The `markdown_preview` block controls typography and spacing of the
+rendered preview. Every field is optional — omitting it keeps the
+built-in default. Font sizes, line height, and spacing are expressed in
+rem units.
+
+```json [settings]
+{
+  "markdown_preview": {
+    // Line height for paragraphs and list items, in rem units.
+    "line_height": 1.3,
+    // Bottom margin below paragraphs and list blocks, in rem units.
+    "paragraph_spacing": 0.5,
+    // Bottom margin between list items, in rem units.
+    "list_item_spacing": 0.25,
+    // Per-heading-level styling. Every attribute of every level is
+    // optional; when omitted, the built-in per-level default applies.
+    "headings": {
+      "h1": {
+        "font_size": 1.45,        // rem, multiplied by the base font size
+        "bold": false,            // render this level in bold
+        "border": "below",        // "none" | "above" | "below"
+        "spacing_before": 1.0,    // rem, top margin
+        "spacing_after": 0.5      // rem, bottom margin
+      },
+      "h2": {
+        "font_size": 1.3,
+        "border": "below",
+        "spacing_before": 1.5
+      },
+      "h3": { "font_size": 1.1, "border": "below" },
+      "h4": { "font_size": 1.01 },
+      "h5": { "font_size": 0.95 },
+      "h6": { "font_size": 0.85 }
+    }
+  }
+}
 ```
 
 ### Font ligatures

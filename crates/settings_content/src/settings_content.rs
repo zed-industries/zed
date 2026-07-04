@@ -1175,6 +1175,79 @@ pub struct MarkdownPreviewSettingsContent {
     ///
     /// Default: 800
     pub max_width: Option<f32>,
+    /// Per-heading-level styling. Every attribute of every level is
+    /// optional; when unset, the built-in default for that level applies.
+    pub headings: Option<HeadingsContent>,
+    /// Line height for paragraphs and list items, in rem units. Unset uses
+    /// the built-in default.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub line_height: Option<f32>,
+    /// Bottom margin below paragraphs and list blocks, in rem units. Unset
+    /// uses the built-in default.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub paragraph_spacing: Option<f32>,
+    /// Bottom margin between list items, in rem units. Unset uses the
+    /// built-in default.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub list_item_spacing: Option<f32>,
+}
+
+/// Per-heading-level style overrides for the markdown preview.
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
+pub struct HeadingsContent {
+    pub h1: Option<HeadingLevelContent>,
+    pub h2: Option<HeadingLevelContent>,
+    pub h3: Option<HeadingLevelContent>,
+    pub h4: Option<HeadingLevelContent>,
+    pub h5: Option<HeadingLevelContent>,
+    pub h6: Option<HeadingLevelContent>,
+}
+
+/// Style overrides for a single heading level.
+#[with_fallible_options]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, MergeFrom, Default, PartialEq)]
+pub struct HeadingLevelContent {
+    /// Font size in rem units (multiplied by the preview's base font size).
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub font_size: Option<f32>,
+    /// Whether the heading text is rendered in bold.
+    pub bold: Option<bool>,
+    /// Whether to draw a horizontal rule above, below, or on neither side of
+    /// the heading.
+    pub border: Option<HeadingBorder>,
+    /// Top margin above the heading, in rem units.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub spacing_before: Option<f32>,
+    /// Bottom margin below the heading, in rem units.
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub spacing_after: Option<f32>,
+}
+
+/// Which horizontal rule, if any, is drawn on a heading.
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    JsonSchema,
+    MergeFrom,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum HeadingBorder {
+    /// No horizontal rule.
+    #[default]
+    None,
+    /// Draw a rule above the heading.
+    Above,
+    /// Draw a rule below the heading.
+    Below,
 }
 
 /// The settings for the image viewer.

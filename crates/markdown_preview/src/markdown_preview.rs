@@ -30,7 +30,9 @@ actions!(
         /// Scrolls to the bottom of the markdown preview.
         ScrollToBottom,
         /// Opens a following markdown preview that syncs with the editor.
-        OpenFollowingPreview
+        OpenFollowingPreview,
+        /// Opens the settings editor scrolled to the Markdown Preview page.
+        OpenPreviewSettings
     ]
 );
 

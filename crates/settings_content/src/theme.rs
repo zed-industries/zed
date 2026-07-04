@@ -156,9 +156,15 @@ pub struct ThemeSettingsContent {
     /// The name of a font to use for code (code blocks and inline code) in the
     /// markdown preview. Falls back to the buffer font if unset.
     pub markdown_preview_code_font_family: Option<FontFamilyName>,
+    /// The name of a font to use for headings (H1..H6) in the markdown preview.
+    /// Falls back to the body font family if unset.
+    pub markdown_preview_heading_font_family: Option<FontFamilyName>,
     /// The font size to use for rendering in the markdown preview.
     /// Falls back to the UI font size if unset.
     pub markdown_preview_font_size: Option<FontSize>,
+    /// The font size to use for code (code blocks and inline code) in the
+    /// markdown preview. Falls back to the preview body font size if unset.
+    pub markdown_preview_code_font_size: Option<FontSize>,
     /// The theme to use for the markdown preview.
     /// Falls back to the main editor theme if unset.
     pub markdown_preview_theme: Option<ThemeSelection>,

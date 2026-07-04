@@ -34,7 +34,7 @@ use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Edges, Entity,
     FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox, Hsla, Image,
     ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
+    MouseMoveEvent, MouseUpEvent, Point, Rems, ScrollHandle, Stateful, StrikethroughStyle,
     StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun,
     TextStyle, TextStyleRefinement, WrappedLineLayout, actions, img, point, quad,
 };
@@ -91,6 +91,41 @@ pub struct HeadingLevelStyles {
     pub h6: Option<TextStyleRefinement>,
 }
 
+/// Per-level top and bottom margins for headings.
+#[derive(Clone, Copy, Default)]
+pub struct HeadingLevelMargins {
+    pub h1: HeadingLevelMargin,
+    pub h2: HeadingLevelMargin,
+    pub h3: HeadingLevelMargin,
+    pub h4: HeadingLevelMargin,
+    pub h5: HeadingLevelMargin,
+    pub h6: HeadingLevelMargin,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct HeadingLevelMargin {
+    pub top: Option<Rems>,
+    pub bottom: Option<Rems>,
+}
+
+/// Per-level border toggles for headings. When either flag is true, the
+/// heading gets a rule on that side drawn in `heading_border_color`.
+#[derive(Clone, Copy, Default)]
+pub struct HeadingLevelBorders {
+    pub h1: HeadingLevelBorder,
+    pub h2: HeadingLevelBorder,
+    pub h3: HeadingLevelBorder,
+    pub h4: HeadingLevelBorder,
+    pub h5: HeadingLevelBorder,
+    pub h6: HeadingLevelBorder,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct HeadingLevelBorder {
+    pub above: bool,
+    pub below: bool,
+}
+
 #[derive(Clone)]
 pub struct MarkdownStyle {
     pub base_text_style: TextStyle,
@@ -113,6 +148,22 @@ pub struct MarkdownStyle {
     pub prevent_mouse_interaction: bool,
     pub table_columns_min_size: bool,
     pub soft_break_as_hard_break: bool,
+    /// If set, overrides the default paragraph / list-item line height.
+    pub body_line_height: Option<Rems>,
+    /// If set, overrides the default paragraph bottom margin.
+    pub paragraph_margin_bottom: Option<Rems>,
+    /// Per-level heading margins (top and bottom). Any field left `None`
+    /// falls back to the built-in default for that level.
+    pub heading_level_margins: HeadingLevelMargins,
+    /// Per-level heading borders (above / below).
+    pub heading_level_borders: HeadingLevelBorders,
+    /// If set, overrides the default list-item bottom margin.
+    pub list_item_margin_bottom: Option<Rems>,
+    /// If set, applies a bottom margin to the whole list block (not just the
+    /// last item), treating lists as peer block elements to paragraphs the
+    /// way CSS markdown stylesheets do. Unset preserves the current behavior
+    /// (no explicit list-block margin).
+    pub list_margin_bottom: Option<Rems>,
 }
 
 impl Default for MarkdownStyle {
@@ -138,6 +189,12 @@ impl Default for MarkdownStyle {
             prevent_mouse_interaction: false,
             table_columns_min_size: false,
             soft_break_as_hard_break: false,
+            body_line_height: None,
+            paragraph_margin_bottom: None,
+            heading_level_margins: HeadingLevelMargins::default(),
+            heading_level_borders: HeadingLevelBorders::default(),
+            list_item_margin_bottom: None,
+            list_margin_bottom: None,
         }
     }
 }
@@ -170,18 +227,21 @@ impl MarkdownStyle {
         let is_preview = matches!(font, MarkdownFont::Preview);
 
         let buffer_font_weight = theme_settings.buffer_font.weight;
-        let (buffer_font_size, ui_font_size) = match font {
+        let (buffer_font_size, ui_font_size, code_font_size) = match font {
             MarkdownFont::Agent => (
                 theme_settings.agent_buffer_font_size(cx),
                 theme_settings.agent_ui_font_size(cx),
+                theme_settings.agent_buffer_font_size(cx),
             ),
             MarkdownFont::Editor => (
                 theme_settings.buffer_font_size(cx),
                 theme_settings.ui_font_size(cx),
+                theme_settings.buffer_font_size(cx),
             ),
             MarkdownFont::Preview => (
                 theme_settings.markdown_preview_font_size(cx),
                 theme_settings.ui_font_size(cx),
+                theme_settings.markdown_preview_code_font_size(cx),
             ),
         };
 
@@ -256,7 +316,7 @@ impl MarkdownStyle {
                     font_family: Some(code_font_family.clone()),
                     font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                     font_features: Some(theme_settings.buffer_font.features.clone()),
-                    font_size: Some(buffer_font_size.into()),
+                    font_size: Some(code_font_size.into()),
                     font_weight: Some(buffer_font_weight),
                     ..Default::default()
                 },
@@ -266,7 +326,7 @@ impl MarkdownStyle {
                 font_family: Some(code_font_family),
                 font_fallbacks: theme_settings.buffer_font.fallbacks.clone(),
                 font_features: Some(theme_settings.buffer_font.features.clone()),
-                font_size: Some(buffer_font_size.into()),
+                font_size: Some(code_font_size.into()),
                 font_weight: Some(buffer_font_weight),
                 background_color: Some(colors.editor_foreground.opacity(0.08)),
                 ..Default::default()
@@ -357,6 +417,12 @@ impl MarkdownStyle {
         });
 
         self.heading_border_color = Some(colors.border_variant);
+
+        // Preview defaults for per-level borders: H1/H2/H3 have a rule below,
+        // matching what the render code has always drawn for these levels.
+        self.heading_level_borders.h1.below = true;
+        self.heading_level_borders.h2.below = true;
+        self.heading_level_borders.h3.below = true;
 
         self
     }
@@ -1442,8 +1508,14 @@ impl MarkdownElement {
         text_align_override: Option<TextAlign>,
     ) {
         let align = text_align_override.unwrap_or(self.style.base_text_style.text_align);
+        let paragraph_margin_bottom = self.style.paragraph_margin_bottom;
+        let body_line_height = self.style.body_line_height.unwrap_or(rems(1.3));
         let mut paragraph = div().when(!self.style.height_is_multiple_of_line_height, |el| {
-            el.mb_2().line_height(rems(1.3))
+            let el = match paragraph_margin_bottom {
+                Some(mb) => el.mb(mb),
+                None => el.mb_2(),
+            };
+            el.line_height(body_line_height)
         });
 
         paragraph = match align {
@@ -1473,12 +1545,24 @@ impl MarkdownElement {
         text_align_override: Option<TextAlign>,
     ) {
         let align = text_align_override.unwrap_or(self.style.base_text_style.text_align);
-        let mut heading = div().mt_4().mb_2();
+        let margins = heading_level_margin(&self.style.heading_level_margins, level);
+        let borders = heading_level_border(&self.style.heading_level_borders, level);
+        // Built-in defaults: H1 top = 1.0 rem (mt_4); H2..H6 top = 1.5 rem
+        // (mt_4 + mt_6, where mt_6 wins). Bottom = 0.5 rem (mb_2) for all.
+        let default_top = if matches!(level, pulldown_cmark::HeadingLevel::H1) {
+            rems(1.0)
+        } else {
+            rems(1.5)
+        };
+        let mt = margins.top.unwrap_or(default_top);
+        let mb = margins.bottom.unwrap_or(rems(0.5));
+        let mut heading = div().mt(mt).mb(mb);
         heading = apply_heading_style(
             heading,
             level,
             self.style.heading_level_styles.as_ref(),
             self.style.heading_border_color,
+            borders,
         );
 
         heading = match align {
@@ -1488,7 +1572,29 @@ impl MarkdownElement {
         };
 
         let mut heading_style = self.style.heading.clone();
-        let heading_text_style = heading_style.text_style().clone();
+        let mut heading_text_style = heading_style.text_style().clone();
+        // Merge per-level font_weight into the pushed text-style refinement.
+        // `font_weight` is carried on `TextRun.font` (built from the builder's
+        // text-style stack), not through the div's `style.text`, so setting
+        // it on `heading_level_styles.hN.font_weight` would be discarded —
+        // the same class of bug that affected `font_family`. Font *size*
+        // reaches the runs via the window text-style stack, which is why
+        // that path still works through `heading_level_styles`.
+        if let Some(level_styles) = &self.style.heading_level_styles {
+            let level_refinement = match level {
+                pulldown_cmark::HeadingLevel::H1 => &level_styles.h1,
+                pulldown_cmark::HeadingLevel::H2 => &level_styles.h2,
+                pulldown_cmark::HeadingLevel::H3 => &level_styles.h3,
+                pulldown_cmark::HeadingLevel::H4 => &level_styles.h4,
+                pulldown_cmark::HeadingLevel::H5 => &level_styles.h5,
+                pulldown_cmark::HeadingLevel::H6 => &level_styles.h6,
+            };
+            if let Some(refinement) = level_refinement
+                && let Some(weight) = refinement.font_weight
+            {
+                heading_text_style.font_weight = Some(weight);
+            }
+        }
         heading.style().refine(&heading_style);
 
         builder.push_text_style(TextStyleRefinement {
@@ -1670,10 +1776,16 @@ impl MarkdownElement {
         range: &Range<usize>,
         markdown_end: usize,
     ) {
+        let list_item_margin_bottom = self.style.list_item_margin_bottom;
+        let body_line_height = self.style.body_line_height.unwrap_or(rems(1.3));
         builder.push_div(
             div()
                 .when(!self.style.height_is_multiple_of_line_height, |el| {
-                    el.mb_1().gap_1().line_height(rems(1.3))
+                    let el = match list_item_margin_bottom {
+                        Some(mb) => el.mb(mb),
+                        None => el.mb_1(),
+                    };
+                    el.gap_1().line_height(body_line_height)
                 })
                 .h_flex()
                 .items_start()
@@ -2320,7 +2432,11 @@ impl Element for MarkdownElement {
                         }
                         MarkdownTag::List(bullet_index) => {
                             builder.push_list(*bullet_index);
-                            builder.push_div(div().pl_2p5(), range, markdown_end);
+                            let mut list_div = div().pl_2p5();
+                            if let Some(mb) = self.style.list_margin_bottom {
+                                list_div = list_div.mb(mb);
+                            }
+                            builder.push_div(list_div, range, markdown_end);
                         }
                         MarkdownTag::Item => {
                             let bullet =
@@ -2860,11 +2976,40 @@ fn image_fallback_element(
         .into_any_element()
 }
 
+fn heading_level_margin(
+    margins: &HeadingLevelMargins,
+    level: pulldown_cmark::HeadingLevel,
+) -> HeadingLevelMargin {
+    match level {
+        pulldown_cmark::HeadingLevel::H1 => margins.h1,
+        pulldown_cmark::HeadingLevel::H2 => margins.h2,
+        pulldown_cmark::HeadingLevel::H3 => margins.h3,
+        pulldown_cmark::HeadingLevel::H4 => margins.h4,
+        pulldown_cmark::HeadingLevel::H5 => margins.h5,
+        pulldown_cmark::HeadingLevel::H6 => margins.h6,
+    }
+}
+
+fn heading_level_border(
+    borders: &HeadingLevelBorders,
+    level: pulldown_cmark::HeadingLevel,
+) -> HeadingLevelBorder {
+    match level {
+        pulldown_cmark::HeadingLevel::H1 => borders.h1,
+        pulldown_cmark::HeadingLevel::H2 => borders.h2,
+        pulldown_cmark::HeadingLevel::H3 => borders.h3,
+        pulldown_cmark::HeadingLevel::H4 => borders.h4,
+        pulldown_cmark::HeadingLevel::H5 => borders.h5,
+        pulldown_cmark::HeadingLevel::H6 => borders.h6,
+    }
+}
+
 fn apply_heading_style(
     mut heading: Div,
     level: pulldown_cmark::HeadingLevel,
     custom_styles: Option<&HeadingLevelStyles>,
     border_color: Option<Hsla>,
+    borders: HeadingLevelBorder,
 ) -> Div {
     heading = match level {
         pulldown_cmark::HeadingLevel::H1 => heading.text_3xl(),
@@ -2875,20 +3020,13 @@ fn apply_heading_style(
         pulldown_cmark::HeadingLevel::H6 => heading.text_sm(),
     };
 
-    heading = match level {
-        pulldown_cmark::HeadingLevel::H1 => heading,
-        _ => heading.mt_6(),
-    };
-
-    if let Some(border_color) = border_color
-        && matches!(
-            level,
-            pulldown_cmark::HeadingLevel::H1
-                | pulldown_cmark::HeadingLevel::H2
-                | pulldown_cmark::HeadingLevel::H3
-        )
-    {
-        heading = heading.pb_1().border_b_1().border_color(border_color);
+    if let Some(border_color) = border_color {
+        if borders.above {
+            heading = heading.pt_1().border_t_1().border_color(border_color);
+        }
+        if borders.below {
+            heading = heading.pb_1().border_b_1().border_color(border_color);
+        }
     }
 
     if let Some(styles) = custom_styles {

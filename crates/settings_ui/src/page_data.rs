@@ -1,4 +1,4 @@
-use gpui::{Action as _, App};
+use gpui::{Action as _, App, ReadGlobal as _};
 use itertools::Itertools as _;
 use settings::{
     AudioInputDeviceName, AudioOutputDeviceName, EditPredictionDataCollectionChoice,
@@ -1162,67 +1162,6 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
-    fn markdown_preview_font_section() -> [SettingsPageItem; 4] {
-        [
-            SettingsPageItem::SectionHeader("Markdown Preview Font"),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Font Family",
-                description: "Font family for the markdown preview. Falls back to the UI font family.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("markdown_preview_font_family"),
-                    pick: |settings_content| {
-                        settings_content.theme.markdown_preview_font_family.as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content.theme.markdown_preview_font_family = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Code Font Family",
-                description: "Font family for code blocks in the markdown preview. Falls back to the editor font family.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("markdown_preview_code_font_family"),
-                    pick: |settings_content| {
-                        settings_content
-                            .theme
-                            .markdown_preview_code_font_family
-                            .as_ref()
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content.theme.markdown_preview_code_font_family = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-            SettingsPageItem::SettingItem(SettingItem {
-                title: "Font Size",
-                description: "Font size for the markdown preview. Falls back to the editor font size.",
-                field: Box::new(SettingField {
-                    organization_override: None,
-                    json_path: Some("markdown_preview_font_size"),
-                    pick: |settings_content| {
-                        settings_content
-                            .theme
-                            .markdown_preview_font_size
-                            .as_ref()
-                            .or(settings_content.theme.buffer_font_size.as_ref())
-                    },
-                    write: |settings_content, value, _| {
-                        settings_content.theme.markdown_preview_font_size = value;
-                    },
-                }),
-                metadata: None,
-                files: USER,
-            }),
-        ]
-    }
-
     fn text_rendering_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SectionHeader("Text Rendering"),
@@ -1446,16 +1385,50 @@ fn appearance_page() -> SettingsPage {
         ]
     }
 
+    fn markdown_preview_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Markdown Preview"),
+            SettingsPageItem::SubPageLink(SubPageLink {
+                title: "Markdown Preview".into(),
+                r#type: Default::default(),
+                description: Some(
+                    "Typography, spacing, and theme for the markdown preview.".into(),
+                ),
+                search_aliases: &[
+                    "heading",
+                    "line height",
+                    "paragraph",
+                    "list",
+                    "font",
+                    "font family",
+                    "font size",
+                    "code font",
+                    "theme",
+                    "bold",
+                    "border",
+                ],
+                json_path: Some("markdown_preview"),
+                in_json: true,
+                files: USER,
+                render: |this, scroll_handle, window, cx| {
+                    let items = markdown_preview_sub_page_items();
+                    this.render_sub_page_items(items.iter().enumerate(), scroll_handle, window, cx)
+                        .into_any_element()
+                },
+            }),
+        ]
+    }
+
     let items: Box<[SettingsPageItem]> = concat_sections!(
         theme_section(),
         buffer_font_section(),
         ui_font_section(),
         agent_panel_font_section(),
-        markdown_preview_font_section(),
         text_rendering_section(),
         cursor_section(),
         highlighting_section(),
         guides_section(),
+        markdown_preview_section(),
     );
 
     SettingsPage {
@@ -7375,6 +7348,538 @@ fn terminal_page() -> SettingsPage {
     }
 }
 
+fn markdown_preview_sub_page_items() -> Box<[SettingsPageItem]> {
+    // Effective defaults, so the number fields show the real applied value
+    // when the setting is unset in user settings. Only used by `pick` —
+    // `write` is untouched, so leaving a field alone keeps `null` in the
+    // JSON and lets the runtime fallback apply.
+    const DEFAULT_LINE_HEIGHT: f32 = 1.3;
+    const DEFAULT_PARAGRAPH_SPACING: f32 = 0.5;
+    const DEFAULT_LIST_ITEM_SPACING: f32 = 0.25;
+    const DEFAULT_HEADING_SIZES: [f32; 6] = [1.45, 1.3, 1.1, 1.01, 0.95, 0.85];
+    // Preview default: H1 top margin is 1.0 rem, H2..H6 are 1.5 rem (mt_6).
+    const DEFAULT_HEADING_SPACING_BEFORE: [f32; 6] = [1.0, 1.5, 1.5, 1.5, 1.5, 1.5];
+    const DEFAULT_HEADING_SPACING_AFTER: f32 = 0.5;
+    // Preview default: H1/H2/H3 show a rule below, H4/H5/H6 show none.
+    const DEFAULT_HEADING_BORDER: [settings::HeadingBorder; 6] = [
+        settings::HeadingBorder::Below,
+        settings::HeadingBorder::Below,
+        settings::HeadingBorder::Below,
+        settings::HeadingBorder::None,
+        settings::HeadingBorder::None,
+        settings::HeadingBorder::None,
+    ];
+    const DEFAULT_BOLD: bool = false;
+
+    fn rem_step_metadata() -> Option<Box<SettingsFieldMetadata>> {
+        Some(Box::new(SettingsFieldMetadata {
+            number_field_step: Some(0.1),
+            ..Default::default()
+        }))
+    }
+
+    fn theme_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Theme"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Preview Theme",
+                description: "Theme used for the markdown preview's colors (background, text, syntax, and so on). Falls back to the main editor theme when unset. Choose a light/dark pair by editing `markdown_preview_theme` in settings.json directly.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview_theme"),
+                    // Read as a plain theme name; fall through to the main
+                    // editor theme so the picker shows what's actually
+                    // being applied. Handles the `Dynamic { light, dark }`
+                    // case by picking the dark side arbitrarily — pick
+                    // has no App context, so it can't consult the current
+                    // system appearance; it only needs to return *some*
+                    // sensible name to avoid the "NO DEFAULT" badge.
+                    // Write always converts to `Static`; users who want a
+                    // light/dark pair for `markdown_preview_theme` edit
+                    // settings.json directly.
+                    pick: |c| {
+                        fn theme_name(
+                            selection: Option<&settings::ThemeSelection>,
+                        ) -> Option<&settings::ThemeName> {
+                            match selection? {
+                                settings::ThemeSelection::Static(name) => Some(name),
+                                settings::ThemeSelection::Dynamic { dark, .. } => Some(dark),
+                            }
+                        }
+                        theme_name(c.theme.markdown_preview_theme.as_ref())
+                            .or_else(|| theme_name(c.theme.theme.as_ref()))
+                    },
+                    write: |c, v, _| {
+                        c.theme.markdown_preview_theme = v.map(settings::ThemeSelection::Static);
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn font_section() -> [SettingsPageItem; 6] {
+        [
+            SettingsPageItem::SectionHeader("Font"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Family",
+                description: "Font family for the markdown preview. Falls back to the UI font family.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview_font_family"),
+                    // Same rationale as Font Size below: fall through to the
+                    // effective runtime value (UI font family) so the picker
+                    // shows what's actually rendering.
+                    pick: |c| {
+                        c.theme
+                            .markdown_preview_font_family
+                            .as_ref()
+                            .or(c.theme.ui_font_family.as_ref())
+                    },
+                    write: |c, v, _| {
+                        c.theme.markdown_preview_font_family = v;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Code Font Family",
+                description: "Font family for code blocks. Falls back to the buffer font family.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview_code_font_family"),
+                    pick: |c| {
+                        c.theme
+                            .markdown_preview_code_font_family
+                            .as_ref()
+                            .or(c.theme.buffer_font_family.as_ref())
+                    },
+                    write: |c, v, _| {
+                        c.theme.markdown_preview_code_font_family = v;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Heading Font Family",
+                description: "Font family for headings (H1..H6). Falls back to the body font family.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview_heading_font_family"),
+                    pick: |c| {
+                        c.theme
+                            .markdown_preview_heading_font_family
+                            .as_ref()
+                            .or(c.theme.markdown_preview_font_family.as_ref())
+                            .or(c.theme.ui_font_family.as_ref())
+                    },
+                    write: |c, v, _| {
+                        c.theme.markdown_preview_heading_font_family = v;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Font Size",
+                description: "Base body font size. Falls back to the UI font size.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview_font_size"),
+                    // When unset, show the effective value (UI font size), matching
+                    // the runtime fallback in ThemeSettings::markdown_preview_font_size.
+                    // Otherwise the field displays the FontSize minimum (6) and the
+                    // preview appears to "jump" to the real size on the first tweak.
+                    pick: |c| {
+                        c.theme
+                            .markdown_preview_font_size
+                            .as_ref()
+                            .or(c.theme.ui_font_size.as_ref())
+                    },
+                    write: |c, v, _| {
+                        c.theme.markdown_preview_font_size = v;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Code Font Size",
+                description: "Font size for code blocks and inline code. Falls back to the preview body font size.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview_code_font_size"),
+                    // Fall through the same way the runtime does: code →
+                    // preview body → UI font size. Keeps defaults byte-
+                    // identical to `main` where preview code tracked the
+                    // body font size.
+                    pick: |c| {
+                        c.theme
+                            .markdown_preview_code_font_size
+                            .as_ref()
+                            .or(c.theme.markdown_preview_font_size.as_ref())
+                            .or(c.theme.ui_font_size.as_ref())
+                    },
+                    write: |c, v, _| {
+                        c.theme.markdown_preview_code_font_size = v;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+        ]
+    }
+
+    fn layout_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Layout"),
+            SettingsPageItem::DynamicItem(DynamicItem {
+                discriminant: SettingItem {
+                    files: USER,
+                    title: "Limit Content Width",
+                    description: "Constrain content to a maximum width, centering it in the pane.",
+                    field: Box::new(SettingField::<bool> {
+                        organization_override: None,
+                        json_path: Some("markdown_preview.limit_content_width"),
+                        pick: |c| c.markdown_preview.as_ref()?.limit_content_width.as_ref(),
+                        write: |c, v, _| {
+                            c.markdown_preview
+                                .get_or_insert_default()
+                                .limit_content_width = v;
+                        },
+                    }),
+                    metadata: None,
+                },
+                pick_discriminant: |c| {
+                    let enabled = c
+                        .markdown_preview
+                        .as_ref()?
+                        .limit_content_width
+                        .unwrap_or(true);
+                    Some(if enabled { 1 } else { 0 })
+                },
+                fields: vec![
+                    vec![],
+                    vec![SettingItem {
+                        files: USER,
+                        title: "Max Width",
+                        description: "Maximum content width in pixels.",
+                        field: Box::new(SettingField {
+                            organization_override: None,
+                            json_path: Some("markdown_preview.max_width"),
+                            pick: |c| c.markdown_preview.as_ref()?.max_width.as_ref(),
+                            write: |c, v, _| {
+                                c.markdown_preview.get_or_insert_default().max_width = v;
+                            },
+                        }),
+                        metadata: Some(Box::new(SettingsFieldMetadata {
+                            number_field_step: Some(50.0),
+                            ..Default::default()
+                        })),
+                    }],
+                ],
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Line Height",
+                description: "Line height for paragraphs and list items (rem). Unset uses the built-in default.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview.line_height"),
+                    pick: |c| {
+                        c.markdown_preview
+                            .as_ref()
+                            .and_then(|mp| mp.line_height.as_ref())
+                            .or(Some(&DEFAULT_LINE_HEIGHT))
+                    },
+                    write: |c, v, _| {
+                        c.markdown_preview.get_or_insert_default().line_height = v;
+                    },
+                }),
+                metadata: rem_step_metadata(),
+                files: USER,
+            }),
+        ]
+    }
+
+    fn spacing_section() -> [SettingsPageItem; 3] {
+        [
+            SettingsPageItem::SectionHeader("Spacing"),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Paragraph Spacing",
+                description: "Bottom margin below paragraphs and list blocks (rem).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview.paragraph_spacing"),
+                    pick: |c| {
+                        c.markdown_preview
+                            .as_ref()
+                            .and_then(|mp| mp.paragraph_spacing.as_ref())
+                            .or(Some(&DEFAULT_PARAGRAPH_SPACING))
+                    },
+                    write: |c, v, _| {
+                        c.markdown_preview.get_or_insert_default().paragraph_spacing = v;
+                    },
+                }),
+                metadata: rem_step_metadata(),
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "List Item Spacing",
+                description: "Bottom margin between list items (rem).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("markdown_preview.list_item_spacing"),
+                    pick: |c| {
+                        c.markdown_preview
+                            .as_ref()
+                            .and_then(|mp| mp.list_item_spacing.as_ref())
+                            .or(Some(&DEFAULT_LIST_ITEM_SPACING))
+                    },
+                    write: |c, v, _| {
+                        c.markdown_preview.get_or_insert_default().list_item_spacing = v;
+                    },
+                }),
+                metadata: rem_step_metadata(),
+                files: USER,
+            }),
+        ]
+    }
+
+    macro_rules! heading_level_section {
+        ($title:literal, $field:ident, $idx:expr) => {
+            [
+                SettingsPageItem::SectionHeader($title),
+                // Font size
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Font Size",
+                    description: "Font size in rem, multiplied by the preview's base font size.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some(concat!(
+                            "markdown_preview.headings.",
+                            stringify!($field),
+                            ".font_size"
+                        )),
+                        pick: |c| {
+                            c.markdown_preview
+                                .as_ref()
+                                .and_then(|mp| mp.headings.as_ref())
+                                .and_then(|h| h.$field.as_ref())
+                                .and_then(|l| l.font_size.as_ref())
+                                .or(Some(&DEFAULT_HEADING_SIZES[$idx]))
+                        },
+                        write: |c, v, _| {
+                            c.markdown_preview
+                                .get_or_insert_default()
+                                .headings
+                                .get_or_insert_default()
+                                .$field
+                                .get_or_insert_default()
+                                .font_size = v;
+                        },
+                    }),
+                    metadata: rem_step_metadata(),
+                    files: USER,
+                }),
+                // Bold
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Bold",
+                    description: "Render this heading level in bold weight.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some(concat!(
+                            "markdown_preview.headings.",
+                            stringify!($field),
+                            ".bold"
+                        )),
+                        pick: |c| {
+                            c.markdown_preview
+                                .as_ref()
+                                .and_then(|mp| mp.headings.as_ref())
+                                .and_then(|h| h.$field.as_ref())
+                                .and_then(|l| l.bold.as_ref())
+                                .or(Some(&DEFAULT_BOLD))
+                        },
+                        write: |c, v, _| {
+                            c.markdown_preview
+                                .get_or_insert_default()
+                                .headings
+                                .get_or_insert_default()
+                                .$field
+                                .get_or_insert_default()
+                                .bold = v;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                // Border (dropdown: none / above / below)
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Border",
+                    description: "Draw a horizontal rule above the heading, below it, or neither.",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some(concat!(
+                            "markdown_preview.headings.",
+                            stringify!($field),
+                            ".border"
+                        )),
+                        pick: |c| {
+                            c.markdown_preview
+                                .as_ref()
+                                .and_then(|mp| mp.headings.as_ref())
+                                .and_then(|h| h.$field.as_ref())
+                                .and_then(|l| l.border.as_ref())
+                                .or(Some(&DEFAULT_HEADING_BORDER[$idx]))
+                        },
+                        write: |c, v, _| {
+                            c.markdown_preview
+                                .get_or_insert_default()
+                                .headings
+                                .get_or_insert_default()
+                                .$field
+                                .get_or_insert_default()
+                                .border = v;
+                        },
+                    }),
+                    metadata: None,
+                    files: USER,
+                }),
+                // Spacing before
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Spacing Before",
+                    description: "Top margin above this heading (rem).",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some(concat!(
+                            "markdown_preview.headings.",
+                            stringify!($field),
+                            ".spacing_before"
+                        )),
+                        pick: |c| {
+                            c.markdown_preview
+                                .as_ref()
+                                .and_then(|mp| mp.headings.as_ref())
+                                .and_then(|h| h.$field.as_ref())
+                                .and_then(|l| l.spacing_before.as_ref())
+                                .or(Some(&DEFAULT_HEADING_SPACING_BEFORE[$idx]))
+                        },
+                        write: |c, v, _| {
+                            c.markdown_preview
+                                .get_or_insert_default()
+                                .headings
+                                .get_or_insert_default()
+                                .$field
+                                .get_or_insert_default()
+                                .spacing_before = v;
+                        },
+                    }),
+                    metadata: rem_step_metadata(),
+                    files: USER,
+                }),
+                // Spacing after
+                SettingsPageItem::SettingItem(SettingItem {
+                    title: "Spacing After",
+                    description: "Bottom margin below this heading (rem).",
+                    field: Box::new(SettingField {
+                        organization_override: None,
+                        json_path: Some(concat!(
+                            "markdown_preview.headings.",
+                            stringify!($field),
+                            ".spacing_after"
+                        )),
+                        pick: |c| {
+                            c.markdown_preview
+                                .as_ref()
+                                .and_then(|mp| mp.headings.as_ref())
+                                .and_then(|h| h.$field.as_ref())
+                                .and_then(|l| l.spacing_after.as_ref())
+                                .or(Some(&DEFAULT_HEADING_SPACING_AFTER))
+                        },
+                        write: |c, v, _| {
+                            c.markdown_preview
+                                .get_or_insert_default()
+                                .headings
+                                .get_or_insert_default()
+                                .$field
+                                .get_or_insert_default()
+                                .spacing_after = v;
+                        },
+                    }),
+                    metadata: rem_step_metadata(),
+                    files: USER,
+                }),
+            ]
+        };
+    }
+
+    fn h1_section() -> [SettingsPageItem; 6] {
+        heading_level_section!("Heading 1 (Title)", h1, 0)
+    }
+    fn h2_section() -> [SettingsPageItem; 6] {
+        heading_level_section!("Heading 2 (Section)", h2, 1)
+    }
+    fn h3_section() -> [SettingsPageItem; 6] {
+        heading_level_section!("Heading 3 (Subsection)", h3, 2)
+    }
+    fn h4_section() -> [SettingsPageItem; 6] {
+        heading_level_section!("Heading 4 (Sub-subsection)", h4, 3)
+    }
+    fn h5_section() -> [SettingsPageItem; 6] {
+        heading_level_section!("Heading 5 (Minor Heading)", h5, 4)
+    }
+    fn h6_section() -> [SettingsPageItem; 6] {
+        heading_level_section!("Heading 6 (Small Heading)", h6, 5)
+    }
+
+    fn reset_section() -> [SettingsPageItem; 2] {
+        [
+            SettingsPageItem::SectionHeader("Reset"),
+            SettingsPageItem::ActionLink(ActionLink {
+                title: "Reset to Defaults".into(),
+                description: Some(
+                    "Clear every Markdown Preview setting so the built-in defaults apply.".into(),
+                ),
+                button_text: "Reset".into(),
+                on_click: Arc::new(|_settings_window, _window, cx| {
+                    settings::SettingsStore::global(cx).update_settings_file(
+                        <dyn fs::Fs>::global(cx),
+                        |content, _| {
+                            // Clear every setting the sub-page displays. The
+                            // Preview Theme row lives here now, so include it.
+                            content.theme.markdown_preview_font_family = None;
+                            content.theme.markdown_preview_code_font_family = None;
+                            content.theme.markdown_preview_heading_font_family = None;
+                            content.theme.markdown_preview_font_size = None;
+                            content.theme.markdown_preview_code_font_size = None;
+                            content.theme.markdown_preview_theme = None;
+                            content.markdown_preview = None;
+                        },
+                    );
+                }),
+                files: USER,
+            }),
+        ]
+    }
+
+    concat_sections!(
+        theme_section(),
+        font_section(),
+        layout_section(),
+        spacing_section(),
+        h1_section(),
+        h2_section(),
+        h3_section(),
+        h4_section(),
+        h5_section(),
+        h6_section(),
+        reset_section(),
+    )
+}
+
 fn version_control_page() -> SettingsPage {
     fn git_integration_section() -> [SettingsPageItem; 2] {
         [
@@ -9791,7 +10296,7 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
         ]
     }
 
-    fn global_only_miscellaneous_sub_section() -> [SettingsPageItem; 3] {
+    fn global_only_miscellaneous_sub_section() -> [SettingsPageItem; 2] {
         [
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Image Viewer",
@@ -9811,65 +10316,6 @@ fn language_settings_data() -> Box<[SettingsPageItem]> {
                 }),
                 metadata: None,
                 files: USER,
-            }),
-            SettingsPageItem::DynamicItem(DynamicItem {
-                discriminant: SettingItem {
-                    files: USER,
-                    title: "Limit Markdown Preview Width",
-                    description: "Whether to constrain the markdown preview content to a maximum width, centering it when the pane is wider, for optimal readability.",
-                    field: Box::new(SettingField::<bool> {
-                        organization_override: None,
-                        json_path: Some("markdown_preview.limit_content_width"),
-                        pick: |settings_content| {
-                            settings_content
-                                .markdown_preview
-                                .as_ref()?
-                                .limit_content_width
-                                .as_ref()
-                        },
-                        write: |settings_content, value, _| {
-                            settings_content
-                                .markdown_preview
-                                .get_or_insert_default()
-                                .limit_content_width = value;
-                        },
-                    }),
-                    metadata: None,
-                },
-                pick_discriminant: |settings_content| {
-                    let enabled = settings_content
-                        .markdown_preview
-                        .as_ref()?
-                        .limit_content_width
-                        .unwrap_or(true);
-                    Some(if enabled { 1 } else { 0 })
-                },
-                fields: vec![
-                    vec![],
-                    vec![SettingItem {
-                        files: USER,
-                        title: "Max Width",
-                        description: "Maximum content width in pixels. Content will be centered when the pane is wider than this value.",
-                        field: Box::new(SettingField {
-                            organization_override: None,
-                            json_path: Some("markdown_preview.max_width"),
-                            pick: |settings_content| {
-                                settings_content
-                                    .markdown_preview
-                                    .as_ref()?
-                                    .max_width
-                                    .as_ref()
-                            },
-                            write: |settings_content, value, _| {
-                                settings_content
-                                    .markdown_preview
-                                    .get_or_insert_default()
-                                    .max_width = value;
-                            },
-                        }),
-                        metadata: None,
-                    }],
-                ],
             }),
             SettingsPageItem::SettingItem(SettingItem {
                 title: "Drop Size Target",
