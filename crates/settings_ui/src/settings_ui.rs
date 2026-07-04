@@ -4805,7 +4805,6 @@ fn update_project_setting_file(
 
 /// Derives a human-readable label for assistive technology from a setting's
 /// JSON path, e.g. `"buffer_font_size"` becomes `"Buffer Font Size"`.
-
 struct CurrentSettingsValue<'a, T> {
     value: &'a T,
     disabled: bool,
