@@ -125,43 +125,24 @@ impl State {
     fn set_api_key(&mut self, api_key: Option<String>, cx: &mut Context<Self>) -> Task<Result<()>> {
         let credentials_provider = self.credentials_provider.clone();
         let api_url = OpenCodeLanguageModelProvider::api_url(cx);
-        let should_fetch_models = api_key.is_some();
-        let task = self.api_key_state.store(
+        self.api_key_state.store(
             api_url,
             api_key,
             |this| &mut this.api_key_state,
             credentials_provider,
             cx,
-        );
-
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            if result.is_ok() && should_fetch_models {
-                this.update(cx, |this, cx| this.start_fetch_model_task(cx))
-                    .ok();
-            }
-            result
-        })
+        )
     }
 
     fn authenticate(&mut self, cx: &mut Context<Self>) -> Task<Result<(), AuthenticateError>> {
         let credentials_provider = self.credentials_provider.clone();
         let api_url = OpenCodeLanguageModelProvider::api_url(cx);
-        let task = self.api_key_state.load_if_needed(
+        self.api_key_state.load_if_needed(
             api_url,
             |this| &mut this.api_key_state,
             credentials_provider,
             cx,
-        );
-
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            if result.is_ok() {
-                this.update(cx, |this, cx| this.start_fetch_model_task(cx))
-                    .ok();
-            }
-            result
-        })
+        )
     }
 
     fn is_refreshing(&self) -> bool {
