@@ -15,6 +15,8 @@ use crate::{
 pub struct WorkspaceSettingsContent {
     /// Active pane styling settings.
     pub active_pane_modifiers: Option<ActivePaneModifiers>,
+    /// Styling settings applied to the focused dock panel.
+    pub active_panel_modifiers: Option<ActivePanelModifiers>,
     /// The text rendering mode to use.
     ///
     /// Default: platform_default
@@ -311,6 +313,26 @@ pub struct ActivePaneModifiers {
     pub inactive_opacity: Option<InactiveOpacity>,
 }
 
+#[with_fallible_options]
+#[derive(Copy, Clone, PartialEq, Debug, Default, Serialize, Deserialize, JsonSchema, MergeFrom)]
+#[serde(rename_all = "snake_case")]
+pub struct ActivePanelModifiers {
+    /// Size of the border surrounding the focused dock panel.
+    /// When set to 0, the focused panel doesn't have any border.
+    /// The border is drawn inset.
+    ///
+    /// Default: `0.0`
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub border_size: Option<f32>,
+    /// Opacity of dock panels that don't currently have focus.
+    /// When set to 1.0, unfocused panels have the same opacity as the focused one.
+    /// If set to 0, unfocused panel content will not be visible at all.
+    /// Values are clamped to the [0.0, 1.0] range.
+    ///
+    /// Default: `1.0`
+    #[schemars(range(min = 0.0, max = 1.0))]
+    pub inactive_opacity: Option<InactiveOpacity>,
+}
 #[derive(
     Copy,
     Clone,

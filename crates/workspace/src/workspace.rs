@@ -1485,6 +1485,12 @@ pub enum OpenMode {
     Activate,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum FocusedSurface {
+    PaneGroup,
+    Dock(DockPosition),
+}
+
 impl Workspace {
     pub fn new(
         workspace_id: Option<WorkspaceId>,
@@ -8072,6 +8078,32 @@ impl Workspace {
             )
     }
 
+    fn focused_surface(&self, window: &Window, cx: &App) -> Option<FocusedSurface> {
+        if self
+            .center
+            .panes()
+            .iter()
+            .any(|pane| pane.focus_handle(cx).contains_focused(window, cx))
+        {
+            return Some(FocusedSurface::PaneGroup);
+        }
+
+        [
+            (&self.left_dock, DockPosition::Left),
+            (&self.right_dock, DockPosition::Right),
+            (&self.bottom_dock, DockPosition::Bottom),
+        ]
+        .into_iter()
+        .find_map(|(dock, position)| {
+            dock.read(cx).visible_panel().and_then(|panel| {
+                panel
+                    .panel_focus_handle(cx)
+                    .contains_focused(window, cx)
+                    .then_some(FocusedSurface::Dock(position))
+            })
+        })
+    }
+
     fn render_dock(
         &self,
         position: DockPosition,
@@ -8088,6 +8120,12 @@ impl Workspace {
             let follower_states = &self.follower_states;
             leader_border_for_pane(follower_states, &pane, window, cx)
         });
+
+        let panel_highlight = dock
+            .read(cx)
+            .is_open()
+            .then(|| panel_highlight_overlay(self.focused_surface(window, cx), position, cx))
+            .flatten();
 
         // Expose each open dock as a landmark region so assistive technology
         // can navigate to it, and so region navigation announces it. While a
@@ -8117,7 +8155,8 @@ impl Workspace {
             .overflow_hidden()
             .flex_none()
             .child(dock.clone())
-            .children(leader_border);
+            .children(leader_border)
+            .children(panel_highlight);
 
         // Apply sizing only when the dock is open. When closed the dock is still
         // included in the element tree so its focus handle remains mounted — without
@@ -8644,6 +8683,51 @@ pub enum ActiveCallEvent {
     LocalScreenShareStarted,
     LocalScreenShareStopped,
     RoomLeft,
+}
+
+fn panel_highlight_overlay(
+    focused_surface: Option<FocusedSurface>,
+    position: DockPosition,
+    cx: &App,
+) -> Option<Div> {
+    let modifiers = WorkspaceSettings::get_global(cx).active_panel_modifiers;
+
+    let overlay_opacity = modifiers
+        .inactive_opacity
+        .map(|value| value.0.clamp(0.0, 1.0))
+        .and_then(|value| (value < 1.).then_some(value));
+    let overlay_border = modifiers
+        .border_size
+        .and_then(|value| (value > 0.).then_some(value));
+
+    if focused_surface == Some(FocusedSurface::Dock(position)) {
+        let border = overlay_border?;
+        return Some(
+            div()
+                .absolute()
+                .size_full()
+                .left_0()
+                .top_0()
+                .border(px(border))
+                .border_color(cx.theme().colors().border_selected),
+        );
+    }
+
+    if focused_surface.is_none() {
+        return None;
+    }
+
+    let opacity = overlay_opacity?;
+    let mut overlay_background = cx.theme().colors().panel_background;
+    overlay_background.fade_out(opacity);
+    Some(
+        div()
+            .absolute()
+            .size_full()
+            .left_0()
+            .top_0()
+            .bg(overlay_background),
+    )
 }
 
 fn leader_border_for_pane(
