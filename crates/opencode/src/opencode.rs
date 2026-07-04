@@ -112,7 +112,7 @@ impl Model {
 pub(crate) enum ModelParseResult {
     Success(Model),
     Deprecated,
-    Failed,
+    Failed(String),
 }
 
 mod models_dev {
@@ -205,7 +205,7 @@ pub(crate) fn extract_model_config(
         Ok(e) => e,
         Err(err) => {
             log::error!("Failed to parse model entry {model_id}: {err}");
-            return ModelParseResult::Failed;
+            return ModelParseResult::Failed(err.to_string());
         }
     };
 
@@ -348,9 +348,9 @@ pub fn parse_models_json(
                         entries.push((model_id, model, subscription));
                     }
                     ModelParseResult::Deprecated => {}
-                    ModelParseResult::Failed => {
+                    ModelParseResult::Failed(error) => {
                         log::error!(
-                            "model {model_name} ({model_id}) failed to parse, showing as disabled"
+                            "model {model_name} ({model_id}) failed to parse, showing as disabled: {error}"
                         );
                         let disabled_model = Model::new_disabled(
                             &model_id,
@@ -378,9 +378,9 @@ pub fn parse_models_json(
                         entries.push((model_id.clone(), model, OpenCodeSubscription::Go));
                     }
                     ModelParseResult::Deprecated => {}
-                    ModelParseResult::Failed => {
+                    ModelParseResult::Failed(error) => {
                         log::error!(
-                            "Go model {model_name} ({model_id}) failed to parse, showing as disabled"
+                            "Go model {model_name} ({model_id}) failed to parse, showing as disabled: {error}"
                         );
                         let disabled_model = Model::new_disabled(
                             &model_id,
@@ -887,7 +887,7 @@ mod tests {
 
         assert!(matches!(
             extract_model_config("broken-model", json, None),
-            ModelParseResult::Failed
+            ModelParseResult::Failed(_)
         ));
     }
 
