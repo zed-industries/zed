@@ -7937,11 +7937,10 @@ impl ThreadView {
         reason: &SandboxNotAppliedReason,
         cx: &Context<Self>,
     ) -> AnyElement {
-        // (title, optional detail line)
-        let (title, detail): (SharedString, Option<SharedString>) = match reason {
+        let (title, detail): (SharedString, SharedString) = match reason {
             SandboxNotAppliedReason::ErrorLinuxWsl(error) => (
                 "Couldn't create a sandbox".into(),
-                Some(error.user_facing_message().into()),
+                error.user_facing_message().into(),
             ),
             SandboxNotAppliedReason::DisabledForThisThread => {
                 // The grant only exists because an earlier command failed to
@@ -7957,42 +7956,15 @@ impl ThreadView {
                     .unwrap_or_else(|| {
                         "Unsandboxed execution is allowed for the rest of this thread.".into()
                     });
-                ("Ran without sandbox".into(), Some(detail))
+                ("Ran without sandbox".into(), detail)
             }
         };
 
-        h_flex()
-            .px_2()
-            .py_1()
-            .gap_1()
-            .border_t_1()
-            .border_color(cx.theme().status().warning_border)
-            .bg(cx.theme().status().warning_background.opacity(0.5))
-            .child(
-                h_flex()
-                    .min_w_0()
-                    .flex_1()
-                    .gap_1p5()
-                    .items_start()
-                    .child(
-                        Icon::new(IconName::Warning)
-                            .size(IconSize::XSmall)
-                            .color(Color::Warning),
-                    )
-                    .child(
-                        v_flex()
-                            .min_w_0()
-                            .gap_0p5()
-                            .child(Label::new(title).size(LabelSize::Small).color(Color::Muted))
-                            .when_some(detail, |this, detail| {
-                                this.child(
-                                    Label::new(detail)
-                                        .size(LabelSize::XSmall)
-                                        .color(Color::Muted),
-                                )
-                            }),
-                    ),
-            )
+        Callout::new()
+            .severity(Severity::Warning)
+            .icon(IconName::Warning)
+            .title(title)
+            .description(detail)
             .into_any_element()
     }
 
