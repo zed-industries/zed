@@ -2527,7 +2527,7 @@ impl ThreadView {
             matches!(
                 entry,
                 AgentThreadEntry::ToolCall(call)
-                    if call.id == tool_call_id && self.sandbox_confusables_block_allow(call)
+                    if call.id == tool_call_id && self.sandbox_confusables_block_allow(call, cx)
             )
         })
     }
@@ -7950,7 +7950,7 @@ impl ThreadView {
             })
             .when_some(confirmation_options, |this, options| {
                 let is_first = self.is_first_tool_call(active_session_id, &tool_call.id, cx);
-                let allow_disabled = self.sandbox_confusables_block_allow(tool_call);
+                let allow_disabled = self.sandbox_confusables_block_allow(tool_call, cx);
                 this.child(self.render_permission_buttons(
                     self.thread.read(cx).session_id().clone(),
                     is_first,
@@ -8342,7 +8342,7 @@ impl ThreadView {
                             entry_ix,
                             tool_call.id.clone(),
                             focus_handle,
-                            self.sandbox_confusables_block_allow(tool_call),
+                            self.sandbox_confusables_block_allow(tool_call, cx),
                             cx,
                         ))
                         .into_any()
@@ -8692,7 +8692,11 @@ impl ThreadView {
             return Empty.into_any_element();
         }
 
-        let confusable_findings = Self::sandbox_confusable_findings(details);
+        let confusable_findings = if Self::confusable_warning_enabled(cx) {
+            Self::sandbox_confusable_findings(details)
+        } else {
+            Vec::new()
+        };
 
         let network_section = has_network.then(|| {
             let summary = if details.network_all_hosts {
@@ -8971,11 +8975,23 @@ impl ThreadView {
         findings
     }
 
+    /// Whether the surprising-Unicode warning is enabled in settings (on by
+    /// default). When off, prompts neither show the banner nor gate their allow
+    /// buttons on it.
+    fn confusable_warning_enabled(cx: &App) -> bool {
+        AgentSettings::get_global(cx)
+            .sandbox_permissions
+            .warn_confusable_unicode
+    }
+
     /// Whether this tool call's sandbox escalation shows surprising Unicode that
     /// the user hasn't acknowledged yet. While true, the prompt's allow buttons
     /// stay disabled so the user can't grant access to a lookalike target
     /// without first ticking the acknowledgement checkbox.
-    fn sandbox_confusables_block_allow(&self, tool_call: &ToolCall) -> bool {
+    fn sandbox_confusables_block_allow(&self, tool_call: &ToolCall, cx: &App) -> bool {
+        if !Self::confusable_warning_enabled(cx) {
+            return false;
+        }
         let Some(details) = tool_call.sandbox_authorization_details.as_ref() else {
             return false;
         };
@@ -9036,6 +9052,21 @@ impl ThreadView {
                                     ))
                             },
                         )),
+                    )
+                    .child(
+                        IconButton::new("configure-confusable-warning", IconName::Settings)
+                            .icon_size(IconSize::Small)
+                            .icon_color(Color::Muted)
+                            .tooltip(Tooltip::text("Configure unicode confusables warning"))
+                            .on_click(|_, window, cx| {
+                                window.dispatch_action(
+                                    Box::new(zed_actions::OpenSettingsAt {
+                                        path: zed_actions::AGENT_SANDBOX_SETTINGS_PATH.to_string(),
+                                        target: None,
+                                    }),
+                                    cx,
+                                );
+                            }),
                     ),
             )
             .child(
