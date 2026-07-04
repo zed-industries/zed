@@ -1,0 +1,59 @@
+# Builds a macOS DMG of this fork on every merge to `main`, and publishes it
+# as a GitHub Release. Uses GitHub-hosted macOS runners (full Xcode, so Metal
+# shaders compile) and ad-hoc code signing (no Apple certificates required).
+name: Build dev release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {} # lets you trigger a build manually from the Actions tab
+
+# Only keep the newest build for a given ref; cancel superseded ones.
+concurrency:
+  group: build-dev-release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: '1'
+  # Don't fail the bundle if a transitive crate is missing license metadata.
+  ALLOW_MISSING_LICENSES: '1'
+
+jobs:
+  bundle_mac:
+    runs-on: macos-14 # Apple Silicon (aarch64)
+    permissions:
+      contents: write # needed to create the GitHub Release
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build macOS bundle (DMG)
+        run: ./script/bundle-mac aarch64-apple-darwin
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Zed-aarch64.dmg
+          path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="dev-$(date +%Y.%m.%d)-${GITHUB_SHA::7}"
+          gh release create "$tag" \
+            target/aarch64-apple-darwin/release/Zed-aarch64.dmg \
+            --title "Dev build $tag" \
+            --notes "Automated dev build from ${GITHUB_SHA::7} on $(date -u '+%Y-%m-%d %H:%M UTC')." \
+            --target "$GITHUB_SHA"
