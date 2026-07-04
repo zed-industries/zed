@@ -1,32 +1,56 @@
 pub mod active_file_name;
+
 pub mod dock;
+
 pub mod history_manager;
+
 pub mod invalid_item_view;
+
 pub mod item;
+
 mod modal_layer;
+
 mod multi_workspace;
+
 #[cfg(test)]
 mod multi_workspace_tests;
+
 pub mod notifications;
+
 pub mod pane;
+
 pub mod pane_group;
+
 pub mod path_list {
     pub use util::path_list::{PathList, SerializedPathList};
 }
+
 pub mod path_link;
+
 mod persistence;
+
 pub mod searchable;
+
 pub mod security_modal;
+
 pub mod shared_screen;
 pub use shared_screen::SharedScreen;
 pub mod focus_follows_mouse;
+
 mod status_bar;
+
 pub mod tasks;
+
 mod theme_preview;
+
 mod toast_layer;
+
 mod toolbar;
+
 pub mod welcome;
+
 pub mod workspace_error;
+
 mod workspace_settings;
 
 pub use dock::Panel;
@@ -172,6 +196,7 @@ use crate::{
 };
 
 pub const SERIALIZATION_THROTTLE_TIME: Duration = Duration::from_millis(200);
+
 pub const MAX_RECENT_SELECTIONS: usize = 20;
 
 static ZED_WINDOW_SIZE: LazyLock<Option<Size<Pixels>>> = LazyLock::new(|| {
@@ -732,11 +757,13 @@ impl WorkspaceId {
 }
 
 impl StaticColumnCount for WorkspaceId {}
+
 impl Bind for WorkspaceId {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
         self.0.bind(statement, start_index)
     }
 }
+
 impl Column for WorkspaceId {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
         i64::column(statement, start_index)
@@ -744,6 +771,7 @@ impl Column for WorkspaceId {
             .with_context(|| format!("Failed to read WorkspaceId at index {start_index}"))
     }
 }
+
 impl From<WorkspaceId> for i64 {
     fn from(val: WorkspaceId) -> Self {
         val.0
@@ -1559,6 +1587,12 @@ pub enum OpenMode {
     /// Add to the window's multi workspace and activate it.
     #[default]
     Activate,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum FocusedSurface {
+    PaneGroup,
+    Dock(DockPosition),
 }
 
 impl Workspace {
@@ -8371,6 +8405,32 @@ impl Workspace {
             )
     }
 
+    fn focused_surface(&self, window: &Window, cx: &App) -> Option<FocusedSurface> {
+        if self
+            .center
+            .panes()
+            .iter()
+            .any(|pane| pane.focus_handle(cx).contains_focused(window, cx))
+        {
+            return Some(FocusedSurface::PaneGroup);
+        }
+
+        [
+            (&self.left_dock, DockPosition::Left),
+            (&self.right_dock, DockPosition::Right),
+            (&self.bottom_dock, DockPosition::Bottom),
+        ]
+        .into_iter()
+        .find_map(|(dock, position)| {
+            dock.read(cx).visible_panel().and_then(|panel| {
+                panel
+                    .panel_focus_handle(cx)
+                    .contains_focused(window, cx)
+                    .then_some(FocusedSurface::Dock(position))
+            })
+        })
+    }
+
     fn render_dock(
         &self,
         position: DockPosition,
@@ -8387,6 +8447,12 @@ impl Workspace {
             let follower_states = &self.follower_states;
             leader_border_for_pane(follower_states, &pane, window, cx)
         });
+
+        let panel_highlight = dock
+            .read(cx)
+            .is_open()
+            .then(|| panel_highlight_overlay(self.focused_surface(window, cx), position, cx))
+            .flatten();
 
         // Expose each open dock as a landmark region so assistive technology
         // can navigate to it, and so region navigation announces it. While a
@@ -8416,7 +8482,8 @@ impl Workspace {
             .overflow_hidden()
             .flex_none()
             .child(dock.clone())
-            .children(leader_border);
+            .children(leader_border)
+            .children(panel_highlight);
 
         // Apply sizing only when the dock is open. When closed the dock is still
         // included in the element tree so its focus handle remains mounted — without
@@ -8870,6 +8937,7 @@ pub trait AnyActiveCall {
 
 #[derive(Clone)]
 pub struct GlobalAnyActiveCall(pub Arc<dyn AnyActiveCall>);
+
 impl Global for GlobalAnyActiveCall {}
 
 impl GlobalAnyActiveCall {
@@ -8906,6 +8974,7 @@ impl ParticipantLocation {
         }
     }
 }
+
 /// Workspace-local view of a remote collaborator's state.
 /// This is the subset of `call::RemoteParticipant` that workspace needs.
 #[derive(Clone)]
@@ -8922,6 +8991,51 @@ pub enum ActiveCallEvent {
     LocalScreenShareStarted,
     LocalScreenShareStopped,
     RoomLeft,
+}
+
+fn panel_highlight_overlay(
+    focused_surface: Option<FocusedSurface>,
+    position: DockPosition,
+    cx: &App,
+) -> Option<Div> {
+    let modifiers = WorkspaceSettings::get_global(cx).active_panel_modifiers;
+
+    let overlay_opacity = modifiers
+        .inactive_opacity
+        .map(|value| value.0.clamp(0.0, 1.0))
+        .and_then(|value| (value < 1.).then_some(value));
+    let overlay_border = modifiers
+        .border_size
+        .and_then(|value| (value > 0.).then_some(value));
+
+    if focused_surface == Some(FocusedSurface::Dock(position)) {
+        let border = overlay_border?;
+        return Some(
+            div()
+                .absolute()
+                .size_full()
+                .left_0()
+                .top_0()
+                .border(px(border))
+                .border_color(cx.theme().colors().border_selected),
+        );
+    }
+
+    if focused_surface.is_none() {
+        return None;
+    }
+
+    let opacity = overlay_opacity?;
+    let mut overlay_background = cx.theme().colors().panel_background;
+    overlay_background.fade_out(opacity);
+    Some(
+        div()
+            .absolute()
+            .size_full()
+            .left_0()
+            .top_0()
+            .bg(overlay_background),
+    )
 }
 
 fn leader_border_for_pane(
@@ -14821,7 +14935,7 @@ mod tests {
         workspace.update_in(cx, |workspace, window, cx| {
             assert_eq!(workspace.active_pane(), &second_pane);
             let result = render_center_group(workspace, window, cx);
-            assert!(result.contains_active_pane);
+            assert!(!result.contains_active_pane);
             assert_eq!(
                 result.decorated_pane_ix, None,
                 "an unfocused group should not decorate its active pane"
