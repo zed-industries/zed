@@ -5474,6 +5474,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "docker_client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures 0.3.32",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "docs_preprocessor"
 version = "0.1.0"
 dependencies = [
