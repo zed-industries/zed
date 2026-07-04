@@ -51,6 +51,22 @@ impl EditorLspTestContext {
         capabilities: lsp::ServerCapabilities,
         cx: &mut gpui::TestAppContext,
     ) -> EditorLspTestContext {
+        Self::new_with_adapter(
+            language,
+            FakeLspAdapter {
+                capabilities,
+                ..Default::default()
+            },
+            cx,
+        )
+        .await
+    }
+
+    pub async fn new_with_adapter(
+        language: Language,
+        adapter: FakeLspAdapter,
+        cx: &mut gpui::TestAppContext,
+    ) -> EditorLspTestContext {
         let app_state = cx.update(AppState::test);
 
         cx.update(|cx| {
@@ -70,13 +86,7 @@ impl EditorLspTestContext {
         let project = Project::test(app_state.fs.clone(), [], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
-        let mut fake_servers = language_registry.register_fake_lsp(
-            language.name(),
-            FakeLspAdapter {
-                capabilities,
-                ..Default::default()
-            },
-        );
+        let mut fake_servers = language_registry.register_fake_lsp(language.name(), adapter);
         language_registry.add(Arc::new(language));
 
         let root = Self::root_path();
@@ -171,10 +181,29 @@ impl EditorLspTestContext {
         capabilities: lsp::ServerCapabilities,
         cx: &mut gpui::TestAppContext,
     ) -> EditorLspTestContext {
+        Self::new_with_adapter(
+            Self::typescript_language(),
+            FakeLspAdapter {
+                capabilities,
+                ..Default::default()
+            },
+            cx,
+        )
+        .await
+    }
+
+    pub async fn new_typescript_with_adapter(
+        adapter: FakeLspAdapter,
+        cx: &mut gpui::TestAppContext,
+    ) -> EditorLspTestContext {
+        Self::new_with_adapter(Self::typescript_language(), adapter, cx).await
+    }
+
+    fn typescript_language() -> Language {
         let mut word_characters: HashSet<char> = Default::default();
         word_characters.insert('$');
         word_characters.insert('#');
-        let language = Language::new(
+        Language::new(
             LanguageConfig {
                 name: "Typescript".into(),
                 matcher: LanguageMatcher {
@@ -267,9 +296,7 @@ impl EditorLspTestContext {
                 "#})),
             ..Default::default()
         })
-        .expect("Could not parse queries");
-
-        Self::new(language, capabilities, cx).await
+        .expect("Could not parse queries")
     }
 
     pub async fn new_tsx(

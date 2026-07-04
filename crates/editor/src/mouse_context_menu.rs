@@ -1,8 +1,8 @@
 use crate::{
     Copy, CopyAndTrim, CopyPermalinkToLine, Cut, DisplayPoint, DisplaySnapshot, Editor,
     EvaluateSelectedText, FindAllReferences, GoToDeclaration, GoToDefinition, GoToImplementation,
-    GoToTypeDefinition, Paste, Rename, RevealInFileManager, RunToCursor, SelectMode,
-    SelectionEffects, SelectionExt, ToDisplayPoint, ToggleCodeActions,
+    GoToSourceDefinition, GoToTypeDefinition, Paste, Rename, RevealInFileManager, RunToCursor,
+    SelectMode, SelectionEffects, SelectionExt, ToDisplayPoint, ToggleCodeActions,
     actions::{Format, FormatSelections},
     selections_collection::SelectionsCollection,
 };
@@ -216,6 +216,18 @@ pub fn deploy_context_menu(
                         .repository_and_path_for_buffer_id(buffer_anchor.buffer_id, cx)
                         .is_some()
                 });
+        let has_source_definition = buffer
+            .anchor_to_buffer_anchor(anchor)
+            .and_then(|(_, buffer_snapshot)| {
+                editor.buffer().read(cx).buffer(buffer_snapshot.remote_id())
+            })
+            .is_some_and(|buffer| {
+                project.update(cx, |project, cx| {
+                    buffer.update(cx, |buffer, cx| {
+                        project.supports_source_definition(buffer, cx)
+                    })
+                })
+            });
 
         let evaluate_selection = window.is_action_available(&EvaluateSelectedText, cx);
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
@@ -257,6 +269,9 @@ pub fn deploy_context_menu(
                     |builder| builder.separator(),
                 )
                 .action("Go to Definition", Box::new(GoToDefinition))
+                .when(has_source_definition, |builder| {
+                    builder.action("Go to Source Definition", Box::new(GoToSourceDefinition))
+                })
                 .action("Go to Declaration", Box::new(GoToDeclaration))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
                 .action("Go to Implementation", Box::new(GoToImplementation))

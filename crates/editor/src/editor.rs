@@ -1599,6 +1599,7 @@ pub enum GotoDefinitionKind {
     Declaration,
     Type,
     Implementation,
+    Source,
 }
 
 pub enum FormatTarget {
@@ -11274,6 +11275,19 @@ impl SemanticsProvider for WeakEntity<Project> {
             GotoDefinitionKind::Declaration => project.declarations(buffer, position, cx),
             GotoDefinitionKind::Type => project.type_definitions(buffer, position, cx),
             GotoDefinitionKind::Implementation => project.implementations(buffer, position, cx),
+            GotoDefinitionKind::Source => {
+                let source_task = project.source_definitions(buffer, position, cx);
+                let buffer = buffer.clone();
+                cx.spawn(async move |this, cx| {
+                    if let Ok(Some(definitions)) = source_task.await
+                        && !definitions.is_empty()
+                    {
+                        return Ok(Some(definitions));
+                    }
+                    this.update(cx, |project, cx| project.definitions(&buffer, position, cx))?
+                        .await
+                })
+            }
         })
         .ok()
     }

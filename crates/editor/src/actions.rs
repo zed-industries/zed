@@ -584,6 +584,10 @@ actions!(
         GoToDeclarationSplit,
         /// Goes to the definition of the symbol at cursor.
         GoToDefinition,
+        /// Goes to the source definition of the symbol at cursor.
+        GoToSourceDefinition,
+        /// Goes to the source definition in a split pane.
+        GoToSourceDefinitionSplit,
         /// Goes to definition in a split pane.
         GoToDefinitionSplit,
         /// Goes to the next diff hunk.
