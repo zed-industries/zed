@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use gpui::{AnyElement, App, Entity, IntoElement, Window};
 use language::{Anchor, Buffer, HighlightedText};
+use project::Symbol;
 
 /// The editor-agnostic interface a [`Picker`](crate::Picker) uses to drive its
 /// preview.
@@ -67,6 +68,13 @@ pub enum PreviewSource {
     /// Used by pickers (like the text picker) that already hold the matched
     /// buffer.
     Buffer(Entity<Buffer>),
+    /// The buffer is identified by a project symbol; the preview opens it and
+    /// highlights the symbol's range.
+    ///
+    /// Used by pickers (like the project symbols picker) that only know the
+    /// matched symbol. The highlight is derived from the symbol once its buffer
+    /// loads, so callers don't supply a [`MatchLocation`].
+    Symbol(Symbol),
     /// No buffer to show; display this message centered in the preview instead.
     ///
     /// Used by pickers that have a selection without a previewable buffer (like
@@ -115,6 +123,17 @@ impl Update {
         Self {
             source: PreviewSource::Buffer(buffer),
             match_location: Some(highlight),
+        }
+    }
+
+    /// Preview the buffer for `symbol`, highlighting and scrolling to its range.
+    ///
+    /// The buffer is opened and the highlight derived by the preview once the
+    /// buffer loads.
+    pub fn from_symbol(symbol: Symbol) -> Self {
+        Self {
+            source: PreviewSource::Symbol(symbol),
+            match_location: None,
         }
     }
 }

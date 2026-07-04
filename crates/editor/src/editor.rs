@@ -254,9 +254,8 @@ use theme::{
 };
 use theme_settings::{ThemeSettings, observe_buffer_font_size_adjustment};
 use ui::{
-    Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
-    IconName, IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
-    utils::WithRemSize,
+    Avatar, ContextMenu, Disclosure, IconButtonShape, Indicator, Key, KeyBinding, Tooltip,
+    prelude::*, scrollbars::ScrollbarAutoHide, tooltip_container, utils::WithRemSize,
 };
 use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
@@ -1387,11 +1386,15 @@ struct DeferredSelectionEffectsState {
     history_entry: SelectionHistoryEntry,
 }
 
+#[derive(Clone, Debug)]
+pub struct TransactionSelections {
+    pub undo: Arc<[Selection<Anchor>]>,
+    pub redo: Option<Arc<[Selection<Anchor>]>>,
+}
+
 #[derive(Default)]
 struct SelectionHistory {
-    #[allow(clippy::type_complexity)]
-    selections_by_transaction:
-        HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
+    selections_by_transaction: HashMap<TransactionId, TransactionSelections>,
     mode: SelectionHistoryMode,
     undo_stack: VecDeque<SelectionHistoryEntry>,
     redo_stack: VecDeque<SelectionHistoryEntry>,
@@ -1411,23 +1414,23 @@ impl SelectionHistory {
             );
             return;
         }
-        self.selections_by_transaction
-            .insert(transaction_id, (selections, None));
+        self.selections_by_transaction.insert(
+            transaction_id,
+            TransactionSelections {
+                undo: selections,
+                redo: None,
+            },
+        );
     }
 
-    #[allow(clippy::type_complexity)]
-    fn transaction(
-        &self,
-        transaction_id: TransactionId,
-    ) -> Option<&(Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)> {
+    fn transaction(&self, transaction_id: TransactionId) -> Option<&TransactionSelections> {
         self.selections_by_transaction.get(&transaction_id)
     }
 
-    #[allow(clippy::type_complexity)]
     fn transaction_mut(
         &mut self,
         transaction_id: TransactionId,
-    ) -> Option<&mut (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)> {
+    ) -> Option<&mut TransactionSelections> {
         self.selections_by_transaction.get_mut(&transaction_id)
     }
 
@@ -1631,6 +1634,97 @@ pub struct RewrapOptions {
     pub override_language_settings: bool,
     pub preserve_existing_whitespace: bool,
     pub line_length: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GutterButtonIntent {
+    SetBookmark,
+    SetBreakpoint,
+}
+
+impl GutterButtonIntent {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::SetBookmark => "Set Bookmark",
+            Self::SetBreakpoint => "Set Breakpoint",
+        }
+    }
+
+    fn icon(&self) -> ui::IconName {
+        match self {
+            Self::SetBookmark => ui::IconName::Bookmark,
+            Self::SetBreakpoint => ui::IconName::DebugBreakpoint,
+        }
+    }
+
+    fn color(&self) -> Color {
+        match self {
+            Self::SetBookmark => Color::Info,
+            Self::SetBreakpoint => Color::Hint,
+        }
+    }
+
+    fn action(&self) -> &'static dyn Action {
+        match self {
+            Self::SetBookmark => &ToggleBookmark,
+            Self::SetBreakpoint => &ToggleBreakpoint,
+        }
+    }
+}
+
+struct GutterButtonTooltip {
+    primary: GutterButtonIntent,
+    secondary: GutterButtonIntent,
+    focus_handle: FocusHandle,
+}
+
+impl GutterButtonTooltip {
+    fn active_intent(&self, modifiers: Modifiers) -> GutterButtonIntent {
+        if modifiers.secondary() {
+            self.secondary
+        } else {
+            self.primary
+        }
+    }
+
+    fn meta_text(&self, intent: GutterButtonIntent) -> String {
+        const RIGHT_CLICK_HINT: &str = "right-click for more options";
+
+        if self.primary == self.secondary {
+            return RIGHT_CLICK_HINT.to_string();
+        }
+        let modifier_as_text = gpui::Keystroke {
+            modifiers: Modifiers::secondary_key(),
+            ..Default::default()
+        };
+        let other = match intent {
+            GutterButtonIntent::SetBookmark => "breakpoint",
+            GutterButtonIntent::SetBreakpoint => "bookmark",
+        };
+        format!("{modifier_as_text}-click to add a {other}\n{RIGHT_CLICK_HINT}")
+    }
+}
+
+impl Render for GutterButtonTooltip {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let intent = self.active_intent(window.modifiers());
+        let key_binding = KeyBinding::for_action_in(intent.action(), &self.focus_handle, cx);
+        let meta_text = self.meta_text(intent);
+
+        tooltip_container(cx, move |this, _| {
+            this.child(
+                h_flex()
+                    .justify_between()
+                    .child(intent.as_str())
+                    .child(key_binding),
+            )
+            .child(
+                Label::new(meta_text)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+        })
+    }
 }
 
 impl Editor {
@@ -3039,6 +3133,35 @@ impl Editor {
         self.cursor_offset_on_selection = set_cursor_offset_on_selection;
     }
 
+    /// Returns the anchor to use as the rename target for a selection.
+    ///
+    /// In selection-based modes, like vim's visual mode and helix, the rendered
+    /// block cursor sits one position to the left of the selection's head,
+    /// since the head is the exclusive end of a forward selection. Using the
+    /// head
+    /// directly would place the rename one character past the symbol, for
+    /// example, trailing whitespace, so for a non-empty forward selection we
+    /// shift one point left to land back on the symbol under the cursor.
+    fn rename_target_anchor(&self, selection: &Selection<Anchor>, cx: &mut App) -> Anchor {
+        let head = selection.head();
+
+        if self.cursor_offset_on_selection
+            && !selection.reversed
+            && selection.start != selection.end
+        {
+            let display_map = self.display_snapshot(cx);
+            let display_head = head.to_display_point(&display_map);
+
+            if display_head.column() > 0 {
+                return display_map.display_point_to_anchor(
+                    movement::left(&display_map, display_head),
+                    Bias::Left,
+                );
+            }
+        }
+        head
+    }
+
     pub fn set_current_line_highlight(
         &mut self,
         current_line_highlight: Option<CurrentLineHighlight>,
@@ -3961,8 +4084,8 @@ impl Editor {
             .size(ui::ButtonSize::None)
             .icon_color(Color::Info)
             .style(ButtonStyle::Transparent)
-            .on_click(cx.listener(move |editor, _, window, cx| {
-                editor.toggle_bookmark_at_row(row, window, cx);
+            .on_click(cx.listener(move |editor, _, _window, cx| {
+                editor.toggle_bookmark_at_row(row, cx);
             }))
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
                 editor.set_gutter_context_menu(row, None, event.position(), window, cx);
@@ -4253,10 +4376,10 @@ impl Editor {
                 .separator()
                 .entry(set_bookmark_msg, Some(ToggleBookmark.boxed_clone()), {
                     let weak_editor = weak_editor.clone();
-                    move |window, cx| {
+                    move |_window, cx| {
                         weak_editor
                             .update(cx, |this, cx| {
-                                this.toggle_bookmark_at_anchor(anchor, window, cx);
+                                this.toggle_bookmark_at_anchor(anchor, cx);
                             })
                             .log_err();
                     }
@@ -4371,61 +4494,20 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> IconButton {
-        #[derive(Clone, Copy)]
-        enum Intent {
-            SetBookmark,
-            SetBreakpoint,
-        }
-
-        impl Intent {
-            fn as_str(&self) -> &'static str {
-                match self {
-                    Intent::SetBookmark => "Set bookmark",
-                    Intent::SetBreakpoint => "Set breakpoint",
-                }
-            }
-
-            fn icon(&self) -> ui::IconName {
-                match self {
-                    Intent::SetBookmark => ui::IconName::Bookmark,
-                    Intent::SetBreakpoint => ui::IconName::DebugBreakpoint,
-                }
-            }
-
-            fn color(&self) -> Color {
-                match self {
-                    Intent::SetBookmark => Color::Info,
-                    Intent::SetBreakpoint => Color::Hint,
-                }
-            }
-
-            fn secondary_and_options(&self) -> String {
-                let alt_as_text = gpui::Keystroke {
-                    modifiers: Modifiers::secondary_key(),
-                    ..Default::default()
-                };
-                match self {
-                    Intent::SetBookmark => format!(
-                        "{alt_as_text}-click to add a breakpoint\nright-click for more options"
-                    ),
-                    Intent::SetBreakpoint => format!(
-                        "{alt_as_text}-click to add a bookmark\nright-click for more options"
-                    ),
-                }
-            }
-        }
-
         let gutter_settings = EditorSettings::get_global(cx).gutter;
         let show_bookmarks = self.show_bookmarks.unwrap_or(gutter_settings.bookmarks);
         let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
 
         let [primary, secondary] = match [show_breakpoints, show_bookmarks] {
-            [true, true] => [Intent::SetBreakpoint, Intent::SetBookmark],
-            [true, false] => [Intent::SetBreakpoint; 2],
-            [false, true] => [Intent::SetBookmark; 2],
+            [true, true] => [
+                GutterButtonIntent::SetBreakpoint,
+                GutterButtonIntent::SetBookmark,
+            ],
+            [true, false] => [GutterButtonIntent::SetBreakpoint; 2],
+            [false, true] => [GutterButtonIntent::SetBookmark; 2],
             [false, false] => {
                 log::error!("Trying to place gutter_hover without anything enabled!!");
-                [Intent::SetBookmark; 2]
+                [GutterButtonIntent::SetBookmark; 2]
             }
         };
 
@@ -4452,8 +4534,8 @@ impl Editor {
                     };
 
                     match intent {
-                        Intent::SetBookmark => editor.toggle_bookmark_at_row(row, window, cx),
-                        Intent::SetBreakpoint => editor.edit_breakpoint_at_anchor(
+                        GutterButtonIntent::SetBookmark => editor.toggle_bookmark_at_row(row, cx),
+                        GutterButtonIntent::SetBreakpoint => editor.edit_breakpoint_at_anchor(
                             position,
                             Breakpoint::new_standard(),
                             BreakpointEditAction::Toggle,
@@ -4467,13 +4549,12 @@ impl Editor {
             }))
             .when(!has_context_menu, |button| {
                 button.tooltip(move |_window, cx| {
-                    Tooltip::with_meta_in(
-                        intent.as_str(),
-                        Some(&ToggleBreakpoint),
-                        intent.secondary_and_options(),
-                        &focus_handle,
-                        cx,
-                    )
+                    cx.new(|_| GutterButtonTooltip {
+                        primary,
+                        secondary,
+                        focus_handle: focus_handle.clone(),
+                    })
+                    .into()
                 })
             })
     }
@@ -7466,26 +7547,31 @@ impl Editor {
         });
     }
 
+    fn restore_selections(
+        &mut self,
+        selections: Option<Arc<[Selection<Anchor>]>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(selections) = selections.filter(|selections| !selections.is_empty()) {
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_anchors(selections.to_vec());
+            });
+        }
+    }
+
     pub fn undo(&mut self, _: &Undo, window: &mut Window, cx: &mut Context<Self>) {
         if self.read_only(cx) {
             return;
         }
 
         if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
-            if let Some((selections, _)) =
-                self.selection_history.transaction(transaction_id).cloned()
-            {
-                self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_anchors(selections.to_vec());
-                });
-            } else {
-                log::error!(
-                    "No entry in selection_history found for undo. \
-                     This may correspond to a bug where undo does not update the selection. \
-                     If this is occurring, please add details to \
-                     https://github.com/zed-industries/zed/issues/22692"
-                );
+            let transaction = self.selection_history.transaction(transaction_id);
+            if transaction.is_none() {
+                log::error!("No selection history for undone transaction; selection unchanged");
             }
+            let selections = transaction.map(|transaction| transaction.undo.clone());
+            self.restore_selections(selections, window, cx);
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
             self.refresh_edit_prediction(
@@ -7506,20 +7592,11 @@ impl Editor {
         }
 
         if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
-            if let Some((_, Some(selections))) =
-                self.selection_history.transaction(transaction_id).cloned()
-            {
-                self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_anchors(selections.to_vec());
-                });
-            } else {
-                log::error!(
-                    "No entry in selection_history found for redo. \
-                     This may correspond to a bug where undo does not update the selection. \
-                     If this is occurring, please add details to \
-                     https://github.com/zed-industries/zed/issues/22692"
-                );
-            }
+            let selections = self
+                .selection_history
+                .transaction(transaction_id)
+                .and_then(|transaction| transaction.redo.clone());
+            self.restore_selections(selections, window, cx);
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
             self.refresh_edit_prediction(
@@ -7632,10 +7709,9 @@ impl Editor {
         }
         let provider = self.semantics_provider.clone()?;
         let selection = self.selections.newest_anchor().clone();
-        let (cursor_buffer, cursor_buffer_position) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(selection.head(), cx)?;
+        let cursor = self.rename_target_anchor(&selection, cx);
+        let (cursor_buffer, cursor_buffer_position) =
+            self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         let (tail_buffer, cursor_buffer_position_end) = self
             .buffer
             .read(cx)
@@ -7663,7 +7739,7 @@ impl Editor {
 
                     this.take_rename(false, window, cx);
                     let buffer = this.buffer.read(cx).read(cx);
-                    let cursor_offset = selection.head().to_offset(&buffer);
+                    let cursor_offset = cursor.to_offset(&buffer);
                     let rename_start =
                         cursor_offset.saturating_sub_usize(cursor_offset_in_rename_range);
                     let rename_end = rename_start + rename_buffer_range.len();
@@ -8033,7 +8109,7 @@ impl Editor {
                 // will take you back to where you made the last edit, instead of staying where you scrolled
                 self.selection_history
                     .transaction(transaction_id_prev)
-                    .map(|t| t.0.clone())
+                    .map(|t| t.undo.clone())
             })
             .unwrap_or_else(|| self.selections.disjoint_anchors_arc());
 
@@ -8259,10 +8335,8 @@ impl Editor {
             .buffer
             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
         {
-            if let Some((_, end_selections)) =
-                self.selection_history.transaction_mut(transaction_id)
-            {
-                *end_selections = Some(self.selections.disjoint_anchors_arc());
+            if let Some(transaction) = self.selection_history.transaction_mut(transaction_id) {
+                transaction.redo = Some(self.selections.disjoint_anchors_arc());
             } else {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
@@ -8277,7 +8351,7 @@ impl Editor {
     pub fn modify_transaction_selection_history(
         &mut self,
         transaction_id: TransactionId,
-        modify: impl FnOnce(&mut (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)),
+        modify: impl FnOnce(&mut TransactionSelections),
     ) -> bool {
         self.selection_history
             .transaction_mut(transaction_id)
@@ -9612,6 +9686,13 @@ impl Editor {
         let theme_settings = theme_settings::ThemeSettings::get_global(cx);
         let theme = cx.theme();
         let accent_colors = theme.accents().clone();
+        let editor_background = theme.colors().editor_background;
+        let auto_accent_colors =
+            AccentColors(crate::bracket_colorization::bracket_colorization_accents(
+                &accent_colors.0,
+                theme.appearance,
+                editor_background,
+            ));
 
         let accent_overrides = theme_settings
             .theme_overrides
@@ -9631,7 +9712,7 @@ impl Editor {
             .collect();
 
         Some(AccentData {
-            colors: accent_colors,
+            colors: auto_accent_colors,
             overrides: accent_overrides,
         })
     }
@@ -11591,30 +11672,50 @@ impl EditorSnapshot {
         current_selection_head: DisplayRow,
         count_wrapped_lines: bool,
     ) -> HashMap<DisplayRow, u32> {
-        let initial_offset =
-            self.relative_line_delta(current_selection_head, rows.start, count_wrapped_lines);
-
-        self.row_infos(rows.start)
+        let mut row_infos = self
+            .row_infos(rows.start)
             .take(rows.len())
             .enumerate()
-            .map(|(i, row_info)| (DisplayRow(rows.start.0 + i as u32), row_info))
+            .map(|(index, row_info)| (DisplayRow(rows.start.0 + index as u32), row_info))
             .filter(|(_row, row_info)| {
                 row_info.buffer_row.is_some()
                     || (count_wrapped_lines && row_info.wrapped_buffer_row.is_some())
             })
-            .enumerate()
-            .filter_map(|(i, (row, row_info))| {
+            .peekable();
+
+        // We find the first row that actually passes the filter and calculate its
+        // delta independently. This ensures accuracy when scrolling, as the first
+        // visible row in `rows` might be a wrap part that is filtered out, which
+        // would otherwise offset the counter for subsequent lines if we used
+        // `rows.start` as the base for enumeration.
+        let Some((first_row, _)) = row_infos.peek() else {
+            return HashMap::default();
+        };
+
+        let mut current_delta =
+            self.relative_line_delta(current_selection_head, *first_row, count_wrapped_lines);
+
+        row_infos
+            .filter_map(|(row, row_info)| {
+                let is_deleted = row_info
+                    .diff_status
+                    .is_some_and(|status| status.is_deleted());
+
+                if !self.number_deleted_lines && is_deleted {
+                    // Even if we don't number this line, it still counts as a unit
+                    // of distance for the relative numbers of lines below it.
+                    current_delta += 1;
+                    return None;
+                }
+
                 // We want to ensure here that the current line has absolute
                 // numbering, even if we are in a soft-wrapped line. With the
                 // exception that if we are in a deleted line, we should number this
                 // relative with 0, as otherwise it would have no line number at all
-                let relative_line_number = (initial_offset + i as i64).unsigned_abs() as u32;
+                let relative_line_number = current_delta.unsigned_abs() as u32;
+                current_delta += 1;
 
-                (relative_line_number != 0
-                    || row_info
-                        .diff_status
-                        .is_some_and(|status| status.is_deleted()))
-                .then_some((row, relative_line_number))
+                (relative_line_number != 0 || is_deleted).then_some((row, relative_line_number))
             })
             .collect()
     }
