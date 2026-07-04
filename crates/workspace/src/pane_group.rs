@@ -8,8 +8,8 @@ use crate::{
 use anyhow::Result;
 use collections::HashMap;
 use gpui::{
-    Along, AnyView, AnyWeakView, Axis, Bounds, Entity, Hsla, IntoElement, MouseButton, Pixels,
-    Point, StyleRefinement, WeakEntity, Window, point, size,
+    Along, AnyView, AnyWeakView, Axis, Bounds, Entity, Focusable, Hsla, IntoElement, MouseButton,
+    Pixels, Point, StyleRefinement, WeakEntity, Window, point, size,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -497,6 +497,10 @@ impl PaneLeaderDecorator for PaneRenderContext<'_> {
     }
 }
 
+pub(crate) fn pane_has_focus(pane: &Entity<Pane>, window: &Window, cx: &App) -> bool {
+    pane.focus_handle(cx).contains_focused(window, cx)
+}
+
 impl Member {
     fn new_axis(old_pane: Entity<Pane>, new_pane: Entity<Pane>, direction: SplitDirection) -> Self {
         use Axis::*;
@@ -564,7 +568,7 @@ impl Member {
                 };
 
                 let decoration = render_cx.decorate(pane, cx);
-                let is_active = pane == render_cx.active_pane();
+                let is_active = pane_has_focus(pane, window, cx);
 
                 let pane = div()
                     .relative()
@@ -1004,8 +1008,8 @@ impl PaneAxis {
                 match member {
                     Member::Pane(pane) => {
                         is_leaf_pane[ix] = true;
-                        if pane == render_cx.active_pane() {
-                            active_pane_ix = pane.read(cx).has_focus(window, cx).then_some(ix);
+                        if pane_has_focus(pane, window, cx) {
+                            active_pane_ix = Some(ix);
                             contains_active_pane = true;
                         }
                     }
@@ -1032,6 +1036,7 @@ impl PaneAxis {
         .with_is_leaf_pane_mask(is_leaf_pane)
         .children(rendered_children)
         .with_active_pane(active_pane_ix)
+        .with_any_pane_focused(contains_active_pane)
         .into_any_element();
 
         PaneRenderResult {
@@ -1176,6 +1181,7 @@ mod element {
             active_pane_ix: None,
             workspace,
             is_leaf_pane_mask: Vec::new(),
+            any_pane_focused: false,
         }
     }
 
@@ -1191,6 +1197,7 @@ mod element {
         workspace: WeakEntity<Workspace>,
         // Track which children are leaf panes (Member::Pane) vs axes (Member::Axis)
         is_leaf_pane_mask: Vec<bool>,
+        any_pane_focused: bool,
     }
 
     pub struct PaneAxisLayout {
@@ -1218,6 +1225,11 @@ mod element {
 
         pub fn with_is_leaf_pane_mask(mut self, mask: Vec<bool>) -> Self {
             self.is_leaf_pane_mask = mask;
+            self
+        }
+
+        pub fn with_any_pane_focused(mut self, any_pane_focused: bool) -> Self {
+            self.any_pane_focused = any_pane_focused;
             self
         }
 
@@ -1491,7 +1503,8 @@ mod element {
                 .and_then(|val| (val >= 0.).then_some(val));
 
             for (ix, child) in &mut layout.children.iter_mut().enumerate() {
-                if overlay_opacity.is_some() || overlay_border.is_some() {
+                if self.any_pane_focused && (overlay_opacity.is_some() || overlay_border.is_some())
+                {
                     // the overlay has to be painted in origin+1px with size width-1px
                     // in order to accommodate the divider between panels
                     let overlay_bounds = Bounds {
