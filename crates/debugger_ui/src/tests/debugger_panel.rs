@@ -2578,8 +2578,8 @@ async fn test_handle_start_debugging_request_does_not_steal_editor_focus(
 
     let session = start_debug_session(&workspace, cx, |_| {}).unwrap();
     let client = session.update(cx, |session, _| session.adapter_client().unwrap());
+    let parent_session_id = session.read_with(cx, |session, _| session.session_id());
 
-    let fake_config = json!({"one": "two"});
     let launched_with = Arc::new(parking_lot::Mutex::new(None));
     let _subscription = project::debugger::test::intercept_debug_sessions(cx, {
         let launched_with = launched_with.clone();
@@ -2589,59 +2589,79 @@ async fn test_handle_start_debugging_request_does_not_steal_editor_focus(
                 launched_with.lock().replace(args.raw);
                 Ok(())
             });
-            client.on_request::<dap::requests::Attach, _>(move |_, _| {
-                assert!(false, "should not get attach request");
-                Ok(())
-            });
         }
     });
 
-    let buffer = project
-        .update(cx, |project, cx| {
-            let worktree = project
-                .find_worktree(Path::new(path!("/project")), cx)
-                .unwrap()
-                .0;
-            project.open_buffer((worktree.read(cx).id(), rel_path("main.rs")), cx)
+    // Let the parent session finish registering (which focuses the debug panel).
+    cx.run_until_parked();
+
+    let worktree_id = project.update(cx, |project, cx| {
+        project
+            .find_worktree(Path::new(path!("/project")), cx)
+            .unwrap()
+            .0
+            .read(cx)
+            .id()
+    });
+
+    // Open and focus an editor in the workspace, as if the user were editing
+    // code while the debug session is running.
+    let editor = workspace
+        .update(cx, |multi, window, cx| {
+            multi.workspace().update(cx, |workspace, cx| {
+                workspace.open_path((worktree_id, rel_path("main.rs")), None, true, window, cx)
+            })
         })
+        .unwrap()
         .await
+        .unwrap()
+        .downcast::<Editor>()
         .unwrap();
 
-    let (editor, cx) = cx.add_window_view(|window, cx| {
-        Editor::new(
-            EditorMode::full(),
-            MultiBuffer::build_from_buffer(buffer, cx),
-            Some(project.clone()),
-            window,
-            cx,
-        )
-    });
+    cx.run_until_parked();
 
-    editor.update_in(cx, |editor, window, cx| {
-        window.focus(&editor.focus_handle(cx), cx);
-        assert!(editor.is_focused(window));
-    });
+    workspace
+        .update(cx, |_, window, cx| {
+            assert!(
+                editor.focus_handle(cx).is_focused(window),
+                "editor should be focused before the child session starts"
+            );
+        })
+        .unwrap();
 
+    // The adapter spawns a child session via a reverse request, as e.g.
+    // hot-reload-capable adapters do while the user is editing code.
     client
         .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
             request: StartDebuggingRequestArgumentsRequest::Launch,
-            configuration: fake_config.clone(),
+            configuration: json!({"one": "two"}),
         })
         .await;
 
     cx.run_until_parked();
 
+    assert!(
+        launched_with.lock().is_some(),
+        "child session should have been launched"
+    );
+
     workspace
         .update(cx, |workspace, window, cx| {
             let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
-            let is_debug_panel_focused = debug_panel
-                .read(cx)
-                .active_session()
-                .unwrap()
-                .read(cx)
-                .focus_handle(cx)
-                .is_focused(window);
-            assert!(!is_debug_panel_focused);
+            let active_session = debug_panel.read(cx).active_session().unwrap();
+            assert_ne!(
+                active_session.read(cx).session_id(cx),
+                parent_session_id,
+                "child session should have been activated in the debug panel"
+            );
+            assert!(
+                !debug_panel.focus_handle(cx).contains_focused(window, cx),
+                "debug panel should not steal focus when a child session starts"
+            );
+            assert!(
+                editor.focus_handle(cx).is_focused(window),
+                "editor should remain focused when a child session starts"
+            );
         })
         .unwrap();
 }
