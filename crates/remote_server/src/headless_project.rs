@@ -537,6 +537,7 @@ impl HeadlessProject {
                 root_repo_common_dir: worktree
                     .root_repo_common_dir()
                     .map(|p| p.to_string_lossy().into_owned()),
+                root_repo_is_linked_worktree: worktree.root_repo_is_linked_worktree(),
             }
         });
 
@@ -1107,7 +1108,7 @@ impl HeadlessProject {
                 }
             });
 
-            while let Some(buffer) = new_matches.next().await {
+            while let Some((buffer, _)) = new_matches.next().await {
                 let _ = buffer_store
                     .update(cx, |this, cx| {
                         this.create_buffer_for_peer(&buffer, REMOTE_SERVER_PEER_ID, cx)

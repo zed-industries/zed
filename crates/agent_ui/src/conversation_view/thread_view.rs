@@ -9,8 +9,8 @@ use agent_client_protocol::schema::v1 as acp;
 use std::cell::RefCell;
 
 use acp_thread::{
-    PlanEntry, SandboxAuthorizationDetails, SandboxFallbackAuthorizationDetails,
-    SandboxNotAppliedReason,
+    Elicitation, ElicitationEntryId, ElicitationStatus, PlanEntry, SandboxAuthorizationDetails,
+    SandboxFallbackAuthorizationDetails, SandboxNotAppliedReason,
 };
 use agent::{
     SandboxStatusKey, SandboxStatusRefresh, SkillLoadingIssue, SkillLoadingIssueKind,
@@ -20,9 +20,10 @@ use agent_settings::UserAgentsMd;
 use agent_skills::MAX_SKILL_DESCRIPTION_LEN;
 use cloud_api_types::{SubmitAgentThreadFeedbackBody, SubmitAgentThreadFeedbackCommentsBody};
 use editor::actions::OpenExcerpts;
-use sandbox::{GitSandboxPolicy, SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
+use feature_flags::{AcpBetaFeatureFlag, FeatureFlagAppExt as _};
+use sandbox::{SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy};
 
-use crate::completion_provider::AvailableSkill;
+use crate::completion_provider::{AvailableSkill, PromptLocalCommand};
 use crate::message_editor::SharedSessionCapabilities;
 use crate::ui::{SandboxGroup, SandboxRow, SandboxSection, SandboxStatusTooltip};
 
@@ -35,6 +36,7 @@ use language_model::{
     FastModeConfirmation, LanguageModel, LanguageModelEffortLevel, LanguageModelId,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Speed,
 };
+use notifications::status_toast::StatusToast;
 use settings::{update_settings_file, update_settings_file_with_completion};
 use ui::{
     ButtonLike, CalloutBorderPosition, SpinnerLabel, SpinnerVariant, SplitButton, SplitButtonStyle,
@@ -42,6 +44,9 @@ use ui::{
 };
 use workspace::{OpenOptions, SERIALIZATION_THROTTLE_TIME};
 
+use super::elicitation::{
+    ElicitationCard, ElicitationCardHandlers, ElicitationFormState, should_render_elicitation,
+};
 use super::*;
 
 const DATA_RETENTION_LEARN_MORE_URL: &str = "https://support.claude.com/en/articles/15425996-data-retention-practices-for-mythos-class-models";
@@ -598,6 +603,7 @@ pub struct ThreadView {
     pub new_server_version_available: Option<SharedString>,
     pub resumed_without_history: bool,
     pub(crate) permission_selections: HashMap<acp::ToolCallId, PermissionSelection>,
+    elicitation_form_states: HashMap<ElicitationEntryId, ElicitationFormState>,
     pub _cancel_task: Option<Task<()>>,
     _save_task: Option<Task<()>>,
     _draft_resolve_task: Option<Task<()>>,
@@ -989,6 +995,7 @@ impl ThreadView {
             is_loading_contents: false,
             new_server_version_available: None,
             permission_selections: HashMap::default(),
+            elicitation_form_states: HashMap::default(),
             _cancel_task: None,
             _save_task: None,
             _draft_resolve_task: None,
@@ -1016,6 +1023,7 @@ impl ThreadView {
 
         this.sync_generating_indicator(cx);
         this.sync_editor_mode_for_empty_state(cx);
+        this.sync_existing_elicitation_states(window, cx);
         let list_state_for_scroll = this.list_state.clone();
         let thread_view = cx.entity().downgrade();
 
@@ -1102,9 +1110,46 @@ impl ThreadView {
             }
             MessageEditorEvent::LostFocus => {}
             MessageEditorEvent::SlashAutocompleteOpened => {}
+            MessageEditorEvent::LocalCommandInvoked(command) => {
+                self.run_local_command(*command, window, cx);
+            }
             MessageEditorEvent::InputAttempted { .. } => {}
             MessageEditorEvent::Edited => {}
         }
+    }
+
+    fn run_local_command(
+        &mut self,
+        command: PromptLocalCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match command {
+            PromptLocalCommand::ThumbsUp => {
+                self.handle_feedback_click(ThreadFeedback::Positive, window, cx);
+                self.show_local_command_toast("Thanks for your feedback!", cx);
+            }
+            PromptLocalCommand::ThumbsDown => {
+                self.handle_feedback_click(ThreadFeedback::Negative, window, cx);
+            }
+        }
+    }
+
+    fn show_local_command_toast(&self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
+        // Shown after positive feedback, replacing the inline button state.
+        let Some(workspace) = self.workspace.upgrade() else {
+            return;
+        };
+        workspace.update(cx, |workspace, cx| {
+            let toast = StatusToast::new(message, cx, |this, _cx| {
+                this.icon(
+                    Icon::new(IconName::Check)
+                        .size(IconSize::Small)
+                        .color(Color::Success),
+                )
+            });
+            workspace.toggle_status_toast(toast, cx);
+        });
     }
 
     pub(crate) fn as_native_connection(
@@ -1243,6 +1288,7 @@ impl ThreadView {
             }
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::SlashAutocompleteOpened) => {
             }
+            ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::LocalCommandInvoked(_)) => {}
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::Edited) => {}
             ViewEvent::MessageEditorEvent(_editor, MessageEditorEvent::InputAttempted { .. }) => {}
             ViewEvent::OpenDiffLocation {
@@ -1444,13 +1490,11 @@ impl ThreadView {
 
                 let connection = self.thread.read(cx).connection().clone();
                 window.defer(cx, {
-                    let agent_id = self.agent_id.clone();
                     let server_view = self.server_view.clone();
                     move |window, cx| {
                         ConversationView::handle_auth_required(
                             server_view.clone(),
                             AuthRequired::new(),
-                            agent_id,
                             connection,
                             window,
                             cx,
@@ -2480,15 +2524,182 @@ impl ThreadView {
         Some(())
     }
 
-    fn is_waiting_for_confirmation(entry: &AgentThreadEntry) -> bool {
-        if let AgentThreadEntry::ToolCall(tool_call) = entry {
-            matches!(
-                tool_call.status,
-                ToolCallStatus::WaitingForConfirmation { .. }
-            )
-        } else {
-            false
+    fn is_waiting_for_confirmation(&self, entry: &AgentThreadEntry, cx: &Context<Self>) -> bool {
+        match entry {
+            AgentThreadEntry::ToolCall(tool_call) => {
+                matches!(
+                    tool_call.status,
+                    ToolCallStatus::WaitingForConfirmation { .. }
+                )
+            }
+            AgentThreadEntry::Elicitation(elicitation_id) => {
+                cx.has_flag::<AcpBetaFeatureFlag>()
+                    && self
+                        .thread
+                        .read(cx)
+                        .elicitation(elicitation_id)
+                        .is_some_and(|(_, elicitation)| {
+                            matches!(elicitation.status, ElicitationStatus::Pending { .. })
+                        })
+            }
+            _ => false,
         }
+    }
+
+    pub fn sync_elicitation_state_for_entry(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let elicitation_id = {
+            let thread = self.thread.read(cx);
+            let Some(AgentThreadEntry::Elicitation(elicitation_id)) = thread.entries().get(index)
+            else {
+                return;
+            };
+            elicitation_id.clone()
+        };
+
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            self.elicitation_form_states.remove(&elicitation_id);
+            return;
+        }
+
+        let thread = self.thread.read(cx);
+        let entry = thread.elicitation(&elicitation_id).map(|(_, elicitation)| {
+            (
+                elicitation_id.clone(),
+                matches!(elicitation.status, ElicitationStatus::Pending { .. }),
+                match &elicitation.request.mode {
+                    acp::ElicitationMode::Form(mode) => Some(mode.requested_schema.clone()),
+                    _ => None,
+                },
+            )
+        });
+
+        let Some((id, is_pending, schema)) = entry else {
+            return;
+        };
+
+        if is_pending
+            && let Some(schema) = schema
+            && !self.elicitation_form_states.contains_key(&id)
+        {
+            self.elicitation_form_states
+                .insert(id, ElicitationFormState::new(&schema, window, cx));
+        } else if !is_pending {
+            self.elicitation_form_states.remove(&id);
+        }
+    }
+
+    fn sync_existing_elicitation_states(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let entry_count = self.thread.read(cx).entries().len();
+        for index in 0..entry_count {
+            self.sync_elicitation_state_for_entry(index, window, cx);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_elicitation_form_state(&self, id: &ElicitationEntryId) -> bool {
+        self.elicitation_form_states.contains_key(id)
+    }
+
+    fn submit_elicitation(
+        &mut self,
+        elicitation_id: ElicitationEntryId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            return;
+        }
+
+        let mode = self
+            .thread
+            .read(cx)
+            .elicitation(&elicitation_id)
+            .map(|(_, elicitation)| elicitation.request.mode.clone());
+
+        let Some(mode) = mode else {
+            return;
+        };
+
+        let response = match mode {
+            acp::ElicitationMode::Form(mode) => {
+                let Some(state) = self.elicitation_form_states.get(&elicitation_id) else {
+                    return;
+                };
+                match state.collect(&mode.requested_schema, cx) {
+                    Ok(content) => {
+                        acp::CreateElicitationResponse::new(acp::ElicitationAction::Accept(
+                            acp::ElicitationAcceptAction::new().content(content),
+                        ))
+                    }
+                    Err(errors) => {
+                        if let Some(state) = self.elicitation_form_states.get_mut(&elicitation_id) {
+                            state.set_errors(errors);
+                        }
+                        cx.notify();
+                        return;
+                    }
+                }
+            }
+            acp::ElicitationMode::Url(_) => acp::CreateElicitationResponse::new(
+                acp::ElicitationAction::Accept(acp::ElicitationAcceptAction::new()),
+            ),
+            _ => return,
+        };
+
+        self.respond_to_elicitation(elicitation_id, response, cx);
+    }
+
+    fn decline_elicitation(
+        &mut self,
+        elicitation_id: ElicitationEntryId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            return;
+        }
+
+        self.respond_to_elicitation(
+            elicitation_id,
+            acp::CreateElicitationResponse::new(acp::ElicitationAction::Decline),
+            cx,
+        );
+    }
+
+    fn cancel_elicitation(
+        &mut self,
+        elicitation_id: ElicitationEntryId,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !cx.has_flag::<AcpBetaFeatureFlag>() {
+            return;
+        }
+
+        self.respond_to_elicitation(
+            elicitation_id,
+            acp::CreateElicitationResponse::new(acp::ElicitationAction::Cancel),
+            cx,
+        );
+    }
+
+    fn respond_to_elicitation(
+        &mut self,
+        elicitation_id: ElicitationEntryId,
+        response: acp::CreateElicitationResponse,
+        cx: &mut Context<Self>,
+    ) {
+        let session_id = self.session_id.clone();
+        self.elicitation_form_states.remove(&elicitation_id);
+        self.conversation.update(cx, |conversation, cx| {
+            conversation.respond_to_elicitation(session_id, elicitation_id, response, cx);
+        });
+        cx.notify();
     }
 
     fn handle_authorize_tool_call(
@@ -4645,18 +4856,26 @@ impl ThreadView {
             // Sandboxed by settings, but disabled for this thread: show the
             // settings scope (greyed) for context above the disabled status.
             (ThreadSandbox::Sandboxed(settings_policy), ThreadSandbox::Unsandboxed) => {
-                let settings = augment_settings_sandbox_policy(settings_policy, baseline);
-                SandboxStatusTooltip::disabled_for_thread(sandbox_section(&settings, true))
+                let settings = augment_settings_sandbox_policy(&settings_policy, baseline);
+                SandboxStatusTooltip::disabled_for_thread(sandbox_section(
+                    "Defined in your settings:",
+                    &settings,
+                    true,
+                ))
             }
             (
                 ThreadSandbox::Sandboxed(settings_policy),
                 ThreadSandbox::Sandboxed(thread_policy),
             ) => {
-                let settings = augment_settings_sandbox_policy(settings_policy, baseline);
+                let settings = augment_settings_sandbox_policy(&settings_policy, baseline);
+                let thread = SandboxPolicyDisplay::from_policy(&thread_policy);
                 // Omit the per-thread section when it grants nothing extra.
-                let thread = (!sandbox_policy_grants_nothing(&thread_policy))
-                    .then(|| sandbox_section(&thread_policy, false));
-                SandboxStatusTooltip::enabled(sandbox_section(&settings, true), thread)
+                let thread = (!sandbox_policy_grants_nothing(&thread))
+                    .then(|| sandbox_section("Allowed for this thread:", &thread, false));
+                SandboxStatusTooltip::enabled(
+                    sandbox_section("Defined in your settings:", &settings, true),
+                    thread,
+                )
             }
         };
 
@@ -5597,6 +5816,59 @@ impl Render for TokenUsageTooltip {
     }
 }
 
+/// A display-ready snapshot of a sandbox policy for the status tooltip.
+///
+/// The opaque `HostFilesystemLocation`s in a policy are stringified up front,
+/// when this is built, so the tooltip state (which outlives the build and is
+/// captured by the lazy tooltip closure) never holds the locations' fds open.
+#[derive(Clone)]
+struct SandboxPolicyDisplay {
+    fs: SandboxFsDisplay,
+    network: SandboxNetPolicy,
+}
+
+/// The filesystem write-access portion of a [`SandboxPolicyDisplay`].
+#[derive(Clone)]
+enum SandboxFsDisplay {
+    Unrestricted,
+    Restricted(Vec<WritableEntryDisplay>),
+}
+
+/// A single writable entry to display in the sandbox tooltip: either a real host
+/// location (already stringified for display) or the Linux-only host-isolated
+/// `/tmp` overlay, which has no backing host path and is purely a label.
+#[derive(Clone)]
+enum WritableEntryDisplay {
+    Path(String),
+    // Only ever constructed on Linux (the bwrap `--tmpfs /tmp` overlay), so the
+    // variant is gated to match and avoid dead-code warnings elsewhere.
+    #[cfg(target_os = "linux")]
+    IsolatedTmp,
+}
+
+impl SandboxPolicyDisplay {
+    /// Display a policy verbatim (used for the per-thread overrides, which carry
+    /// no implicit baseline grants). Takes the policy by reference and stringifies
+    /// its locations immediately, so no fd is retained past this call.
+    fn from_policy(policy: &SandboxPolicy) -> Self {
+        let fs = match &policy.fs {
+            SandboxFsPolicy::Unrestricted { .. } => SandboxFsDisplay::Unrestricted,
+            SandboxFsPolicy::Restricted { writable_paths, .. } => SandboxFsDisplay::Restricted(
+                writable_paths
+                    .iter()
+                    .map(|location| {
+                        WritableEntryDisplay::Path(location.untrusted_path_display().to_string())
+                    })
+                    .collect(),
+            ),
+        };
+        SandboxPolicyDisplay {
+            fs,
+            network: policy.network.clone(),
+        }
+    }
+}
+
 /// Fold the always-granted baseline writable paths (the project's worktree
 /// roots, derived from the same source the terminal tool uses) and, on Linux,
 /// the host-isolated `/tmp` overlay into a settings policy for display. These
@@ -5605,76 +5877,75 @@ impl Render for TokenUsageTooltip {
 /// section rather than stored. A no-op when the fs is unrestricted (rendered as
 /// "All paths"), since there's nothing to scope.
 fn augment_settings_sandbox_policy(
-    mut policy: SandboxPolicy,
+    policy: &SandboxPolicy,
     baseline: Vec<PathBuf>,
-) -> SandboxPolicy {
-    if let SandboxFsPolicy::Restricted { writable_paths } = &mut policy.fs {
-        let mut merged = baseline;
-        for path in writable_paths.drain(..) {
-            if !merged.contains(&path) {
-                merged.push(path);
+) -> SandboxPolicyDisplay {
+    let fs = match &policy.fs {
+        SandboxFsPolicy::Unrestricted { .. } => SandboxFsDisplay::Unrestricted,
+        SandboxFsPolicy::Restricted { writable_paths, .. } => {
+            // Dedup by display string. We deliberately don't open the locations'
+            // fds to dedup by inode here: this is a display-only tooltip and the
+            // string is the location's identity for that purpose. The string can
+            // only diverge from the captured inode while a symlink-swap is
+            // actively in progress, and in that case the bind validator refuses
+            // to run the command at all (see the `sandbox` crate) — so showing the
+            // requested path is always safe, and not worth a blocking syscall on
+            // the render path.
+            let mut merged: Vec<String> = Vec::new();
+            let baseline_paths = baseline.iter().map(|path| path.display().to_string());
+            let granted_paths = writable_paths
+                .iter()
+                .map(|location| location.untrusted_path_display().to_string());
+            for path in baseline_paths.chain(granted_paths) {
+                if !merged.contains(&path) {
+                    merged.push(path);
+                }
             }
+            // `mut` is only needed on Linux, where the isolated `/tmp` entry is
+            // pushed below.
+            #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
+            let mut entries: Vec<WritableEntryDisplay> =
+                merged.into_iter().map(WritableEntryDisplay::Path).collect();
+            // The ephemeral, host-isolated tmpfs at /tmp is Linux-specific (the
+            // bwrap `--tmpfs /tmp` overlay). It's a display-only label, not a
+            // real host path, so it can't be a captured location.
+            #[cfg(target_os = "linux")]
+            entries.push(WritableEntryDisplay::IsolatedTmp);
+            SandboxFsDisplay::Restricted(entries)
         }
-        // The ephemeral, host-isolated tmpfs at /tmp is Linux-specific (the
-        // bwrap `--tmpfs /tmp` overlay). It's a display-only label, not a real
-        // host path, so it can't come from the path source above.
-        #[cfg(target_os = "linux")]
-        merged.push(PathBuf::from("/tmp (isolated)"));
-        *writable_paths = merged;
+    };
+    SandboxPolicyDisplay {
+        fs,
+        network: policy.network.clone(),
     }
-    policy
 }
 
-fn sandbox_section(policy: &SandboxPolicy, show_empty: bool) -> SandboxSection {
+fn sandbox_section(title: &str, policy: &SandboxPolicyDisplay, show_empty: bool) -> SandboxSection {
     let write_empty = fs_grants_nothing(&policy.fs);
     let network_empty = network_grants_nothing(&policy.network);
-    // Git access is only surfaced when granted, so it never shows a "None" row.
-    let git_empty = git_grants_nothing(&policy.git);
+    let mut section = SandboxSection::new(title.to_string());
 
-    let mut section = SandboxSection::new();
     if show_empty || !write_empty {
         section =
             section.group(SandboxGroup::new("Write Access").rows(sandbox_fs_rows(&policy.fs)));
     }
+
     if show_empty || !network_empty {
         section = section
             .group(SandboxGroup::new("Network Access").rows(sandbox_network_rows(&policy.network)));
     }
-    if !git_empty {
-        section = section
-            .group(SandboxGroup::new("Git Metadata Access").rows(sandbox_git_rows(&policy.git)));
-    }
+
     section
 }
 
 /// Whether a policy grants nothing worth surfacing, used to decide whether to
 /// show the per-thread overrides section at all.
-fn sandbox_policy_grants_nothing(policy: &SandboxPolicy) -> bool {
-    fs_grants_nothing(&policy.fs)
-        && network_grants_nothing(&policy.network)
-        && git_grants_nothing(&policy.git)
+fn sandbox_policy_grants_nothing(policy: &SandboxPolicyDisplay) -> bool {
+    fs_grants_nothing(&policy.fs) && network_grants_nothing(&policy.network)
 }
 
-/// Git access grants nothing to surface unless `.git` writes are allowed *and*
-/// at least one `.git` directory is known.
-fn git_grants_nothing(git: &GitSandboxPolicy) -> bool {
-    !git.allows_writes() || git.git_dirs().is_empty()
-}
-
-/// Rows for the Git-access group: one row per writable `.git` directory (these
-/// may live outside the project for a linked worktree).
-fn sandbox_git_rows(git: &GitSandboxPolicy) -> Vec<SandboxRow> {
-    match git {
-        GitSandboxPolicy::Allowed { git_dirs } if !git_dirs.is_empty() => git_dirs
-            .iter()
-            .map(|path| SandboxRow::git(path.clone()))
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn fs_grants_nothing(fs: &SandboxFsPolicy) -> bool {
-    matches!(fs, SandboxFsPolicy::Restricted { writable_paths } if writable_paths.is_empty())
+fn fs_grants_nothing(fs: &SandboxFsDisplay) -> bool {
+    matches!(fs, SandboxFsDisplay::Restricted(entries) if entries.is_empty())
 }
 
 fn network_grants_nothing(network: &SandboxNetPolicy) -> bool {
@@ -5687,15 +5958,24 @@ fn network_grants_nothing(network: &SandboxNetPolicy) -> bool {
 
 /// Rows for the write-access group: a message for the "all"/"none" cases, or one
 /// row per granted path.
-fn sandbox_fs_rows(fs: &SandboxFsPolicy) -> Vec<SandboxRow> {
+fn sandbox_fs_rows(fs: &SandboxFsDisplay) -> Vec<SandboxRow> {
     match fs {
-        SandboxFsPolicy::Unrestricted => vec![SandboxRow::message("All paths (unrestricted)")],
-        SandboxFsPolicy::Restricted { writable_paths } if writable_paths.is_empty() => {
+        SandboxFsDisplay::Unrestricted => vec![SandboxRow::message(
+            "All paths except protected Git metadata",
+        )],
+        SandboxFsDisplay::Restricted(entries) if entries.is_empty() => {
             vec![SandboxRow::message("None")]
         }
-        SandboxFsPolicy::Restricted { writable_paths } => writable_paths
+        SandboxFsDisplay::Restricted(entries) => entries
             .iter()
-            .map(|path| SandboxRow::path(path.clone()))
+            .map(|entry| match entry {
+                // The display string was captured up front.
+                WritableEntryDisplay::Path(path) => SandboxRow::path(PathBuf::from(path)),
+                #[cfg(target_os = "linux")]
+                WritableEntryDisplay::IsolatedTmp => {
+                    SandboxRow::path(PathBuf::from("/tmp (isolated)"))
+                }
+            })
             .collect(),
     }
 }
@@ -5738,7 +6018,7 @@ impl ThreadView {
                 } else if this.generating_indicator_in_list {
                     let confirmation = entries
                         .last()
-                        .is_some_and(|entry| Self::is_waiting_for_confirmation(entry));
+                        .is_some_and(|entry| this.is_waiting_for_confirmation(entry, cx));
                     let rendered = this.render_generating(confirmation, cx);
                     centered_container(rendered.into_any_element()).into_any_element()
                 } else {
@@ -6057,6 +6337,28 @@ impl ThreadView {
                     tool_call.into_any()
                 }
             }
+            AgentThreadEntry::Elicitation(elicitation_id) => {
+                let thread = self.thread.read(cx);
+                if cx.has_flag::<AcpBetaFeatureFlag>()
+                    && let Some((_, elicitation)) = thread.elicitation(elicitation_id)
+                    && should_render_elicitation(elicitation)
+                {
+                    let elicitation = self.render_elicitation(entry_ix, elicitation, window, cx);
+
+                    if let Some(handle) = self
+                        .entry_view_state
+                        .read(cx)
+                        .entry(entry_ix)
+                        .and_then(|entry| entry.focus_handle(cx))
+                    {
+                        elicitation.track_focus(&handle).into_any()
+                    } else {
+                        elicitation.into_any()
+                    }
+                } else {
+                    Empty.into_any()
+                }
+            }
             AgentThreadEntry::CompletedPlan(entries) => {
                 self.render_completed_plan(entries, window, cx)
             }
@@ -6130,7 +6432,7 @@ impl ThreadView {
             primary
         };
 
-        let needs_confirmation = Self::is_waiting_for_confirmation(entry);
+        let needs_confirmation = self.is_waiting_for_confirmation(entry, cx);
 
         let comments_editor = self.thread_feedback.comments_editor.clone();
 
@@ -6172,6 +6474,99 @@ impl ThreadView {
         } else {
             primary
         }
+    }
+
+    fn render_elicitation(
+        &self,
+        entry_ix: usize,
+        elicitation: &Elicitation,
+        _window: &Window,
+        cx: &Context<Self>,
+    ) -> Div {
+        ElicitationCard::new(
+            entry_ix,
+            elicitation,
+            self.elicitation_form_states.get(&elicitation.id),
+            self.elicitation_card_handlers(cx),
+        )
+        .render(cx)
+    }
+
+    fn elicitation_card_handlers(&self, cx: &Context<Self>) -> ElicitationCardHandlers {
+        let view = cx.entity().downgrade();
+
+        ElicitationCardHandlers::new(
+            {
+                let view = view.clone();
+                move |elicitation_id, window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.submit_elicitation(elicitation_id, window, cx);
+                    })
+                    .log_err();
+                }
+            },
+            {
+                let view = view.clone();
+                move |elicitation_id, window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.decline_elicitation(elicitation_id, window, cx);
+                    })
+                    .log_err();
+                }
+            },
+            {
+                let view = view.clone();
+                move |elicitation_id, window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.cancel_elicitation(elicitation_id, window, cx);
+                    })
+                    .log_err();
+                }
+            },
+            {
+                let view = view.clone();
+                move |elicitation_id, url, window, cx| {
+                    cx.open_url(&url);
+                    view.update(cx, |this, cx| {
+                        this.submit_elicitation(elicitation_id, window, cx);
+                    })
+                    .log_err();
+                }
+            },
+            {
+                let view = view.clone();
+                move |elicitation_id, field_name, value, cx| {
+                    view.update(cx, |this, cx| {
+                        if let Some(form) = this.elicitation_form_states.get_mut(&elicitation_id) {
+                            form.set_boolean(&field_name, value);
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
+                }
+            },
+            {
+                let view = view.clone();
+                move |elicitation_id, field_name, value, cx| {
+                    view.update(cx, |this, cx| {
+                        if let Some(form) = this.elicitation_form_states.get_mut(&elicitation_id) {
+                            form.set_single_select(&field_name, value);
+                            cx.notify();
+                        }
+                    })
+                    .log_err();
+                }
+            },
+            move |elicitation_id, field_name, value, selected, cx| {
+                view.update(cx, |this, cx| {
+                    if let Some(form) = this.elicitation_form_states.get_mut(&elicitation_id) {
+                        form.set_multi_select(&field_name, value, selected);
+                        cx.notify();
+                    }
+                })
+                .log_err();
+            },
+        )
     }
 
     fn render_feedback_feedback_editor(editor: Entity<Editor>, cx: &Context<Self>) -> Div {
@@ -6222,42 +6617,50 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let is_generating = matches!(thread.read(cx).status(), ThreadStatus::Generating);
+
         if is_generating {
             return Empty.into_any_element();
         }
 
-        let open_as_markdown = IconButton::new("open-as-markdown", IconName::FileMarkdown)
-            .shape(ui::IconButtonShape::Square)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Ignored)
-            .tooltip(Tooltip::text("Open Thread as Markdown"))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                if let Some(workspace) = this.workspace.upgrade() {
-                    this.open_thread_as_markdown(workspace, window, cx)
-                        .detach_and_log_err(cx);
-                }
-            }));
+        let last_response_index = thread
+            .read(cx)
+            .entries()
+            .iter()
+            .rposition(|entry| matches!(entry, AgentThreadEntry::AssistantMessage(_)));
+
+        let copy_response_button = last_response_index.map(|response_index| {
+            IconButton::new("copy_agent_response", IconName::Copy)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::text("Copy This Agent Response"))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let entries = this.thread.read(cx).entries();
+                    if let Some(text) = Self::get_agent_message_content(entries, response_index, cx)
+                    {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    }
+                }))
+        });
 
         let scroll_to_recent_user_prompt =
-            IconButton::new("scroll_to_recent_user_prompt", IconName::ForwardArrow)
-                .shape(ui::IconButtonShape::Square)
+            IconButton::new("scroll_to_recent_user_prompt", IconName::UserArrowUp)
                 .icon_size(IconSize::Small)
-                .icon_color(Color::Ignored)
-                .tooltip(Tooltip::text("Scroll To Most Recent User Prompt"))
+                .icon_color(Color::Muted)
+                .tooltip(Tooltip::text("Scroll to Most Recent User Message"))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.scroll_to_most_recent_user_prompt(cx);
                 }));
 
         let scroll_to_top = IconButton::new("scroll_to_top", IconName::ArrowUp)
-            .shape(ui::IconButtonShape::Square)
             .icon_size(IconSize::Small)
-            .icon_color(Color::Ignored)
-            .tooltip(Tooltip::text("Scroll To Top"))
+            .icon_color(Color::Muted)
+            .tooltip(Tooltip::text("Scroll to Top"))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.scroll_to_top(cx);
             }));
 
         let show_stats = AgentSettings::get_global(cx).show_turn_stats;
+
         let last_turn_clock = show_stats
             .then(|| {
                 self.turn_fields
@@ -6285,29 +6688,98 @@ impl ThreadView {
             })
             .flatten();
 
-        let mut container = h_flex()
+        let feedback_buttons = (self.is_subagent() && self.is_thread_feedback_enabled(cx)).then(
+            || {
+                let feedback = self.thread_feedback.feedback;
+                let tooltip_meta =
+                    "Rating the thread sends all of your current conversation to the Zed team.";
+
+                h_flex()
+                    .child(
+                        IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
+                            .icon_size(IconSize::Small)
+                            .icon_color(match feedback {
+                                Some(ThreadFeedback::Positive) => Color::Accent,
+                                _ => Color::Muted,
+                            })
+                            .tooltip(move |window, cx| match feedback {
+                                Some(ThreadFeedback::Positive) => {
+                                    Tooltip::text("Thanks for your feedback!")(window, cx)
+                                }
+                                _ => Tooltip::with_meta(
+                                    "Helpful Response",
+                                    None,
+                                    tooltip_meta,
+                                    cx,
+                                ),
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.handle_feedback_click(ThreadFeedback::Positive, window, cx);
+                            })),
+                    )
+                    .child(
+                        IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
+                            .icon_size(IconSize::Small)
+                            .icon_color(match feedback {
+                                Some(ThreadFeedback::Negative) => Color::Accent,
+                                _ => Color::Muted,
+                            })
+                            .tooltip(move |window, cx| match feedback {
+                                Some(ThreadFeedback::Negative) => Tooltip::text(
+                                    "We appreciate your feedback and will use it to improve in the future.",
+                                )(
+                                    window, cx
+                                ),
+                                _ => Tooltip::with_meta(
+                                    "Not Helpful Response",
+                                    None,
+                                    tooltip_meta,
+                                    cx,
+                                ),
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.handle_feedback_click(ThreadFeedback::Negative, window, cx);
+                            })),
+                    )
+            },
+        );
+
+        h_flex()
             .w_full()
-            .py_2()
-            .px_5()
-            .gap_px()
-            .opacity(0.6)
-            .hover(|s| s.opacity(1.))
+            .py_1p5()
+            .px_4()
             .justify_end()
+            .opacity(0.4)
+            .hover(|s| s.opacity(1.))
             .when(
                 last_turn_tokens_label.is_some() || last_turn_clock.is_some(),
                 |this| {
                     this.child(
                         h_flex()
-                            .gap_1()
                             .px_1()
-                            .when_some(last_turn_tokens_label, |this, label| this.child(label))
+                            .gap_1()
+                            .when_some(last_turn_tokens_label, |this, label| {
+                                this.child(label).child(
+                                    Label::new("•")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .alpha(0.5),
+                                )
+                            })
                             .when_some(last_turn_clock, |this, label| this.child(label)),
                     )
                 },
-            );
+            )
+            .when_some(feedback_buttons, |this, buttons| this.child(buttons))
+            .when_some(copy_response_button, |this, button| this.child(button))
+            .child(scroll_to_recent_user_prompt)
+            .child(scroll_to_top)
+            .into_any_element()
+    }
 
-        let enable_thread_feedback = util::maybe!({
-            let project = thread.read(cx).project().read(cx);
+    fn is_thread_feedback_enabled(&self, cx: &App) -> bool {
+        util::maybe!({
+            let project = self.thread.read(cx).project().read(cx);
             let user_store = project.user_store();
             if let Some(configuration) = user_store.read(cx).current_organization_configuration() {
                 if !configuration.is_agent_thread_feedback_enabled {
@@ -6317,72 +6789,41 @@ impl ThreadView {
 
             AgentSettings::get_global(cx).enable_feedback
                 && self.thread.read(cx).connection().telemetry().is_some()
-        });
+        })
+    }
 
-        if enable_thread_feedback {
-            let feedback = self.thread_feedback.feedback;
+    // The local slash commands the message editor should currently expose.
+    // Kept in sync with the availability of the corresponding actions via
+    // `sync_local_commands`.
+    fn available_local_commands(&self, cx: &App) -> Vec<PromptLocalCommand> {
+        let mut commands = Vec::new();
 
-            let tooltip_meta = || {
-                SharedString::new(
-                    "Rating the thread sends all of your current conversation to the Zed team.",
-                )
-            };
-
-            container = container
-                    .child(
-                        IconButton::new("feedback-thumbs-up", IconName::ThumbsUp)
-                            .shape(ui::IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .icon_color(match feedback {
-                                Some(ThreadFeedback::Positive) => Color::Accent,
-                                _ => Color::Ignored,
-                            })
-                            .tooltip(move |window, cx| match feedback {
-                                Some(ThreadFeedback::Positive) => {
-                                    Tooltip::text("Thanks for your feedback!")(window, cx)
-                                }
-                                _ => {
-                                    Tooltip::with_meta("Helpful Response", None, tooltip_meta(), cx)
-                                }
-                            })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.handle_feedback_click(ThreadFeedback::Positive, window, cx);
-                            })),
-                    )
-                    .child(
-                        IconButton::new("feedback-thumbs-down", IconName::ThumbsDown)
-                            .shape(ui::IconButtonShape::Square)
-                            .icon_size(IconSize::Small)
-                            .icon_color(match feedback {
-                                Some(ThreadFeedback::Negative) => Color::Accent,
-                                _ => Color::Ignored,
-                            })
-                            .tooltip(move |window, cx| match feedback {
-                                Some(ThreadFeedback::Negative) => {
-                                    Tooltip::text(
-                                    "We appreciate your feedback and will use it to improve in the future.",
-                                )(window, cx)
-                                }
-                                _ => {
-                                    Tooltip::with_meta(
-                                        "Not Helpful Response",
-                                        None,
-                                        tooltip_meta(),
-                                        cx,
-                                    )
-                                }
-                            })
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.handle_feedback_click(ThreadFeedback::Negative, window, cx);
-                            })),
-                    );
+        if self.is_thread_feedback_enabled(cx) {
+            commands.push(PromptLocalCommand::ThumbsUp);
+            commands.push(PromptLocalCommand::ThumbsDown);
         }
 
-        container
-            .child(open_as_markdown)
-            .child(scroll_to_recent_user_prompt)
-            .child(scroll_to_top)
-            .into_any_element()
+        commands
+    }
+
+    // Pushes the current set of available local commands to the message
+    // editor so they appear in its slash-command popup.
+    pub(crate) fn sync_local_commands(&self, cx: &App) {
+        let commands = self.available_local_commands(cx);
+        self.message_editor.read(cx).set_local_commands(commands);
+    }
+
+    fn render_request_elicitations(&self, cx: &Context<Self>) -> Vec<AnyElement> {
+        let server_view = self.server_view.clone();
+        let handlers_view = server_view.clone();
+        server_view
+            .read_with(cx, |server_view, cx| {
+                let Some(connection) = server_view.request_elicitation_connection() else {
+                    return Vec::new();
+                };
+                server_view.render_request_elicitations(&connection, handlers_view, cx)
+            })
+            .unwrap_or_default()
     }
 
     pub(crate) fn scroll_to_most_recent_user_prompt(&mut self, cx: &mut Context<Self>) {
@@ -7120,6 +7561,7 @@ impl ThreadView {
                     }
                 }
                 AgentThreadEntry::ToolCall(_)
+                | AgentThreadEntry::Elicitation(_)
                 | AgentThreadEntry::AssistantMessage(_)
                 | AgentThreadEntry::CompletedPlan(_)
                 | AgentThreadEntry::ContextCompaction(_) => {}
@@ -7495,11 +7937,10 @@ impl ThreadView {
         reason: &SandboxNotAppliedReason,
         cx: &Context<Self>,
     ) -> AnyElement {
-        // (title, optional detail line)
-        let (title, detail): (SharedString, Option<SharedString>) = match reason {
+        let (title, detail): (SharedString, SharedString) = match reason {
             SandboxNotAppliedReason::ErrorLinuxWsl(error) => (
                 "Couldn't create a sandbox".into(),
-                Some(error.user_facing_message().into()),
+                error.user_facing_message().into(),
             ),
             SandboxNotAppliedReason::DisabledForThisThread => {
                 // The grant only exists because an earlier command failed to
@@ -7515,42 +7956,15 @@ impl ThreadView {
                     .unwrap_or_else(|| {
                         "Unsandboxed execution is allowed for the rest of this thread.".into()
                     });
-                ("Ran without sandbox".into(), Some(detail))
+                ("Ran without sandbox".into(), detail)
             }
         };
 
-        h_flex()
-            .px_2()
-            .py_1()
-            .gap_1()
-            .border_t_1()
-            .border_color(cx.theme().status().warning_border)
-            .bg(cx.theme().status().warning_background.opacity(0.5))
-            .child(
-                h_flex()
-                    .min_w_0()
-                    .flex_1()
-                    .gap_1p5()
-                    .items_start()
-                    .child(
-                        Icon::new(IconName::Warning)
-                            .size(IconSize::XSmall)
-                            .color(Color::Warning),
-                    )
-                    .child(
-                        v_flex()
-                            .min_w_0()
-                            .gap_0p5()
-                            .child(Label::new(title).size(LabelSize::Small).color(Color::Muted))
-                            .when_some(detail, |this, detail| {
-                                this.child(
-                                    Label::new(detail)
-                                        .size(LabelSize::XSmall)
-                                        .color(Color::Muted),
-                                )
-                            }),
-                    ),
-            )
+        Callout::new()
+            .severity(Severity::Warning)
+            .icon(IconName::Warning)
+            .title(title)
+            .description(detail)
             .into_any_element()
     }
 
@@ -8168,12 +8582,7 @@ impl ThreadView {
     ) -> AnyElement {
         let has_network = details.network_all_hosts || !details.network_hosts.is_empty();
         let has_write = details.allow_fs_write_all || !details.write_paths.is_empty();
-        if !has_network
-            && !has_write
-            && !details.allow_git_access
-            && !details.unsandboxed
-            && details.reason.is_empty()
-        {
+        if !has_network && !has_write && !details.unsandboxed && details.reason.is_empty() {
             return Empty.into_any_element();
         }
 
@@ -8255,33 +8664,29 @@ impl ThreadView {
                         }),
                 )
                 .when(has_host_list && is_open, |this| {
-                    this.child(
-                        v_flex()
-                            .id(("sandbox-network-hosts-list", entry_ix))
-                            .max_h_40()
-                            .overflow_y_scroll()
-                            .children(hosts.iter().enumerate().map(|(host_ix, host)| {
-                                h_flex()
-                                    .min_w_0()
-                                    .px_2()
-                                    .py_1p5()
-                                    .bg(cx.theme().colors().editor_background)
-                                    .when(host_ix < hosts.len() - 1, |this| {
-                                        this.border_b_1().border_color(cx.theme().colors().border)
-                                    })
-                                    .child(
-                                        Label::new(host.clone())
-                                            .size(LabelSize::XSmall)
-                                            .buffer_font(cx),
-                                    )
-                            })),
-                    )
+                    this.child(v_flex().children(hosts.iter().enumerate().map(
+                        |(host_ix, host)| {
+                            h_flex()
+                                .min_w_0()
+                                .px_2()
+                                .py_1p5()
+                                .bg(cx.theme().colors().editor_background)
+                                .when(host_ix < hosts.len() - 1, |this| {
+                                    this.border_b_1().border_color(cx.theme().colors().border)
+                                })
+                                .child(
+                                    Label::new(host.clone())
+                                        .size(LabelSize::XSmall)
+                                        .buffer_font(cx),
+                                )
+                        },
+                    )))
                 })
         });
 
         let write_section = has_write.then(|| {
             let summary = if details.allow_fs_write_all {
-                "unrestricted".to_string()
+                "unrestricted except Git metadata".to_string()
             } else {
                 format!(
                     "{} {}",
@@ -8358,21 +8763,17 @@ impl ThreadView {
                         }),
                 )
                 .when(has_path_list && is_open, |this| {
-                    this.child(
-                        v_flex()
-                            .id(("sandbox-authorization-paths-list", entry_ix))
-                            .max_h_40()
-                            .overflow_y_scroll()
-                            .children(paths.iter().enumerate().map(|(path_ix, path)| {
-                                self.render_sandbox_authorization_path_row(
-                                    entry_ix,
-                                    path_ix,
-                                    path,
-                                    path_ix < paths.len() - 1,
-                                    cx,
-                                )
-                            })),
-                    )
+                    this.child(v_flex().children(paths.iter().enumerate().map(
+                        |(path_ix, path)| {
+                            self.render_sandbox_authorization_path_row(
+                                entry_ix,
+                                path_ix,
+                                path,
+                                path_ix < paths.len() - 1,
+                                cx,
+                            )
+                        },
+                    )))
                 })
         });
 
@@ -8391,23 +8792,6 @@ impl ThreadView {
                         .size(LabelSize::Small)
                         .color(Color::Muted),
                 )
-        });
-
-        let git_access_section = details.allow_git_access.then(|| {
-            v_flex().px_2().py_1().gap_0p5().child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Icon::new(IconName::GitBranch)
-                            .color(Color::Muted)
-                            .size(IconSize::Small),
-                    )
-                    .child(
-                        Label::new("Git metadata access")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    ),
-            )
         });
 
         let reason_section = (!details.reason.is_empty()).then(|| {
@@ -8431,7 +8815,6 @@ impl ThreadView {
             .border_color(self.tool_card_border_color(cx))
             .children(network_section)
             .children(write_section)
-            .children(git_access_section)
             .children(unsandboxed_section)
             .children(reason_section)
             .into_any_element()
@@ -10423,7 +10806,6 @@ impl ThreadView {
             .on_click(cx.listener({
                 move |this, _, window, cx| {
                     let server_view = this.server_view.clone();
-                    let agent_name = this.agent_id.clone();
 
                     this.clear_thread_error(cx);
                     if let Some(message) = this.in_flight_prompt.take() {
@@ -10436,7 +10818,6 @@ impl ThreadView {
                         ConversationView::handle_auth_required(
                             server_view,
                             AuthRequired::new(),
-                            agent_name,
                             connection,
                             window,
                             cx,
@@ -10911,7 +11292,7 @@ impl ThreadView {
             ),
         };
 
-        let description = "To continue, start a new thread from a summary.";
+        let description = "To continue, run /compact or start a new thread and @-mention this one";
 
         Some(
             Callout::new()
@@ -11182,6 +11563,11 @@ impl ThreadView {
 
 impl Render for ThreadView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Keep the message editor's local slash commands in sync with the
+        // current availability of feedback/sharing, which can change between
+        // renders (settings, connection state, feature flags).
+        self.sync_local_commands(cx);
+
         let has_messages = self.list_state.item_count() > 0;
         let list_state = self.list_state.clone();
 
@@ -11529,6 +11915,7 @@ impl Render for ThreadView {
                 |this, version| this.child(self.render_new_version_callout(&version, cx)),
             )
             .children(self.render_token_limit_callout(cx))
+            .children(self.render_request_elicitations(cx))
             .child(self.render_message_editor(window, cx))
     }
 }
