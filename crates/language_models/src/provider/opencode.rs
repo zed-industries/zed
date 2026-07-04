@@ -308,8 +308,7 @@ impl State {
             .await?;
         if body_bytes.len() > MODELS_DEV_MAX_RESPONSE_SIZE as usize {
             return Err(anyhow!(
-                "models.dev response body too large: {:.2} MB total, maximum {} MB allowed",
-                body_bytes.len() as f64 / (1024 * 1024) as f64,
+                "models.dev response body exceeded the {} MB maximum allowed size",
                 MODELS_DEV_MAX_RESPONSE_SIZE / (1024 * 1024),
             ));
         }
