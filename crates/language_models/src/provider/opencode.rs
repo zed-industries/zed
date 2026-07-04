@@ -1084,6 +1084,13 @@ impl LanguageModel for OpenCodeLanguageModel {
         self.model.reasoning_effort_levels.is_some()
     }
 
+    fn supports_disabling_thinking(&self) -> bool {
+        self.model
+            .reasoning_effort_levels
+            .as_ref()
+            .is_some_and(|levels| levels.contains(&ReasoningEffort::None))
+    }
+
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         self.model
             .reasoning_effort_levels
