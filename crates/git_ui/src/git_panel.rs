@@ -438,6 +438,19 @@ struct GitHeaderEntry {
     header: Section,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+struct ProjectedChangeEntry {
+    section: Section,
+    index: usize,
+}
+
+#[derive(Clone, Copy)]
+struct StagingAction {
+    stage: bool,
+    icon: IconName,
+    label: &'static str,
+}
+
 impl GitHeaderEntry {
     pub fn contains(&self, status_entry: &GitStatusEntry, repo: &Repository) -> bool {
         let this = &self.header;
@@ -793,7 +806,7 @@ pub struct GitPanel {
     entries: Vec<GitListEntry>,
     view_mode: GitPanelViewMode,
     tree_expanded_dirs: HashMap<TreeKey, bool>,
-    entries_indices: HashMap<RepoPath, usize>,
+    projected_entries_by_path: HashMap<RepoPath, SmallVec<[ProjectedChangeEntry; 2]>>,
     single_staged_entry: Option<GitStatusEntry>,
     single_tracked_entry: Option<GitStatusEntry>,
     focus_handle: FocusHandle,
@@ -1078,7 +1091,7 @@ impl GitPanel {
                 entries: Vec::new(),
                 view_mode: GitPanelViewMode::from_settings(cx),
                 tree_expanded_dirs: HashMap::default(),
-                entries_indices: HashMap::default(),
+                projected_entries_by_path: HashMap::default(),
                 focus_handle: cx.focus_handle(),
                 fs,
                 new_count: 0,
@@ -1133,7 +1146,18 @@ impl GitPanel {
     }
 
     pub fn entry_by_path(&self, path: &RepoPath) -> Option<usize> {
-        self.entries_indices.get(path).copied()
+        self.projected_entries_by_path
+            .get(path)?
+            .first()
+            .map(|entry| entry.index)
+    }
+
+    fn entry_by_path_in_section(&self, path: &RepoPath, section: Section) -> Option<usize> {
+        self.projected_entries_by_path
+            .get(path)?
+            .iter()
+            .find(|entry| entry.section == section)
+            .map(|entry| entry.index)
     }
 
     pub fn select_entry_by_path(
@@ -1198,7 +1222,10 @@ impl GitPanel {
             self.update_visible_entries(window, cx);
         }
 
-        let Some(ix) = self.entry_by_path(&repo_path) else {
+        let Some(ix) = section
+            .and_then(|section| self.entry_by_path_in_section(&repo_path, section))
+            .or_else(|| self.entry_by_path(&repo_path))
+        else {
             return;
         };
 
@@ -2488,7 +2515,18 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(selected_entry) = self.get_selected_entry().cloned() {
+        let Some(selected_index) = self.selected_entry else {
+            return;
+        };
+        let Some(selected_entry) = self.entries.get(selected_index).cloned() else {
+            return;
+        };
+
+        if let Some(action) = self.staging_action_for_entry_index(selected_index)
+            && let Some(entry) = selected_entry.status_entry()
+        {
+            self.change_file_stage(action.stage, vec![entry.clone()], cx);
+        } else {
             self.toggle_staged_for_entry(&selected_entry, window, cx);
         }
     }
@@ -4249,7 +4287,7 @@ impl GitPanel {
             self.git_access = None;
         }
         self.entries.clear();
-        self.entries_indices.clear();
+        self.projected_entries_by_path.clear();
         self.single_staged_entry.take();
         self.single_tracked_entry.take();
         self.conflicted_count = 0;
@@ -4413,6 +4451,7 @@ impl GitPanel {
         let mut push_entry =
             |this: &mut Self,
              entry: GitListEntry,
+             section: Section,
              is_visible: bool,
              logical_indices: Option<&mut Vec<usize>>| {
                 if let Some(estimate) =
@@ -4426,7 +4465,13 @@ impl GitPanel {
 
                 if let Some(repo_path) = entry.status_entry().map(|status| status.repo_path.clone())
                 {
-                    this.entries_indices.insert(repo_path, this.entries.len());
+                    this.projected_entries_by_path
+                        .entry(repo_path)
+                        .or_default()
+                        .push(ProjectedChangeEntry {
+                            section,
+                            index: this.entries.len(),
+                        });
                 }
 
                 if let (Some(indices), true) = (logical_indices, is_visible) {
@@ -4468,6 +4513,7 @@ impl GitPanel {
                         push_entry(
                             self,
                             GitListEntry::Header(GitHeaderEntry { header: section }),
+                            section,
                             true,
                             Some(&mut tree_state.logical_indices),
                         );
@@ -4479,6 +4525,7 @@ impl GitPanel {
                         push_entry(
                             self,
                             entry,
+                            section,
                             is_visible,
                             Some(&mut tree_state.logical_indices),
                         );
@@ -4501,13 +4548,14 @@ impl GitPanel {
                         push_entry(
                             self,
                             GitListEntry::Header(GitHeaderEntry { header: section }),
+                            section,
                             true,
                             None,
                         );
                     }
 
                     for entry in entries {
-                        push_entry(self, GitListEntry::Status(entry), true, None);
+                        push_entry(self, GitListEntry::Status(entry), section, true, None);
                     }
                 }
             }
@@ -4572,12 +4620,25 @@ impl GitPanel {
         })
     }
 
-    fn staging_action_for_section(section: Section) -> Option<(bool, IconName, &'static str)> {
+    fn staging_action_for_section(section: Section) -> Option<StagingAction> {
         match section {
-            Section::Staged => Some((false, IconName::Dash, "Unstage")),
-            Section::Unstaged => Some((true, IconName::Plus, "Stage")),
+            Section::Staged => Some(StagingAction {
+                stage: false,
+                icon: IconName::Dash,
+                label: "Unstage",
+            }),
+            Section::Unstaged => Some(StagingAction {
+                stage: true,
+                icon: IconName::Plus,
+                label: "Stage",
+            }),
             _ => None,
         }
+    }
+
+    fn staging_action_for_entry_index(&self, ix: usize) -> Option<StagingAction> {
+        self.section_for_entry_index(ix)
+            .and_then(Self::staging_action_for_section)
     }
 
     fn staging_action_button(
@@ -6612,10 +6673,15 @@ impl GitPanel {
             )
             .child(if staging_conflict {
                 div().into_any_element()
-            } else if let Some((_stage, icon, action)) = staging_action {
-                Self::staging_action_button(checkbox_id, icon, action, !has_write_access)
-                    .tooltip(move |_window, cx| Tooltip::simple(format!("{action} all"), cx))
-                    .into_any_element()
+            } else if let Some(action) = staging_action {
+                Self::staging_action_button(
+                    checkbox_id,
+                    action.icon,
+                    action.label,
+                    !has_write_access,
+                )
+                .tooltip(move |_window, cx| Tooltip::simple(format!("{} all", action.label), cx))
+                .into_any_element()
             } else {
                 Checkbox::new(checkbox_id, toggle_state)
                     .disabled(!has_write_access)
@@ -6662,13 +6728,15 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let staging_action = self.staging_action_for_entry_index(ix);
         let Some(entry) = self.entries.get(ix).and_then(|e| e.status_entry()) else {
             return;
         };
-        let stage_title = if entry.status.staging().is_fully_staged() {
-            "Unstage File"
-        } else {
-            "Stage File"
+        let stage_title = match staging_action {
+            Some(StagingAction { stage: true, .. }) => "Stage File",
+            Some(StagingAction { stage: false, .. }) => "Unstage File",
+            None if entry.status.staging().is_fully_staged() => "Unstage File",
+            None => "Stage File",
         };
         let restore_title = if entry.status.is_created() {
             "Trash File"
@@ -6823,11 +6891,7 @@ impl GitPanel {
         let staging_conflict = settings.group_by == GitPanelGroupBy::Staging
             && section == Some(Section::Conflict)
             && status.is_conflicted();
-        let staging_action = if settings.group_by == GitPanelGroupBy::Staging {
-            section.and_then(Self::staging_action_for_section)
-        } else {
-            None
-        };
+        let staging_action = self.staging_action_for_entry_index(ix);
         let mut is_staged: ToggleState = match stage_status {
             StageStatus::Staged => ToggleState::Selected,
             StageStatus::Unstaged => ToggleState::Unselected,
@@ -6963,24 +7027,29 @@ impl GitPanel {
                         })
                         .tooltip(move |_window, cx| Tooltip::simple("Mark as Resolved", cx))
                         .into_any_element()
-                    } else if let Some((stage, icon, action)) = staging_action {
-                        Self::staging_action_button(checkbox_id, icon, action, !has_write_access)
-                            .on_click({
-                                let entry = entry.clone();
-                                let this = cx.weak_entity();
-                                move |_, _window, cx| {
-                                    this.update(cx, |this, cx| {
-                                        if !has_write_access {
-                                            return;
-                                        }
-                                        this.change_file_stage(stage, vec![entry.clone()], cx);
-                                        cx.stop_propagation();
-                                    })
-                                    .ok();
-                                }
-                            })
-                            .tooltip(move |_window, cx| Tooltip::simple(action, cx))
-                            .into_any_element()
+                    } else if let Some(action) = staging_action {
+                        Self::staging_action_button(
+                            checkbox_id,
+                            action.icon,
+                            action.label,
+                            !has_write_access,
+                        )
+                        .on_click({
+                            let entry = entry.clone();
+                            let this = cx.weak_entity();
+                            move |_, _window, cx| {
+                                this.update(cx, |this, cx| {
+                                    if !has_write_access {
+                                        return;
+                                    }
+                                    this.change_file_stage(action.stage, vec![entry.clone()], cx);
+                                    cx.stop_propagation();
+                                })
+                                .ok();
+                            }
+                        })
+                        .tooltip(move |_window, cx| Tooltip::simple(action.label, cx))
+                        .into_any_element()
                     } else {
                         Checkbox::new(checkbox_id, is_staged)
                             .disabled(!has_write_access)
@@ -7177,27 +7246,32 @@ impl GitPanel {
                     .cursor_pointer()
                     .child(if staging_conflict {
                         div().into_any_element()
-                    } else if let Some((_stage, icon, action)) = staging_action {
-                        Self::staging_action_button(checkbox_id, icon, action, !has_write_access)
-                            .on_click({
-                                let entry = entry.clone();
-                                let this = cx.weak_entity();
-                                move |_, window, cx| {
-                                    this.update(cx, |this, cx| {
-                                        if !has_write_access {
-                                            return;
-                                        }
-                                        let list_entry = GitListEntry::Directory(entry.clone());
-                                        this.toggle_staged_for_entry(&list_entry, window, cx);
-                                        cx.stop_propagation();
-                                    })
-                                    .ok();
-                                }
-                            })
-                            .tooltip(move |_window, cx| {
-                                Tooltip::simple(format!("{action} folder"), cx)
-                            })
-                            .into_any_element()
+                    } else if let Some(action) = staging_action {
+                        Self::staging_action_button(
+                            checkbox_id,
+                            action.icon,
+                            action.label,
+                            !has_write_access,
+                        )
+                        .on_click({
+                            let entry = entry.clone();
+                            let this = cx.weak_entity();
+                            move |_, window, cx| {
+                                this.update(cx, |this, cx| {
+                                    if !has_write_access {
+                                        return;
+                                    }
+                                    let list_entry = GitListEntry::Directory(entry.clone());
+                                    this.toggle_staged_for_entry(&list_entry, window, cx);
+                                    cx.stop_propagation();
+                                })
+                                .ok();
+                            }
+                        })
+                        .tooltip(move |_window, cx| {
+                            Tooltip::simple(format!("{} folder", action.label), cx)
+                        })
+                        .into_any_element()
                     } else {
                         Checkbox::new(checkbox_id, toggle_state)
                             .disabled(!has_write_access)
@@ -9008,6 +9082,37 @@ mod tests {
                     .collect::<Vec<_>>(),
                 [rel_path("new.rs"), rel_path("partial_new.rs")]
             );
+
+            let partial_path = repo_path("partial.rs");
+            let projections = panel
+                .projected_entries_by_path
+                .get(&partial_path)
+                .expect("partially staged entry should have projections");
+            assert_eq!(
+                projections.as_slice(),
+                &[
+                    ProjectedChangeEntry {
+                        section: Section::Staged,
+                        index: 3,
+                    },
+                    ProjectedChangeEntry {
+                        section: Section::Unstaged,
+                        index: 8,
+                    },
+                ]
+            );
+            assert_eq!(
+                panel
+                    .staging_action_for_entry_index(projections[0].index)
+                    .map(|action| action.stage),
+                Some(false)
+            );
+            assert_eq!(
+                panel
+                    .staging_action_for_entry_index(projections[1].index)
+                    .map(|action| action.stage),
+                Some(true)
+            );
             panel.entries.clone()
         });
 
@@ -9044,6 +9149,25 @@ mod tests {
                 Some("unstaged.rs"),
             ],
         );
+
+        let worktree_id =
+            cx.read(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
+        panel.update_in(&mut cx, |panel, window, cx| {
+            panel.select_entry_by_path(
+                ProjectPath {
+                    worktree_id,
+                    path: rel_path("partial.rs").into_arc(),
+                },
+                window,
+                cx,
+            );
+        });
+        panel.read_with(&cx, |panel, _| {
+            assert_eq!(
+                panel.selected_entry,
+                panel.entry_by_path_in_section(&repo_path("partial.rs"), Section::Staged)
+            );
+        });
     }
 
     #[gpui::test]
