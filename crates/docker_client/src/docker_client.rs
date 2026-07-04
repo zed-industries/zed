@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub mod parse;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EndpointKind {
     Local,
