@@ -9025,9 +9025,15 @@ impl ThreadView {
                     .gap_1p5()
                     .items_start()
                     .child(
-                        Icon::new(IconName::Warning)
-                            .size(IconSize::Small)
-                            .color(Color::Error),
+                        h_flex()
+                            .h(line_height)
+                            .flex_none()
+                            .justify_center()
+                            .child(
+                                Icon::new(IconName::Warning)
+                                    .size(IconSize::Small)
+                                    .color(Color::Error),
+                            ),
                     )
                     .child(
                         v_flex().min_w_0().flex_1().gap_1().children(findings.iter().map(
