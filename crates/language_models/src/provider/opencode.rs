@@ -790,17 +790,17 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
 
         entries.sort_by(
             |(model1, subscription1, is_custom1), (model2, subscription2, is_custom2)| {
-                let group1 = if *is_custom1 {
-                    "custom"
-                } else {
-                    subscription1.id_prefix()
+                let tier = |sub: &OpenCodeSubscription| -> u8 {
+                    match sub {
+                        OpenCodeSubscription::Go => 0,
+                        OpenCodeSubscription::Free => 1,
+                        OpenCodeSubscription::Zen => 2,
+                    }
                 };
-                let group2 = if *is_custom2 {
-                    "custom"
-                } else {
-                    subscription2.id_prefix()
-                };
-                group1.cmp(group2).then(model1.id.cmp(&model2.id))
+                tier(subscription1)
+                    .cmp(&tier(subscription2))
+                    .then(is_custom2.cmp(is_custom1)) // Custom models first
+                    .then(model1.id.cmp(&model2.id))
             },
         );
 
