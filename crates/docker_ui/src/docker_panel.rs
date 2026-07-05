@@ -699,10 +699,7 @@ impl DockerPanel {
         };
         let client = store.make_client();
 
-        self.logs = Some(LogsState {
-            id: id.clone(),
-            lines: Vec::new(),
-        });
+        self.logs = Some(LogsState::new(id.clone()));
 
         let task = gpui_tokio::Tokio::spawn_result(cx, async move {
             client.container_logs(&endpoint, &id, TAIL).await
@@ -725,6 +722,13 @@ impl DockerPanel {
                             let overflow = logs.lines.len() - MAX_DISPLAYED_LOG_LINES;
                             logs.lines.drain(0..overflow);
                         }
+                        // Only pull the view down to the tail while
+                        // following; paused, the buffer keeps growing but
+                        // the scroll position is left alone so the user can
+                        // read back through history without it jumping.
+                        if logs.follow {
+                            logs.scroll_handle.scroll_to_bottom();
+                        }
                         cx.notify();
                     }
                 });
@@ -733,6 +737,21 @@ impl DockerPanel {
                 }
             }
         });
+    }
+
+    /// Flips the follow/pause toggle for the currently open logs stream.
+    /// Switching back to follow immediately snaps to the tail; pausing
+    /// leaves the scroll position where the user left it. The background
+    /// stream in `load_logs` keeps appending to `lines` either way, so
+    /// nothing is lost while paused.
+    pub(crate) fn toggle_logs_follow(&mut self, cx: &mut Context<Self>) {
+        if let Some(logs) = self.logs.as_mut() {
+            logs.follow = !logs.follow;
+            if logs.follow {
+                logs.scroll_handle.scroll_to_bottom();
+            }
+            cx.notify();
+        }
     }
 
     fn render_detail_pane(&self, cx: &Context<Self>) -> AnyElement {
@@ -1286,5 +1305,109 @@ mod tests {
             "cancelling must not dispatch the action; calls: {:?}",
             fake.calls()
         );
+    }
+
+    /// The logs buffer must fill from the streamed `LogChunk`s the client
+    /// yields, in order, regardless of the follow/pause toggle (Task 11).
+    #[gpui::test]
+    async fn logs_stream_fills_buffer(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let mut fake = FakeDockerClient::new_with_container("api");
+        fake.log_lines = vec!["a".into(), "b".into()];
+        let fake = Arc::new(fake);
+        let factory = {
+            let fake = fake.clone();
+            Arc::new(move || fake.clone() as Arc<dyn DockerClient>)
+        };
+        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+        let endpoint_name =
+            store.read_with(cx, |store, _| store.endpoints()[0].endpoint.name.clone());
+
+        let panel = cx.new(|cx| DockerPanel::new_for_test(store.clone(), cx));
+        panel.update(cx, |panel, cx| {
+            panel.select_container(endpoint_name.clone(), "api-id".into(), "api".into(), cx);
+        });
+
+        panel.update(cx, |panel, cx| {
+            panel.load_logs("api-id".into(), cx);
+        });
+
+        wait_until(cx, |cx| {
+            panel.read_with(cx, |panel, _| {
+                panel
+                    .logs
+                    .as_ref()
+                    .is_some_and(|logs| logs.lines == vec!["a".to_string(), "b".to_string()])
+            })
+        })
+        .await;
+
+        panel.read_with(cx, |panel, _| {
+            let logs = panel.logs.as_ref().expect("logs state should be present");
+            assert_eq!(logs.lines, vec!["a".to_string(), "b".to_string()]);
+            assert!(logs.follow, "follow should default to true");
+        });
+    }
+
+    /// Toggling follow/pause must flip the observable `follow` flag; this is
+    /// the behavior the toggle button in `detail_view` drives.
+    #[gpui::test]
+    async fn toggle_logs_follow_flips_flag(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let mut fake = FakeDockerClient::new_with_container("api");
+        fake.log_lines = vec!["a".into()];
+        let fake = Arc::new(fake);
+        let factory = {
+            let fake = fake.clone();
+            Arc::new(move || fake.clone() as Arc<dyn DockerClient>)
+        };
+        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+        let endpoint_name =
+            store.read_with(cx, |store, _| store.endpoints()[0].endpoint.name.clone());
+
+        let panel = cx.new(|cx| DockerPanel::new_for_test(store.clone(), cx));
+        panel.update(cx, |panel, cx| {
+            panel.select_container(endpoint_name.clone(), "api-id".into(), "api".into(), cx);
+        });
+        panel.update(cx, |panel, cx| {
+            panel.load_logs("api-id".into(), cx);
+        });
+
+        wait_until(cx, |cx| {
+            panel.read_with(cx, |panel, _| {
+                panel
+                    .logs
+                    .as_ref()
+                    .is_some_and(|logs| !logs.lines.is_empty())
+            })
+        })
+        .await;
+
+        panel.read_with(cx, |panel, _| {
+            assert!(
+                panel.logs.as_ref().expect("logs present").follow,
+                "follow should default to true"
+            );
+        });
+
+        panel.update(cx, |panel, cx| panel.toggle_logs_follow(cx));
+        panel.read_with(cx, |panel, _| {
+            assert!(
+                !panel.logs.as_ref().expect("logs present").follow,
+                "toggling once should pause following"
+            );
+        });
+
+        panel.update(cx, |panel, cx| panel.toggle_logs_follow(cx));
+        panel.read_with(cx, |panel, _| {
+            assert!(
+                panel.logs.as_ref().expect("logs present").follow,
+                "toggling twice should resume following"
+            );
+        });
     }
 }

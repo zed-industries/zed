@@ -1,5 +1,5 @@
 use docker_client::{ComposeProject, Container, DockerEndpoint, Image};
-use gpui::{AnyElement, Context, InteractiveElement, ParentElement, Styled};
+use gpui::{AnyElement, Context, InteractiveElement, ParentElement, ScrollHandle, Styled};
 use ui::{Tooltip, prelude::*};
 
 use crate::docker_panel::DockerPanel;
@@ -46,10 +46,28 @@ pub struct InspectState {
 
 /// The tail of streamed log lines for the selected container, if Logs has
 /// been opened.
-#[derive(Clone, Debug, Default)]
+///
+/// `follow` gates whether newly-appended lines pull the view down to the
+/// tail: the background stream in `DockerPanel::load_logs` keeps pushing
+/// into `lines` regardless of `follow`, so pausing never drops data, it only
+/// freezes the scroll position so the user can read back through history.
+#[derive(Clone, Debug)]
 pub struct LogsState {
     pub id: String,
     pub lines: Vec<String>,
+    pub follow: bool,
+    pub scroll_handle: ScrollHandle,
+}
+
+impl LogsState {
+    pub fn new(id: String) -> Self {
+        Self {
+            id,
+            lines: Vec::new(),
+            follow: true,
+            scroll_handle: ScrollHandle::new(),
+        }
+    }
 }
 
 /// Builds an action button that is disabled with an explanatory tooltip when
@@ -210,11 +228,22 @@ fn render_container_detail(
             },
         )
         .when_some(logs.filter(|logs| logs.id == id), |this, logs| {
+            let follow_label = if logs.follow { "Following" } else { "Paused" };
             this.child(
+                h_flex().gap_2().child(
+                    Button::new("toggle-follow-logs", follow_label)
+                        .toggle_state(logs.follow)
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            this.toggle_logs_follow(cx);
+                        })),
+                ),
+            )
+            .child(
                 v_flex()
                     .id("container-logs-scroll")
                     .flex_1()
                     .overflow_y_scroll()
+                    .track_scroll(&logs.scroll_handle)
                     .p_2()
                     .bg(cx.theme().colors().editor_background)
                     .children(logs.lines.iter().map(|line| {
