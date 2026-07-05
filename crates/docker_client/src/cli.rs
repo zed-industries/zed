@@ -88,31 +88,31 @@ impl DockerClient for CliDockerClient {
     }
 
     async fn inspect_container(&self, endpoint: &DockerEndpoint, id: &str) -> Result<String> {
-        run(endpoint, &["inspect", id]).await
+        run(endpoint, &["inspect", "--", id]).await
     }
 
     async fn start_container(&self, endpoint: &DockerEndpoint, id: &str) -> Result<()> {
-        run(endpoint, &["start", id]).await?;
+        run(endpoint, &["start", "--", id]).await?;
         Ok(())
     }
 
     async fn stop_container(&self, endpoint: &DockerEndpoint, id: &str) -> Result<()> {
-        run(endpoint, &["stop", id]).await?;
+        run(endpoint, &["stop", "--", id]).await?;
         Ok(())
     }
 
     async fn restart_container(&self, endpoint: &DockerEndpoint, id: &str) -> Result<()> {
-        run(endpoint, &["restart", id]).await?;
+        run(endpoint, &["restart", "--", id]).await?;
         Ok(())
     }
 
     async fn pull_image(&self, endpoint: &DockerEndpoint, reference: &str) -> Result<()> {
-        run(endpoint, &["pull", reference]).await?;
+        run(endpoint, &["pull", "--", reference]).await?;
         Ok(())
     }
 
     async fn remove_image(&self, endpoint: &DockerEndpoint, id: &str) -> Result<()> {
-        run(endpoint, &["rmi", id]).await?;
+        run(endpoint, &["rmi", "--", id]).await?;
         Ok(())
     }
 
@@ -122,6 +122,10 @@ impl DockerClient for CliDockerClient {
         project: &str,
         service: Option<&str>,
     ) -> Result<()> {
+        // No `--` here: `-p <project>` is itself a flag value, and `docker
+        // compose`'s end-of-options placement differs from plain `docker`
+        // subcommands, so this is left unguarded (unlike inspect/rmi/start/
+        // stop/restart/pull/logs above).
         let mut args = vec!["compose", "-p", project, "up", "-d"];
         if let Some(service) = service {
             args.push(service);
@@ -131,6 +135,8 @@ impl DockerClient for CliDockerClient {
     }
 
     async fn compose_down(&self, endpoint: &DockerEndpoint, project: &str) -> Result<()> {
+        // See the comment in `compose_up`: compose subcommands are not
+        // `--`-guarded.
         run(endpoint, &["compose", "-p", project, "down"]).await?;
         Ok(())
     }
@@ -141,6 +147,8 @@ impl DockerClient for CliDockerClient {
         project: &str,
         service: Option<&str>,
     ) -> Result<()> {
+        // See the comment in `compose_up`: compose subcommands are not
+        // `--`-guarded.
         let mut args = vec!["compose", "-p", project, "restart"];
         if let Some(service) = service {
             args.push(service);
@@ -158,7 +166,7 @@ impl DockerClient for CliDockerClient {
         use tokio::io::{AsyncBufReadExt as _, BufReader};
 
         let tail = tail.to_string();
-        let mut cmd = command(endpoint, &["logs", "-f", "--tail", &tail, id]);
+        let mut cmd = command(endpoint, &["logs", "-f", "--tail", &tail, "--", id]);
         cmd.stdout(std::process::Stdio::piped());
         cmd.stderr(std::process::Stdio::piped());
         let mut child = cmd.spawn().context("spawning `docker logs -f`")?;
