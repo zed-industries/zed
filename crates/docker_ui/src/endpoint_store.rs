@@ -98,13 +98,6 @@ impl DockerAction {
     }
 }
 
-/// Standalone helper mirroring [`DockerAction::is_destructive`] for callers
-/// that only have the action, e.g. UI code deciding whether to render a
-/// button disabled before any endpoint/store is involved.
-pub fn is_destructive(action: &DockerAction) -> bool {
-    action.is_destructive()
-}
-
 /// Constructs a [`DockerClient`] used to talk to every endpoint.
 ///
 /// Production wires this to [`default_client_factory`], which builds a
