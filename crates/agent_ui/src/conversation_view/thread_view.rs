@@ -10785,6 +10785,9 @@ impl ThreadView {
     fn render_model_not_available_error(&self, cx: &mut Context<Self>) -> Option<Callout> {
         let thread = self.as_native_thread(cx)?;
 
+        let has_authenticated_provider =
+            LanguageModelRegistry::read_global(cx).has_authenticated_provider(cx);
+
         let (title, description): (SharedString, SharedString) =
             match thread.read(cx).thread_model() {
                 agent::ThreadModel::Ready(_) => return None,
@@ -10813,10 +10816,20 @@ impl ThreadView {
                         )
                     }
                 }
-                agent::ThreadModel::Unset => (
-                    "No model selected".into(),
-                    "Select a model from the model picker below to get started.".into(),
-                ),
+                agent::ThreadModel::Unset => {
+                    if has_authenticated_provider {
+                        (
+                            "No model selected".into(),
+                            "Choose a different model or configure other providers to get started"
+                                .into(),
+                        )
+                    } else {
+                        (
+                            "No model selected".into(),
+                            "Configure a provider to get started".into(),
+                        )
+                    }
+                }
             };
 
         let callout = Callout::new()
@@ -10827,7 +10840,10 @@ impl ThreadView {
             .actions_slot(
                 h_flex()
                     .gap_0p5()
-                    .child(self.open_llm_providers_settings_button(cx)),
+                    .child(self.open_llm_providers_settings_button(cx))
+                    .when(has_authenticated_provider, |this| {
+                        this.child(self.open_model_selector_button(cx))
+                    }),
             )
             .dismiss_action(self.dismiss_error_button(cx));
 
@@ -10835,7 +10851,7 @@ impl ThreadView {
     }
 
     fn open_llm_providers_settings_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        Button::new("configure-llm-provider", "Configure")
+        Button::new("configure-llm-provider", "Configure Provider")
             .label_size(LabelSize::Small)
             .style(ButtonStyle::Filled)
             .on_click(cx.listener(|this, _, window, cx| {
@@ -10847,6 +10863,16 @@ impl ThreadView {
                     }),
                     cx,
                 );
+            }))
+    }
+
+    fn open_model_selector_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("open-model-selector", "Select Model")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Filled)
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.clear_thread_error(cx);
+                window.dispatch_action(ToggleModelSelector.boxed_clone(), cx);
             }))
     }
 
