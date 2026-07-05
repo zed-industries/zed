@@ -1,5 +1,7 @@
 #[cfg(feature = "predict-edits")]
 pub mod predict_edits_v3;
+#[cfg(feature = "predict-edits")]
+pub mod predict_edits_v4;
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -306,12 +308,18 @@ pub struct LanguageModel {
     pub supports_disabling_thinking: bool,
     #[serde(default)]
     pub supports_fast_mode: bool,
+    #[serde(default)]
+    pub supports_server_side_compaction: bool,
     pub supported_effort_levels: Vec<SupportedEffortLevel>,
     #[serde(default)]
     pub supports_streaming_tools: bool,
     /// Only used by OpenAI and xAI.
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,
+    #[serde(default)]
+    pub is_disabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disabled_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

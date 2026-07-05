@@ -41,7 +41,7 @@ agent paths and model access paths.
 
 ## API Keys and Environment Variables {#api-keys}
 
-Most API-access providers can be configured in Zed's Agent Settings panel with {#action agent::OpenSettings}. Keys saved through Zed are stored in the system keychain, not in `settings.json`.
+Most API-access providers can be configured on the **Settings → AI → LLM Providers** page with {#action agent::OpenSettings}. Keys saved through Zed are stored in the system keychain, not in `settings.json`.
 
 Zed also reads provider-specific environment variables. Non-empty environment variables take precedence over keychain values. If a key comes from an environment variable, unset the variable and restart Zed to stop using it.
 
@@ -389,7 +389,7 @@ Add custom models in your settings file:
           "max_tokens": 123456,
           "max_output_tokens": 98765,
           "protocol": "openai_chat",
-          "reasoning_effort_levels": ["low", "medium", "high"],
+          "reasoning_effort_levels": ["low", "medium", "high", "max"],
           "interleaved_reasoning": false,
           "subscription": "go",
           "custom_model_api_url": "https://example.com/zen"
@@ -407,7 +407,7 @@ The available configuration options for custom OpenCode models are:
 - `max_tokens` (required): maximum model context window size, such as `1000000`
 - `max_output_tokens` (optional): maximum tokens the model can generate, such as `64000`
 - `protocol` (required): model API protocol, one of `"anthropic"`, `"openai_responses"`, `"openai_chat"`, or `"google"`
-- `reasoning_effort_levels` (optional): list of supported reasoning effort levels, such as `["low", "medium", "high"]`. The last value in the list is used as the default
+- `reasoning_effort_levels` (optional): list of supported reasoning effort levels, such as `["low", "medium", "high", "max"]`. The last value in the list is used as the default
 - `interleaved_reasoning` (optional, default `false`): whether thinking tokens are sent as a dedicated `reasoning_content` field. Applies only when using the `openai_chat` protocol
 - `subscription` (optional): `"zen"`, `"go"`, or `"free"`; defaults to `"zen"`
 - `custom_model_api_url` (optional): custom API base URL to use instead of the default OpenCode API
@@ -499,7 +499,73 @@ By default, OpenAI-compatible models inherit these capabilities:
 - `prompt_cache_key`: `false`
 - `chat_completions`: `true`
 - `interleaved_reasoning`: `false`
+- `max_tokens_parameter`: `false`
 
 If a model only works with the Responses API, set `capabilities.chat_completions` to `false`. Zed will use the Responses endpoint for that model.
+
+For reasoning models (e.g. GPT-5), set `reasoning_effort` to the non-`none` effort level your endpoint supports. This enables thinking in the agent panel and tells Zed which effort to send when thinking is enabled. The provider settings UI can configure this when adding an OpenAI-compatible provider. Zed sends OpenAI-style `reasoning_effort` on chat-completions requests.
+
+If the model requires the Responses API for reasoning state, set `capabilities.chat_completions` to `false`:
+
+```json [settings]
+{
+  "language_models": {
+    "openai_compatible": {
+      "my-provider": {
+        "api_url": "https://example.com/v1",
+        "available_models": [
+          {
+            "name": "gpt-5",
+            "max_tokens": 272000,
+            "reasoning_effort": "high",
+            "capabilities": {
+              "tools": true,
+              "images": false,
+              "parallel_tool_calls": false,
+              "prompt_cache_key": false,
+              "chat_completions": false,
+              "interleaved_reasoning": false,
+              "max_tokens_parameter": false
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+Valid settings values are `"none"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, and `"max"`. Use `"none"` in `settings.json` when you need to force reasoning off for an endpoint; the provider setup UI exposes the non-`none` values for thinking-capable models. For chat-completions endpoints that should receive prior thinking back in a dedicated `reasoning_content` field, also set `capabilities.interleaved_reasoning` to `true`. If the endpoint expects the output-token limit as `max_tokens` instead of `max_completion_tokens`, set `capabilities.max_tokens_parameter` to `true`.
+
+For example, a chat-completions endpoint with the maximum OpenAI-style reasoning effort, streamed thinking, and `max_tokens` output limits can be configured as:
+
+```json [settings]
+{
+  "language_models": {
+    "openai_compatible": {
+      "my-reasoning-provider": {
+        "api_url": "https://example.com/v1",
+        "available_models": [
+          {
+            "name": "reasoning-model",
+            "max_tokens": 1000000,
+            "max_output_tokens": 128000,
+            "reasoning_effort": "max",
+            "capabilities": {
+              "tools": true,
+              "images": false,
+              "parallel_tool_calls": false,
+              "prompt_cache_key": false,
+              "chat_completions": true,
+              "interleaved_reasoning": true,
+              "max_tokens_parameter": true
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+```
 
 Enter the API key in the provider settings UI or set the generated environment variable. Do not put API keys in `settings.json`.

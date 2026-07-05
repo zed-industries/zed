@@ -119,6 +119,43 @@ impl BlockPoint {
     }
 }
 
+/// Forward-only cursor mapping [`WrapPoint`]s to [`BlockPoint`]s, reusing its
+/// tree position across calls. This is the streaming equivalent of
+/// [`BlockSnapshot::to_block_point`]; callers must provide non-decreasing wrap
+/// points.
+pub struct BlockPointCursor<'a> {
+    snapshot: &'a BlockSnapshot,
+    cursor: sum_tree::Cursor<'a, 'static, Transform, Dimensions<WrapRow, BlockRow>>,
+}
+
+impl BlockPointCursor<'_> {
+    /// Resets the cursor to the start so it can seek backward again.
+    pub fn reset(&mut self) {
+        self.cursor.reset();
+    }
+
+    pub fn map(&mut self, wrap_point: WrapPoint) -> BlockPoint {
+        let cursor = &mut self.cursor;
+        if cursor.did_seek() {
+            cursor.seek_forward(&wrap_point.row(), Bias::Right);
+        } else {
+            cursor.seek(&wrap_point.row(), Bias::Right);
+        }
+        if let Some(transform) = cursor.item() {
+            if transform.block.is_some() {
+                BlockPoint::new(cursor.start().1, 0)
+            } else {
+                let input_start = Point::new(cursor.start().0.0, 0);
+                let output_start = Point::new(cursor.start().1.0, 0);
+                let input_overshoot = wrap_point.0 - input_start;
+                BlockPoint(output_start + input_overshoot)
+            }
+        } else {
+            self.snapshot.max_point()
+        }
+    }
+}
+
 pub type RenderBlock = Arc<dyn Send + Sync + Fn(&mut BlockContext) -> AnyElement>;
 
 /// Where to place a block.
@@ -331,6 +368,8 @@ impl std::fmt::Display for BlockId {
 #[derive(Clone, Debug)]
 struct Transform {
     summary: TransformSummary,
+    /// When `block` is `None`, the transform is isomorphic and passes input
+    /// wrap rows through as normal text.
     block: Option<Block>,
 }
 
@@ -510,6 +549,7 @@ struct TransformSummary {
     output_rows: BlockRow,
     longest_row: BlockRow,
     longest_row_chars: u32,
+    has_replacement_blocks: bool,
 }
 
 pub struct BlockChunks<'a> {
@@ -1035,6 +1075,18 @@ impl BlockMap {
                     .iter()
                     .filter_map(|block| {
                         let placement = block.placement.to_wrap_row(wrap_snapshot)?;
+                        if !matches!(placement, BlockPlacement::Replace(_))
+                            && wrap_snapshot.intersects_fold(Point::new(
+                                block
+                                    .placement
+                                    .start()
+                                    .to_point(wrap_snapshot.buffer_snapshot())
+                                    .row,
+                                0,
+                            ))
+                        {
+                            return None;
+                        }
                         if let BlockPlacement::Above(row) = placement
                             && row < new_start
                         {
@@ -1089,6 +1141,7 @@ impl BlockMap {
                     output_rows: BlockRow(block.height()),
                     longest_row: BlockRow(0),
                     longest_row_chars: 0,
+                    has_replacement_blocks: false,
                 };
 
                 let rows_before_block;
@@ -1599,6 +1652,7 @@ fn push_isomorphic(tree: &mut SumTree<Transform>, rows: RowDelta, wrap_snapshot:
         output_rows: BlockRow(rows.0),
         longest_row: BlockRow(wrap_summary.longest_row),
         longest_row_chars: wrap_summary.longest_row_chars,
+        has_replacement_blocks: false,
     };
     let mut merged = false;
     tree.update_last(
@@ -1776,8 +1830,12 @@ impl BlockMapWriter<'_> {
 
             let start = block.placement.start().to_point(&buffer);
             let end = block.placement.end().to_point(&buffer);
-            let start_wrap_row = wrap_snapshot.make_wrap_point(start, Bias::Left).row();
-            let end_wrap_row = wrap_snapshot.make_wrap_point(end, Bias::Left).row();
+            let start_wrap_row = wrap_snapshot
+                .make_wrap_point(Point::new(start.row, 0), Bias::Left)
+                .row();
+            let end_wrap_row = wrap_snapshot
+                .make_wrap_point(Point::new(end.row, 0), Bias::Left)
+                .row();
 
             let (start_row, end_row) = {
                 previous_wrap_row_range.take_if(|range| {
@@ -1928,8 +1986,12 @@ impl BlockMapWriter<'_> {
                 let end = block.placement.end().to_point(buffer);
                 if last_block_buffer_row != Some(end.row) {
                     last_block_buffer_row = Some(end.row);
-                    let start_wrap_row = wrap_snapshot.make_wrap_point(start, Bias::Left).row();
-                    let end_wrap_row = wrap_snapshot.make_wrap_point(end, Bias::Left).row();
+                    let start_wrap_row = wrap_snapshot
+                        .make_wrap_point(Point::new(start.row, 0), Bias::Left)
+                        .row();
+                    let end_wrap_row = wrap_snapshot
+                        .make_wrap_point(Point::new(end.row, 0), Bias::Left)
+                        .row();
                     let (start_row, end_row) = {
                         previous_wrap_row_range.take_if(|range| {
                             !range.contains(&start_wrap_row) || !range.contains(&end_wrap_row)
@@ -2137,6 +2199,11 @@ impl BlockMapWriter<'_> {
 }
 
 impl BlockSnapshot {
+    #[inline(always)]
+    pub fn has_replacement_blocks(&self) -> bool {
+        self.transforms.summary().has_replacement_blocks
+    }
+
     #[cfg(test)]
     #[ztracing::instrument(skip_all)]
     pub fn text(&self) -> String {
@@ -2495,6 +2562,13 @@ impl BlockSnapshot {
         }
     }
 
+    pub fn block_point_cursor(&self) -> BlockPointCursor<'_> {
+        BlockPointCursor {
+            snapshot: self,
+            cursor: self.transforms.cursor::<Dimensions<WrapRow, BlockRow>>(()),
+        }
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn to_block_point(&self, wrap_point: WrapPoint) -> BlockPoint {
         let (start, _, item) = self.transforms.find::<Dimensions<WrapRow, BlockRow>, _>(
@@ -2747,7 +2821,9 @@ impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
     fn summary(&self, _cx: ()) -> Self::Summary {
-        self.summary.clone()
+        let mut summary = self.summary.clone();
+        summary.has_replacement_blocks = self.block.as_ref().is_some_and(Block::is_replacement);
+        summary
     }
 }
 
@@ -2763,6 +2839,7 @@ impl sum_tree::ContextLessSummary for TransformSummary {
         }
         self.input_rows += summary.input_rows;
         self.output_rows += summary.output_rows;
+        self.has_replacement_blocks |= summary.has_replacement_blocks;
     }
 }
 
@@ -2869,7 +2946,8 @@ mod tests {
     use super::*;
     use crate::{
         display_map::{
-            Companion, fold_map::FoldMap, inlay_map::InlayMap, tab_map::TabMap, wrap_map::WrapMap,
+            Companion, fold_map::FoldMap, fold_map::FoldPlaceholder, inlay_map::InlayMap,
+            tab_map::TabMap, wrap_map::WrapMap,
         },
         test::test_font,
     };
@@ -3077,6 +3155,74 @@ mod tests {
         });
         let snapshot = block_map.read(wraps_snapshot, wrap_edits, None);
         assert_eq!(snapshot.text(), "aaa\n\nb!!!\n\n\nbb\nccc\nddd\n\n\n");
+    }
+
+    #[gpui::test]
+    fn test_blocks_hidden_in_folds(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "line0\nline1\nline2\nline3\nline4";
+
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let tab_size = 1.try_into().unwrap();
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, tab_size);
+        let (wrap_map, wraps_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
+
+        let above = |row| BlockProperties {
+            style: BlockStyle::Fixed,
+            placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(row, 0))),
+            height: Some(1),
+            render: Arc::new(|_| div().into_any()),
+            priority: 0,
+        };
+        let below = |row| BlockProperties {
+            placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(row, 0))),
+            ..above(row)
+        };
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
+        let block_ids = writer.insert(vec![above(1), above(2), below(2), above(4)]);
+        let (block_a, block_b, block_c, block_d) =
+            (block_ids[0], block_ids[1], block_ids[2], block_ids[3]);
+
+        let present_blocks =
+            |block_map: &mut BlockMap, wraps_snapshot: WrapSnapshot, wrap_edits: WrapPatch| {
+                let snapshot = block_map.read(wraps_snapshot, wrap_edits, None);
+                let max_row = snapshot.max_point().row;
+                snapshot
+                    .blocks_in_range(BlockRow(0)..BlockRow(max_row + 1))
+                    .filter_map(|(_, block)| Some(block.as_custom()?.id))
+                    .collect::<HashSet<_>>()
+            };
+
+        assert_eq!(
+            present_blocks(&mut block_map, wraps_snapshot, Default::default()),
+            HashSet::from_iter([block_a, block_b, block_c, block_d]),
+            "every block is present before folding",
+        );
+
+        // Fold lines 2 and 3 entirely, leaving line1 (the fold start) visible.
+        let (inlay_snapshot, inlay_edits) = inlay_map.sync(buffer_snapshot.clone(), vec![]);
+        let (mut fold_writer, _, _) = fold_map.write(inlay_snapshot, inlay_edits);
+        let (fold_snapshot, fold_edits) = fold_writer.fold(vec![(
+            Point::new(1, 5)..Point::new(3, 5),
+            FoldPlaceholder::test(),
+        )]);
+        let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
+        let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+            wrap_map.sync(tab_snapshot, tab_edits, cx)
+        });
+
+        assert_eq!(
+            present_blocks(&mut block_map, wraps_snapshot, wrap_edits),
+            HashSet::from_iter([block_a, block_d]),
+            "blocks B and C anchored to folded lines are dropped, A (fold-start line) and D (past the fold) stay",
+        );
     }
 
     #[gpui::test]
@@ -3304,6 +3450,41 @@ mod tests {
             snapshot.text(),
             "one two \nthree\n\nfour five \nsix\n\nseven \neight"
         );
+    }
+
+    #[gpui::test]
+    fn test_insert_and_remove_block_anchored_past_soft_wrap(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "one two three\nfour\nfive";
+
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, wraps_snapshot) = cx.update(|cx| {
+            WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), Some(px(90.)), cx)
+        });
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), 1, 1);
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
+        let block_id = writer.insert(vec![BlockProperties {
+            style: BlockStyle::Fixed,
+            placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(0, 12))),
+            render: Arc::new(|_| div().into_any()),
+            height: Some(2),
+            priority: 0,
+        }])[0];
+
+        let snapshot = block_map.read(wraps_snapshot.clone(), Default::default(), None);
+        assert_eq!(snapshot.text(), "\n\none two \nthree\nfour\nfive");
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default(), None);
+        writer.remove(HashSet::from_iter([block_id]));
+
+        let snapshot = block_map.read(wraps_snapshot, Default::default(), None);
+        assert_eq!(snapshot.text(), "one two \nthree\nfour\nfive");
     }
 
     #[gpui::test]

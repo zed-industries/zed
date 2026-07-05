@@ -910,7 +910,7 @@ impl EditPredictionButton {
 
         menu = menu.item(
             ContextMenuEntry::new("Configure Excluded Files")
-                .icon(IconName::LockOutlined)
+                .icon(IconName::Lock)
                 .icon_color(Color::Muted)
                 .documentation_aside(DocumentationSide::Left, |_| {
                     Label::new(indoc!{"

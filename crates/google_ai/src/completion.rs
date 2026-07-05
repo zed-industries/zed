@@ -53,7 +53,7 @@ pub fn into_google(
                 MessageContent::Thinking { .. } => {
                     vec![]
                 }
-                MessageContent::RedactedThinking(_) => vec![],
+                MessageContent::RedactedThinking(_) | MessageContent::Compaction(_) => vec![],
                 MessageContent::Image(image) => {
                     vec![Part::InlineDataPart(InlineDataPart {
                         inline_data: GenerativeContentBlob {
