@@ -1,6 +1,10 @@
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 pub mod parse;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod fake;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EndpointKind {
@@ -69,6 +73,47 @@ pub fn docker_host_for(endpoint: &DockerEndpoint) -> Option<String> {
         EndpointKind::Local => None,
         EndpointKind::Ssh { host } => Some(format!("ssh://{host}")),
     }
+}
+
+#[async_trait::async_trait]
+pub trait DockerClient: Send + Sync {
+    /// Runs `docker version` to verify the endpoint is reachable.
+    async fn test_endpoint(&self, endpoint: &DockerEndpoint) -> Result<()>;
+    async fn list_containers(&self, endpoint: &DockerEndpoint) -> Result<Vec<Container>>;
+    async fn list_images(&self, endpoint: &DockerEndpoint) -> Result<Vec<Image>>;
+    async fn list_compose_projects(&self, endpoint: &DockerEndpoint)
+    -> Result<Vec<ComposeProject>>;
+    async fn list_compose_services(
+        &self,
+        endpoint: &DockerEndpoint,
+        project: &str,
+    ) -> Result<Vec<ComposeService>>;
+    /// Returns the pretty-printed JSON output of `docker inspect`.
+    async fn inspect_container(&self, endpoint: &DockerEndpoint, id: &str) -> Result<String>;
+    async fn start_container(&self, endpoint: &DockerEndpoint, id: &str) -> Result<()>;
+    async fn stop_container(&self, endpoint: &DockerEndpoint, id: &str) -> Result<()>;
+    async fn restart_container(&self, endpoint: &DockerEndpoint, id: &str) -> Result<()>;
+    async fn pull_image(&self, endpoint: &DockerEndpoint, reference: &str) -> Result<()>;
+    async fn remove_image(&self, endpoint: &DockerEndpoint, id: &str) -> Result<()>;
+    async fn compose_up(
+        &self,
+        endpoint: &DockerEndpoint,
+        project: &str,
+        service: Option<&str>,
+    ) -> Result<()>;
+    async fn compose_down(&self, endpoint: &DockerEndpoint, project: &str) -> Result<()>;
+    async fn compose_restart(
+        &self,
+        endpoint: &DockerEndpoint,
+        project: &str,
+        service: Option<&str>,
+    ) -> Result<()>;
+    async fn container_logs(
+        &self,
+        endpoint: &DockerEndpoint,
+        id: &str,
+        tail: usize,
+    ) -> Result<futures::channel::mpsc::UnboundedReceiver<LogChunk>>;
 }
 
 #[cfg(test)]
