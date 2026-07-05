@@ -1,10 +1,13 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+pub mod cli;
 pub mod parse;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake;
+
+pub use cli::CliDockerClient;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EndpointKind {
