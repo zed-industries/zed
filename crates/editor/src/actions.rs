@@ -428,7 +428,8 @@ actions!(
         /// Cancels the running flycheck operation.
         CancelFlycheck,
         /// Cancels pending language server work.
-        CancelLanguageServerWork,
+        #[action(deprecated_aliases = ["editor::CancelLanguageServerWork"])]
+        CancelLspWork,
         /// Clears flycheck results.
         ClearFlycheck,
         /// Confirms the rename operation.
@@ -747,7 +748,8 @@ actions!(
         /// Renames the symbol at cursor.
         Rename,
         /// Restarts the language server for the current file.
-        RestartLanguageServer,
+        #[action(deprecated_aliases = ["editor::RestartLanguageServer"])]
+        RestartLsp,
         /// Reverses the order of selected lines.
         ReverseLines,
         /// Reloads the file from disk.
@@ -847,7 +849,8 @@ actions!(
         /// Sorts selected lines case-sensitively.
         SortLinesCaseSensitive,
         /// Stops the language server for the current file.
-        StopLanguageServer,
+        #[action(deprecated_aliases = ["editor::StopLanguageServer"])]
+        StopLsp,
         /// Switches between source and header files.
         SwitchSourceHeader,
         /// Inserts a tab character or indents.

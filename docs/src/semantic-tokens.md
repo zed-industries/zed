@@ -41,7 +41,7 @@ You can configure this globally or per-language:
 }
 ```
 
-> **Note:** Changing the `semantic_tokens` mode may require a language server restart to take effect. Use the {#action editor::RestartLanguageServer} command from the command palette if highlighting doesn't update immediately.
+> **Note:** Changing the `semantic_tokens` mode may require a language server restart to take effect. Use the {#action editor::RestartLsp} command from the command palette if highlighting doesn't update immediately.
 
 ## Customizing Token Colors
 
@@ -192,12 +192,12 @@ To see semantic tokens applied to your code in real-time, use the {#action dev::
 
 1. Ensure `semantic_tokens` is set to `"combined"` or `"full"` for the language
 2. Verify the language server supports semantic tokens (not all do)
-3. Try restarting the language server with {#action editor::RestartLanguageServer}
-4. Check the LSP logs ({#action dev::OpenLanguageServerLogs}) for errors
+3. Try restarting the language server with {#action editor::RestartLsp}
+4. Check the LSP logs ({#action dev::OpenLspLogs}) for errors
 
 ### Colors not updating after changing settings
 
-Changes to `semantic_tokens` mode may require a language server restart. Use {#action editor::RestartLanguageServer} from the command palette.
+Changes to `semantic_tokens` mode may require a language server restart. Use {#action editor::RestartLsp} from the command palette.
 
 ### Theme styles not being applied
 

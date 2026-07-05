@@ -369,7 +369,7 @@ To configure command mnemonics, add the `command_aliases` key to your settings f
     "crp": "workspace::CopyRelativePath",
     "cpp": "workspace::CopyPath",
     "reveal": "editor::RevealInFileManager",
-    "clank": "editor::CancelLanguageServerWork"
+    "clank": "editor::CancelLspWork"
   }
 }
 ```

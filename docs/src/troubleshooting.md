@@ -86,7 +86,7 @@ If your issue persists after regenerating the database, please [file an issue](h
 
 ## Language Server Issues
 
-If you're experiencing language-server related issues, such as stale diagnostics or issues jumping to definitions, restarting the language server via {#action editor::RestartLanguageServer} from the command palette will often resolve the issue.
+If you're experiencing language-server related issues, such as stale diagnostics or issues jumping to definitions, restarting the language server via {#action editor::RestartLsp} from the command palette will often resolve the issue.
 
 ## Agent Error Messages
 

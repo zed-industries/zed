@@ -109,7 +109,8 @@ actions!(
     dev,
     [
         /// Opens the language server protocol logs viewer.
-        OpenLanguageServerLogs
+        #[action(deprecated_aliases = ["dev::OpenLanguageServerLogs"])]
+        OpenLspLogs
     ]
 );
 
@@ -122,7 +123,7 @@ pub fn init(on_headless_host: bool, cx: &mut App) {
         });
 
         let log_store = log_store.clone();
-        workspace.register_action(move |workspace, _: &OpenLanguageServerLogs, window, cx| {
+        workspace.register_action(move |workspace, _: &OpenLspLogs, window, cx| {
             let log_store = log_store.clone();
             let project = workspace.project().clone();
             get_or_create_tool(

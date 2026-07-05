@@ -8210,12 +8210,7 @@ impl Editor {
         })
     }
 
-    fn restart_language_server(
-        &mut self,
-        _: &RestartLanguageServer,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn restart_language_server(&mut self, _: &RestartLsp, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(project) = self.project.clone() {
             self.buffer.update(cx, |multi_buffer, cx| {
                 project.update(cx, |project, cx| {
@@ -8230,12 +8225,7 @@ impl Editor {
         }
     }
 
-    fn stop_language_server(
-        &mut self,
-        _: &StopLanguageServer,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn stop_language_server(&mut self, _: &StopLsp, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(project) = self.project.clone() {
             self.buffer.update(cx, |multi_buffer, cx| {
                 project.update(cx, |project, cx| {
@@ -8251,7 +8241,7 @@ impl Editor {
 
     fn cancel_language_server_work(
         workspace: &mut Workspace,
-        _: &actions::CancelLanguageServerWork,
+        _: &actions::CancelLspWork,
         _: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
