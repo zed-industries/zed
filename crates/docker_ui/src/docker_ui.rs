@@ -1,6 +1,8 @@
 mod docker_settings;
+mod endpoint_store;
 
 pub use docker_settings::DockerSettings;
+pub use endpoint_store::*;
 
 use gpui::App;
 

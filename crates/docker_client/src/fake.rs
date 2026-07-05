@@ -77,6 +77,22 @@ impl FakeDockerClient {
         }
     }
 
+    /// Constructs a client whose `list_containers` returns a single running
+    /// container named `name`.
+    pub fn new_with_container(name: &str) -> Self {
+        Self {
+            containers: vec![Container {
+                id: format!("{name}-id"),
+                names: name.to_string(),
+                image: format!("{name}-image"),
+                state: ContainerState::Running,
+                status: "Up".into(),
+                ports: String::new(),
+            }],
+            ..Self::new()
+        }
+    }
+
     /// Sets or clears an error that fails only `test_endpoint`, unlike `error`
     /// which fails every method.
     pub fn set_test_endpoint_error(&self, error: Option<String>) {
