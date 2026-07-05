@@ -1655,8 +1655,9 @@ impl BufferDiff {
 
     /// Installs optimistic pending hunks in this diff, merging them with any
     /// existing pending hunks (newest wins on overlap) and emitting a
-    /// `DiffChanged` covering the affected range. `hunks` must be sorted by
-    /// `buffer_range.start` and non-overlapping.
+    /// `DiffChanged` covering both the new hunks and any existing pending hunks
+    /// they replace. `hunks` must be sorted by `buffer_range.start` and
+    /// non-overlapping.
     pub fn set_pending_hunks(&mut self, hunks: &[PendingHunk], cx: &mut Context<Self>) {
         if hunks.is_empty() {
             return;
@@ -1674,30 +1675,37 @@ impl BufferDiff {
         let mut changed_end: Option<Anchor> = None;
         let mut base_start = usize::MAX;
         let mut base_end = 0usize;
+        let mut extend_changed_range = |buffer_range: &Range<Anchor>, base_range: &Range<usize>| {
+            changed_start = Some(changed_start.map_or(buffer_range.start, |start| {
+                *start.min(&buffer_range.start, &buffer)
+            }));
+            changed_end = Some(
+                changed_end.map_or(buffer_range.end, |end| *end.max(&buffer_range.end, &buffer)),
+            );
+            base_start = base_start.min(base_range.start);
+            base_end = base_end.max(base_range.end);
+        };
         for hunk in hunks {
             let preceding = old.slice(&hunk.buffer_range.start, Bias::Left);
             new_pending.append(preceding, &buffer);
 
-            // Drop any overlapping or adjacent existing pending hunks.
-            while old.item().is_some_and(|old_hunk| {
-                old_hunk
+            // Drop any overlapping or adjacent existing pending hunks, folding
+            // them into the changed range so that views repaint their full
+            // extent (a replaced hunk can be wider than its replacement).
+            while let Some(old_hunk) = old.item() {
+                if old_hunk
                     .buffer_range
                     .start
                     .cmp(&hunk.buffer_range.end, &buffer)
-                    .is_le()
-            }) {
+                    .is_gt()
+                {
+                    break;
+                }
+                extend_changed_range(&old_hunk.buffer_range, &old_hunk.diff_base_byte_range);
                 old.next();
             }
 
-            changed_start = Some(changed_start.map_or(hunk.buffer_range.start, |start| {
-                *start.min(&hunk.buffer_range.start, &buffer)
-            }));
-            changed_end = Some(changed_end.map_or(hunk.buffer_range.end, |end| {
-                *end.max(&hunk.buffer_range.end, &buffer)
-            }));
-            base_start = base_start.min(hunk.diff_base_byte_range.start);
-            base_end = base_end.max(hunk.diff_base_byte_range.end);
-
+            extend_changed_range(&hunk.buffer_range, &hunk.diff_base_byte_range);
             new_pending.push(hunk.clone(), &buffer);
         }
         new_pending.append(old.suffix(), &buffer);
@@ -2970,6 +2978,79 @@ mod tests {
                 DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_set_pending_hunks_change_covers_replaced_hunks(cx: &mut TestAppContext) {
+        let base_text = "
+            zero
+            one
+            two
+            three
+            four
+            five
+        "
+        .unindent();
+        let buffer_text = "
+            ZERO
+            one
+            two
+            THREE
+            four
+            FIVE
+        "
+        .unindent();
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let diff = cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer, cx));
+
+        // Install a whole-file pending hunk, as the no-HEAD staging paths do.
+        let version = buffer.version();
+        diff.update(cx, |diff, cx| {
+            diff.set_pending_hunks(
+                &[PendingHunk::new(
+                    Anchor::min_max_range_for_buffer(buffer.remote_id()),
+                    0..base_text.len(),
+                    version.clone(),
+                    PendingSense::SetSecondaryStatus { stage: true },
+                )],
+                cx,
+            )
+        });
+
+        let (tx, rx) = mpsc::channel();
+        let subscription =
+            cx.update(|cx| cx.subscribe(&diff, move |_, event, _| tx.send(event.clone()).unwrap()));
+
+        // Replace it with a narrower hunk; the emitted change must still cover
+        // the whole extent of the replaced hunk.
+        diff.update(cx, |diff, cx| {
+            diff.set_pending_hunks(
+                &[PendingHunk::new(
+                    buffer.anchor_before(Point::new(3, 0))..buffer.anchor_before(Point::new(4, 0)),
+                    base_text.find("three").unwrap()..base_text.find("four").unwrap(),
+                    version,
+                    PendingSense::Suppress,
+                )],
+                cx,
+            )
+        });
+
+        drop(subscription);
+        let events = rx.into_iter().collect::<Vec<_>>();
+        match events.as_slice() {
+            [
+                BufferDiffEvent::DiffChanged(DiffChanged {
+                    changed_range: Some(changed_range),
+                    ..
+                }),
+            ] => {
+                assert_eq!(
+                    changed_range.to_point(&buffer),
+                    Point::zero()..buffer.max_point(),
+                );
+            }
+            _ => panic!("unexpected events: {:?}", events),
+        }
     }
 
     #[gpui::test]

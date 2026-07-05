@@ -680,12 +680,21 @@ impl SplittableEditor {
                         let translated = translate_lhs_hunks_to_rhs(hunks, this, cx);
                         if !translated.is_empty() {
                             let stage = *stage;
-                            this.rhs_editor.update(cx, |editor, cx| {
-                                let chunk_by = translated.into_iter().chunk_by(|h| h.buffer_id);
-                                for (buffer_id, hunks) in &chunk_by {
-                                    editor.do_stage_or_unstage(stage, buffer_id, hunks, cx);
-                                }
-                            });
+                            // When the RHS delegates too, the embedding view owns
+                            // these operations; acting directly would bypass it.
+                            if this.rhs_editor.read(cx).delegate_stage_and_restore {
+                                cx.emit(EditorEvent::StageOrUnstageRequested {
+                                    stage,
+                                    hunks: translated,
+                                });
+                            } else {
+                                this.rhs_editor.update(cx, |editor, cx| {
+                                    let chunk_by = translated.into_iter().chunk_by(|h| h.buffer_id);
+                                    for (buffer_id, hunks) in &chunk_by {
+                                        editor.do_stage_or_unstage(stage, buffer_id, hunks, cx);
+                                    }
+                                });
+                            }
                         }
                     }
                 }
@@ -693,9 +702,16 @@ impl SplittableEditor {
                     if this.lhs.is_some() {
                         let translated = translate_lhs_hunks_to_rhs(hunks, this, cx);
                         if !translated.is_empty() {
-                            this.rhs_editor.update(cx, |editor, cx| {
-                                editor.restore_diff_hunks(translated, cx);
-                            });
+                            // When the RHS delegates too, the embedding view owns
+                            // these operations; restoring directly would edit the
+                            // staged view's read-only index text buffer.
+                            if this.rhs_editor.read(cx).delegate_stage_and_restore {
+                                cx.emit(EditorEvent::RestoreRequested { hunks: translated });
+                            } else {
+                                this.rhs_editor.update(cx, |editor, cx| {
+                                    editor.restore_diff_hunks(translated, cx);
+                                });
+                            }
                         }
                     }
                 }

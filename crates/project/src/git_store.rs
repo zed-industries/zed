@@ -15,9 +15,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
-use buffer_diff::{
-    BufferDiff, BufferDiffEvent, DiffHunk, DiffHunkSecondaryStatus, PendingHunk, PendingSense,
-};
+use buffer_diff::{BufferDiff, DiffHunk, DiffHunkSecondaryStatus, PendingHunk, PendingSense};
 use client::ProjectId;
 use collections::HashMap;
 pub use conflict_set::{ConflictRegion, ConflictSet, ConflictSetSnapshot, ConflictSetUpdate};
@@ -1386,7 +1384,7 @@ impl GitStore {
         };
         let new_index_text = diff_state
             .read(cx)
-            .desired_index_text(cx)
+            .pending_index_text(cx)
             .map(|rope| rope.to_string());
         self.write_index_text_for_buffer_id(buffer_id, new_index_text, cx);
     }
@@ -1458,9 +1456,6 @@ impl GitStore {
                     });
 
                     this.update(cx, |this, cx| {
-                        cx.subscribe(&buffer_diff, Self::on_buffer_diff_event)
-                            .detach();
-
                         this.loading_diffs.remove(&(buffer_id, diff_kind));
 
                         let git_store = cx.weak_entity();
@@ -1699,7 +1694,6 @@ impl GitStore {
                         unreachable!("open_diff_internal is not used for OID diffs")
                     }
                 };
-                cx.subscribe(&diff, Self::on_buffer_diff_event).detach();
                 diff
             };
             diff_state.update(cx, |diff_state, cx| {
@@ -2543,16 +2537,6 @@ impl GitStore {
         async move {
             futures::future::join_all(futures).await;
         }
-    }
-
-    fn on_buffer_diff_event(
-        &mut self,
-        _diff: Entity<buffer_diff::BufferDiff>,
-        _event: &BufferDiffEvent,
-        _cx: &mut Context<Self>,
-    ) {
-        // Index writes are driven explicitly by the stage/unstage methods, which
-        // also install the corresponding optimistic state.
     }
 
     fn write_index_text_for_buffer_id(
@@ -4599,10 +4583,7 @@ impl BufferGitState {
         }
     }
 
-    /// Derives the index text to write to disk by splicing the pending edits into
-    /// the currently-loaded index text. Returns `None` when the file should be
-    /// absent from the index. The only place index text is derived.
-    fn desired_index_text(&self, cx: &App) -> Option<Rope> {
+    fn pending_index_text(&self, cx: &App) -> Option<Rope> {
         let index_text_buffer = self.index_text_buffer.upgrade()?;
         let edits = self.pending_index_edits.as_ref()?;
         #[cfg(debug_assertions)]

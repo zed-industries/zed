@@ -85,6 +85,11 @@ impl ProjectDiff {
                 UnstagedDiff::deploy_at(workspace, None, window, cx);
             },
         );
+        workspace.register_action(
+            |workspace, _: &git_actions::ViewStagedChanges, window, cx| {
+                StagedDiff::deploy_at(workspace, None, window, cx);
+            },
+        );
         workspace.register_action(|workspace, _: &Add, window, cx| {
             Self::deploy(workspace, &Diff, window, cx);
         });
@@ -1398,6 +1403,36 @@ mod tests {
                 DiffHunkSecondaryStatus::HasSecondaryHunk,
                 DiffHunkSecondaryStatus::NoSecondaryHunk,
             ]
+        );
+
+        cx.focus(&workspace);
+        cx.update(|window, cx| {
+            window.dispatch_action(git_actions::ViewStagedChanges.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        let staged_editor = workspace.update(cx, |workspace, cx| {
+            workspace.active_item_as::<StagedDiff>(cx).unwrap();
+            let active_item = workspace.active_item(cx).unwrap();
+            assert_eq!(active_item.tab_content_text(0, cx), "Staged Changes");
+            active_item
+                .act_as::<DiffMultibuffer>(cx)
+                .unwrap()
+                .read(cx)
+                .editor()
+                .read(cx)
+                .rhs_editor()
+                .clone()
+        });
+        assert_eq!(
+            staged_editor.read_with(cx, |editor, cx| {
+                let snapshot = editor.buffer().read(cx).snapshot(cx);
+                editor
+                    .diff_hunks_in_ranges(&[editor::Anchor::Min..editor::Anchor::Max], &snapshot)
+                    .map(|hunk| hunk.status.secondary)
+                    .collect::<Vec<_>>()
+            }),
+            vec![DiffHunkSecondaryStatus::NoSecondaryHunk]
         );
     }
 

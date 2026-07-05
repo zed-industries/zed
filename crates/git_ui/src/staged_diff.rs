@@ -648,13 +648,15 @@ impl Render for StagedDiffToolbar {
 #[cfg(test)]
 mod tests {
     use crate::project_diff::{self, ProjectDiff};
+    use git::repository::RepoPath;
     use gpui::{Action as _, TestAppContext};
-    use project::FakeFs;
+    use language::Point;
+    use project::{FakeFs, Fs as _};
     use serde_json::json;
     use settings::{DiffViewStyle, SettingsStore};
     use std::path::Path;
     use unindent::Unindent as _;
-    use util::path;
+    use util::{path, rel_path::rel_path};
     use workspace::MultiWorkspace;
 
     use super::*;
@@ -770,6 +772,134 @@ mod tests {
             );
             assert_eq!(active_item.tab_content_text(0, cx), "Staged Changes");
             assert!(!active_item.can_save(cx));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_toggle_staged_unstages_from_staged_view(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let committed_contents = r#"
+            fn main() {
+                println!("hello world");
+            }
+        "#
+        .unindent();
+        let staged_contents = r#"
+            fn main() {
+                println!("goodbye world");
+            }
+        "#
+        .unindent();
+        let file_contents = r#"
+            // print goodbye
+            fn main() {
+                println!("goodbye world");
+            }
+        "#
+        .unindent();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": file_contents,
+                }
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("src/main.rs", committed_contents.clone())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("src/main.rs", staged_contents)],
+        );
+        let repo = fs
+            .open_repo(path!("/project/.git").as_ref(), Some("git".as_ref()))
+            .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            StagedDiff::deploy_at(workspace, None, window, cx);
+        });
+        cx.run_until_parked();
+
+        let editor = workspace.update(cx, |workspace, cx| {
+            let staged_diff = workspace.active_item_as::<StagedDiff>(cx).unwrap();
+            let staged_diff = staged_diff.read(cx);
+            staged_diff
+                .diff
+                .read(cx)
+                .editor()
+                .read(cx)
+                .rhs_editor()
+                .clone()
+        });
+        editor.read_with(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            assert_eq!(
+                editor
+                    .diff_hunks_in_ranges(&[editor::Anchor::Min..editor::Anchor::Max], &snapshot)
+                    .count(),
+                1
+            );
+        });
+
+        // Hold back FS events so the first assertions observe the optimistic
+        // state rather than a reloaded diff.
+        fs.pause_events();
+
+        editor.update_in(cx, |editor, window, cx| {
+            editor.change_selections(Default::default(), window, cx, |s| {
+                s.select_ranges([Point::new(1, 0)..Point::new(1, 0)]);
+            });
+        });
+        cx.focus(&editor);
+        cx.update(|window, cx| {
+            window.dispatch_action(git::ToggleStaged.boxed_clone(), cx);
+        });
+        cx.run_until_parked();
+
+        // The hunk is optimistically suppressed from the staged view, and the
+        // index write has landed.
+        editor.read_with(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            assert_eq!(
+                editor
+                    .diff_hunks_in_ranges(&[editor::Anchor::Min..editor::Anchor::Max], &snapshot)
+                    .count(),
+                0
+            );
+        });
+        assert_eq!(
+            repo.load_index_text(RepoPath::from_rel_path(rel_path("src/main.rs")))
+                .await
+                .unwrap(),
+            committed_contents
+        );
+
+        fs.unpause_events_and_flush();
+        cx.run_until_parked();
+
+        // Once the write is reconciled, the staged view remains empty.
+        editor.read_with(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            assert_eq!(
+                editor
+                    .diff_hunks_in_ranges(&[editor::Anchor::Min..editor::Anchor::Max], &snapshot)
+                    .count(),
+                0
+            );
         });
     }
 

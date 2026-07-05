@@ -532,22 +532,45 @@ impl DiffMultibuffer {
             return;
         }
 
-        let Some((project, mut ranges_by_buffer_id)) = editor.update(cx, |editor, cx| {
-            let project = editor.project().cloned()?;
+        let mut ranges_by_buffer_id: HashMap<BufferId, Vec<_>> = HashMap::default();
+        editor.update(cx, |editor, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            // In staged mode the display buffer is the index text buffer, so the
-            // hunks' buffer ranges are index-coordinate anchors.
-            let mut ranges_by_buffer_id: HashMap<BufferId, Vec<_>> = HashMap::default();
-
             for hunk in editor.diff_hunks_in_ranges(&ranges, &snapshot) {
                 ranges_by_buffer_id
                     .entry(hunk.buffer_id)
                     .or_default()
                     .push(hunk.buffer_range.clone());
             }
+        });
+        if ranges_by_buffer_id.is_empty() {
+            return;
+        }
 
-            Some((project, ranges_by_buffer_id))
-        }) else {
+        self.unstage_index_ranges(ranges_by_buffer_id, cx);
+
+        if move_to_next {
+            editor
+                .focus_handle(cx)
+                .dispatch_action(&GoToHunk, window, cx);
+        }
+    }
+
+    /// Unstages the given ranges, keyed by display (index text) buffer id. In
+    /// staged mode the display buffer is the index text buffer, so the ranges
+    /// are index-coordinate anchors.
+    fn unstage_index_ranges(
+        &mut self,
+        mut ranges_by_buffer_id: HashMap<BufferId, Vec<std::ops::Range<Anchor>>>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self
+            .editor
+            .read(cx)
+            .rhs_editor()
+            .read(cx)
+            .project()
+            .cloned()
+        else {
             return;
         };
 
@@ -573,12 +596,6 @@ impl DiffMultibuffer {
                     .log_err();
             }
         });
-
-        if move_to_next {
-            editor
-                .focus_handle(cx)
-                .dispatch_action(&GoToHunk, window, cx);
-        }
     }
 
     fn handle_editor_event(
@@ -612,6 +629,22 @@ impl DiffMultibuffer {
             EditorEvent::Saved => {
                 self._task =
                     cx.spawn_in(window, async move |this, cx| Self::refresh(this, cx).await);
+            }
+            EditorEvent::StageOrUnstageRequested { stage, hunks } => {
+                // The staged view's editors delegate stage/restore. Unstage is
+                // the only meaningful operation here: this view shows nothing
+                // that could be staged, and restore must not touch the index
+                // text buffer.
+                if !*stage && self.is_staged_mode(cx) {
+                    let mut ranges_by_buffer_id: HashMap<BufferId, Vec<_>> = HashMap::default();
+                    for hunk in hunks {
+                        ranges_by_buffer_id
+                            .entry(hunk.buffer_id)
+                            .or_default()
+                            .push(hunk.buffer_range.clone());
+                    }
+                    self.unstage_index_ranges(ranges_by_buffer_id, cx);
+                }
             }
             _ => {}
         }
