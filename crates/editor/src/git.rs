@@ -1412,18 +1412,28 @@ impl Editor {
     ) -> Option<()> {
         let project = self.project()?;
         let buffer = project.read(cx).buffer_for_id(buffer_id, cx)?;
+        let diff = self.buffer.read(cx).diff_for(buffer_id)?;
+        let secondary_diff = diff.read(cx).secondary_diff();
         let worktree_ranges = hunks.map(|hunk| hunk.buffer_range).collect::<Vec<_>>();
         if worktree_ranges.is_empty() {
             return None;
         }
-        let task = project.update(cx, |project, cx| {
-            if stage {
-                project.stage_hunks(buffer, worktree_ranges, cx)
-            } else {
-                project.unstage_uncommitted_hunks(buffer, worktree_ranges, cx)
-            }
-        });
-        task.detach_and_log_err(cx);
+        project
+            .update(cx, |project, cx| {
+                if stage {
+                    // A diff with an unstaged secondary is uncommitted-like (its
+                    // base is HEAD or an OID); a diff without one is the unstaged
+                    // diff itself. Staging acts on the unstaged diff either way.
+                    project.stage_hunks(buffer, secondary_diff.unwrap_or(diff), worktree_ranges, cx)
+                } else if secondary_diff.is_some() {
+                    project.unstage_uncommitted_hunks(buffer, diff, worktree_ranges, cx)
+                } else {
+                    // Restoring hunks issues a blanket unstage, but in the
+                    // unstaged view there is nothing to unstage.
+                    Ok(())
+                }
+            })
+            .log_err();
         Some(())
     }
 

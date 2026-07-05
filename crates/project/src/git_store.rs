@@ -1146,51 +1146,33 @@ impl GitStore {
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
-    /// Stages the worktree changes covered by `worktree_ranges`. Used by both the
-    /// unstaged-changes view and the uncommitted (gutter) controls: "stage" means
-    /// the same index change regardless of which view it was invoked from.
+    /// Stages the worktree changes covered by `worktree_ranges`, acting on the
+    /// given unstaged (index-vs-worktree) diff. Used by both the unstaged-changes
+    /// view and the uncommitted (gutter) controls: "stage" means the same index
+    /// change regardless of which view it was invoked from, so callers holding an
+    /// uncommitted diff pass its unstaged secondary.
     ///
-    /// Decomposes the worktree region into the unstaged hunks it covers (the
-    /// unstaged diff is the uncommitted diff's always-present secondary), so no
+    /// Decomposes the worktree region into the unstaged hunks it covers, so no
     /// worktree->index projection is needed. Optimistically suppresses the staged
-    /// hunks from the unstaged diff and marks the corresponding uncommitted hunks
-    /// as staging.
+    /// hunks from the unstaged diff and, if the uncommitted diff happens to be
+    /// open, marks the corresponding uncommitted hunks as staging.
     pub fn stage_hunks(
         &mut self,
         buffer: Entity<Buffer>,
+        unstaged_diff: Entity<BufferDiff>,
         worktree_ranges: Vec<Range<Anchor>>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Result<()> {
         if worktree_ranges.is_empty() {
-            return Task::ready(Ok(()));
+            return Ok(());
         }
-        let uncommitted_diff = self.open_uncommitted_diff(buffer.clone(), cx);
-        cx.spawn(async move |this, cx| {
-            let uncommitted_diff = uncommitted_diff.await?;
-            this.update(cx, |this, cx| {
-                this.stage_hunks_optimistically(buffer, uncommitted_diff, worktree_ranges, cx);
-            })?;
-            Ok(())
-        })
-    }
-
-    fn stage_hunks_optimistically(
-        &mut self,
-        buffer: Entity<Buffer>,
-        uncommitted_diff: Entity<BufferDiff>,
-        worktree_ranges: Vec<Range<Anchor>>,
-        cx: &mut Context<Self>,
-    ) {
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
         let file_exists = buffer_snapshot
             .file()
             .is_some_and(|file| file.disk_state().exists());
 
-        let uncommitted_snapshot = uncommitted_diff.read(cx).snapshot(cx);
-        let Some(unstaged_snapshot) = uncommitted_snapshot.secondary_diff() else {
-            return;
-        };
+        let unstaged_snapshot = unstaged_diff.read(cx).snapshot(cx);
 
         // Decompose: the unstaged hunks the worktree region covers carry the
         // index range directly. Sorting by buffer offset also sorts by index
@@ -1215,18 +1197,23 @@ impl GitStore {
 
         // The uncommitted hunks the region covers get the optimistic
         // "staging" secondary status (free cross-view update).
+        let uncommitted_diff = self.get_uncommitted_diff(buffer_id, cx);
         let mut uncommitted_hunks = Vec::new();
-        for range in &worktree_ranges {
-            uncommitted_hunks.extend(
-                uncommitted_snapshot
-                    .hunks_intersecting_range(range.clone(), &buffer_snapshot)
-                    .filter(|hunk| {
-                        hunk.secondary_status != DiffHunkSecondaryStatus::NoSecondaryHunk
-                    }),
-            );
+        if let Some(uncommitted_diff) = &uncommitted_diff {
+            let uncommitted_snapshot = uncommitted_diff.read(cx).snapshot(cx);
+            for range in &worktree_ranges {
+                uncommitted_hunks.extend(
+                    uncommitted_snapshot
+                        .hunks_intersecting_range(range.clone(), &buffer_snapshot)
+                        .filter(|hunk| {
+                            hunk.secondary_status != DiffHunkSecondaryStatus::NoSecondaryHunk
+                        }),
+                );
+            }
+            uncommitted_hunks
+                .sort_by_key(|hunk| hunk.buffer_range.start.to_offset(&buffer_snapshot));
+            uncommitted_hunks.dedup_by(|a, b| a.buffer_range.start == b.buffer_range.start);
         }
-        uncommitted_hunks.sort_by_key(|hunk| hunk.buffer_range.start.to_offset(&buffer_snapshot));
-        uncommitted_hunks.dedup_by(|a, b| a.buffer_range.start == b.buffer_range.start);
 
         let index_edits = if !file_exists {
             // The worktree file is gone: staging removes it from the index.
@@ -1255,62 +1242,45 @@ impl GitStore {
             &version,
             PendingSense::SetSecondaryStatus { stage: true },
         );
-        drop(uncommitted_snapshot);
+        drop(unstaged_snapshot);
 
-        let Some(diff_state) = self.diffs.get(&buffer_id).cloned() else {
-            return;
-        };
+        let diff_state = self
+            .diffs
+            .get(&buffer_id)
+            .cloned()
+            .context("failed to find git state for buffer")?;
         diff_state.update(cx, |diff_state, _| {
             diff_state.remove_index_edits_overlapping(&index_footprints);
             diff_state.apply_index_edits(index_edits);
         });
 
-        uncommitted_diff.update(cx, |diff, cx| {
-            diff.set_pending_hunks(&uncommitted_pending, cx);
-        });
-        if let Some(unstaged_diff) = self.get_unstaged_diff(buffer_id, cx) {
-            unstaged_diff.update(cx, |diff, cx| {
-                diff.set_pending_hunks(&unstaged_pending, cx);
+        if let Some(uncommitted_diff) = uncommitted_diff {
+            uncommitted_diff.update(cx, |diff, cx| {
+                diff.set_pending_hunks(&uncommitted_pending, cx);
             });
         }
+        unstaged_diff.update(cx, |diff, cx| {
+            diff.set_pending_hunks(&unstaged_pending, cx);
+        });
 
         self.write_optimistic_index(buffer_id, cx);
+        Ok(())
     }
 
-    /// Unstages the worktree changes covered by `worktree_ranges`, invoked from
-    /// the uncommitted (gutter) controls. Uses the worktree->index projection
-    /// (the hard part) because the acted-on hunks are HEAD-vs-worktree.
+    /// Unstages the worktree changes covered by `worktree_ranges`, acting on the
+    /// given uncommitted (HEAD-vs-worktree) diff, invoked from the uncommitted
+    /// (gutter) controls. Uses the worktree->index projection (the hard part)
+    /// because the acted-on hunks are HEAD-vs-worktree.
     pub fn unstage_uncommitted_hunks(
-        &mut self,
-        buffer: Entity<Buffer>,
-        worktree_ranges: Vec<Range<Anchor>>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        if worktree_ranges.is_empty() {
-            return Task::ready(Ok(()));
-        }
-        let uncommitted_diff = self.open_uncommitted_diff(buffer.clone(), cx);
-        cx.spawn(async move |this, cx| {
-            let uncommitted_diff = uncommitted_diff.await?;
-            this.update(cx, |this, cx| {
-                this.unstage_uncommitted_hunks_optimistically(
-                    buffer,
-                    uncommitted_diff,
-                    worktree_ranges,
-                    cx,
-                );
-            })?;
-            Ok(())
-        })
-    }
-
-    fn unstage_uncommitted_hunks_optimistically(
         &mut self,
         buffer: Entity<Buffer>,
         uncommitted_diff: Entity<BufferDiff>,
         worktree_ranges: Vec<Range<Anchor>>,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Result<()> {
+        if worktree_ranges.is_empty() {
+            return Ok(());
+        }
         let buffer_snapshot = buffer.read(cx).snapshot();
         let buffer_id = buffer_snapshot.remote_id();
         let file_exists = buffer_snapshot
@@ -1318,9 +1288,9 @@ impl GitStore {
             .is_some_and(|file| file.disk_state().exists());
 
         let uncommitted_snapshot = uncommitted_diff.read(cx).snapshot(cx);
-        let Some(unstaged_snapshot) = uncommitted_snapshot.secondary_diff() else {
-            return;
-        };
+        let unstaged_snapshot = uncommitted_snapshot
+            .secondary_diff()
+            .context("diff has no unstaged secondary")?;
 
         let mut hunks = Vec::new();
         for range in &worktree_ranges {
@@ -1340,9 +1310,11 @@ impl GitStore {
         );
         drop(uncommitted_snapshot);
 
-        let Some(diff_state) = self.diffs.get(&buffer_id).cloned() else {
-            return;
-        };
+        let diff_state = self
+            .diffs
+            .get(&buffer_id)
+            .cloned()
+            .context("failed to find git state for buffer")?;
         diff_state.update(cx, |diff_state, _| {
             diff_state.apply_index_edits(index_edits)
         });
@@ -1352,49 +1324,33 @@ impl GitStore {
         });
 
         self.write_optimistic_index(buffer_id, cx);
+        Ok(())
     }
 
-    /// Unstages staged (HEAD-vs-index) hunks covered by `index_ranges`, invoked
-    /// from the staged-changes view. The acted-on hunks already carry an index
-    /// range, so no projection is needed; optimistically suppresses them from the
-    /// staged diff.
+    /// Unstages staged (HEAD-vs-index) hunks covered by `index_ranges`, acting on
+    /// the given staged diff, invoked from the staged-changes view. The acted-on
+    /// hunks already carry an index range, so no projection is needed;
+    /// optimistically suppresses them from the staged diff.
     pub fn unstage_staged_hunks(
         &mut self,
         buffer: Entity<Buffer>,
-        index_ranges: Vec<Range<Anchor>>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<()>> {
-        if index_ranges.is_empty() {
-            return Task::ready(Ok(()));
-        }
-        let buffer_id = buffer.read(cx).remote_id();
-        let Some(diff_state) = self.diffs.get(&buffer_id).cloned() else {
-            return Task::ready(Err(anyhow!("failed to find git state for buffer")));
-        };
-        let Some(staged_diff) = diff_state.read(cx).staged_diff() else {
-            return Task::ready(Err(anyhow!("staged diff is not open")));
-        };
-        cx.spawn(async move |this, cx| {
-            this.update(cx, |this, cx| {
-                this.unstage_staged_hunks_optimistically(buffer_id, staged_diff, index_ranges, cx);
-            })?;
-            Ok(())
-        })
-    }
-
-    fn unstage_staged_hunks_optimistically(
-        &mut self,
-        buffer_id: BufferId,
         staged_diff: Entity<BufferDiff>,
         index_ranges: Vec<Range<Anchor>>,
         cx: &mut Context<Self>,
-    ) {
-        let Some(diff_state) = self.diffs.get(&buffer_id).cloned() else {
-            return;
-        };
-        let Some(index_buffer) = diff_state.read(cx).index_text_buffer() else {
-            return;
-        };
+    ) -> Result<()> {
+        if index_ranges.is_empty() {
+            return Ok(());
+        }
+        let buffer_id = buffer.read(cx).remote_id();
+        let diff_state = self
+            .diffs
+            .get(&buffer_id)
+            .cloned()
+            .context("failed to find git state for buffer")?;
+        let index_buffer = diff_state
+            .read(cx)
+            .index_text_buffer()
+            .context("index text is not loaded")?;
         let index_snapshot = index_buffer.read(cx).text_snapshot();
         let staged_snapshot = staged_diff.read(cx).snapshot(cx);
 
@@ -1420,6 +1376,7 @@ impl GitStore {
         });
 
         self.write_optimistic_index(buffer_id, cx);
+        Ok(())
     }
 
     /// Derives the desired index text from the buffer's optimistic patch and

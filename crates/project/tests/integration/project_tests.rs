@@ -10063,9 +10063,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let range = snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_before(Point::new(2, 0));
     project
         .update(cx, |project, cx| {
-            project.stage_hunks(buffer.clone(), vec![range], cx)
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![range], cx)
         })
-        .await
         .unwrap();
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
@@ -10135,9 +10135,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     let range = snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_before(Point::new(4, 0));
     project
         .update(cx, |project, cx| {
-            project.stage_hunks(buffer.clone(), vec![range], cx)
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![range], cx)
         })
-        .await
         .unwrap();
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
@@ -10207,15 +10207,15 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     });
     project
         .update(cx, |project, cx| {
-            project.stage_hunks(buffer.clone(), vec![range0], cx)
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![range0], cx)
         })
-        .await
         .unwrap();
     project
         .update(cx, |project, cx| {
-            project.stage_hunks(buffer.clone(), vec![range2], cx)
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![range2], cx)
         })
-        .await
         .unwrap();
 
     // Both staged hunks appear as pending.
@@ -10455,9 +10455,9 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     });
     project
         .update(cx, |project, cx| {
-            project.stage_hunks(buffer.clone(), vec![range], cx)
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![range], cx)
         })
-        .await
         .unwrap();
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
@@ -10498,9 +10498,9 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     });
     project
         .update(cx, |project, cx| {
-            project.stage_hunks(buffer.clone(), vec![range], cx)
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![range], cx)
         })
-        .await
         .unwrap();
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
@@ -10544,9 +10544,9 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     });
     project
         .update(cx, |project, cx| {
-            project.stage_hunks(buffer.clone(), vec![range], cx)
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![range], cx)
         })
-        .await
         .unwrap();
 
     // Wait for all remaining IO.
@@ -10663,9 +10663,13 @@ async fn test_restaging_hunk_after_optimistic_unstage(cx: &mut gpui::TestAppCont
     // Unstage the hunk. It appears as optimistically unstaged.
     project
         .update(cx, |project, cx| {
-            project.unstage_uncommitted_hunks(buffer.clone(), vec![hunk_range.clone()], cx)
+            project.unstage_uncommitted_hunks(
+                buffer.clone(),
+                uncommitted_diff.clone(),
+                vec![hunk_range.clone()],
+                cx,
+            )
         })
-        .await
         .unwrap();
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
@@ -10684,9 +10688,9 @@ async fn test_restaging_hunk_after_optimistic_unstage(cx: &mut gpui::TestAppCont
     // Re-stage the same hunk before the unstage write has been reconciled.
     project
         .update(cx, |project, cx| {
-            project.stage_hunks(buffer.clone(), vec![hunk_range.clone()], cx)
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![hunk_range.clone()], cx)
         })
-        .await
         .unwrap();
     uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
@@ -10808,19 +10812,24 @@ async fn test_staging_random_hunks(
     fs.pause_events();
     project
         .update(cx, |project, cx| {
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
             project.stage_hunks(
                 buffer.clone(),
+                unstaged_diff,
                 vec![insertion_hunk.buffer_range.clone()],
                 cx,
             )
         })
-        .await
         .unwrap();
     project
         .update(cx, |project, cx| {
-            project.unstage_uncommitted_hunks(buffer.clone(), vec![insertion_hunk.buffer_range], cx)
+            project.unstage_uncommitted_hunks(
+                buffer.clone(),
+                uncommitted_diff.clone(),
+                vec![insertion_hunk.buffer_range],
+                cx,
+            )
         })
-        .await
         .unwrap();
     cx.executor().run_until_parked();
     assert_eq!(
@@ -10842,25 +10851,26 @@ async fn test_staging_random_hunks(
         let row = hunk.range.start.row;
 
         let range = hunk.buffer_range.clone();
-        // Await so the optimistic state is applied in issue order (matching the
-        // expectation tracking below); the index write it kicks off remains
-        // in-flight, so writes from successive operations still race.
         if hunk.status().has_secondary_hunk() {
             log::info!("staging hunk at {row}");
             project
                 .update(cx, |project, cx| {
-                    project.stage_hunks(buffer.clone(), vec![range], cx)
+                    let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+                    project.stage_hunks(buffer.clone(), unstaged_diff, vec![range], cx)
                 })
-                .await
                 .unwrap();
             hunk.secondary_status = SecondaryHunkRemovalPending;
         } else {
             log::info!("unstaging hunk at {row}");
             project
                 .update(cx, |project, cx| {
-                    project.unstage_uncommitted_hunks(buffer.clone(), vec![range], cx)
+                    project.unstage_uncommitted_hunks(
+                        buffer.clone(),
+                        uncommitted_diff.clone(),
+                        vec![range],
+                        cx,
+                    )
                 })
-                .await
                 .unwrap();
             hunk.secondary_status = SecondaryHunkAdditionPending;
         }
@@ -11032,9 +11042,9 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
     });
     project
         .update(cx, |project, cx| {
-            project.stage_hunks(buffer.clone(), ranges, cx)
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, ranges, cx)
         })
-        .await
         .unwrap();
 
     cx.run_until_parked();

@@ -555,9 +555,10 @@ impl DiffMultibuffer {
             .buffer_subscriptions
             .values()
             .filter_map(|sub| {
-                let index_ranges =
-                    ranges_by_buffer_id.remove(&sub.display_buffer.read(cx).remote_id())?;
-                Some((sub.main_buffer.clone(), index_ranges))
+                let display_buffer_id = sub.display_buffer.read(cx).remote_id();
+                let index_ranges = ranges_by_buffer_id.remove(&display_buffer_id)?;
+                let staged_diff = self.multibuffer.read(cx).diff_for(display_buffer_id)?;
+                Some((sub.main_buffer.clone(), staged_diff, index_ranges))
             })
             .collect::<Vec<_>>();
 
@@ -565,26 +566,19 @@ impl DiffMultibuffer {
             return;
         }
 
-        cx.spawn_in(window, async move |_, cx| {
-            for (main_buffer, index_ranges) in ranges_to_unstage {
+        project.update(cx, |project, cx| {
+            for (main_buffer, staged_diff, index_ranges) in ranges_to_unstage {
                 project
-                    .update(cx, |project, cx| {
-                        project.unstage_staged_hunks(main_buffer, index_ranges, cx)
-                    })
-                    .await?;
+                    .unstage_staged_hunks(main_buffer, staged_diff, index_ranges, cx)
+                    .log_err();
             }
+        });
 
-            if move_to_next {
-                cx.update(|window, cx| {
-                    editor
-                        .focus_handle(cx)
-                        .dispatch_action(&GoToHunk, window, cx);
-                })?;
-            }
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+        if move_to_next {
+            editor
+                .focus_handle(cx)
+                .dispatch_action(&GoToHunk, window, cx);
+        }
     }
 
     fn handle_editor_event(
