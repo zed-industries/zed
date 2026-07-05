@@ -560,13 +560,13 @@ impl DockerPanel {
                 let repository = repository.to_string();
                 let tag = tag.to_string();
                 move |this, _, _, cx| {
-                    this.selected = Some(SelectedItem::Image {
-                        endpoint_name: endpoint_name.clone(),
-                        id: id.clone(),
-                        repository: repository.clone(),
-                        tag: tag.clone(),
-                    });
-                    cx.notify();
+                    this.select_image(
+                        endpoint_name.clone(),
+                        id.clone(),
+                        repository.clone(),
+                        tag.clone(),
+                        cx,
+                    );
                 }
             }))
             .into_any_element()
@@ -607,14 +607,22 @@ impl DockerPanel {
                 let endpoint_name = endpoint_name.to_string();
                 let name = name.to_string();
                 move |this, _, _, cx| {
-                    this.selected = Some(SelectedItem::Compose {
-                        endpoint_name: endpoint_name.clone(),
-                        project: name.clone(),
-                    });
-                    cx.notify();
+                    this.select_compose(endpoint_name.clone(), name.clone(), cx);
                 }
             }))
             .into_any_element()
+    }
+
+    /// Clears everything tied to the previously selected row before a new
+    /// selection is applied. In particular, replacing `_logs_task` drops the
+    /// previous task, which cancels any in-flight `docker logs -f` stream
+    /// (see `load_logs`'s doc comment on `kill_on_drop`). Every selection
+    /// handler (container/image/compose) must call this first so switching
+    /// away from a container's Logs tab can never leak the child process.
+    fn reset_detail_state(&mut self) {
+        self.logs = None;
+        self.inspect = None;
+        self._logs_task = Task::ready(());
     }
 
     fn select_container(
@@ -624,14 +632,39 @@ impl DockerPanel {
         name: String,
         cx: &mut Context<Self>,
     ) {
+        self.reset_detail_state();
         self.selected = Some(SelectedItem::Container {
             endpoint_name,
             id,
             name,
         });
-        self.inspect = None;
-        self.logs = None;
-        self._logs_task = Task::ready(());
+        cx.notify();
+    }
+
+    fn select_image(
+        &mut self,
+        endpoint_name: String,
+        id: String,
+        repository: String,
+        tag: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.reset_detail_state();
+        self.selected = Some(SelectedItem::Image {
+            endpoint_name,
+            id,
+            repository,
+            tag,
+        });
+        cx.notify();
+    }
+
+    fn select_compose(&mut self, endpoint_name: String, project: String, cx: &mut Context<Self>) {
+        self.reset_detail_state();
+        self.selected = Some(SelectedItem::Compose {
+            endpoint_name,
+            project,
+        });
         cx.notify();
     }
 
@@ -1348,6 +1381,93 @@ mod tests {
             let logs = panel.logs.as_ref().expect("logs state should be present");
             assert_eq!(logs.lines, vec!["a".to_string(), "b".to_string()]);
             assert!(logs.follow, "follow should default to true");
+        });
+    }
+
+    /// Selecting ANY row (container/image/compose) must cancel an in-flight
+    /// `docker logs -f` stream: `self.logs` must be cleared even when the
+    /// newly-selected row is not a container. Guards against leaking the
+    /// `docker logs -f` child process when the user switches from a
+    /// container's Logs tab straight to an Image/Compose row.
+    #[gpui::test]
+    async fn selecting_non_container_row_clears_logs(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let mut fake = FakeDockerClient::new_with_container("api");
+        fake.log_lines = vec!["a".into(), "b".into()];
+        let fake = Arc::new(fake);
+        let factory = {
+            let fake = fake.clone();
+            Arc::new(move || fake.clone() as Arc<dyn DockerClient>)
+        };
+        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+        let endpoint_name =
+            store.read_with(cx, |store, _| store.endpoints()[0].endpoint.name.clone());
+
+        let panel = cx.new(|cx| DockerPanel::new_for_test(store.clone(), cx));
+        panel.update(cx, |panel, cx| {
+            panel.select_container(endpoint_name.clone(), "api-id".into(), "api".into(), cx);
+        });
+        panel.update(cx, |panel, cx| {
+            panel.load_logs("api-id".into(), cx);
+        });
+
+        wait_until(cx, |cx| {
+            panel.read_with(cx, |panel, _| {
+                panel
+                    .logs
+                    .as_ref()
+                    .is_some_and(|logs| !logs.lines.is_empty())
+            })
+        })
+        .await;
+
+        // Selecting an image row (not a container) must still clear the
+        // logs state and cancel the in-flight follow task.
+        panel.update(cx, |panel, cx| {
+            panel.select_image(
+                endpoint_name.clone(),
+                "img-id".into(),
+                "repo".into(),
+                "latest".into(),
+                cx,
+            );
+        });
+
+        panel.read_with(cx, |panel, _| {
+            assert!(
+                panel.logs.is_none(),
+                "logs state must be cleared when selecting a non-container row"
+            );
+        });
+
+        // Selecting a compose row must have the same effect.
+        panel.update(cx, |panel, cx| {
+            panel.select_container(endpoint_name.clone(), "api-id".into(), "api".into(), cx);
+        });
+        panel.update(cx, |panel, cx| {
+            panel.load_logs("api-id".into(), cx);
+        });
+        wait_until(cx, |cx| {
+            panel.read_with(cx, |panel, _| {
+                panel
+                    .logs
+                    .as_ref()
+                    .is_some_and(|logs| !logs.lines.is_empty())
+            })
+        })
+        .await;
+
+        panel.update(cx, |panel, cx| {
+            panel.select_compose(endpoint_name.clone(), "proj".into(), cx);
+        });
+
+        panel.read_with(cx, |panel, _| {
+            assert!(
+                panel.logs.is_none(),
+                "logs state must be cleared when selecting a compose row"
+            );
         });
     }
 

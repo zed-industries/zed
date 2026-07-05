@@ -49,8 +49,10 @@ pub struct InspectState {
 ///
 /// `follow` gates whether newly-appended lines pull the view down to the
 /// tail: the background stream in `DockerPanel::load_logs` keeps pushing
-/// into `lines` regardless of `follow`, so pausing never drops data, it only
-/// freezes the scroll position so the user can read back through history.
+/// into `lines` regardless of `follow`. The displayed buffer is capped at
+/// `MAX_DISPLAYED_LOG_LINES` (500) either way, evicting the oldest lines past
+/// that cap; pausing only freezes the scroll position, it does not exempt
+/// the buffer from that cap.
 #[derive(Clone, Debug)]
 pub struct LogsState {
     pub id: String,
