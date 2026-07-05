@@ -11004,7 +11004,7 @@ fn process_completion_for_edit(
 ) -> CompletionEdit {
     let buffer = buffer.read(cx);
     let buffer_snapshot = buffer.snapshot();
-    let (snippet, new_text) = if completion.is_snippet() {
+    let (snippet, new_text, snippet_source) = if completion.is_snippet() {
         let mut snippet_source = completion.new_text.clone();
         // Workaround for typescript language server issues so that methods don't expand within
         // strings and functions with type expressions. The previous point is used because the query
@@ -11026,11 +11026,15 @@ fn process_completion_for_edit(
             snippet_source = label;
         }
         match Snippet::parse(&snippet_source).log_err() {
-            Some(parsed_snippet) => (Some(parsed_snippet.clone()), parsed_snippet.text),
-            None => (None, completion.new_text.clone()),
+            Some(parsed_snippet) => (
+                Some(parsed_snippet.clone()),
+                parsed_snippet.text,
+                Some(snippet_source),
+            ),
+            None => (None, completion.new_text.clone(), None),
         }
     } else {
-        (None, completion.new_text.clone())
+        (None, completion.new_text.clone(), None)
     };
 
     let mut range_to_replace = {
@@ -11133,6 +11137,7 @@ fn process_completion_for_edit(
         new_text,
         replace_range: range_to_replace,
         snippet,
+        snippet_source,
     }
 }
 
@@ -11140,6 +11145,7 @@ struct CompletionEdit {
     new_text: String,
     replace_range: Range<text::Anchor>,
     snippet: Option<Snippet>,
+    snippet_source: Option<String>,
 }
 
 pub trait CollaborationHub {
@@ -11759,6 +11765,9 @@ pub enum EditorEvent {
     InputHandled {
         utf16_range_to_replace: Option<Range<isize>>,
         text: Arc<str>,
+    },
+    SnippetInsertion {
+        snippet_source: Arc<str>,
     },
     BufferRangesUpdated {
         buffer: Entity<Buffer>,

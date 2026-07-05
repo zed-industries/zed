@@ -69,6 +69,27 @@ impl Editor {
         self.handle_input(text, window, cx);
     }
 
+    pub fn replay_snippet_insertion(
+        &mut self,
+        snippet_source: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.input_enabled {
+            return;
+        }
+        let Some(snippet) = Snippet::parse(snippet_source).log_err() else {
+            return;
+        };
+        let ranges = self
+            .selections
+            .all::<MultiBufferOffset>(&self.display_snapshot(cx))
+            .into_iter()
+            .map(|selection| selection.range())
+            .collect::<Vec<_>>();
+        self.insert_snippet(&ranges, snippet, window, cx).log_err();
+    }
+
     pub fn handle_input(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         let text: Arc<str> = text.into();
 
