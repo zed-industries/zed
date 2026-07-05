@@ -183,6 +183,7 @@ impl VsCodeSettings {
             database: None,
             debugger: None,
             diagnostics: None,
+            docker: None,
             editor: self.editor_settings_content(),
             extension: ExtensionSettingsContent::default(),
             file_finder: None,

@@ -1,6 +1,7 @@
 mod action;
 mod agent;
 mod database;
+mod docker;
 mod editor;
 mod extension;
 mod fallible_options;
@@ -17,6 +18,7 @@ mod workspace;
 pub use action::{ActionName, ActionWithArguments, CommandAliasTarget};
 pub use agent::*;
 pub use database::*;
+pub use docker::*;
 pub use editor::*;
 pub use extension::*;
 pub use fallible_options::*;
@@ -173,6 +175,9 @@ pub struct SettingsContent {
 
     /// Configuration for Diagnostics-related features.
     pub diagnostics: Option<DiagnosticsSettingsContent>,
+
+    /// Configuration for the Docker panel.
+    pub docker: Option<DockerSettingsContent>,
 
     /// Configuration for Git-related features
     pub git: Option<GitSettings>,

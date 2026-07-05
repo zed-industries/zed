@@ -2739,6 +2739,12 @@
     "format_dap_log_messages": true,
     "button": true,
   },
+  "docker": {
+    // Seconds between automatic status refreshes.
+    "poll_interval_seconds": 5,
+    // Docker endpoints (SSH auth comes from your ssh-agent/~/.ssh/config).
+    "connections": []
+  },
   // Configures any number of settings profiles that are temporarily applied
   // when selected from `settings profile selector: toggle`.
   //
