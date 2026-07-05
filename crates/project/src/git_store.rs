@@ -155,14 +155,6 @@ struct BufferGitState {
     /// this state in the same update), so byte offsets stay valid for the whole
     /// window.
     pending_index_edits: Option<Vec<(Range<usize>, Arc<str>)>>,
-    /// The index text most recently scheduled to be written to disk by the
-    /// optimistic path, if any write is outstanding since the last recalculation
-    /// settled. Used to dedupe writes against what the index *will* be (which may
-    /// differ from the currently-loaded `index_text` while writes are in flight),
-    /// so an operation that returns the index to a value matching the stale
-    /// loaded text is not wrongly skipped. `Some(None)` means "scheduled to be
-    /// removed".
-    last_scheduled_index_text: Option<Option<Arc<str>>>,
     oid_texts: HashMap<git::Oid, Arc<str>>,
     head_text_buffer: WeakEntity<Buffer>,
     index_text_buffer: WeakEntity<Buffer>,
@@ -1204,11 +1196,18 @@ impl GitStore {
         // index range directly. Sorting by buffer offset also sorts by index
         // offset, since the hunks are non-overlapping. We read the raw hunks
         // (ignoring optimistic suppression) so that re-staging a hunk that was
-        // optimistically staged and then unstaged still finds it.
+        // optimistically staged and then unstaged still finds it. The footprints
+        // let the patch drop earlier edits the region covers even where the raw
+        // diff is empty (re-staging a hunk that is staged on disk but
+        // optimistically unstaged).
         let mut unstaged_hunks = Vec::new();
+        let mut index_footprints = Vec::new();
         for range in &worktree_ranges {
             unstaged_hunks.extend(
                 unstaged_snapshot.raw_hunks_intersecting_range(range.clone(), &buffer_snapshot),
+            );
+            index_footprints.push(
+                unstaged_snapshot.base_text_range_for_buffer_range(range.clone(), &buffer_snapshot),
             );
         }
         unstaged_hunks.sort_by_key(|hunk| hunk.buffer_range.start.to_offset(&buffer_snapshot));
@@ -1229,7 +1228,7 @@ impl GitStore {
         uncommitted_hunks.sort_by_key(|hunk| hunk.buffer_range.start.to_offset(&buffer_snapshot));
         uncommitted_hunks.dedup_by(|a, b| a.buffer_range.start == b.buffer_range.start);
 
-        let mut index_edits = if !file_exists {
+        let index_edits = if !file_exists {
             // The worktree file is gone: staging removes it from the index.
             None
         } else {
@@ -1249,31 +1248,6 @@ impl GitStore {
             )
         };
 
-        if file_exists {
-            let pending_unstage_hunks = uncommitted_hunks
-                .iter()
-                .filter(|hunk| {
-                    hunk.secondary_status == DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            if !pending_unstage_hunks.is_empty() {
-                let (pending_unstage_edits, _) = uncommitted_snapshot
-                    .compute_uncommitted_index_edits(
-                        unstaged_snapshot,
-                        true,
-                        &pending_unstage_hunks,
-                        &buffer_snapshot,
-                        file_exists,
-                    );
-                if let (Some(index_edits), Some(mut pending_unstage_edits)) =
-                    (&mut index_edits, pending_unstage_edits)
-                {
-                    index_edits.append(&mut pending_unstage_edits);
-                }
-            }
-        }
-
         let version = buffer_snapshot.version().clone();
         let unstaged_pending = pending_hunks(&unstaged_hunks, &version, PendingSense::Suppress);
         let uncommitted_pending = pending_hunks(
@@ -1287,7 +1261,8 @@ impl GitStore {
             return;
         };
         diff_state.update(cx, |diff_state, _| {
-            diff_state.apply_index_edits(index_edits)
+            diff_state.remove_index_edits_overlapping(&index_footprints);
+            diff_state.apply_index_edits(index_edits);
         });
 
         uncommitted_diff.update(cx, |diff, cx| {
@@ -2633,21 +2608,7 @@ impl GitStore {
         let Some(diff_state) = self.diffs.get(&buffer_id) else {
             return;
         };
-        // Compare against what the index will become after any in-flight writes
-        // (tracked in `last_scheduled_index_text`), falling back to the loaded
-        // index text when nothing is outstanding. Comparing against the loaded
-        // index text alone would wrongly skip a write that returns the index to
-        // that value while a different write is still in flight.
-        let already_scheduled = diff_state.read(cx).last_scheduled_index_text.clone();
-        let baseline = match &already_scheduled {
-            Some(scheduled) => scheduled.as_deref(),
-            None => diff_state.read(cx).index_text.as_deref(),
-        };
-        if new_index_text.as_deref() == baseline {
-            return;
-        }
         let hunk_staging_operation_count = diff_state.update(cx, |diff_state, _| {
-            diff_state.last_scheduled_index_text = Some(new_index_text.as_deref().map(Arc::from));
             diff_state.hunk_staging_operation_count += 1;
             diff_state.hunk_staging_operation_count
         });
@@ -4513,7 +4474,6 @@ impl BufferGitState {
             head_text: Default::default(),
             index_text: Default::default(),
             pending_index_edits: Some(Vec::new()),
-            last_scheduled_index_text: Default::default(),
             oid_texts: Default::default(),
             head_text_buffer: WeakEntity::new_invalid(),
             index_text_buffer: WeakEntity::new_invalid(),
@@ -4653,9 +4613,25 @@ impl BufferGitState {
         }
     }
 
+    /// Drops pending index edits overlapping or touching any of `footprints`,
+    /// an operation's coverage in loaded-index coordinates. This is how an
+    /// operation supersedes earlier ones across its whole acted region even
+    /// where it derives no edits of its own (e.g. re-staging an optimistically
+    /// unstaged hunk, where the worktree and the loaded index already agree).
+    fn remove_index_edits_overlapping(&mut self, footprints: &[Range<usize>]) {
+        if let Some(edits) = &mut self.pending_index_edits {
+            edits.retain(|(existing, _)| {
+                footprints.iter().all(|footprint| {
+                    existing.end < footprint.start || footprint.end < existing.start
+                })
+            });
+        }
+    }
+
     /// Merges a stage/unstage operation's index edits into the pending index
-    /// state (the patch). Overlapping edits are resolved newest-wins; the patch
-    /// stays sorted by start offset and non-overlapping.
+    /// state (the patch). Overlapping or touching edits are resolved
+    /// newest-wins; the patch stays sorted by start offset and non-overlapping.
+    /// `None` means the file should be removed from the index.
     fn apply_index_edits(&mut self, edits: Option<Vec<(Range<usize>, Arc<str>)>>) {
         match edits {
             None => {
@@ -4665,10 +4641,7 @@ impl BufferGitState {
                 let mut edits = self.pending_index_edits.take().unwrap_or_default();
                 for (range, replacement) in new_edits {
                     edits.retain(|(existing, _)| {
-                        (existing.end <= range.start || range.end <= existing.start)
-                            && !(existing.is_empty()
-                                && range.is_empty()
-                                && existing.start == range.start)
+                        existing.end < range.start || range.end < existing.start
                     });
                     let position =
                         edits.partition_point(|(existing, _)| existing.start < range.start);
@@ -4694,7 +4667,6 @@ impl BufferGitState {
     /// separately (at recalc-settle, by the diffs' own snapshots).
     fn clear_pending_index_text(&mut self) {
         self.pending_index_edits = Some(Vec::new());
-        self.last_scheduled_index_text = None;
     }
 
     /// Clears all optimistic state for this buffer: the index patch and every
@@ -4727,16 +4699,17 @@ impl BufferGitState {
         };
 
         let diff_bases_change = match mode {
-            Mode::HeadOnly => DiffBasesChange::SetHead(message.committed_text),
-            Mode::IndexOnly => DiffBasesChange::SetIndex(message.staged_text),
-            Mode::IndexMatchesHead => DiffBasesChange::SetBoth(message.committed_text),
-            Mode::IndexAndHead => DiffBasesChange::SetEach {
+            Mode::HeadOnly => Some(DiffBasesChange::SetHead(message.committed_text)),
+            Mode::IndexOnly => Some(DiffBasesChange::SetIndex(message.staged_text)),
+            Mode::IndexMatchesHead => Some(DiffBasesChange::SetBoth(message.committed_text)),
+            Mode::IndexAndHead => Some(DiffBasesChange::SetEach {
                 index: message.staged_text,
                 head: message.committed_text,
-            },
+            }),
+            Mode::Unchanged => None,
         };
 
-        self.diff_bases_changed(buffer, Some(diff_bases_change), cx);
+        self.diff_bases_changed(buffer, diff_bases_change, cx);
     }
 
     pub fn wait_for_recalculation(&mut self) -> Option<impl Future<Output = ()> + use<>> {
@@ -5890,21 +5863,23 @@ impl Repository {
                         diff_state.update(cx, |diff_state, cx| {
                             use proto::update_diff_bases::Mode;
 
-                            if let Some((diff_bases_change, (client, project_id))) =
-                                diff_bases_change.clone().zip(downstream_client)
-                            {
-                                let (staged_text, committed_text, mode) = match diff_bases_change {
-                                    DiffBasesChange::SetIndex(index) => {
-                                        (index, None, Mode::IndexOnly)
-                                    }
-                                    DiffBasesChange::SetHead(head) => (None, head, Mode::HeadOnly),
-                                    DiffBasesChange::SetEach { index, head } => {
-                                        (index, head, Mode::IndexAndHead)
-                                    }
-                                    DiffBasesChange::SetBoth(text) => {
-                                        (None, text, Mode::IndexMatchesHead)
-                                    }
-                                };
+                            if let Some((client, project_id)) = downstream_client {
+                                let (staged_text, committed_text, mode) =
+                                    match diff_bases_change.clone() {
+                                        Some(DiffBasesChange::SetIndex(index)) => {
+                                            (index, None, Mode::IndexOnly)
+                                        }
+                                        Some(DiffBasesChange::SetHead(head)) => {
+                                            (None, head, Mode::HeadOnly)
+                                        }
+                                        Some(DiffBasesChange::SetEach { index, head }) => {
+                                            (index, head, Mode::IndexAndHead)
+                                        }
+                                        Some(DiffBasesChange::SetBoth(text)) => {
+                                            (None, text, Mode::IndexMatchesHead)
+                                        }
+                                        None => (None, None, Mode::Unchanged),
+                                    };
                                 client
                                     .send(proto::UpdateDiffBases {
                                         project_id: project_id.to_proto(),

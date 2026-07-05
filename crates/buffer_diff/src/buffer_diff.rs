@@ -353,6 +353,28 @@ impl BufferDiffSnapshot {
             })
     }
 
+    /// Maps a range in this diff's main buffer to the range it covers in the
+    /// base text, expanding to whole hunks wherever the range endpoints fall
+    /// inside or touch a hunk (`edit_for_old_position` is inclusive on both
+    /// boundaries, matching `raw_hunks_intersecting_range`). Used by the
+    /// index-write path to compute the index-coordinate footprint of a staging
+    /// operation; like the raw hunks, the mapping ignores optimistic pending
+    /// hunks.
+    pub fn base_text_range_for_buffer_range(
+        &self,
+        range: Range<Anchor>,
+        buffer: &text::BufferSnapshot,
+    ) -> Range<usize> {
+        let point_range = range.to_point(buffer);
+        let patch = self.patch_for_buffer_range(point_range.start..=point_range.end, buffer);
+        let start_point = patch.edit_for_old_position(point_range.start).new.start;
+        let end_point = patch.edit_for_old_position(point_range.end).new.end;
+        let base_text = self.base_text();
+        let start = base_text.point_to_offset(start_point.min(base_text.max_point()));
+        let end = base_text.point_to_offset(end_point.min(base_text.max_point()));
+        start.min(end)..end
+    }
+
     pub fn hunks_intersecting_range_rev<'a>(
         &'a self,
         range: Range<Anchor>,
