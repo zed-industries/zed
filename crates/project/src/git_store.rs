@@ -1253,11 +1253,11 @@ impl GitStore {
 
         if let Some(uncommitted_diff) = uncommitted_diff {
             uncommitted_diff.update(cx, |diff, cx| {
-                diff.set_pending_hunks(&uncommitted_pending, cx);
+                diff.set_pending_hunks(&uncommitted_pending, &buffer_snapshot, cx);
             });
         }
         unstaged_diff.update(cx, |diff, cx| {
-            diff.set_pending_hunks(&unstaged_pending, cx);
+            diff.set_pending_hunks(&unstaged_pending, &buffer_snapshot, cx);
         });
 
         self.write_optimistic_index(buffer_id, cx);
@@ -1317,7 +1317,7 @@ impl GitStore {
         });
 
         uncommitted_diff.update(cx, |diff, cx| {
-            diff.set_pending_hunks(&pending, cx);
+            diff.set_pending_hunks(&pending, &buffer_snapshot, cx);
         });
 
         self.write_optimistic_index(buffer_id, cx);
@@ -1369,7 +1369,7 @@ impl GitStore {
             diff_state.insert_pending_index_edits(index_edits)
         });
         staged_diff.update(cx, |diff, cx| {
-            diff.set_pending_hunks(&pending, cx);
+            diff.set_pending_hunks(&pending, &index_snapshot, cx);
         });
 
         self.write_optimistic_index(buffer_id, cx);

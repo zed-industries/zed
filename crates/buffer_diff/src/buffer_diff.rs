@@ -1658,36 +1658,45 @@ impl BufferDiff {
     /// `DiffChanged` covering both the new hunks and any existing pending hunks
     /// they replace. `hunks` must be sorted by `buffer_range.start` and
     /// non-overlapping.
-    pub fn set_pending_hunks(&mut self, hunks: &[PendingHunk], cx: &mut Context<Self>) {
+    ///
+    /// `buffer` must be a current snapshot of this diff's main buffer: the
+    /// incoming hunks carry anchors minted from the current buffer, which this
+    /// diff's internal snapshot (from the last settled recalculation) may not
+    /// have observed yet.
+    pub fn set_pending_hunks(
+        &mut self,
+        hunks: &[PendingHunk],
+        buffer: &text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
         if hunks.is_empty() {
             return;
         }
         let Some(diff_snapshot) = self.diff_snapshot.as_mut() else {
             return;
         };
-        let buffer = diff_snapshot.buffer_snapshot.clone();
 
-        let mut new_pending = SumTree::new(&buffer);
+        let mut new_pending = SumTree::new(buffer);
         let mut old = diff_snapshot
             .pending_hunks
-            .cursor::<DiffHunkSummary>(&buffer);
+            .cursor::<DiffHunkSummary>(buffer);
         let mut changed_start: Option<Anchor> = None;
         let mut changed_end: Option<Anchor> = None;
         let mut base_start = usize::MAX;
         let mut base_end = 0usize;
         let mut extend_changed_range = |buffer_range: &Range<Anchor>, base_range: &Range<usize>| {
             changed_start = Some(changed_start.map_or(buffer_range.start, |start| {
-                *start.min(&buffer_range.start, &buffer)
+                *start.min(&buffer_range.start, buffer)
             }));
             changed_end = Some(
-                changed_end.map_or(buffer_range.end, |end| *end.max(&buffer_range.end, &buffer)),
+                changed_end.map_or(buffer_range.end, |end| *end.max(&buffer_range.end, buffer)),
             );
             base_start = base_start.min(base_range.start);
             base_end = base_end.max(base_range.end);
         };
         for hunk in hunks {
             let preceding = old.slice(&hunk.buffer_range.start, Bias::Left);
-            new_pending.append(preceding, &buffer);
+            new_pending.append(preceding, buffer);
 
             // Drop any overlapping or adjacent existing pending hunks, folding
             // them into the changed range so that views repaint their full
@@ -1696,7 +1705,7 @@ impl BufferDiff {
                 if old_hunk
                     .buffer_range
                     .start
-                    .cmp(&hunk.buffer_range.end, &buffer)
+                    .cmp(&hunk.buffer_range.end, buffer)
                     .is_gt()
                 {
                     break;
@@ -1706,9 +1715,9 @@ impl BufferDiff {
             }
 
             extend_changed_range(&hunk.buffer_range, &hunk.diff_base_byte_range);
-            new_pending.push(hunk.clone(), &buffer);
+            new_pending.push(hunk.clone(), buffer);
         }
-        new_pending.append(old.suffix(), &buffer);
+        new_pending.append(old.suffix(), buffer);
         drop(old);
         diff_snapshot.pending_hunks = new_pending;
 
@@ -1752,7 +1761,7 @@ impl BufferDiff {
                 )
             })
             .collect::<Vec<_>>();
-        self.set_pending_hunks(&hunks, cx);
+        self.set_pending_hunks(&hunks, buffer, cx);
     }
 
     /// Computes the index-text edits for unstaging the given staged (HEAD-vs-index)
@@ -1809,7 +1818,7 @@ impl BufferDiff {
             buffer,
             file_exists,
         );
-        self.set_pending_hunks(&pending, cx);
+        self.set_pending_hunks(&pending, buffer, cx);
         edits.map(|edits| {
             let mut index_text = unstaged_diff_snapshot.base_text.as_rope().clone();
             for (old_range, replacement_text) in edits.iter().rev() {
@@ -3013,6 +3022,7 @@ mod tests {
                     version.clone(),
                     PendingSense::SetSecondaryStatus { stage: true },
                 )],
+                &buffer,
                 cx,
             )
         });
@@ -3031,6 +3041,7 @@ mod tests {
                     version,
                     PendingSense::Suppress,
                 )],
+                &buffer,
                 cx,
             )
         });
