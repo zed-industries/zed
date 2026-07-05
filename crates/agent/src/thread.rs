@@ -1947,7 +1947,7 @@ impl Thread {
     }
 
     pub fn thread_model(&self) -> &ThreadModel {
-        &&self.model
+        &self.model
     }
 
     pub(crate) fn ensure_model(
