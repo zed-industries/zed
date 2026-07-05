@@ -2865,7 +2865,10 @@ impl Fs for FakeFs {
                     if options.overwrite {
                         *e.get_mut() = moved_entry;
                     } else if !options.ignore_if_exists {
-                        anyhow::bail!("path already exists: {new_path:?}");
+                        return Err(anyhow!(io::Error::new(
+                            io::ErrorKind::AlreadyExists,
+                            format!("path already exists: {new_path:?}")
+                        )));
                     }
                 }
                 btree_map::Entry::Vacant(e) => {

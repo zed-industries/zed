@@ -620,6 +620,13 @@ impl WorktreeStore {
                                     .await;
                                 }
                             }
+                            if let Some(err) = e.downcast_ref::<std::io::Error>()
+                                && err.kind() == std::io::ErrorKind::AlreadyExists
+                            {
+                                let file_name = abs_new_path.file_name().unwrap_or(abs_new_path.as_os_str()).to_string_lossy();
+                                anyhow::bail!("A file named '{file_name}' already exists in the destination folder")
+                            }
+
                             return Err(e);
                         }
                         Ok(())

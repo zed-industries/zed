@@ -5466,6 +5466,53 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_rename_file_onto_existing_file(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.as_fake()
+        .insert_tree(
+            "/root",
+            json!({
+                "test.txt": "original",
+                "dir": {
+                    "test.txt": "existing"
+                }
+            }),
+        )
+        .await;
+
+    let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
+
+    let (worktree, entry_id) = project.read_with(cx, |project, cx| {
+        let worktree = project.worktrees(cx).next().unwrap();
+        let entry_id = worktree
+            .read(cx)
+            .entry_for_path(rel_path("test.txt"))
+            .unwrap()
+            .id;
+        (worktree, entry_id)
+    });
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+
+    // Moving `test.txt` into `dir/`, which already contains a file with the same
+    // name, should fail with a clear "already exists" error rather than a
+    // generic rename failure.
+    let result = project
+        .update(cx, |project, cx| {
+            project.rename_entry(entry_id, (worktree_id, rel_path("dir/test.txt")).into(), cx)
+        })
+        .await;
+
+    let Err(error) = result else {
+        panic!("moving a file onto an existing file should have failed");
+    };
+    assert!(
+        error.to_string().contains("already exists"),
+        "expected an 'already exists' error, got: {error}"
+    );
+}
+
+#[gpui::test]
 async fn test_rename_file_to_new_directory(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
