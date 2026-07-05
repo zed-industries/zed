@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use collections::{HashMap, HashSet};
 use context_server::oauth::{self, McpOAuthTokenProvider, OAuthDiscovery, OAuthSession};
-use context_server::transport::{HttpTransport, TransportError};
+use context_server::transport::HttpTransport;
 use context_server::{ContextServer, ContextServerCommand, ContextServerId};
 use credentials_provider::CredentialsProvider;
 use futures::future::Either;
@@ -93,6 +93,9 @@ enum ContextServerState {
     Running {
         server: Arc<ContextServer>,
         configuration: Arc<ContextServerConfiguration>,
+        /// Initiates the OAuth flow if the transport shuts down on an
+        /// authentication challenge; cancelled by any state transition.
+        _transport_watch: Task<()>,
     },
     Stopped {
         server: Arc<ContextServer>,
@@ -708,9 +711,12 @@ impl ContextServerStore {
                 let new_state = match server.clone().start(cx).await {
                     Ok(_) => {
                         debug_assert!(server.client().is_some());
+                        let _transport_watch =
+                            Self::watch_transport_shutdown(this.clone(), server.clone(), cx);
                         ContextServerState::Running {
                             server,
                             configuration,
+                            _transport_watch,
                         }
                     }
                     Err(err) => resolve_start_failure(&id, err, server, configuration, cx).await,
@@ -724,6 +730,97 @@ impl ContextServerStore {
 
         self.update_server_state(
             id.clone(),
+            ContextServerState::Starting {
+                configuration,
+                _task: task,
+                server,
+            },
+            cx,
+        );
+    }
+
+    /// Watches a running server's transport and initiates the OAuth flow if it
+    /// shuts down on an authentication challenge.
+    ///
+    /// MCP servers may accept `initialize` unauthenticated and only send a 401
+    /// with a `WWW-Authenticate` challenge on a later request or notification.
+    /// The HTTP transport records the challenge, and the failed send tears
+    /// down the client's output loop. Observing that shutdown — rather than
+    /// relying on some request to carry a typed error back to a caller — is
+    /// what lets any post-initialize 401 move the server into `AuthRequired`
+    /// instead of leaving it `Running` with a dead client.
+    fn watch_transport_shutdown(
+        this: WeakEntity<Self>,
+        server: Arc<ContextServer>,
+        cx: &mut AsyncApp,
+    ) -> Task<()> {
+        let Some(shutdown) = server
+            .client()
+            .and_then(|client| client.wait_for_shutdown())
+        else {
+            return Task::ready(());
+        };
+        cx.spawn(async move |cx| {
+            let Some(www_authenticate) = shutdown.await else {
+                // Non-auth transport deaths leave the server state untouched,
+                // as they did before this watch existed.
+                return;
+            };
+            this.update(cx, |this, cx| {
+                this.handle_auth_challenge(server, www_authenticate, cx);
+            })
+            .log_err();
+        })
+    }
+
+    fn handle_auth_challenge(
+        &mut self,
+        server: Arc<ContextServer>,
+        www_authenticate: oauth::WwwAuthenticate,
+        cx: &mut Context<Self>,
+    ) {
+        let id = server.id();
+
+        // Act only if this exact server is still the one we consider running.
+        // If the state has changed since the challenge was recorded, whoever
+        // changed it owns the lifecycle now.
+        let Some(ContextServerState::Running {
+            server: running_server,
+            configuration,
+            ..
+        }) = self.servers.get(&id)
+        else {
+            return;
+        };
+        if !Arc::ptr_eq(running_server, &server) {
+            return;
+        }
+        let configuration = configuration.clone();
+
+        log::info!("{id} received 401 after initialization; initiating OAuth authorization");
+
+        // The 401 already tore down the client's output loop. Stop the dead
+        // client, then resolve auth using the captured `WWW-Authenticate` — do
+        // not restart via `run_server`, as a fresh `initialize` would succeed
+        // and lose the challenge.
+        server.stop().log_err();
+
+        let task = cx.spawn({
+            let id = id.clone();
+            let server = server.clone();
+            let configuration = configuration.clone();
+            async move |this, cx| {
+                let new_state =
+                    resolve_auth_required(&id, &www_authenticate, server, configuration, cx).await;
+                this.update(cx, |this, cx| {
+                    this.update_server_state(id.clone(), new_state, cx)
+                })
+                .log_err();
+            }
+        });
+
+        self.update_server_state(
+            id,
             ContextServerState::Starting {
                 configuration,
                 _task: task,
@@ -1686,43 +1783,34 @@ async fn resolve_start_failure(
     configuration: Arc<ContextServerConfiguration>,
     cx: &AsyncApp,
 ) -> ContextServerState {
-    let www_authenticate = err.downcast_ref::<TransportError>().map(|e| match e {
-        TransportError::AuthRequired { www_authenticate } => www_authenticate.clone(),
-    });
-
-    if www_authenticate.is_some() && configuration.has_static_auth_header() {
-        log::warn!("{id} received 401 with a static Authorization header configured");
-        return ContextServerState::Error {
-            configuration,
-            server,
-            error: "Server returned 401 Unauthorized. Check your configured Authorization header."
-                .into(),
-        };
-    }
-
-    let server_url = match configuration.as_ref() {
-        ContextServerConfiguration::Http { url, .. } if !configuration.has_static_auth_header() => {
-            url.clone()
-        }
-        _ => {
-            if www_authenticate.is_some() {
-                log::error!("{id} got OAuth 401 on a non-HTTP transport or with static auth");
-            } else {
-                log::error!("{id} context server failed to start: {err}");
-            }
-            return ContextServerState::Error {
-                configuration,
-                server,
-                error: err.to_string().into(),
-            };
-        }
-    };
+    // Read the challenge from the transport rather than downcasting `err`: it
+    // is recorded before the failed send's error propagates, so a 401 is
+    // recognized even when another error (e.g. the request timeout) wins the
+    // race to become the reported startup failure.
+    let www_authenticate = server.auth_challenge();
 
     // When the error is NOT a 401 but there is a cached OAuth session in the
     // keychain, the session is likely stale/expired and caused the failure
     // (e.g. timeout because the server rejected the token silently). Clear it
     // so the next start attempt can get a clean 401 and trigger the auth flow.
+    // If there is no such session this is an ordinary startup error.
     if www_authenticate.is_none() {
+        let server_url = match configuration.as_ref() {
+            ContextServerConfiguration::Http { url, .. }
+                if !configuration.has_static_auth_header() =>
+            {
+                url.clone()
+            }
+            _ => {
+                log::error!("{id} context server failed to start: {err}");
+                return ContextServerState::Error {
+                    configuration,
+                    server,
+                    error: err.to_string().into(),
+                };
+            }
+        };
+
         let credentials_provider = cx.update(|cx| zed_credentials_provider::global(cx));
         match ContextServerStore::load_session(&credentials_provider, &server_url, cx).await {
             Ok(Some(_)) => {
@@ -1751,6 +1839,46 @@ async fn resolve_start_failure(
     let www_authenticate = www_authenticate
         .as_ref()
         .unwrap_or(&default_www_authenticate);
+
+    resolve_auth_required(id, www_authenticate, server, configuration, cx).await
+}
+
+/// Runs OAuth discovery for a server that returned a 401 and produces the
+/// appropriate state (`AuthRequired`, `ClientSecretRequired`, or `Error`).
+///
+/// Shared by the startup path ([`resolve_start_failure`]) and the
+/// post-initialize path ([`ContextServerStore::handle_auth_challenge`]) so
+/// that a 401 at any point — not only during `initialize` — can initiate the
+/// OAuth flow.
+async fn resolve_auth_required(
+    id: &ContextServerId,
+    www_authenticate: &oauth::WwwAuthenticate,
+    server: Arc<ContextServer>,
+    configuration: Arc<ContextServerConfiguration>,
+    cx: &AsyncApp,
+) -> ContextServerState {
+    if configuration.has_static_auth_header() {
+        log::warn!("{id} received 401 with a static Authorization header configured");
+        return ContextServerState::Error {
+            configuration,
+            server,
+            error: "Server returned 401 Unauthorized. Check your configured Authorization header."
+                .into(),
+        };
+    }
+
+    let server_url = match configuration.as_ref() {
+        ContextServerConfiguration::Http { url, .. } => url.clone(),
+        _ => {
+            log::error!("{id} got OAuth 401 on a non-HTTP transport");
+            return ContextServerState::Error {
+                configuration,
+                server,
+                error: "Server returned 401 Unauthorized on a non-HTTP transport".into(),
+            };
+        }
+    };
+
     let http_client = cx.update(|cx| cx.http_client());
 
     match context_server::oauth::discover(&http_client, &server_url, www_authenticate).await {
