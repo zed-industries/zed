@@ -11068,6 +11068,17 @@ async fn test_staging_random_hunks_with_edits(
 
     init_test(cx);
 
+    fn disk_index_text(fs: &FakeFs) -> String {
+        fs.with_git_state(path!("/dir/.git").as_ref(), false, |state| {
+            state
+                .index_contents
+                .get(&repo_path("file.txt"))
+                .cloned()
+                .expect("file is always present in the index")
+        })
+        .unwrap()
+    }
+
     fn random_row_range(
         snapshot: &text::BufferSnapshot,
         rng: &mut StdRng,
@@ -11299,27 +11310,134 @@ async fn test_staging_random_hunks_with_edits(
                 log::info!("editing buffer: {range:?} -> {new_text:?}");
                 buffer.update(cx, |buffer, cx| buffer.edit([(range, new_text)], None, cx));
             }
-            // Commit: HEAD becomes whatever the index currently contains on
-            // disk, which may lag in-flight optimistic writes, just like
-            // running `git commit` in a terminal would.
+            // Commits and whole-file round-trip checkpoints. The round trips
+            // settle first so the resulting index bytes are exactly
+            // predictable, which catches wrong-content writes that the
+            // settled-consistency checks can't see (a corrupted write becomes
+            // the on-disk truth that everything else then agrees with).
             75..82 => {
-                let new_head = fs
-                    .with_git_state(path!("/dir/.git").as_ref(), false, |state| {
-                        state
-                            .index_contents
-                            .get(&repo_path("file.txt"))
-                            .cloned()
-                            .expect("file is always present in the index")
-                    })
-                    .unwrap();
-                commit_count += 1;
-                log::info!("committing (commit {commit_count})");
-                fs.set_head_for_repo(
-                    path!("/dir/.git").as_ref(),
-                    &[("file.txt", new_head.clone())],
-                    format!("sha-{commit_count}"),
+                let buffer_full_range = Anchor::min_max_range_for_buffer(
+                    buffer.read_with(cx, |buffer, _| buffer.remote_id()),
                 );
-                committed_text = new_head;
+                let index_full_range = Anchor::min_max_range_for_buffer(
+                    index_buffer.read_with(cx, |buffer, _| buffer.remote_id()),
+                );
+                match rng.random_range(0..4) {
+                    // Commit: HEAD becomes whatever the index currently
+                    // contains on disk, which may lag in-flight optimistic
+                    // writes, just like running `git commit` in a terminal.
+                    0 => {
+                        let new_head = disk_index_text(&fs);
+                        commit_count += 1;
+                        log::info!("committing (commit {commit_count})");
+                        fs.set_head_for_repo(
+                            path!("/dir/.git").as_ref(),
+                            &[("file.txt", new_head.clone())],
+                            format!("sha-{commit_count}"),
+                        );
+                        committed_text = new_head;
+                    }
+                    // Stage everything and commit it, like `git add -A &&
+                    // git commit`.
+                    1 => {
+                        log::info!("checkpoint: stage-all, then commit");
+                        if events_paused {
+                            fs.unpause_events_and_flush();
+                            events_paused = false;
+                        }
+                        cx.run_until_parked();
+                        project
+                            .update(cx, |project, cx| {
+                                project.stage_hunks(
+                                    buffer.clone(),
+                                    unstaged_diff.clone(),
+                                    vec![buffer_full_range],
+                                    cx,
+                                )
+                            })
+                            .unwrap();
+                        cx.run_until_parked();
+                        let disk = disk_index_text(&fs);
+                        let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
+                        assert_eq!(
+                            disk, buffer_text,
+                            "after staging everything, the index must equal the worktree"
+                        );
+                        commit_count += 1;
+                        log::info!("committing (commit {commit_count})");
+                        fs.set_head_for_repo(
+                            path!("/dir/.git").as_ref(),
+                            &[("file.txt", disk.clone())],
+                            format!("sha-{commit_count}"),
+                        );
+                        committed_text = disk;
+                    }
+                    // Unstage everything via the staged diff, which by
+                    // definition covers every index-vs-HEAD difference.
+                    2 => {
+                        log::info!("checkpoint: unstage-all");
+                        if events_paused {
+                            fs.unpause_events_and_flush();
+                            events_paused = false;
+                        }
+                        cx.run_until_parked();
+                        project
+                            .update(cx, |project, cx| {
+                                project.unstage_staged_hunks(
+                                    buffer.clone(),
+                                    staged_diff.clone(),
+                                    vec![index_full_range],
+                                    cx,
+                                )
+                            })
+                            .unwrap();
+                        cx.run_until_parked();
+                        let disk = disk_index_text(&fs);
+                        assert_eq!(
+                            disk, committed_text,
+                            "after unstaging everything, the index must equal HEAD"
+                        );
+                    }
+                    // Unstage everything and immediately re-stage everything
+                    // with no settling in between: the re-stage must supersede
+                    // the in-flight unstage (the footprint mechanism), leaving
+                    // the index equal to the worktree.
+                    _ => {
+                        log::info!("checkpoint: unstage-all then stage-all");
+                        if events_paused {
+                            fs.unpause_events_and_flush();
+                            events_paused = false;
+                        }
+                        cx.run_until_parked();
+                        project
+                            .update(cx, |project, cx| {
+                                project.unstage_staged_hunks(
+                                    buffer.clone(),
+                                    staged_diff.clone(),
+                                    vec![index_full_range],
+                                    cx,
+                                )
+                            })
+                            .unwrap();
+                        project
+                            .update(cx, |project, cx| {
+                                project.stage_hunks(
+                                    buffer.clone(),
+                                    unstaged_diff.clone(),
+                                    vec![buffer_full_range],
+                                    cx,
+                                )
+                            })
+                            .unwrap();
+                        cx.run_until_parked();
+                        let disk = disk_index_text(&fs);
+                        let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
+                        assert_eq!(
+                            disk, buffer_text,
+                            "re-staging everything must supersede the in-flight unstage"
+                        );
+                    }
+                }
             }
             82..90 => {
                 if events_paused {

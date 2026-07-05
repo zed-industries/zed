@@ -941,14 +941,39 @@ impl BufferDiffSnapshot {
                 )
             };
 
-            edits.push((index_byte_range, replacement_text));
+            // Distinct worktree hunks can project to touching index ranges
+            // (e.g. a staged deletion ending exactly where the next hunk's
+            // index position starts). Merge them so the edit list stays
+            // strictly disjoint, which the pending-edit eviction logic relies
+            // on to not evict one of these edits when the other is inserted.
+            if let Some((last_range, last_text)) = edits.last_mut()
+                && index_byte_range.start <= last_range.end
+            {
+                debug_assert!(index_byte_range.start == last_range.end);
+                debug_assert!(index_byte_range.end >= last_range.end);
+                last_range.end = index_byte_range.end;
+                let mut merged_text =
+                    String::with_capacity(last_text.len() + replacement_text.len());
+                merged_text.push_str(last_text);
+                merged_text.push_str(&replacement_text);
+                *last_text = Arc::from(merged_text);
+            } else {
+                edits.push((index_byte_range, replacement_text));
+            }
         }
 
         #[cfg(debug_assertions)] // invariants: non-overlapping and sorted
         {
             for window in edits.windows(2) {
                 let (range_a, range_b) = (&window[0].0, &window[1].0);
-                debug_assert!(range_a.end < range_b.start);
+                debug_assert!(
+                    range_a.end < range_b.start,
+                    "index edits out of order or overlapping: {:?}",
+                    edits
+                        .iter()
+                        .map(|(range, text)| (range.clone(), text.len()))
+                        .collect::<Vec<_>>()
+                );
             }
         }
 
