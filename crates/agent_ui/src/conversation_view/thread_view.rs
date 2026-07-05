@@ -10585,6 +10585,17 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
+        // A "no model selected" error is stale once the thread has a usable
+        // model
+        if matches!(self.thread_error, Some(ThreadError::NoModelSelected))
+            && self.as_native_thread(cx).is_some_and(|thread| {
+                matches!(thread.read(cx).thread_model(), agent::ThreadModel::Ready(_))
+            })
+        {
+            self.clear_thread_error(cx);
+            return None;
+        }
+
         let callout = match self.thread_error.as_ref()? {
             ThreadError::Other { message, .. } => {
                 self.render_any_thread_error(message.clone(), window, cx)
