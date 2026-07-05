@@ -756,9 +756,10 @@ impl DockerPanel {
                             logs.lines.drain(0..overflow);
                         }
                         // Only pull the view down to the tail while
-                        // following; paused, the buffer keeps growing but
-                        // the scroll position is left alone so the user can
-                        // read back through history without it jumping.
+                        // following; paused, the scroll position is left
+                        // alone so the user can read back through history
+                        // without it jumping. The buffer stays capped at
+                        // MAX_DISPLAYED_LOG_LINES regardless of follow state.
                         if logs.follow {
                             logs.scroll_handle.scroll_to_bottom();
                         }
@@ -775,8 +776,8 @@ impl DockerPanel {
     /// Flips the follow/pause toggle for the currently open logs stream.
     /// Switching back to follow immediately snaps to the tail; pausing
     /// leaves the scroll position where the user left it. The background
-    /// stream in `load_logs` keeps appending to `lines` either way, so
-    /// nothing is lost while paused.
+    /// stream in `load_logs` keeps appending to `lines` either way (still
+    /// capped at MAX_DISPLAYED_LOG_LINES), so pausing only freezes scroll.
     pub(crate) fn toggle_logs_follow(&mut self, cx: &mut Context<Self>) {
         if let Some(logs) = self.logs.as_mut() {
             logs.follow = !logs.follow;
