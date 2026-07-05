@@ -10787,7 +10787,7 @@ impl ThreadView {
 
         let (title, description): (SharedString, SharedString) =
             match thread.read(cx).thread_model() {
-                agent::ThreadModel::Ready(_) => { dbg!("MODEL Ready"); return None },
+                agent::ThreadModel::Ready(_) => return None,
                 agent::ThreadModel::Unresolved(selected_model) => {
                     if let Some(provider) = LanguageModelRegistry::global(cx)
                         .read(cx)

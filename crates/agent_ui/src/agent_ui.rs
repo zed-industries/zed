@@ -857,11 +857,12 @@ fn init_language_model_settings(cx: &mut App) {
         .detach();
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
-        |_, event: &language_model::Event, cx| match event {
+        |registry, event: &language_model::Event, cx| match event {
             language_model::Event::ProviderStateChanged(_)
             | language_model::Event::AddedProvider(_)
             | language_model::Event::RemovedProvider(_)
             | language_model::Event::ProvidersChanged => {
+                registry.update(cx, |registry, cx| registry.refresh_fallback_model(cx));
                 update_active_language_model_from_settings(cx);
             }
             _ => {}
