@@ -668,6 +668,10 @@ mod tests {
                 cx,
             );
 
+            assert!(registry.default_model().is_none());
+
+            registry.set_should_use_fallback(true);
+
             let default_model = registry.default_model().unwrap();
             assert_eq!(default_model.model.id(), model.id());
             assert_eq!(default_model.provider.id(), provider.id());
