@@ -95,7 +95,7 @@ impl MentionUri {
         };
 
         if is_absolute(input, path_style) && !input.contains("://") {
-            return parse_absolute_path(input, path_style, DecodePercentEscapes::Yes)
+            return parse_absolute_path(input)
                 .with_context(|| format!("Invalid absolute path mention URI: {input}"));
         }
 
@@ -282,31 +282,51 @@ impl MentionUri {
         }
     }
 
-    /// Returns the literal (un-decoded) interpretation of a bare-path mention
-    /// target, when it differs from what [`MentionUri::parse`] produces.
+    /// Parses a hyperlink target from agent-authored Markdown.
     ///
-    /// A bare path target containing percent escapes is ambiguous: `parse`
-    /// assumes it's percent-encoded and decodes it, but the file's name may
-    /// literally contain the escape sequence (e.g. `a%20b.rs`). Callers with
-    /// access to the project can prefer this interpretation when a file with
-    /// the literal name actually exists. `file://` (and other) URLs are not
-    /// ambiguous — their escapes are always decoded — so this returns `None`
-    /// for them.
-    pub fn parse_literal(input: &str, path_style: PathStyle) -> Option<Self> {
-        let input = input
-            .strip_prefix('`')
-            .and_then(|input| input.strip_suffix('`'))
-            .unwrap_or(input);
+    /// Agents spell out file hyperlinks in ways [`MentionUri::parse`]
+    /// intentionally does not accept: bare paths with percent-encoded
+    /// characters (`My%20File.rs`) and Windows-compatible spellings such as
+    /// `/C:/foo`, `/c/foo`, or forward slashes. This entry point normalizes
+    /// bare-path targets before parsing them; `parse` stays strict so that
+    /// canonical mention URIs round-trip verbatim and other callers are
+    /// unaffected by these hyperlink heuristics.
+    ///
+    /// Percent escapes that decode to path separators (`%2F`, `%5C`) are
+    /// left encoded, since decoding them would change which directories the
+    /// path traverses rather than a character within one component. A file
+    /// whose name literally contains a decodable escape sequence (e.g.
+    /// `a%20b.rs`) is misread by this default; callers with access to the
+    /// project can use [`MentionUri::parse_hyperlink_literal`] to
+    /// disambiguate.
+    pub fn parse_hyperlink(input: &str, path_style: PathStyle) -> Result<Self> {
+        if let Some(target) = bare_path_target(input, path_style) {
+            return parse_hyperlink_path(target, path_style, DecodePercentEscapes::Yes)
+                .with_context(|| format!("Invalid hyperlink path target: {input}"));
+        }
+        Self::parse(input, path_style)
+    }
 
-        if !is_absolute(input, path_style) || input.contains("://") {
+    /// Returns the literal (un-decoded) interpretation of a bare-path
+    /// hyperlink target, when it differs from what
+    /// [`MentionUri::parse_hyperlink`] produces.
+    ///
+    /// A bare path target containing percent escapes is ambiguous:
+    /// `parse_hyperlink` assumes it's percent-encoded and decodes it, but the
+    /// file's name may literally contain the escape sequence (e.g.
+    /// `a%20b.rs`). Callers with access to the project can fall back to this
+    /// interpretation when the decoded path doesn't resolve. `file://` (and
+    /// other) URLs are not ambiguous — their escapes are always decoded — so
+    /// this returns `None` for them.
+    pub fn parse_hyperlink_literal(input: &str, path_style: PathStyle) -> Option<Self> {
+        let target = bare_path_target(input, path_style)?;
+        // Only differs from `parse_hyperlink` when decoding changes the path
+        // (or its line suffix); the fragment is never decoded.
+        let (path_input, _) = split_path_fragment(target);
+        if !matches!(decode_path_escapes(path_input), Cow::Owned(_)) {
             return None;
         }
-        // Only differs from `parse` when decoding would change the input.
-        match decode(input) {
-            Ok(decoded) if decoded != input => {}
-            _ => return None,
-        }
-        parse_absolute_path(input, path_style, DecodePercentEscapes::No).ok()
+        parse_hyperlink_path(target, path_style, DecodePercentEscapes::No).ok()
     }
 
     /// The absolute path this mention refers to, if it refers to one.
@@ -625,25 +645,50 @@ fn parse_line_range(fragment: &str) -> Result<RangeInclusive<u32>> {
     Ok(start_line..=end_line)
 }
 
-fn parse_absolute_path(
+/// Returns the bare-path form of a mention target: an absolute path that
+/// isn't spelled as a URL. Strips the backticks agents sometimes wrap targets
+/// in.
+fn bare_path_target(input: &str, path_style: PathStyle) -> Option<&str> {
+    let input = input
+        .strip_prefix('`')
+        .and_then(|input| input.strip_suffix('`'))
+        .unwrap_or(input);
+    (is_absolute(input, path_style) && !input.contains("://")).then_some(input)
+}
+
+fn split_path_fragment(input: &str) -> (&str, Option<&str>) {
+    input
+        .split_once('#')
+        .map_or((input, None), |(path, fragment)| (path, Some(fragment)))
+}
+
+fn parse_absolute_path(input: &str) -> Result<MentionUri> {
+    let (path_input, fragment) = split_path_fragment(input);
+    absolute_path_mention(path_input, fragment)
+}
+
+/// Like [`parse_absolute_path`], but normalizes the spellings agents use in
+/// hyperlink targets (see [`normalize_path_mention`]) before parsing.
+fn parse_hyperlink_path(
     input: &str,
     path_style: PathStyle,
     decode_escapes: DecodePercentEscapes,
 ) -> Result<MentionUri> {
-    let (path_input, fragment) = input
-        .split_once('#')
-        .map_or((input, None), |(path, fragment)| (path, Some(fragment)));
+    let (path_input, fragment) = split_path_fragment(input);
     let path_input = normalize_path_mention(path_input, path_style, decode_escapes);
+    absolute_path_mention(&path_input, fragment)
+}
 
+fn absolute_path_mention(path_input: &str, fragment: Option<&str>) -> Result<MentionUri> {
     if let Some(fragment) = fragment.and_then(|fragment| parse_line_range(fragment).ok()) {
         return Ok(MentionUri::Selection {
-            abs_path: Some(path_input.as_ref().into()),
+            abs_path: Some(path_input.into()),
             line_range: fragment,
             column: None,
         });
     }
 
-    let path_with_position = PathWithPosition::parse_str(path_input.as_ref());
+    let path_with_position = PathWithPosition::parse_str(path_input);
     let abs_path = path_with_position.path;
     if let Some(row) = path_with_position.row {
         let line = row
@@ -661,22 +706,23 @@ fn parse_absolute_path(
     }
 }
 
-/// Normalizes a path-like mention target (e.g. a Markdown hyperlink target
-/// emitted by an agent) so it can be parsed as a native path.
+/// Normalizes a path-like hyperlink target emitted by an agent so it can be
+/// parsed as a native path.
 ///
-/// Percent escapes are decoded because agents frequently percent-encode
-/// hyperlink targets (`My%20File.rs`). A file whose name literally contains a
-/// valid escape sequence (e.g. `a%20b.rs`) is misread by this default; the
-/// two cases can't be distinguished syntactically, so callers with access to
-/// the project can use `MentionUri::parse_literal` to check whether a file
-/// with the un-decoded name exists and prefer that interpretation.
+/// Percent escapes are decoded (see [`decode_path_escapes`]) because agents
+/// frequently percent-encode hyperlink targets (`My%20File.rs`). A file whose
+/// name literally contains a valid escape sequence (e.g. `a%20b.rs`) is
+/// misread by this default; the two cases can't be distinguished
+/// syntactically, so callers with access to the project can use
+/// `MentionUri::parse_hyperlink_literal` to check whether a file with the
+/// un-decoded name exists and prefer that interpretation.
 fn normalize_path_mention(
     input: &str,
     path_style: PathStyle,
     decode_escapes: DecodePercentEscapes,
 ) -> Cow<'_, str> {
     let decoded = match decode_escapes {
-        DecodePercentEscapes::Yes => decode(input).unwrap_or(Cow::Borrowed(input)),
+        DecodePercentEscapes::Yes => decode_path_escapes(input),
         DecodePercentEscapes::No => Cow::Borrowed(input),
     };
     if !path_style.is_windows() {
@@ -685,6 +731,57 @@ fn normalize_path_mention(
     match to_native_windows_path(&decoded) {
         Some(native) => Cow::Owned(native),
         None => decoded,
+    }
+}
+
+/// Decodes percent escapes in a path-like hyperlink target.
+///
+/// Differs from a generic URL decoder in two ways required for paths:
+/// escapes that decode to path separators (`%2F`, `%5C`) are left encoded so
+/// decoding can't change which directories the path traverses (e.g.
+/// introduce `../` traversal), and invalid escape sequences or escapes
+/// decoding to invalid UTF-8 leave the input unchanged rather than failing.
+///
+/// Returns `Cow::Owned` if and only if decoding changed the input.
+fn decode_path_escapes(input: &str) -> Cow<'_, str> {
+    fn hex_digit(byte: u8) -> Option<u8> {
+        match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            b'A'..=b'F' => Some(byte - b'A' + 10),
+            _ => None,
+        }
+    }
+
+    if !input.contains('%') {
+        return Cow::Borrowed(input);
+    }
+    let bytes = input.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && let Some(high) = bytes.get(index + 1).copied().and_then(hex_digit)
+            && let Some(low) = bytes.get(index + 2).copied().and_then(hex_digit)
+        {
+            let byte = (high << 4) | low;
+            if byte != b'/' && byte != b'\\' {
+                decoded.push(byte);
+                index += 3;
+                continue;
+            }
+        }
+        decoded.push(bytes[index]);
+        index += 1;
+    }
+    if decoded == bytes {
+        return Cow::Borrowed(input);
+    }
+    match String::from_utf8(decoded) {
+        Ok(decoded) => Cow::Owned(decoded),
+        // Some escape decoded to invalid UTF-8; treat the whole input as a
+        // literal path, matching how invalid escape sequences are handled.
+        Err(_) => Cow::Borrowed(input),
     }
 }
 
@@ -897,7 +994,7 @@ mod tests {
 
     #[test]
     fn test_parse_windows_drive_path_with_leading_slash_and_line() {
-        let parsed = MentionUri::parse(
+        let parsed = MentionUri::parse_hyperlink(
             "/C:/Projects/Example Workspace/Cargo.toml:2",
             PathStyle::Windows,
         )
@@ -920,7 +1017,7 @@ mod tests {
 
     #[test]
     fn test_parse_windows_path_with_percent_escaped_spaces_and_line() {
-        let parsed = MentionUri::parse(
+        let parsed = MentionUri::parse_hyperlink(
             "C:\\Projects\\Example%20Workspace\\path\\to\\filename.ext:42",
             PathStyle::Windows,
         )
@@ -943,7 +1040,7 @@ mod tests {
 
     #[test]
     fn test_parse_windows_compat_path_with_spaces() {
-        let parsed = MentionUri::parse(
+        let parsed = MentionUri::parse_hyperlink(
             "/c/Projects/Example Workspace/AGENTS.md",
             PathStyle::Windows,
         )
@@ -961,7 +1058,8 @@ mod tests {
 
     #[test]
     fn test_parse_windows_drive_path_with_leading_slash_and_fragment_line() {
-        let parsed = MentionUri::parse("/C:/Projects/Cargo.toml#L4", PathStyle::Windows).unwrap();
+        let parsed =
+            MentionUri::parse_hyperlink("/C:/Projects/Cargo.toml#L4", PathStyle::Windows).unwrap();
         match parsed {
             MentionUri::Selection {
                 abs_path: Some(abs_path),
@@ -977,7 +1075,7 @@ mod tests {
 
     #[test]
     fn test_windows_drive_path_with_leading_slash_round_trips() {
-        let parsed = MentionUri::parse("/C:/dir/file.rs", PathStyle::Windows).unwrap();
+        let parsed = MentionUri::parse_hyperlink("/C:/dir/file.rs", PathStyle::Windows).unwrap();
         assert_eq!(
             parsed,
             MentionUri::File {
@@ -991,7 +1089,8 @@ mod tests {
 
     #[test]
     fn test_parse_windows_unc_path() {
-        let parsed = MentionUri::parse("//server/share/dir/file.rs", PathStyle::Windows).unwrap();
+        let parsed =
+            MentionUri::parse_hyperlink("//server/share/dir/file.rs", PathStyle::Windows).unwrap();
         match parsed {
             MentionUri::File { abs_path } => {
                 assert_eq!(abs_path, PathBuf::from("\\\\server\\share\\dir\\file.rs"));
@@ -1011,7 +1110,7 @@ mod tests {
             "c:\\foo\\bar.rs",
             "c:/foo/bar.rs",
         ] {
-            let parsed = MentionUri::parse(input, PathStyle::Windows).unwrap();
+            let parsed = MentionUri::parse_hyperlink(input, PathStyle::Windows).unwrap();
             assert_eq!(
                 parsed,
                 MentionUri::File {
@@ -1026,7 +1125,7 @@ mod tests {
     fn test_msys_style_paths_require_lowercase_drive() {
         // `/C/foo` (uppercase) is more likely a real single-letter directory
         // than a Git Bash drive prefix, so it is left untouched.
-        let parsed = MentionUri::parse("/C/Users/readme.md", PathStyle::Windows).unwrap();
+        let parsed = MentionUri::parse_hyperlink("/C/Users/readme.md", PathStyle::Windows).unwrap();
         match parsed {
             MentionUri::File { abs_path } => {
                 assert_eq!(abs_path, PathBuf::from("\\C\\Users\\readme.md"));
@@ -1037,7 +1136,8 @@ mod tests {
 
     #[test]
     fn test_posix_paths_are_not_rewritten_as_windows_drives() {
-        let parsed = MentionUri::parse("/c/Projects/AGENTS.md", PathStyle::Posix).unwrap();
+        let parsed =
+            MentionUri::parse_hyperlink("/c/Projects/AGENTS.md", PathStyle::Posix).unwrap();
         match parsed {
             MentionUri::File { abs_path } => {
                 assert_eq!(abs_path, PathBuf::from("/c/Projects/AGENTS.md"));
@@ -1047,31 +1147,74 @@ mod tests {
     }
 
     #[test]
-    fn test_bare_path_percent_escapes_are_decoded() {
-        // Valid percent escapes in bare path mentions are decoded on every
-        // platform; `parse_literal` provides the alternative interpretation
-        // for files whose names literally contain an escape sequence.
-        let parsed = MentionUri::parse("/tmp/a%20b.rs", PathStyle::Posix).unwrap();
-        match parsed {
-            MentionUri::File { abs_path } => {
-                assert_eq!(abs_path, PathBuf::from("/tmp/a b.rs"));
+    fn test_hyperlink_percent_escapes_are_decoded() {
+        // Valid percent escapes in bare path hyperlink targets are decoded on
+        // every platform; `parse_hyperlink_literal` provides the alternative
+        // interpretation for files whose names literally contain an escape
+        // sequence.
+        let parsed = MentionUri::parse_hyperlink("/tmp/a%20b.rs", PathStyle::Posix).unwrap();
+        assert_eq!(
+            parsed,
+            MentionUri::File {
+                abs_path: PathBuf::from("/tmp/a b.rs")
             }
-            other => panic!("Expected File variant, got {other:?}"),
-        }
+        );
 
         // Invalid escape sequences pass through unchanged.
-        let parsed = MentionUri::parse("C:\\dir\\100%_done.txt", PathStyle::Windows).unwrap();
-        match parsed {
-            MentionUri::File { abs_path } => {
-                assert_eq!(abs_path, PathBuf::from("C:\\dir\\100%_done.txt"));
+        let parsed =
+            MentionUri::parse_hyperlink("C:\\dir\\100%_done.txt", PathStyle::Windows).unwrap();
+        assert_eq!(
+            parsed,
+            MentionUri::File {
+                abs_path: PathBuf::from("C:\\dir\\100%_done.txt")
             }
-            other => panic!("Expected File variant, got {other:?}"),
-        }
+        );
+
+        // Escapes that decode to path separators stay encoded, so decoding
+        // can't change which directories the path traverses.
+        let parsed = MentionUri::parse_hyperlink("/tmp/a%2Fb.rs", PathStyle::Posix).unwrap();
+        assert_eq!(
+            parsed,
+            MentionUri::File {
+                abs_path: PathBuf::from("/tmp/a%2Fb.rs")
+            }
+        );
+        let parsed =
+            MentionUri::parse_hyperlink("/tmp/..%2F..%2Fsecret", PathStyle::Posix).unwrap();
+        assert_eq!(
+            parsed,
+            MentionUri::File {
+                abs_path: PathBuf::from("/tmp/..%2F..%2Fsecret")
+            }
+        );
     }
 
     #[test]
-    fn test_parse_literal_keeps_percent_escapes() {
-        let literal = MentionUri::parse_literal("/tmp/a%20b.rs", PathStyle::Posix).unwrap();
+    fn test_parse_keeps_bare_path_targets_verbatim() {
+        // Hyperlink normalization is opt-in via `parse_hyperlink`; `parse`
+        // treats bare paths verbatim so canonical mention URIs and resource
+        // links are unaffected by hyperlink heuristics.
+        let parsed = MentionUri::parse("/tmp/a%20b.rs", PathStyle::Posix).unwrap();
+        assert_eq!(
+            parsed,
+            MentionUri::File {
+                abs_path: PathBuf::from("/tmp/a%20b.rs")
+            }
+        );
+
+        let parsed = MentionUri::parse("/c/Projects/AGENTS.md", PathStyle::Windows).unwrap();
+        assert_eq!(
+            parsed,
+            MentionUri::File {
+                abs_path: PathBuf::from("/c/Projects/AGENTS.md")
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_hyperlink_literal_keeps_percent_escapes() {
+        let literal =
+            MentionUri::parse_hyperlink_literal("/tmp/a%20b.rs", PathStyle::Posix).unwrap();
         assert_eq!(
             literal,
             MentionUri::File {
@@ -1080,7 +1223,8 @@ mod tests {
         );
 
         // Line suffixes still parse.
-        let literal = MentionUri::parse_literal("/tmp/a%20b.rs:42", PathStyle::Posix).unwrap();
+        let literal =
+            MentionUri::parse_hyperlink_literal("/tmp/a%20b.rs:42", PathStyle::Posix).unwrap();
         assert_eq!(
             literal,
             MentionUri::Selection {
@@ -1091,7 +1235,8 @@ mod tests {
         );
 
         // Windows normalization still applies.
-        let literal = MentionUri::parse_literal("/C:/dir/a%20b.rs", PathStyle::Windows).unwrap();
+        let literal =
+            MentionUri::parse_hyperlink_literal("/C:/dir/a%20b.rs", PathStyle::Windows).unwrap();
         assert_eq!(
             literal,
             MentionUri::File {
@@ -1101,25 +1246,30 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_literal_returns_none_when_unambiguous() {
-        // No percent escapes: identical to `parse`.
+    fn test_parse_hyperlink_literal_returns_none_when_unambiguous() {
+        // No percent escapes: identical to `parse_hyperlink`.
         assert_eq!(
-            MentionUri::parse_literal("/tmp/a b.rs", PathStyle::Posix),
+            MentionUri::parse_hyperlink_literal("/tmp/a b.rs", PathStyle::Posix),
             None
         );
-        // Invalid escape sequences are also left alone by `parse`.
+        // Invalid escape sequences are also left alone by `parse_hyperlink`.
         assert_eq!(
-            MentionUri::parse_literal("/tmp/100%_done.txt", PathStyle::Posix),
+            MentionUri::parse_hyperlink_literal("/tmp/100%_done.txt", PathStyle::Posix),
+            None
+        );
+        // Separator escapes are never decoded, so they're not ambiguous.
+        assert_eq!(
+            MentionUri::parse_hyperlink_literal("/tmp/a%2Fb.rs", PathStyle::Posix),
             None
         );
         // URLs are spec-encoded, not ambiguous.
         assert_eq!(
-            MentionUri::parse_literal("file:///tmp/a%20b.rs", PathStyle::Posix),
+            MentionUri::parse_hyperlink_literal("file:///tmp/a%20b.rs", PathStyle::Posix),
             None
         );
         // Relative paths are not bare-path mentions.
         assert_eq!(
-            MentionUri::parse_literal("tmp/a%20b.rs", PathStyle::Posix),
+            MentionUri::parse_hyperlink_literal("tmp/a%20b.rs", PathStyle::Posix),
             None
         );
     }

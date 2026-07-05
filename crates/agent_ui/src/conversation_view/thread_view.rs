@@ -11960,33 +11960,32 @@ pub(crate) fn open_link(
     };
 
     let path_style = workspace.read(cx).path_style(cx);
-    if let Some(mention) = MentionUri::parse(&url, path_style).log_err() {
-        // A bare path target with percent escapes is ambiguous: `parse`
-        // decodes them, but the file may literally be named with the escape
-        // sequence (e.g. `a%20b.rs`). Prefer the literal interpretation when
-        // such a file actually exists in the project.
-        let mention = MentionUri::parse_literal(&url, path_style)
-            .filter(|literal| {
-                literal.abs_path().is_some_and(|abs_path| {
-                    let project = workspace.read(cx).project().read(cx);
-                    project
-                        .find_project_path(abs_path, cx)
-                        .is_some_and(|path| project.entry_for_path(&path, cx).is_some())
-                })
+    if let Some(mention) = MentionUri::parse_hyperlink(&url, path_style).log_err() {
+        // A bare path target with percent escapes is ambiguous:
+        // `parse_hyperlink` decodes them, but the file may literally be named
+        // with the escape sequence (e.g. `a%20b.rs`). Prefer the decoded
+        // interpretation, and fall back to the literal one only when the
+        // decoded path doesn't resolve in the project but the literal one
+        // does.
+        let resolves_in_project = |mention: &MentionUri, cx: &App| {
+            mention.abs_path().is_some_and(|abs_path| {
+                let project = workspace.read(cx).project().read(cx);
+                project
+                    .find_project_path(abs_path, cx)
+                    .is_some_and(|path| project.entry_for_path(&path, cx).is_some())
             })
-            .unwrap_or(mention);
+        };
+        let mention = match MentionUri::parse_hyperlink_literal(&url, path_style) {
+            Some(literal)
+                if !resolves_in_project(&mention, cx) && resolves_in_project(&literal, cx) =>
+            {
+                literal
+            }
+            _ => mention,
+        };
         workspace.update(cx, |workspace, cx| match mention {
             MentionUri::File { abs_path } => {
-                let project = workspace.project();
-                let Some(path) =
-                    project.update(cx, |project, cx| project.find_project_path(abs_path, cx))
-                else {
-                    return;
-                };
-
-                workspace
-                    .open_path(path, None, true, window, cx)
-                    .detach_and_log_err(cx);
+                open_abs_path_at_point(workspace, abs_path, None, window, cx);
             }
             MentionUri::PastedImage { .. } => {}
             MentionUri::Directory { abs_path } => {
@@ -12010,7 +12009,7 @@ pub(crate) fn open_link(
                 open_abs_path_at_point(
                     workspace,
                     path,
-                    Point::new(*line_range.start(), 0),
+                    Some(Point::new(*line_range.start(), 0)),
                     window,
                     cx,
                 );
@@ -12023,7 +12022,7 @@ pub(crate) fn open_link(
                 open_abs_path_at_point(
                     workspace,
                     path,
-                    Point::new(*line_range.start(), column.unwrap_or(0)),
+                    Some(Point::new(*line_range.start(), column.unwrap_or(0))),
                     window,
                     cx,
                 );
@@ -12110,6 +12109,7 @@ mod tests {
     use super::*;
     use project::{FakeFs, Project};
     use serde_json::json;
+    use std::path::Path;
     use util::path;
     use workspace::MultiWorkspace;
 
@@ -12216,16 +12216,21 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_open_link_prefers_literal_percent_named_file(cx: &mut gpui::TestAppContext) {
+    async fn test_open_link_percent_escape_disambiguation(cx: &mut gpui::TestAppContext) {
         crate::test_support::init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        // `a%20b.rs` literally contains a percent escape; `a b.rs` is what the
-        // link decodes to. Both exist, plus a `c d.rs` that only exists with a
-        // space in its name.
+        // `a%20b.rs` literally contains a percent escape and `a b.rs` is what
+        // it decodes to; both exist. `c d.rs` exists only with a space in its
+        // name, and `e%20f.rs` exists only with a literal escape.
         fs.insert_tree(
             path!("/project"),
-            json!({"a%20b.rs": "literal", "a b.rs": "decoded", "c d.rs": ""}),
+            json!({
+                "a%20b.rs": "literal",
+                "a b.rs": "decoded",
+                "c d.rs": "",
+                "e%20f.rs": "",
+            }),
         )
         .await;
 
@@ -12235,33 +12240,96 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let workspace_weak = workspace.downgrade();
 
-        // A file literally named with the escape exists: prefer it over the
-        // decoded interpretation.
-        let url: SharedString = path!("/project/a%20b.rs").to_string().into();
+        let open_link_and_active_path = |url: String, cx: &mut gpui::VisualTestContext| {
+            multi_workspace.update_in(cx, |_, window, cx| {
+                open_link(url.into(), &workspace_weak, window, cx);
+            });
+            cx.run_until_parked();
+            workspace.read_with(cx, |workspace, cx| {
+                workspace
+                    .active_item(cx)
+                    .and_then(|item| item.project_path(cx))
+                    .expect("file should be open")
+                    .path
+            })
+        };
+
+        // Both interpretations exist: the decoded one wins, since agents
+        // conventionally percent-encode hyperlink targets.
+        let path = open_link_and_active_path(path!("/project/a%20b.rs").to_string(), cx);
+        assert_eq!(*path, *"a b.rs");
+
+        // Only the decoded file exists.
+        let path = open_link_and_active_path(path!("/project/c%20d.rs").to_string(), cx);
+        assert_eq!(*path, *"c d.rs");
+
+        // The decoded file doesn't exist, but a file literally named with the
+        // escape does: fall back to it.
+        let path = open_link_and_active_path(path!("/project/e%20f.rs").to_string(), cx);
+        assert_eq!(*path, *"e%20f.rs");
+    }
+
+    #[gpui::test]
+    async fn test_open_link_out_of_project_path(cx: &mut gpui::TestAppContext) {
+        crate::test_support::init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/project"), json!({"src": {"main.rs": ""}}))
+            .await;
+        fs.insert_tree(path!("/outside"), json!({"notes.md": "one\ntwo\nthree\n"}))
+            .await;
+
+        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let workspace_weak = workspace.downgrade();
+
+        // A hyperlink to a nonexistent out-of-project path opens nothing (in
+        // particular, no empty buffer is created for it).
         multi_workspace.update_in(cx, |_, window, cx| {
-            open_link(url, &workspace_weak, window, cx);
+            open_link(
+                path!("/outside/missing.md").to_string().into(),
+                &workspace_weak,
+                window,
+                cx,
+            );
         });
         cx.run_until_parked();
         workspace.read_with(cx, |workspace, cx| {
-            let active = workspace
-                .active_item(cx)
-                .and_then(|item| item.project_path(cx))
-                .expect("file should be open");
-            assert!(*active.path == *"a%20b.rs", "got {:?}", active.path);
+            assert!(
+                workspace.active_item(cx).is_none(),
+                "nothing should open for a nonexistent path"
+            );
         });
 
-        // No literal file: fall back to decoding the escape.
-        let url: SharedString = path!("/project/c%20d.rs").to_string().into();
+        // A hyperlink to an existing file outside the project's worktrees
+        // opens it and places the cursor on the linked line.
         multi_workspace.update_in(cx, |_, window, cx| {
-            open_link(url, &workspace_weak, window, cx);
+            open_link(
+                format!("{}:2", path!("/outside/notes.md")).into(),
+                &workspace_weak,
+                window,
+                cx,
+            );
         });
         cx.run_until_parked();
-        workspace.read_with(cx, |workspace, cx| {
-            let active = workspace
-                .active_item(cx)
-                .and_then(|item| item.project_path(cx))
-                .expect("file should be open");
-            assert!(*active.path == *"c d.rs", "got {:?}", active.path);
+        let editor = workspace.read_with(cx, |workspace, cx| {
+            let item = workspace.active_item(cx).expect("file should be open");
+            let project_path = item.project_path(cx).expect("item should have a path");
+            let abs_path = workspace
+                .project()
+                .read(cx)
+                .absolute_path(&project_path, cx);
+            assert_eq!(
+                abs_path.as_deref(),
+                Some(Path::new(path!("/outside/notes.md")))
+            );
+            item.downcast::<Editor>().expect("should be an editor")
+        });
+        editor.update_in(cx, |editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            assert_eq!(editor.selections.newest::<Point>(&snapshot).head().row, 1);
         });
     }
 }

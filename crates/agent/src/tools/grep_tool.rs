@@ -399,6 +399,7 @@ mod tests {
     use project::{FakeFs, Project};
     use serde_json::json;
     use settings::SettingsStore;
+    use std::path::PathBuf;
     use unindent::Unindent;
     use util::path;
 
@@ -619,7 +620,7 @@ mod tests {
 
         let selection_uri = |abs_path: &str| {
             MentionUri::Selection {
-                abs_path: Some(std::path::PathBuf::from(abs_path)),
+                abs_path: Some(PathBuf::from(abs_path)),
                 line_range: 0..=0,
                 column: None,
             }
