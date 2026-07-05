@@ -517,37 +517,11 @@ impl DiffMultibuffer {
 
         let editor = self.editor.read(cx).rhs_editor().clone();
         let ranges = self.hunk_action_ranges(cx);
-        self.unstage_staged_hunks(editor, ranges, move_to_next, window, cx);
-    }
-
-    pub(crate) fn unstage_staged_hunks(
-        &mut self,
-        editor: Entity<Editor>,
-        ranges: Vec<std::ops::Range<multi_buffer::Anchor>>,
-        move_to_next: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.is_staged_mode(cx) {
-            return;
-        }
-
-        let mut ranges_by_buffer_id: HashMap<BufferId, Vec<_>> = HashMap::default();
+        // Route through the editor's delegated stage path, the same path taken
+        // by the hunk buttons (on either side of a split) and the keyboard.
         editor.update(cx, |editor, cx| {
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            for hunk in editor.diff_hunks_in_ranges(&ranges, &snapshot) {
-                ranges_by_buffer_id
-                    .entry(hunk.buffer_id)
-                    .or_default()
-                    .push(hunk.buffer_range.clone());
-            }
+            editor.stage_or_unstage_diff_hunks(false, ranges, cx);
         });
-        if ranges_by_buffer_id.is_empty() {
-            return;
-        }
-
-        self.unstage_index_ranges(ranges_by_buffer_id, cx);
-
         if move_to_next {
             editor
                 .focus_handle(cx)

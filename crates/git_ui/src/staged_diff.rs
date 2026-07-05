@@ -129,12 +129,8 @@ impl StagedDiff {
         workspace: Entity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let staged_diff = cx.weak_entity();
         diff.update(cx, |diff, cx| {
-            diff.set_render_diff_hunk_controls(
-                render_unstage_staged_hunk_controls(staged_diff),
-                cx,
-            );
+            diff.set_render_diff_hunk_controls(render_unstage_staged_hunk_controls(), cx);
         });
         let diff_event_subscription = cx.subscribe(&diff, |_, _, event: &EditorEvent, cx| {
             cx.emit(event.clone())
@@ -160,19 +156,6 @@ impl StagedDiff {
     ) {
         self.diff.update(cx, |diff, cx| {
             diff.unstage_selected_staged_hunks(move_to_next, window, cx)
-        });
-    }
-
-    fn unstage_staged_hunks(
-        &mut self,
-        editor: Entity<Editor>,
-        ranges: Vec<std::ops::Range<multi_buffer::Anchor>>,
-        move_to_next: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.diff.update(cx, |diff, cx| {
-            diff.unstage_staged_hunks(editor, ranges, move_to_next, window, cx)
         });
     }
 }
@@ -408,9 +391,7 @@ impl Render for StagedDiff {
     }
 }
 
-fn render_unstage_staged_hunk_controls(
-    staged_diff: WeakEntity<StagedDiff>,
-) -> RenderDiffHunkControlsFn {
+fn render_unstage_staged_hunk_controls() -> RenderDiffHunkControlsFn {
     Arc::new(
         move |row, status, hunk_range, _is_created_file, line_height, editor, _window, cx| {
             if !ProjectSettings::get_global(cx)
@@ -419,9 +400,6 @@ fn render_unstage_staged_hunk_controls(
             {
                 return gpui::Empty.into_any_element();
             }
-            let Some(staged_diff) = staged_diff.upgrade() else {
-                return gpui::Empty.into_any_element();
-            };
             let hunk_range = hunk_range.start..hunk_range.start;
             h_flex()
                 .h(line_height)
@@ -442,13 +420,14 @@ fn render_unstage_staged_hunk_controls(
                         .tooltip(Tooltip::text("Unstage Hunk"))
                         .on_click({
                             let editor = editor.clone();
-                            move |_event, window, cx| {
-                                staged_diff.update(cx, |staged_diff, cx| {
-                                    staged_diff.unstage_staged_hunks(
-                                        editor.clone(),
-                                        vec![hunk_range.clone()],
+                            // Route through the editor's delegated stage path so
+                            // the hunk resolves in the coordinates of whichever
+                            // editor (LHS or RHS) rendered the button.
+                            move |_event, _window, cx| {
+                                editor.update(cx, |editor, cx| {
+                                    editor.stage_or_unstage_diff_hunks(
                                         false,
-                                        window,
+                                        vec![hunk_range.clone()],
                                         cx,
                                     );
                                 });
@@ -901,6 +880,108 @@ mod tests {
                 0
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_unstage_from_lhs_of_split_staged_view(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.editor.diff_view_style = Some(DiffViewStyle::Split);
+                });
+            });
+        });
+
+        let committed_contents = r#"
+            fn main() {
+                println!("hello world");
+            }
+        "#
+        .unindent();
+        let staged_contents = r#"
+            fn main() {
+                println!("goodbye world");
+            }
+        "#
+        .unindent();
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "src": {
+                    "main.rs": staged_contents.clone(),
+                }
+            }),
+        )
+        .await;
+        fs.set_head_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("src/main.rs", committed_contents.clone())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            Path::new(path!("/project/.git")),
+            &[("src/main.rs", staged_contents)],
+        );
+        let repo = fs
+            .open_repo(path!("/project/.git").as_ref(), Some("git".as_ref()))
+            .unwrap();
+
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        cx.run_until_parked();
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            StagedDiff::deploy_at(workspace, None, window, cx);
+        });
+        cx.run_until_parked();
+
+        let (rhs_editor, lhs_editor, lhs_hunk_anchor) = workspace.update(cx, |workspace, cx| {
+            let staged_diff = workspace.active_item_as::<StagedDiff>(cx).unwrap();
+            let splittable = staged_diff.read(cx).diff.read(cx).editor().clone();
+            let splittable = splittable.read(cx);
+            let rhs_editor = splittable.rhs_editor().clone();
+            let lhs_editor = splittable
+                .lhs_editor()
+                .expect("split view has an lhs")
+                .clone();
+            let snapshot = lhs_editor.read(cx).buffer().read(cx).snapshot(cx);
+            let hunk = snapshot
+                .diff_hunks()
+                .next()
+                .expect("lhs shows the staged hunk");
+            let anchor = snapshot.anchor_before(Point::new(hunk.row_range.start.0, 0));
+            (rhs_editor, lhs_editor, anchor)
+        });
+
+        // Simulate the LHS hunk button, which routes through the delegated
+        // stage path with a zero-width range at the hunk.
+        lhs_editor.update_in(cx, |editor, _window, cx| {
+            editor.stage_or_unstage_diff_hunks(false, vec![lhs_hunk_anchor..lhs_hunk_anchor], cx);
+        });
+        cx.run_until_parked();
+
+        rhs_editor.read_with(cx, |editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            assert_eq!(
+                editor
+                    .diff_hunks_in_ranges(&[editor::Anchor::Min..editor::Anchor::Max], &snapshot)
+                    .count(),
+                0
+            );
+        });
+        assert_eq!(
+            repo.load_index_text(RepoPath::from_rel_path(rel_path("src/main.rs")))
+                .await
+                .unwrap(),
+            committed_contents
+        );
     }
 
     #[gpui::test]
