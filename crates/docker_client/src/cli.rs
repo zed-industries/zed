@@ -132,11 +132,41 @@ impl DockerClient for CliDockerClient {
 
     async fn container_logs(
         &self,
-        _endpoint: &DockerEndpoint,
-        _id: &str,
-        _tail: usize,
+        endpoint: &DockerEndpoint,
+        id: &str,
+        tail: usize,
     ) -> Result<futures::channel::mpsc::UnboundedReceiver<LogChunk>> {
-        anyhow::bail!("not implemented")
+        use tokio::io::{AsyncBufReadExt as _, BufReader};
+
+        let tail = tail.to_string();
+        let mut cmd = command(endpoint, &["logs", "-f", "--tail", &tail, id]);
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn().context("spawning `docker logs -f`")?;
+        let stdout = child
+            .stdout
+            .take()
+            .context("capturing docker logs stdout")?;
+        let (tx, rx) = futures::channel::mpsc::unbounded();
+        tokio::spawn(async move {
+            let _child = child; // kept alive (kill_on_drop) until this task ends
+            let mut lines = BufReader::new(stdout).lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        if tx.unbounded_send(LogChunk { line }).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        log::warn!("docker logs read error: {error}");
+                        break;
+                    }
+                }
+            }
+        });
+        Ok(rx)
     }
 }
 
@@ -187,5 +217,42 @@ mod tests {
         client.restart_container(&ep, "zed-db-test").await.unwrap();
         let containers = client.list_containers(&ep).await.unwrap();
         assert!(containers.iter().any(|c| c.names.contains("zed-db-test")));
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn cli_streams_logs_from_known_container() {
+        use futures::StreamExt as _;
+
+        let client = CliDockerClient;
+        let ep = DockerEndpoint {
+            name: "local".into(),
+            kind: EndpointKind::Local,
+            read_only: false,
+        };
+        // Expects a running container named `zed-db-test` to exist locally.
+        let mut rx = client.container_logs(&ep, "zed-db-test", 10).await.unwrap();
+
+        let mut saw_non_empty_line = false;
+        for _ in 0..50 {
+            match tokio::time::timeout(std::time::Duration::from_secs(1), rx.next()).await {
+                Ok(Some(chunk)) => {
+                    if !chunk.line.is_empty() {
+                        saw_non_empty_line = true;
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(_) => continue,
+            }
+        }
+        assert!(
+            saw_non_empty_line,
+            "expected at least one non-empty log line from zed-db-test"
+        );
+
+        // Dropping the receiver should let the background task's child (kill_on_drop) exit;
+        // this is best-effort since we can't directly observe the spawned tokio task.
+        drop(rx);
     }
 }
