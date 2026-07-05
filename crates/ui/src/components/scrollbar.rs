@@ -391,7 +391,7 @@ impl Scrollbars {
 }
 
 impl Scrollbars {
-    pub fn new_with_setting(show_along: ScrollAxes, get_visibility: fn(&App) -> ShowScrollbar) -> Self {
+    fn new_with_setting(show_along: ScrollAxes, get_visibility: fn(&App) -> ShowScrollbar) -> Self {
         Self {
             id: None,
             get_visibility,

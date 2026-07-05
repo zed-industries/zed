@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorEvent, EditorSettings, MultiBufferOffset, SelectionEffects};
+use editor::{Editor, EditorEvent, EditorSettingsScrollbarProxy, MultiBufferOffset, SelectionEffects};
 use gpui::{
     App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
     InteractiveElement, IntoElement, IsZero, Pixels, Render, Resource, RetainAllImageCache,
@@ -1321,12 +1321,9 @@ impl Render for MarkdownPreviewView {
                 ),
             )
             .custom_scrollbars(
-                Scrollbars::new_with_setting(
-                    ScrollAxes::Vertical,
-                    |cx| EditorSettings::get_global(cx).scrollbar.show,
-                )
-                .tracked_scroll_handle(&self.scroll_handle)
-                .ensure_id(core::panic::Location::caller()),
+                Scrollbars::for_settings::<EditorSettingsScrollbarProxy>()
+                    .show_along(ScrollAxes::Vertical)
+                    .tracked_scroll_handle(&self.scroll_handle),
                 window,
                 cx,
             )
