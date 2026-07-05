@@ -22,6 +22,14 @@ pub struct DockerEndpoint {
     pub read_only: bool,
 }
 
+/// A context reported by `docker context ls`, used to auto-discover endpoints
+/// beyond what the user has explicitly configured.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DockerContext {
+    pub name: String,
+    pub docker_endpoint: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContainerState {
     Running,
@@ -78,8 +86,47 @@ pub fn docker_host_for(endpoint: &DockerEndpoint) -> Option<String> {
     }
 }
 
+/// Parses a context's `DockerEndpoint` string (e.g. `"ssh://user@host"` or
+/// `"unix:///var/run/docker.sock"`) into an [`EndpointKind`]. Anything that
+/// isn't an `ssh://` URL (unix sockets, `"default"`, npipe, etc.) is treated
+/// as [`EndpointKind::Local`].
+fn endpoint_kind_from_docker_endpoint(docker_endpoint: &str) -> EndpointKind {
+    match docker_endpoint.strip_prefix("ssh://") {
+        Some(host) => EndpointKind::Ssh {
+            host: host.to_string(),
+        },
+        None => EndpointKind::Local,
+    }
+}
+
+/// Merges auto-discovered `docker context ls` contexts into the user's
+/// configured endpoints. Configured entries always win by name: a context
+/// whose name clashes with a configured endpoint is ignored. Every other
+/// context becomes a new [`DockerEndpoint`] with `read_only: false`.
+pub fn merge_endpoints(
+    configured: Vec<DockerEndpoint>,
+    contexts: Vec<DockerContext>,
+) -> Vec<DockerEndpoint> {
+    let mut merged = configured;
+    for context in contexts {
+        if merged.iter().any(|endpoint| endpoint.name == context.name) {
+            continue;
+        }
+        merged.push(DockerEndpoint {
+            name: context.name,
+            kind: endpoint_kind_from_docker_endpoint(&context.docker_endpoint),
+            read_only: false,
+        });
+    }
+    merged
+}
+
 #[async_trait::async_trait]
 pub trait DockerClient: Send + Sync {
+    /// Runs `docker context ls` on the LOCAL docker CLI (no endpoint argument:
+    /// contexts are a property of the local docker config, not of a remote
+    /// daemon) to discover endpoints beyond what's explicitly configured.
+    async fn list_contexts(&self) -> Result<Vec<DockerContext>>;
     /// Runs `docker version` to verify the endpoint is reachable.
     async fn test_endpoint(&self, endpoint: &DockerEndpoint) -> Result<()>;
     async fn list_containers(&self, endpoint: &DockerEndpoint) -> Result<Vec<Container>>;
@@ -141,6 +188,44 @@ mod tests {
         assert_eq!(
             docker_host_for(&remote),
             Some("ssh://deploy@1.2.3.4".to_string())
+        );
+    }
+
+    #[test]
+    fn merge_prefers_configured_and_imports_new_contexts() {
+        let configured = vec![DockerEndpoint {
+            name: "prod".into(),
+            kind: EndpointKind::Ssh {
+                host: "me@h".into(),
+            },
+            read_only: true,
+        }];
+        let contexts = vec![
+            DockerContext {
+                name: "prod".into(),
+                docker_endpoint: "ssh://other@h2".into(),
+            }, // ignored (name clash)
+            DockerContext {
+                name: "staging".into(),
+                docker_endpoint: "ssh://deploy@stg".into(),
+            },
+            DockerContext {
+                name: "default".into(),
+                docker_endpoint: "unix:///var/run/docker.sock".into(),
+            },
+        ];
+        let merged = merge_endpoints(configured, contexts);
+        let prod = merged.iter().find(|e| e.name == "prod").unwrap();
+        assert!(prod.read_only); // configured wins
+        assert!(
+            merged
+                .iter()
+                .any(|e| e.name == "staging" && matches!(e.kind, EndpointKind::Ssh { .. }))
+        );
+        assert!(
+            merged
+                .iter()
+                .any(|e| e.name == "default" && matches!(e.kind, EndpointKind::Local))
         );
     }
 }

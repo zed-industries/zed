@@ -204,6 +204,7 @@ mod tests {
     #[gpui::test]
     fn cancel_emits_cancelled_without_dispatching(cx: &mut TestAppContext) {
         init_test(cx);
+        cx.executor().allow_parking();
         let fake = Arc::new(FakeDockerClient::new());
         let factory: ClientFactory = {
             let fake = fake.clone();

@@ -138,6 +138,11 @@ pub struct EndpointState {
     /// its result back if this still matches the value it captured at spawn
     /// time, so a superseded attempt can never clobber newer state.
     generation: u64,
+    /// Whether this endpoint was auto-imported from `docker context ls`
+    /// rather than configured (or the synthetic "local"). Used by
+    /// `sync_from_settings` so a settings resync doesn't discard an imported
+    /// endpoint just because it's absent from settings.
+    is_imported: bool,
 }
 
 impl EndpointState {
@@ -149,6 +154,14 @@ impl EndpointState {
             images: None,
             compose: None,
             generation: 0,
+            is_imported: false,
+        }
+    }
+
+    fn new_imported(endpoint: DockerEndpoint) -> Self {
+        Self {
+            is_imported: true,
+            ..Self::new(endpoint)
         }
     }
 }
@@ -190,13 +203,64 @@ impl DockerEndpointStore {
         }
         let settings_subscription = cx.observe_global::<SettingsStore>(Self::sync_from_settings);
         let poll_task = Self::start_poll_task(cx);
-        Self {
+        let mut this = Self {
             endpoints,
             client_factory,
             last_polled: HashMap::new(),
             _settings_subscription: settings_subscription,
             _poll_task: poll_task,
-        }
+        };
+        this.discover_contexts(cx);
+        this
+    }
+
+    /// Best-effort auto-import of `docker context ls` endpoints: spawns
+    /// [`DockerClient::list_contexts`] and merges any discovered contexts
+    /// into the endpoint list via [`docker_client::merge_endpoints`], which
+    /// ensures configured endpoints (and the synthetic "local" one, since
+    /// it's included in the "configured" side of the merge) always win by
+    /// name over an imported context.
+    ///
+    /// A failure to list contexts must NOT break the panel: it's logged and
+    /// otherwise ignored, leaving the endpoint list exactly as it was
+    /// (configured + synthetic local).
+    fn discover_contexts(&mut self, cx: &mut Context<Self>) {
+        let client = (self.client_factory)();
+        let task = gpui_tokio::Tokio::spawn_result(cx, async move { client.list_contexts().await });
+        cx.spawn(async move |this, cx| {
+            let contexts = match task.await {
+                Ok(contexts) => contexts,
+                Err(error) => {
+                    log::warn!("docker_ui: failed to list docker contexts: {error:#}");
+                    return;
+                }
+            };
+            this.update(cx, |this, cx| {
+                let configured: Vec<DockerEndpoint> = this
+                    .endpoints
+                    .iter()
+                    .map(|state| state.endpoint.clone())
+                    .collect();
+                let merged = docker_client::merge_endpoints(configured, contexts);
+                let mut changed = false;
+                for endpoint in merged {
+                    if !this
+                        .endpoints
+                        .iter()
+                        .any(|state| state.endpoint.name == endpoint.name)
+                    {
+                        this.endpoints.push(EndpointState::new_imported(endpoint));
+                        changed = true;
+                    }
+                }
+                if changed {
+                    cx.emit(EndpointStoreEvent::Changed);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn endpoints(&self) -> &[EndpointState] {
@@ -236,11 +300,18 @@ impl DockerEndpointStore {
 
         let mut changed = false;
 
+        // Drop endpoints that are neither configured nor synthetic-local NOR
+        // an auto-imported context: those came from a prior settings
+        // generation and are no longer wanted. Imported endpoints are kept
+        // even though they're absent from `configs`, since they're not
+        // sourced from settings in the first place; a configured endpoint of
+        // the same name still takes precedence below.
         let before = self.endpoints.len();
         self.endpoints.retain(|state| {
-            configs
-                .iter()
-                .any(|config| config.name == state.endpoint.name)
+            state.is_imported
+                || configs
+                    .iter()
+                    .any(|config| config.name == state.endpoint.name)
         });
         changed |= self.endpoints.len() != before;
 
@@ -251,13 +322,14 @@ impl DockerEndpointStore {
                 .find(|state| state.endpoint.name == config.name)
             {
                 Some(existing) => {
-                    if &existing.endpoint != config {
+                    if &existing.endpoint != config || existing.is_imported {
                         existing.endpoint = config.clone();
                         existing.status = EndpointStatus::Idle;
                         existing.containers = None;
                         existing.images = None;
                         existing.compose = None;
                         existing.generation = existing.generation.wrapping_add(1);
+                        existing.is_imported = false;
                         changed = true;
                     }
                 }
@@ -272,6 +344,8 @@ impl DockerEndpointStore {
             cx.emit(EndpointStoreEvent::Changed);
             cx.notify();
         }
+
+        self.discover_contexts(cx);
     }
 
     fn endpoint_index(&self, endpoint_name: &str) -> Option<usize> {
@@ -820,11 +894,113 @@ mod tests {
     #[gpui::test]
     fn new_store_prepends_local_endpoint(cx: &mut TestAppContext) {
         init_test(cx);
+        cx.executor().allow_parking();
         let factory: ClientFactory =
             Arc::new(|| Arc::new(FakeDockerClient::new()) as Arc<dyn DockerClient>);
         let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
         store.read_with(cx, |s, _| {
             assert!(s.endpoints().iter().any(|e| e.endpoint.name == "local"))
+        });
+    }
+
+    #[gpui::test]
+    async fn new_store_imports_discovered_context_as_endpoint(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let mut fake = FakeDockerClient::new();
+        fake.contexts = vec![docker_client::DockerContext {
+            name: "staging".into(),
+            docker_endpoint: "ssh://deploy@stg".into(),
+        }];
+        let fake = Arc::new(fake);
+        let factory: ClientFactory = Arc::new(move || fake.clone() as Arc<dyn DockerClient>);
+        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+
+        wait_until(cx, |cx| {
+            store.read_with(cx, |s, _| {
+                s.endpoints().iter().any(|e| e.endpoint.name == "staging")
+            })
+        })
+        .await;
+
+        store.read_with(cx, |s, _| {
+            let staging = s
+                .endpoints()
+                .iter()
+                .find(|e| e.endpoint.name == "staging")
+                .expect("staging endpoint should have been imported");
+            assert!(matches!(
+                staging.endpoint.kind,
+                EndpointKind::Ssh { ref host } if host == "deploy@stg"
+            ));
+            assert!(!staging.endpoint.read_only);
+        });
+    }
+
+    #[gpui::test]
+    async fn new_store_prefers_configured_endpoint_over_clashing_context(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        set_one_ssh_endpoint(cx); // configures "prod" as read_only: true, ssh deploy@1.2.3.4
+        let mut fake = FakeDockerClient::new();
+        fake.contexts = vec![docker_client::DockerContext {
+            name: "prod".into(),
+            docker_endpoint: "ssh://other@h2".into(),
+        }];
+        let fake = Arc::new(fake);
+        let factory: ClientFactory = Arc::new(move || fake.clone() as Arc<dyn DockerClient>);
+        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+
+        // Give the (best-effort) context-discovery task a chance to run and
+        // merge before asserting nothing changed for "prod".
+        cx.executor()
+            .timer(std::time::Duration::from_millis(50))
+            .await;
+        cx.run_until_parked();
+
+        store.read_with(cx, |s, _| {
+            let prod_count = s
+                .endpoints()
+                .iter()
+                .filter(|e| e.endpoint.name == "prod")
+                .count();
+            assert_eq!(prod_count, 1, "clashing context must not duplicate prod");
+            let prod = s
+                .endpoints()
+                .iter()
+                .find(|e| e.endpoint.name == "prod")
+                .expect("prod endpoint should exist");
+            assert!(
+                prod.endpoint.read_only,
+                "configured prod endpoint must win over the clashing context"
+            );
+            assert!(matches!(
+                prod.endpoint.kind,
+                EndpointKind::Ssh { ref host } if host == "deploy@1.2.3.4"
+            ));
+        });
+    }
+
+    #[gpui::test]
+    async fn new_store_falls_back_when_list_contexts_fails(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDockerClient::with_error("boom"));
+        let factory: ClientFactory = Arc::new(move || fake.clone() as Arc<dyn DockerClient>);
+        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+
+        cx.executor()
+            .timer(std::time::Duration::from_millis(50))
+            .await;
+        cx.run_until_parked();
+
+        store.read_with(cx, |s, _| {
+            assert!(s.endpoints().iter().any(|e| e.endpoint.name == "local"));
+            assert_eq!(
+                s.endpoints().len(),
+                1,
+                "a failed context listing must fall back to just the synthetic local endpoint"
+            );
         });
     }
 
@@ -905,10 +1081,18 @@ mod tests {
         }
         cx.run_until_parked();
 
+        // `list_contexts` is expected: it's the best-effort context-discovery
+        // call made once on construction, unrelated to the read-only gate
+        // under test here.
+        let non_discovery_calls: Vec<_> = fake
+            .calls()
+            .into_iter()
+            .filter(|call| call != "list_contexts")
+            .collect();
         assert!(
-            fake.calls().is_empty(),
+            non_discovery_calls.is_empty(),
             "no destructive action should reach the client on a read-only endpoint; calls: {:?}",
-            fake.calls()
+            non_discovery_calls
         );
     }
 

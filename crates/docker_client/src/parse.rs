@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use crate::{ComposeProject, ComposeService, Container, ContainerState, Image};
+use crate::{ComposeProject, ComposeService, Container, ContainerState, DockerContext, Image};
 
 pub fn parse_container_state(raw: &str) -> ContainerState {
     match raw {
@@ -64,6 +64,14 @@ struct ComposeServiceRow {
     project: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct ContextRow {
+    #[serde(rename = "Name")]
+    name: String,
+    #[serde(rename = "DockerEndpoint")]
+    docker_endpoint: String,
+}
+
 fn parse_json_lines<T, F, U>(stdout: &str, map: F) -> anyhow::Result<Vec<U>>
 where
     T: for<'de> Deserialize<'de>,
@@ -122,6 +130,13 @@ pub fn parse_compose_services(stdout: &str) -> anyhow::Result<Vec<ComposeService
     })
 }
 
+pub fn parse_contexts(stdout: &str) -> anyhow::Result<Vec<DockerContext>> {
+    parse_json_lines(stdout, |row: ContextRow| DockerContext {
+        name: row.name,
+        docker_endpoint: row.docker_endpoint,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,5 +175,27 @@ mod tests {
         let svcs =
             parse_compose_services(r#"{"Name":"web","State":"running","Project":"shop"}"#).unwrap();
         assert_eq!(svcs[0].state, "running");
+    }
+
+    #[test]
+    fn parse_contexts_jsonlines() {
+        let out = concat!(
+            r#"{"Name":"default","DockerEndpoint":"unix:///var/run/docker.sock"}"#,
+            "\n",
+            r#"{"Name":"staging","DockerEndpoint":"ssh://deploy@stg"}"#,
+            "\n",
+        );
+        let contexts = parse_contexts(out).unwrap();
+        assert_eq!(contexts.len(), 2);
+        assert_eq!(contexts[0].name, "default");
+        assert_eq!(contexts[0].docker_endpoint, "unix:///var/run/docker.sock");
+        assert_eq!(contexts[1].name, "staging");
+        assert_eq!(contexts[1].docker_endpoint, "ssh://deploy@stg");
+    }
+
+    #[test]
+    fn parse_contexts_empty_is_empty_vec() {
+        assert!(parse_contexts("").unwrap().is_empty());
+        assert!(parse_contexts("   \n\n").unwrap().is_empty());
     }
 }

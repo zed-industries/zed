@@ -1,8 +1,8 @@
 use anyhow::{Context as _, Result};
 
 use crate::{
-    ComposeProject, ComposeService, Container, DockerClient, DockerEndpoint, Image, LogChunk,
-    docker_host_for, parse,
+    ComposeProject, ComposeService, Container, DockerClient, DockerContext, DockerEndpoint, Image,
+    LogChunk, docker_host_for, parse,
 };
 
 /// [`DockerClient`] implementation that shells out to the `docker` CLI.
@@ -18,8 +18,8 @@ fn command(endpoint: &DockerEndpoint, args: &[&str]) -> tokio::process::Command 
     cmd
 }
 
-async fn run(endpoint: &DockerEndpoint, args: &[&str]) -> Result<String> {
-    let output = command(endpoint, args)
+async fn run_command(mut cmd: tokio::process::Command, args: &[&str]) -> Result<String> {
+    let output = cmd
         .output()
         .await
         .with_context(|| format!("running `docker {}`", args.join(" ")))?;
@@ -30,8 +30,27 @@ async fn run(endpoint: &DockerEndpoint, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+async fn run(endpoint: &DockerEndpoint, args: &[&str]) -> Result<String> {
+    run_command(command(endpoint, args), args).await
+}
+
+/// Runs a LOCAL docker CLI invocation with no `DOCKER_HOST` override, since
+/// contexts are a property of the local docker config rather than of any
+/// particular remote daemon.
+async fn run_local(args: &[&str]) -> Result<String> {
+    let mut cmd = tokio::process::Command::new("docker");
+    cmd.args(args);
+    cmd.kill_on_drop(true);
+    run_command(cmd, args).await
+}
+
 #[async_trait::async_trait]
 impl DockerClient for CliDockerClient {
+    async fn list_contexts(&self) -> Result<Vec<DockerContext>> {
+        let stdout = run_local(&["context", "ls", "--format", "json"]).await?;
+        parse::parse_contexts(&stdout)
+    }
+
     async fn test_endpoint(&self, endpoint: &DockerEndpoint) -> Result<()> {
         run(endpoint, &["version", "--format", "json"]).await?;
         Ok(())
@@ -189,6 +208,14 @@ mod tests {
         let containers = client.list_containers(&ep).await.unwrap();
         // At least the zed-db-test postgres container is expected to be present when run.
         assert!(containers.iter().any(|c| c.image.contains("postgres")));
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn cli_lists_contexts() {
+        let client = CliDockerClient;
+        let contexts = client.list_contexts().await.unwrap();
+        assert!(contexts.iter().any(|c| c.name == "default"));
     }
 
     #[tokio::test]

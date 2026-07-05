@@ -13,6 +13,7 @@ pub struct FakeDockerClient {
     pub images: Vec<Image>,
     pub compose_projects: Vec<ComposeProject>,
     pub compose_services: Vec<ComposeService>,
+    pub contexts: Vec<DockerContext>,
     pub inspect: String,
     pub log_lines: Vec<String>,
     pub error: Option<String>,
@@ -21,6 +22,7 @@ pub struct FakeDockerClient {
     list_images_error: Mutex<Option<String>>,
     list_compose_projects_error: Mutex<Option<String>>,
     list_compose_services_error: Mutex<Option<String>>,
+    list_contexts_error: Mutex<Option<String>>,
     inspect_container_error: Mutex<Option<String>>,
     start_container_error: Mutex<Option<String>>,
     stop_container_error: Mutex<Option<String>>,
@@ -47,6 +49,7 @@ impl FakeDockerClient {
             images: Vec::new(),
             compose_projects: Vec::new(),
             compose_services: Vec::new(),
+            contexts: Vec::new(),
             inspect: String::new(),
             log_lines: Vec::new(),
             error: None,
@@ -55,6 +58,7 @@ impl FakeDockerClient {
             list_images_error: Mutex::new(None),
             list_compose_projects_error: Mutex::new(None),
             list_compose_services_error: Mutex::new(None),
+            list_contexts_error: Mutex::new(None),
             inspect_container_error: Mutex::new(None),
             start_container_error: Mutex::new(None),
             stop_container_error: Mutex::new(None),
@@ -129,6 +133,14 @@ impl FakeDockerClient {
     /// unlike `error` which fails every method.
     pub fn set_list_compose_services_error(&self, error: Option<String>) {
         if let Ok(mut slot) = self.list_compose_services_error.lock() {
+            *slot = error;
+        }
+    }
+
+    /// Sets or clears an error that fails only `list_contexts`, unlike
+    /// `error` which fails every method.
+    pub fn set_list_contexts_error(&self, error: Option<String>) {
+        if let Ok(mut slot) = self.list_contexts_error.lock() {
             *slot = error;
         }
     }
@@ -246,6 +258,13 @@ impl FakeDockerClient {
 
 #[async_trait::async_trait]
 impl DockerClient for FakeDockerClient {
+    async fn list_contexts(&self) -> Result<Vec<DockerContext>> {
+        self.check_error()?;
+        self.record("list_contexts");
+        self.check_override(&self.list_contexts_error)?;
+        Ok(self.contexts.clone())
+    }
+
     async fn test_endpoint(&self, endpoint: &DockerEndpoint) -> Result<()> {
         self.check_error()?;
         self.record(format!("test_endpoint {}", endpoint.name));
@@ -456,6 +475,19 @@ mod tests {
         };
         let error = fake.list_containers(&ep).await.unwrap_err();
         assert!(error.to_string().contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn fake_lists_contexts_and_records_call() {
+        let mut fake = FakeDockerClient::new();
+        fake.contexts = vec![DockerContext {
+            name: "staging".into(),
+            docker_endpoint: "ssh://deploy@stg".into(),
+        }];
+        let got = fake.list_contexts().await.unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "staging");
+        assert!(fake.calls().iter().any(|c| c == "list_contexts"));
     }
 
     #[tokio::test]
