@@ -145,9 +145,6 @@ impl PendingHunk {
     }
 }
 
-/// What an optimistic [`PendingHunk`] does to the rendering of the real hunk it
-/// matches in its owning diff. This is purely view state; the index text that
-/// gets written to disk is derived separately (see `BufferGitState`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PendingSense {
     /// Override the secondary status of the matched hunk (used by the
@@ -325,9 +322,7 @@ impl BufferDiffSnapshot {
 
     /// Like [`hunks_intersecting_range`], but ignores optimistic pending hunks
     /// (both secondary-status overrides and suppressions) and does not compute a
-    /// secondary status. Used by the index-write path, which must reason about
-    /// the real diff against the loaded index rather than the view's optimistic
-    /// overlay.
+    /// secondary status.
     pub fn raw_hunks_intersecting_range<'a>(
         &'a self,
         range: Range<Anchor>,
@@ -786,15 +781,8 @@ impl BufferDiffSnapshot {
 }
 
 impl BufferDiffSnapshot {
-    /// Projects a stage/unstage of HEAD-vs-worktree (uncommitted) hunks into
-    /// index-text edits, returning the edits to apply to the loaded index text
-    /// (in index coordinates) plus the pending hunks that should be shown
-    /// optimistically in the uncommitted diff.
-    ///
-    /// `self` is the uncommitted diff snapshot (base = HEAD); `unstaged_diff` is
-    /// its unstaged secondary (base = index). This is the hard worktree->index
-    /// projection; the unstaged/staged views need no such projection because the
-    /// hunks they act on already carry an index range.
+    // Compute the edits to apply to the index, and the resulting pending hunks,
+    // for a stage or unstage operation on the uncommitted diff.
     pub fn compute_uncommitted_index_edits(
         &self,
         unstaged_diff: &Self,
@@ -847,8 +835,7 @@ impl BufferDiffSnapshot {
         let mut pending = Vec::<PendingHunk>::new();
 
         // Process only the hunks the user acted on, skipping any already in the
-        // desired state. Cross-operation accumulation lives in the index patch,
-        // not here.
+        // desired state.
         let mut hunks_iter = hunks
             .iter()
             .filter(|hunk| {
@@ -967,24 +954,6 @@ impl BufferDiffSnapshot {
 
         (Some(edits), pending)
     }
-}
-
-/// Splices index-text edits (sorted by start and non-overlapping, in the
-/// coordinate space of `index_text`) into the loaded index text.
-pub fn splice_index_edits(index_text: &Rope, edits: &[(Range<usize>, Arc<str>)]) -> Rope {
-    #[cfg(debug_assertions)]
-    for window in edits.windows(2) {
-        debug_assert!(window[0].0.end <= window[1].0.start);
-    }
-    let mut new_index_text = Rope::new();
-    let mut index_cursor = index_text.cursor(0);
-    for (old_range, replacement_text) in edits {
-        new_index_text.append(index_cursor.slice(old_range.start));
-        index_cursor.seek_forward(old_range.end);
-        new_index_text.push(replacement_text);
-    }
-    new_index_text.append(index_cursor.suffix());
-    new_index_text
 }
 
 impl BufferDiffSnapshot {
@@ -1834,8 +1803,11 @@ impl BufferDiff {
         );
         self.set_pending_hunks(&pending, cx);
         edits.map(|edits| {
-            let index_text = unstaged_diff_snapshot.base_text.as_rope();
-            splice_index_edits(index_text, &edits)
+            let mut index_text = unstaged_diff_snapshot.base_text.as_rope().clone();
+            for (old_range, replacement_text) in edits.iter().rev() {
+                index_text.replace(old_range.clone(), replacement_text);
+            }
+            index_text
         })
     }
 

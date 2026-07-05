@@ -17,7 +17,6 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use askpass::{AskPassDelegate, EncryptedPassword, IKnowWhatIAmDoingAndIHaveReadTheDocs};
 use buffer_diff::{
     BufferDiff, BufferDiffEvent, DiffHunk, DiffHunkSecondaryStatus, PendingHunk, PendingSense,
-    splice_index_edits,
 };
 use client::ProjectId;
 use collections::HashMap;
@@ -1250,8 +1249,8 @@ impl GitStore {
             .cloned()
             .context("failed to find git state for buffer")?;
         diff_state.update(cx, |diff_state, _| {
-            diff_state.remove_index_edits_overlapping(&index_footprints);
-            diff_state.apply_index_edits(index_edits);
+            diff_state.remove_overlapping_pending_index_edits(&index_footprints);
+            diff_state.insert_pending_index_edits(index_edits);
         });
 
         if let Some(uncommitted_diff) = uncommitted_diff {
@@ -1316,7 +1315,7 @@ impl GitStore {
             .cloned()
             .context("failed to find git state for buffer")?;
         diff_state.update(cx, |diff_state, _| {
-            diff_state.apply_index_edits(index_edits)
+            diff_state.insert_pending_index_edits(index_edits)
         });
 
         uncommitted_diff.update(cx, |diff, cx| {
@@ -1369,7 +1368,7 @@ impl GitStore {
         drop(staged_snapshot);
 
         diff_state.update(cx, |diff_state, _| {
-            diff_state.apply_index_edits(index_edits)
+            diff_state.insert_pending_index_edits(index_edits)
         });
         staged_diff.update(cx, |diff, cx| {
             diff.set_pending_hunks(&pending, cx);
@@ -2586,7 +2585,7 @@ impl GitStore {
                 this.update(cx, |this, cx| {
                     if let Some(diff_state) = this.diffs.get(&buffer_id).cloned() {
                         diff_state.update(cx, |diff_state, cx| {
-                            diff_state.clear_pending_optimistic_state(cx);
+                            diff_state.clear_pending_index_edits_and_hunks(cx);
                         });
                     }
                     cx.emit(GitStoreEvent::IndexWriteError(error));
@@ -4570,26 +4569,17 @@ impl BufferGitState {
         }
     }
 
-    /// Drops pending index edits overlapping or touching any of `footprints`,
-    /// an operation's coverage in loaded-index coordinates. This is how an
-    /// operation supersedes earlier ones across its whole acted region even
-    /// where it derives no edits of its own (e.g. re-staging an optimistically
-    /// unstaged hunk, where the worktree and the loaded index already agree).
-    fn remove_index_edits_overlapping(&mut self, footprints: &[Range<usize>]) {
+    fn remove_overlapping_pending_index_edits(&mut self, ranges: &[Range<usize>]) {
         if let Some(edits) = &mut self.pending_index_edits {
             edits.retain(|(existing, _)| {
-                footprints.iter().all(|footprint| {
+                ranges.iter().all(|footprint| {
                     existing.end < footprint.start || footprint.end < existing.start
                 })
             });
         }
     }
 
-    /// Merges a stage/unstage operation's index edits into the pending index
-    /// state (the patch). Overlapping or touching edits are resolved
-    /// newest-wins; the patch stays sorted by start offset and non-overlapping.
-    /// `None` means the file should be removed from the index.
-    fn apply_index_edits(&mut self, edits: Option<Vec<(Range<usize>, Arc<str>)>>) {
+    fn insert_pending_index_edits(&mut self, edits: Option<Vec<(Range<usize>, Arc<str>)>>) {
         match edits {
             None => {
                 self.pending_index_edits = None;
@@ -4614,23 +4604,24 @@ impl BufferGitState {
     /// absent from the index. The only place index text is derived.
     fn desired_index_text(&self, cx: &App) -> Option<Rope> {
         let index_text_buffer = self.index_text_buffer.upgrade()?;
-        let loaded_index = index_text_buffer.read(cx).text_snapshot().as_rope().clone();
-        self.pending_index_edits
-            .as_ref()
-            .map(|edits| splice_index_edits(&loaded_index, edits))
+        let edits = self.pending_index_edits.as_ref()?;
+        #[cfg(debug_assertions)]
+        for window in edits.windows(2) {
+            debug_assert!(window[0].0.end <= window[1].0.start);
+        }
+        let mut index_text = index_text_buffer.read(cx).text_snapshot().as_rope().clone();
+        for (old_range, replacement_text) in edits.iter().rev() {
+            index_text.replace(old_range.clone(), replacement_text);
+        }
+        Some(index_text)
     }
 
-    /// Clears the optimistic index patch. Pending hunks on the diffs are cleared
-    /// separately (at recalc-settle, by the diffs' own snapshots).
-    fn clear_pending_index_text(&mut self) {
+    fn clear_pending_index_edits(&mut self) {
         self.pending_index_edits = Some(Vec::new());
     }
 
-    /// Clears all optimistic state for this buffer: the index patch and every
-    /// diff's pending hunks. Used on write-error paths where no recalculation
-    /// will arrive to reconcile.
-    fn clear_pending_optimistic_state(&mut self, cx: &mut Context<Self>) {
-        self.clear_pending_index_text();
+    fn clear_pending_index_edits_and_hunks(&mut self, cx: &mut Context<Self>) {
+        self.clear_pending_index_edits();
         for diff in [
             self.uncommitted_diff(),
             self.unstaged_diff(),
@@ -4972,11 +4963,7 @@ impl BufferGitState {
             }
 
             this.update(cx, |this, cx| {
-                // The freshly-loaded index now reflects everything the patch
-                // described, and the index text buffer is about to be
-                // fast-forwarded to it, invalidating the patch's offsets. Clear
-                // the patch in the same update so the two never drift.
-                this.clear_pending_index_text();
+                this.clear_pending_index_edits();
 
                 if let (Some(staged_diff), Some(new_staged_diff)) =
                     (staged_diff.as_ref(), new_staged_diff.clone())
@@ -4996,7 +4983,6 @@ impl BufferGitState {
                                 head_text_buffer.fast_forward(edited_head_text, cx)
                             });
                         }
-                        // Clear the staged diff's optimistic (Cancel) pending hunks.
                         diff.set_snapshot_with_secondary(new_staged_diff, None, true, cx)
                     });
                 }
@@ -5012,7 +4998,6 @@ impl BufferGitState {
                                 index_text_buffer.fast_forward(edited_index_text, cx)
                             });
                         }
-                        // Clear the unstaged diff's optimistic (Cancel) pending hunks.
                         diff.set_snapshot_with_secondary(new_unstaged_diff, None, true, cx)
                     }))
                 } else {

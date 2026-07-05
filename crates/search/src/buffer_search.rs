@@ -75,7 +75,6 @@ pub struct BufferSearchBar {
     query_editor_focused: bool,
     replacement_editor: Entity<Editor>,
     replacement_editor_focused: bool,
-    active_item: Option<Box<dyn ItemHandle>>,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
     #[cfg(target_os = "macos")]
@@ -649,7 +648,6 @@ impl ToolbarItemView for BufferSearchBar {
         cx: &mut Context<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();
-        self.active_item = item.map(ItemHandle::boxed_clone);
         self.active_searchable_item_subscriptions.take();
         self.active_searchable_item.take();
         self.splittable_editor = None;
@@ -911,7 +909,6 @@ impl BufferSearchBar {
             query_editor_focused: false,
             replacement_editor,
             replacement_editor_focused: false,
-            active_item: None,
             active_searchable_item: None,
             active_searchable_item_subscriptions: None,
             #[cfg(target_os = "macos")]
