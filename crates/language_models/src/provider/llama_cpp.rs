@@ -4,7 +4,7 @@ use credentials_provider::CredentialsProvider;
 use fs::Fs;
 use futures::Stream;
 use futures::{FutureExt, StreamExt, future::BoxFuture, stream::BoxStream};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, Task, TaskExt};
+use gpui::{App, AsyncApp, Context, Entity, Task, TaskExt};
 use http_client::{CustomHeaders, HttpClient};
 use language_model::util::parse_tool_arguments;
 use language_model::{
@@ -12,8 +12,8 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, RateLimiter, Role,
-    StopReason, TokenUsage, env_var,
+    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, ProviderSettingsView,
+    RateLimiter, Role, StopReason, SubPageProviderSettings, TokenUsage, env_var,
 };
 use llama_cpp::{
     LLAMA_CPP_API_URL, ModelEntry, Props, get_models, get_props, stream_chat_completion,
@@ -562,12 +562,6 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
         None
     }
 
-    fn inline_description(&self, _cx: &App) -> Option<InlineDescription> {
-        Some(InlineDescription::Text(
-            "Run local models on your machine with LlamaCpp.".into(),
-        ))
-    }
-
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let settings = LlamaCppLanguageModelProvider::settings(cx);
         let effective = compute_effective_models(&self.state.read(cx).fetched_models, settings);
@@ -603,20 +597,17 @@ impl LanguageModelProvider for LlamaCppLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
+    fn settings_view(&self, _cx: &mut App) -> Option<ProviderSettingsView> {
         let state = self.state.clone();
-        cx.new(|cx| ConfigurationView::new(state, window, cx))
-            .into()
-    }
-
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.state
-            .update(cx, |state, cx| state.set_api_key(None, cx))
+        Some(ProviderSettingsView::SubPage(
+            SubPageProviderSettings::new(move |window, cx| {
+                cx.new(|cx| ConfigurationView::new(state.clone(), window, cx))
+                    .into()
+            })
+            .description(InlineDescription::Text(
+                "Run local models on your machine with LlamaCpp.".into(),
+            )),
+        ))
     }
 }
 
