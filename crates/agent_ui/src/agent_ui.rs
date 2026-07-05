@@ -119,12 +119,8 @@ pub(crate) fn resolve_agent_image(
 }
 
 /// Opens `abs_path` in the workspace, moving the cursor to `point` when one
-/// is given.
-///
-/// Paths inside the project open through their worktree. Absolute paths
-/// outside every worktree — agent hyperlinks frequently reference such files —
-/// are opened without adding a worktree, but only when a file exists at the
-/// path, so that broken links don't create empty buffers.
+/// is given. Paths outside every worktree are only opened when a file exists
+/// there, so broken agent links don't create empty buffers.
 pub(crate) fn open_abs_path_at_point(
     workspace: &mut Workspace,
     abs_path: PathBuf,

@@ -284,21 +284,11 @@ impl MentionUri {
 
     /// Parses a hyperlink target from agent-authored Markdown.
     ///
-    /// Agents spell out file hyperlinks in ways [`MentionUri::parse`]
-    /// intentionally does not accept: bare paths with percent-encoded
-    /// characters (`My%20File.rs`) and Windows-compatible spellings such as
-    /// `/C:/foo`, `/c/foo`, or forward slashes. This entry point normalizes
-    /// bare-path targets before parsing them; `parse` stays strict so that
-    /// canonical mention URIs round-trip verbatim and other callers are
-    /// unaffected by these hyperlink heuristics.
-    ///
-    /// Percent escapes that decode to path separators (`%2F`, `%5C`) are
-    /// left encoded, since decoding them would change which directories the
-    /// path traverses rather than a character within one component. A file
-    /// whose name literally contains a decodable escape sequence (e.g.
-    /// `a%20b.rs`) is misread by this default; callers with access to the
-    /// project can use [`MentionUri::parse_hyperlink_literal`] to
-    /// disambiguate.
+    /// Unlike [`MentionUri::parse`] — which stays strict so canonical mention
+    /// URIs round-trip verbatim — bare path targets are normalized first:
+    /// percent escapes are decoded (see [`decode_path_escapes`]) and
+    /// Windows-compatible spellings like `/C:/foo` or `/c/foo` become native
+    /// paths (see [`to_native_windows_path`]).
     pub fn parse_hyperlink(input: &str, path_style: PathStyle) -> Result<Self> {
         if let Some(target) = bare_path_target(input, path_style) {
             return parse_hyperlink_path(target, path_style, DecodePercentEscapes::Yes)
@@ -308,20 +298,12 @@ impl MentionUri {
     }
 
     /// Returns the literal (un-decoded) interpretation of a bare-path
-    /// hyperlink target, when it differs from what
-    /// [`MentionUri::parse_hyperlink`] produces.
-    ///
-    /// A bare path target containing percent escapes is ambiguous:
-    /// `parse_hyperlink` assumes it's percent-encoded and decodes it, but the
-    /// file's name may literally contain the escape sequence (e.g.
-    /// `a%20b.rs`). Callers with access to the project can fall back to this
-    /// interpretation when the decoded path doesn't resolve. `file://` (and
-    /// other) URLs are not ambiguous — their escapes are always decoded — so
-    /// this returns `None` for them.
+    /// hyperlink target, for files whose names literally contain an escape
+    /// sequence (e.g. `a%20b.rs`). Returns `None` when this wouldn't differ
+    /// from [`MentionUri::parse_hyperlink`], including for URLs, whose
+    /// escapes are unambiguous.
     pub fn parse_hyperlink_literal(input: &str, path_style: PathStyle) -> Option<Self> {
         let target = bare_path_target(input, path_style)?;
-        // Only differs from `parse_hyperlink` when decoding changes the path
-        // (or its line suffix); the fragment is never decoded.
         let (path_input, _) = split_path_fragment(target);
         if !matches!(decode_path_escapes(path_input), Cow::Owned(_)) {
             return None;
@@ -645,9 +627,8 @@ fn parse_line_range(fragment: &str) -> Result<RangeInclusive<u32>> {
     Ok(start_line..=end_line)
 }
 
-/// Returns the bare-path form of a mention target: an absolute path that
-/// isn't spelled as a URL. Strips the backticks agents sometimes wrap targets
-/// in.
+/// Returns the mention target as a bare absolute path (not a URL), with the
+/// backticks agents sometimes add stripped.
 fn bare_path_target(input: &str, path_style: PathStyle) -> Option<&str> {
     let input = input
         .strip_prefix('`')
@@ -667,8 +648,7 @@ fn parse_absolute_path(input: &str) -> Result<MentionUri> {
     absolute_path_mention(path_input, fragment)
 }
 
-/// Like [`parse_absolute_path`], but normalizes the spellings agents use in
-/// hyperlink targets (see [`normalize_path_mention`]) before parsing.
+/// Like [`parse_absolute_path`], but normalizes hyperlink spellings first.
 fn parse_hyperlink_path(
     input: &str,
     path_style: PathStyle,
@@ -706,16 +686,6 @@ fn absolute_path_mention(path_input: &str, fragment: Option<&str>) -> Result<Men
     }
 }
 
-/// Normalizes a path-like hyperlink target emitted by an agent so it can be
-/// parsed as a native path.
-///
-/// Percent escapes are decoded (see [`decode_path_escapes`]) because agents
-/// frequently percent-encode hyperlink targets (`My%20File.rs`). A file whose
-/// name literally contains a valid escape sequence (e.g. `a%20b.rs`) is
-/// misread by this default; the two cases can't be distinguished
-/// syntactically, so callers with access to the project can use
-/// `MentionUri::parse_hyperlink_literal` to check whether a file with the
-/// un-decoded name exists and prefer that interpretation.
 fn normalize_path_mention(
     input: &str,
     path_style: PathStyle,
@@ -734,15 +704,11 @@ fn normalize_path_mention(
     }
 }
 
-/// Decodes percent escapes in a path-like hyperlink target.
-///
-/// Differs from a generic URL decoder in two ways required for paths:
-/// escapes that decode to path separators (`%2F`, `%5C`) are left encoded so
-/// decoding can't change which directories the path traverses (e.g.
-/// introduce `../` traversal), and invalid escape sequences or escapes
-/// decoding to invalid UTF-8 leave the input unchanged rather than failing.
-///
-/// Returns `Cow::Owned` if and only if decoding changed the input.
+/// Decodes percent escapes in a path, leaving separator escapes (`%2F`,
+/// `%5C`) encoded so decoding can't change which directories the path
+/// traverses. Invalid sequences and non-UTF-8 results leave the input
+/// unchanged. Returns `Cow::Owned` iff decoding changed the input
+/// (`parse_hyperlink_literal` relies on this).
 fn decode_path_escapes(input: &str) -> Cow<'_, str> {
     fn hex_digit(byte: u8) -> Option<u8> {
         match byte {
@@ -779,17 +745,14 @@ fn decode_path_escapes(input: &str) -> Cow<'_, str> {
     }
     match String::from_utf8(decoded) {
         Ok(decoded) => Cow::Owned(decoded),
-        // Some escape decoded to invalid UTF-8; treat the whole input as a
-        // literal path, matching how invalid escape sequences are handled.
         Err(_) => Cow::Borrowed(input),
     }
 }
 
-/// Converts Windows-compatible path spellings that agents emit into a native
-/// Windows path, normalizing separators to backslashes and the drive letter
-/// to uppercase so parsed paths compare equal to worktree paths (which is
-/// required for opening them in the workspace). Returns `None` when the input
-/// needs no changes.
+/// Converts Windows-compatible path spellings into a native Windows path,
+/// normalizing separators to backslashes and drive letters to uppercase so
+/// parsed paths compare equal to worktree paths. Returns `None` when the
+/// input needs no changes.
 fn to_native_windows_path(path: &str) -> Option<String> {
     fn join_drive(drive: char, rest: &str) -> String {
         format!(
@@ -809,9 +772,8 @@ fn to_native_windows_path(path: &str) -> Option<String> {
             return Some(join_drive(drive, chars.as_str()));
         }
 
-        // MSYS/Git Bash style: `/c/foo`. Restricted to lowercase drive
-        // letters because that's what those shells emit; this is a heuristic
-        // and can misread a path rooted at a single-letter directory.
+        // MSYS/Git Bash style: `/c/foo`. Lowercase-only, since that's what
+        // those shells emit and uppercase risks misreading real directories.
         let mut chars = rest.chars();
         if let (Some(drive), Some('/' | '\\')) = (chars.next(), chars.next())
             && drive.is_ascii_lowercase()
@@ -1101,8 +1063,6 @@ mod tests {
 
     #[test]
     fn test_parse_windows_drive_letters_are_uppercased() {
-        // All spellings of a drive prefix normalize to an uppercase drive so
-        // parsed paths compare equal to worktree paths.
         for input in [
             "file:///c:/foo/bar.rs",
             "/c:/foo/bar.rs",
@@ -1123,8 +1083,7 @@ mod tests {
 
     #[test]
     fn test_msys_style_paths_require_lowercase_drive() {
-        // `/C/foo` (uppercase) is more likely a real single-letter directory
-        // than a Git Bash drive prefix, so it is left untouched.
+        // Uppercase `/C/foo` is more likely a real directory than a drive.
         let parsed = MentionUri::parse_hyperlink("/C/Users/readme.md", PathStyle::Windows).unwrap();
         match parsed {
             MentionUri::File { abs_path } => {
@@ -1148,10 +1107,6 @@ mod tests {
 
     #[test]
     fn test_hyperlink_percent_escapes_are_decoded() {
-        // Valid percent escapes in bare path hyperlink targets are decoded on
-        // every platform; `parse_hyperlink_literal` provides the alternative
-        // interpretation for files whose names literally contain an escape
-        // sequence.
         let parsed = MentionUri::parse_hyperlink("/tmp/a%20b.rs", PathStyle::Posix).unwrap();
         assert_eq!(
             parsed,
@@ -1170,8 +1125,7 @@ mod tests {
             }
         );
 
-        // Escapes that decode to path separators stay encoded, so decoding
-        // can't change which directories the path traverses.
+        // Separator escapes stay encoded (no introduced path traversal).
         let parsed = MentionUri::parse_hyperlink("/tmp/a%2Fb.rs", PathStyle::Posix).unwrap();
         assert_eq!(
             parsed,
@@ -1191,9 +1145,6 @@ mod tests {
 
     #[test]
     fn test_parse_keeps_bare_path_targets_verbatim() {
-        // Hyperlink normalization is opt-in via `parse_hyperlink`; `parse`
-        // treats bare paths verbatim so canonical mention URIs and resource
-        // links are unaffected by hyperlink heuristics.
         let parsed = MentionUri::parse("/tmp/a%20b.rs", PathStyle::Posix).unwrap();
         assert_eq!(
             parsed,

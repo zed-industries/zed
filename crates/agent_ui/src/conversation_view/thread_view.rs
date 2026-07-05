@@ -11961,12 +11961,10 @@ pub(crate) fn open_link(
 
     let path_style = workspace.read(cx).path_style(cx);
     if let Some(mention) = MentionUri::parse_hyperlink(&url, path_style).log_err() {
-        // A bare path target with percent escapes is ambiguous:
-        // `parse_hyperlink` decodes them, but the file may literally be named
-        // with the escape sequence (e.g. `a%20b.rs`). Prefer the decoded
-        // interpretation, and fall back to the literal one only when the
-        // decoded path doesn't resolve in the project but the literal one
-        // does.
+        // Percent escapes in bare paths are ambiguous: prefer the decoded
+        // interpretation, falling back to the literal one (e.g. a file
+        // actually named `a%20b.rs`) only when the decoded path doesn't
+        // resolve in the project but the literal one does.
         let resolves_in_project = |mention: &MentionUri, cx: &App| {
             mention.abs_path().is_some_and(|abs_path| {
                 let project = workspace.read(cx).project().read(cx);
@@ -12220,9 +12218,6 @@ mod tests {
         crate::test_support::init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
-        // `a%20b.rs` literally contains a percent escape and `a b.rs` is what
-        // it decodes to; both exist. `c d.rs` exists only with a space in its
-        // name, and `e%20f.rs` exists only with a literal escape.
         fs.insert_tree(
             path!("/project"),
             json!({
@@ -12254,8 +12249,7 @@ mod tests {
             })
         };
 
-        // Both interpretations exist: the decoded one wins, since agents
-        // conventionally percent-encode hyperlink targets.
+        // Both interpretations exist: the decoded one wins.
         let path = open_link_and_active_path(path!("/project/a%20b.rs").to_string(), cx);
         assert_eq!(*path, *"a b.rs");
 
@@ -12263,8 +12257,7 @@ mod tests {
         let path = open_link_and_active_path(path!("/project/c%20d.rs").to_string(), cx);
         assert_eq!(*path, *"c d.rs");
 
-        // The decoded file doesn't exist, but a file literally named with the
-        // escape does: fall back to it.
+        // Only the literally-named file exists: fall back to it.
         let path = open_link_and_active_path(path!("/project/e%20f.rs").to_string(), cx);
         assert_eq!(*path, *"e%20f.rs");
     }
@@ -12285,8 +12278,8 @@ mod tests {
         let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
         let workspace_weak = workspace.downgrade();
 
-        // A hyperlink to a nonexistent out-of-project path opens nothing (in
-        // particular, no empty buffer is created for it).
+        // A nonexistent out-of-project path opens nothing, not even an
+        // empty buffer.
         multi_workspace.update_in(cx, |_, window, cx| {
             open_link(
                 path!("/outside/missing.md").to_string().into(),
@@ -12303,8 +12296,7 @@ mod tests {
             );
         });
 
-        // A hyperlink to an existing file outside the project's worktrees
-        // opens it and places the cursor on the linked line.
+        // An existing out-of-project file opens at the linked line.
         multi_workspace.update_in(cx, |_, window, cx| {
             open_link(
                 format!("{}:2", path!("/outside/notes.md")).into(),
