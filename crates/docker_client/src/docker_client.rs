@@ -101,8 +101,14 @@ fn endpoint_kind_from_docker_endpoint(docker_endpoint: &str) -> EndpointKind {
 
 /// Merges auto-discovered `docker context ls` contexts into the user's
 /// configured endpoints. Configured entries always win by name: a context
-/// whose name clashes with a configured endpoint is ignored. Every other
-/// context becomes a new [`DockerEndpoint`] with `read_only: false`.
+/// whose name clashes with a configured endpoint is ignored, and the
+/// configured endpoint keeps whatever `read_only` the user set. Every other
+/// context becomes a new [`DockerEndpoint`] with `read_only: true`:
+/// auto-discovered endpoints (possibly production) are view-only until the
+/// user explicitly adds them to `docker.connections` with `read_only: false`.
+/// This also prevents a subtle downgrade: if the user deletes a configured
+/// `read_only: true` endpoint but the underlying `docker context` still
+/// exists, re-running discovery must not resurrect it as writable.
 pub fn merge_endpoints(
     configured: Vec<DockerEndpoint>,
     contexts: Vec<DockerContext>,
@@ -115,7 +121,7 @@ pub fn merge_endpoints(
         merged.push(DockerEndpoint {
             name: context.name,
             kind: endpoint_kind_from_docker_endpoint(&context.docker_endpoint),
-            read_only: false,
+            read_only: true,
         });
     }
     merged
@@ -216,16 +222,41 @@ mod tests {
         ];
         let merged = merge_endpoints(configured, contexts);
         let prod = merged.iter().find(|e| e.name == "prod").unwrap();
-        assert!(prod.read_only); // configured wins
+        assert!(prod.read_only); // configured keeps its own flag and wins by name
+
+        let staging = merged.iter().find(|e| e.name == "staging").unwrap();
+        assert!(matches!(staging.kind, EndpointKind::Ssh { .. }));
         assert!(
-            merged
-                .iter()
-                .any(|e| e.name == "staging" && matches!(e.kind, EndpointKind::Ssh { .. }))
+            staging.read_only,
+            "auto-imported contexts must default to read_only: true"
         );
+
+        let default = merged.iter().find(|e| e.name == "default").unwrap();
+        assert!(matches!(default.kind, EndpointKind::Local));
         assert!(
-            merged
-                .iter()
-                .any(|e| e.name == "default" && matches!(e.kind, EndpointKind::Local))
+            default.read_only,
+            "auto-imported contexts must default to read_only: true"
+        );
+    }
+
+    /// Resurrection scenario: a configured `read_only: true` endpoint is
+    /// removed from settings, but `docker context ls` still reports a
+    /// context with the same name (e.g. the user only deleted the
+    /// `docker.connections` entry, not the underlying docker context). The
+    /// re-imported endpoint must come back read-only, never silently
+    /// downgraded to writable.
+    #[test]
+    fn removed_configured_endpoint_resurrects_as_read_only() {
+        let configured = vec![]; // "prod" no longer configured
+        let contexts = vec![DockerContext {
+            name: "prod".into(),
+            docker_endpoint: "ssh://deploy@1.2.3.4".into(),
+        }];
+        let merged = merge_endpoints(configured, contexts);
+        let prod = merged.iter().find(|e| e.name == "prod").unwrap();
+        assert!(
+            prod.read_only,
+            "a context resurrecting a removed configured endpoint must be read-only, not writable"
         );
     }
 }

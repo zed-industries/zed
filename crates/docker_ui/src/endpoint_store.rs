@@ -933,7 +933,10 @@ mod tests {
                 staging.endpoint.kind,
                 EndpointKind::Ssh { ref host } if host == "deploy@stg"
             ));
-            assert!(!staging.endpoint.read_only);
+            assert!(
+                staging.endpoint.read_only,
+                "auto-imported contexts must default to read_only: true"
+            );
         });
     }
 
