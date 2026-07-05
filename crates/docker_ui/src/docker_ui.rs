@@ -1,12 +1,27 @@
+mod docker_panel;
 mod docker_settings;
 mod endpoint_store;
 
+pub use docker_panel::{DockerPanel, Toggle, ToggleFocus};
 pub use docker_settings::DockerSettings;
 pub use endpoint_store::*;
 
 use gpui::App;
+use workspace::Workspace;
 
-pub fn init(_cx: &mut App) {}
+pub fn init(cx: &mut App) {
+    cx.observe_new(|workspace: &mut Workspace, _, _| {
+        workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
+            workspace.toggle_panel_focus::<DockerPanel>(window, cx);
+        });
+        workspace.register_action(|workspace, _: &Toggle, window, cx| {
+            if !workspace.toggle_panel_focus::<DockerPanel>(window, cx) {
+                workspace.close_panel::<DockerPanel>(window, cx);
+            }
+        });
+    })
+    .detach();
+}
 
 #[cfg(test)]
 mod tests {
