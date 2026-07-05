@@ -5,17 +5,22 @@ use std::sync::Arc;
 use docker_client::ContainerState;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, ListSizingBehavior, ParentElement, Pixels, Render, Styled, Subscription,
+    Focusable, ListSizingBehavior, ParentElement, Pixels, Render, Styled, Subscription, Task,
     UniformListScrollHandle, WeakEntity, Window, actions, px, uniform_list,
 };
 use ui::{Indicator, ListItem, Tooltip, prelude::*};
+use util::ResultExt as _;
 use workspace::{
     Workspace,
     dock::{DockPosition, Panel, PanelEvent},
 };
 
+use crate::confirm_modal::ConfirmModal;
+use crate::detail_view::{DetailView, InspectState, LogsState, SelectedItem};
 use crate::endpoint_store::default_client_factory;
-use crate::endpoint_store::{DockerEndpointStore, EndpointStatus, EndpointStoreEvent};
+use crate::endpoint_store::{
+    DockerAction, DockerEndpointStore, EndpointStatus, EndpointStoreEvent,
+};
 
 actions!(
     docker_panel,
@@ -52,15 +57,20 @@ enum TreeRow {
         count: Option<usize>,
     },
     Container {
+        endpoint_name: String,
+        id: String,
         name: String,
         state: ContainerState,
         status: String,
     },
     Image {
+        endpoint_name: String,
+        id: String,
         repository: String,
         tag: String,
     },
     Compose {
+        endpoint_name: String,
         name: String,
         status: String,
     },
@@ -73,10 +83,31 @@ enum TreeRow {
     },
 }
 
+/// A destructive [`DockerAction`] awaiting user confirmation via
+/// [`ConfirmModal`]. Tracked as plain data (rather than only living inside
+/// the modal entity) so tests can assert a confirmation was requested
+/// without needing a real `Workspace`/window to host the modal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingConfirmation {
+    endpoint_name: String,
+    action: DockerAction,
+}
+
 pub struct DockerPanel {
     store: Entity<DockerEndpointStore>,
+    workspace: Option<WeakEntity<Workspace>>,
     focus_handle: FocusHandle,
     expanded: HashSet<TreeNodeId>,
+    selected: Option<SelectedItem>,
+    inspect: Option<InspectState>,
+    logs: Option<LogsState>,
+    /// Holds the in-flight logs-follow task, if any, so switching selection
+    /// or requesting logs again cancels the previous stream rather than
+    /// leaking a `docker logs -f` process indefinitely.
+    _logs_task: Task<()>,
+    /// Set while a `ConfirmModal` is open for a destructive action; cleared
+    /// on Confirm or Cancel. See [`Self::request_action`].
+    pending_confirmation: Option<PendingConfirmation>,
     scroll_handle: UniformListScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -96,24 +127,35 @@ impl DockerPanel {
         _window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
+        let workspace_handle = cx.entity().downgrade();
         cx.new(|cx| {
             let client_factory = default_client_factory();
             let store = cx.new(|cx| DockerEndpointStore::new(client_factory, cx));
-            Self::from_parts(store, cx)
+            Self::from_parts(store, Some(workspace_handle), cx)
         })
     }
 
     /// Builds the panel entity around an already-constructed store, shared by
     /// [`Self::new`] and tests that supply a fake-backed store.
-    fn from_parts(store: Entity<DockerEndpointStore>, cx: &mut Context<Self>) -> Self {
+    fn from_parts(
+        store: Entity<DockerEndpointStore>,
+        workspace: Option<WeakEntity<Workspace>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let mut subscriptions = vec![cx.observe(&store, |_this: &mut Self, _, cx| {
             cx.notify();
         })];
         subscriptions.push(cx.subscribe(&store, Self::on_store_event));
         Self {
             store,
+            workspace,
             focus_handle: cx.focus_handle(),
             expanded: HashSet::new(),
+            selected: None,
+            inspect: None,
+            logs: None,
+            _logs_task: Task::ready(()),
+            pending_confirmation: None,
             scroll_handle: UniformListScrollHandle::new(),
             _subscriptions: subscriptions,
         }
@@ -121,7 +163,7 @@ impl DockerPanel {
 
     #[cfg(test)]
     pub(crate) fn new_for_test(store: Entity<DockerEndpointStore>, cx: &mut Context<Self>) -> Self {
-        Self::from_parts(store, cx)
+        Self::from_parts(store, None, cx)
     }
 
     fn on_store_event(
@@ -190,6 +232,8 @@ impl DockerPanel {
                     Some(containers) => {
                         for container in containers {
                             rows.push(TreeRow::Container {
+                                endpoint_name: endpoint_name.clone(),
+                                id: container.id.clone(),
                                 name: container.names.clone(),
                                 state: container.state,
                                 status: container.status.clone(),
@@ -213,6 +257,8 @@ impl DockerPanel {
                     Some(images) => {
                         for image in images {
                             rows.push(TreeRow::Image {
+                                endpoint_name: endpoint_name.clone(),
+                                id: image.id.clone(),
                                 repository: image.repository.clone(),
                                 tag: image.tag.clone(),
                             });
@@ -235,6 +281,7 @@ impl DockerPanel {
                     Some(compose) => {
                         for project in compose {
                             rows.push(TreeRow::Compose {
+                                endpoint_name: endpoint_name.clone(),
                                 name: project.name.clone(),
                                 status: project.status.clone(),
                             });
@@ -302,12 +349,23 @@ impl DockerPanel {
                 ..
             } => self.render_category_row(index, label, node.clone(), *expanded, *count, cx),
             TreeRow::Container {
+                endpoint_name,
+                id,
                 name,
                 state,
                 status,
-            } => Self::render_container_row(index, name, *state, status),
-            TreeRow::Image { repository, tag } => Self::render_image_row(index, repository, tag),
-            TreeRow::Compose { name, status } => Self::render_compose_row(index, name, status),
+            } => self.render_container_row(index, endpoint_name, id, name, *state, status, cx),
+            TreeRow::Image {
+                endpoint_name,
+                id,
+                repository,
+                tag,
+            } => self.render_image_row(index, endpoint_name, id, repository, tag, cx),
+            TreeRow::Compose {
+                endpoint_name,
+                name,
+                status,
+            } => self.render_compose_row(index, endpoint_name, name, status, cx),
             TreeRow::Loading { depth } => ListItem::new(index)
                 .indent_level(*depth)
                 .child(
@@ -416,10 +474,14 @@ impl DockerPanel {
     }
 
     fn render_container_row(
+        &self,
         index: usize,
+        endpoint_name: &str,
+        id: &str,
         name: &str,
         state: ContainerState,
         status: &str,
+        cx: &Context<Self>,
     ) -> AnyElement {
         let indicator_color = match state {
             ContainerState::Running => Color::Success,
@@ -427,8 +489,11 @@ impl DockerPanel {
             ContainerState::Paused | ContainerState::Restarting => Color::Warning,
             ContainerState::Created | ContainerState::Unknown => Color::Muted,
         };
+        let selected =
+            self.selected.as_ref() == Some(&self.container_item(endpoint_name, id, name));
         ListItem::new(index)
             .indent_level(2)
+            .toggle_state(selected)
             .child(
                 h_flex()
                     .gap_1p5()
@@ -440,13 +505,45 @@ impl DockerPanel {
                             .size(LabelSize::Small),
                     ),
             )
+            .on_click(cx.listener({
+                let endpoint_name = endpoint_name.to_string();
+                let id = id.to_string();
+                let name = name.to_string();
+                move |this, _, _, cx| {
+                    this.select_container(endpoint_name.clone(), id.clone(), name.clone(), cx)
+                }
+            }))
             .into_any_element()
     }
 
-    fn render_image_row(index: usize, repository: &str, tag: &str) -> AnyElement {
+    fn container_item(&self, endpoint_name: &str, id: &str, name: &str) -> SelectedItem {
+        SelectedItem::Container {
+            endpoint_name: endpoint_name.to_string(),
+            id: id.to_string(),
+            name: name.to_string(),
+        }
+    }
+
+    fn render_image_row(
+        &self,
+        index: usize,
+        endpoint_name: &str,
+        id: &str,
+        repository: &str,
+        tag: &str,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let label = format!("{repository}:{tag}");
+        let selected = self.selected
+            == Some(SelectedItem::Image {
+                endpoint_name: endpoint_name.to_string(),
+                id: id.to_string(),
+                repository: repository.to_string(),
+                tag: tag.to_string(),
+            });
         ListItem::new(index)
             .indent_level(2)
+            .toggle_state(selected)
             .child(
                 h_flex()
                     .gap_1p5()
@@ -457,12 +554,40 @@ impl DockerPanel {
                     )
                     .child(Label::new(label)),
             )
+            .on_click(cx.listener({
+                let endpoint_name = endpoint_name.to_string();
+                let id = id.to_string();
+                let repository = repository.to_string();
+                let tag = tag.to_string();
+                move |this, _, _, cx| {
+                    this.selected = Some(SelectedItem::Image {
+                        endpoint_name: endpoint_name.clone(),
+                        id: id.clone(),
+                        repository: repository.clone(),
+                        tag: tag.clone(),
+                    });
+                    cx.notify();
+                }
+            }))
             .into_any_element()
     }
 
-    fn render_compose_row(index: usize, name: &str, status: &str) -> AnyElement {
+    fn render_compose_row(
+        &self,
+        index: usize,
+        endpoint_name: &str,
+        name: &str,
+        status: &str,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let selected = self.selected
+            == Some(SelectedItem::Compose {
+                endpoint_name: endpoint_name.to_string(),
+                project: name.to_string(),
+            });
         ListItem::new(index)
             .indent_level(2)
+            .toggle_state(selected)
             .child(
                 h_flex()
                     .gap_1p5()
@@ -478,7 +603,309 @@ impl DockerPanel {
                             .size(LabelSize::Small),
                     ),
             )
+            .on_click(cx.listener({
+                let endpoint_name = endpoint_name.to_string();
+                let name = name.to_string();
+                move |this, _, _, cx| {
+                    this.selected = Some(SelectedItem::Compose {
+                        endpoint_name: endpoint_name.clone(),
+                        project: name.clone(),
+                    });
+                    cx.notify();
+                }
+            }))
             .into_any_element()
+    }
+
+    fn select_container(
+        &mut self,
+        endpoint_name: String,
+        id: String,
+        name: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.selected = Some(SelectedItem::Container {
+            endpoint_name,
+            id,
+            name,
+        });
+        self.inspect = None;
+        self.logs = None;
+        self._logs_task = Task::ready(());
+        cx.notify();
+    }
+
+    /// Fetches `docker inspect` output for the container with `id` on the
+    /// currently selected endpoint. Always allowed: Inspect is a read
+    /// action, never gated by `read_only`.
+    pub(crate) fn load_inspect(&mut self, id: String, cx: &mut Context<Self>) {
+        let Some(endpoint_name) = self
+            .selected
+            .as_ref()
+            .map(|s| s.endpoint_name().to_string())
+        else {
+            return;
+        };
+        let store = self.store.read(cx);
+        let Some(endpoint) = store.endpoint(&endpoint_name).cloned() else {
+            return;
+        };
+        let client = store.make_client();
+
+        let task = gpui_tokio::Tokio::spawn_result(cx, async move {
+            client.inspect_container(&endpoint, &id).await
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| match result {
+                Ok(json) => {
+                    if let Some(SelectedItem::Container { id, .. }) = this.selected.as_ref() {
+                        this.inspect = Some(InspectState {
+                            id: id.clone(),
+                            json,
+                        });
+                        cx.notify();
+                    }
+                }
+                Err(error) => {
+                    log::warn!("docker inspect failed: {error:#}");
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Streams `docker logs -f` for the container with `id` on the currently
+    /// selected endpoint, capping the displayed tail at
+    /// `MAX_DISPLAYED_LOG_LINES` lines. Always allowed: Logs is a read
+    /// action, never gated by `read_only`. Replaces any previous
+    /// `_logs_task`, which cancels that stream (dropping its receiver lets
+    /// `CliDockerClient::container_logs`'s `kill_on_drop` child exit).
+    pub(crate) fn load_logs(&mut self, id: String, cx: &mut Context<Self>) {
+        const MAX_DISPLAYED_LOG_LINES: usize = 500;
+        const TAIL: usize = 200;
+
+        let Some(endpoint_name) = self
+            .selected
+            .as_ref()
+            .map(|s| s.endpoint_name().to_string())
+        else {
+            return;
+        };
+        let store = self.store.read(cx);
+        let Some(endpoint) = store.endpoint(&endpoint_name).cloned() else {
+            return;
+        };
+        let client = store.make_client();
+
+        self.logs = Some(LogsState {
+            id: id.clone(),
+            lines: Vec::new(),
+        });
+
+        let task = gpui_tokio::Tokio::spawn_result(cx, async move {
+            client.container_logs(&endpoint, &id, TAIL).await
+        });
+        self._logs_task = cx.spawn(async move |this, cx| {
+            use futures::StreamExt as _;
+
+            let mut receiver = match task.await {
+                Ok(receiver) => receiver,
+                Err(error) => {
+                    log::warn!("docker logs failed: {error:#}");
+                    return;
+                }
+            };
+            while let Some(chunk) = receiver.next().await {
+                let updated = this.update(cx, |this, cx| {
+                    if let Some(logs) = this.logs.as_mut() {
+                        logs.lines.push(chunk.line);
+                        if logs.lines.len() > MAX_DISPLAYED_LOG_LINES {
+                            let overflow = logs.lines.len() - MAX_DISPLAYED_LOG_LINES;
+                            logs.lines.drain(0..overflow);
+                        }
+                        cx.notify();
+                    }
+                });
+                if updated.is_err() {
+                    return;
+                }
+            }
+        });
+    }
+
+    fn render_detail_pane(&self, cx: &Context<Self>) -> AnyElement {
+        let store = self.store.read(cx);
+        let selected = self.selected.as_ref();
+        let endpoint = selected.and_then(|selected| {
+            store
+                .endpoints()
+                .iter()
+                .find(|state| state.endpoint.name == selected.endpoint_name())
+                .map(|state| &state.endpoint)
+        });
+        let state = selected.and_then(|selected| {
+            store
+                .endpoints()
+                .iter()
+                .find(|state| state.endpoint.name == selected.endpoint_name())
+        });
+
+        let container = match selected {
+            Some(SelectedItem::Container { id, .. }) => state
+                .and_then(|state| state.containers.as_ref())
+                .and_then(|containers| containers.iter().find(|c| &c.id == id)),
+            _ => None,
+        };
+        let image = match selected {
+            Some(SelectedItem::Image { id, .. }) => state
+                .and_then(|state| state.images.as_ref())
+                .and_then(|images| images.iter().find(|i| &i.id == id)),
+            _ => None,
+        };
+        let compose = match selected {
+            Some(SelectedItem::Compose { project, .. }) => state
+                .and_then(|state| state.compose.as_ref())
+                .and_then(|projects| projects.iter().find(|p| &p.name == project)),
+            _ => None,
+        };
+
+        DetailView {
+            selected,
+            endpoint,
+            container,
+            image,
+            compose,
+            inspect: self.inspect.as_ref(),
+            logs: self.logs.as_ref(),
+        }
+        .render(cx)
+    }
+
+    /// Entry point for every action button in the detail view.
+    ///
+    /// This is the handler-side half of the read-only gate: even though
+    /// destructive buttons are already rendered `disabled` when the
+    /// endpoint is read-only (see `detail_view::action_button`), this method
+    /// re-checks `endpoint.read_only` itself and bails before doing anything
+    /// else. That way a caller bug in the disabled-button logic (or a test
+    /// invoking this handler directly, bypassing the UI) can never reach the
+    /// `DockerClient`.
+    ///
+    /// Non-destructive actions run immediately. Destructive ones open a
+    /// `ConfirmModal` (when a `Workspace` is available) and are only sent to
+    /// the store once the user confirms — see `ConfirmModal::confirm`, which
+    /// is the only place a destructive action actually reaches the store.
+    pub(crate) fn request_action(
+        &mut self,
+        action: DockerAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pending) = self.gate_and_dispatch_or_pend(action, cx) else {
+            return;
+        };
+
+        // Tests that construct a bare panel (see `new_for_test`) have no
+        // `Workspace`/window to host a modal in; they instead observe
+        // `pending_confirmation` directly and drive the outcome via
+        // `confirm_pending_for_test`/`cancel_pending_for_test`, which run
+        // the exact same store-dispatch path a real Confirm click would.
+        let Some(workspace) = self.workspace.clone() else {
+            return;
+        };
+        let store = self.store.clone();
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.toggle_modal(window, cx, |_window, cx| {
+                    ConfirmModal::new(pending.endpoint_name, pending.action, store, cx)
+                });
+            })
+            .log_err();
+        // The real `ConfirmModal` now owns the decision; a bare-panel
+        // `pending_confirmation` (used only when there is no `Workspace`) is
+        // not applicable once a modal has actually been shown.
+        self.pending_confirmation = None;
+    }
+
+    /// The windowless core of [`Self::request_action`]: applies the
+    /// read-only gate, runs non-destructive actions immediately, and records
+    /// a [`PendingConfirmation`] for destructive ones. Returns the pending
+    /// confirmation when the caller still needs to decide how to surface it
+    /// (open a real modal, or leave it for a windowless test to observe).
+    fn gate_and_dispatch_or_pend(
+        &mut self,
+        action: DockerAction,
+        cx: &mut Context<Self>,
+    ) -> Option<PendingConfirmation> {
+        let endpoint_name = self
+            .selected
+            .as_ref()
+            .map(|s| s.endpoint_name().to_string())?;
+        let read_only = self
+            .store
+            .read(cx)
+            .endpoints()
+            .iter()
+            .find(|state| state.endpoint.name == endpoint_name)
+            .map(|state| state.endpoint.read_only)
+            .unwrap_or(false);
+
+        if action.is_destructive() && read_only {
+            // Belt-and-suspenders: the button that dispatched here should
+            // already be disabled, but bail regardless of how we got called.
+            return None;
+        }
+
+        if !action.is_destructive() {
+            self.store.update(cx, |store, cx| {
+                store.dispatch_action(&endpoint_name, action, cx)
+            });
+            return None;
+        }
+
+        let pending = PendingConfirmation {
+            endpoint_name,
+            action,
+        };
+        self.pending_confirmation = Some(pending.clone());
+        Some(pending)
+    }
+
+    /// Test-only equivalent of clicking an action button, for panels built
+    /// via `new_for_test` (no `Workspace`/window available to host a real
+    /// `ConfirmModal`). Runs the exact same read-only gate and dispatch path
+    /// as `request_action`; destructive actions land in
+    /// `pending_confirmation` instead of opening a modal.
+    #[cfg(test)]
+    pub(crate) fn request_action_for_test(&mut self, action: DockerAction, cx: &mut Context<Self>) {
+        self.gate_and_dispatch_or_pend(action, cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_confirmation_for_test(&self) -> Option<(String, DockerAction)> {
+        self.pending_confirmation
+            .as_ref()
+            .map(|pending| (pending.endpoint_name.clone(), pending.action.clone()))
+    }
+
+    /// Test-only equivalent of clicking Confirm on the open `ConfirmModal`:
+    /// runs the exact same store-dispatch path (including the store's own
+    /// read-only re-check) without requiring a real `Workspace`/window.
+    #[cfg(test)]
+    pub(crate) fn confirm_pending_for_test(&mut self, cx: &mut Context<Self>) {
+        let Some(pending) = self.pending_confirmation.take() else {
+            return;
+        };
+        self.store.update(cx, |store, cx| {
+            store.dispatch_action(&pending.endpoint_name, pending.action, cx);
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cancel_pending_for_test(&mut self) {
+        self.pending_confirmation = None;
     }
 }
 
@@ -543,6 +970,15 @@ impl Render for DockerPanel {
                     .overflow_hidden()
                     .child(content),
             )
+            .when(self.selected.is_some(), |this| {
+                this.child(
+                    v_flex()
+                        .h(rems(16.))
+                        .border_t_1()
+                        .border_color(cx.theme().colors().border)
+                        .child(self.render_detail_pane(cx)),
+                )
+            })
     }
 }
 
@@ -681,5 +1117,174 @@ mod tests {
             _ => false,
         });
         assert!(found, "expected an expanded container row named `api`");
+    }
+
+    /// SAFETY-CRITICAL: invoking a destructive action against a read-only
+    /// endpoint must never reach the `DockerClient`, even when called
+    /// directly on the handler (bypassing a disabled button in the UI).
+    #[gpui::test]
+    async fn destructive_action_blocked_on_read_only_endpoint(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fake = Arc::new(FakeDockerClient::new_with_container("api"));
+        let factory = {
+            let fake = fake.clone();
+            Arc::new(move || fake.clone() as Arc<dyn DockerClient>)
+        };
+        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+        let endpoint_name =
+            store.read_with(cx, |store, _| store.endpoints()[0].endpoint.name.clone());
+
+        // Force the endpoint read-only directly on the store's state (the
+        // "local" synthetic endpoint defaults to `read_only: false`).
+        store.update(cx, |store, cx| {
+            if let Some(state) = store.endpoint_mut_for_test(&endpoint_name) {
+                state.endpoint.read_only = true;
+            }
+            cx.notify();
+        });
+
+        let panel = cx.new(|cx| DockerPanel::new_for_test(store.clone(), cx));
+        panel.update(cx, |panel, cx| {
+            panel.select_container(endpoint_name.clone(), "api-id".into(), "api".into(), cx);
+        });
+
+        panel.update(cx, |panel, cx| {
+            panel.request_action_for_test(
+                DockerAction::StopContainer {
+                    id: "api-id".into(),
+                },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        assert!(
+            !fake.calls().iter().any(|c| c.starts_with("stop_container")),
+            "a destructive action on a read-only endpoint must never reach the client; calls: {:?}",
+            fake.calls()
+        );
+        // No confirmation should be pending either: the gate bails before
+        // getting anywhere near a confirm step.
+        panel.read_with(cx, |panel, _| {
+            assert!(panel.pending_confirmation_for_test().is_none());
+        });
+    }
+
+    /// SAFETY-CRITICAL: invoking a destructive action on a non-read-only
+    /// endpoint must not call the client until the user confirms; after
+    /// confirming, the client must be called exactly once.
+    #[gpui::test]
+    async fn destructive_action_requires_confirmation(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fake = Arc::new(FakeDockerClient::new_with_container("api"));
+        let factory = {
+            let fake = fake.clone();
+            Arc::new(move || fake.clone() as Arc<dyn DockerClient>)
+        };
+        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+        let endpoint_name =
+            store.read_with(cx, |store, _| store.endpoints()[0].endpoint.name.clone());
+
+        let panel = cx.new(|cx| DockerPanel::new_for_test(store.clone(), cx));
+        panel.update(cx, |panel, cx| {
+            panel.select_container(endpoint_name.clone(), "api-id".into(), "api".into(), cx);
+        });
+
+        panel.update(cx, |panel, cx| {
+            panel.request_action_for_test(
+                DockerAction::RestartContainer {
+                    id: "api-id".into(),
+                },
+                cx,
+            );
+        });
+        cx.run_until_parked();
+
+        // A confirmation must be pending (standing in for an opened
+        // `ConfirmModal`) and the client must not have been called yet.
+        panel.read_with(cx, |panel, _| {
+            let pending = panel
+                .pending_confirmation_for_test()
+                .expect("restart on a writable endpoint should require confirmation");
+            assert_eq!(pending.0, endpoint_name);
+            assert_eq!(
+                pending.1,
+                DockerAction::RestartContainer {
+                    id: "api-id".into()
+                }
+            );
+        });
+        assert!(
+            !fake
+                .calls()
+                .iter()
+                .any(|c| c.starts_with("restart_container")),
+            "the client must not be called before confirmation; calls: {:?}",
+            fake.calls()
+        );
+
+        panel.update(cx, |panel, cx| panel.confirm_pending_for_test(cx));
+        wait_until(cx, |_| {
+            fake.calls()
+                .iter()
+                .any(|c| c.starts_with("restart_container"))
+        })
+        .await;
+
+        assert!(
+            fake.calls()
+                .iter()
+                .any(|c| c.starts_with("restart_container")),
+            "confirming should dispatch restart_container; calls: {:?}",
+            fake.calls()
+        );
+    }
+
+    /// Cancelling a pending confirmation must never dispatch the action.
+    #[gpui::test]
+    async fn cancelling_confirmation_does_not_dispatch(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fake = Arc::new(FakeDockerClient::new_with_container("api"));
+        let factory = {
+            let fake = fake.clone();
+            Arc::new(move || fake.clone() as Arc<dyn DockerClient>)
+        };
+        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+        let endpoint_name =
+            store.read_with(cx, |store, _| store.endpoints()[0].endpoint.name.clone());
+
+        let panel = cx.new(|cx| DockerPanel::new_for_test(store.clone(), cx));
+        panel.update(cx, |panel, cx| {
+            panel.select_container(endpoint_name.clone(), "api-id".into(), "api".into(), cx);
+        });
+        panel.update(cx, |panel, cx| {
+            panel.request_action_for_test(
+                DockerAction::StopContainer {
+                    id: "api-id".into(),
+                },
+                cx,
+            );
+        });
+        panel.read_with(cx, |panel, _| {
+            assert!(panel.pending_confirmation_for_test().is_some());
+        });
+
+        panel.update(cx, |panel, _cx| panel.cancel_pending_for_test());
+        cx.run_until_parked();
+
+        panel.read_with(cx, |panel, _| {
+            assert!(panel.pending_confirmation_for_test().is_none());
+        });
+        assert!(
+            !fake.calls().iter().any(|c| c.starts_with("stop_container")),
+            "cancelling must not dispatch the action; calls: {:?}",
+            fake.calls()
+        );
     }
 }

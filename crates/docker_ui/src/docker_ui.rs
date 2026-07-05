@@ -1,7 +1,11 @@
+mod confirm_modal;
+mod detail_view;
 mod docker_panel;
 mod docker_settings;
 mod endpoint_store;
 
+pub use confirm_modal::{ConfirmModal, ConfirmModalEvent};
+pub use detail_view::{DetailView, InspectState, LogsState, SelectedItem};
 pub use docker_panel::{DockerPanel, Toggle, ToggleFocus};
 pub use docker_settings::DockerSettings;
 pub use endpoint_store::*;

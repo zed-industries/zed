@@ -20,6 +20,91 @@ pub enum EndpointStoreEvent {
     Changed,
 }
 
+/// A single container/image/compose action that can be dispatched against an
+/// endpoint. Carries everything needed both to invoke the [`DockerClient`]
+/// method and to render the exact command string in [`crate::ConfirmModal`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DockerAction {
+    StartContainer {
+        id: String,
+    },
+    StopContainer {
+        id: String,
+    },
+    RestartContainer {
+        id: String,
+    },
+    PullImage {
+        reference: String,
+    },
+    RemoveImage {
+        id: String,
+    },
+    ComposeUp {
+        project: String,
+        service: Option<String>,
+    },
+    ComposeDown {
+        project: String,
+    },
+    ComposeRestart {
+        project: String,
+        service: Option<String>,
+    },
+}
+
+impl DockerAction {
+    /// Whether this action can change running state or delete data. Mirrors
+    /// exactly the `docker` subcommands that mutate the daemon's state, as
+    /// opposed to read-only actions like `start`/`pull`/`inspect`/`logs`.
+    ///
+    /// NOTE: `start_container` is intentionally NOT destructive: bringing up
+    /// an already-stopped container is the inverse of the read-only gate's
+    /// concern (it can't discard running state or data). `pull_image` is also
+    /// non-destructive: it only downloads an image and is always allowed.
+    pub fn is_destructive(&self) -> bool {
+        match self {
+            DockerAction::StartContainer { .. } | DockerAction::PullImage { .. } => false,
+            DockerAction::StopContainer { .. }
+            | DockerAction::RestartContainer { .. }
+            | DockerAction::RemoveImage { .. }
+            | DockerAction::ComposeUp { .. }
+            | DockerAction::ComposeDown { .. }
+            | DockerAction::ComposeRestart { .. } => true,
+        }
+    }
+
+    /// The exact `docker` command line this action will run, matching
+    /// [`docker_client::cli::CliDockerClient`]'s argument construction. Shown
+    /// verbatim in [`crate::ConfirmModal`] so the user knows precisely what
+    /// will execute before confirming.
+    pub fn command_string(&self) -> String {
+        match self {
+            DockerAction::StartContainer { id } => format!("docker start {id}"),
+            DockerAction::StopContainer { id } => format!("docker stop {id}"),
+            DockerAction::RestartContainer { id } => format!("docker restart {id}"),
+            DockerAction::PullImage { reference } => format!("docker pull {reference}"),
+            DockerAction::RemoveImage { id } => format!("docker rmi {id}"),
+            DockerAction::ComposeUp { project, service } => match service {
+                Some(service) => format!("docker compose -p {project} up -d {service}"),
+                None => format!("docker compose -p {project} up -d"),
+            },
+            DockerAction::ComposeDown { project } => format!("docker compose -p {project} down"),
+            DockerAction::ComposeRestart { project, service } => match service {
+                Some(service) => format!("docker compose -p {project} restart {service}"),
+                None => format!("docker compose -p {project} restart"),
+            },
+        }
+    }
+}
+
+/// Standalone helper mirroring [`DockerAction::is_destructive`] for callers
+/// that only have the action, e.g. UI code deciding whether to render a
+/// button disabled before any endpoint/store is involved.
+pub fn is_destructive(action: &DockerAction) -> bool {
+    action.is_destructive()
+}
+
 /// Constructs a [`DockerClient`] used to talk to every endpoint.
 ///
 /// Production wires this to [`default_client_factory`], which builds a
@@ -118,6 +203,20 @@ impl DockerEndpointStore {
         &self.endpoints
     }
 
+    /// Builds a fresh [`DockerClient`] for one-off read operations (e.g.
+    /// Inspect/Logs in the detail view) that are always allowed and do not
+    /// go through [`Self::dispatch_action`]'s read-only gate.
+    pub fn make_client(&self) -> Arc<dyn DockerClient> {
+        (self.client_factory)()
+    }
+
+    pub fn endpoint(&self, endpoint_name: &str) -> Option<&DockerEndpoint> {
+        self.endpoints
+            .iter()
+            .find(|state| state.endpoint.name == endpoint_name)
+            .map(|state| &state.endpoint)
+    }
+
     /// Reconciles `self.endpoints` with the current settings: adds newly
     /// configured endpoints as `Idle`, drops removed ones, and keeps live
     /// state for endpoints whose config is unchanged. The synthetic "local"
@@ -185,6 +284,17 @@ impl DockerEndpointStore {
         self.endpoints
             .iter_mut()
             .find(|state| state.endpoint.name == endpoint_name)
+    }
+
+    /// Test-only hook for forcing an endpoint's `read_only` flag (or other
+    /// fields) without going through settings, so read-only-gate tests don't
+    /// need a full settings round-trip to set up their fixture.
+    #[cfg(test)]
+    pub(crate) fn endpoint_mut_for_test(
+        &mut self,
+        endpoint_name: &str,
+    ) -> Option<&mut EndpointState> {
+        self.endpoint_mut(endpoint_name)
     }
 
     /// Tests the endpoint and lists its containers, images, and compose
@@ -313,6 +423,159 @@ impl DockerEndpointStore {
         .detach();
     }
 
+    /// Runs `action` against `endpoint_name` and refreshes that endpoint on
+    /// success.
+    ///
+    /// This is the SAFETY-CRITICAL gate: a destructive action
+    /// (`DockerAction::is_destructive`) against a `read_only` endpoint
+    /// returns immediately WITHOUT invoking the `DockerClient` at all. This
+    /// check is re-applied here rather than trusted to the caller (e.g. a
+    /// disabled button or a confirm modal that failed to gate correctly), so
+    /// that even a caller bug can never reach the client on a read-only
+    /// endpoint.
+    ///
+    /// Callers are expected to have already shown a [`crate::ConfirmModal`]
+    /// for destructive actions and only invoke this method once the user
+    /// confirmed; this method itself does not prompt.
+    pub fn dispatch_action(
+        &mut self,
+        endpoint_name: &str,
+        action: DockerAction,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(state) = self
+            .endpoints
+            .iter()
+            .find(|s| s.endpoint.name == endpoint_name)
+        else {
+            return;
+        };
+        if action.is_destructive() && state.endpoint.read_only {
+            log::warn!(
+                "blocked destructive docker action on read-only endpoint {endpoint_name}: {action:?}"
+            );
+            return;
+        }
+
+        let endpoint = state.endpoint.clone();
+        let client = (self.client_factory)();
+        let endpoint_name = endpoint_name.to_string();
+
+        let run_task = gpui_tokio::Tokio::spawn_result(cx, async move {
+            match action {
+                DockerAction::StartContainer { id } => client.start_container(&endpoint, &id).await,
+                DockerAction::StopContainer { id } => client.stop_container(&endpoint, &id).await,
+                DockerAction::RestartContainer { id } => {
+                    client.restart_container(&endpoint, &id).await
+                }
+                DockerAction::PullImage { reference } => {
+                    client.pull_image(&endpoint, &reference).await
+                }
+                DockerAction::RemoveImage { id } => client.remove_image(&endpoint, &id).await,
+                DockerAction::ComposeUp { project, service } => {
+                    client
+                        .compose_up(&endpoint, &project, service.as_deref())
+                        .await
+                }
+                DockerAction::ComposeDown { project } => {
+                    client.compose_down(&endpoint, &project).await
+                }
+                DockerAction::ComposeRestart { project, service } => {
+                    client
+                        .compose_restart(&endpoint, &project, service.as_deref())
+                        .await
+                }
+            }
+        });
+
+        cx.spawn(async move |this, cx| {
+            let result = run_task.await;
+            match result {
+                Ok(()) => {
+                    this.update(cx, |this, cx| this.refresh(&endpoint_name, cx))
+                        .ok();
+                }
+                Err(error) => {
+                    this.update(cx, |this, cx| {
+                        this.set_error(&endpoint_name, format!("{error:#}"), cx);
+                    })
+                    .ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Starts the container with `id` on `endpoint_name`. Not destructive:
+    /// always allowed regardless of `read_only`.
+    pub fn start_container(&mut self, endpoint_name: &str, id: String, cx: &mut Context<Self>) {
+        self.dispatch_action(endpoint_name, DockerAction::StartContainer { id }, cx);
+    }
+
+    /// Stops the container with `id` on `endpoint_name`. Destructive: blocked
+    /// on read-only endpoints by [`Self::dispatch_action`].
+    pub fn stop_container(&mut self, endpoint_name: &str, id: String, cx: &mut Context<Self>) {
+        self.dispatch_action(endpoint_name, DockerAction::StopContainer { id }, cx);
+    }
+
+    /// Restarts the container with `id` on `endpoint_name`. Destructive:
+    /// blocked on read-only endpoints by [`Self::dispatch_action`].
+    pub fn restart_container(&mut self, endpoint_name: &str, id: String, cx: &mut Context<Self>) {
+        self.dispatch_action(endpoint_name, DockerAction::RestartContainer { id }, cx);
+    }
+
+    /// Pulls `reference` on `endpoint_name`. Not destructive: always allowed
+    /// regardless of `read_only`.
+    pub fn pull_image(&mut self, endpoint_name: &str, reference: String, cx: &mut Context<Self>) {
+        self.dispatch_action(endpoint_name, DockerAction::PullImage { reference }, cx);
+    }
+
+    /// Removes the image with `id` on `endpoint_name`. Destructive: blocked
+    /// on read-only endpoints by [`Self::dispatch_action`].
+    pub fn remove_image(&mut self, endpoint_name: &str, id: String, cx: &mut Context<Self>) {
+        self.dispatch_action(endpoint_name, DockerAction::RemoveImage { id }, cx);
+    }
+
+    /// Brings up `project` (optionally scoped to `service`) on
+    /// `endpoint_name`. Destructive: blocked on read-only endpoints by
+    /// [`Self::dispatch_action`].
+    pub fn compose_up(
+        &mut self,
+        endpoint_name: &str,
+        project: String,
+        service: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.dispatch_action(
+            endpoint_name,
+            DockerAction::ComposeUp { project, service },
+            cx,
+        );
+    }
+
+    /// Tears down `project` on `endpoint_name`. Destructive: blocked on
+    /// read-only endpoints by [`Self::dispatch_action`].
+    pub fn compose_down(&mut self, endpoint_name: &str, project: String, cx: &mut Context<Self>) {
+        self.dispatch_action(endpoint_name, DockerAction::ComposeDown { project }, cx);
+    }
+
+    /// Restarts `project` (optionally scoped to `service`) on
+    /// `endpoint_name`. Destructive: blocked on read-only endpoints by
+    /// [`Self::dispatch_action`].
+    pub fn compose_restart(
+        &mut self,
+        endpoint_name: &str,
+        project: String,
+        service: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.dispatch_action(
+            endpoint_name,
+            DockerAction::ComposeRestart { project, service },
+            cx,
+        );
+    }
+
     /// Refreshes every endpoint that is not currently `Error` or `Connecting`.
     pub fn refresh_all(&mut self, cx: &mut Context<Self>) {
         let names: Vec<String> = self
@@ -430,6 +693,63 @@ mod tests {
     use gpui::{AppContext as _, BorrowAppContext as _, TestAppContext};
     use settings::SettingsStore;
 
+    #[test]
+    fn is_destructive_covers_exactly_stop_restart_remove_and_compose() {
+        assert!(!DockerAction::StartContainer { id: "a".into() }.is_destructive());
+        assert!(
+            !DockerAction::PullImage {
+                reference: "a".into()
+            }
+            .is_destructive()
+        );
+        assert!(DockerAction::StopContainer { id: "a".into() }.is_destructive());
+        assert!(DockerAction::RestartContainer { id: "a".into() }.is_destructive());
+        assert!(DockerAction::RemoveImage { id: "a".into() }.is_destructive());
+        assert!(
+            DockerAction::ComposeUp {
+                project: "a".into(),
+                service: None
+            }
+            .is_destructive()
+        );
+        assert!(
+            DockerAction::ComposeDown {
+                project: "a".into()
+            }
+            .is_destructive()
+        );
+        assert!(
+            DockerAction::ComposeRestart {
+                project: "a".into(),
+                service: None
+            }
+            .is_destructive()
+        );
+    }
+
+    #[test]
+    fn command_string_matches_cli_docker_client_args() {
+        assert_eq!(
+            DockerAction::RestartContainer { id: "api".into() }.command_string(),
+            "docker restart api"
+        );
+        assert_eq!(
+            DockerAction::ComposeDown {
+                project: "shop".into()
+            }
+            .command_string(),
+            "docker compose -p shop down"
+        );
+        assert_eq!(
+            DockerAction::ComposeUp {
+                project: "shop".into(),
+                service: Some("web".into())
+            }
+            .command_string(),
+            "docker compose -p shop up -d web"
+        );
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
@@ -543,6 +863,126 @@ mod tests {
         assert!(
             after > before,
             "autopoll should have refreshed at least once"
+        );
+    }
+
+    /// SAFETY-CRITICAL: this is the lowest-level proof of the read-only
+    /// gate. Every destructive action must bail out of `dispatch_action`
+    /// before invoking the `DockerClient`, for a `read_only` endpoint.
+    #[gpui::test]
+    async fn dispatch_action_blocks_all_destructive_actions_on_read_only_endpoint(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        set_one_ssh_endpoint(cx); // "prod" is read_only: true
+        let fake = Arc::new(FakeDockerClient::new_with_container("api"));
+        let factory: ClientFactory = {
+            let fake = fake.clone();
+            Arc::new(move || fake.clone() as Arc<dyn DockerClient>)
+        };
+        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+
+        let destructive_actions = [
+            DockerAction::StopContainer { id: "api".into() },
+            DockerAction::RestartContainer { id: "api".into() },
+            DockerAction::RemoveImage { id: "img".into() },
+            DockerAction::ComposeUp {
+                project: "shop".into(),
+                service: None,
+            },
+            DockerAction::ComposeDown {
+                project: "shop".into(),
+            },
+            DockerAction::ComposeRestart {
+                project: "shop".into(),
+                service: None,
+            },
+        ];
+        for action in destructive_actions {
+            assert!(action.is_destructive());
+            store.update(cx, |s, cx| s.dispatch_action("prod", action, cx));
+        }
+        cx.run_until_parked();
+
+        assert!(
+            fake.calls().is_empty(),
+            "no destructive action should reach the client on a read-only endpoint; calls: {:?}",
+            fake.calls()
+        );
+    }
+
+    /// Non-destructive actions (start/pull) are always allowed, even on a
+    /// read-only endpoint.
+    #[gpui::test]
+    async fn dispatch_action_allows_non_destructive_actions_on_read_only_endpoint(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        set_one_ssh_endpoint(cx); // "prod" is read_only: true
+        let fake = Arc::new(FakeDockerClient::new_with_container("api"));
+        let factory: ClientFactory = {
+            let fake = fake.clone();
+            Arc::new(move || fake.clone() as Arc<dyn DockerClient>)
+        };
+        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+
+        store.update(cx, |s, cx| {
+            s.dispatch_action(
+                "prod",
+                DockerAction::StartContainer { id: "api".into() },
+                cx,
+            )
+        });
+        wait_until(cx, |_| {
+            fake.calls()
+                .iter()
+                .any(|c| c.starts_with("start_container"))
+        })
+        .await;
+
+        assert!(
+            fake.calls()
+                .iter()
+                .any(|c| c.starts_with("start_container")),
+            "non-destructive actions must be allowed on a read-only endpoint"
+        );
+    }
+
+    #[gpui::test]
+    async fn dispatch_action_runs_destructive_actions_on_writable_endpoint(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx); // "local" endpoint defaults to read_only: false
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDockerClient::new_with_container("api"));
+        let factory: ClientFactory = {
+            let fake = fake.clone();
+            Arc::new(move || fake.clone() as Arc<dyn DockerClient>)
+        };
+        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+
+        store.update(cx, |s, cx| {
+            s.dispatch_action(
+                "local",
+                DockerAction::RestartContainer { id: "api".into() },
+                cx,
+            )
+        });
+        wait_until(cx, |_| {
+            fake.calls()
+                .iter()
+                .any(|c| c.starts_with("restart_container"))
+        })
+        .await;
+
+        assert!(
+            fake.calls()
+                .iter()
+                .any(|c| c.starts_with("restart_container local api")),
+            "restart should run with the expected endpoint/id; calls: {:?}",
+            fake.calls()
         );
     }
 }
