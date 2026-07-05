@@ -1,0 +1,40 @@
+[package]
+name = "docker_ui"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lib]
+path = "src/docker_ui.rs"
+doctest = false
+
+[features]
+test-support = ["docker_client/test-support"]
+
+[dependencies]
+anyhow.workspace = true
+docker_client.workspace = true
+futures.workspace = true
+fs.workspace = true
+gpui.workspace = true
+gpui_tokio.workspace = true
+log.workspace = true
+menu.workspace = true
+serde_json.workspace = true
+settings.workspace = true
+theme.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true
+
+[dev-dependencies]
+docker_client = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+gpui_tokio.workspace = true
+settings = { workspace = true, features = ["test-support"] }
+theme_settings.workspace = true
+theme = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

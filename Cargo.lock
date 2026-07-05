@@ -5487,6 +5487,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "docker_ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "docker_client",
+ "fs",
+ "futures 0.3.32",
+ "gpui",
+ "gpui_tokio",
+ "log",
+ "menu",
+ "serde_json",
+ "settings",
+ "theme",
+ "theme_settings",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "docs_preprocessor"
 version = "0.1.0"
 dependencies = [
@@ -23279,6 +23300,7 @@ dependencies = [
  "debugger_ui",
  "dev_container",
  "diagnostics",
+ "docker_ui",
  "edit_prediction",
  "edit_prediction_ui",
  "editor",

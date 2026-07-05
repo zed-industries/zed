@@ -58,6 +58,7 @@ members = [
     "crates/dev_container",
     "crates/diagnostics",
     "crates/docker_client",
+    "crates/docker_ui",
     "crates/docs_preprocessor",
     "crates/edit_prediction",
     "crates/edit_prediction_cli",
@@ -331,6 +332,7 @@ dev_container = { path = "crates/dev_container" }
 diagnostics = { path = "crates/diagnostics" }
 dialoguer = { version = "0.12", default-features = false }
 docker_client = { path = "crates/docker_client" }
+docker_ui = { path = "crates/docker_ui" }
 editor = { path = "crates/editor" }
 encoding_selector = { path = "crates/encoding_selector" }
 env_var = { path = "crates/env_var" }

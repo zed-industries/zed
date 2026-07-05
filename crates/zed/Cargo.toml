@@ -102,6 +102,7 @@ debugger_tools.workspace = true
 debugger_ui.workspace = true
 dev_container.workspace = true
 diagnostics.workspace = true
+docker_ui.workspace = true
 editor.workspace = true
 encoding_selector.workspace = true
 env_logger.workspace = true

@@ -5568,6 +5568,7 @@ mod tests {
             collab_ui::init(&app_state, cx);
             git_ui::init(cx);
             database_ui::init(cx);
+            docker_ui::init(cx);
             project_panel::init(cx);
             outline_panel::init(cx);
             terminal_view::init(cx);
