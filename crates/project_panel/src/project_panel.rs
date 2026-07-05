@@ -20,14 +20,14 @@ use git::status::GitSummary;
 use git_ui;
 use git_ui::file_diff_view::FileDiffView;
 use gpui::{
-    Action, AnyElement, App, AsyncWindowContext, Bounds, ClipboardEntry as GpuiClipboardEntry,
-    ClipboardItem, Context, CursorStyle, DismissEvent, Div, DragMoveEvent, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement, KeyContext,
-    ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, ParentElement, PathPromptOptions, Pixels, Point, PromptLevel,
-    Render, ScrollStrategy, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
-    WeakEntity, Window, actions, anchored, deferred, div, hsla, linear_color_stop, linear_gradient,
-    point, px, size, transparent_white, uniform_list,
+    Action, AnyElement, App, AsyncWindowContext, Axis, Bounds,
+    ClipboardEntry as GpuiClipboardEntry, ClipboardItem, Context, CursorStyle, DismissEvent, Div,
+    DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable, FontWeight, Hsla,
+    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, ParentElement, PathPromptOptions, Pixels,
+    Point, PromptLevel, Render, ScrollStrategy, Stateful, Styled, Subscription, Task,
+    UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, div, hsla,
+    linear_color_stop, linear_gradient, point, px, size, transparent_white, uniform_list,
 };
 use language::DiagnosticSeverity;
 use markdown_preview::markdown_preview_view::MarkdownPreviewView;
@@ -7213,9 +7213,7 @@ impl Render for ProjectPanel {
                             } else {
                                 ListHorizontalSizingBehavior::FitList
                             })
-                            .when(horizontal_scroll, |list| {
-                                list.with_width_from_item(self.state.max_width_item_index)
-                            })
+                            .with_width_from_item(self.state.max_width_item_index)
                             .track_scroll(&self.scroll_handle),
                         )
                         .child(
@@ -7524,6 +7522,22 @@ impl Panel for ProjectPanel {
 
     fn default_size(&self, _: &Window, cx: &App) -> Pixels {
         ProjectPanelSettings::get_global(cx).default_width
+    }
+
+    fn fitted_size(
+        &self,
+        axis: Axis,
+        current_size: Pixels,
+        _window: &Window,
+        _cx: &App,
+    ) -> Option<Pixels> {
+        if axis != Axis::Horizontal {
+            return None;
+        }
+
+        let item_size = self.scroll_handle.0.borrow().last_item_size?;
+        let chrome = current_size - item_size.item.width;
+        Some(item_size.measured_item_width + chrome)
     }
 
     fn icon(&self, _: &Window, cx: &App) -> Option<IconName> {
