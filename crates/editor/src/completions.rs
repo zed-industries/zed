@@ -810,6 +810,7 @@ impl Editor {
             new_text,
             snippet,
             replace_range,
+            snippet_source,
         } = process_completion_for_edit(&completion, intent, &buffer_handle, &initial_position, cx);
 
         let buffer = buffer_handle.read(cx).snapshot();
@@ -899,10 +900,16 @@ impl Editor {
             .map(|(a, _)| a.len_utf8())
             .sum::<usize>();
 
-        cx.emit(EditorEvent::InputHandled {
-            utf16_range_to_replace: None,
-            text: new_text[common_prefix_len..].into(),
-        });
+        if let Some(snippet_source) = &snippet_source {
+            cx.emit(EditorEvent::SnippetInsertion {
+                snippet_source: snippet_source.as_str().into(),
+            });
+        } else {
+            cx.emit(EditorEvent::InputHandled {
+                utf16_range_to_replace: None,
+                text: new_text[common_prefix_len..].into(),
+            });
+        }
 
         let tx_id = self.transact(window, cx, |editor, window, cx| {
             if let Some(mut snippet) = snippet {

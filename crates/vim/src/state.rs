@@ -1016,6 +1016,33 @@ impl VimGlobals {
         }
     }
 
+    pub fn observe_snippet_insertion(&mut self, snippet_source: &Arc<str>) {
+        if self.ignore_current_insertion {
+            self.ignore_current_insertion = false;
+            return;
+        }
+        if self.dot_recording {
+            self.recording_actions
+                .push(ReplayableAction::SnippetInsertion {
+                    snippet_source: snippet_source.clone(),
+                });
+            if self.stop_recording_after_next_action {
+                self.dot_recording = false;
+                self.recorded_actions = std::mem::take(&mut self.recording_actions);
+                self.recorded_count = self.recording_count.take();
+                self.recorded_register_for_dot = self.recording_register_for_dot.take();
+                self.stop_recording_after_next_action = false;
+            }
+        }
+        if let Some(recording_register) = self.recording_register {
+            self.recordings.entry(recording_register).or_default().push(
+                ReplayableAction::SnippetInsertion {
+                    snippet_source: snippet_source.clone(),
+                },
+            );
+        }
+    }
+
     pub fn focused_vim(&self) -> Option<Entity<Vim>> {
         self.focused_vim.as_ref().and_then(|vim| vim.upgrade())
     }
@@ -1041,6 +1068,9 @@ pub enum ReplayableAction {
         text: Arc<str>,
         utf16_range_to_replace: Option<Range<isize>>,
     },
+    SnippetInsertion {
+        snippet_source: Arc<str>,
+    },
 }
 
 impl Clone for ReplayableAction {
@@ -1053,6 +1083,9 @@ impl Clone for ReplayableAction {
             } => Self::Insertion {
                 text: text.clone(),
                 utf16_range_to_replace: utf16_range_to_replace.clone(),
+            },
+            Self::SnippetInsertion { snippet_source } => Self::SnippetInsertion {
+                snippet_source: snippet_source.clone(),
             },
         }
     }
