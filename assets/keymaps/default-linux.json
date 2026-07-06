@@ -299,6 +299,13 @@
     },
   },
   {
+    "context": "AgentTerminalThread",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-f": "agent::ToggleSearch",
+    },
+  },
+  {
     "context": "AcpThreadSearchBar",
     "use_key_equivalents": true,
     "bindings": {
@@ -1279,13 +1286,6 @@
       "escape": "menu::Cancel",
       "enter": "editor::Newline",
       "ctrl-enter": "menu::Confirm",
-    },
-  },
-  {
-    "context": "ContextServerToolsModal",
-    "use_key_equivalents": true,
-    "bindings": {
-      "escape": "menu::Cancel",
     },
   },
   {

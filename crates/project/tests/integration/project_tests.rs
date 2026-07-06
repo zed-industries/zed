@@ -12070,6 +12070,188 @@ async fn test_project_group_keys_remain_distinct_for_sibling_repo_subdirectories
     );
 }
 
+fn project_group_key_paths(project: &Entity<Project>, cx: &TestAppContext) -> Vec<PathBuf> {
+    project.read_with(cx, |project, cx| {
+        ProjectGroupKey::from_project(project, cx)
+            .path_list()
+            .ordered_paths()
+            .cloned()
+            .collect()
+    })
+}
+
+fn project_worktree_paths(
+    project: &Entity<Project>,
+    cx: &TestAppContext,
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    project.read_with(cx, |project, cx| {
+        let paths = project.worktree_paths(cx);
+        (
+            paths.folder_path_list().ordered_paths().cloned().collect(),
+            paths
+                .main_worktree_path_list()
+                .ordered_paths()
+                .cloned()
+                .collect(),
+        )
+    })
+}
+
+#[gpui::test]
+async fn test_project_group_keys_match_for_bare_repo_linked_worktrees(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "monty": {
+                ".git": "gitdir: ./.bare\n",
+                ".bare": {
+                    "HEAD": "ref: refs/heads/main\n",
+                    "worktrees": {
+                        "main": {
+                            "commondir": "../..",
+                            "gitdir": "/root/monty/main/.git",
+                        },
+                        "feature-a": {
+                            "commondir": "../..",
+                            "gitdir": "/root/monty/feature-a/.git",
+                        },
+                        "feature-b": {
+                            "commondir": "../..",
+                            "gitdir": "/root/monty/feature-b/.git",
+                        },
+                    },
+                },
+                "main": {
+                    ".git": "gitdir: /root/monty/.bare/worktrees/main\n",
+                    "file.txt": "main",
+                },
+                "feature-a": {
+                    ".git": "gitdir: /root/monty/.bare/worktrees/feature-a\n",
+                    "file.txt": "a",
+                },
+                "feature-b": {
+                    ".git": "gitdir: /root/monty/.bare/worktrees/feature-b\n",
+                    "file.txt": "b",
+                },
+            },
+        }),
+    )
+    .await;
+
+    let project_root = Project::test(fs.clone(), [path!("/root/monty").as_ref()], cx).await;
+    let project_main = Project::test(fs.clone(), [path!("/root/monty/main").as_ref()], cx).await;
+    let project_a = Project::test(fs.clone(), [path!("/root/monty/feature-a").as_ref()], cx).await;
+    let project_b = Project::test(fs, [path!("/root/monty/feature-b").as_ref()], cx).await;
+
+    project_root
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    project_main
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    project_a
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    project_b
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    for project in [&project_root, &project_main, &project_a, &project_b] {
+        assert_eq!(
+            project_group_key_paths(project, cx),
+            vec![PathBuf::from(path!("/root/monty"))]
+        );
+    }
+
+    assert_eq!(
+        project_worktree_paths(&project_root, cx),
+        (
+            vec![PathBuf::from(path!("/root/monty"))],
+            vec![PathBuf::from(path!("/root/monty"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_main, cx),
+        (
+            vec![PathBuf::from(path!("/root/monty/main"))],
+            vec![PathBuf::from(path!("/root/monty"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_a, cx),
+        (
+            vec![PathBuf::from(path!("/root/monty/feature-a"))],
+            vec![PathBuf::from(path!("/root/monty"))],
+        )
+    );
+    assert_eq!(
+        project_worktree_paths(&project_b, cx),
+        (
+            vec![PathBuf::from(path!("/root/monty/feature-b"))],
+            vec![PathBuf::from(path!("/root/monty"))],
+        )
+    );
+}
+
+#[gpui::test]
+async fn test_project_group_key_groups_nested_linked_worktree_under_main_repo(
+    executor: gpui::BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor);
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            "my-repo": {
+                ".git": {},
+                "file.txt": "content",
+            },
+        }),
+    )
+    .await;
+
+    let linked_worktree_path = PathBuf::from(path!("/root/my-repo/.zed/worktrees/feature"));
+    fs.add_linked_worktree_for_repo(
+        Path::new(path!("/root/my-repo/.git")),
+        false,
+        git::repository::Worktree {
+            path: linked_worktree_path.clone(),
+            ref_name: Some("refs/heads/feature".into()),
+            sha: "abc123".into(),
+            is_main: false,
+            is_bare: false,
+        },
+    )
+    .await;
+
+    let project = Project::test(fs, [linked_worktree_path.as_path()], cx).await;
+    project
+        .update(cx, |project, cx| project.git_scans_complete(cx))
+        .await;
+    cx.run_until_parked();
+
+    assert_eq!(
+        project_group_key_paths(&project, cx),
+        vec![PathBuf::from(path!("/root/my-repo"))]
+    );
+    assert_eq!(
+        project_worktree_paths(&project, cx),
+        (
+            vec![PathBuf::from(path!("/root/my-repo/.zed/worktrees/feature"))],
+            vec![PathBuf::from(path!("/root/my-repo"))],
+        )
+    );
+}
+
 #[gpui::test]
 async fn test_repository_subfolder_git_status(
     executor: gpui::BackgroundExecutor,

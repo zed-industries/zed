@@ -2148,6 +2148,7 @@ impl Project {
                 visible: true,
                 abs_path: abs_path.to_string(),
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             },
             client,
             PathStyle::Posix,
@@ -2531,6 +2532,30 @@ impl Project {
                 let contains =
                     relative_path.is_some() && (!exclude_sub_dirs || !is_dir || !is_subdir);
                 contains.then(|| worktree.is_visible())
+            })
+            .max()
+    }
+
+    pub fn visibility_for_subpaths(&self, paths: &[PathBuf], cx: &App) -> Option<bool> {
+        paths
+            .iter()
+            .map(|path| self.visibility_for_subpath(path, cx))
+            .max()
+            .flatten()
+    }
+
+    fn visibility_for_subpath(&self, path: &Path, cx: &App) -> Option<bool> {
+        let path = SanitizedPath::new(path).as_path();
+        let path_style = self.path_style(cx);
+        self.worktrees(cx)
+            .filter_map(|worktree| {
+                let worktree = worktree.read(cx);
+                let abs_path = worktree.abs_path();
+                let relative_path = path_style.strip_prefix(path, abs_path.as_ref());
+                let is_subpath = relative_path
+                    .as_ref()
+                    .is_some_and(|p| !p.as_ref().as_unix_str().is_empty());
+                is_subpath.then(|| worktree.is_visible())
             })
             .max()
     }
@@ -5657,7 +5682,7 @@ impl Project {
                 }
             });
 
-            while let Some(buffer) = new_matches.next().await {
+            while let Some((buffer, _)) = new_matches.next().await {
                 let buffer_id = this.update(cx, |this, cx| {
                     this.create_buffer_for_peer(&buffer, peer_id, cx).to_proto()
                 });
