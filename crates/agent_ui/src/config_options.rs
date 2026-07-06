@@ -142,10 +142,7 @@ impl ConfigOptionsView {
             .map(|option| option.id)
     }
 
-    fn can_cycle_config_option(
-        option: &acp::SessionConfigOption,
-        favorites_only: bool,
-    ) -> bool {
+    fn can_cycle_config_option(option: &acp::SessionConfigOption, favorites_only: bool) -> bool {
         match &option.kind {
             acp::SessionConfigKind::Select(_) => true,
             acp::SessionConfigKind::Boolean(_) => !favorites_only,
