@@ -53,11 +53,20 @@ impl Chunk {
     }
 
     fn allocate(&mut self, layout: alloc::Layout) -> Option<NonNull<u8>> {
-        let aligned = unsafe { self.offset.add(self.offset.align_offset(layout.align())) };
-        let next = unsafe { aligned.add(layout.size()) };
+        // Compute the allocation bounds in integer address space so that the
+        // bounds check happens before any pointer offsetting. Offsetting a
+        // pointer past the end of its allocation is undefined behavior even if
+        // the result is never dereferenced (as happens on the chunk-spill
+        // path), so `ptr::add` cannot be used until we know the result stays
+        // in bounds. `checked_add` also handles the documented case where
+        // `align_offset` returns `usize::MAX`.
+        let base = self.offset.addr();
+        let aligned_addr = base.checked_add(self.offset.align_offset(layout.align()))?;
+        let next_addr = aligned_addr.checked_add(layout.size())?;
 
-        if next <= self.end {
-            self.offset = next;
+        if next_addr <= self.end.addr() {
+            let aligned = self.offset.with_addr(aligned_addr);
+            self.offset = self.offset.with_addr(next_addr);
             NonNull::new(aligned)
         } else {
             None
