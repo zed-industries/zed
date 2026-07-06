@@ -638,6 +638,29 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let just_started = self.blame.is_none();
+        if just_started {
+            self.start_git_blame(true, window, cx);
+        }
+        let Some(blame) = self.blame.as_ref() else {
+            return;
+        };
+
+        if just_started && !blame.read(cx).has_generated_entries() {
+            let subscription = cx.observe_in(blame, window, |editor, blame, window, cx| {
+                if blame.read(cx).has_generated_entries() {
+                    editor.pending_blame_hover_observation.take();
+                    editor.show_blame_hover_popover(window, cx);
+                }
+            });
+            self.pending_blame_hover_observation = Some(subscription);
+            return;
+        }
+
+        self.show_blame_hover_popover(window, cx);
+    }
+
+    fn show_blame_hover_popover(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = self.snapshot(window, cx);
         let cursor = self
             .selections
@@ -647,9 +670,6 @@ impl Editor {
             return;
         };
 
-        if self.blame.is_none() {
-            self.start_git_blame(true, window, cx);
-        }
         let Some(blame) = self.blame.as_ref() else {
             return;
         };
