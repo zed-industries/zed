@@ -255,15 +255,36 @@ impl ContextServerConfiguration {
                 oauth,
             } => {
                 let url = url::Url::parse(&url).log_err()?;
+                let headers = auth
+                    .into_iter()
+                    .map(|(key, value)| (key, expand_env_vars(&value)))
+                    .collect();
                 Some(ContextServerConfiguration::Http {
                     url,
-                    headers: auth,
+                    headers,
                     timeout,
                     oauth,
                 })
             }
         }
     }
+}
+
+/// Expands `$VAR`/`${VAR}` references in a header value using the process
+/// environment, so secrets like bearer tokens can live in the environment
+/// instead of the settings file.
+///
+/// A bare `$VAR`/`${VAR}` reference to an unset variable is left
+/// unexpanded, so a missing variable produces an obviously-wrong header
+/// (and a 401) rather than silently sending a header with the reference
+/// stripped out. `${VAR:-default}` shell syntax is also supported and
+/// behaves as it would in a shell: the default is used if `VAR` is unset.
+fn expand_env_vars(value: &str) -> String {
+    expand_env_vars_with(value, |var| std::env::var(var).ok())
+}
+
+fn expand_env_vars_with(value: &str, lookup: impl FnMut(&str) -> Option<String>) -> String {
+    shellexpand::env_with_context_no_errors(value, lookup).into_owned()
 }
 
 pub type ContextServerFactory =
@@ -1929,5 +1950,52 @@ async fn resolve_auth_required(
                 error: format!("OAuth discovery failed: {discovery_err}").into(),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod header_expansion_tests {
+    use super::expand_env_vars_with;
+
+    #[test]
+    fn expands_a_known_variable_wrapped_in_braces() {
+        let value = expand_env_vars_with("Bearer ${TOKEN}", |var| {
+            (var == "TOKEN").then(|| "secret".to_string())
+        });
+        assert_eq!(value, "Bearer secret");
+    }
+
+    #[test]
+    fn expands_a_known_variable_without_braces() {
+        let value = expand_env_vars_with("Bearer $TOKEN", |var| {
+            (var == "TOKEN").then(|| "secret".to_string())
+        });
+        assert_eq!(value, "Bearer secret");
+    }
+
+    #[test]
+    fn leaves_an_unset_variable_unexpanded() {
+        let value = expand_env_vars_with("Bearer ${TOKEN}", |_| None);
+        assert_eq!(value, "Bearer ${TOKEN}");
+    }
+
+    #[test]
+    fn leaves_a_header_with_no_variable_reference_untouched() {
+        let value = expand_env_vars_with("Bearer literal-token", |_| None);
+        assert_eq!(value, "Bearer literal-token");
+    }
+
+    #[test]
+    fn applies_the_shell_default_when_the_variable_is_unset() {
+        let value = expand_env_vars_with("Bearer ${MCP_TOKEN:-fallback}", |_| None);
+        assert_eq!(value, "Bearer fallback");
+    }
+
+    #[test]
+    fn ignores_the_shell_default_when_the_variable_is_set() {
+        let value = expand_env_vars_with("Bearer ${MCP_TOKEN:-fallback}", |var| {
+            (var == "MCP_TOKEN").then(|| "secret".to_string())
+        });
+        assert_eq!(value, "Bearer secret");
     }
 }

@@ -14,6 +14,7 @@ use project::{
 use serde_json::json;
 use settings::settings_content::SaturatingBool;
 use settings::{ContextServerCommand, Settings, SettingsStore};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::{cell::RefCell, path::PathBuf, rc::Rc};
 use util::path;
@@ -1485,6 +1486,99 @@ async fn test_context_server_stdio_timeout(cx: &mut TestAppContext) {
     assert!(
         result.is_ok(),
         "Stdio server should be created successfully with timeout"
+    );
+}
+
+// Header values may reference environment variables (as documented for
+// `context_servers.*.headers` in settings.json), e.g. so a bearer token can
+// live in the environment instead of the config file. `from_settings` must
+// expand those references, otherwise the literal `${VAR}` string gets sent
+// as the Authorization header and every request 401s.
+#[gpui::test]
+async fn test_http_server_header_expands_environment_variable(cx: &mut TestAppContext) {
+    // SAFETY: test-only; no other test in this process reads this variable.
+    unsafe { std::env::set_var("ZED_TEST_MCP_TOKEN", "expanded-secret") };
+
+    let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
+    let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+
+    let async_cx = cx.to_async();
+    let configuration = ContextServerConfiguration::from_settings(
+        ContextServerSettings::Http {
+            enabled: true,
+            url: "https://mcp.example.com/mcp".to_string(),
+            headers: HashMap::from_iter([(
+                "Authorization".to_string(),
+                "Bearer ${ZED_TEST_MCP_TOKEN}".to_string(),
+            )]),
+            timeout: None,
+            oauth: None,
+        },
+        ContextServerId("env-header-server".into()),
+        registry,
+        worktree_store,
+        &async_cx,
+    )
+    .await
+    .expect("HTTP configuration should be created from valid settings");
+
+    let ContextServerConfiguration::Http { headers, .. } = configuration else {
+        panic!("expected an HTTP configuration");
+    };
+    assert_eq!(
+        headers.get("Authorization").map(String::as_str),
+        Some("Bearer expanded-secret"),
+        "the ${{VAR}} reference in the header should have been expanded using the environment"
+    );
+
+    unsafe { std::env::remove_var("ZED_TEST_MCP_TOKEN") };
+}
+
+// A header may be written with shell "default value" syntax
+// (`${VAR:-default}`), e.g. copied from a docker-compose file or another
+// MCP client's config. When the variable is unset, the default should be
+// used, matching ordinary shell behavior.
+#[gpui::test]
+async fn test_http_server_header_applies_shell_default_syntax(cx: &mut TestAppContext) {
+    let registry = cx.new(|_| ContextServerDescriptorRegistry::new());
+    let (_fs, project) = setup_context_server_test(cx, json!({"code.rs": ""}), vec![]).await;
+    let worktree_store = project.read_with(cx, |project, _| project.worktree_store());
+
+    // Ensure the variable really is unset for this test, regardless of the
+    // ambient environment the test happens to run in.
+    assert!(
+        std::env::var("ZED_TEST_UNSET_MCP_TOKEN").is_err(),
+        "test variable should not be set in the ambient environment"
+    );
+
+    let async_cx = cx.to_async();
+    let configuration = ContextServerConfiguration::from_settings(
+        ContextServerSettings::Http {
+            enabled: true,
+            url: "https://mcp.example.com/mcp".to_string(),
+            headers: HashMap::from_iter([(
+                "Authorization".to_string(),
+                "Bearer ${ZED_TEST_UNSET_MCP_TOKEN:-fallback}".to_string(),
+            )]),
+            timeout: None,
+            oauth: None,
+        },
+        ContextServerId("env-header-default-server".into()),
+        registry,
+        worktree_store,
+        &async_cx,
+    )
+    .await
+    .expect("HTTP configuration should be created from valid settings");
+
+    let ContextServerConfiguration::Http { headers, .. } = configuration else {
+        panic!("expected an HTTP configuration");
+    };
+    assert_eq!(
+        headers.get("Authorization").map(String::as_str),
+        Some("Bearer fallback"),
+        "an unset variable referenced with shell default syntax should fall back to the default"
     );
 }
 

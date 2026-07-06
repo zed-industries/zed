@@ -74,6 +74,8 @@ You can connect both local and remote MCP servers from **Settings → AI → MCP
 
 > Note: When a remote MCP server has no configured `"Authorization"` header, Zed will prompt you to authenticate yourself against the MCP server using the standard MCP OAuth flow.
 
+> Note: Header values may reference environment variables using `$VAR` or `${VAR}`, e.g. `"headers": { "Authorization": "Bearer ${MY_API_TOKEN}" }`. This keeps secrets out of your settings file. A reference to a variable that isn't set in Zed's environment is left unexpanded, unless a shell-style default is given with `${VAR:-default}`.
+
 ## Using MCP Servers
 
 ### Configuration Check
