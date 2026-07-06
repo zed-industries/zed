@@ -3,17 +3,17 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
+use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest,
     http::{HeaderName, HeaderValue},
 };
 use language_model::{
-    AuthenticateError, FastModeConfirmation, IconOrSvg, LanguageModel,
+    AuthenticateError, FastModeConfirmation, IconOrSvg, InlineDescription, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, RateLimiter,
+    LanguageModelToolChoice, ProviderSettingsView, RateLimiter,
 };
 use open_ai::{ReasoningEffort, responses::stream_response};
 use rand::RngCore as _;
@@ -30,6 +30,9 @@ use crate::provider::open_ai::{OpenAiResponseEventMapper, into_open_ai_response}
 const PROVIDER_ID: LanguageModelProviderId = LanguageModelProviderId::new("openai-subscribed");
 const PROVIDER_NAME: LanguageModelProviderName =
     LanguageModelProviderName::new("ChatGPT Subscription");
+
+const SUBSCRIPTION_DESCRIPTION: &str =
+    "Sign in with your ChatGPT Plus or Pro subscription to use OpenAI models in Zed's agent.";
 
 const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 const OPENAI_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
@@ -154,10 +157,6 @@ impl OpenAiSubscribedProvider {
         });
     }
 
-    fn sign_out(&self, cx: &mut App) -> Task<Result<()>> {
-        do_sign_out(&self.state.downgrade(), cx)
-    }
-
     fn create_language_model(&self, model: ChatGptModel) -> Arc<dyn LanguageModel> {
         Arc::new(OpenAiSubscribedLanguageModel {
             id: LanguageModelId::from(model.id().to_string()),
@@ -240,31 +239,48 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
         }
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        let state = self.state.clone();
-        let http_client = self.http_client.clone();
-        cx.new(|_cx| ConfigurationView { state, http_client })
-            .into()
-    }
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
+        let is_authenticated = self.state.read(cx).is_authenticated();
+        let title = if is_authenticated {
+            None
+        } else {
+            Some("Configure ChatGPT".into())
+        };
+        let description = if is_authenticated {
+            None
+        } else {
+            Some(InlineDescription::Text(SUBSCRIPTION_DESCRIPTION.into()))
+        };
 
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.sign_out(cx)
+        Some(ProviderSettingsView::Inline(
+            language_model::InlineProviderSettings {
+                title,
+                description,
+                create_view: Arc::new({
+                    let state = self.state.clone();
+                    let http_client = self.http_client.clone();
+                    move |_window, cx| {
+                        cx.new(|_cx| ConfigurationView {
+                            state: state.clone(),
+                            http_client: http_client.clone(),
+                            compact: true,
+                        })
+                        .into()
+                    }
+                }),
+            },
+        ))
     }
 
     fn authentication_error_message(&self) -> SharedString {
         "Your ChatGPT subscription session is invalid or has expired. \
-        Sign in again via the Agent Panel settings to continue."
+        Sign in again via Settings > AI > LLM Providers to continue."
             .into()
     }
 
     fn missing_credentials_error_message(&self) -> SharedString {
         "You are not signed in to your ChatGPT account. \
-        Sign in via the Agent Panel settings to continue."
+        Sign in via Settings > AI > LLM Providers to continue."
             .into()
     }
 
@@ -322,15 +338,17 @@ impl ChatGptModel {
     }
 
     fn max_token_count(&self) -> u64 {
-        // All Codex-supported models share the backend's 272K input cap, even
-        // when the raw model exposes a larger context window via the public
-        // API (e.g. gpt-5.4 has max_context_window 1M, but the Codex backend
-        // caps it at 272K). Source: openai/codex models-manager/models.json.
+        // All Codex-supported models use a 272K context window in the Codex
+        // backend, even when the raw model exposes a larger context window via the
+        // public API (e.g. gpt-5.4 has max_context_window 1M, but Codex uses
+        // context_window 272K). Source: openai/codex models-manager/models.json.
         272_000
     }
 
     fn max_output_tokens(&self) -> Option<u64> {
-        Some(128_000)
+        // Codex model metadata does not expose a max output token cap for these
+        // models. Source: openai/codex models-manager/models.json.
+        None
     }
 
     fn supports_images(&self) -> bool {
@@ -431,6 +449,7 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                     ReasoningEffort::Medium => ("Medium", "medium"),
                     ReasoningEffort::High => ("High", "high"),
                     ReasoningEffort::XHigh => ("Extra High", "xhigh"),
+                    ReasoningEffort::Max => return None, // Not supported by any OpenAI models
                 };
 
                 Some(LanguageModelEffortLevel {
@@ -741,10 +760,12 @@ async fn do_oauth_flow(
         .query_pairs_mut()
         .append_pair("client_id", CLIENT_ID)
         .append_pair("redirect_uri", &redirect_uri)
-        .append_pair(
-            "scope",
-            "openid profile email offline_access api.connectors.read api.connectors.invoke",
-        )
+        // Deliberately excludes `api.connectors.read api.connectors.invoke`
+        // (which Codex CLI requests): extra scopes inflate the
+        // access-token JWT, and the serialized credentials must fit within
+        // Windows Credential Manager's 2560-byte blob limit
+        // (CRED_MAX_CREDENTIAL_BLOB_SIZE). See #58541.
+        .append_pair("scope", "openid profile email offline_access")
         .append_pair("response_type", "code")
         .append_pair("code_challenge", &challenge)
         .append_pair("code_challenge_method", "S256")
@@ -1040,6 +1061,9 @@ fn do_sign_out(state: &gpui::WeakEntity<State>, cx: &mut App) -> Task<Result<()>
 struct ConfigurationView {
     state: Entity<State>,
     http_client: Arc<dyn HttpClient>,
+    /// When `true`, the description is rendered elsewhere (the settings row's
+    /// left column), so it's omitted here to avoid duplication.
+    compact: bool,
 }
 
 impl Render for ConfigurationView {
@@ -1056,7 +1080,7 @@ impl Render for ConfigurationView {
 
             return v_flex()
                 .child(
-                    ConfiguredApiCard::new(SharedString::from(label))
+                    ConfiguredApiCard::new("openai-subscribed-sign-out", SharedString::from(label))
                         .button_label("Sign Out")
                         .on_click(cx.listener(move |_this, _, _window, cx| {
                             do_sign_out(&weak_state, cx).detach_and_log_err(cx);
@@ -1073,27 +1097,21 @@ impl Render for ConfigurationView {
         let button_label = if is_signing_in {
             "Signing in…"
         } else {
-            "Sign in to use ChatGPT Subscription"
+            "Sign In"
         };
 
         v_flex()
             .gap_2()
-            .child(Label::new(
-                "Sign in with your ChatGPT Plus or Pro subscription to use OpenAI models in Zed's agent.",
-            ))
+            .when(!self.compact, |this| {
+                this.child(Label::new(SUBSCRIPTION_DESCRIPTION))
+            })
             .child(
                 Button::new("sign-in", button_label)
-                    .full_width()
+                    .when(!self.compact, |this| this.full_width())
                     .style(ButtonStyle::Outlined)
+                    .size(ButtonSize::Medium)
                     .loading(is_signing_in)
                     .disabled(is_signing_in)
-                    .when(!is_signing_in, |this| {
-                        this.start_icon(
-                            Icon::new(IconName::AiOpenAi)
-                                .size(IconSize::Small)
-                                .color(Color::Muted),
-                        )
-                    })
                     .on_click(move |_, _window, cx| {
                         do_sign_in(&provider_state, &http_client, cx);
                     }),

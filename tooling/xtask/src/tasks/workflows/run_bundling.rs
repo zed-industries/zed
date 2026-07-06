@@ -114,7 +114,7 @@ pub(crate) fn build_static_bwrap(arch: Arch, deps: &[&NamedJob]) -> NamedJob {
 
     NamedJob {
         name: format!("build_static_bwrap_linux_{arch}"),
-        job: dependant_job(deps)
+        job: bundle_job(deps)
             .runs_on(arch.linux_bundler())
             .timeout_minutes(60u32)
             .add_step(steps::cache_nix_dependencies_namespace())

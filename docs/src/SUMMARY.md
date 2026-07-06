@@ -55,6 +55,7 @@
   - [Agent Profiles](./ai/agent-profiles.md)
   - [Tools](./ai/tools.md)
     - [Tool Permissions](./ai/tool-permissions.md)
+    - [Agent Sandboxing](./ai/sandboxing.md)
     - [Model Context Protocol](./ai/mcp.md)
   - [Skills](./ai/skills.md)
   - [Instructions](./ai/instructions.md)

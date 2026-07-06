@@ -51,7 +51,7 @@ use workspace::{
 };
 use zed_actions::{
     AGENT_SKILLS_SETTINGS_PATH, OpenProjectSettings, OpenSettings, OpenSettingsAt,
-    OpenSettingsAtTarget,
+    OpenSettingsAtTarget, OpenSettingsPage,
 };
 
 use crate::components::{
@@ -60,7 +60,7 @@ use crate::components::{
     text_field_a11y_state, theme_picker,
 };
 use crate::pages::{
-    CustomAgentForm, McpServerForm, render_input_audio_device_dropdown,
+    CustomAgentForm, LlmProviderForm, McpServerForm, render_input_audio_device_dropdown,
     render_output_audio_device_dropdown,
 };
 
@@ -450,6 +450,15 @@ pub fn init(cx: &mut App) {
                     cx,
                 );
             })
+            .register_action(|_, action: &OpenSettingsPage, window, cx| {
+                let window_handle = window.window_handle().downcast::<MultiWorkspace>();
+                open_settings_editor_to_page(
+                    &action.page,
+                    action.target.as_ref().map(SettingsFileTarget::from),
+                    window_handle,
+                    cx,
+                );
+            })
             .register_action(|_, _: &OpenSettings, window, cx| {
                 let window_handle = window.window_handle().downcast::<MultiWorkspace>();
                 open_settings_editor(None, None, window_handle, cx);
@@ -545,6 +554,7 @@ fn init_renderers(cx: &mut App) {
         .add_basic_renderer::<settings::GitGutterSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitHunkStyleSetting>(render_dropdown)
         .add_basic_renderer::<settings::GitPathStyle>(render_dropdown)
+        .add_basic_renderer::<settings::InlineBlameLocation>(render_dropdown)
         .add_basic_renderer::<settings::DiagnosticSeverityContent>(render_dropdown)
         .add_basic_renderer::<settings::SeedQuerySetting>(render_dropdown)
         .add_basic_renderer::<settings::DoubleClickInMultibuffer>(render_dropdown)
@@ -668,30 +678,71 @@ pub fn open_settings_editor(
     );
 }
 
+fn select_settings_file_target(
+    target_file: SettingsFileTarget,
+    settings_window: &mut SettingsWindow,
+    window: &mut Window,
+    cx: &mut Context<SettingsWindow>,
+) {
+    let file_index = settings_window
+        .files
+        .iter()
+        .position(|(file, _)| match target_file {
+            SettingsFileTarget::User => matches!(file, SettingsUiFile::User),
+            SettingsFileTarget::Project(worktree_id) => file.worktree_id() == Some(worktree_id),
+        });
+    if let Some(file_index) = file_index {
+        settings_window.change_file(file_index, window, cx);
+    }
+}
+
+fn open_settings_editor_to_page(
+    page: &str,
+    target_file: Option<SettingsFileTarget>,
+    workspace_handle: Option<WindowHandle<MultiWorkspace>>,
+    cx: &mut App,
+) {
+    let page = page.to_string();
+    open_settings_editor_with(workspace_handle, cx, move |settings_window, window, cx| {
+        if let Some(target_file) = target_file {
+            select_settings_file_target(target_file, settings_window, window, cx);
+        }
+
+        settings_window.opening_link = false;
+        settings_window.search_bar.update(cx, |editor, cx| {
+            editor.set_text(String::new(), window, cx);
+        });
+        for page_filter in &mut settings_window.filter_table {
+            page_filter.fill(true);
+        }
+        settings_window.has_query = false;
+        settings_window.filter_matches_to_file();
+
+        let Some(navbar_entry_index) = settings_window
+            .navbar_entries
+            .iter()
+            .position(|entry| entry.is_root && entry.title.eq_ignore_ascii_case(&page))
+        else {
+            log::error!("settings page not found: {page}");
+            return;
+        };
+
+        settings_window.open_and_scroll_to_navbar_entry(
+            navbar_entry_index,
+            None,
+            false,
+            window,
+            cx,
+        );
+    });
+}
+
 fn open_settings_editor_at_target(
     path: Option<&str>,
     target_file: Option<SettingsFileTarget>,
     workspace_handle: Option<WindowHandle<MultiWorkspace>>,
     cx: &mut App,
 ) {
-    fn select_target_file(
-        target_file: SettingsFileTarget,
-        settings_window: &mut SettingsWindow,
-        window: &mut Window,
-        cx: &mut Context<SettingsWindow>,
-    ) {
-        let file_index = settings_window
-            .files
-            .iter()
-            .position(|(file, _)| match target_file {
-                SettingsFileTarget::User => matches!(file, SettingsUiFile::User),
-                SettingsFileTarget::Project(worktree_id) => file.worktree_id() == Some(worktree_id),
-            });
-        if let Some(file_index) = file_index {
-            settings_window.change_file(file_index, window, cx);
-        }
-    }
-
     /// Assumes a settings GUI window is already open
     fn open_path(
         path: &str,
@@ -739,7 +790,7 @@ fn open_settings_editor_at_target(
     let path = path.map(ToOwned::to_owned);
     open_settings_editor_with(workspace_handle, cx, move |settings_window, window, cx| {
         if let Some(target_file) = target_file {
-            select_target_file(target_file, settings_window, window, cx);
+            select_settings_file_target(target_file, settings_window, window, cx);
         }
         if let Some(path) = path {
             open_path(&path, settings_window, window, cx);
@@ -897,15 +948,20 @@ pub struct SettingsWindow {
     pub(crate) regex_validation_error: Option<String>,
     pub(crate) sandbox_host_validation_error: Option<String>,
     last_copied_link_path: Option<&'static str>,
-    /// Cached configuration views per provider, created lazily. Holds the
-    /// provider's chosen presentation ([`Inline`] or [`SubPage`]).
+    /// Cached configuration views per provider, created lazily.
     pub(crate) provider_configuration_views:
-        HashMap<language_model::LanguageModelProviderId, language_model::ProviderConfigurationView>,
+        HashMap<language_model::LanguageModelProviderId, gpui::AnyView>,
     /// The provider whose configuration sub-page is currently open, if any.
     pub(crate) configuring_provider: Option<language_model::LanguageModelProviderId>,
     /// Directory path of the skill whose share link was most recently copied,
     /// used to show a transient "copied" checkmark on its share button.
     pub(crate) last_copied_skill_directory_path: Option<PathBuf>,
+    /// State for the active "add OpenAI/Anthropic-compatible provider" form sub-page, if open.
+    pub(crate) llm_provider_form: Option<LlmProviderForm>,
+    /// Stable focus handle for the LLM "Add Provider" button, so it can show a
+    /// focus ring when the page auto-focuses it on open (which happens via mouse,
+    /// where `focus_visible` styling would otherwise be suppressed).
+    pub(crate) llm_provider_add_focus_handle: FocusHandle,
     /// State for the active "add/edit custom MCP server" form sub-page, if open.
     pub(crate) mcp_server_form: Option<McpServerForm>,
     /// Stable focus handle for the MCP "Add Server" button, so it can show a
@@ -1584,6 +1640,7 @@ struct SubPageLink {
     title: SharedString,
     r#type: SubPageType,
     description: Option<SharedString>,
+    search_aliases: &'static [&'static str],
     /// See [`SettingField.json_path`]
     json_path: Option<&'static str>,
     /// Whether or not the settings in this sub page are configurable in settings.json
@@ -1770,6 +1827,12 @@ impl SettingsWindow {
         })
         .detach();
 
+        let language_model_registry = language_model::LanguageModelRegistry::global(cx);
+        cx.subscribe(&language_model_registry, |_, _, _event, cx| {
+            cx.notify();
+        })
+        .detach();
+
         cx.on_window_closed(|cx, _window_id| {
             if let Some(existing_window) = cx
                 .windows()
@@ -1925,6 +1988,8 @@ impl SettingsWindow {
             provider_configuration_views: HashMap::default(),
             configuring_provider: None,
             last_copied_skill_directory_path: None,
+            llm_provider_form: None,
+            llm_provider_add_focus_handle: cx.focus_handle(),
             mcp_server_form: None,
             mcp_add_server_focus_handle: cx.focus_handle(),
             custom_agent_form: None,
@@ -2350,19 +2415,20 @@ impl SettingsWindow {
                     }
                     SettingsPageItem::SubPageLink(sub_page_link) => {
                         json_path = sub_page_link.json_path;
+                        let mut parts = vec![page.title, header_str, sub_page_link.title.as_ref()];
+                        parts.extend(sub_page_link.search_aliases);
                         documents.push(SearchDocument {
                             id: key_index,
-                            words: split_into_words(&[
-                                page.title,
-                                header_str,
-                                sub_page_link.title.as_ref(),
-                            ]),
+                            words: split_into_words(&parts),
                         });
                         push_candidates(
                             &mut fuzzy_match_candidates,
                             key_index,
                             sub_page_link.title.as_ref(),
                         );
+                        for alias in sub_page_link.search_aliases {
+                            push_candidates(&mut fuzzy_match_candidates, key_index, alias);
+                        }
                     }
                     SettingsPageItem::ActionLink(action_link) => {
                         documents.push(SearchDocument {
@@ -3648,6 +3714,11 @@ impl SettingsWindow {
         if let Some(current_sub_page) = self.sub_page_stack.last() {
             let is_skills_page =
                 current_sub_page.link.json_path == Some(AGENT_SKILLS_SETTINGS_PATH);
+            let is_llm_providers_page = current_sub_page.link.json_path == Some("llm_providers")
+                && current_sub_page.link.title.as_ref() == "LLM Providers";
+            let is_external_agents_page = current_sub_page.link.json_path == Some("agent_servers");
+            let is_mcp_servers_page = current_sub_page.link.json_path == Some("context_servers");
+
             page_header = h_flex()
                 .w_full()
                 .min_w_0()
@@ -3685,6 +3756,9 @@ impl SettingsWindow {
                                     })),
                             )
                         })
+                        .when(is_llm_providers_page, |this| {
+                            this.child(pages::render_add_llm_provider_popover(self, window, cx))
+                        })
                         .when(is_skills_page, |this| {
                             this.child(
                                 Button::new("open-skill-creator", "Create Skill")
@@ -3698,6 +3772,12 @@ impl SettingsWindow {
                                         );
                                     })),
                             )
+                        })
+                        .when(is_external_agents_page, |this| {
+                            this.child(pages::render_add_agent_popover(self, window, cx))
+                        })
+                        .when(is_mcp_servers_page, |this| {
+                            this.child(pages::render_add_server_popover(self, window, cx))
                         }),
                 )
                 .into_any_element();
@@ -3959,7 +4039,11 @@ impl SettingsWindow {
     /// This function will create a new settings file if one doesn't exist
     /// if the current file is a project settings with a valid worktree id
     /// We do this because the settings ui allows initializing project settings
-    fn open_current_settings_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_current_settings_file(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match &self.current_file {
             SettingsUiFile::User => {
                 let Some(original_window) = self.original_window else {
@@ -4127,6 +4211,7 @@ impl SettingsWindow {
             title: title.into(),
             r#type: SubPageType::default(),
             description: None,
+            search_aliases: &[],
             json_path,
             in_json,
             files: USER,
@@ -4184,6 +4269,7 @@ impl SettingsWindow {
             title: "Create Skill".into(),
             r#type: SubPageType::SkillCreator,
             description: None,
+            search_aliases: &[],
             json_path: None,
             in_json: false,
             files: USER | PROJECT,
@@ -5197,6 +5283,8 @@ pub mod test {
                 provider_configuration_views: HashMap::default(),
                 configuring_provider: None,
                 last_copied_skill_directory_path: None,
+                llm_provider_form: None,
+                llm_provider_add_focus_handle: cx.focus_handle(),
                 mcp_server_form: None,
                 mcp_add_server_focus_handle: cx.focus_handle(),
                 custom_agent_form: None,
@@ -5222,6 +5310,7 @@ pub mod test {
         theme_settings::init(theme::LoadThemes::JustBase, cx);
         editor::init(cx);
         menu::init();
+        language_model::init(cx);
     }
 
     fn parse(input: &'static str, window: &mut Window, cx: &mut App) -> SettingsWindow {
@@ -5333,6 +5422,8 @@ pub mod test {
             provider_configuration_views: HashMap::default(),
             configuring_provider: None,
             last_copied_skill_directory_path: None,
+            llm_provider_form: None,
+            llm_provider_add_focus_handle: cx.focus_handle(),
             mcp_server_form: None,
             mcp_add_server_focus_handle: cx.focus_handle(),
             custom_agent_form: None,
