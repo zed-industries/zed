@@ -1800,7 +1800,7 @@ async fn test_snippet_with_count_insert_nested(cx: &mut gpui::TestAppContext) {
         fn foo() {
             fn foo() {
                 fn foo() {
-                \x20\x20\x20\x20
+                \x20\x20\x20ˇ\x20
                 }
             }
         }"});

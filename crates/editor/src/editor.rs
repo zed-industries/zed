@@ -4710,9 +4710,36 @@ impl Editor {
             ranges: Vec<Range<T>>,
             choices: Option<Vec<String>>,
         }
+        f
+
+        // Converts a byte offset within the snippet text into a `(row, column)`
+        // relative to the start of the snippet.
+        fn snippet_point(text: &str, offset: isize) -> Point {
+            let offset = (offset.max(0) as usize).min(text.len());
+            let mut row = 0;
+            let mut line_start = 0;
+            for (ix, byte) in text.as_bytes()[..offset].iter().enumerate() {
+                if *byte == b'\n' {
+                    row += 1;
+                    line_start = ix + 1;
+                }
+            }
+            Point::new(row, (offset - line_start) as u32)
+        }
 
         let tabstops = self.buffer.update(cx, |buffer, cx| {
             let snippet_text: Arc<str> = snippet.text.clone().into();
+            // Anchor the insertion points so we can find where each snippet
+            // actually landed. `AutoindentMode::Block` shifts the inserted text
+            // by the indentation of its first line while preserving the
+            // snippet's internal layout, so tabstop positions must be computed
+            // relative to that landing point rather than from raw offsets, which
+            // don't account for the indentation autoindent adds.
+            let snapshot_before_edit = buffer.snapshot(cx);
+            let insertion_points = insertion_ranges
+                .iter()
+                .map(|range| snapshot_before_edit.anchor_before(range.start))
+                .collect::<Vec<_>>();
             let edits = insertion_ranges
                 .iter()
                 .cloned()
@@ -4722,7 +4749,8 @@ impl Editor {
             };
             buffer.edit(edits, Some(autoindent_mode), cx);
 
-            let snapshot = &*buffer.read(cx);
+            let snapshot = buffer.snapshot(cx);
+            let snapshot = &snapshot;
             let snippet = &snippet;
             snippet
                 .tabstops
@@ -4735,16 +4763,22 @@ impl Editor {
                         .ranges
                         .iter()
                         .flat_map(|tabstop_range| {
-                            let mut delta = 0_isize;
-                            insertion_ranges.iter().map(move |insertion_range| {
-                                let insertion_start = insertion_range.start + delta;
-                                delta += snippet.text.len() as isize
-                                    - (insertion_range.end - insertion_range.start) as isize;
-
-                                let start =
-                                    (insertion_start + tabstop_range.start).min(snapshot.len());
-                                let end = (insertion_start + tabstop_range.end).min(snapshot.len());
-                                snapshot.anchor_before(start)..snapshot.anchor_after(end)
+                            let start = snippet_point(&snippet.text, tabstop_range.start);
+                            let end = snippet_point(&snippet.text, tabstop_range.end);
+                            insertion_points.iter().map(move |insertion_point| {
+                                let base = insertion_point.to_point(&snapshot);
+                                let to_offset = |offset: Point| {
+                                    let point = snapshot.clip_point(
+                                        Point::new(
+                                            base.row + offset.row,
+                                            base.column + offset.column,
+                                        ),
+                                        Bias::Left,
+                                    );
+                                    snapshot.point_to_offset(point)
+                                };
+                                snapshot.anchor_before(to_offset(start))
+                                    ..snapshot.anchor_after(to_offset(end))
                             })
                         })
                         .collect::<Vec<_>>();
