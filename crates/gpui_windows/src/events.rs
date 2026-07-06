@@ -2,17 +2,15 @@ use std::{rc::Rc, sync::atomic::Ordering};
 
 use anyhow::Context as _;
 use gpui_util::ResultExt;
-use windows::{
-    Win32::{
-        Foundation::*,
-        Graphics::Gdi::*,
-        System::SystemServices::*,
-        UI::{
-            Controls::*,
-            HiDpi::*,
-            Input::{Ime::*, KeyboardAndMouse::*},
-            WindowsAndMessaging::*,
-        },
+use windows::Win32::{
+    Foundation::*,
+    Graphics::Gdi::*,
+    System::SystemServices::*,
+    UI::{
+        Controls::*,
+        HiDpi::*,
+        Input::{Ime::*, KeyboardAndMouse::*},
+        WindowsAndMessaging::*,
     },
 };
 
