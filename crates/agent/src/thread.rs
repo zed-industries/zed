@@ -35,7 +35,8 @@ use futures::{
 };
 use futures::{StreamExt, stream};
 use gpui::{
-    App, AppContext, AsyncApp, Context, Entity, EventEmitter, SharedString, Task, WeakEntity,
+    App, AppContext, AsyncApp, Context, Entity, EventEmitter, ReadGlobal as _, SharedString, Task,
+    WeakEntity,
 };
 use heck::ToSnakeCase as _;
 use language_model::{
@@ -1181,7 +1182,7 @@ enum CompletionError {
     Other(#[from] anyhow::Error),
 }
 
-pub(crate) enum ThreadModel {
+pub enum ThreadModel {
     Ready(Arc<dyn LanguageModel>),
     Unresolved(SelectedModel),
     Unset,
@@ -1357,7 +1358,11 @@ impl Thread {
             .and_then(|model| model.speed);
         let (prompt_capabilities_tx, prompt_capabilities_rx) =
             watch::channel(Self::prompt_capabilities(model.as_deref()));
-        let model = model.map_or(ThreadModel::Unset, ThreadModel::Ready);
+        let model = match model {
+            Some(model) => ThreadModel::Ready(model),
+            None => Self::user_configured_model_selection(cx)
+                .map_or(ThreadModel::Unset, ThreadModel::Unresolved),
+        };
         Self {
             id: acp::SessionId::new(uuid::Uuid::new_v4().to_string()),
             prompt_id: PromptId::new(),
@@ -1946,6 +1951,10 @@ impl Thread {
         self.model.as_model()
     }
 
+    pub fn thread_model(&self) -> &ThreadModel {
+        &self.model
+    }
+
     pub(crate) fn ensure_model(
         &mut self,
         default_model: Option<&Arc<dyn LanguageModel>>,
@@ -1977,6 +1986,7 @@ impl Thread {
             cx.emit(TokenUsageUpdated(new_usage));
         }
         self.prompt_capabilities_tx.send(new_caps).log_err();
+        cx.emit(ModelChanged);
 
         for subagent in &self.running_subagents {
             subagent
@@ -2393,6 +2403,20 @@ impl Thread {
             .default_model
             .clone()?;
         Self::resolve_model_from_selection(&selection, cx)
+    }
+
+    fn user_configured_model_selection(cx: &App) -> Option<SelectedModel> {
+        let selection = SettingsStore::global(cx)
+            .raw_user_settings()?
+            .content
+            .agent
+            .as_ref()?
+            .default_model
+            .as_ref()?;
+        Some(SelectedModel {
+            provider: LanguageModelProviderId::from(selection.provider.0.clone()),
+            model: LanguageModelId::from(selection.model.clone()),
+        })
     }
 
     /// Translate a stored model selection into the configured model from the registry.
@@ -4766,6 +4790,10 @@ impl EventEmitter<TokenUsageUpdated> for Thread {}
 pub struct TitleUpdated;
 
 impl EventEmitter<TitleUpdated> for Thread {}
+
+pub struct ModelChanged;
+
+impl EventEmitter<ModelChanged> for Thread {}
 
 /// A channel-based wrapper that delivers tool input to a running tool.
 ///
