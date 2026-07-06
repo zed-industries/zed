@@ -320,6 +320,25 @@ fn main() {
         return;
     }
 
+    // Capture the XDG desktop startup activation token before spawning any
+    // threads. It has to be read and removed from the environment while we are
+    // still single-threaded: mutating the process environment after other
+    // threads exist races with concurrent `getenv` calls. The token must still
+    // be removed globally so it isn't inherited by child processes we spawn (per
+    // the xdg-activation spec: https://wayland.app/protocols/xdg-activation-v1).
+    // The Wayland platform reads the stashed value later via
+    // `gpui::startup_activation_token()` instead of touching the environment.
+    {
+        const XDG_ACTIVATION_TOKEN_ENV_VAR: &str = "XDG_ACTIVATION_TOKEN";
+        let startup_activation_token = env::var(XDG_ACTIVATION_TOKEN_ENV_VAR)
+            .ok()
+            .filter(|token| !token.is_empty());
+        // SAFETY: `main` is still single-threaded here; this runs before the
+        // rayon thread pool is built and before any other threads are spawned.
+        unsafe { env::remove_var(XDG_ACTIVATION_TOKEN_ENV_VAR) };
+        gpui::set_startup_activation_token(startup_activation_token);
+    }
+
     rayon::ThreadPoolBuilder::new()
         .num_threads(std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2)))
         .stack_size(10 * 1024 * 1024)
