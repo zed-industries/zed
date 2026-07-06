@@ -4637,7 +4637,8 @@ impl AcpThread {
                 }
 
                 if let Some(_status) = self.pending_terminal_exit.remove(&terminal_id) {
-                    entity.update(cx, |_term, cx| {
+                    entity.update(cx, |term, cx| {
+                        term.inner().update(cx, |inner, _| inner.shrink_to_used());
                         cx.notify();
                     });
                 }
@@ -4673,7 +4674,8 @@ impl AcpThread {
                 status,
             } => {
                 if let Some(entity) = self.terminals.get(&terminal_id) {
-                    entity.update(cx, |_term, cx| {
+                    entity.update(cx, |term, cx| {
+                        term.inner().update(cx, |inner, _| inner.shrink_to_used());
                         cx.notify();
                     });
                 } else {
@@ -5099,6 +5101,83 @@ mod tests {
         assert!(
             content.contains("hello buffered"),
             "expected buffered output to render, got: {content}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_terminal_exit_preserves_visible_scrollback(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let connection = Rc::new(FakeAgentConnection::new());
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(
+                    project,
+                    PathList::new(&[std::path::Path::new(path!("/test"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        let terminal_id = acp::TerminalId::new(uuid::Uuid::new_v4().to_string());
+        let lower = cx.new(|cx| {
+            let builder = ::terminal::TerminalBuilder::new_display_only(
+                ::terminal::terminal_settings::CursorShape::default(),
+                ::terminal::terminal_settings::AlternateScroll::On,
+                None,
+                0,
+                cx.background_executor(),
+                PathStyle::local(),
+            );
+            builder.subscribe(cx)
+        });
+
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Created {
+                    terminal_id: terminal_id.clone(),
+                    label: "Buffered Test".to_string(),
+                    cwd: None,
+                    output_byte_limit: None,
+                    terminal: lower.clone(),
+                },
+                cx,
+            );
+        });
+
+        let mut output = String::new();
+        for line in 0..15_000 {
+            output.push_str(&format!("line {line}\n"));
+        }
+
+        thread.update(cx, |thread, cx| {
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Output {
+                    terminal_id: terminal_id.clone(),
+                    data: output.into_bytes(),
+                },
+                cx,
+            );
+            thread.on_terminal_provider_event(
+                TerminalProviderEvent::Exit {
+                    terminal_id: terminal_id.clone(),
+                    status: acp::TerminalExitStatus::new().exit_code(0),
+                },
+                cx,
+            );
+        });
+
+        let content = thread.read_with(cx, |thread, cx| {
+            let term = thread.terminal(terminal_id.clone()).unwrap();
+            term.read_with(cx, |term, cx| term.inner().read(cx).get_content())
+        });
+
+        assert!(
+            content.contains("line 14999"),
+            "expected output to remain visible after terminal exit, got: {content}"
         );
     }
 
