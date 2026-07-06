@@ -237,10 +237,15 @@ In such case Zed won't spawn a new instance of Delve, as it opts to use an exist
 
 ## Using the Tailwind CSS Language Server with Templ
 
-[Templ](https://github.com/a-h/templ) is an HTML templating language for Go. Templ files are not recognised as HTML by default, so the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) needs to be told to treat them as HTML and where to look for class names. With the [Templ extension](https://github.com/makifdb/zed-templ) installed, add the following to your `settings.json`:
+To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS language server](https://github.com/tailwindlabs/tailwindcss-intellisense/tree/HEAD/packages/tailwindcss-language-server#readme) in [Templ](https://github.com/a-h/templ) files, you need to enable the language server for Templ and configure where it should look for CSS classes by adding the following to your `settings.json`:
 
 ```json [settings]
 {
+  "languages": {
+    "Templ": {
+      "language_servers": ["tailwindcss-language-server", "..."]
+    }
+  },
   "lsp": {
     "tailwindcss-language-server": {
       "settings": {
@@ -256,4 +261,6 @@ In such case Zed won't spawn a new instance of Delve, as it opts to use an exist
 }
 ```
 
-With these settings you'll get Tailwind completions inside `class="..."` attributes in `.templ` files.
+> Note: You need to enable the language server for Templ, tell it to treat .templ files as HTML (they are not recognised as HTML by default)
+
+This gives you Tailwind CSS completions inside `class="..."` attributes in your `.templ` files.
