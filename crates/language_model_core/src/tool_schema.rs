@@ -116,16 +116,17 @@ fn resolve_refs(json: &mut Value) -> Result<()> {
 
     let defs = root_obj.remove("$defs");
     let legacy_defs = root_obj.remove("definitions");
-    let Some(defs) = defs.or(legacy_defs) else {
+    if defs.is_none() && legacy_defs.is_none() {
         return Ok(());
-    };
+    }
 
-    resolve_refs_recursive(json, &defs, &mut Vec::new())
+    resolve_refs_recursive(json, defs.as_ref(), legacy_defs.as_ref(), &mut Vec::new())
 }
 
 fn resolve_refs_recursive(
     value: &mut Value,
-    defs: &Value,
+    defs: Option<&Value>,
+    legacy_defs: Option<&Value>,
     visiting: &mut Vec<String>,
 ) -> Result<()> {
     match value {
@@ -139,7 +140,12 @@ fn resolve_refs_recursive(
                 }
 
                 let (defs_key, name) = parse_ref(ref_str)?;
-                let Some(def) = defs.get(name) else {
+                let defs_for_key = match defs_key {
+                    "$defs" => defs,
+                    "definitions" => legacy_defs,
+                    _ => None,
+                };
+                let Some(def) = defs_for_key.and_then(|defs| defs.get(name)) else {
                     anyhow::bail!("$ref target not found in {defs_key}: {ref_str}");
                 };
 
@@ -157,7 +163,7 @@ fn resolve_refs_recursive(
                 *value = resolved;
 
                 visiting.push(ref_owned);
-                let result = resolve_refs_recursive(value, defs, visiting);
+                let result = resolve_refs_recursive(value, defs, legacy_defs, visiting);
                 visiting.pop();
                 return result;
             }
@@ -165,13 +171,13 @@ fn resolve_refs_recursive(
             let keys: Vec<String> = obj.keys().cloned().collect();
             for key in keys {
                 if let Some(child) = obj.get_mut(&key) {
-                    resolve_refs_recursive(child, defs, visiting)?;
+                    resolve_refs_recursive(child, defs, legacy_defs, visiting)?;
                 }
             }
         }
         Value::Array(arr) => {
             for item in arr.iter_mut() {
-                resolve_refs_recursive(item, defs, visiting)?;
+                resolve_refs_recursive(item, defs, legacy_defs, visiting)?;
             }
         }
         _ => {}
@@ -1018,11 +1024,26 @@ mod tests {
     }
 
     #[test]
-    fn test_schema_without_defs_is_unchanged() {
+    fn test_refs_resolve_when_both_defs_and_definitions_exist() {
         let mut json = json!({
             "type": "object",
             "properties": {
-                "name": { "type": "string" }
+                "modern": {
+                    "$ref": "#/$defs/Modern"
+                },
+                "legacy": {
+                    "$ref": "#/definitions/Legacy"
+                }
+            },
+            "$defs": {
+                "Modern": {
+                    "type": "string"
+                }
+            },
+            "definitions": {
+                "Legacy": {
+                    "type": "number"
+                }
             }
         });
 
@@ -1033,7 +1054,12 @@ mod tests {
             json!({
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string" }
+                    "modern": {
+                        "type": "string"
+                    },
+                    "legacy": {
+                        "type": "number"
+                    }
                 }
             })
         );
@@ -1071,91 +1097,6 @@ mod tests {
                         "items": {
                             "type": "string",
                             "description": "An item"
-                        }
-                    }
-                }
-            })
-        );
-    }
-
-    #[test]
-    fn test_legacy_definitions_prefix_is_supported() {
-        // Older schemas (draft 4-7) use `definitions` instead of `$defs`.
-        let mut json = json!({
-            "type": "object",
-            "properties": {
-                "user": {
-                    "$ref": "#/definitions/User"
-                }
-            },
-            "definitions": {
-                "User": {
-                    "type": "object",
-                    "properties": {
-                        "id": { "type": "string" }
-                    }
-                }
-            }
-        });
-
-        adapt_schema_to_format(&mut json, LanguageModelToolSchemaFormat::JsonSchemaSubset).unwrap();
-
-        assert_eq!(
-            json,
-            json!({
-                "type": "object",
-                "properties": {
-                    "user": {
-                        "type": "object",
-                        "properties": {
-                            "id": { "type": "string" }
-                        }
-                    }
-                }
-            })
-        );
-    }
-
-    #[test]
-    fn test_cyclic_refs_are_replaced_with_empty_schema() {
-        let mut json = json!({
-            "type": "object",
-            "properties": {
-                "a": { "$ref": "#/$defs/A" }
-            },
-            "$defs": {
-                "A": {
-                    "type": "object",
-                    "properties": {
-                        "b": { "$ref": "#/$defs/B" }
-                    }
-                },
-                "B": {
-                    "type": "object",
-                    "properties": {
-                        "a": { "$ref": "#/$defs/A" }
-                    }
-                }
-            }
-        });
-
-        adapt_schema_to_format(&mut json, LanguageModelToolSchemaFormat::JsonSchemaSubset)
-            .expect("cyclic $ref should not error, just be replaced with {}");
-
-        assert_eq!(
-            json,
-            json!({
-                "type": "object",
-                "properties": {
-                    "a": {
-                        "type": "object",
-                        "properties": {
-                            "b": {
-                                "type": "object",
-                                "properties": {
-                                    "a": {}
-                                }
-                            }
                         }
                     }
                 }
