@@ -1159,6 +1159,9 @@ impl Drop for MacWindow {
             this.native_window.setDelegate_(nil);
         }
         this.input_handler.take();
+        // Drop the AccessKit adapter too: it subclasses the window and retains GPU-backed
+        // resources, so leaving it in place forms a retain cycle that leaks per window.
+        this.accesskit_adapter.take();
         this.foreground_executor
             .spawn(async move {
                 unsafe {
