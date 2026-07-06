@@ -72,6 +72,7 @@ impl Editor {
     pub fn replay_snippet_insertion(
         &mut self,
         snippet_source: &str,
+        relative_utf16_range: Option<Range<isize>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -81,6 +82,31 @@ impl Editor {
         let Some(snippet) = Snippet::parse(snippet_source).log_err() else {
             return;
         };
+        if let Some(relative_utf16_range) = relative_utf16_range {
+            let selections = self
+                .selections
+                .all::<MultiBufferOffsetUtf16>(&self.display_snapshot(cx));
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                let new_ranges = selections.into_iter().map(|range| {
+                    let start = MultiBufferOffsetUtf16(OffsetUtf16(
+                        range
+                            .head()
+                            .0
+                            .0
+                            .saturating_add_signed(relative_utf16_range.start),
+                    ));
+                    let end = MultiBufferOffsetUtf16(OffsetUtf16(
+                        range
+                            .head()
+                            .0
+                            .0
+                            .saturating_add_signed(relative_utf16_range.end),
+                    ));
+                    start..end
+                });
+                s.select_ranges(new_ranges);
+            });
+        }
         let ranges = self
             .selections
             .all::<MultiBufferOffset>(&self.display_snapshot(cx))

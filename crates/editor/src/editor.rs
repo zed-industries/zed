@@ -11768,6 +11768,7 @@ pub enum EditorEvent {
     },
     SnippetInsertion {
         snippet_source: Arc<str>,
+        utf16_range_to_replace: Option<Range<isize>>,
     },
     BufferRangesUpdated {
         buffer: Entity<Buffer>,

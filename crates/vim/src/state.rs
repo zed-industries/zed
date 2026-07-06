@@ -1016,7 +1016,11 @@ impl VimGlobals {
         }
     }
 
-    pub fn observe_snippet_insertion(&mut self, snippet_source: &Arc<str>) {
+    pub fn observe_snippet_insertion(
+        &mut self,
+        snippet_source: &Arc<str>,
+        range_to_replace: Option<Range<isize>>,
+    ) {
         if self.ignore_current_insertion {
             self.ignore_current_insertion = false;
             return;
@@ -1025,6 +1029,7 @@ impl VimGlobals {
             self.recording_actions
                 .push(ReplayableAction::SnippetInsertion {
                     snippet_source: snippet_source.clone(),
+                    utf16_range_to_replace: range_to_replace.clone(),
                 });
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
@@ -1038,6 +1043,7 @@ impl VimGlobals {
             self.recordings.entry(recording_register).or_default().push(
                 ReplayableAction::SnippetInsertion {
                     snippet_source: snippet_source.clone(),
+                    utf16_range_to_replace: range_to_replace,
                 },
             );
         }
@@ -1070,6 +1076,7 @@ pub enum ReplayableAction {
     },
     SnippetInsertion {
         snippet_source: Arc<str>,
+        utf16_range_to_replace: Option<Range<isize>>,
     },
 }
 
@@ -1084,8 +1091,12 @@ impl Clone for ReplayableAction {
                 text: text.clone(),
                 utf16_range_to_replace: utf16_range_to_replace.clone(),
             },
-            Self::SnippetInsertion { snippet_source } => Self::SnippetInsertion {
+            Self::SnippetInsertion {
+                snippet_source,
+                utf16_range_to_replace,
+            } => Self::SnippetInsertion {
                 snippet_source: snippet_source.clone(),
+                utf16_range_to_replace: utf16_range_to_replace.clone(),
             },
         }
     }

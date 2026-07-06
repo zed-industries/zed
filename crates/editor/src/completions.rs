@@ -901,8 +901,10 @@ impl Editor {
             .sum::<usize>();
 
         if let Some(snippet_source) = &snippet_source {
+            dbg!(&snippet_source, lookbehind, lookahead);
             cx.emit(EditorEvent::SnippetInsertion {
                 snippet_source: snippet_source.as_str().into(),
+                utf16_range_to_replace: Some(-(lookbehind as isize)..0),
             });
         } else {
             cx.emit(EditorEvent::InputHandled {
