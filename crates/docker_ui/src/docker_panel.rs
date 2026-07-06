@@ -29,7 +29,8 @@ actions!(
         Toggle,
         /// Toggles focus on the docker panel.
         ToggleFocus,
-        /// Reconnects the selected endpoint and reloads its tree.
+        /// Reconnects the selected endpoint and reloads its tree, or every
+        /// endpoint if nothing is selected.
         RefreshEndpoint,
     ]
 );
@@ -316,21 +317,23 @@ impl DockerPanel {
         cx.notify();
     }
 
+    /// Refreshes the currently selected endpoint if there is a selection,
+    /// otherwise refreshes every endpoint.
     fn refresh_endpoint(
         &mut self,
         _: &RefreshEndpoint,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let endpoint_name = self
-            .store
-            .read(cx)
-            .endpoints()
-            .first()
-            .map(|state| state.endpoint.name.clone());
-        if let Some(endpoint_name) = endpoint_name {
-            self.store
-                .update(cx, |store, cx| store.refresh(&endpoint_name, cx));
+        match self.selected.as_ref() {
+            Some(selected) => {
+                let endpoint_name = selected.endpoint_name().to_string();
+                self.store
+                    .update(cx, |store, cx| store.refresh(&endpoint_name, cx));
+            }
+            None => {
+                self.store.update(cx, |store, cx| store.refresh_all(cx));
+            }
         }
     }
 

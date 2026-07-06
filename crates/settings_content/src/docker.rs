@@ -5,7 +5,8 @@ use settings_macros::{MergeFrom, with_fallible_options};
 #[with_fallible_options]
 #[derive(Clone, PartialEq, Default, Serialize, Deserialize, JsonSchema, MergeFrom, Debug)]
 pub struct DockerSettingsContent {
-    /// Seconds between automatic status refreshes. Default: 5
+    /// Seconds between automatic status refreshes. Default: 300. A value of
+    /// 0 disables autopolling entirely (manual refresh only).
     pub poll_interval_seconds: Option<u64>,
     /// Configured Docker endpoints. Default: []
     pub connections: Option<Vec<DockerConnectionContent>>,

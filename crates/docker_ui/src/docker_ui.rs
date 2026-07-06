@@ -47,7 +47,7 @@ mod tests {
         init_test(cx);
         cx.update(|cx| {
             let settings = DockerSettings::get_global(cx);
-            assert_eq!(settings.poll_interval_seconds, 5);
+            assert_eq!(settings.poll_interval_seconds, 300);
             assert!(settings.endpoints.is_empty());
         });
     }

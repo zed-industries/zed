@@ -13,6 +13,12 @@ use crate::DockerSettings;
 /// is configured very low.
 const MIN_REMOTE_POLL_INTERVAL: Duration = Duration::from_secs(15);
 
+/// How often the autopoll loop wakes up to re-check `poll_interval_seconds`
+/// while autopolling is disabled (`poll_interval_seconds == 0`). This keeps
+/// the loop idle without busy-looping, while still noticing promptly if a
+/// settings change re-enables autopolling.
+const DISABLED_POLL_RECHECK_INTERVAL: Duration = Duration::from_secs(60);
+
 /// Events emitted by [`DockerEndpointStore`] so the panel can surface changes
 /// (e.g. new/updated container lists) to the workspace.
 #[derive(Clone, Debug)]
@@ -695,14 +701,27 @@ impl DockerEndpointStore {
     /// at most every `max(interval, MIN_REMOTE_POLL_INTERVAL)`: endpoints not
     /// yet due are skipped for that tick via `poll_all_due`, rather than
     /// blocking the whole loop's cadence.
+    ///
+    /// `poll_interval_seconds == 0` means manual-only: the loop sleeps
+    /// `DISABLED_POLL_RECHECK_INTERVAL` and re-checks the setting without
+    /// refreshing anything, so it neither busy-loops nor needs restarting
+    /// once the user picks a non-zero interval again.
     fn start_poll_task(cx: &mut Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
             loop {
-                let interval = this
-                    .read_with(cx, |_, cx| {
-                        Duration::from_secs(DockerSettings::get_global(cx).poll_interval_seconds)
-                    })
-                    .unwrap_or(Duration::from_secs(5));
+                let interval_seconds = match this.read_with(cx, |_, cx| {
+                    DockerSettings::get_global(cx).poll_interval_seconds
+                }) {
+                    Ok(interval_seconds) => interval_seconds,
+                    Err(_) => return,
+                };
+                if interval_seconds == 0 {
+                    cx.background_executor()
+                        .timer(DISABLED_POLL_RECHECK_INTERVAL)
+                        .await;
+                    continue;
+                }
+                let interval = Duration::from_secs(interval_seconds);
                 cx.background_executor().timer(interval).await;
                 let now = cx.background_executor().now();
                 let poll_result = this.update(cx, |this, cx| {
@@ -838,6 +857,19 @@ mod tests {
                             ssh_host: Some("deploy@1.2.3.4".into()),
                             read_only: Some(true),
                         }]);
+                });
+            });
+        });
+    }
+
+    fn set_poll_interval_seconds(cx: &mut TestAppContext, poll_interval_seconds: u64) {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .docker
+                        .get_or_insert_default()
+                        .poll_interval_seconds = Some(poll_interval_seconds);
                 });
             });
         });
@@ -1002,7 +1034,11 @@ mod tests {
 
     #[gpui::test]
     async fn autopoll_refreshes_after_interval(cx: &mut TestAppContext) {
-        init_test(cx); // default.json poll_interval_seconds = 5
+        init_test(cx);
+        // Explicitly set a small interval rather than relying on the
+        // (now 300s) default, so this test stays fast regardless of what the
+        // default is configured to.
+        set_poll_interval_seconds(cx, 5);
         cx.executor().allow_parking();
         let fake = Arc::new(FakeDockerClient::new()); // records calls
         let recorder = fake.clone();
@@ -1035,6 +1071,39 @@ mod tests {
         assert!(
             after > before,
             "autopoll should have refreshed at least once"
+        );
+    }
+
+    #[gpui::test]
+    async fn autopoll_disabled_when_interval_zero(cx: &mut TestAppContext) {
+        init_test(cx);
+        // 0 = manual only: the autopoll loop must never call `refresh_all`
+        // while this is set, no matter how long we advance the clock.
+        set_poll_interval_seconds(cx, 0);
+        cx.executor().allow_parking();
+        let fake = Arc::new(FakeDockerClient::new()); // records calls
+        let recorder = fake.clone();
+        let factory: ClientFactory = Arc::new(move || recorder.clone() as Arc<dyn DockerClient>);
+        let _store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+        cx.run_until_parked();
+        let before = fake
+            .calls()
+            .iter()
+            .filter(|c| c.starts_with("list_containers"))
+            .count();
+
+        cx.executor()
+            .advance_clock(std::time::Duration::from_secs(600));
+        cx.run_until_parked();
+
+        let after = fake
+            .calls()
+            .iter()
+            .filter(|c| c.starts_with("list_containers"))
+            .count();
+        assert_eq!(
+            after, before,
+            "autopoll must not refresh while poll_interval_seconds is 0"
         );
     }
 

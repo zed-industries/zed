@@ -2740,8 +2740,9 @@
     "button": true,
   },
   "docker": {
-    // Seconds between automatic status refreshes.
-    "poll_interval_seconds": 5,
+    // Seconds between automatic status refreshes. 0 disables autopolling
+    // entirely (manual refresh only, via the panel's Refresh button).
+    "poll_interval_seconds": 300,
     // Docker endpoints (SSH auth comes from your ssh-agent/~/.ssh/config).
     "connections": []
   },
