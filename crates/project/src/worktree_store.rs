@@ -150,6 +150,74 @@ impl WorktreePaths {
     }
 }
 
+fn strip_prefix_ignore_ascii_case(
+    path_style: PathStyle,
+    child: &Path,
+    parent: &Path,
+) -> Option<Arc<RelPath>> {
+    let child = child.to_str()?;
+    let parent = parent.to_str()?;
+    let parent = path_style
+        .separators()
+        .iter()
+        .find_map(|sep| parent.strip_suffix(sep))
+        .unwrap_or(parent);
+
+    if parent.is_empty() {
+        return RelPath::new(Path::new(child), path_style)
+            .ok()
+            .map(|path| path.as_ref().into_arc());
+    }
+
+    let child_prefix = child.get(..parent.len())?;
+    if !child_prefix.eq_ignore_ascii_case(parent) {
+        return None;
+    }
+
+    let stripped = &child[parent.len()..];
+    let relative = if stripped.is_empty() {
+        ""
+    } else {
+        path_style
+            .separators()
+            .iter()
+            .find_map(|sep| stripped.strip_prefix(sep))?
+    };
+
+    RelPath::new(Path::new(relative), path_style)
+        .ok()
+        .map(|path| path.as_ref().into_arc())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_prefix_ignore_ascii_case_matches_case_only_path_changes() {
+        let relative_path = strip_prefix_ignore_ascii_case(
+            PathStyle::Posix,
+            Path::new("/Users/rifujita/Git_Managed/phorganize/README.md"),
+            Path::new("/Users/rifujita/Git_Managed/Phorganize"),
+        )
+        .unwrap();
+
+        assert_eq!(relative_path.as_unix_str(), "README.md");
+    }
+
+    #[test]
+    fn strip_prefix_ignore_ascii_case_rejects_partial_components() {
+        assert!(
+            strip_prefix_ignore_ascii_case(
+                PathStyle::Posix,
+                Path::new("/Users/rifujita/Git_Managed/Phorganize-old/README.md"),
+                Path::new("/Users/rifujita/Git_Managed/Phorganize"),
+            )
+            .is_none()
+        );
+    }
+}
+
 enum WorktreeStoreState {
     Local {
         fs: Arc<dyn Fs>,
@@ -392,11 +460,25 @@ impl WorktreeStore {
     ) -> Option<(Entity<Worktree>, Arc<RelPath>)> {
         let abs_path = SanitizedPath::new(abs_path.as_ref());
         for tree in self.worktrees() {
-            let path_style = tree.read(cx).path_style();
-            if let Some(relative_path) =
-                path_style.strip_prefix(abs_path.as_ref(), tree.read(cx).abs_path().as_ref())
+            let tree_ref = tree.read(cx);
+            let path_style = tree_ref.path_style();
+            if let Some(relative_path) = path_style
+                .strip_prefix(abs_path.as_ref(), tree_ref.abs_path().as_ref())
+                .map(|path| path.as_ref().into_arc())
+                .or_else(|| {
+                    tree_ref
+                        .as_local()
+                        .filter(|tree_ref| !tree_ref.fs_is_case_sensitive())
+                        .and_then(|_| {
+                            strip_prefix_ignore_ascii_case(
+                                path_style,
+                                abs_path.as_ref(),
+                                tree_ref.abs_path().as_ref(),
+                            )
+                        })
+                })
             {
-                return Some((tree.clone(), relative_path.into_arc()));
+                return Some((tree.clone(), relative_path));
             }
         }
         None
