@@ -941,13 +941,17 @@ impl VisualTestContext {
     /// Get an &mut VisualTestContext (which is mostly what you need to pass to other methods).
     /// This method internally retains the VisualTestContext until the end of the test.
     pub fn into_mut(self) -> &'static mut Self {
-        let ptr = Box::into_raw(Box::new(self));
-        // safety: on_quit will be called after the test has finished.
-        // the executor will ensure that all tasks related to the test have stopped.
-        // so there is no way for cx to be accessed after on_quit is called.
-        // todo: This is unsound under stacked borrows (also tree borrows probably?)
-        // the mutable reference invalidates `ptr` which is later used in the closure
-        let cx = unsafe { &mut *ptr };
+        // Leak the box to obtain the `&'static mut Self` we hand back, then
+        // derive the raw pointer *from that reference*. This way the eventual
+        // `Box::from_raw` is a child of the same borrow we return, rather than
+        // aliasing a separately-created pointer (which would be unsound under
+        // stacked/tree borrows).
+        //
+        // safety: on_quit will be called after the test has finished. The
+        // executor ensures that all tasks related to the test have stopped, so
+        // the reference cannot be accessed after on_quit reclaims the box.
+        let cx: &'static mut Self = Box::leak(Box::new(self));
+        let ptr: *mut Self = cx;
         cx.on_quit(move || unsafe {
             drop(Box::from_raw(ptr));
         });
