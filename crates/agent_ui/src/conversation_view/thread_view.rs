@@ -10853,7 +10853,7 @@ impl ThreadView {
             .description(description)
             .actions_slot(
                 h_flex()
-                    .gap_0p5()
+                    .gap_1()
                     .child(self.open_llm_providers_settings_button(cx))
                     .when(has_authenticated_provider, |this| {
                         this.child(self.open_model_selector_button(cx))
@@ -10884,6 +10884,7 @@ impl ThreadView {
         Button::new("open-model-selector", "Select Model")
             .label_size(LabelSize::Small)
             .style(ButtonStyle::Filled)
+            .key_binding(KeyBinding::for_action(&ToggleModelSelector, cx))
             .on_click(cx.listener(|this, _, window, cx| {
                 this.clear_thread_error(cx);
                 window.dispatch_action(ToggleModelSelector.boxed_clone(), cx);
