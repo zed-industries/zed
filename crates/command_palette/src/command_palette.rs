@@ -125,7 +125,10 @@ impl CommandPalette {
         );
 
         let picker = cx.new(|cx| {
-            let picker = Picker::uniform_list(delegate, window, cx);
+            // One-shot action; there's nothing to reopen.
+            let picker = Picker::uniform_list(delegate, window, cx)
+                .reopenable(false, cx)
+                .show_scrollbar(true);
             picker.set_query(query, window, cx);
             picker
         });
@@ -150,7 +153,6 @@ impl Render for CommandPalette {
     fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("CommandPalette")
-            .w(rems(34.))
             .child(self.picker.clone())
     }
 }
@@ -375,6 +377,10 @@ impl CommandPaletteDelegate {
 
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "command palette"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Execute a command...".into()
