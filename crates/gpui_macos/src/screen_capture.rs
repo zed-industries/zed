@@ -129,8 +129,6 @@ impl ScreenCaptureSource for MacScreenCaptureSource {
             let _: () = msg_send![configuration, release];
             let _: () = msg_send![delegate, release];
 
-            let (tx, rx) = oneshot::channel();
-
             let mut error: id = nil;
             let _: () = msg_send![stream, addStreamOutput:output type:SCStreamOutputTypeScreen sampleHandlerQueue:0 error:&mut error as *mut id];
             if error != nil {
