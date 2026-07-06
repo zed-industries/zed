@@ -82,11 +82,6 @@ pub fn adapt_schema_to_format(
         obj.remove("description");
     }
 
-    // Resolve $ref references from $defs before format-specific processing.
-    // MCP servers (Zod, Pydantic, etc.) commonly generate schemas with shared
-    // definitions referenced via $ref. Dereferencing them here makes the
-    // schema self-contained and prevents the UNSUPPORTED_KEYS check from
-    // rejecting valid tools.
     resolve_refs(json)?;
 
     match format {
@@ -113,23 +108,12 @@ fn preprocess_json_schema(json: &mut Value) -> Result<()> {
     Ok(())
 }
 
-/// Resolves `$ref` references using definitions from the same schema document.
-///
-/// When an object contains a `$ref` key (e.g. `{ "$ref": "#/$defs/Foo" }`),
-/// it is replaced with the corresponding definition from the top-level
-/// `$defs` (or legacy `definitions`) map. Resolution is recursive so that
-/// definitions that themselves contain `$ref` are also resolved. After
-/// resolution, the definitions map is removed from the root object.
-///
-/// Only same-document references of the form `#/$defs/<name>` or
-/// `#/definitions/<name>` are supported; other forms return an error.
+/// Inlines same-document `$ref`s from `$defs`/`definitions` and removes those.
 fn resolve_refs(json: &mut Value) -> Result<()> {
     let Some(root_obj) = json.as_object_mut() else {
         return Ok(());
     };
 
-    // Prefer $defs (draft 2019-09+), fall back to definitions (draft 4-7).
-    // Remove both if present so neither is passed through to the LLM.
     let defs = root_obj.remove("$defs");
     let legacy_defs = root_obj.remove("definitions");
     let Some(defs) = defs.or(legacy_defs) else {
@@ -148,13 +132,7 @@ fn resolve_refs_recursive(
         Value::Object(obj) => {
             if let Some(ref_str) = obj.get("$ref").and_then(|v| v.as_str()) {
                 // Guard against cycles (A -> B -> A, or self-referential
-                // schemas like a Tree node whose children are Trees). Without
-                // this, recursion would overflow the stack.
-                //
-                // Rather than erroring on legitimate recursive schemas, we
-                // replace the cyclic $ref with an empty schema `{}`, which
-                // means "any JSON value" — the tool still works, just without
-                // type info for that recursive field.
+                // schemas like a Tree node whose children are Trees)
                 if visiting.iter().any(|v| v == ref_str) {
                     *obj = Map::new();
                     return Ok(());
@@ -165,19 +143,9 @@ fn resolve_refs_recursive(
                     anyhow::bail!("$ref target not found in {defs_key}: {ref_str}");
                 };
 
-                // Save the ref string before mutating *value (which would
-                // invalidate ref_str, a borrow into the old value's data).
                 let ref_owned = ref_str.to_string();
 
                 // Inline the referenced definition into the current object.
-                // `def` is borrowed from `defs`, so we need to clone it into
-                // `value` before recursing (which may mutate `value` further).
-                //
-                // JSON Schema draft 2019-09+ allows sibling properties to
-                // appear alongside `$ref` (e.g. `{ "$ref": "...", "description": "..." }`).
-                // Merge them onto the resolved definition so they are not lost;
-                // siblings override the definition's keys (the local schema is
-                // more specific).
                 let mut resolved = def.clone();
                 if let Value::Object(resolved_obj) = &mut resolved {
                     for (key, val) in obj.iter() {
@@ -188,15 +156,12 @@ fn resolve_refs_recursive(
                 }
                 *value = resolved;
 
-                // Recurse into the resolved definition (handles nested $ref).
                 visiting.push(ref_owned);
                 let result = resolve_refs_recursive(value, defs, visiting);
                 visiting.pop();
                 return result;
             }
 
-            // Recurse into child objects and arrays. Collect keys first to
-            // avoid borrow issues while mutating.
             let keys: Vec<String> = obj.keys().cloned().collect();
             for key in keys {
                 if let Some(child) = obj.get_mut(&key) {
@@ -428,6 +393,7 @@ fn collapse_nullable_only_any_of(obj: &mut Map<String, Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
     use serde_json::json;
 
     fn obj(value: Value) -> Map<String, Value> {
@@ -912,7 +878,6 @@ mod tests {
 
     #[test]
     fn test_refs_are_resolved_via_adapt_schema_to_format() {
-        // Simulates a typical MCP tool schema with $defs and $ref.
         let mut json = json!({
             "type": "object",
             "properties": {
@@ -941,14 +906,27 @@ mod tests {
 
         adapt_schema_to_format(&mut json, LanguageModelToolSchemaFormat::JsonSchemaSubset).unwrap();
 
-        // The "parent" property should have been inlined from $defs.
-        let parent = &json["properties"]["parent"];
-        assert_eq!(parent["type"], "object");
-        assert_eq!(parent["properties"]["type"]["description"], "Parent type");
-        // $defs should have been removed.
-        assert!(json.get("$defs").is_none());
-        // $ref should have been removed.
-        assert!(parent.get("$ref").is_none());
+        let expected = json!({
+            "type": "object",
+            "properties": {
+                "parent": {
+                    "type": "object",
+                    "properties": {
+                        "type": {
+                            "type": "string",
+                            "description": "Parent type"
+                        }
+                    },
+                    "required": ["type"]
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Page title"
+                }
+            },
+            "required": ["parent"],
+        });
+        assert_eq!(json, expected);
     }
 
     #[test]
@@ -1020,10 +998,23 @@ mod tests {
         adapt_schema_to_format(&mut json, LanguageModelToolSchemaFormat::JsonSchemaSubset).unwrap();
 
         // The nested $ref in pageParent -> databaseId should be resolved.
-        let db_id = &json["properties"]["parent"]["properties"]["database_id"];
-        assert_eq!(db_id["type"], "string");
-        assert_eq!(db_id["description"], "A database ID");
-        assert!(db_id.get("$ref").is_none());
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "parent": {
+                        "type": "object",
+                        "properties": {
+                            "database_id": {
+                                "type": "string",
+                                "description": "A database ID"
+                            }
+                        }
+                    }
+                }
+            })
+        );
     }
 
     #[test]
@@ -1037,10 +1028,15 @@ mod tests {
 
         adapt_schema_to_format(&mut json, LanguageModelToolSchemaFormat::JsonSchemaSubset).unwrap();
 
-        // Should still have properties.name
-        assert_eq!(json["properties"]["name"]["type"], "string");
-        // No $defs should have appeared
-        assert!(json.get("$defs").is_none());
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" }
+                }
+            })
+        );
     }
 
     #[test]
@@ -1065,10 +1061,21 @@ mod tests {
 
         adapt_schema_to_format(&mut json, LanguageModelToolSchemaFormat::JsonSchemaSubset).unwrap();
 
-        let items = &json["properties"]["items"]["items"];
-        assert_eq!(items["type"], "string");
-        assert_eq!(items["description"], "An item");
-        assert!(items.get("$ref").is_none());
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "description": "An item"
+                        }
+                    }
+                }
+            })
+        );
     }
 
     #[test]
@@ -1093,18 +1100,24 @@ mod tests {
 
         adapt_schema_to_format(&mut json, LanguageModelToolSchemaFormat::JsonSchemaSubset).unwrap();
 
-        let user = &json["properties"]["user"];
-        assert_eq!(user["type"], "object");
-        assert_eq!(user["properties"]["id"]["type"], "string");
-        assert!(json.get("definitions").is_none());
-        assert!(user.get("$ref").is_none());
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "user": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string" }
+                        }
+                    }
+                }
+            })
+        );
     }
 
     #[test]
     fn test_cyclic_refs_are_replaced_with_empty_schema() {
-        // Recursive schemas (e.g. a Tree node whose children are Trees) are
-        // legitimate in JSON Schema. Rather than erroring, we replace the
-        // cyclic $ref with an empty schema `{}` so the tool still works.
         let mut json = json!({
             "type": "object",
             "properties": {
@@ -1129,13 +1142,25 @@ mod tests {
         adapt_schema_to_format(&mut json, LanguageModelToolSchemaFormat::JsonSchemaSubset)
             .expect("cyclic $ref should not error, just be replaced with {}");
 
-        // Resolution path: root.a -> A -> A.b -> B -> B.a -> A (cycle detected).
-        // A and B are inlined; only the cyclic field B.a is replaced with {}.
-        let b_field = &json["properties"]["a"]["properties"]["b"];
-        // b was resolved to B's content (not a cycle yet at this point).
-        assert_eq!(b_field["type"], "object");
-        // b.a is the cyclic field: resolving it would re-enter A, so it becomes {}.
-        assert_eq!(b_field["properties"]["a"], json!({}));
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "a": {
+                        "type": "object",
+                        "properties": {
+                            "b": {
+                                "type": "object",
+                                "properties": {
+                                    "a": {}
+                                }
+                            }
+                        }
+                    }
+                }
+            })
+        );
     }
 
     #[test]
@@ -1163,12 +1188,24 @@ mod tests {
         adapt_schema_to_format(&mut json, LanguageModelToolSchemaFormat::JsonSchemaSubset)
             .expect("self-referential $ref should not error");
 
-        // root should be resolved to the Tree definition.
-        let root = &json["properties"]["root"];
-        assert_eq!(root["type"], "object");
-        assert_eq!(root["properties"]["value"]["type"], "string");
-        // The recursive `children.items.$ref` should become {} (cycle).
-        assert_eq!(root["properties"]["children"]["items"], json!({}));
+        assert_eq!(
+            json,
+            json!({
+                "type": "object",
+                "properties": {
+                    "root": {
+                        "type": "object",
+                        "properties": {
+                            "value": { "type": "string" },
+                            "children": {
+                                "type": "array",
+                                "items": {}
+                            }
+                        }
+                    }
+                }
+            })
+        );
     }
 
     #[test]
@@ -1195,14 +1232,14 @@ mod tests {
 
         adapt_schema_to_format(&mut json, LanguageModelToolSchemaFormat::JsonSchemaSubset).unwrap();
 
-        let child = &json["properties"]["child"];
-        // `type` and `minLength` come from the definition.
-        assert_eq!(child["type"], "string");
-        assert_eq!(child["minLength"], 1);
-        // Sibling `description` overrides the definition's description.
-        assert_eq!(child["description"], "Local description overrides def");
-        // `$ref` should have been removed.
-        assert!(child.get("$ref").is_none());
+        assert_eq!(
+            json["properties"]["child"],
+            json!({
+                "type": "string",
+                "description": "Local description overrides def",
+                "minLength": 1
+            })
+        );
     }
 
     #[test]
