@@ -1020,6 +1020,11 @@ impl MacWindow {
                         };
                         let _: () =
                             msg_send![parent, beginSheet: native_window completionHandler: nil];
+                        // Retain the parent so it outlives this sheet: `Drop` sends
+                        // `endSheet:` to it later, and without this retain the parent
+                        // window could be closed and freed first, turning that message
+                        // into a use-after-free. Balanced by a `release` in `Drop`.
+                        let _: () = msg_send![parent, retain];
                         sheet_parent = Some(parent);
                     }
                 }
@@ -1158,6 +1163,8 @@ impl Drop for MacWindow {
                 unsafe {
                     if let Some(parent) = sheet_parent {
                         let _: () = msg_send![parent, endSheet: window];
+                        // Balance the `retain` performed when the sheet parent was stored.
+                        let _: () = msg_send![parent, release];
                     }
                     window.close();
                     window.autorelease();
