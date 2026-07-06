@@ -19,10 +19,11 @@ pub mod test;
 pub mod time;
 
 use anyhow::Result;
+use collections::HashMap;
 use itertools::Either;
 use regex::Regex;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 use std::{
     borrow::Cow,
     cmp::{self, Ordering},
@@ -39,6 +40,32 @@ pub use util_macros::{line_endings, path, uri};
 pub use self::shell::{
     get_default_system_shell, get_default_system_shell_preferring_bash, get_system_shell,
 };
+
+/// The environment captured from the user's login shell at startup.
+///
+/// GUI launches (Finder, the Dock, etc.) inherit a minimal environment that
+/// lacks the `PATH` and other variables a user configures in their shell's rc
+/// files. We capture that environment once at startup (see
+/// [`load_login_shell_environment`]) and stash it here instead of mutating the
+/// process's own environment with `std::env::set_var`. Calling `set_var` after
+/// threads have been spawned is a data race in the C runtime (`setenv` may
+/// reallocate the `environ` block while another thread reads it via `getenv`),
+/// which is why `std::env::set_var` became `unsafe` in the Rust 2024 edition.
+static LOGIN_SHELL_ENVIRONMENT: OnceLock<HashMap<String, String>> = OnceLock::new();
+
+/// Stores the environment captured from the user's login shell. Should be called
+/// once, early in startup, with the result of [`load_login_shell_environment`].
+pub fn set_login_shell_environment(environment: HashMap<String, String>) {
+    if LOGIN_SHELL_ENVIRONMENT.set(environment).is_err() {
+        log::warn!("login shell environment was already set; ignoring the new value");
+    }
+}
+
+/// Returns the environment captured from the user's login shell, if it has been
+/// loaded yet. See [`set_login_shell_environment`].
+pub fn login_shell_environment() -> Option<&'static HashMap<String, String>> {
+    LOGIN_SHELL_ENVIRONMENT.get()
+}
 
 #[inline]
 pub const fn is_utf8_char_boundary(u8: u8) -> bool {
@@ -252,8 +279,13 @@ Error: Running Zed as root or via sudo is unsupported.
     }
 }
 
+/// Resolves the user's login shell from the passwd database.
+///
+/// Returns `Some(shell)` when the resolved shell should take precedence over the
+/// current `$SHELL` (i.e. `$SHELL` is unset or points at a shell that no longer
+/// exists), and `None` when the existing `$SHELL` should be kept.
 #[cfg(unix)]
-fn load_shell_from_passwd() -> Result<()> {
+fn load_shell_from_passwd() -> Result<Option<String>> {
     let buflen = match unsafe { libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) } {
         n if n < 0 => 1024,
         n => n as usize,
@@ -297,14 +329,11 @@ fn load_shell_from_passwd() -> Result<()> {
     });
 
     if should_set_shell {
-        log::info!(
-            "updating SHELL environment variable to value from passwd entry: {:?}",
-            shell,
-        );
-        unsafe { std::env::set_var("SHELL", shell) };
+        log::info!("resolved SHELL from passwd entry: {:?}", shell);
+        Ok(Some(shell.to_string()))
+    } else {
+        Ok(None)
     }
-
-    Ok(())
 }
 
 /// Returns a shell escaped path for the current zed executable
@@ -371,20 +400,38 @@ pub fn get_zed_cli_path() -> Result<PathBuf> {
         })
 }
 
+/// Captures the environment of the user's login shell and returns it, rather
+/// than mutating this process's own environment. Callers are expected to store
+/// the result via [`set_login_shell_environment`] and to consult it (via
+/// [`login_shell_environment`]) when building environments for child processes.
 #[cfg(unix)]
-pub async fn load_login_shell_environment() -> Result<()> {
+pub async fn load_login_shell_environment() -> Result<HashMap<String, String>> {
     use anyhow::Context as _;
 
-    load_shell_from_passwd().log_err();
+    // The user's login shell as recorded in the passwd database takes precedence
+    // over `$SHELL` when the latter is unset or points at a shell that no longer
+    // exists. We capture the environment using this shell.
+    let shell_from_passwd = load_shell_from_passwd().log_err().flatten();
+    let shell = shell_from_passwd.clone().unwrap_or_else(get_system_shell);
+
+    let mut environment = HashMap::default();
+
+    // Reflect the passwd-derived shell in the captured environment. This is
+    // layered in before the capture so that a `SHELL` exported by the login
+    // shell itself still wins, matching the previous ordering (which set `SHELL`
+    // in the process env before capturing on top of it).
+    if let Some(shell) = &shell_from_passwd {
+        environment.insert("SHELL".to_string(), shell.clone());
+    }
 
     // If possible, we want to `cd` in the user's `$HOME` to trigger programs
     // such as direnv, asdf, mise, ... to adjust the PATH. These tools often hook
     // into shell's `cd` command (and hooks) to manipulate env.
     // We do this so that we get the env a user would have when spawning a shell
     // in home directory.
-    for (name, value) in shell_env::capture(get_system_shell(), &[], paths::home_dir())
+    for (name, value) in shell_env::capture(&shell, &[], paths::home_dir())
         .await
-        .with_context(|| format!("capturing environment with {:?}", get_system_shell()))?
+        .with_context(|| format!("capturing environment with {:?}", shell))?
     {
         // Skip SHLVL to prevent it from polluting Zed's process environment.
         // The login shell used for env capture increments SHLVL, and if we propagate it,
@@ -393,16 +440,16 @@ pub async fn load_login_shell_environment() -> Result<()> {
         if name == "SHLVL" {
             continue;
         }
-        unsafe { std::env::set_var(&name, &value) };
+        environment.insert(name, value);
     }
 
     log::info!(
-        "set environment variables from shell:{}, path:{}",
-        std::env::var("SHELL").unwrap_or_default(),
-        std::env::var("PATH").unwrap_or_default(),
+        "captured environment from shell:{}, path:{}",
+        environment.get("SHELL").map_or("", String::as_str),
+        environment.get("PATH").map_or("", String::as_str),
     );
 
-    Ok(())
+    Ok(environment)
 }
 
 /// Configures the process to start a new session, to prevent interactive shells from taking control
