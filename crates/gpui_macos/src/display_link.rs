@@ -8,7 +8,7 @@ use std::ffi::c_void;
 
 pub struct DisplayLink {
     display_link: Option<sys::DisplayLink>,
-    frame_requests: DispatchRetained<DispatchSource>,
+    frame_requests: Option<DispatchRetained<DispatchSource>>,
 }
 
 impl DisplayLink {
@@ -51,7 +51,7 @@ impl DisplayLink {
 
             Ok(Self {
                 display_link: Some(display_link),
-                frame_requests,
+                frame_requests: Some(frame_requests),
             })
         }
     }
@@ -82,7 +82,17 @@ impl Drop for DisplayLink {
         //
         // We might also want to upgrade to CADisplayLink, but that requires dropping old macOS support.
         std::mem::forget(self.display_link.take());
-        self.frame_requests.cancel();
+
+        // The CVDisplayLink output callback holds a raw pointer to `frame_requests` and can still
+        // fire on the CVDisplayLink background thread after `stop`. Cancelling the source prevents
+        // its event handler from running and makes any further `merge_data` calls harmless, but
+        // releasing the source would free the callback's context and cause a cross-thread
+        // use-after-free. So, like the link above, we leak the source to keep that context valid
+        // for the now-detached background thread.
+        if let Some(frame_requests) = self.frame_requests.take() {
+            frame_requests.cancel();
+            std::mem::forget(frame_requests);
+        }
     }
 }
 
