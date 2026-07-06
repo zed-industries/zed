@@ -116,38 +116,43 @@ impl BackgroundExecutor {
     /// Scoped lets you start a number of tasks and waits
     /// for all of them to complete before returning.
     ///
-    /// This is a synchronous, blocking call: it spawns the futures registered
-    /// by `scheduler` onto the background executor and blocks the current
-    /// thread until they have all resolved. Being synchronous is what keeps it
-    /// sound (see the safety comment on [`Scope::spawn`]): the futures borrow
-    /// the caller's frame and are only kept alive by the blocking `Scope` drop.
-    /// If this instead returned an intermediate future, that future could be
-    /// polled once (spawning the borrowing background tasks) and then leaked
-    /// with `mem::forget`, skipping the blocking drop and freeing the borrowed
-    /// frame while the background threads were still reading it.
-    pub fn scoped<'scope, F>(&self, scheduler: F)
+    /// The returned future spawns the futures registered by `scheduler` onto
+    /// the background executor and then awaits them all. It MUST be polled to
+    /// completion and MUST NOT be leaked (see the safety contract on
+    /// [`Scope::spawn`]), because the spawned futures borrow the caller's frame
+    /// for `'scope`.
+    pub async fn scoped<'scope, F>(&self, scheduler: F)
     where
         F: FnOnce(&mut Scope<'scope>),
     {
-        self.scoped_priority(Priority::default(), scheduler)
+        let mut scope = Scope::new(self.clone(), Priority::default());
+        (scheduler)(&mut scope);
+        let spawned = mem::take(&mut scope.futures)
+            .into_iter()
+            .map(|f| self.spawn_with_priority(scope.priority, f))
+            .collect::<Vec<_>>();
+        for task in spawned {
+            task.await;
+        }
     }
 
     /// Scoped lets you start a number of tasks and waits
     /// for all of them to complete before returning.
     ///
-    /// See [`Self::scoped`] for why this is a synchronous, blocking call.
-    pub fn scoped_priority<'scope, F>(&self, priority: Priority, scheduler: F)
+    /// See [`Self::scoped`]: the returned future must be polled to completion
+    /// and must not be leaked.
+    pub async fn scoped_priority<'scope, F>(&self, priority: Priority, scheduler: F)
     where
         F: FnOnce(&mut Scope<'scope>),
     {
-        let mut scope = Scope::new(self.clone());
+        let mut scope = Scope::new(self.clone(), priority);
         (scheduler)(&mut scope);
-        // Spawn every registered future onto the background executor and detach
-        // it. Dropping `scope` at the end of this function blocks until all of
-        // them have resolved (see `Scope::drop`), which upholds the contract
-        // that the borrowed `'scope` data outlives the spawned work.
-        for future in mem::take(&mut scope.futures) {
-            self.spawn_with_priority(priority, future).detach();
+        let spawned = mem::take(&mut scope.futures)
+            .into_iter()
+            .map(|f| self.spawn_with_priority(scope.priority, f))
+            .collect::<Vec<_>>();
+        for task in spawned {
+            task.await;
         }
     }
 
@@ -387,6 +392,7 @@ impl ForegroundExecutor {
 /// Scope manages a set of tasks that are enqueued and waited on together. See [`BackgroundExecutor::scoped`].
 pub struct Scope<'a> {
     executor: BackgroundExecutor,
+    priority: Priority,
     futures: Vec<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
     tx: Option<mpsc::Sender<()>>,
     rx: mpsc::Receiver<()>,
@@ -394,10 +400,11 @@ pub struct Scope<'a> {
 }
 
 impl<'a> Scope<'a> {
-    fn new(executor: BackgroundExecutor) -> Self {
+    fn new(executor: BackgroundExecutor, priority: Priority) -> Self {
         let (tx, rx) = mpsc::channel(1);
         Self {
             executor,
+            priority,
             tx: Some(tx),
             rx,
             futures: Default::default(),
@@ -411,15 +418,29 @@ impl<'a> Scope<'a> {
     }
 
     /// Spawn a future into this scope.
+    ///
+    /// # Safety
+    ///
+    /// `f` may borrow data that only lives for `'a`, but it is transmuted to a
+    /// `'static` future and spawned onto the background executor. The `'a`
+    /// borrow is only guaranteed to outlive the spawned future because
+    /// [`BackgroundExecutor::scoped`]/[`BackgroundExecutor::scoped_priority`]
+    /// await every spawned future (and `Scope::drop` blocks on them) before
+    /// returning. The caller must therefore ensure the enclosing `scoped`
+    /// future is polled to completion and NOT leaked (e.g. via `mem::forget`):
+    /// leaking it would skip that await/drop and free the borrowed frame while
+    /// the background threads are still reading it. Every in-tree caller
+    /// satisfies this by awaiting the `scoped` future immediately.
     #[track_caller]
-    pub fn spawn<F>(&mut self, f: F)
+    pub unsafe fn spawn<F>(&mut self, f: F)
     where
         F: Future<Output = ()> + Send + 'a,
     {
         let tx = self.tx.clone().unwrap();
 
         // SAFETY: The 'a lifetime is guaranteed to outlive any of these futures because
-        // dropping this `Scope` blocks until all of the futures have resolved.
+        // dropping this `Scope` blocks until all of the futures have resolved,
+        // provided the caller upholds the contract documented above.
         let f = unsafe {
             mem::transmute::<
                 Pin<Box<dyn Future<Output = ()> + Send + 'a>>,

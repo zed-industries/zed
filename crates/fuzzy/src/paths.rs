@@ -181,70 +181,78 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
         .map(|_| Vec::with_capacity(max_results))
         .collect::<Vec<_>>();
 
-    executor.scoped(|scope| {
-        for (segment_idx, results) in segment_results.iter_mut().enumerate() {
-            scope.spawn(async move {
-                let segment_start = segment_idx * segment_size;
-                let segment_end = segment_start + segment_size;
-                let mut matcher =
-                    Matcher::new(query, lowercase_query, query_char_bag, smart_case, true);
+    // SAFETY: the `scoped` future is awaited immediately below, so the spawned
+    // futures — which borrow this frame for `'scope` — never outlive it, and the
+    // future is not leaked (which would skip that await and free the frame early).
+    executor
+        .scoped(|scope| unsafe {
+            for (segment_idx, results) in segment_results.iter_mut().enumerate() {
+                scope.spawn(async move {
+                    let segment_start = segment_idx * segment_size;
+                    let segment_end = segment_start + segment_size;
+                    let mut matcher =
+                        Matcher::new(query, lowercase_query, query_char_bag, smart_case, true);
 
-                let mut tree_start = 0;
-                for candidate_set in candidate_sets {
-                    if cancel_flag.load(atomic::Ordering::Acquire) {
-                        break;
-                    }
-
-                    let tree_end = tree_start + candidate_set.len();
-
-                    if tree_start < segment_end && segment_start < tree_end {
-                        let start = cmp::max(tree_start, segment_start) - tree_start;
-                        let end = cmp::min(tree_end, segment_end) - tree_start;
-                        let candidates = candidate_set.candidates(start).take(end - start);
-
-                        let worktree_id = candidate_set.id();
-                        let mut prefix = candidate_set
-                            .prefix()
-                            .as_unix_str()
-                            .chars()
-                            .collect::<Vec<_>>();
-                        if !candidate_set.root_is_file() && !prefix.is_empty() {
-                            prefix.push('/');
+                    let mut tree_start = 0;
+                    for candidate_set in candidate_sets {
+                        if cancel_flag.load(atomic::Ordering::Acquire) {
+                            break;
                         }
-                        let lowercase_prefix = prefix
-                            .iter()
-                            .map(|c| simple_lowercase(*c))
-                            .collect::<Vec<_>>();
-                        matcher.match_candidates(
-                            &prefix,
-                            &lowercase_prefix,
-                            candidates,
-                            results,
-                            cancel_flag,
-                            |candidate, score, positions| PathMatch {
-                                score,
-                                worktree_id,
-                                positions: positions.clone(),
-                                path: Arc::from(candidate.path),
-                                is_dir: candidate.is_dir,
-                                path_prefix: candidate_set.prefix(),
-                                distance_to_relative_ancestor: relative_to.as_ref().map_or(
-                                    usize::MAX,
-                                    |relative_to| {
-                                        distance_between_paths(candidate.path, relative_to.as_ref())
-                                    },
-                                ),
-                            },
-                        );
+
+                        let tree_end = tree_start + candidate_set.len();
+
+                        if tree_start < segment_end && segment_start < tree_end {
+                            let start = cmp::max(tree_start, segment_start) - tree_start;
+                            let end = cmp::min(tree_end, segment_end) - tree_start;
+                            let candidates = candidate_set.candidates(start).take(end - start);
+
+                            let worktree_id = candidate_set.id();
+                            let mut prefix = candidate_set
+                                .prefix()
+                                .as_unix_str()
+                                .chars()
+                                .collect::<Vec<_>>();
+                            if !candidate_set.root_is_file() && !prefix.is_empty() {
+                                prefix.push('/');
+                            }
+                            let lowercase_prefix = prefix
+                                .iter()
+                                .map(|c| simple_lowercase(*c))
+                                .collect::<Vec<_>>();
+                            matcher.match_candidates(
+                                &prefix,
+                                &lowercase_prefix,
+                                candidates,
+                                results,
+                                cancel_flag,
+                                |candidate, score, positions| PathMatch {
+                                    score,
+                                    worktree_id,
+                                    positions: positions.clone(),
+                                    path: Arc::from(candidate.path),
+                                    is_dir: candidate.is_dir,
+                                    path_prefix: candidate_set.prefix(),
+                                    distance_to_relative_ancestor: relative_to.as_ref().map_or(
+                                        usize::MAX,
+                                        |relative_to| {
+                                            distance_between_paths(
+                                                candidate.path,
+                                                relative_to.as_ref(),
+                                            )
+                                        },
+                                    ),
+                                },
+                            );
+                        }
+                        if tree_end >= segment_end {
+                            break;
+                        }
+                        tree_start = tree_end;
                     }
-                    if tree_end >= segment_end {
-                        break;
-                    }
-                    tree_start = tree_end;
-                }
-            })
-        }
-    });
+                })
+            }
+        })
+        .await;
 
     if cancel_flag.load(atomic::Ordering::Acquire) {
         return Vec::new();

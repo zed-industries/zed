@@ -4889,8 +4889,11 @@ impl BackgroundScanner {
         }
 
         let progress_update_count = AtomicUsize::new(0);
+        // SAFETY: the `scoped_priority` future is awaited immediately below, so the
+        // spawned futures — which borrow this frame for `'scope` — never outlive it,
+        // and the future is not leaked (which would skip that await).
         self.executor
-            .scoped_priority(Priority::Low, |scope| {
+            .scoped_priority(Priority::Low, |scope| unsafe {
                 for _ in 0..self.executor.num_cpus() {
                     scope.spawn(async {
                         let mut last_progress_update_count = 0;
@@ -4942,7 +4945,8 @@ impl BackgroundScanner {
                         }
                     });
                 }
-            });
+            })
+            .await;
     }
 
     async fn send_status_update(
@@ -5471,30 +5475,35 @@ impl BackgroundScanner {
         }
         drop(ignore_queue_tx);
 
-        self.executor.scoped(|scope| {
-            for _ in 0..self.executor.num_cpus() {
-                scope.spawn(async {
-                    loop {
-                        select_biased! {
-                            // Process any path refresh requests before moving on to process
-                            // the queue of ignore statuses.
-                            request = self.next_scan_request().fuse() => {
-                                let Ok(request) = request else { break };
-                                if !self.process_scan_request(request, true).await {
-                                    return;
+        // SAFETY: the `scoped` future is awaited immediately below, so the spawned
+        // futures — which borrow this frame for `'scope` — never outlive it, and the
+        // future is not leaked (which would skip that await).
+        self.executor
+            .scoped(|scope| unsafe {
+                for _ in 0..self.executor.num_cpus() {
+                    scope.spawn(async {
+                        loop {
+                            select_biased! {
+                                // Process any path refresh requests before moving on to process
+                                // the queue of ignore statuses.
+                                request = self.next_scan_request().fuse() => {
+                                    let Ok(request) = request else { break };
+                                    if !self.process_scan_request(request, true).await {
+                                        return;
+                                    }
+                                }
+
+                                // Recursively process directories whose ignores have changed.
+                                job = ignore_queue_rx.recv().fuse() => {
+                                    let Ok(job) = job else { break };
+                                    self.update_ignore_status(job, &prev_snapshot).await;
                                 }
                             }
-
-                            // Recursively process directories whose ignores have changed.
-                            job = ignore_queue_rx.recv().fuse() => {
-                                let Ok(job) = job else { break };
-                                self.update_ignore_status(job, &prev_snapshot).await;
-                            }
                         }
-                    }
-                });
-            }
-        });
+                    });
+                }
+            })
+            .await;
     }
 
     async fn ignores_needing_update(&self) -> Vec<Arc<Path>> {

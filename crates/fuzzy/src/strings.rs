@@ -155,38 +155,43 @@ where
         .map(|_| Vec::with_capacity(max_results.min(candidates.len())))
         .collect::<Vec<_>>();
 
-    executor.scoped(|scope| {
-        for (segment_idx, results) in segment_results.iter_mut().enumerate() {
-            let cancel_flag = &cancel_flag;
-            scope.spawn(async move {
-                let segment_start = cmp::min(segment_idx * segment_size, candidates.len());
-                let segment_end = cmp::min(segment_start + segment_size, candidates.len());
-                let mut matcher = Matcher::new(
-                    query,
-                    lowercase_query,
-                    query_char_bag,
-                    smart_case,
-                    penalize_length,
-                );
+    // SAFETY: the `scoped` future is awaited immediately below, so the spawned
+    // futures — which borrow this frame for `'scope` — never outlive it, and the
+    // future is not leaked (which would skip that await and free the frame early).
+    executor
+        .scoped(|scope| unsafe {
+            for (segment_idx, results) in segment_results.iter_mut().enumerate() {
+                let cancel_flag = &cancel_flag;
+                scope.spawn(async move {
+                    let segment_start = cmp::min(segment_idx * segment_size, candidates.len());
+                    let segment_end = cmp::min(segment_start + segment_size, candidates.len());
+                    let mut matcher = Matcher::new(
+                        query,
+                        lowercase_query,
+                        query_char_bag,
+                        smart_case,
+                        penalize_length,
+                    );
 
-                matcher.match_candidates(
-                    &[],
-                    &[],
-                    candidates[segment_start..segment_end]
-                        .iter()
-                        .map(|c| c.borrow()),
-                    results,
-                    cancel_flag,
-                    |candidate: &&StringMatchCandidate, score, positions| StringMatch {
-                        candidate_id: candidate.id,
-                        score,
-                        positions: positions.clone(),
-                        string: candidate.string.to_string(),
-                    },
-                );
-            });
-        }
-    });
+                    matcher.match_candidates(
+                        &[],
+                        &[],
+                        candidates[segment_start..segment_end]
+                            .iter()
+                            .map(|c| c.borrow()),
+                        results,
+                        cancel_flag,
+                        |candidate: &&StringMatchCandidate, score, positions| StringMatch {
+                            candidate_id: candidate.id,
+                            score,
+                            positions: positions.clone(),
+                            string: candidate.string.to_string(),
+                        },
+                    );
+                });
+            }
+        })
+        .await;
 
     if cancel_flag.load(atomic::Ordering::Acquire) {
         return Vec::new();

@@ -346,21 +346,26 @@ impl Search {
                     let num_cpus = _executor.num_cpus();
 
                     assert!(num_cpus > 0);
-                    _executor.scoped(|scope| {
-                        let worker_count = (num_cpus - 1).max(1);
-                        for _ in 0..worker_count {
-                            let worker = Worker {
-                                query: query.clone(),
-                                open_buffers: open_buffers.clone(),
-                                candidates: candidate_searcher.clone(),
-                                find_all_matches_rx: find_all_matches_rx.clone(),
-                            };
-                            scope.spawn(worker.run());
-                        }
+                    // SAFETY: the `scoped` future is awaited immediately below, so the
+                    // spawned futures — which borrow this frame for `'scope` — never
+                    // outlive it, and the future is not leaked (which would skip that await).
+                    _executor
+                        .scoped(|scope| unsafe {
+                            let worker_count = (num_cpus - 1).max(1);
+                            for _ in 0..worker_count {
+                                let worker = Worker {
+                                    query: query.clone(),
+                                    open_buffers: open_buffers.clone(),
+                                    candidates: candidate_searcher.clone(),
+                                    find_all_matches_rx: find_all_matches_rx.clone(),
+                                };
+                                scope.spawn(worker.run());
+                            }
 
-                        drop(find_all_matches_rx);
-                        drop(candidate_searcher);
-                    });
+                            drop(find_all_matches_rx);
+                            drop(candidate_searcher);
+                        })
+                        .await;
                 });
 
                 let (sorted_matches_tx, sorted_matches_rx) = unbounded();

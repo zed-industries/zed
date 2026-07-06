@@ -2633,7 +2633,9 @@ pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut A
         return;
     }
 
-    executor.scoped(|scope| {
+    // SAFETY: `load_themes` is driven to completion by `block_on` below (never
+    // leaked), so the spawned futures' `'scope` borrows of this frame stay valid.
+    let load_themes = executor.scoped(|scope| unsafe {
         for load_target in themes_to_load {
             let theme_registry = &theme_registry;
             let reload_tasks = &reload_tasks;
@@ -2664,6 +2666,7 @@ pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut A
             });
         }
     });
+    cx.foreground_executor().block_on(load_themes);
 
     for reload_target in reload_tasks.into_inner() {
         match reload_target {
