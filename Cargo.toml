@@ -828,8 +828,8 @@ usvg = { version = "0.46.0", default-features = false }
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 vte = { version = "0.15.0", features = ["ansi"] }
 walkdir = "2.5"
-wasm-encoder = "0.221"
-wasmparser = "0.221"
+wasm-encoder = "0.252"
+wasmparser = "0.252"
 wasmtime = { version = "36", default-features = false, features = [
     "async",
     "demangle",
@@ -1070,3 +1070,10 @@ ignored = [
     "documented",
     "sea-orm-macros",
 ]
+
+# Dylint discovers our custom lints through this entry, so `cargo dylint --all`
+# runs them without a `--path` argument. The `lints` package pins its own
+# nightly toolchain (see `tooling/lints/rust-toolchain.toml`) and is kept out of
+# this workspace on purpose.
+[workspace.metadata.dylint]
+libraries = [{ path = "tooling/lints" }]
