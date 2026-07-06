@@ -68,6 +68,7 @@ pub struct FileFinder {
     picker: Entity<Picker<FileFinderDelegate>>,
     picker_focus_handle: FocusHandle,
     init_modifiers: Option<Modifiers>,
+    refresh_after_worktree_update: Option<Task<()>>,
 }
 
 pub fn init(cx: &mut App) {
@@ -183,7 +184,32 @@ impl FileFinder {
             picker,
             picker_focus_handle,
             init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
+            refresh_after_worktree_update: None,
         }
+    }
+
+    fn refresh_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh_after_worktree_update = None;
+        self.picker
+            .update(cx, |picker, cx| picker.refresh(window, cx));
+    }
+
+    fn refresh_picker_after_worktree_update(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let file_finder = cx.entity().downgrade();
+        self.refresh_after_worktree_update = Some(cx.spawn_in(window, async move |_, cx| {
+            cx.background_executor()
+                .timer(WORKTREE_UPDATE_REFRESH_DEBOUNCE)
+                .await;
+            file_finder
+                .update_in(cx, |file_finder, window, cx| {
+                    file_finder.refresh_picker(window, cx);
+                })
+                .log_err();
+        }));
     }
 
     fn handle_modifiers_changed(
@@ -790,6 +816,7 @@ impl FoundPath {
 
 const MAX_RECENT_SELECTIONS: usize = 20;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(100);
+const WORKTREE_UPDATE_REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
 
 pub enum Event {
     Selected(ProjectPath),
@@ -947,11 +974,12 @@ impl FileFinderDelegate {
     ) {
         cx.subscribe_in(project, window, |file_finder, _, event, window, cx| {
             match event {
-                project::Event::WorktreeUpdatedEntries(_, _)
-                | project::Event::WorktreeAdded(_)
-                | project::Event::WorktreeRemoved(_) => file_finder
-                    .picker
-                    .update(cx, |picker, cx| picker.refresh(window, cx)),
+                project::Event::WorktreeUpdatedEntries(_, _) => {
+                    file_finder.refresh_picker_after_worktree_update(window, cx)
+                }
+                project::Event::WorktreeAdded(_) | project::Event::WorktreeRemoved(_) => {
+                    file_finder.refresh_picker(window, cx)
+                }
                 _ => {}
             };
         })
