@@ -7,8 +7,8 @@ use crate::{
     RESIZE_DIVIDER_WIDTH, RedistributableColumnsState, RegisterComponent, RenderOnce, ScrollAxes,
     ScrollableHandle, Scrollbars, SharedString, StatefulInteractiveElement, Styled, StyledExt as _,
     StyledTypography, TableResizeBehavior, Window, WithScrollbar, bind_redistributable_columns,
-    div, example_group_with_title, h_flex, px, render_column_resize_divider,
-    redistribute_hidden_widths, render_redistributable_columns_resize_handles, single_example,
+    div, example_group_with_title, h_flex, px, redistribute_hidden_widths,
+    render_column_resize_divider, render_redistributable_columns_resize_handles, single_example,
     table_row::{IntoTableRow as _, TableRow},
     v_flex,
 };
@@ -1184,7 +1184,7 @@ impl RenderOnce for Table {
                 ))
             })
             .when_some(redistributable_entity, |this, widths| {
-                bind_redistributable_columns(this, widths)
+                bind_redistributable_columns(this, widths, self.column_filter.clone())
             })
             .when_some(resizable_entity, |this, entity| {
                 let scroll_handle_for_drag = h_scroll_handle.clone();

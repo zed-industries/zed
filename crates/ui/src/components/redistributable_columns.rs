@@ -267,6 +267,7 @@ impl RedistributableColumnsState {
     fn on_drag_move(
         &mut self,
         drag_event: &DragMoveEvent<DraggedColumn>,
+        hidden: Option<&TableRow<bool>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -295,6 +296,7 @@ impl RedistributableColumnsState {
         let widths = Self::compute_drag_preview(
             widths,
             &self.resize_behavior,
+            hidden,
             col_idx,
             drag_fraction,
             divider_width,
@@ -307,31 +309,83 @@ impl RedistributableColumnsState {
     /// to `drag_fraction` (the cursor's x position expressed as a fraction of the container
     /// width). `divider_width` is the resize-divider width as a fraction of the container.
     ///
+    /// The on-screen layout only contains the visible columns, with the hidden columns' width
+    /// budget redistributed across them (see [`redistribute_hidden_widths`]), so the geometry
+    /// here is done in that visible/redistributed space: the raw `widths` are compacted to the
+    /// visible columns and scaled to match the rendered layout, the drag is applied there (which
+    /// also makes neighbor propagation skip hidden columns), and the result is mapped back to
+    /// the raw widths, leaving hidden columns untouched.
+    ///
     /// Extracted as a pure function so the drag math can be unit tested, mirroring the
     /// `drag_column_handle` / `propagate_resize_diff` helpers.
     pub(crate) fn compute_drag_preview(
         mut widths: TableRow<f32>,
         resize_behavior: &TableRow<TableResizeBehavior>,
+        hidden: Option<&TableRow<bool>>,
         col_idx: usize,
         drag_fraction: f32,
         divider_width: f32,
     ) -> TableRow<f32> {
+        let visible_cols: Vec<usize> = (0..widths.cols())
+            .filter(|idx| !is_column_hidden(hidden, *idx))
+            .collect();
+
+        // Dividers are only rendered after visible columns, so a hidden `col_idx` should be
+        // impossible; bail out rather than resizing the wrong column.
+        let Some(divider_position) = visible_cols.iter().position(|&idx| idx == col_idx) else {
+            return widths;
+        };
+
+        let total_sum: f32 = widths.as_slice().iter().sum();
+        let visible_sum: f32 = visible_cols.iter().map(|&idx| widths[idx]).sum();
+        // The drag only moves width between visible columns, so `visible_sum` (and therefore
+        // this scale) is the same before and after the drag, making the mapping back exact.
+        let scale = if visible_sum > 0.0 {
+            total_sum / visible_sum
+        } else {
+            1.0
+        };
+
+        let mut rendered_widths = TableRow::from_vec(
+            visible_cols
+                .iter()
+                .map(|&idx| widths[idx] * scale)
+                .collect(),
+            visible_cols.len(),
+        );
+        let rendered_behavior = TableRow::from_vec(
+            visible_cols
+                .iter()
+                .map(|&idx| resize_behavior[idx])
+                .collect(),
+            visible_cols.len(),
+        );
+
         let mut col_position = 0.0;
-        for length in widths[0..=col_idx].iter() {
+        for length in rendered_widths[0..=divider_position].iter() {
             col_position += length + divider_width;
         }
 
         let mut total_length_ratio = col_position;
-        for length in widths[col_idx + 1..].iter() {
+        for length in rendered_widths[divider_position + 1..].iter() {
             total_length_ratio += length;
         }
-        let cols = resize_behavior.cols();
-        total_length_ratio += (cols - 1 - col_idx) as f32 * divider_width;
+        let cols = rendered_behavior.cols();
+        total_length_ratio += (cols - 1 - divider_position) as f32 * divider_width;
 
         let drag_fraction = drag_fraction * total_length_ratio;
         let diff = drag_fraction - col_position - divider_width / 2.0;
 
-        Self::drag_column_handle(diff, col_idx, &mut widths, resize_behavior);
+        Self::drag_column_handle(
+            diff,
+            divider_position,
+            &mut rendered_widths,
+            &rendered_behavior,
+        );
+
+        for (visible_position, &idx) in visible_cols.iter().enumerate() {
+            widths[idx] = rendered_widths[visible_position] / scale;
+        }
 
         widths
     }
@@ -409,7 +463,9 @@ impl RedistributableColumnsState {
 
 /// Returns `true` when the column at `idx` is hidden by `hidden`.
 pub fn is_column_hidden(hidden: Option<&TableRow<bool>>, idx: usize) -> bool {
-    hidden.and_then(|mask| mask.get(idx).copied()).unwrap_or(false)
+    hidden
+        .and_then(|mask| mask.get(idx).copied())
+        .unwrap_or(false)
 }
 
 /// Redistributes the fractional width budget of hidden columns across the visible columns so the
@@ -445,7 +501,9 @@ pub fn redistribute_hidden_widths(
         .iter()
         .enumerate()
         .map(|(idx, width)| match width {
-            Length::Definite(DefiniteLength::Fraction(fraction)) if !is_column_hidden(hidden, idx) => {
+            Length::Definite(DefiniteLength::Fraction(fraction))
+                if !is_column_hidden(hidden, idx) =>
+            {
                 Length::Definite(DefiniteLength::Fraction(fraction * scale))
             }
             other => *other,
@@ -495,6 +553,7 @@ pub fn redistribute_hidden_fractions(
 pub fn bind_redistributable_columns(
     container: Div,
     columns_state: Entity<RedistributableColumnsState>,
+    hidden: Option<TableRow<bool>>,
 ) -> Div {
     container
         .on_drag_move::<DraggedColumn>({
@@ -504,7 +563,7 @@ pub fn bind_redistributable_columns(
                     return;
                 }
                 columns_state.update(cx, |columns, cx| {
-                    columns.on_drag_move(event, window, cx);
+                    columns.on_drag_move(event, hidden.as_ref(), window, cx);
                 });
             }
         })

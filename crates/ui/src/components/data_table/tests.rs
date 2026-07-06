@@ -322,11 +322,9 @@ mod drag_handle {
 mod drag_with_hidden_columns {
     use super::*;
 
-    // These tests capture two bugs in how dragging interacts with hidden (filtered) columns.
-    // The resize dividers are laid out using the *redistributed* (visible-only) widths, but
-    // `on_drag_move` / `compute_drag_preview` still operate on the raw committed widths and are
-    // unaware of which columns are hidden. Both tests are expected to FAIL until the drag math
-    // is made redistribution-aware.
+    // Dragging with hidden (filtered) columns: the resize dividers are laid out using the
+    // *redistributed* (visible-only) widths, so `compute_drag_preview` must do its geometry in
+    // that same space and skip hidden columns when propagating the resize to a neighbor.
 
     /// Mirrors how the renderer turns raw widths into the on-screen layout: hidden columns
     /// collapse to zero and their space is redistributed across the visible columns.
@@ -351,6 +349,34 @@ mod drag_with_hidden_columns {
     }
 
     #[test]
+    fn drag_without_hidden_columns_is_unchanged() {
+        // Guards the pre-existing behavior: with no hidden mask the drag operates on the raw
+        // widths directly (the visible space and the raw space are the same).
+        let resize_behavior = TableRow::from_vec(vec![TableResizeBehavior::Resizable; 3], 3);
+        let widths = TableRow::from_vec(vec![1.0 / 3.0; 3], 3);
+
+        let result = RedistributableColumnsState::compute_drag_preview(
+            widths,
+            &resize_behavior,
+            None,
+            1,
+            0.8,
+            0.0,
+        );
+
+        let result = result.as_slice();
+        let boundary = result[0] + result[1];
+        assert!(
+            (boundary - 0.8).abs() < 1e-6,
+            "expected the boundary after column 1 to follow the cursor to 0.8: {result:?}",
+        );
+        assert!(
+            (result[0] - 1.0 / 3.0).abs() < 1e-6,
+            "column 0 must not be affected: {result:?}",
+        );
+    }
+
+    #[test]
     fn drag_boundary_follows_cursor_with_hidden_column() {
         // Three equal columns; column 0 is hidden. The two visible columns each render at 0.5
         // of the container. The user grabs the divider between the visible columns (original
@@ -358,11 +384,18 @@ mod drag_with_hidden_columns {
         // visible columns should follow the cursor to 0.7.
         let resize_behavior = TableRow::from_vec(vec![TableResizeBehavior::Resizable; 3], 3);
         let widths = TableRow::from_vec(vec![1.0 / 3.0; 3], 3);
-
-        let result =
-            RedistributableColumnsState::compute_drag_preview(widths, &resize_behavior, 1, 0.7, 0.0);
-
         let hidden = [true, false, false];
+        let hidden_mask = TableRow::from_vec(hidden.to_vec(), 3);
+
+        let result = RedistributableColumnsState::compute_drag_preview(
+            widths,
+            &resize_behavior,
+            Some(&hidden_mask),
+            1,
+            0.7,
+            0.0,
+        );
+
         let rendered = redistributed(result.as_slice(), &hidden);
         assert!(
             (rendered[1] - 0.7).abs() < 1e-3,
@@ -379,14 +412,33 @@ mod drag_with_hidden_columns {
         // the next *visible* column (2) and leave the hidden column's width untouched.
         let resize_behavior = TableRow::from_vec(vec![TableResizeBehavior::Resizable; 3], 3);
         let widths = TableRow::from_vec(vec![1.0 / 3.0; 3], 3);
+        let hidden = [false, true, false];
+        let hidden_mask = TableRow::from_vec(hidden.to_vec(), 3);
 
-        let result =
-            RedistributableColumnsState::compute_drag_preview(widths, &resize_behavior, 0, 0.7, 0.0);
+        let result = RedistributableColumnsState::compute_drag_preview(
+            widths,
+            &resize_behavior,
+            Some(&hidden_mask),
+            0,
+            0.7,
+            0.0,
+        );
 
         let result = result.as_slice();
         assert!(
             (result[1] - 1.0 / 3.0).abs() < 1e-6,
             "hidden column width must be preserved, but it changed: {result:?}",
+        );
+        // The drag moved width from visible column 2 to visible column 0, so the total is
+        // unchanged and the next *visible* column absorbed the resize.
+        let total: f32 = result.iter().sum();
+        assert!(
+            (total - 1.0).abs() < 1e-6,
+            "total must be preserved: {result:?}"
+        );
+        assert!(
+            result[0] > 1.0 / 3.0 && result[2] < 1.0 / 3.0,
+            "expected the resize to be absorbed by the next visible column: {result:?}",
         );
     }
 }

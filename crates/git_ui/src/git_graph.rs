@@ -55,8 +55,7 @@ use ui::{
     RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
     TableRenderContext, TableResizeBehavior, Tooltip, WithScrollbar, bind_redistributable_columns,
     prelude::*, redistribute_hidden_fractions, redistribute_hidden_widths,
-    render_redistributable_columns_resize_handles, render_table_header,
-    table_row::TableRow,
+    render_redistributable_columns_resize_handles, render_table_header, table_row::TableRow,
 };
 use workspace::{
     ModalView, Workspace,
@@ -2660,9 +2659,11 @@ impl GitGraph {
         cx.notify();
     }
 
-    fn toggle_column_visibility(&mut self, col_idx: usize) {
+    fn toggle_column_visibility(&mut self, col_idx: usize, cx: &mut Context<Self>) {
         if let Some(slot) = self.column_visibility.as_mut_slice().get_mut(col_idx) {
             *slot = !*slot;
+            // Column visibility is persisted per item, so schedule a workspace serialization.
+            cx.emit(ItemEvent::Edit);
         }
     }
 
@@ -2703,7 +2704,7 @@ impl GitGraph {
                     None,
                     move |_window, cx| {
                         git_graph.update(cx, |this, cx| {
-                            this.toggle_column_visibility(col_idx);
+                            this.toggle_column_visibility(col_idx, cx);
                             cx.notify();
                         });
                     },
@@ -4120,6 +4121,7 @@ impl Render for GitGraph {
                                         cx,
                                     )),
                                 self.column_widths.clone(),
+                                Some(self.column_visibility.clone()),
                             )
                         }),
                 )
@@ -4311,6 +4313,7 @@ impl workspace::SerializableItem for GitGraph {
             selected_sha,
             search_query,
             search_case_sensitive,
+            hidden_columns,
         )) = db.get_git_graph(item_id, workspace_id).ok().flatten()
         else {
             return Task::ready(Err(anyhow::anyhow!("No git graph to deserialize")));
@@ -4323,6 +4326,7 @@ impl workspace::SerializableItem for GitGraph {
             selected_sha,
             search_query,
             search_case_sensitive,
+            hidden_columns,
         };
 
         let window_handle = window.window_handle();
@@ -4365,6 +4369,16 @@ impl workspace::SerializableItem for GitGraph {
                 });
 
                 git_graph.update(cx, |graph, cx| {
+                    if let Some(bits) = state.hidden_columns {
+                        let cols = graph.column_visibility.cols();
+                        let mask = persistence::deserialize_hidden_columns(bits, cols);
+                        // Never restore an all-hidden mask (e.g. from corrupt data); the UI
+                        // guarantees at least one column stays visible.
+                        if mask.iter().any(|is_hidden| !is_hidden) {
+                            graph.column_visibility = TableRow::from_vec(mask, cols);
+                        }
+                    }
+
                     graph.search_state.case_sensitive =
                         state.search_case_sensitive.unwrap_or(false);
 
@@ -4417,6 +4431,9 @@ impl workspace::SerializableItem for GitGraph {
         let log_source_value = persistence::serialize_log_source_value(&self.log_source);
         let log_order = Some(persistence::serialize_log_order(&self.log_order));
         let search_case_sensitive = Some(self.search_state.case_sensitive);
+        let hidden_columns = Some(persistence::serialize_hidden_columns(
+            self.column_visibility.as_slice(),
+        ));
 
         let db = persistence::GitGraphsDb::global(cx);
         Some(cx.background_spawn(async move {
@@ -4430,6 +4447,7 @@ impl workspace::SerializableItem for GitGraph {
                 selected_sha,
                 search_query,
                 search_case_sensitive,
+                hidden_columns,
             )
             .await
         }))
@@ -4484,6 +4502,9 @@ mod persistence {
                 ALTER TABLE git_graphs ADD COLUMN selected_sha TEXT;
                 ALTER TABLE git_graphs ADD COLUMN search_query TEXT;
                 ALTER TABLE git_graphs ADD COLUMN search_case_sensitive INTEGER;
+            ),
+            sql!(
+                ALTER TABLE git_graphs ADD COLUMN hidden_columns INTEGER;
             ),
         ];
     }
@@ -4561,6 +4582,23 @@ mod persistence {
         }
     }
 
+    /// Packs the per-column visibility mask into a bitmask (bit `i` set means column `i` is
+    /// hidden), so it fits in a single integer database column regardless of column count.
+    pub fn serialize_hidden_columns(hidden: &[bool]) -> i32 {
+        hidden.iter().enumerate().fold(
+            0,
+            |bits, (idx, &is_hidden)| {
+                if is_hidden { bits | (1 << idx) } else { bits }
+            },
+        )
+    }
+
+    /// Inverse of [`serialize_hidden_columns`]. Bits beyond `cols` are ignored, and missing
+    /// bits default to visible, so a mask saved with a different column count degrades safely.
+    pub fn deserialize_hidden_columns(bits: i32, cols: usize) -> Vec<bool> {
+        (0..cols).map(|idx| bits & (1 << idx) != 0).collect()
+    }
+
     #[derive(Debug, Default, Clone)]
     pub struct SerializedGitGraphState {
         pub log_source_type: Option<i32>,
@@ -4569,6 +4607,7 @@ mod persistence {
         pub selected_sha: Option<String>,
         pub search_query: Option<String>,
         pub search_case_sensitive: Option<bool>,
+        pub hidden_columns: Option<i32>,
     }
 
     impl GitGraphsDb {
@@ -4582,14 +4621,16 @@ mod persistence {
                 log_order: Option<i32>,
                 selected_sha: Option<String>,
                 search_query: Option<String>,
-                search_case_sensitive: Option<bool>
+                search_case_sensitive: Option<bool>,
+                hidden_columns: Option<i32>
             ) -> Result<()> {
                 INSERT OR REPLACE INTO git_graphs(
                     item_id, workspace_id, repo_working_path,
                     log_source_type, log_source_value, log_order,
-                    selected_sha, search_query, search_case_sensitive
+                    selected_sha, search_query, search_case_sensitive,
+                    hidden_columns
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             }
         }
 
@@ -4604,7 +4645,8 @@ mod persistence {
                 Option<i32>,
                 Option<String>,
                 Option<String>,
-                Option<bool>
+                Option<bool>,
+                Option<i32>
             )>> {
                 SELECT
                     repo_working_path,
@@ -4613,7 +4655,8 @@ mod persistence {
                     log_order,
                     selected_sha,
                     search_query,
-                    search_case_sensitive
+                    search_case_sensitive,
+                    hidden_columns
                 FROM git_graphs
                 WHERE item_id = ? AND workspace_id = ?
             }
@@ -5902,6 +5945,7 @@ mod tests {
             selected_sha: Some(sha.to_string()),
             search_query: Some("fix bug".to_string()),
             search_case_sensitive: Some(true),
+            hidden_columns: None,
         };
 
         assert_eq!(
@@ -5926,6 +5970,7 @@ mod tests {
             selected_sha: None,
             search_query: None,
             search_case_sensitive: None,
+            hidden_columns: None,
         };
         assert_eq!(
             persistence::deserialize_log_source(&all_state),
@@ -5965,6 +6010,34 @@ mod tests {
             persistence::deserialize_log_order(&empty_state),
             LogOrder::DateOrder
         ));
+    }
+
+    #[gpui::test]
+    fn test_hidden_columns_bitmask_roundtrip(_cx: &mut TestAppContext) {
+        let mask = [false, true, false, true, false];
+        let bits = persistence::serialize_hidden_columns(&mask);
+        assert_eq!(
+            persistence::deserialize_hidden_columns(bits, mask.len()),
+            mask.to_vec()
+        );
+
+        assert_eq!(persistence::serialize_hidden_columns(&[false; 5]), 0);
+        assert_eq!(
+            persistence::deserialize_hidden_columns(0, 4),
+            vec![false; 4]
+        );
+
+        // A mask saved with more columns than we restore with is truncated safely, and one
+        // saved with fewer columns defaults the extra columns to visible.
+        let bits = persistence::serialize_hidden_columns(&[true, false, true, false, true]);
+        assert_eq!(
+            persistence::deserialize_hidden_columns(bits, 4),
+            vec![true, false, true, false]
+        );
+        assert_eq!(
+            persistence::deserialize_hidden_columns(bits, 6),
+            vec![true, false, true, false, true, false]
+        );
     }
 
     #[gpui::test]
@@ -6042,6 +6115,9 @@ mod tests {
             .await
             .expect("should create workspace id");
         let db = cx.read(|cx| persistence::GitGraphsDb::global(cx));
+        // Hide the "Date" column (index 2 in the non-path-history layout).
+        let hidden_columns =
+            persistence::serialize_hidden_columns(&[false, false, true, false, false]);
         db.save_git_graph(
             item_id,
             workspace_id,
@@ -6052,6 +6128,7 @@ mod tests {
             selected_sha.clone(),
             Some("some query".to_string()),
             Some(true),
+            Some(hidden_columns),
         )
         .await
         .expect("save should succeed");
@@ -6104,6 +6181,12 @@ mod tests {
             assert_eq!(
                 graph.search_state.case_sensitive, true,
                 "search case sensitivity should be restored"
+            );
+
+            assert_eq!(
+                graph.column_visibility.as_slice(),
+                &[false, false, true, false, false],
+                "hidden columns should be restored"
             );
         });
 
