@@ -119,28 +119,40 @@ impl Pasteboard {
 
             self.with_data_for_type(string_type, |text_bytes| {
                 let text = String::from_utf8_lossy(text_bytes).into_owned();
-                let metadata = self
-                    .with_data_for_type(self.text_hash_type, |hash_bytes| {
-                        let hash_bytes = hash_bytes.try_into().ok()?;
-                        let hash = u64::from_be_bytes(hash_bytes);
-                        let metadata = self.with_data_for_type(self.metadata_type, |metadata| {
-                            if hash == ClipboardString::text_hash(&text) {
-                                String::from_utf8(metadata.to_vec()).ok()
-                            } else {
-                                None
-                            }
-                        })?;
-
-                        metadata
-                    })
-                    .flatten();
+                let metadata = self.read_metadata(&text);
 
                 ClipboardEntry::String(ClipboardString { text, metadata })
             })
         }
     }
 
-    fn with_data_for_type<R>(&self, kind: id, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
+    /// Reads the metadata stored alongside a string entry, returning it only
+    /// when the stored hash matches `text` and the metadata is valid UTF-8.
+    unsafe fn read_metadata(&self, text: &str) -> Option<String> {
+        let hash = unsafe {
+            self.with_data_for_type(self.text_hash_type, |hash_bytes| {
+                let hash_bytes = hash_bytes.try_into().ok()?;
+                Some(u64::from_be_bytes(hash_bytes))
+            })
+        }??;
+
+        if hash != ClipboardString::text_hash(text) {
+            return None;
+        }
+
+        unsafe {
+            self.with_data_for_type(self.metadata_type, |metadata| {
+                String::from_utf8(metadata.to_vec()).ok()
+            })
+        }?
+    }
+
+    /// # Safety
+    ///
+    /// `kind` must be a valid pasteboard type identifier `NSString`. (`self.inner`
+    /// is already guaranteed to be a valid `NSPasteboard` by `Pasteboard::new`'s
+    /// contract.)
+    unsafe fn with_data_for_type<R>(&self, kind: id, f: impl FnOnce(&[u8]) -> R) -> Option<R> {
         unsafe {
             let data = self.inner.dataForType(kind);
             if data == nil {
