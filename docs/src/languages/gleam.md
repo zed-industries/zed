@@ -18,7 +18,7 @@ To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS lan
 {
   "languages": {
     "Gleam": {
-      "language_servers": ["gleam", "tailwindcss-language-server"]
+      "language_servers": ["tailwindcss-language-server", "..."]
     }
   },
   "lsp": {
@@ -33,7 +33,7 @@ To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS lan
 }
 ```
 
-With these settings, you will get completions for Tailwind CSS classes inside any double-quoted string. This works with plain string literals and with [Lustre](https://github.com/lustre-labs/lustre) view templates where class names are passed as string arguments.
+This works with plain string literals and with [Lustre](https://github.com/lustre-labs/lustre) view templates where class names are passed as string arguments.
 
 See also:
 
