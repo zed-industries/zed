@@ -235,7 +235,7 @@ impl EntryViewState {
         match thread_entry {
             AgentThreadEntry::UserMessage(message) => {
                 let can_rewind = thread.read(cx).supports_truncate(cx);
-                let has_id = message.id.is_some();
+                let has_client_id = message.client_id.is_some();
                 let is_subagent = thread.read(cx).parent_session_id().is_some();
                 let chunks = message.chunks.clone();
                 if let Some(Entry::UserMessage(editor)) = self.entries.get_mut(index) {
@@ -262,7 +262,7 @@ impl EntryViewState {
                             window,
                             cx,
                         );
-                        if !can_rewind || !has_id || is_subagent {
+                        if !can_rewind || !has_client_id || is_subagent {
                             editor.set_read_only(true, cx);
                         }
                         editor.set_message(chunks, window, cx);
@@ -377,6 +377,16 @@ impl EntryViewState {
                     });
                 }
             }
+            AgentThreadEntry::Elicitation(_) => {
+                if !matches!(self.entries.get(index), Some(Entry::Elicitation { .. })) {
+                    self.set_entry(
+                        index,
+                        Entry::Elicitation {
+                            focus_handle: cx.focus_handle(),
+                        },
+                    );
+                }
+            }
             AgentThreadEntry::AssistantMessage(message) => {
                 let entry = if let Some(Entry::AssistantMessage(entry)) =
                     self.entries.get_mut(index)
@@ -452,6 +462,7 @@ impl EntryViewState {
             match entry {
                 Entry::UserMessage { .. }
                 | Entry::AssistantMessage { .. }
+                | Entry::Elicitation { .. }
                 | Entry::CompletedPlan
                 | Entry::ContextCompaction => {}
                 Entry::ToolCall(ToolCallEntry { content, .. }) => {
@@ -521,6 +532,7 @@ pub enum Entry {
     UserMessage(Entity<MessageEditor>),
     AssistantMessage(AssistantMessageEntry),
     ToolCall(ToolCallEntry),
+    Elicitation { focus_handle: FocusHandle },
     CompletedPlan,
     ContextCompaction,
 }
@@ -531,6 +543,7 @@ impl Entry {
             Self::UserMessage(editor) => Some(editor.read(cx).focus_handle(cx)),
             Self::AssistantMessage(message) => Some(message.focus_handle.clone()),
             Self::ToolCall(tool_call) => Some(tool_call.focus_handle.clone()),
+            Self::Elicitation { focus_handle } => Some(focus_handle.clone()),
             Self::CompletedPlan | Self::ContextCompaction => None,
         }
     }
@@ -540,6 +553,7 @@ impl Entry {
             Self::UserMessage(editor) => Some(editor),
             Self::AssistantMessage(_)
             | Self::ToolCall(_)
+            | Self::Elicitation { .. }
             | Self::CompletedPlan
             | Self::ContextCompaction => None,
         }
@@ -570,6 +584,7 @@ impl Entry {
             Self::AssistantMessage(message) => message.scroll_handle_for_chunk(chunk_ix),
             Self::UserMessage(_)
             | Self::ToolCall(_)
+            | Self::Elicitation { .. }
             | Self::CompletedPlan
             | Self::ContextCompaction => None,
         }
@@ -588,6 +603,7 @@ impl Entry {
             Self::ToolCall(ToolCallEntry { content, .. }) => !content.is_empty(),
             Self::UserMessage(_)
             | Self::AssistantMessage(_)
+            | Self::Elicitation { .. }
             | Self::CompletedPlan
             | Self::ContextCompaction => false,
         }
@@ -606,6 +622,7 @@ impl Focusable for Entry {
             Self::UserMessage(editor) => editor.read(cx).focus_handle(cx),
             Self::AssistantMessage(message) => message.focus_handle.clone(),
             Self::ToolCall(tool_call) => tool_call.focus_handle.clone(),
+            Self::Elicitation { focus_handle } => focus_handle.clone(),
             Self::CompletedPlan | Self::ContextCompaction => cx.focus_handle(),
         }
     }
@@ -693,11 +710,12 @@ mod tests {
     use agent_client_protocol::schema::v1 as acp;
     use buffer_diff::{DiffHunkStatus, DiffHunkStatusKind};
     use editor::RowInfo;
+    use feature_flags::{AcpBetaFeatureFlag, FeatureFlag as _, FeatureFlagAppExt as _};
     use fs::FakeFs;
     use gpui::{AppContext as _, TestAppContext};
     use parking_lot::RwLock;
 
-    use crate::entry_view_state::EntryViewState;
+    use crate::entry_view_state::{Entry, EntryViewState};
     use crate::message_editor::SessionCapabilities;
     use multi_buffer::MultiBufferRow;
     use pretty_assertions::assert_matches;
@@ -829,9 +847,90 @@ mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_hidden_elicitation_preserves_entry_index(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            cx.update_flags(false, vec![AcpBetaFeatureFlag::NAME.to_string()]);
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/project", json!({})).await;
+        let project = Project::test(fs, [Path::new(path!("/project"))], cx).await;
+
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        let connection = Rc::new(StubAgentConnection::new());
+        let thread = cx
+            .update(|_, cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(path!("/project"))]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let session_id = thread.update(cx, |thread, _| thread.session_id().clone());
+
+        let _response_task = thread.update(cx, |thread, cx| {
+            thread
+                .request_elicitation(
+                    acp::CreateElicitationRequest::new(
+                        acp::ElicitationFormMode::new(
+                            acp::ElicitationSessionScope::new(session_id.clone()),
+                            acp::ElicitationSchema::new().string("name", true),
+                        ),
+                        "Provide a name",
+                    ),
+                    cx,
+                )
+                .unwrap()
+        });
+        cx.update(|_, cx| {
+            connection.send_update(
+                session_id,
+                acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                    acp::ContentBlock::Text(acp::TextContent::new("hello")),
+                )),
+                cx,
+            );
+            cx.update_flags(false, vec![]);
+        });
+
+        let view_state = cx.new(|_cx| {
+            EntryViewState::new(
+                workspace.downgrade(),
+                project.downgrade(),
+                None,
+                Arc::new(RwLock::new(SessionCapabilities::default())),
+                "Test Agent".into(),
+            )
+        });
+
+        view_state.update_in(cx, |view_state, window, cx| {
+            view_state.sync_entry(0, &thread, window, cx);
+            view_state.sync_entry(1, &thread, window, cx);
+        });
+
+        view_state.read_with(cx, |view_state, _cx| {
+            assert!(matches!(
+                view_state.entry(0),
+                Some(Entry::Elicitation { .. })
+            ));
+            assert!(matches!(
+                view_state.entry(1),
+                Some(Entry::AssistantMessage(_))
+            ));
+        });
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            let settings_store = SettingsStore::test(cx);
+            let mut settings_store = SettingsStore::test(cx);
+            settings_store.register_setting::<feature_flags::FeatureFlagsSettings>();
             cx.set_global(settings_store);
             theme_settings::init(theme::LoadThemes::JustBase, cx);
             release_channel::init(semver::Version::new(0, 0, 0), cx);
