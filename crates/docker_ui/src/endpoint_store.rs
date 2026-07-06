@@ -278,6 +278,14 @@ impl DockerEndpointStore {
         (self.client_factory)()
     }
 
+    /// The [`ClientFactory`] this store was built with, so callers that need
+    /// to construct a throwaway client outside the store (e.g.
+    /// `DockerEndpointModal`'s Test Connection button) use the same factory
+    /// production wires to `CliDockerClient` and tests wire to a fake.
+    pub fn client_factory(&self) -> ClientFactory {
+        self.client_factory.clone()
+    }
+
     pub fn endpoint(&self, endpoint_name: &str) -> Option<&DockerEndpoint> {
         self.endpoints
             .iter()

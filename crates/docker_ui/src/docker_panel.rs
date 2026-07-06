@@ -2,13 +2,16 @@ use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::Arc;
 
-use docker_client::ContainerState;
+use docker_client::{ContainerState, DockerEndpoint, EndpointKind};
+use fs::Fs;
 use gpui::{
-    Action, AnyElement, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, ListSizingBehavior, ParentElement, Pixels, Render, Styled, Subscription,
-    UniformListScrollHandle, WeakEntity, Window, actions, px, uniform_list,
+    Action, AnyElement, App, AsyncWindowContext, Context, DismissEvent, Entity, EventEmitter,
+    FocusHandle, Focusable, ListSizingBehavior, MouseDownEvent, ParentElement, Pixels, Point,
+    Render, Styled, Subscription, UniformListScrollHandle, WeakEntity, Window, actions, anchored,
+    deferred, px, uniform_list,
 };
-use ui::{Indicator, ListItem, Tooltip, prelude::*};
+use settings::{Settings as _, update_settings_file};
+use ui::{ContextMenu, Indicator, ListItem, Tooltip, prelude::*};
 use util::ResultExt as _;
 use workspace::{
     Workspace,
@@ -17,6 +20,8 @@ use workspace::{
 
 use crate::confirm_modal::ConfirmModal;
 use crate::detail_view::{DetailView, SelectedItem};
+use crate::docker_settings::DockerSettings;
+use crate::endpoint_modal::DockerEndpointModal;
 use crate::endpoint_store::default_client_factory;
 use crate::endpoint_store::{
     DockerAction, DockerEndpointStore, EndpointStatus, EndpointStoreEvent,
@@ -34,8 +39,36 @@ actions!(
         /// Reconnects the selected endpoint and reloads its tree, or every
         /// endpoint if nothing is selected.
         RefreshEndpoint,
+        /// Opens the new endpoint dialog.
+        AddEndpoint,
+        /// Opens the edit dialog for the selected endpoint.
+        EditEndpoint,
+        /// Removes the selected endpoint from settings.
+        RemoveEndpoint,
     ]
 );
+
+/// Converts a resolved [`DockerEndpoint`] back into the settings-content shape
+/// [`DockerEndpointModal`] edits, for pre-populating the edit form. Only
+/// meaningful for endpoints that are actually settings-backed (see
+/// [`DockerPanel::is_configured`]): the synthetic `local` endpoint and
+/// auto-imported contexts never reach this function.
+fn docker_connection_content_from_endpoint(
+    endpoint: &DockerEndpoint,
+) -> settings::DockerConnectionContent {
+    let (kind, ssh_host) = match &endpoint.kind {
+        EndpointKind::Local => (settings::DockerEndpointKindContent::Local, None),
+        EndpointKind::Ssh { host } => {
+            (settings::DockerEndpointKindContent::Ssh, Some(host.clone()))
+        }
+    };
+    settings::DockerConnectionContent {
+        name: endpoint.name.clone(),
+        kind,
+        ssh_host,
+        read_only: Some(endpoint.read_only),
+    }
+}
 
 /// Identifies an expandable node in the endpoints tree.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -100,12 +133,17 @@ struct PendingConfirmation {
 pub struct DockerPanel {
     store: Entity<DockerEndpointStore>,
     workspace: Option<WeakEntity<Workspace>>,
+    fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     expanded: HashSet<TreeNodeId>,
     selected: Option<SelectedItem>,
     /// Set while a `ConfirmModal` is open for a destructive action; cleared
     /// on Confirm or Cancel. See [`Self::request_action`].
     pending_confirmation: Option<PendingConfirmation>,
+    context_menu: Option<(Entity<ContextMenu>, Point<Pixels>, Subscription)>,
+    /// The endpoint the currently-open context menu (and its Edit/Remove
+    /// actions) targets.
+    menu_target: Option<String>,
     scroll_handle: UniformListScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -121,15 +159,16 @@ impl DockerPanel {
     }
 
     fn new(
-        _workspace: &mut Workspace,
+        workspace: &mut Workspace,
         _window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
+        let fs = workspace.app_state().fs.clone();
         let workspace_handle = cx.entity().downgrade();
         cx.new(|cx| {
             let client_factory = default_client_factory();
             let store = cx.new(|cx| DockerEndpointStore::new(client_factory, cx));
-            Self::from_parts(store, Some(workspace_handle), cx)
+            Self::from_parts(store, Some(workspace_handle), fs, cx)
         })
     }
 
@@ -138,6 +177,7 @@ impl DockerPanel {
     fn from_parts(
         store: Entity<DockerEndpointStore>,
         workspace: Option<WeakEntity<Workspace>>,
+        fs: Arc<dyn Fs>,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut subscriptions = vec![cx.observe(&store, |_this: &mut Self, _, cx| {
@@ -147,10 +187,13 @@ impl DockerPanel {
         Self {
             store,
             workspace,
+            fs,
             focus_handle: cx.focus_handle(),
             expanded: HashSet::new(),
             selected: None,
             pending_confirmation: None,
+            context_menu: None,
+            menu_target: None,
             scroll_handle: UniformListScrollHandle::new(),
             _subscriptions: subscriptions,
         }
@@ -158,7 +201,12 @@ impl DockerPanel {
 
     #[cfg(test)]
     pub(crate) fn new_for_test(store: Entity<DockerEndpointStore>, cx: &mut Context<Self>) -> Self {
-        Self::from_parts(store, None, cx)
+        Self::from_parts(
+            store,
+            None,
+            fs::FakeFs::new(cx.background_executor().clone()),
+            cx,
+        )
     }
 
     fn on_store_event(
@@ -332,6 +380,148 @@ impl DockerPanel {
         }
     }
 
+    /// Whether `endpoint_name` is backed by a `docker.connections` settings
+    /// entry, as opposed to the synthetic `local` default or an
+    /// auto-imported `docker context ls` endpoint. Only configured endpoints
+    /// get Edit/Remove in the context menu: editing or removing the
+    /// synthetic local endpoint or an auto-imported context doesn't make
+    /// sense since neither is backed by a settings entry to edit/remove.
+    fn is_configured(&self, endpoint_name: &str, cx: &App) -> bool {
+        DockerSettings::get_global(cx)
+            .endpoints
+            .iter()
+            .any(|endpoint| endpoint.name == endpoint_name)
+    }
+
+    /// The endpoint names already configured in `docker.connections`, used to
+    /// seed the duplicate-name check in [`DockerEndpointModal`].
+    fn configured_names(&self, cx: &App) -> Vec<String> {
+        DockerSettings::get_global(cx)
+            .endpoints
+            .iter()
+            .map(|endpoint| endpoint.name.clone())
+            .collect()
+    }
+
+    fn deploy_endpoint_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        endpoint_name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let configured = self.is_configured(&endpoint_name, cx);
+        let context_menu = ContextMenu::build(window, cx, |menu, _, _| {
+            let menu = menu
+                .context(self.focus_handle.clone())
+                .action("Refresh", Box::new(RefreshEndpoint));
+            if configured {
+                menu.action("Edit Endpoint…", Box::new(EditEndpoint))
+                    .separator()
+                    .action("Remove Endpoint", Box::new(RemoveEndpoint))
+            } else {
+                menu
+            }
+        });
+        window.focus(&context_menu.focus_handle(cx), cx);
+        let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+            this.context_menu.take();
+            cx.notify();
+        });
+        self.context_menu = Some((context_menu, position, subscription));
+        self.menu_target = Some(endpoint_name);
+        cx.notify();
+    }
+
+    fn add_endpoint(&mut self, _: &AddEndpoint, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_endpoint_modal(None, window, cx);
+    }
+
+    fn edit_endpoint(&mut self, _: &EditEndpoint, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(endpoint_name) = self.menu_target.clone() else {
+            return;
+        };
+        if !self.is_configured(&endpoint_name, cx) {
+            return;
+        }
+        let Some(existing) = DockerSettings::get_global(cx)
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.name == endpoint_name)
+            .map(docker_connection_content_from_endpoint)
+        else {
+            return;
+        };
+        self.open_endpoint_modal(Some(existing), window, cx);
+    }
+
+    /// Opens the add/edit endpoint modal, seeding it with the current set of
+    /// configured endpoint names for the duplicate-name check and the
+    /// store's `ClientFactory` for the Test Connection button.
+    fn open_endpoint_modal(
+        &mut self,
+        existing: Option<settings::DockerConnectionContent>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let existing_names = self.configured_names(cx);
+        let client_factory = self.store.read(cx).client_factory();
+        let fs = self.fs.clone();
+        let Some(workspace) = self.workspace.clone() else {
+            return;
+        };
+        workspace
+            .update(cx, |workspace, cx| {
+                workspace.toggle_modal(window, cx, |window, cx| {
+                    DockerEndpointModal::new(
+                        existing,
+                        existing_names,
+                        client_factory,
+                        fs,
+                        window,
+                        cx,
+                    )
+                });
+            })
+            .log_err();
+    }
+
+    fn remove_endpoint(
+        &mut self,
+        _: &RemoveEndpoint,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.remove_menu_target_endpoint(cx);
+    }
+
+    /// The windowless core of [`Self::remove_endpoint`], also used directly
+    /// by tests that build a bare panel via `new_for_test` (no `Workspace`/
+    /// window available).
+    fn remove_menu_target_endpoint(&mut self, cx: &mut Context<Self>) {
+        let Some(endpoint_name) = self.menu_target.clone() else {
+            return;
+        };
+        if !self.is_configured(&endpoint_name, cx) {
+            return;
+        }
+
+        update_settings_file(self.fs.clone(), cx, move |settings, _| {
+            if let Some(connections) = settings
+                .docker
+                .as_mut()
+                .and_then(|docker| docker.connections.as_mut())
+            {
+                connections.retain(|entry| entry.name != endpoint_name);
+            }
+        });
+    }
+
+    #[cfg(test)]
+    pub(crate) fn remove_endpoint_for_test(&mut self, cx: &mut Context<Self>) {
+        self.remove_menu_target_endpoint(cx);
+    }
+
     fn render_row(&self, row: &TreeRow, index: usize, cx: &Context<Self>) -> AnyElement {
         match row {
             TreeRow::Endpoint {
@@ -426,7 +616,7 @@ impl DockerPanel {
                             })
                             .size(IconSize::Small),
                     )
-                    .child(Label::new(endpoint_name))
+                    .child(Label::new(endpoint_name.clone()))
                     .when(read_only, |this| {
                         this.child(
                             Icon::new(IconName::Lock)
@@ -435,7 +625,18 @@ impl DockerPanel {
                         )
                     }),
             )
-            .on_click(cx.listener(move |this, _, _, cx| this.toggle_node(node.clone(), cx)));
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_node(node.clone(), cx)))
+            .on_secondary_mouse_down(cx.listener(
+                move |this, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    this.deploy_endpoint_context_menu(
+                        event.position,
+                        endpoint_name.clone(),
+                        window,
+                        cx,
+                    );
+                },
+            ));
 
         if read_only {
             item = item.tooltip(Tooltip::text("read-only endpoint"));
@@ -945,6 +1146,9 @@ impl Render for DockerPanel {
             .key_context("DockerPanel")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::refresh_endpoint))
+            .on_action(cx.listener(Self::add_endpoint))
+            .on_action(cx.listener(Self::edit_endpoint))
+            .on_action(cx.listener(Self::remove_endpoint))
             .size_full()
             .bg(cx.theme().colors().panel_background)
             .child(
@@ -956,12 +1160,24 @@ impl Render for DockerPanel {
                     .border_color(cx.theme().colors().border)
                     .child(Label::new("Docker"))
                     .child(
-                        IconButton::new("refresh-endpoint", IconName::RotateCw)
-                            .icon_size(IconSize::Small)
-                            .tooltip(Tooltip::text("Refresh"))
-                            .on_click(|_, window, cx| {
-                                window.dispatch_action(RefreshEndpoint.boxed_clone(), cx);
-                            }),
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                IconButton::new("add-endpoint", IconName::Plus)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Add Endpoint"))
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(AddEndpoint.boxed_clone(), cx);
+                                    }),
+                            )
+                            .child(
+                                IconButton::new("refresh-endpoint", IconName::RotateCw)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(Tooltip::text("Refresh"))
+                                    .on_click(|_, window, cx| {
+                                        window.dispatch_action(RefreshEndpoint.boxed_clone(), cx);
+                                    }),
+                            ),
                     ),
             )
             .child(
@@ -980,6 +1196,15 @@ impl Render for DockerPanel {
                         .child(self.render_detail_pane(cx)),
                 )
             })
+            .children(self.context_menu.as_ref().map(|(menu, position, _)| {
+                deferred(
+                    anchored()
+                        .position(*position)
+                        .anchor(gpui::Anchor::TopLeft)
+                        .child(menu.clone()),
+                )
+                .with_priority(3)
+            }))
     }
 }
 
@@ -1397,5 +1622,114 @@ mod tests {
             "open_inspect_tab must no-op without a workspace; calls: {:?}",
             fake.calls()
         );
+    }
+
+    fn set_one_ssh_endpoint(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.update_global::<settings::SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.docker.get_or_insert_default().connections =
+                        Some(vec![settings::DockerConnectionContent {
+                            name: "prod".into(),
+                            kind: settings::DockerEndpointKindContent::Ssh,
+                            ssh_host: Some("deploy@1.2.3.4".into()),
+                            read_only: Some(true),
+                        }]);
+                });
+            });
+        });
+    }
+
+    /// Only a settings-backed endpoint (present in `docker.connections`)
+    /// counts as "configured"; the synthetic `local` default and an
+    /// auto-imported context must not, since editing/removing them doesn't
+    /// make sense — see `DockerPanel::is_configured`.
+    #[gpui::test]
+    async fn is_configured_true_only_for_settings_backed_endpoint(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        set_one_ssh_endpoint(cx); // configures "prod"
+
+        let mut fake = FakeDockerClient::new();
+        fake.contexts = vec![docker_client::DockerContext {
+            name: "staging".into(),
+            docker_endpoint: "ssh://deploy@stg".into(),
+        }];
+        let fake = Arc::new(fake);
+        let factory = {
+            let fake = fake.clone();
+            Arc::new(move || fake.clone() as Arc<dyn DockerClient>)
+        };
+        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+        wait_until(cx, |cx| {
+            store.read_with(cx, |store, _| {
+                store
+                    .endpoints()
+                    .iter()
+                    .any(|e| e.endpoint.name == "staging")
+            })
+        })
+        .await;
+
+        let panel = cx.new(|cx| DockerPanel::new_for_test(store.clone(), cx));
+        panel.read_with(cx, |panel, cx| {
+            assert!(
+                panel.is_configured("prod", cx),
+                "a docker.connections entry must be configured"
+            );
+            assert!(
+                !panel.is_configured("local", cx),
+                "the synthetic local endpoint must not be configured"
+            );
+            assert!(
+                !panel.is_configured("staging", cx),
+                "an auto-imported context must not be configured"
+            );
+        });
+    }
+
+    /// `remove_endpoint` must remove the matching entry from
+    /// `docker.connections`, and be a no-op for a non-configured
+    /// `menu_target` (e.g. `local`), mirroring the guard in
+    /// `DatabasePanel::remove_connection`.
+    #[gpui::test]
+    async fn remove_endpoint_removes_only_configured_entry(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+        set_one_ssh_endpoint(cx); // configures "prod"
+
+        let fake = Arc::new(FakeDockerClient::new());
+        let factory = {
+            let fake = fake.clone();
+            Arc::new(move || fake.clone() as Arc<dyn DockerClient>)
+        };
+        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+        let panel = cx.new(|cx| DockerPanel::new_for_test(store.clone(), cx));
+
+        // Attempting to remove a non-configured endpoint must not touch
+        // settings at all.
+        panel.update(cx, |panel, cx| {
+            panel.menu_target = Some("local".into());
+            panel.remove_endpoint_for_test(cx);
+        });
+        cx.run_until_parked();
+        store.read_with(cx, |store, _| {
+            assert!(
+                store.endpoints().iter().any(|e| e.endpoint.name == "prod"),
+                "removing a non-configured menu target must not remove prod"
+            );
+        });
+
+        panel.update(cx, |panel, cx| {
+            panel.menu_target = Some("prod".into());
+            panel.remove_endpoint_for_test(cx);
+        });
+
+        wait_until(cx, |cx| {
+            store.read_with(cx, |store, _| {
+                !store.endpoints().iter().any(|e| e.endpoint.name == "prod")
+            })
+        })
+        .await;
     }
 }
