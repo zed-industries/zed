@@ -14,7 +14,7 @@ use language::Buffer;
 use picker::Picker;
 
 use project::ProjectPath;
-use settings::{Settings as _, SeedQuerySetting};
+use settings::{SeedQuerySetting, Settings as _};
 use text::Anchor;
 use ui::Window;
 use workspace::{
