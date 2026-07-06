@@ -261,6 +261,6 @@ To get all the features (autocomplete, linting, etc.) from the [Tailwind CSS lan
 }
 ```
 
-> Note: You need to enable the language server for Templ, tell it to treat .templ files as HTML (they are not recognised as HTML by default)
+> Note: Unlike other languages, you need to tell Tailwind to treat `.templ` files as HTML explicitly.
 
 This gives you Tailwind CSS completions inside `class="..."` attributes in your `.templ` files.
