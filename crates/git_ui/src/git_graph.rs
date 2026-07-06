@@ -52,7 +52,7 @@ use theme::AccentColors;
 use time::{OffsetDateTime, UtcOffset, format_description::BorrowedFormatItem};
 use ui::{
     Chip, ColumnWidthConfig, CommonAnimationExt as _, ContextMenu, ContextMenuEntry, DiffStat,
-    Divider, HeaderResizeInfo, HighlightedLabel, ListItem, ListItemSpacing,
+    Divider, HeaderResizeInfo, HighlightedLabel, IndentGuideColors, ListItem, ListItemSpacing,
     RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
     TableRenderContext, TableResizeBehavior, Tooltip, WithScrollbar, bind_redistributable_columns,
     prelude::*, render_redistributable_columns_resize_handles, render_table_header,
@@ -73,6 +73,10 @@ const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
 const COMMIT_TAG_LIST_WIDTH_IN_REMS: Rems = rems(10.);
 const CUSTOM_GIT_COMMANDS_DOCS_SLUG: &str = "tasks#custom-git-commands";
+// Indentation step (in pixels) for each nesting level of the changed-files
+// tree. Matches the Project Panel's default `indent_size` so the trees indent
+// consistently.
+const TREE_INDENT: f32 = 20.0;
 // Extra vertical breathing room added to the UI line height when computing
 // the git graph's row height, so commit dots and lines have space around them.
 const ROW_VERTICAL_PADDING: Pixels = px(4.0);
@@ -277,8 +281,6 @@ impl ChangedFileEntry {
         workspace: WeakEntity<Workspace>,
         _cx: &App,
     ) -> AnyElement {
-        const TREE_INDENT: f32 = 12.0;
-
         let file_name = self.file_name.clone();
         let dir_path = self.dir_path.clone();
 
@@ -357,8 +359,6 @@ struct ChangedFileDirectoryEntry {
 
 impl ChangedFileDirectoryEntry {
     fn render(&self, ix: usize, git_graph: WeakEntity<GitGraph>, cx: &App) -> AnyElement {
-        const TREE_INDENT: f32 = 12.0;
-
         let path = self.path.clone();
         let expanded = self.expanded;
         let folder_icon = FileIcons::get_folder_icon(expanded, path.as_std_path(), cx)
@@ -380,22 +380,6 @@ impl ChangedFileDirectoryEntry {
             .spacing(ListItemSpacing::Sparse)
             .indent_level(self.depth)
             .indent_step_size(px(TREE_INDENT))
-            .toggle(Some(expanded))
-            .always_show_disclosure_icon(true)
-            .on_toggle({
-                let path = path.clone();
-                let git_graph = git_graph.clone();
-                move |_, _, cx| {
-                    git_graph
-                        .update(cx, |git_graph, cx| {
-                            git_graph
-                                .changed_files_expanded_dirs
-                                .insert(path.clone(), !expanded);
-                            cx.notify();
-                        })
-                        .ok();
-                }
-            })
             .start_slot(folder_icon)
             .child(
                 Label::new(self.name.clone())
@@ -2973,12 +2957,13 @@ impl GitGraph {
             Rc::default()
         };
 
+        let is_tree_view = self.changed_files_view_mode.is_tree();
         let view_toggle = IconButton::new("toggle-changed-files-view", IconName::ListTree)
             .shape(ui::IconButtonShape::Square)
             .icon_size(IconSize::Small)
             .toggle_state(self.changed_files_view_mode.is_tree())
             .tooltip({
-                let tooltip = if self.changed_files_view_mode.is_tree() {
+                let tooltip = if is_tree_view {
                     "Show Flat View"
                 } else {
                     "Show Tree View"
@@ -3190,7 +3175,6 @@ impl GitGraph {
                 v_flex()
                     .min_w_0()
                     .flex_1()
-                    .gap_1()
                     .overflow_hidden()
                     .child(
                         h_flex()
@@ -3231,7 +3215,7 @@ impl GitGraph {
                             .min_h_0()
                             .child({
                                 let flat_entries = changed_file_entries;
-                                let is_tree_view = self.changed_files_view_mode.is_tree();
+
                                 let entry_count = if is_tree_view {
                                     tree_entries.len()
                                 } else {
@@ -3241,6 +3225,7 @@ impl GitGraph {
                                 let repository = repository.downgrade();
                                 let workspace = self.workspace.clone();
                                 let git_graph = cx.weak_entity();
+                                let indent_tree_entries = tree_entries.clone();
 
                                 uniform_list(
                                     "changed-files-list",
@@ -3284,6 +3269,33 @@ impl GitGraph {
                                             .collect()
                                     },
                                 )
+                                .when(is_tree_view, |list| {
+                                    list.with_decoration(
+                                        ui::indent_guides(
+                                            px(TREE_INDENT),
+                                            IndentGuideColors::panel(cx),
+                                        )
+                                        .with_left_offset(
+                                            ui::LIST_ITEM_INDENT_GUIDE_LEFT_OFFSET - px(2.),
+                                        )
+                                        .with_compute_indents_fn(
+                                            cx.entity(),
+                                            move |_, range, _window, _cx| {
+                                                range
+                                                    .map(|ix| match indent_tree_entries.get(ix) {
+                                                        Some(ChangedFileTreeEntry::Directory(
+                                                            entry,
+                                                        )) => entry.depth,
+                                                        Some(ChangedFileTreeEntry::File(entry)) => {
+                                                            entry.depth
+                                                        }
+                                                        None => 0,
+                                                    })
+                                                    .collect()
+                                            },
+                                        ),
+                                    )
+                                })
                                 .size_full()
                                 .track_scroll(&self.changed_files_scroll_handle)
                             })
