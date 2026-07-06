@@ -175,12 +175,54 @@ impl Editor {
         cx.notify();
     }
 
+    /// Make all diff hunks render with the "unstaged" appearance, regardless
+    /// of whether they have a secondary hunk. Intended for views whose diffs
+    /// aren't related to the git index (e.g. agent diffs).
+    pub fn set_render_diff_hunks_as_unstaged(
+        &mut self,
+        render_as_unstaged: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.render_diff_hunks_as_unstaged = render_as_unstaged;
+        cx.notify();
+    }
+
     pub fn git_blame_inline_enabled(&self) -> bool {
         self.git_blame_inline_enabled
     }
 
     pub fn blame(&self) -> Option<&Entity<GitBlame>> {
         self.blame.as_ref()
+    }
+
+    pub fn active_git_blame_entry(&self, cx: &mut App) -> Option<BlameEntry> {
+        if !self.show_git_blame_inline
+            || self.newest_selection_head_on_empty_line(cx)
+            || !self.has_blame_entries(cx)
+        {
+            return None;
+        }
+
+        let blame = self.blame.as_ref()?;
+        let snapshot = self.display_snapshot(cx);
+        let cursor = self.selections.newest::<Point>(&snapshot).head();
+        let (buffer, point) = snapshot.buffer_snapshot().point_to_buffer_point(cursor)?;
+
+        blame
+            .update(cx, |blame, cx| {
+                blame
+                    .blame_for_rows(
+                        &[RowInfo {
+                            buffer_id: Some(buffer.remote_id()),
+                            buffer_row: Some(point.row),
+                            ..Default::default()
+                        }],
+                        cx,
+                    )
+                    .next()
+            })
+            .flatten()
+            .map(|(_, entry)| entry)
     }
 
     pub fn show_git_blame_gutter(&self) -> bool {
@@ -230,6 +272,7 @@ impl Editor {
 
     pub fn end_temporary_diff_override(&mut self, cx: &mut Context<Self>) {
         self.temporary_diff_override = false;
+        self.render_diff_hunks_as_unstaged = false;
         self.set_render_diff_hunk_controls(Arc::new(render_diff_hunk_controls), cx);
         self.buffer.update(cx, |buffer, cx| {
             buffer.set_all_diff_hunks_collapsed(cx);
@@ -757,6 +800,19 @@ impl Editor {
         self.buffer.update(cx, |buffer, cx| {
             buffer.collapse_diff_hunks(vec![Anchor::Min..Anchor::Max], cx)
         });
+    }
+
+    pub fn toggle_all_diff_hunks(
+        &mut self,
+        _: &ToggleAllDiffHunks,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.has_any_expanded_diff_hunks(cx) {
+            self.collapse_all_diff_hunks(&CollapseAllDiffHunks, window, cx);
+        } else {
+            self.expand_all_diff_hunks(&ExpandAllDiffHunks, window, cx);
+        }
     }
 
     pub(super) fn toggle_selected_diff_hunks(
@@ -1577,7 +1633,9 @@ impl Editor {
     }
 
     pub(super) fn render_git_blame_inline(&self, window: &Window, cx: &App) -> bool {
-        self.show_git_blame_inline
+        ProjectSettings::get_global(cx).git.inline_blame.location
+            == project::project_settings::InlineBlameLocation::Inline
+            && self.show_git_blame_inline
             && (self.focus_handle.is_focused(window) || self.inline_blame_popover.is_some())
             && !self.newest_selection_head_on_empty_line(cx)
             && self.has_blame_entries(cx)

@@ -19,6 +19,7 @@ pub mod code_context_menus;
 mod code_lens;
 pub mod display_map;
 mod document_colors;
+mod document_links;
 mod document_symbols;
 mod editor_settings;
 mod element;
@@ -26,7 +27,7 @@ mod fold;
 mod folding_ranges;
 mod git;
 mod highlight_matching_bracket;
-mod hover_links;
+pub mod hover_links;
 pub mod hover_popover;
 mod indent_guides;
 mod inlays;
@@ -58,17 +59,22 @@ mod signature_help;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
+mod clipboard;
 mod code_actions;
 mod completions;
 mod config;
 mod diagnostics;
+mod edit_prediction;
 mod input;
+mod markdown_actions;
 mod navigation;
 mod rewrap;
 mod selection;
 
 pub(crate) use actions::*;
+pub use clipboard::ClipboardSelection;
 pub use code_actions::CodeActionProvider;
+use collections::TypeIdHashMap;
 pub use completions::CompletionProvider;
 #[cfg(test)]
 pub(crate) use completions::snippet_candidate_suffixes;
@@ -79,7 +85,17 @@ pub use display_map::{
     ChunkRenderer, ChunkRendererContext, DisplayPoint, FoldPlaceholder, HighlightKey,
     NavigationOverlayKey, SemanticTokenHighlight,
 };
+pub use edit_prediction::make_suggestion_styles;
+pub(crate) use edit_prediction::{
+    EditDisplayMode, EditPrediction, EditPredictionPreview, EditPredictionSettings,
+    EditPredictionState, MenuEditPredictionsPolicy, RegisteredEditPredictionDelegate,
+};
+#[cfg(test)]
+pub(crate) use edit_prediction::{
+    EditPredictionKeybindAction, EditPredictionKeybindSurface, edit_prediction_edit_text,
+};
 pub use edit_prediction_types::Direction;
+pub use edit_prediction_types::EditPredictionRequestTrigger;
 pub use editor_settings::{
     CompletionDetailAlignment, CompletionMenuItemKind, CurrentLineHighlight, DiffViewStyle,
     DocumentColorsRenderMode, EditorSettings, EditorSettingsScrollbarProxy, ScrollBeyondLastLine,
@@ -112,7 +128,7 @@ pub use split::{SplittableEditor, ToggleSplitDiff};
 pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
 
-use ::git::status::FileStatus;
+use ::git::{Blame, status::FileStatus};
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder, BuildError};
 use anyhow::{Context as _, Result, anyhow, bail};
 use blink_manager::BlinkManager;
@@ -128,6 +144,7 @@ use convert_case::{Case, Casing};
 use dap::TelemetrySpawnLocation;
 use display_map::*;
 use document_colors::LspColorData;
+use document_links::LspDocumentLinks;
 use edit_prediction_types::{
     EditPredictionDelegate, EditPredictionDelegateHandle, EditPredictionDiscardReason,
     EditPredictionGranularity, SuggestionDisplayType,
@@ -237,9 +254,8 @@ use theme::{
 };
 use theme_settings::{ThemeSettings, observe_buffer_font_size_adjustment};
 use ui::{
-    Avatar, ButtonSize, ButtonStyle, ContextMenu, Disclosure, IconButton, IconButtonShape,
-    IconName, IconSize, Indicator, Key, Tooltip, h_flex, prelude::*, scrollbars::ScrollbarAutoHide,
-    utils::WithRemSize,
+    Avatar, ContextMenu, Disclosure, IconButtonShape, Indicator, Key, KeyBinding, Tooltip,
+    prelude::*, scrollbars::ScrollbarAutoHide, tooltip_container, utils::WithRemSize,
 };
 use ui_input::ErasedEditor;
 use util::{RangeExt, ResultExt, TryFutureExt, maybe, post_inc};
@@ -517,13 +533,15 @@ pub struct EditorStyle {
 
 impl Default for EditorStyle {
     fn default() -> Self {
+        static NONE_SYNTAX: std::sync::LazyLock<Arc<SyntaxTheme>> =
+            std::sync::LazyLock::new(|| Arc::new(SyntaxTheme::default()));
         Self {
             background: Hsla::default(),
             border: Hsla::default(),
             local_player: PlayerColor::default(),
             text: TextStyle::default(),
             scrollbar_width: Pixels::default(),
-            syntax: Default::default(),
+            syntax: NONE_SYNTAX.clone(),
             // HACK: Status colors don't have a real default.
             // We should look into removing the status colors from the editor
             // style and retrieve them directly from the theme.
@@ -567,123 +585,7 @@ pub fn make_inlay_hints_style(cx: &App) -> HighlightStyle {
     style
 }
 
-pub fn make_suggestion_styles(cx: &App) -> EditPredictionStyles {
-    EditPredictionStyles {
-        insertion: HighlightStyle {
-            color: Some(cx.theme().status().predictive),
-            ..HighlightStyle::default()
-        },
-        whitespace: HighlightStyle {
-            background_color: Some(cx.theme().status().created_background),
-            ..HighlightStyle::default()
-        },
-    }
-}
-
 type CompletionId = usize;
-
-pub(crate) enum EditDisplayMode {
-    TabAccept,
-    DiffPopover,
-    Inline,
-}
-
-enum EditPrediction {
-    Edit {
-        // TODO could be a language::Anchor?
-        edits: Vec<(Range<Anchor>, Arc<str>)>,
-        /// Predicted cursor position as (anchor, offset_from_anchor).
-        /// The anchor is in multibuffer coordinates; after applying edits,
-        /// resolve the anchor and add the offset to get the final cursor position.
-        cursor_position: Option<(Anchor, usize)>,
-        edit_preview: Option<EditPreview>,
-        display_mode: EditDisplayMode,
-        snapshot: BufferSnapshot,
-    },
-    /// Move to a specific location in the active editor
-    MoveWithin {
-        target: Anchor,
-        snapshot: BufferSnapshot,
-    },
-    /// Move to a specific location in a different editor (not the active one)
-    MoveOutside {
-        target: language::Anchor,
-        snapshot: BufferSnapshot,
-    },
-}
-
-struct EditPredictionState {
-    inlay_ids: Vec<InlayId>,
-    completion: EditPrediction,
-    completion_id: Option<SharedString>,
-    invalidation_range: Option<Range<Anchor>>,
-}
-
-enum EditPredictionSettings {
-    Disabled,
-    Enabled {
-        show_in_menu: bool,
-        preview_requires_modifier: bool,
-    },
-}
-
-pub enum MenuEditPredictionsPolicy {
-    Never,
-    ByProvider,
-}
-
-pub enum EditPredictionPreview {
-    /// Modifier is not pressed
-    Inactive { released_too_fast: bool },
-    /// Modifier pressed
-    Active {
-        since: Instant,
-        previous_scroll_position: Option<SharedScrollAnchor>,
-    },
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum EditPredictionKeybindSurface {
-    Inline,
-    CursorPopoverCompact,
-    CursorPopoverExpanded,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-enum EditPredictionKeybindAction {
-    Accept,
-    Preview,
-}
-
-struct EditPredictionKeybindDisplay {
-    #[cfg(test)]
-    accept_keystroke: Option<gpui::KeybindingKeystroke>,
-    #[cfg(test)]
-    preview_keystroke: Option<gpui::KeybindingKeystroke>,
-    displayed_keystroke: Option<gpui::KeybindingKeystroke>,
-    action: EditPredictionKeybindAction,
-    missing_accept_keystroke: bool,
-    show_hold_label: bool,
-}
-
-impl EditPredictionPreview {
-    pub fn released_too_fast(&self) -> bool {
-        match self {
-            EditPredictionPreview::Inactive { released_too_fast } => *released_too_fast,
-            EditPredictionPreview::Active { .. } => false,
-        }
-    }
-
-    pub fn set_previous_scroll_position(&mut self, scroll_position: Option<SharedScrollAnchor>) {
-        if let EditPredictionPreview::Active {
-            previous_scroll_position,
-            ..
-        } = self
-        {
-            *previous_scroll_position = scroll_position;
-        }
-    }
-}
 
 pub struct ContextMenuOptions {
     pub min_entries_visible: usize,
@@ -709,9 +611,6 @@ impl EditorActionId {
         Self(answer)
     }
 }
-
-// type GetFieldEditorTheme = dyn Fn(&theme::Theme) -> theme::FieldEditor;
-// type OverrideTextStyle = dyn Fn(&EditorStyle) -> Option<HighlightStyle>;
 
 type BackgroundHighlight = (
     Arc<dyn Fn(&usize, &Theme) -> Hsla + Send + Sync>,
@@ -803,6 +702,40 @@ impl MinimapVisibility {
                 toggle_override: !toggle_override,
             },
             Self::Disabled => Self::Disabled,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct BreadcrumbsVisibility {
+    setting_configuration: bool,
+    toggle_override: bool,
+}
+
+impl BreadcrumbsVisibility {
+    fn from_settings(cx: &App) -> Self {
+        Self::new(EditorSettings::get_global(cx).toolbar.breadcrumbs)
+    }
+
+    fn new(setting_configuration: bool) -> Self {
+        Self {
+            setting_configuration,
+            toggle_override: false,
+        }
+    }
+
+    fn settings_visibility(&self) -> bool {
+        self.setting_configuration
+    }
+
+    fn visible(&self) -> bool {
+        self.setting_configuration ^ self.toggle_override
+    }
+
+    fn toggle_visibility(&self) -> Self {
+        Self {
+            setting_configuration: self.setting_configuration,
+            toggle_override: !self.toggle_override,
         }
     }
 }
@@ -999,7 +932,7 @@ pub struct Editor {
     /// Whenever you want to modify the scroll position of the editor, you should
     /// usually use the existing available APIs as opposed to directly interacting
     /// with the scroll manager.
-    pub(crate) scroll_manager: ScrollManager,
+    pub scroll_manager: ScrollManager,
     /// When inline assist editors are linked, they all render cursors because
     /// typing enters text into each of them, even the ones that aren't focused.
     pub(crate) show_cursor_when_unfocused: bool,
@@ -1033,7 +966,7 @@ pub struct Editor {
     hovered_cursors: HashMap<HoveredCursor, Task<()>>,
     pub show_local_selections: bool,
     mode: EditorMode,
-    show_breadcrumbs: bool,
+    breadcrumbs_visibility: BreadcrumbsVisibility,
     show_gutter: bool,
     show_scrollbars: ScrollbarAxes,
     minimap_visibility: MinimapVisibility,
@@ -1059,10 +992,10 @@ pub struct Editor {
     show_indent_guides: Option<bool>,
     buffers_with_disabled_indent_guides: HashSet<BufferId>,
     highlight_order: usize,
-    highlighted_rows: HashMap<TypeId, Vec<RowHighlight>>,
+    highlighted_rows: TypeIdHashMap<Vec<RowHighlight>>,
     background_highlights: HashMap<HighlightKey, BackgroundHighlight>,
     navigation_overlays: HashMap<NavigationOverlayKey, Arc<[NavigationTargetOverlay]>>,
-    gutter_highlights: HashMap<TypeId, GutterHighlight>,
+    gutter_highlights: TypeIdHashMap<GutterHighlight>,
     scrollbar_marker_state: ScrollbarMarkerState,
     active_indent_guides_state: ActiveIndentGuidesState,
     nav_history: Option<ItemNavHistory>,
@@ -1159,6 +1092,16 @@ pub struct Editor {
     >,
     last_bounds: Option<Bounds<Pixels>>,
     last_position_map: Option<Rc<PositionMap>>,
+    /// The right margin (vertical scrollbar + minimap width) the editor was
+    /// last laid out with, updated on every prepaint.
+    /// Used later in the frame by `SplitBufferHeadersElement` to shrink the
+    /// width available to buffer headers.
+    last_right_margin: Pixels,
+    /// Whether the horizontal scrollbar was laid out as visible during the last
+    /// prepaint.
+    /// Used by `SplitBufferHeadersElement` to clip buffer headers so they don't
+    /// paint over the scrollbar.
+    last_horizontal_scrollbar_visible: bool,
     expect_bounds_change: Option<Bounds<Pixels>>,
     runnables: RunnableData,
     bookmark_store: Option<Entity<BookmarkStore>>,
@@ -1182,11 +1125,15 @@ pub struct Editor {
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
     next_scroll_position: NextScrollCursorCenterTopBottom,
-    addons: HashMap<TypeId, Box<dyn Addon>>,
+    addons: TypeIdHashMap<Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
     load_diff_task: Option<Shared<Task<()>>>,
     /// Whether we are temporarily displaying a diff other than git's
     temporary_diff_override: bool,
+    /// Whether to render all diff hunks with the "unstaged" appearance,
+    /// regardless of whether they have a secondary hunk. Used by views whose
+    /// diffs aren't related to the git index (e.g. agent diffs).
+    render_diff_hunks_as_unstaged: bool,
     selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
@@ -1218,6 +1165,7 @@ pub struct Editor {
     semantic_token_state: SemanticTokenState,
     pub(crate) refresh_matching_bracket_highlights_task: Task<()>,
     refresh_document_symbols_task: Shared<Task<()>>,
+    lsp_document_links: LspDocumentLinks,
     lsp_document_symbols: HashMap<BufferId, Vec<OutlineItem<text::Anchor>>>,
     refresh_outline_symbols_at_cursor_at_cursor_task: Task<()>,
     outline_symbols_at_cursor: Option<(BufferId, Vec<OutlineItem<Anchor>>)>,
@@ -1438,11 +1386,15 @@ struct DeferredSelectionEffectsState {
     history_entry: SelectionHistoryEntry,
 }
 
+#[derive(Clone, Debug)]
+pub struct TransactionSelections {
+    pub undo: Arc<[Selection<Anchor>]>,
+    pub redo: Option<Arc<[Selection<Anchor>]>>,
+}
+
 #[derive(Default)]
 struct SelectionHistory {
-    #[allow(clippy::type_complexity)]
-    selections_by_transaction:
-        HashMap<TransactionId, (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)>,
+    selections_by_transaction: HashMap<TransactionId, TransactionSelections>,
     mode: SelectionHistoryMode,
     undo_stack: VecDeque<SelectionHistoryEntry>,
     redo_stack: VecDeque<SelectionHistoryEntry>,
@@ -1462,23 +1414,23 @@ impl SelectionHistory {
             );
             return;
         }
-        self.selections_by_transaction
-            .insert(transaction_id, (selections, None));
+        self.selections_by_transaction.insert(
+            transaction_id,
+            TransactionSelections {
+                undo: selections,
+                redo: None,
+            },
+        );
     }
 
-    #[allow(clippy::type_complexity)]
-    fn transaction(
-        &self,
-        transaction_id: TransactionId,
-    ) -> Option<&(Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)> {
+    fn transaction(&self, transaction_id: TransactionId) -> Option<&TransactionSelections> {
         self.selections_by_transaction.get(&transaction_id)
     }
 
-    #[allow(clippy::type_complexity)]
     fn transaction_mut(
         &mut self,
         transaction_id: TransactionId,
-    ) -> Option<&mut (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)> {
+    ) -> Option<&mut TransactionSelections> {
         self.selections_by_transaction.get_mut(&transaction_id)
     }
 
@@ -1541,7 +1493,7 @@ impl Default for RowHighlightOptions {
 struct RowHighlight {
     index: usize,
     range: Range<Anchor>,
-    color: Hsla,
+    color: fn(&App) -> Hsla,
     options: RowHighlightOptions,
     type_id: TypeId,
 }
@@ -1596,66 +1548,6 @@ pub struct RenameState {
 }
 
 struct InvalidationStack<T>(Vec<T>);
-
-struct RegisteredEditPredictionDelegate {
-    provider: Arc<dyn EditPredictionDelegateHandle>,
-    _subscription: Subscription,
-}
-
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ClipboardSelection {
-    /// The number of bytes in this selection.
-    pub len: usize,
-    /// Whether this was a full-line selection.
-    pub is_entire_line: bool,
-    /// The indentation of the first line when this content was originally copied.
-    pub first_line_indent: u32,
-    #[serde(default)]
-    pub file_path: Option<PathBuf>,
-    #[serde(default)]
-    pub line_range: Option<RangeInclusive<u32>>,
-}
-
-impl ClipboardSelection {
-    pub fn for_buffer(
-        len: usize,
-        is_entire_line: bool,
-        range: Range<Point>,
-        buffer: &MultiBufferSnapshot,
-        project: Option<&Entity<Project>>,
-        cx: &App,
-    ) -> Self {
-        let first_line_indent = buffer
-            .indent_size_for_line(MultiBufferRow(range.start.row))
-            .len;
-
-        let file_path = util::maybe!({
-            let project = project?.read(cx);
-            let file = buffer.file_at(range.start)?;
-            let project_path = ProjectPath {
-                worktree_id: file.worktree_id(cx),
-                path: file.path().clone(),
-            };
-            project.absolute_path(&project_path, cx)
-        });
-
-        let line_range = if file_path.is_some() {
-            buffer
-                .range_to_buffer_range(range)
-                .map(|(_, buffer_range)| buffer_range.start.row..=buffer_range.end.row)
-        } else {
-            None
-        };
-
-        Self {
-            len,
-            is_entire_line,
-            first_line_indent,
-            file_path,
-            line_range,
-        }
-    }
-}
 
 // selections, scroll behavior, was newest selection reversed
 type SelectSyntaxNodeHistoryState = (
@@ -1742,6 +1634,97 @@ pub struct RewrapOptions {
     pub override_language_settings: bool,
     pub preserve_existing_whitespace: bool,
     pub line_length: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GutterButtonIntent {
+    SetBookmark,
+    SetBreakpoint,
+}
+
+impl GutterButtonIntent {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::SetBookmark => "Set Bookmark",
+            Self::SetBreakpoint => "Set Breakpoint",
+        }
+    }
+
+    fn icon(&self) -> ui::IconName {
+        match self {
+            Self::SetBookmark => ui::IconName::Bookmark,
+            Self::SetBreakpoint => ui::IconName::DebugBreakpoint,
+        }
+    }
+
+    fn color(&self) -> Color {
+        match self {
+            Self::SetBookmark => Color::Info,
+            Self::SetBreakpoint => Color::Hint,
+        }
+    }
+
+    fn action(&self) -> &'static dyn Action {
+        match self {
+            Self::SetBookmark => &ToggleBookmark,
+            Self::SetBreakpoint => &ToggleBreakpoint,
+        }
+    }
+}
+
+struct GutterButtonTooltip {
+    primary: GutterButtonIntent,
+    secondary: GutterButtonIntent,
+    focus_handle: FocusHandle,
+}
+
+impl GutterButtonTooltip {
+    fn active_intent(&self, modifiers: Modifiers) -> GutterButtonIntent {
+        if modifiers.secondary() {
+            self.secondary
+        } else {
+            self.primary
+        }
+    }
+
+    fn meta_text(&self, intent: GutterButtonIntent) -> String {
+        const RIGHT_CLICK_HINT: &str = "right-click for more options";
+
+        if self.primary == self.secondary {
+            return RIGHT_CLICK_HINT.to_string();
+        }
+        let modifier_as_text = gpui::Keystroke {
+            modifiers: Modifiers::secondary_key(),
+            ..Default::default()
+        };
+        let other = match intent {
+            GutterButtonIntent::SetBookmark => "breakpoint",
+            GutterButtonIntent::SetBreakpoint => "bookmark",
+        };
+        format!("{modifier_as_text}-click to add a {other}\n{RIGHT_CLICK_HINT}")
+    }
+}
+
+impl Render for GutterButtonTooltip {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let intent = self.active_intent(window.modifiers());
+        let key_binding = KeyBinding::for_action_in(intent.action(), &self.focus_handle, cx);
+        let meta_text = self.meta_text(intent);
+
+        tooltip_container(cx, move |this, _| {
+            this.child(
+                h_flex()
+                    .justify_between()
+                    .child(intent.as_str())
+                    .child(key_binding),
+            )
+            .child(
+                Label::new(meta_text)
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            )
+        })
+    }
 }
 
 impl Editor {
@@ -1901,6 +1884,8 @@ impl Editor {
                         depth: outline_item.depth,
                         range: multi_buffer
                             .buffer_anchor_range_to_anchor_range(outline_item.range)?,
+                        selection_range: multi_buffer
+                            .buffer_anchor_range_to_anchor_range(outline_item.selection_range)?,
                         source_range_for_text: multi_buffer.buffer_anchor_range_to_anchor_range(
                             outline_item.source_range_for_text,
                         )?,
@@ -1920,8 +1905,10 @@ impl Editor {
         self.sticky_headers_task = cx.spawn(async move |this, cx| {
             let sticky_headers = background_task.await;
             this.update(cx, |this, cx| {
-                this.sticky_headers = Some(sticky_headers);
-                cx.notify();
+                if this.sticky_headers.as_ref() != Some(&sticky_headers) {
+                    this.sticky_headers = Some(sticky_headers);
+                    cx.notify();
+                }
             })
             .ok();
         });
@@ -2291,7 +2278,7 @@ impl Editor {
             },
             minimap_visibility: MinimapVisibility::for_mode(&mode, cx),
             offset_content: !matches!(mode, EditorMode::SingleLine),
-            show_breadcrumbs: EditorSettings::get_global(cx).toolbar.breadcrumbs,
+            breadcrumbs_visibility: BreadcrumbsVisibility::from_settings(cx),
             show_gutter: full_mode,
             show_line_numbers: (!full_mode).then_some(false),
             use_relative_line_numbers: None,
@@ -2314,10 +2301,10 @@ impl Editor {
             show_indent_guides,
             buffers_with_disabled_indent_guides: HashSet::default(),
             highlight_order: 0,
-            highlighted_rows: HashMap::default(),
+            highlighted_rows: Default::default(),
             background_highlights: HashMap::default(),
             navigation_overlays: HashMap::default(),
-            gutter_highlights: HashMap::default(),
+            gutter_highlights: Default::default(),
             scrollbar_marker_state: ScrollbarMarkerState::default(),
             active_indent_guides_state: ActiveIndentGuidesState::default(),
             nav_history: None,
@@ -2380,6 +2367,8 @@ impl Editor {
             pixel_position_of_newest_cursor: None,
             last_bounds: None,
             last_position_map: None,
+            last_right_margin: Pixels::ZERO,
+            last_horizontal_scrollbar_visible: false,
             expect_bounds_change: None,
             gutter_dimensions: GutterDimensions::default(),
             style: None,
@@ -2460,7 +2449,7 @@ impl Editor {
             breadcrumb_header: None,
             focused_block: None,
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
-            addons: HashMap::default(),
+            addons: Default::default(),
             registered_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             selection_mark_mode: false,
@@ -2470,6 +2459,7 @@ impl Editor {
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
             temporary_diff_override: false,
+            render_diff_hunks_as_unstaged: false,
             minimap: None,
             change_list: ChangeList::new(),
             mode,
@@ -2486,6 +2476,7 @@ impl Editor {
             number_deleted_lines: false,
             refresh_matching_bracket_highlights_task: Task::ready(()),
             refresh_document_symbols_task: Task::ready(()).shared(),
+            lsp_document_links: LspDocumentLinks::new(cx),
             lsp_document_symbols: HashMap::default(),
             refresh_outline_symbols_at_cursor_at_cursor_task: Task::ready(()),
             outline_symbols_at_cursor: None,
@@ -2788,6 +2779,14 @@ impl Editor {
         self.last_bounds.as_ref()
     }
 
+    pub(crate) fn last_right_margin(&self) -> Pixels {
+        self.last_right_margin
+    }
+
+    pub(crate) fn last_horizontal_scrollbar_visible(&self) -> bool {
+        self.last_horizontal_scrollbar_visible
+    }
+
     pub fn working_directory(&self, cx: &App) -> Option<PathBuf> {
         if let Some(buffer) = self.buffer().read(cx).as_singleton() {
             if let Some(file) = buffer.read(cx).file().and_then(|f| f.as_local())
@@ -2814,16 +2813,6 @@ impl Editor {
         })
     }
 
-    /// Returns the project path for the editor's buffer, if any buffer is
-    /// opened in the editor.
-    pub fn project_path(&self, cx: &App) -> Option<ProjectPath> {
-        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-            buffer.read(cx).project_path(cx)
-        } else {
-            None
-        }
-    }
-
     pub fn selection_menu_enabled(&self, cx: &App) -> bool {
         self.show_selection_menu
             .unwrap_or_else(|| EditorSettings::get_global(cx).toolbar.selections_menu)
@@ -2841,195 +2830,6 @@ impl Editor {
             .or_else(|| Some(!EditorSettings::get_global(cx).toolbar.selections_menu));
 
         cx.notify();
-    }
-
-    fn accept_edit_prediction_keystroke(
-        &self,
-        granularity: EditPredictionGranularity,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<gpui::KeybindingKeystroke> {
-        let key_context = self.key_context_internal(true, window, cx);
-
-        let bindings =
-            match granularity {
-                EditPredictionGranularity::Word => window
-                    .bindings_for_action_in_context(&AcceptNextWordEditPrediction, key_context),
-                EditPredictionGranularity::Line => window
-                    .bindings_for_action_in_context(&AcceptNextLineEditPrediction, key_context),
-                EditPredictionGranularity::Full => {
-                    window.bindings_for_action_in_context(&AcceptEditPrediction, key_context)
-                }
-            };
-
-        bindings
-            .into_iter()
-            .rev()
-            .find_map(|binding| match binding.keystrokes() {
-                [keystroke, ..] => Some(keystroke.clone()),
-                _ => None,
-            })
-    }
-
-    fn preview_edit_prediction_keystroke(
-        &self,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<gpui::KeybindingKeystroke> {
-        let key_context = self.key_context_internal(true, window, cx);
-        let bindings = window.bindings_for_action_in_context(&AcceptEditPrediction, key_context);
-        bindings
-            .into_iter()
-            .rev()
-            .find_map(|binding| match binding.keystrokes() {
-                [keystroke, ..] if keystroke.modifiers().modified() => Some(keystroke.clone()),
-                _ => None,
-            })
-    }
-
-    fn edit_prediction_preview_modifiers_held(
-        &self,
-        modifiers: &Modifiers,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> bool {
-        let can_supersede_active_menu =
-            self.context_menu.borrow().as_ref().is_none_or(|menu| {
-                !menu.visible() || matches!(menu, CodeContextMenu::Completions(_))
-            });
-
-        if !can_supersede_active_menu {
-            return false;
-        }
-
-        let key_context = self.key_context_internal(true, window, cx);
-        let actions: [&dyn Action; 3] = [
-            &AcceptEditPrediction,
-            &AcceptNextWordEditPrediction,
-            &AcceptNextLineEditPrediction,
-        ];
-
-        actions.into_iter().any(|action| {
-            window
-                .bindings_for_action_in_context(action, key_context.clone())
-                .into_iter()
-                .rev()
-                .any(|binding| {
-                    binding.keystrokes().first().is_some_and(|keystroke| {
-                        keystroke.modifiers().modified() && keystroke.modifiers() == modifiers
-                    })
-                })
-        })
-    }
-
-    fn edit_prediction_cursor_popover_prefers_preview(
-        &self,
-        completion: &EditPredictionState,
-        cx: &App,
-    ) -> bool {
-        let multibuffer_snapshot = self.buffer.read(cx).snapshot(cx);
-
-        match &completion.completion {
-            EditPrediction::Edit {
-                edits, snapshot, ..
-            } => {
-                let mut start_row: Option<u32> = None;
-                let mut end_row: Option<u32> = None;
-
-                for (range, text) in edits {
-                    let Some((_, range)) =
-                        multibuffer_snapshot.anchor_range_to_buffer_anchor_range(range.clone())
-                    else {
-                        continue;
-                    };
-                    let edit_start_row = range.start.to_point(snapshot).row;
-                    let old_end_row = range.end.to_point(snapshot).row;
-                    let inserted_newline_count = text
-                        .as_ref()
-                        .chars()
-                        .filter(|character| *character == '\n')
-                        .count() as u32;
-                    let deleted_newline_count = old_end_row - edit_start_row;
-                    let preview_end_row = edit_start_row + inserted_newline_count;
-
-                    start_row =
-                        Some(start_row.map_or(edit_start_row, |row| row.min(edit_start_row)));
-                    end_row = Some(end_row.map_or(preview_end_row, |row| row.max(preview_end_row)));
-
-                    if deleted_newline_count > 1 {
-                        end_row = Some(end_row.map_or(old_end_row, |row| row.max(old_end_row)));
-                    }
-                }
-
-                start_row
-                    .zip(end_row)
-                    .is_some_and(|(start_row, end_row)| end_row > start_row)
-            }
-            EditPrediction::MoveWithin { .. } | EditPrediction::MoveOutside { .. } => false,
-        }
-    }
-
-    fn edit_prediction_keybind_display(
-        &self,
-        surface: EditPredictionKeybindSurface,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> EditPredictionKeybindDisplay {
-        let accept_keystroke =
-            self.accept_edit_prediction_keystroke(EditPredictionGranularity::Full, window, cx);
-        let preview_keystroke = self.preview_edit_prediction_keystroke(window, cx);
-
-        let action = match surface {
-            EditPredictionKeybindSurface::Inline
-            | EditPredictionKeybindSurface::CursorPopoverCompact => {
-                if self.edit_prediction_requires_modifier() {
-                    EditPredictionKeybindAction::Preview
-                } else {
-                    EditPredictionKeybindAction::Accept
-                }
-            }
-            EditPredictionKeybindSurface::CursorPopoverExpanded => self
-                .active_edit_prediction
-                .as_ref()
-                .filter(|completion| {
-                    self.edit_prediction_cursor_popover_prefers_preview(completion, cx)
-                })
-                .map_or(EditPredictionKeybindAction::Accept, |_| {
-                    EditPredictionKeybindAction::Preview
-                }),
-        };
-        #[cfg(test)]
-        let preview_copy = preview_keystroke.clone();
-        #[cfg(test)]
-        let accept_copy = accept_keystroke.clone();
-
-        let displayed_keystroke = match surface {
-            EditPredictionKeybindSurface::Inline => match action {
-                EditPredictionKeybindAction::Accept => accept_keystroke,
-                EditPredictionKeybindAction::Preview => preview_keystroke,
-            },
-            EditPredictionKeybindSurface::CursorPopoverCompact
-            | EditPredictionKeybindSurface::CursorPopoverExpanded => match action {
-                EditPredictionKeybindAction::Accept => accept_keystroke,
-                EditPredictionKeybindAction::Preview => {
-                    preview_keystroke.or_else(|| accept_keystroke.clone())
-                }
-            },
-        };
-
-        let missing_accept_keystroke = displayed_keystroke.is_none();
-
-        EditPredictionKeybindDisplay {
-            #[cfg(test)]
-            accept_keystroke: accept_copy,
-            #[cfg(test)]
-            preview_keystroke: preview_copy,
-            displayed_keystroke,
-            action,
-            missing_accept_keystroke,
-            show_hold_label: matches!(surface, EditPredictionKeybindSurface::CursorPopoverCompact)
-                && self.edit_prediction_preview.released_too_fast(),
-        }
     }
 
     pub fn new_file(
@@ -3279,26 +3079,6 @@ impl Editor {
         self.semantics_provider = provider;
     }
 
-    pub fn set_edit_prediction_provider<T>(
-        &mut self,
-        provider: Option<Entity<T>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) where
-        T: EditPredictionDelegate,
-    {
-        self.edit_prediction_provider = provider.map(|provider| RegisteredEditPredictionDelegate {
-            _subscription: cx.observe_in(&provider, window, |this, _, window, cx| {
-                if this.focus_handle.is_focused(window) {
-                    this.update_visible_edit_prediction(window, cx);
-                }
-            }),
-            provider: Arc::new(provider),
-        });
-        self.update_edit_prediction_settings(cx);
-        self.refresh_edit_prediction(false, false, window, cx);
-    }
-
     pub fn placeholder_text(&self, cx: &mut App) -> Option<String> {
         self.placeholder_display_map
             .as_ref()
@@ -3353,6 +3133,35 @@ impl Editor {
         self.cursor_offset_on_selection = set_cursor_offset_on_selection;
     }
 
+    /// Returns the anchor to use as the rename target for a selection.
+    ///
+    /// In selection-based modes, like vim's visual mode and helix, the rendered
+    /// block cursor sits one position to the left of the selection's head,
+    /// since the head is the exclusive end of a forward selection. Using the
+    /// head
+    /// directly would place the rename one character past the symbol, for
+    /// example, trailing whitespace, so for a non-empty forward selection we
+    /// shift one point left to land back on the symbol under the cursor.
+    fn rename_target_anchor(&self, selection: &Selection<Anchor>, cx: &mut App) -> Anchor {
+        let head = selection.head();
+
+        if self.cursor_offset_on_selection
+            && !selection.reversed
+            && selection.start != selection.end
+        {
+            let display_map = self.display_snapshot(cx);
+            let display_head = head.to_display_point(&display_map);
+
+            if display_head.column() > 0 {
+                return display_map.display_point_to_anchor(
+                    movement::left(&display_map, display_head),
+                    Bias::Left,
+                );
+            }
+        }
+        head
+    }
+
     pub fn set_current_line_highlight(
         &mut self,
         current_line_highlight: Option<CurrentLineHighlight>,
@@ -3380,26 +3189,6 @@ impl Editor {
             self.display_map
                 .update(cx, |map, _| map.clip_at_line_ends = clip);
         }
-    }
-
-    pub fn set_edit_predictions_hidden_for_vim_mode(
-        &mut self,
-        hidden: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if hidden != self.edit_predictions_hidden_for_vim_mode {
-            self.edit_predictions_hidden_for_vim_mode = hidden;
-            if hidden {
-                self.update_visible_edit_prediction(window, cx);
-            } else {
-                self.refresh_edit_prediction(true, false, window, cx);
-            }
-        }
-    }
-
-    pub fn set_menu_edit_predictions_policy(&mut self, value: MenuEditPredictionsPolicy) {
-        self.menu_edit_predictions_policy = value;
     }
 
     pub fn capability(&self, cx: &App) -> Capability {
@@ -3436,57 +3225,6 @@ impl Editor {
         self.buffer_serialization.is_some()
     }
 
-    pub fn toggle_edit_predictions(
-        &mut self,
-        _: &ToggleEditPrediction,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.show_edit_predictions_override.is_some() {
-            self.set_show_edit_predictions(None, window, cx);
-        } else {
-            let show_edit_predictions = !self.edit_predictions_enabled();
-            self.set_show_edit_predictions(Some(show_edit_predictions), window, cx);
-        }
-    }
-
-    pub fn set_show_edit_predictions(
-        &mut self,
-        show_edit_predictions: Option<bool>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.show_edit_predictions_override = show_edit_predictions;
-        self.update_edit_prediction_settings(cx);
-
-        if let Some(false) = show_edit_predictions {
-            self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
-        } else {
-            self.refresh_edit_prediction(false, true, window, cx);
-        }
-    }
-
-    fn edit_predictions_disabled_in_scope(
-        &self,
-        buffer: &Entity<Buffer>,
-        buffer_position: language::Anchor,
-        cx: &App,
-    ) -> bool {
-        let snapshot = buffer.read(cx).snapshot();
-        let settings = snapshot.settings_at(buffer_position, cx);
-
-        let Some(scope) = snapshot.language_scope_at(buffer_position) else {
-            return false;
-        };
-
-        scope.override_name().is_some_and(|scope_name| {
-            settings
-                .edit_predictions_disabled_in
-                .iter()
-                .any(|s| s == scope_name)
-        })
-    }
-
     pub fn set_use_modal_editing(&mut self, to: bool) {
         self.use_modal_editing = to;
     }
@@ -3495,6 +3233,8 @@ impl Editor {
         self.use_modal_editing
     }
 
+    /// Inserted text is normalized to LF line endings before being applied.
+    /// Normalize before measuring inserted text for post-edit offsets.
     pub fn edit<I, S, T>(&mut self, edits: I, cx: &mut Context<Self>)
     where
         I: IntoIterator<Item = (Range<S>, T)>,
@@ -4104,196 +3844,6 @@ impl Editor {
                 .to_point(display_snapshot)
     }
 
-    pub fn refresh_edit_prediction(
-        &mut self,
-        debounce: bool,
-        user_requested: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<()> {
-        if self.leader_id.is_some() {
-            self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
-            return None;
-        }
-
-        let cursor = self.selections.newest_anchor().head();
-        let (buffer, cursor_buffer_position) =
-            self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
-
-        if DisableAiSettings::is_ai_disabled_for_buffer(Some(&buffer), cx) {
-            return None;
-        }
-
-        if !self.edit_predictions_enabled_in_buffer(&buffer, cursor_buffer_position, cx) {
-            self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
-            return None;
-        }
-
-        self.update_visible_edit_prediction(window, cx);
-
-        if !user_requested
-            && (!self.should_show_edit_predictions()
-                || !self.is_focused(window)
-                || buffer.read(cx).is_empty())
-        {
-            self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
-            return None;
-        }
-
-        self.edit_prediction_provider()?
-            .refresh(buffer, cursor_buffer_position, debounce, cx);
-        Some(())
-    }
-
-    fn show_edit_predictions_in_menu(&self) -> bool {
-        match self.edit_prediction_settings {
-            EditPredictionSettings::Disabled => false,
-            EditPredictionSettings::Enabled { show_in_menu, .. } => show_in_menu,
-        }
-    }
-
-    pub fn edit_predictions_enabled(&self) -> bool {
-        match self.edit_prediction_settings {
-            EditPredictionSettings::Disabled => false,
-            EditPredictionSettings::Enabled { .. } => true,
-        }
-    }
-
-    fn edit_prediction_requires_modifier(&self) -> bool {
-        match self.edit_prediction_settings {
-            EditPredictionSettings::Disabled => false,
-            EditPredictionSettings::Enabled {
-                preview_requires_modifier,
-                ..
-            } => preview_requires_modifier,
-        }
-    }
-
-    pub fn update_edit_prediction_settings(&mut self, cx: &mut Context<Self>) {
-        if self.edit_prediction_provider.is_none() {
-            self.edit_prediction_settings = EditPredictionSettings::Disabled;
-            self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
-            return;
-        }
-
-        let selection = self.selections.newest_anchor();
-        let cursor = selection.head();
-
-        if let Some((buffer, cursor_buffer_position)) =
-            self.buffer.read(cx).text_anchor_for_position(cursor, cx)
-        {
-            if DisableAiSettings::is_ai_disabled_for_buffer(Some(&buffer), cx) {
-                self.edit_prediction_settings = EditPredictionSettings::Disabled;
-                self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
-                return;
-            }
-            self.edit_prediction_settings =
-                self.edit_prediction_settings_at_position(&buffer, cursor_buffer_position, cx);
-        }
-    }
-
-    fn edit_prediction_settings_at_position(
-        &self,
-        buffer: &Entity<Buffer>,
-        buffer_position: language::Anchor,
-        cx: &App,
-    ) -> EditPredictionSettings {
-        if !self.mode.is_full()
-            || !self.show_edit_predictions_override.unwrap_or(true)
-            || self.edit_predictions_disabled_in_scope(buffer, buffer_position, cx)
-        {
-            return EditPredictionSettings::Disabled;
-        }
-
-        if !LanguageSettings::for_buffer(&buffer.read(cx), cx).show_edit_predictions {
-            return EditPredictionSettings::Disabled;
-        };
-
-        let by_provider = matches!(
-            self.menu_edit_predictions_policy,
-            MenuEditPredictionsPolicy::ByProvider
-        );
-
-        let show_in_menu = by_provider
-            && self
-                .edit_prediction_provider
-                .as_ref()
-                .is_some_and(|provider| provider.provider.show_predictions_in_menu());
-
-        let file = buffer.read(cx).file();
-        let preview_requires_modifier =
-            all_language_settings(file, cx).edit_predictions_mode() == EditPredictionsMode::Subtle;
-
-        EditPredictionSettings::Enabled {
-            show_in_menu,
-            preview_requires_modifier,
-        }
-    }
-
-    fn should_show_edit_predictions(&self) -> bool {
-        self.snippet_stack.is_empty() && self.edit_predictions_enabled()
-    }
-
-    pub fn edit_prediction_preview_is_active(&self) -> bool {
-        matches!(
-            self.edit_prediction_preview,
-            EditPredictionPreview::Active { .. }
-        )
-    }
-
-    pub fn edit_predictions_enabled_at_cursor(&self, cx: &App) -> bool {
-        let cursor = self.selections.newest_anchor().head();
-        if let Some((buffer, cursor_position)) =
-            self.buffer.read(cx).text_anchor_for_position(cursor, cx)
-        {
-            self.edit_predictions_enabled_in_buffer(&buffer, cursor_position, cx)
-        } else {
-            false
-        }
-    }
-
-    pub fn supports_minimap(&self, cx: &App) -> bool {
-        !self.minimap_visibility.disabled() && self.buffer_kind(cx) == ItemBufferKind::Singleton
-    }
-
-    fn edit_predictions_enabled_in_buffer(
-        &self,
-        buffer: &Entity<Buffer>,
-        buffer_position: language::Anchor,
-        cx: &App,
-    ) -> bool {
-        maybe!({
-            if self.read_only(cx) || self.leader_id.is_some() {
-                return Some(false);
-            }
-            let provider = self.edit_prediction_provider()?;
-            if !provider.is_enabled(buffer, buffer_position, cx) {
-                return Some(false);
-            }
-            let buffer = buffer.read(cx);
-            let Some(file) = buffer.file() else {
-                return Some(true);
-            };
-            let settings = all_language_settings(Some(file), cx);
-            Some(settings.edit_predictions_enabled_for_file(file, cx))
-        })
-        .unwrap_or(false)
-    }
-
-    pub fn show_edit_prediction(
-        &mut self,
-        _: &ShowEditPrediction,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.has_active_edit_prediction() {
-            self.refresh_edit_prediction(false, true, window, cx);
-            return;
-        }
-
-        self.update_visible_edit_prediction(window, cx);
-    }
-
     pub fn display_cursor_names(
         &mut self,
         _: &DisplayCursorNames,
@@ -4315,362 +3865,6 @@ impl Editor {
             .ok()
         })
         .detach();
-    }
-
-    pub fn accept_partial_edit_prediction(
-        &mut self,
-        granularity: EditPredictionGranularity,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.read_only(cx) {
-            return;
-        }
-        if self.show_edit_predictions_in_menu() {
-            self.hide_context_menu(window, cx);
-        }
-
-        let Some(active_edit_prediction) = self.active_edit_prediction.as_ref() else {
-            return;
-        };
-
-        if !matches!(granularity, EditPredictionGranularity::Full) && self.selections.count() != 1 {
-            return;
-        }
-
-        match &active_edit_prediction.completion {
-            EditPrediction::MoveWithin { target, .. } => {
-                let target = *target;
-
-                if matches!(granularity, EditPredictionGranularity::Full) {
-                    if let Some(position_map) = &self.last_position_map {
-                        let target_row = target.to_display_point(&position_map.snapshot).row();
-                        let is_visible = position_map.visible_row_range.contains(&target_row);
-
-                        if is_visible || !self.edit_prediction_requires_modifier() {
-                            self.unfold_ranges(&[target..target], true, false, cx);
-                            self.change_selections(
-                                SelectionEffects::scroll(Autoscroll::newest()),
-                                window,
-                                cx,
-                                |selections| {
-                                    selections.select_anchor_ranges([target..target]);
-                                },
-                            );
-                            self.clear_row_highlights::<EditPredictionPreview>();
-                            self.edit_prediction_preview
-                                .set_previous_scroll_position(None);
-                        } else {
-                            // Highlight and request scroll
-                            self.edit_prediction_preview
-                                .set_previous_scroll_position(Some(
-                                    position_map.snapshot.scroll_anchor,
-                                ));
-                            self.highlight_rows::<EditPredictionPreview>(
-                                target..target,
-                                cx.theme().colors().editor_highlighted_line_background,
-                                RowHighlightOptions {
-                                    autoscroll: true,
-                                    ..Default::default()
-                                },
-                                cx,
-                            );
-                            self.request_autoscroll(Autoscroll::fit(), cx);
-                        }
-                    }
-                } else {
-                    self.change_selections(
-                        SelectionEffects::scroll(Autoscroll::newest()),
-                        window,
-                        cx,
-                        |selections| {
-                            selections.select_anchor_ranges([target..target]);
-                        },
-                    );
-                }
-            }
-            EditPrediction::MoveOutside { snapshot, target } => {
-                if let Some(workspace) = self.workspace() {
-                    Self::open_editor_at_anchor(snapshot, *target, &workspace, window, cx)
-                        .detach_and_log_err(cx);
-                }
-            }
-            EditPrediction::Edit {
-                edits,
-                cursor_position,
-                ..
-            } => {
-                self.report_edit_prediction_event(
-                    active_edit_prediction.completion_id.clone(),
-                    true,
-                    cx,
-                );
-
-                match granularity {
-                    EditPredictionGranularity::Full => {
-                        let transaction_id_prev = self.buffer.read(cx).last_transaction_id(cx);
-
-                        // Compute fallback cursor position BEFORE applying the edit,
-                        // so the anchor tracks through the edit correctly
-                        let fallback_cursor_target = {
-                            let snapshot = self.buffer.read(cx).snapshot(cx);
-                            edits.last().unwrap().0.end.bias_right(&snapshot)
-                        };
-
-                        self.buffer.update(cx, |buffer, cx| {
-                            buffer.edit(edits.iter().cloned(), None, cx)
-                        });
-
-                        if let Some(provider) = self.edit_prediction_provider() {
-                            provider.accept(cx);
-                        }
-
-                        // Resolve cursor position after the edit is applied
-                        let cursor_target = if let Some((anchor, offset)) = cursor_position {
-                            // The anchor tracks through the edit, then we add the offset
-                            let snapshot = self.buffer.read(cx).snapshot(cx);
-                            let base_offset = anchor.to_offset(&snapshot).0;
-                            let target_offset =
-                                MultiBufferOffset((base_offset + offset).min(snapshot.len().0));
-                            snapshot.anchor_after(target_offset)
-                        } else {
-                            fallback_cursor_target
-                        };
-
-                        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                            s.select_anchor_ranges([cursor_target..cursor_target]);
-                        });
-
-                        let selections = self.selections.disjoint_anchors_arc();
-                        if let Some(transaction_id_now) =
-                            self.buffer.read(cx).last_transaction_id(cx)
-                        {
-                            if transaction_id_prev != Some(transaction_id_now) {
-                                self.selection_history
-                                    .insert_transaction(transaction_id_now, selections);
-                            }
-                        }
-
-                        self.update_visible_edit_prediction(window, cx);
-                        if self.active_edit_prediction.is_none() {
-                            self.refresh_edit_prediction(true, true, window, cx);
-                        }
-                        cx.notify();
-                    }
-                    _ => {
-                        let snapshot = self.buffer.read(cx).snapshot(cx);
-                        let cursor_offset = self
-                            .selections
-                            .newest::<MultiBufferOffset>(&self.display_snapshot(cx))
-                            .head();
-
-                        let insertion = edits.iter().find_map(|(range, text)| {
-                            let range = range.to_offset(&snapshot);
-                            if range.is_empty() && range.start == cursor_offset {
-                                Some(text)
-                            } else {
-                                None
-                            }
-                        });
-
-                        if let Some(text) = insertion {
-                            let text_to_insert = match granularity {
-                                EditPredictionGranularity::Word => {
-                                    let mut partial = text
-                                        .chars()
-                                        .by_ref()
-                                        .take_while(|c| c.is_alphabetic())
-                                        .collect::<String>();
-                                    if partial.is_empty() {
-                                        partial = text
-                                            .chars()
-                                            .by_ref()
-                                            .take_while(|c| c.is_whitespace() || !c.is_alphabetic())
-                                            .collect::<String>();
-                                    }
-                                    partial
-                                }
-                                EditPredictionGranularity::Line => {
-                                    if let Some(line) = text.split_inclusive('\n').next() {
-                                        line.to_string()
-                                    } else {
-                                        text.to_string()
-                                    }
-                                }
-                                EditPredictionGranularity::Full => unreachable!(),
-                            };
-
-                            cx.emit(EditorEvent::InputHandled {
-                                utf16_range_to_replace: None,
-                                text: text_to_insert.clone().into(),
-                            });
-
-                            self.replace_selections(&text_to_insert, None, window, cx, false);
-                            self.refresh_edit_prediction(true, true, window, cx);
-                            cx.notify();
-                        } else {
-                            self.accept_partial_edit_prediction(
-                                EditPredictionGranularity::Full,
-                                window,
-                                cx,
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn accept_next_word_edit_prediction(
-        &mut self,
-        _: &AcceptNextWordEditPrediction,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.accept_partial_edit_prediction(EditPredictionGranularity::Word, window, cx);
-    }
-
-    pub fn accept_next_line_edit_prediction(
-        &mut self,
-        _: &AcceptNextLineEditPrediction,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.accept_partial_edit_prediction(EditPredictionGranularity::Line, window, cx);
-    }
-
-    pub fn accept_edit_prediction(
-        &mut self,
-        _: &AcceptEditPrediction,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.accept_partial_edit_prediction(EditPredictionGranularity::Full, window, cx);
-    }
-
-    fn discard_edit_prediction(
-        &mut self,
-        reason: EditPredictionDiscardReason,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        if reason == EditPredictionDiscardReason::Rejected {
-            let completion_id = self
-                .active_edit_prediction
-                .as_ref()
-                .and_then(|active_completion| active_completion.completion_id.clone());
-
-            self.report_edit_prediction_event(completion_id, false, cx);
-        }
-
-        if let Some(provider) = self.edit_prediction_provider() {
-            provider.discard(reason, cx);
-        }
-
-        self.take_active_edit_prediction(reason == EditPredictionDiscardReason::Ignored, cx)
-    }
-
-    fn report_edit_prediction_event(&self, id: Option<SharedString>, accepted: bool, cx: &App) {
-        let Some(provider) = self.edit_prediction_provider() else {
-            return;
-        };
-
-        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
-        let Some((position, _)) =
-            buffer_snapshot.anchor_to_buffer_anchor(self.selections.newest_anchor().head())
-        else {
-            return;
-        };
-        let Some(buffer) = self.buffer.read(cx).buffer(position.buffer_id) else {
-            return;
-        };
-
-        let extension = buffer
-            .read(cx)
-            .file()
-            .and_then(|file| Some(file.path().extension()?.to_string()));
-
-        let event_type = match accepted {
-            true => "Edit Prediction Accepted",
-            false => "Edit Prediction Discarded",
-        };
-        telemetry::event!(
-            event_type,
-            provider = provider.name(),
-            prediction_id = id,
-            suggestion_accepted = accepted,
-            file_extension = extension,
-        );
-    }
-
-    fn open_editor_at_anchor(
-        snapshot: &language::BufferSnapshot,
-        target: language::Anchor,
-        workspace: &Entity<Workspace>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Task<Result<()>> {
-        workspace.update(cx, |workspace, cx| {
-            let path = snapshot.file().map(|file| file.full_path(cx));
-            let Some(path) =
-                path.and_then(|path| workspace.project().read(cx).find_project_path(path, cx))
-            else {
-                return Task::ready(Err(anyhow::anyhow!("Project path not found")));
-            };
-            let target = text::ToPoint::to_point(&target, snapshot);
-            let item = workspace.open_path(path, None, true, window, cx);
-            window.spawn(cx, async move |cx| {
-                let Some(editor) = item.await?.downcast::<Editor>() else {
-                    return Ok(());
-                };
-                editor
-                    .update_in(cx, |editor, window, cx| {
-                        editor.go_to_singleton_buffer_point(target, window, cx);
-                    })
-                    .ok();
-                anyhow::Ok(())
-            })
-        })
-    }
-
-    pub fn has_active_edit_prediction(&self) -> bool {
-        self.active_edit_prediction.is_some()
-    }
-
-    fn take_active_edit_prediction(
-        &mut self,
-        preserve_stale_in_menu: bool,
-        cx: &mut Context<Self>,
-    ) -> bool {
-        let Some(active_edit_prediction) = self.active_edit_prediction.take() else {
-            if !preserve_stale_in_menu {
-                self.stale_edit_prediction_in_menu = None;
-            }
-            return false;
-        };
-
-        self.splice_inlays(&active_edit_prediction.inlay_ids, Default::default(), cx);
-        self.clear_highlights(HighlightKey::EditPredictionHighlight, cx);
-        self.stale_edit_prediction_in_menu =
-            preserve_stale_in_menu.then_some(active_edit_prediction);
-        true
-    }
-
-    /// Returns true when we're displaying the edit prediction popover below the cursor
-    /// like we are not previewing and the LSP autocomplete menu is visible
-    /// or we are in `when_holding_modifier` mode.
-    pub fn edit_prediction_visible_in_cursor_popover(&self, has_completion: bool) -> bool {
-        if self.edit_prediction_preview_is_active()
-            || !self.show_edit_predictions_in_menu()
-            || !self.edit_predictions_enabled()
-        {
-            return false;
-        }
-
-        if self.has_visible_completions_menu() {
-            return true;
-        }
-
-        has_completion && self.edit_prediction_requires_modifier()
     }
 
     fn handle_modifiers_changed(
@@ -4775,319 +3969,6 @@ impl Editor {
         );
     }
 
-    fn update_edit_prediction_preview(
-        &mut self,
-        modifiers: &Modifiers,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let modifiers_held = self.edit_prediction_preview_modifiers_held(modifiers, window, cx);
-
-        if modifiers_held {
-            if matches!(
-                self.edit_prediction_preview,
-                EditPredictionPreview::Inactive { .. }
-            ) {
-                self.edit_prediction_preview = EditPredictionPreview::Active {
-                    previous_scroll_position: None,
-                    since: Instant::now(),
-                };
-
-                self.update_visible_edit_prediction(window, cx);
-                cx.notify();
-            }
-        } else if let EditPredictionPreview::Active {
-            previous_scroll_position,
-            since,
-        } = self.edit_prediction_preview
-        {
-            if let (Some(previous_scroll_position), Some(position_map)) =
-                (previous_scroll_position, self.last_position_map.as_ref())
-            {
-                self.set_scroll_position(
-                    previous_scroll_position
-                        .scroll_position(&position_map.snapshot.display_snapshot),
-                    window,
-                    cx,
-                );
-            }
-
-            self.edit_prediction_preview = EditPredictionPreview::Inactive {
-                released_too_fast: since.elapsed() < Duration::from_millis(200),
-            };
-            self.clear_row_highlights::<EditPredictionPreview>();
-            self.update_visible_edit_prediction(window, cx);
-            cx.notify();
-        }
-    }
-
-    fn update_visible_edit_prediction(
-        &mut self,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<()> {
-        if self.ime_transaction.is_some() {
-            self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
-            return None;
-        }
-
-        let selection = self.selections.newest_anchor();
-        let multibuffer = self.buffer.read(cx).snapshot(cx);
-        let cursor = selection.head();
-        let (cursor_text_anchor, _) = multibuffer.anchor_to_buffer_anchor(cursor)?;
-        let buffer = self.buffer.read(cx).buffer(cursor_text_anchor.buffer_id)?;
-
-        // Check project-level disable_ai setting for the current buffer
-        if DisableAiSettings::is_ai_disabled_for_buffer(Some(&buffer), cx) {
-            return None;
-        }
-        let offset_selection = selection.map(|endpoint| endpoint.to_offset(&multibuffer));
-
-        let show_in_menu = self.show_edit_predictions_in_menu();
-        let completions_menu_has_precedence = !show_in_menu
-            && (self.context_menu.borrow().is_some()
-                || (!self.completion_tasks.is_empty() && !self.has_active_edit_prediction()));
-
-        if completions_menu_has_precedence
-            || !offset_selection.is_empty()
-            || self
-                .active_edit_prediction
-                .as_ref()
-                .is_some_and(|completion| {
-                    let Some(invalidation_range) = completion.invalidation_range.as_ref() else {
-                        return false;
-                    };
-                    let invalidation_range = invalidation_range.to_offset(&multibuffer);
-                    let invalidation_range = invalidation_range.start..=invalidation_range.end;
-                    !invalidation_range.contains(&offset_selection.head())
-                })
-        {
-            self.discard_edit_prediction(EditPredictionDiscardReason::Ignored, cx);
-            return None;
-        }
-
-        self.take_active_edit_prediction(true, cx);
-        let Some(provider) = self.edit_prediction_provider() else {
-            self.edit_prediction_settings = EditPredictionSettings::Disabled;
-            return None;
-        };
-
-        self.edit_prediction_settings =
-            self.edit_prediction_settings_at_position(&buffer, cursor_text_anchor, cx);
-
-        self.in_leading_whitespace = multibuffer.is_line_whitespace_upto(cursor);
-
-        if self.in_leading_whitespace {
-            let cursor_point = cursor.to_point(&multibuffer);
-            let mut suggested_indent = None;
-            multibuffer.suggested_indents_callback(
-                cursor_point.row..cursor_point.row + 1,
-                &mut |_, indent| {
-                    suggested_indent = Some(indent);
-                    ControlFlow::Break(())
-                },
-                cx,
-            );
-
-            if let Some(indent) = suggested_indent
-                && indent.len == cursor_point.column
-            {
-                self.in_leading_whitespace = false;
-            }
-        }
-
-        let edit_prediction = provider.suggest(&buffer, cursor_text_anchor, cx)?;
-
-        let (completion_id, edits, predicted_cursor_position, edit_preview) = match edit_prediction
-        {
-            edit_prediction_types::EditPrediction::Local {
-                id,
-                edits,
-                cursor_position,
-                edit_preview,
-            } => (id, edits, cursor_position, edit_preview),
-            edit_prediction_types::EditPrediction::Jump {
-                id,
-                snapshot,
-                target,
-            } => {
-                if let Some(provider) = &self.edit_prediction_provider {
-                    provider.provider.did_show(SuggestionDisplayType::Jump, cx);
-                }
-                self.stale_edit_prediction_in_menu = None;
-                self.active_edit_prediction = Some(EditPredictionState {
-                    inlay_ids: vec![],
-                    completion: EditPrediction::MoveOutside { snapshot, target },
-                    completion_id: id,
-                    invalidation_range: None,
-                });
-                cx.notify();
-                return Some(());
-            }
-        };
-
-        let edits = edits
-            .into_iter()
-            .flat_map(|(range, new_text)| {
-                Some((
-                    multibuffer.buffer_anchor_range_to_anchor_range(range)?,
-                    new_text,
-                ))
-            })
-            .collect::<Vec<_>>();
-        if edits.is_empty() {
-            return None;
-        }
-
-        let cursor_position = predicted_cursor_position.and_then(|predicted| {
-            let anchor = multibuffer.anchor_in_excerpt(predicted.anchor)?;
-            Some((anchor, predicted.offset))
-        });
-
-        let first_edit_start = edits.first().unwrap().0.start;
-        let first_edit_start_point = first_edit_start.to_point(&multibuffer);
-        let edit_start_row = first_edit_start_point.row.saturating_sub(2);
-
-        let last_edit_end = edits.last().unwrap().0.end;
-        let last_edit_end_point = last_edit_end.to_point(&multibuffer);
-        let edit_end_row = cmp::min(multibuffer.max_point().row, last_edit_end_point.row + 2);
-
-        let cursor_row = cursor.to_point(&multibuffer).row;
-
-        let snapshot = multibuffer
-            .buffer_for_id(cursor_text_anchor.buffer_id)
-            .cloned()?;
-
-        let mut inlay_ids = Vec::new();
-        let invalidation_row_range;
-        let move_invalidation_row_range = if cursor_row < edit_start_row {
-            Some(cursor_row..edit_end_row)
-        } else if cursor_row > edit_end_row {
-            Some(edit_start_row..cursor_row)
-        } else {
-            None
-        };
-        let supports_jump = self
-            .edit_prediction_provider
-            .as_ref()
-            .map(|provider| provider.provider.supports_jump_to_edit())
-            .unwrap_or(true);
-
-        let is_move = supports_jump
-            && (move_invalidation_row_range.is_some() || self.edit_predictions_hidden_for_vim_mode);
-        let completion = if is_move {
-            if let Some(provider) = &self.edit_prediction_provider {
-                provider.provider.did_show(SuggestionDisplayType::Jump, cx);
-            }
-            invalidation_row_range =
-                move_invalidation_row_range.unwrap_or(edit_start_row..edit_end_row);
-
-            let (_, snapshot) = multibuffer.anchor_to_buffer_anchor(first_edit_start)?;
-
-            EditPrediction::MoveWithin {
-                target: first_edit_start,
-                snapshot: snapshot.clone(),
-            }
-        } else {
-            let show_completions_in_menu = self.has_visible_completions_menu();
-            let show_completions_in_buffer = !self.edit_prediction_visible_in_cursor_popover(true)
-                && !self.edit_predictions_hidden_for_vim_mode;
-
-            let display_mode = if all_edits_insertions_or_deletions(&edits, &multibuffer) {
-                if provider.show_tab_accept_marker() {
-                    EditDisplayMode::TabAccept
-                } else {
-                    EditDisplayMode::Inline
-                }
-            } else {
-                EditDisplayMode::DiffPopover
-            };
-
-            let report_shown = match display_mode {
-                EditDisplayMode::DiffPopover | EditDisplayMode::Inline => {
-                    show_completions_in_buffer || show_completions_in_menu
-                }
-                EditDisplayMode::TabAccept => {
-                    show_completions_in_menu || self.edit_prediction_preview_is_active()
-                }
-            };
-
-            if report_shown && let Some(provider) = &self.edit_prediction_provider {
-                let suggestion_display_type = match display_mode {
-                    EditDisplayMode::DiffPopover => SuggestionDisplayType::DiffPopover,
-                    EditDisplayMode::Inline | EditDisplayMode::TabAccept => {
-                        SuggestionDisplayType::GhostText
-                    }
-                };
-                provider.provider.did_show(suggestion_display_type, cx);
-            }
-
-            if show_completions_in_buffer {
-                if edits
-                    .iter()
-                    .all(|(range, _)| range.to_offset(&multibuffer).is_empty())
-                {
-                    let mut inlays = Vec::new();
-                    for (range, new_text) in &edits {
-                        let inlay = Inlay::edit_prediction(
-                            post_inc(&mut self.next_inlay_id),
-                            range.start,
-                            new_text.as_ref(),
-                        );
-                        inlay_ids.push(inlay.id);
-                        inlays.push(inlay);
-                    }
-
-                    self.splice_inlays(&[], inlays, cx);
-                } else {
-                    let background_color = cx.theme().status().deleted_background;
-                    self.highlight_text(
-                        HighlightKey::EditPredictionHighlight,
-                        edits.iter().map(|(range, _)| range.clone()).collect(),
-                        HighlightStyle {
-                            background_color: Some(background_color),
-                            ..Default::default()
-                        },
-                        cx,
-                    );
-                }
-            }
-
-            invalidation_row_range = edit_start_row..edit_end_row;
-
-            EditPrediction::Edit {
-                edits,
-                cursor_position,
-                edit_preview,
-                display_mode,
-                snapshot,
-            }
-        };
-
-        let invalidation_range = multibuffer
-            .anchor_before(Point::new(invalidation_row_range.start, 0))
-            ..multibuffer.anchor_after(Point::new(
-                invalidation_row_range.end,
-                multibuffer.line_len(MultiBufferRow(invalidation_row_range.end)),
-            ));
-
-        self.stale_edit_prediction_in_menu = None;
-        self.active_edit_prediction = Some(EditPredictionState {
-            inlay_ids,
-            completion,
-            completion_id,
-            invalidation_range: Some(invalidation_range),
-        });
-
-        cx.notify();
-
-        Some(())
-    }
-
-    pub fn edit_prediction_provider(&self) -> Option<Arc<dyn EditPredictionDelegateHandle>> {
-        Some(self.edit_prediction_provider.as_ref()?.provider.clone())
-    }
-
     fn active_run_indicators(
         &mut self,
         range: Range<DisplayRow>,
@@ -5181,7 +4062,7 @@ impl Editor {
             });
             for bookmark in bookmarks {
                 let Some(multi_buffer_anchor) =
-                    multi_buffer_snapshot.anchor_in_buffer(bookmark.anchor())
+                    multi_buffer_snapshot.anchor_in_buffer(bookmark.anchor)
                 else {
                     continue;
                 };
@@ -5203,7 +4084,7 @@ impl Editor {
             .size(ui::ButtonSize::None)
             .icon_color(Color::Info)
             .style(ButtonStyle::Transparent)
-            .on_click(cx.listener(move |editor, _, _, cx| {
+            .on_click(cx.listener(move |editor, _, _window, cx| {
                 editor.toggle_bookmark_at_row(row, cx);
             }))
             .on_right_click(cx.listener(move |editor, event: &ClickEvent, window, cx| {
@@ -5284,7 +4165,7 @@ impl Editor {
         anchor: Anchor,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Entity<ui::ContextMenu> {
+    ) -> Entity<ContextMenu> {
         let weak_editor = cx.weak_entity();
         let focus_handle = self.focus_handle(cx);
 
@@ -5329,6 +4210,12 @@ impl Editor {
             "Set Breakpoint"
         };
 
+        let git_blame_msg = if self.show_git_blame_gutter {
+            "Close Git Blame"
+        } else {
+            "Open Git Blame"
+        };
+
         let bookmark = self.bookmark_at_row(row, window, cx);
 
         let set_bookmark_msg = if bookmark.as_ref().is_some() {
@@ -5336,40 +4223,54 @@ impl Editor {
         } else {
             "Add Bookmark"
         };
+        let has_bookmark = bookmark.as_ref().is_some();
 
         let run_to_cursor = window.is_action_available(&RunToCursor, cx);
 
-        let toggle_state_msg = breakpoint.as_ref().map_or(None, |bp| match bp.1.state {
-            BreakpointState::Enabled => Some("Disable"),
-            BreakpointState::Disabled => Some("Enable"),
-        });
+        let toggle_state_entry: Option<(&str, Box<dyn Action>)> =
+            breakpoint.as_ref().map(|bp| match bp.1.state {
+                BreakpointState::Enabled => {
+                    ("Disable", crate::actions::DisableBreakpoint.boxed_clone())
+                }
+                BreakpointState::Disabled => {
+                    ("Enable", crate::actions::EnableBreakpoint.boxed_clone())
+                }
+            });
 
         let (anchor, breakpoint) =
             breakpoint.unwrap_or_else(|| (anchor, Arc::new(Breakpoint::new_standard())));
 
-        ui::ContextMenu::build(window, cx, |menu, _, _cx| {
+        ContextMenu::build(window, cx, |menu, _, _cx| {
             menu.on_blur_subscription(Subscription::new(|| {}))
                 .context(focus_handle)
                 .when(run_to_cursor, |this| {
                     let weak_editor = weak_editor.clone();
-                    this.entry("Run to Cursor", None, move |window, cx| {
-                        weak_editor
-                            .update(cx, |editor, cx| {
-                                editor.change_selections(
-                                    SelectionEffects::no_scroll(),
-                                    window,
-                                    cx,
-                                    |s| s.select_ranges([Point::new(row, 0)..Point::new(row, 0)]),
-                                );
-                            })
-                            .ok();
+                    this.entry(
+                        "Run to Cursor",
+                        Some(RunToCursor.boxed_clone()),
+                        move |window, cx| {
+                            weak_editor
+                                .update(cx, |editor, cx| {
+                                    editor.change_selections(
+                                        SelectionEffects::no_scroll(),
+                                        window,
+                                        cx,
+                                        |s| {
+                                            s.select_ranges(
+                                                [Point::new(row, 0)..Point::new(row, 0)],
+                                            )
+                                        },
+                                    );
+                                })
+                                .ok();
 
-                        window.dispatch_action(Box::new(RunToCursor), cx);
-                    })
+                            window.dispatch_action(Box::new(RunToCursor), cx);
+                        },
+                    )
                     .separator()
                 })
-                .when_some(toggle_state_msg, |this, msg| {
-                    this.entry(msg, None, {
+                .when_some(toggle_state_entry, |this, (msg, action)| {
+                    this.entry(msg, Some(action), {
                         let weak_editor = weak_editor.clone();
                         let breakpoint = breakpoint.clone();
                         move |_window, cx| {
@@ -5386,39 +4287,47 @@ impl Editor {
                         }
                     })
                 })
-                .entry(set_breakpoint_msg, None, {
-                    let weak_editor = weak_editor.clone();
-                    let breakpoint = breakpoint.clone();
-                    move |_window, cx| {
-                        weak_editor
-                            .update(cx, |this, cx| {
-                                this.edit_breakpoint_at_anchor(
-                                    anchor,
-                                    breakpoint.as_ref().clone(),
-                                    BreakpointEditAction::Toggle,
-                                    cx,
-                                );
-                            })
-                            .log_err();
-                    }
-                })
-                .entry(log_breakpoint_msg, None, {
-                    let breakpoint = breakpoint.clone();
-                    let weak_editor = weak_editor.clone();
-                    move |window, cx| {
-                        weak_editor
-                            .update(cx, |this, cx| {
-                                this.add_edit_breakpoint_block(
-                                    anchor,
-                                    breakpoint.as_ref(),
-                                    BreakpointPromptEditAction::Log,
-                                    window,
-                                    cx,
-                                );
-                            })
-                            .log_err();
-                    }
-                })
+                .entry(
+                    set_breakpoint_msg,
+                    Some(crate::actions::ToggleBreakpoint.boxed_clone()),
+                    {
+                        let weak_editor = weak_editor.clone();
+                        let breakpoint = breakpoint.clone();
+                        move |_window, cx| {
+                            weak_editor
+                                .update(cx, |this, cx| {
+                                    this.edit_breakpoint_at_anchor(
+                                        anchor,
+                                        breakpoint.as_ref().clone(),
+                                        BreakpointEditAction::Toggle,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    },
+                )
+                .entry(
+                    log_breakpoint_msg,
+                    Some(crate::actions::EditLogBreakpoint.boxed_clone()),
+                    {
+                        let breakpoint = breakpoint.clone();
+                        let weak_editor = weak_editor.clone();
+                        move |window, cx| {
+                            weak_editor
+                                .update(cx, |this, cx| {
+                                    this.add_edit_breakpoint_block(
+                                        anchor,
+                                        breakpoint.as_ref(),
+                                        BreakpointPromptEditAction::Log,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .log_err();
+                        }
+                    },
+                )
                 .entry(condition_breakpoint_msg, None, {
                     let breakpoint = breakpoint.clone();
                     let weak_editor = weak_editor.clone();
@@ -5454,12 +4363,39 @@ impl Editor {
                     }
                 })
                 .separator()
-                .entry(set_bookmark_msg, None, move |_window, cx| {
-                    weak_editor
-                        .update(cx, |this, cx| {
-                            this.toggle_bookmark_at_anchor(anchor, cx);
-                        })
-                        .log_err();
+                .entry(git_blame_msg, Some(Blame.boxed_clone()), {
+                    let weak_editor = weak_editor.clone();
+                    move |window, cx| {
+                        weak_editor
+                            .update(cx, |this, cx| {
+                                this.toggle_git_blame(&Blame, window, cx);
+                            })
+                            .log_err();
+                    }
+                })
+                .separator()
+                .entry(set_bookmark_msg, Some(ToggleBookmark.boxed_clone()), {
+                    let weak_editor = weak_editor.clone();
+                    move |_window, cx| {
+                        weak_editor
+                            .update(cx, |this, cx| {
+                                this.toggle_bookmark_at_anchor(anchor, cx);
+                            })
+                            .log_err();
+                    }
+                })
+                .when(has_bookmark, |this| {
+                    this.entry(
+                        "Edit Bookmark",
+                        Some(EditBookmark.boxed_clone()),
+                        move |window, cx| {
+                            weak_editor
+                                .update(cx, |this, cx| {
+                                    this.edit_bookmark_at_anchor(anchor, window, cx);
+                                })
+                                .log_err();
+                        },
+                    )
                 })
         })
     }
@@ -5558,61 +4494,20 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> IconButton {
-        #[derive(Clone, Copy)]
-        enum Intent {
-            SetBookmark,
-            SetBreakpoint,
-        }
-
-        impl Intent {
-            fn as_str(&self) -> &'static str {
-                match self {
-                    Intent::SetBookmark => "Set bookmark",
-                    Intent::SetBreakpoint => "Set breakpoint",
-                }
-            }
-
-            fn icon(&self) -> ui::IconName {
-                match self {
-                    Intent::SetBookmark => ui::IconName::Bookmark,
-                    Intent::SetBreakpoint => ui::IconName::DebugBreakpoint,
-                }
-            }
-
-            fn color(&self) -> Color {
-                match self {
-                    Intent::SetBookmark => Color::Info,
-                    Intent::SetBreakpoint => Color::Hint,
-                }
-            }
-
-            fn secondary_and_options(&self) -> String {
-                let alt_as_text = gpui::Keystroke {
-                    modifiers: Modifiers::secondary_key(),
-                    ..Default::default()
-                };
-                match self {
-                    Intent::SetBookmark => format!(
-                        "{alt_as_text}-click to add a breakpoint\nright-click for more options"
-                    ),
-                    Intent::SetBreakpoint => format!(
-                        "{alt_as_text}-click to add a bookmark\nright-click for more options"
-                    ),
-                }
-            }
-        }
-
         let gutter_settings = EditorSettings::get_global(cx).gutter;
         let show_bookmarks = self.show_bookmarks.unwrap_or(gutter_settings.bookmarks);
         let show_breakpoints = self.show_breakpoints.unwrap_or(gutter_settings.breakpoints);
 
         let [primary, secondary] = match [show_breakpoints, show_bookmarks] {
-            [true, true] => [Intent::SetBreakpoint, Intent::SetBookmark],
-            [true, false] => [Intent::SetBreakpoint; 2],
-            [false, true] => [Intent::SetBookmark; 2],
+            [true, true] => [
+                GutterButtonIntent::SetBreakpoint,
+                GutterButtonIntent::SetBookmark,
+            ],
+            [true, false] => [GutterButtonIntent::SetBreakpoint; 2],
+            [false, true] => [GutterButtonIntent::SetBookmark; 2],
             [false, false] => {
                 log::error!("Trying to place gutter_hover without anything enabled!!");
-                [Intent::SetBookmark; 2]
+                [GutterButtonIntent::SetBookmark; 2]
             }
         };
 
@@ -5639,8 +4534,8 @@ impl Editor {
                     };
 
                     match intent {
-                        Intent::SetBookmark => editor.toggle_bookmark_at_row(row, cx),
-                        Intent::SetBreakpoint => editor.edit_breakpoint_at_anchor(
+                        GutterButtonIntent::SetBookmark => editor.toggle_bookmark_at_row(row, cx),
+                        GutterButtonIntent::SetBreakpoint => editor.edit_breakpoint_at_anchor(
                             position,
                             Breakpoint::new_standard(),
                             BreakpointEditAction::Toggle,
@@ -5654,13 +4549,12 @@ impl Editor {
             }))
             .when(!has_context_menu, |button| {
                 button.tooltip(move |_window, cx| {
-                    Tooltip::with_meta_in(
-                        intent.as_str(),
-                        Some(&ToggleBreakpoint),
-                        intent.secondary_and_options(),
-                        &focus_handle,
-                        cx,
-                    )
+                    cx.new(|_| GutterButtonTooltip {
+                        primary,
+                        secondary,
+                        focus_handle: focus_handle.clone(),
+                    })
+                    .into()
                 })
             })
     }
@@ -5713,1184 +4607,11 @@ impl Editor {
         self.context_menu_options = Some(options);
     }
 
-    const EDIT_PREDICTION_POPOVER_PADDING_X: Pixels = px(24.);
-    const EDIT_PREDICTION_POPOVER_PADDING_Y: Pixels = px(2.);
-
-    fn render_edit_prediction_popover(
-        &mut self,
-        text_bounds: &Bounds<Pixels>,
-        content_origin: gpui::Point<Pixels>,
-        right_margin: Pixels,
-        editor_snapshot: &EditorSnapshot,
-        visible_row_range: Range<DisplayRow>,
-        scroll_top: ScrollOffset,
-        scroll_bottom: ScrollOffset,
-        line_layouts: &[LineWithInvisibles],
-        line_height: Pixels,
-        scroll_position: gpui::Point<ScrollOffset>,
-        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
-        newest_selection_head: Option<DisplayPoint>,
-        editor_width: Pixels,
-        style: &EditorStyle,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
-        if self.mode().is_minimap() {
-            return None;
-        }
-        let active_edit_prediction = self.active_edit_prediction.as_ref()?;
-
-        if self.edit_prediction_visible_in_cursor_popover(true) {
-            return None;
-        }
-
-        match &active_edit_prediction.completion {
-            EditPrediction::MoveWithin { target, .. } => {
-                let target_display_point = target.to_display_point(editor_snapshot);
-
-                if self.edit_prediction_requires_modifier() {
-                    if !self.edit_prediction_preview_is_active() {
-                        return None;
-                    }
-
-                    self.render_edit_prediction_modifier_jump_popover(
-                        text_bounds,
-                        content_origin,
-                        visible_row_range,
-                        line_layouts,
-                        line_height,
-                        scroll_pixel_position,
-                        newest_selection_head,
-                        target_display_point,
-                        window,
-                        cx,
-                    )
-                } else {
-                    self.render_edit_prediction_eager_jump_popover(
-                        text_bounds,
-                        content_origin,
-                        editor_snapshot,
-                        visible_row_range,
-                        scroll_top,
-                        scroll_bottom,
-                        line_height,
-                        scroll_pixel_position,
-                        target_display_point,
-                        editor_width,
-                        window,
-                        cx,
-                    )
-                }
-            }
-            EditPrediction::Edit {
-                display_mode: EditDisplayMode::Inline,
-                ..
-            } => None,
-            EditPrediction::Edit {
-                display_mode: EditDisplayMode::TabAccept,
-                edits,
-                ..
-            } => {
-                let range = &edits.first()?.0;
-                let target_display_point = range.end.to_display_point(editor_snapshot);
-
-                self.render_edit_prediction_end_of_line_popover(
-                    "Accept",
-                    editor_snapshot,
-                    visible_row_range,
-                    target_display_point,
-                    line_height,
-                    scroll_pixel_position,
-                    content_origin,
-                    editor_width,
-                    window,
-                    cx,
-                )
-            }
-            EditPrediction::Edit {
-                edits,
-                edit_preview,
-                display_mode: EditDisplayMode::DiffPopover,
-                snapshot,
-                ..
-            } => self.render_edit_prediction_diff_popover(
-                text_bounds,
-                content_origin,
-                right_margin,
-                editor_snapshot,
-                visible_row_range,
-                line_layouts,
-                line_height,
-                scroll_position,
-                scroll_pixel_position,
-                newest_selection_head,
-                editor_width,
-                style,
-                edits,
-                edit_preview,
-                snapshot,
-                window,
-                cx,
-            ),
-            EditPrediction::MoveOutside { snapshot, .. } => {
-                let mut element = self
-                    .render_edit_prediction_jump_outside_popover(snapshot, window, cx)
-                    .into_any();
-
-                let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-                let origin_x = text_bounds.size.width - size.width - px(30.);
-                let origin = text_bounds.origin + gpui::Point::new(origin_x, px(16.));
-                element.prepaint_at(origin, window, cx);
-
-                Some((element, origin))
-            }
-        }
-    }
-
-    fn render_edit_prediction_modifier_jump_popover(
-        &mut self,
-        text_bounds: &Bounds<Pixels>,
-        content_origin: gpui::Point<Pixels>,
-        visible_row_range: Range<DisplayRow>,
-        line_layouts: &[LineWithInvisibles],
-        line_height: Pixels,
-        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
-        newest_selection_head: Option<DisplayPoint>,
-        target_display_point: DisplayPoint,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
-        let scrolled_content_origin =
-            content_origin - gpui::Point::new(scroll_pixel_position.x.into(), Pixels::ZERO);
-
-        const SCROLL_PADDING_Y: Pixels = px(12.);
-
-        if target_display_point.row() < visible_row_range.start {
-            return self.render_edit_prediction_scroll_popover(
-                &|_| SCROLL_PADDING_Y,
-                IconName::ArrowUp,
-                visible_row_range,
-                line_layouts,
-                newest_selection_head,
-                scrolled_content_origin,
-                window,
-                cx,
-            );
-        } else if target_display_point.row() >= visible_row_range.end {
-            return self.render_edit_prediction_scroll_popover(
-                &|size| text_bounds.size.height - size.height - SCROLL_PADDING_Y,
-                IconName::ArrowDown,
-                visible_row_range,
-                line_layouts,
-                newest_selection_head,
-                scrolled_content_origin,
-                window,
-                cx,
-            );
-        }
-
-        const POLE_WIDTH: Pixels = px(2.);
-
-        let line_layout =
-            line_layouts.get(target_display_point.row().minus(visible_row_range.start) as usize)?;
-        let target_column = target_display_point.column() as usize;
-
-        let target_x = line_layout.x_for_index(target_column);
-        let target_y = (target_display_point.row().as_f64() * f64::from(line_height))
-            - scroll_pixel_position.y;
-
-        let flag_on_right = target_x < text_bounds.size.width / 2.;
-
-        let mut border_color = Self::edit_prediction_callout_popover_border_color(cx);
-        border_color.l += 0.001;
-
-        let mut element = v_flex()
-            .items_end()
-            .when(flag_on_right, |el| el.items_start())
-            .child(if flag_on_right {
-                self.render_edit_prediction_line_popover("Jump", None, window, cx)
-                    .rounded_bl(px(0.))
-                    .rounded_tl(px(0.))
-                    .border_l_2()
-                    .border_color(border_color)
-            } else {
-                self.render_edit_prediction_line_popover("Jump", None, window, cx)
-                    .rounded_br(px(0.))
-                    .rounded_tr(px(0.))
-                    .border_r_2()
-                    .border_color(border_color)
-            })
-            .child(div().w(POLE_WIDTH).bg(border_color).h(line_height))
-            .into_any();
-
-        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-
-        let mut origin = scrolled_content_origin + point(target_x, target_y.into())
-            - point(
-                if flag_on_right {
-                    POLE_WIDTH
-                } else {
-                    size.width - POLE_WIDTH
-                },
-                size.height - line_height,
-            );
-
-        origin.x = origin.x.max(content_origin.x);
-
-        element.prepaint_at(origin, window, cx);
-
-        Some((element, origin))
-    }
-
-    fn render_edit_prediction_scroll_popover(
-        &mut self,
-        to_y: &dyn Fn(Size<Pixels>) -> Pixels,
-        scroll_icon: IconName,
-        visible_row_range: Range<DisplayRow>,
-        line_layouts: &[LineWithInvisibles],
-        newest_selection_head: Option<DisplayPoint>,
-        scrolled_content_origin: gpui::Point<Pixels>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
-        let mut element = self
-            .render_edit_prediction_line_popover("Scroll", Some(scroll_icon), window, cx)
-            .into_any();
-
-        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-
-        let cursor = newest_selection_head?;
-        let cursor_row_layout =
-            line_layouts.get(cursor.row().minus(visible_row_range.start) as usize)?;
-        let cursor_column = cursor.column() as usize;
-
-        let cursor_character_x = cursor_row_layout.x_for_index(cursor_column);
-
-        let origin = scrolled_content_origin + point(cursor_character_x, to_y(size));
-
-        element.prepaint_at(origin, window, cx);
-        Some((element, origin))
-    }
-
-    fn render_edit_prediction_eager_jump_popover(
-        &mut self,
-        text_bounds: &Bounds<Pixels>,
-        content_origin: gpui::Point<Pixels>,
-        editor_snapshot: &EditorSnapshot,
-        visible_row_range: Range<DisplayRow>,
-        scroll_top: ScrollOffset,
-        scroll_bottom: ScrollOffset,
-        line_height: Pixels,
-        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
-        target_display_point: DisplayPoint,
-        editor_width: Pixels,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
-        if target_display_point.row().as_f64() < scroll_top {
-            let mut element = self
-                .render_edit_prediction_line_popover(
-                    "Jump to Edit",
-                    Some(IconName::ArrowUp),
-                    window,
-                    cx,
-                )
-                .into_any();
-
-            let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-            let offset = point(
-                (text_bounds.size.width - size.width) / 2.,
-                Self::EDIT_PREDICTION_POPOVER_PADDING_Y,
-            );
-
-            let origin = text_bounds.origin + offset;
-            element.prepaint_at(origin, window, cx);
-            Some((element, origin))
-        } else if (target_display_point.row().as_f64() + 1.) > scroll_bottom {
-            let mut element = self
-                .render_edit_prediction_line_popover(
-                    "Jump to Edit",
-                    Some(IconName::ArrowDown),
-                    window,
-                    cx,
-                )
-                .into_any();
-
-            let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-            let offset = point(
-                (text_bounds.size.width - size.width) / 2.,
-                text_bounds.size.height - size.height - Self::EDIT_PREDICTION_POPOVER_PADDING_Y,
-            );
-
-            let origin = text_bounds.origin + offset;
-            element.prepaint_at(origin, window, cx);
-            Some((element, origin))
-        } else {
-            self.render_edit_prediction_end_of_line_popover(
-                "Jump to Edit",
-                editor_snapshot,
-                visible_row_range,
-                target_display_point,
-                line_height,
-                scroll_pixel_position,
-                content_origin,
-                editor_width,
-                window,
-                cx,
-            )
-        }
-    }
-
-    fn render_edit_prediction_end_of_line_popover(
-        self: &mut Editor,
-        label: &'static str,
-        editor_snapshot: &EditorSnapshot,
-        visible_row_range: Range<DisplayRow>,
-        target_display_point: DisplayPoint,
-        line_height: Pixels,
-        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
-        content_origin: gpui::Point<Pixels>,
-        editor_width: Pixels,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
-        let target_line_end = DisplayPoint::new(
-            target_display_point.row(),
-            editor_snapshot.line_len(target_display_point.row()),
-        );
-
-        let mut element = self
-            .render_edit_prediction_line_popover(label, None, window, cx)
-            .into_any();
-
-        let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-
-        let line_origin =
-            self.display_to_pixel_point(target_line_end, editor_snapshot, window, cx)?;
-
-        let start_point = content_origin - point(scroll_pixel_position.x.into(), Pixels::ZERO);
-        let mut origin = start_point
-            + line_origin
-            + point(Self::EDIT_PREDICTION_POPOVER_PADDING_X, Pixels::ZERO);
-        origin.x = origin.x.max(content_origin.x);
-
-        let max_x = content_origin.x + editor_width - size.width;
-
-        if origin.x > max_x {
-            let offset = line_height + Self::EDIT_PREDICTION_POPOVER_PADDING_Y;
-
-            let icon = if visible_row_range.contains(&(target_display_point.row() + 2)) {
-                origin.y += offset;
-                IconName::ArrowUp
-            } else {
-                origin.y -= offset;
-                IconName::ArrowDown
-            };
-
-            element = self
-                .render_edit_prediction_line_popover(label, Some(icon), window, cx)
-                .into_any();
-
-            let size = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-
-            origin.x = content_origin.x + editor_width - size.width - px(2.);
-        }
-
-        element.prepaint_at(origin, window, cx);
-        Some((element, origin))
-    }
-
-    fn render_edit_prediction_diff_popover(
-        self: &Editor,
-        text_bounds: &Bounds<Pixels>,
-        content_origin: gpui::Point<Pixels>,
-        right_margin: Pixels,
-        editor_snapshot: &EditorSnapshot,
-        visible_row_range: Range<DisplayRow>,
-        line_layouts: &[LineWithInvisibles],
-        line_height: Pixels,
-        scroll_position: gpui::Point<ScrollOffset>,
-        scroll_pixel_position: gpui::Point<ScrollPixelOffset>,
-        newest_selection_head: Option<DisplayPoint>,
-        editor_width: Pixels,
-        style: &EditorStyle,
-        edits: &Vec<(Range<Anchor>, Arc<str>)>,
-        edit_preview: &Option<language::EditPreview>,
-        snapshot: &language::BufferSnapshot,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<(AnyElement, gpui::Point<Pixels>)> {
-        let edit_start = edits
-            .first()
-            .unwrap()
-            .0
-            .start
-            .to_display_point(editor_snapshot);
-        let edit_end = edits
-            .last()
-            .unwrap()
-            .0
-            .end
-            .to_display_point(editor_snapshot);
-
-        let is_visible = visible_row_range.contains(&edit_start.row())
-            || visible_row_range.contains(&edit_end.row());
-        if !is_visible {
-            return None;
-        }
-
-        let highlighted_edits = if let Some(edit_preview) = edit_preview.as_ref() {
-            crate::edit_prediction_edit_text(
-                snapshot,
-                edits,
-                edit_preview,
-                false,
-                editor_snapshot.buffer_snapshot(),
-                cx,
-            )
-        } else {
-            // Fallback for providers without edit_preview
-            crate::edit_prediction_fallback_text(edits, cx)
-        };
-
-        let styled_text = highlighted_edits.to_styled_text(&style.text);
-        let line_count = highlighted_edits.text.lines().count();
-
-        const BORDER_WIDTH: Pixels = px(1.);
-
-        let keybind = self.render_edit_prediction_keybind(window, cx);
-        let has_keybind = keybind.is_some();
-
-        let mut element = h_flex()
-            .items_start()
-            .child(
-                h_flex()
-                    .bg(cx.theme().colors().editor_background)
-                    .border(BORDER_WIDTH)
-                    .shadow_xs()
-                    .border_color(cx.theme().colors().border)
-                    .rounded_l_lg()
-                    .when(line_count > 1, |el| el.rounded_br_lg())
-                    .pr_1()
-                    .child(styled_text),
-            )
-            .child(
-                h_flex()
-                    .h(line_height + BORDER_WIDTH * 2.)
-                    .px_1p5()
-                    .gap_1()
-                    // Workaround: For some reason, there's a gap if we don't do this
-                    .ml(-BORDER_WIDTH)
-                    .shadow(vec![gpui::BoxShadow {
-                        color: gpui::black().opacity(0.05),
-                        offset: point(px(1.), px(1.)),
-                        blur_radius: px(2.),
-                        spread_radius: px(0.),
-                    }])
-                    .bg(Editor::edit_prediction_line_popover_bg_color(cx))
-                    .border(BORDER_WIDTH)
-                    .border_color(cx.theme().colors().border)
-                    .rounded_r_lg()
-                    .id("edit_prediction_diff_popover_keybind")
-                    .when(!has_keybind, |el| {
-                        let status_colors = cx.theme().status();
-
-                        el.bg(status_colors.error_background)
-                            .border_color(status_colors.error.opacity(0.6))
-                            .child(Icon::new(IconName::Info).color(Color::Error))
-                            .cursor_default()
-                            .hoverable_tooltip(move |_window, cx| {
-                                cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
-                            })
-                    })
-                    .children(keybind),
-            )
-            .into_any();
-
-        let longest_row =
-            editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
-        let longest_line_width = if visible_row_range.contains(&longest_row) {
-            line_layouts[(longest_row.0 - visible_row_range.start.0) as usize].width
-        } else {
-            layout_line(
-                longest_row,
-                editor_snapshot,
-                style,
-                editor_width,
-                |_| false,
-                window,
-                cx,
-            )
-            .width
-        };
-
-        let viewport_bounds =
-            Bounds::new(Default::default(), window.viewport_size()).extend(Edges {
-                right: -right_margin,
-                ..Default::default()
-            });
-
-        let x_after_longest = Pixels::from(
-            ScrollPixelOffset::from(
-                text_bounds.origin.x + longest_line_width + Self::EDIT_PREDICTION_POPOVER_PADDING_X,
-            ) - scroll_pixel_position.x,
-        );
-
-        let element_bounds = element.layout_as_root(AvailableSpace::min_size(), window, cx);
-
-        // Fully visible if it can be displayed within the window (allow overlapping other
-        // panes). However, this is only allowed if the popover starts within text_bounds.
-        let can_position_to_the_right = x_after_longest < text_bounds.right()
-            && x_after_longest + element_bounds.width < viewport_bounds.right();
-
-        let mut origin = if can_position_to_the_right {
-            point(
-                x_after_longest,
-                text_bounds.origin.y
-                    + Pixels::from(
-                        edit_start.row().as_f64() * ScrollPixelOffset::from(line_height)
-                            - scroll_pixel_position.y,
-                    ),
-            )
-        } else {
-            let cursor_row = newest_selection_head.map(|head| head.row());
-            let above_edit = edit_start
-                .row()
-                .0
-                .checked_sub(line_count as u32)
-                .map(DisplayRow);
-            let below_edit = Some(edit_end.row() + 1);
-            let above_cursor =
-                cursor_row.and_then(|row| row.0.checked_sub(line_count as u32).map(DisplayRow));
-            let below_cursor = cursor_row.map(|cursor_row| cursor_row + 1);
-
-            // Place the edit popover adjacent to the edit if there is a location
-            // available that is onscreen and does not obscure the cursor. Otherwise,
-            // place it adjacent to the cursor.
-            let row_target = [above_edit, below_edit, above_cursor, below_cursor]
-                .into_iter()
-                .flatten()
-                .find(|&start_row| {
-                    let end_row = start_row + line_count as u32;
-                    visible_row_range.contains(&start_row)
-                        && visible_row_range.contains(&end_row)
-                        && cursor_row
-                            .is_none_or(|cursor_row| !((start_row..end_row).contains(&cursor_row)))
-                })?;
-
-            content_origin
-                + point(
-                    Pixels::from(-scroll_pixel_position.x),
-                    Pixels::from(
-                        (row_target.as_f64() - scroll_position.y) * f64::from(line_height),
-                    ),
-                )
-        };
-
-        origin.x -= BORDER_WIDTH;
-
-        window.with_content_mask(
-            Some(gpui::ContentMask {
-                bounds: *text_bounds,
-            }),
-            |window| {
-                window.defer_draw(element, origin, 1, Some(window.content_mask()));
-            },
-        );
-
-        // Do not return an element, since it will already be drawn due to defer_draw.
-        None
-    }
-
-    fn edit_prediction_cursor_popover_height(&self) -> Pixels {
-        px(30.)
-    }
-
     fn current_user_player_color(&self, cx: &mut App) -> PlayerColor {
         if self.read_only(cx) {
             cx.theme().players().read_only()
         } else {
             self.style.as_ref().unwrap().local_player
-        }
-    }
-
-    fn render_edit_prediction_inline_keystroke(
-        &self,
-        keystroke: &gpui::KeybindingKeystroke,
-        modifiers_color: Color,
-        cx: &App,
-    ) -> AnyElement {
-        let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
-
-        h_flex()
-            .px_0p5()
-            .when(is_platform_style_mac, |parent| parent.gap_0p5())
-            .font(
-                theme_settings::ThemeSettings::get_global(cx)
-                    .buffer_font
-                    .clone(),
-            )
-            .text_size(TextSize::XSmall.rems(cx))
-            .child(h_flex().children(ui::render_modifiers(
-                keystroke.modifiers(),
-                PlatformStyle::platform(),
-                Some(modifiers_color),
-                Some(IconSize::XSmall.rems().into()),
-                true,
-            )))
-            .when(is_platform_style_mac, |parent| {
-                parent.child(keystroke.key().to_string())
-            })
-            .when(!is_platform_style_mac, |parent| {
-                parent.child(
-                    Key::new(ui::utils::capitalize(keystroke.key()), Some(Color::Default))
-                        .size(Some(IconSize::XSmall.rems().into())),
-                )
-            })
-            .into_any()
-    }
-
-    fn render_edit_prediction_popover_keystroke(
-        &self,
-        keystroke: &gpui::KeybindingKeystroke,
-        color: Color,
-        cx: &App,
-    ) -> AnyElement {
-        let is_platform_style_mac = PlatformStyle::platform() == PlatformStyle::Mac;
-
-        if keystroke.modifiers().modified() {
-            h_flex()
-                .font(
-                    theme_settings::ThemeSettings::get_global(cx)
-                        .buffer_font
-                        .clone(),
-                )
-                .when(is_platform_style_mac, |parent| parent.gap_1())
-                .child(h_flex().children(ui::render_modifiers(
-                    keystroke.modifiers(),
-                    PlatformStyle::platform(),
-                    Some(color),
-                    None,
-                    false,
-                )))
-                .into_any()
-        } else {
-            Key::new(ui::utils::capitalize(keystroke.key()), Some(color))
-                .size(Some(IconSize::XSmall.rems().into()))
-                .into_any_element()
-        }
-    }
-
-    fn render_edit_prediction_keybind(
-        &self,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Option<AnyElement> {
-        let keybind_display =
-            self.edit_prediction_keybind_display(EditPredictionKeybindSurface::Inline, window, cx);
-        let keystroke = keybind_display.displayed_keystroke.as_ref()?;
-
-        let modifiers_color = if *keystroke.modifiers() == window.modifiers() {
-            Color::Accent
-        } else {
-            Color::Muted
-        };
-
-        Some(self.render_edit_prediction_inline_keystroke(keystroke, modifiers_color, cx))
-    }
-
-    fn render_edit_prediction_line_popover(
-        &self,
-        label: impl Into<SharedString>,
-        icon: Option<IconName>,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Stateful<Div> {
-        let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
-
-        let keybind = self.render_edit_prediction_keybind(window, cx);
-        let has_keybind = keybind.is_some();
-        let icons = Self::get_prediction_provider_icons(&self.edit_prediction_provider, cx);
-
-        h_flex()
-            .id("ep-line-popover")
-            .py_0p5()
-            .pl_1()
-            .pr(padding_right)
-            .gap_1()
-            .rounded_md()
-            .border_1()
-            .bg(Self::edit_prediction_line_popover_bg_color(cx))
-            .border_color(Self::edit_prediction_callout_popover_border_color(cx))
-            .shadow_xs()
-            .when(!has_keybind, |el| {
-                let status_colors = cx.theme().status();
-
-                el.bg(status_colors.error_background)
-                    .border_color(status_colors.error.opacity(0.6))
-                    .pl_2()
-                    .child(Icon::new(icons.error).color(Color::Error))
-                    .cursor_default()
-                    .hoverable_tooltip(move |_window, cx| {
-                        cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
-                    })
-            })
-            .children(keybind)
-            .child(
-                Label::new(label)
-                    .size(LabelSize::Small)
-                    .when(!has_keybind, |el| {
-                        el.color(cx.theme().status().error.into()).strikethrough()
-                    }),
-            )
-            .when(!has_keybind, |el| {
-                el.child(
-                    h_flex().ml_1().child(
-                        Icon::new(IconName::Info)
-                            .size(IconSize::Small)
-                            .color(cx.theme().status().error.into()),
-                    ),
-                )
-            })
-            .when_some(icon, |element, icon| {
-                element.child(
-                    div()
-                        .mt(px(1.5))
-                        .child(Icon::new(icon).size(IconSize::Small)),
-                )
-            })
-    }
-
-    fn render_edit_prediction_jump_outside_popover(
-        &self,
-        snapshot: &BufferSnapshot,
-        window: &mut Window,
-        cx: &mut App,
-    ) -> Stateful<Div> {
-        let keybind = self.render_edit_prediction_keybind(window, cx);
-        let has_keybind = keybind.is_some();
-        let icons = Self::get_prediction_provider_icons(&self.edit_prediction_provider, cx);
-
-        let file_name = snapshot
-            .file()
-            .map(|file| SharedString::new(file.file_name(cx)))
-            .unwrap_or(SharedString::new_static("untitled"));
-
-        h_flex()
-            .id("ep-jump-outside-popover")
-            .py_1()
-            .px_2()
-            .gap_1()
-            .rounded_md()
-            .border_1()
-            .bg(Self::edit_prediction_line_popover_bg_color(cx))
-            .border_color(Self::edit_prediction_callout_popover_border_color(cx))
-            .shadow_xs()
-            .when(!has_keybind, |el| {
-                let status_colors = cx.theme().status();
-
-                el.bg(status_colors.error_background)
-                    .border_color(status_colors.error.opacity(0.6))
-                    .pl_2()
-                    .child(Icon::new(icons.error).color(Color::Error))
-                    .cursor_default()
-                    .hoverable_tooltip(move |_window, cx| {
-                        cx.new(|_| MissingEditPredictionKeybindingTooltip).into()
-                    })
-            })
-            .children(keybind)
-            .child(
-                Label::new(file_name)
-                    .size(LabelSize::Small)
-                    .buffer_font(cx)
-                    .when(!has_keybind, |el| {
-                        el.color(cx.theme().status().error.into()).strikethrough()
-                    }),
-            )
-            .when(!has_keybind, |el| {
-                el.child(
-                    h_flex().ml_1().child(
-                        Icon::new(IconName::Info)
-                            .size(IconSize::Small)
-                            .color(cx.theme().status().error.into()),
-                    ),
-                )
-            })
-            .child(
-                div()
-                    .mt(px(1.5))
-                    .child(Icon::new(IconName::ArrowUpRight).size(IconSize::Small)),
-            )
-    }
-
-    fn edit_prediction_line_popover_bg_color(cx: &App) -> Hsla {
-        let accent_color = cx.theme().colors().text_accent;
-        let editor_bg_color = cx.theme().colors().editor_background;
-        editor_bg_color.blend(accent_color.opacity(0.1))
-    }
-
-    fn edit_prediction_callout_popover_border_color(cx: &App) -> Hsla {
-        let accent_color = cx.theme().colors().text_accent;
-        let editor_bg_color = cx.theme().colors().editor_background;
-        editor_bg_color.blend(accent_color.opacity(0.6))
-    }
-    fn get_prediction_provider_icons(
-        provider: &Option<RegisteredEditPredictionDelegate>,
-        cx: &App,
-    ) -> edit_prediction_types::EditPredictionIconSet {
-        match provider {
-            Some(provider) => provider.provider.icons(cx),
-            None => edit_prediction_types::EditPredictionIconSet::new(IconName::ZedPredict),
-        }
-    }
-
-    fn render_edit_prediction_cursor_popover(
-        &self,
-        min_width: Pixels,
-        max_width: Pixels,
-        cursor_point: Point,
-        style: &EditorStyle,
-        window: &mut Window,
-        cx: &mut Context<Editor>,
-    ) -> Option<AnyElement> {
-        let provider = self.edit_prediction_provider.as_ref()?;
-        let icons = Self::get_prediction_provider_icons(&self.edit_prediction_provider, cx);
-
-        let is_refreshing = provider.provider.is_refreshing(cx);
-
-        fn pending_completion_container(icon: IconName) -> Div {
-            h_flex().h_full().flex_1().gap_2().child(Icon::new(icon))
-        }
-
-        let completion = match &self.active_edit_prediction {
-            Some(prediction) => {
-                if !self.has_visible_completions_menu() {
-                    const RADIUS: Pixels = px(6.);
-                    const BORDER_WIDTH: Pixels = px(1.);
-                    let keybind_display = self.edit_prediction_keybind_display(
-                        EditPredictionKeybindSurface::CursorPopoverCompact,
-                        window,
-                        cx,
-                    );
-
-                    return Some(
-                        h_flex()
-                            .elevation_2(cx)
-                            .border(BORDER_WIDTH)
-                            .border_color(cx.theme().colors().border)
-                            .when(keybind_display.missing_accept_keystroke, |el| {
-                                el.border_color(cx.theme().status().error)
-                            })
-                            .rounded(RADIUS)
-                            .rounded_tl(px(0.))
-                            .overflow_hidden()
-                            .child(div().px_1p5().child(match &prediction.completion {
-                                EditPrediction::MoveWithin { target, snapshot } => {
-                                    use text::ToPoint as _;
-                                    if target.text_anchor_in(&snapshot).to_point(snapshot).row
-                                        > cursor_point.row
-                                    {
-                                        Icon::new(icons.down)
-                                    } else {
-                                        Icon::new(icons.up)
-                                    }
-                                }
-                                EditPrediction::MoveOutside { .. } => {
-                                    // TODO [zeta2] custom icon for external jump?
-                                    Icon::new(icons.base)
-                                }
-                                EditPrediction::Edit { .. } => Icon::new(icons.base),
-                            }))
-                            .child(
-                                h_flex()
-                                    .gap_1()
-                                    .py_1()
-                                    .px_2()
-                                    .rounded_r(RADIUS - BORDER_WIDTH)
-                                    .border_l_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .bg(Self::edit_prediction_line_popover_bg_color(cx))
-                                    .when(keybind_display.show_hold_label, |el| {
-                                        el.child(
-                                            Label::new("Hold")
-                                                .size(LabelSize::Small)
-                                                .when(
-                                                    keybind_display.missing_accept_keystroke,
-                                                    |el| el.strikethrough(),
-                                                )
-                                                .line_height_style(LineHeightStyle::UiLabel),
-                                        )
-                                    })
-                                    .id("edit_prediction_cursor_popover_keybind")
-                                    .when(keybind_display.missing_accept_keystroke, |el| {
-                                        let status_colors = cx.theme().status();
-
-                                        el.bg(status_colors.error_background)
-                                            .border_color(status_colors.error.opacity(0.6))
-                                            .child(Icon::new(IconName::Info).color(Color::Error))
-                                            .cursor_default()
-                                            .hoverable_tooltip(move |_window, cx| {
-                                                cx.new(|_| MissingEditPredictionKeybindingTooltip)
-                                                    .into()
-                                            })
-                                    })
-                                    .when_some(
-                                        keybind_display.displayed_keystroke.as_ref(),
-                                        |el, compact_keystroke| {
-                                            el.child(self.render_edit_prediction_popover_keystroke(
-                                                compact_keystroke,
-                                                Color::Default,
-                                                cx,
-                                            ))
-                                        },
-                                    ),
-                            )
-                            .into_any(),
-                    );
-                }
-
-                self.render_edit_prediction_cursor_popover_preview(
-                    prediction,
-                    cursor_point,
-                    style,
-                    cx,
-                )?
-            }
-
-            None if is_refreshing => match &self.stale_edit_prediction_in_menu {
-                Some(stale_completion) => self.render_edit_prediction_cursor_popover_preview(
-                    stale_completion,
-                    cursor_point,
-                    style,
-                    cx,
-                )?,
-
-                None => pending_completion_container(icons.base)
-                    .child(Label::new("...").size(LabelSize::Small)),
-            },
-
-            None => pending_completion_container(icons.base)
-                .child(Label::new("...").size(LabelSize::Small)),
-        };
-
-        let completion = if is_refreshing || self.active_edit_prediction.is_none() {
-            completion
-                .with_animation(
-                    "loading-completion",
-                    Animation::new(Duration::from_secs(2))
-                        .repeat()
-                        .with_easing(pulsating_between(0.4, 0.8)),
-                    |label, delta| label.opacity(delta),
-                )
-                .into_any_element()
-        } else {
-            completion.into_any_element()
-        };
-
-        let has_completion = self.active_edit_prediction.is_some();
-        let keybind_display = self.edit_prediction_keybind_display(
-            EditPredictionKeybindSurface::CursorPopoverExpanded,
-            window,
-            cx,
-        );
-
-        Some(
-            h_flex()
-                .min_w(min_width)
-                .max_w(max_width)
-                .flex_1()
-                .elevation_2(cx)
-                .border_color(cx.theme().colors().border)
-                .child(
-                    div()
-                        .flex_1()
-                        .py_1()
-                        .px_2()
-                        .overflow_hidden()
-                        .child(completion),
-                )
-                .when_some(
-                    keybind_display.displayed_keystroke.as_ref(),
-                    |el, keystroke| {
-                        let key_color = if !has_completion {
-                            Color::Muted
-                        } else {
-                            Color::Default
-                        };
-
-                        if keybind_display.action == EditPredictionKeybindAction::Preview {
-                            el.child(
-                                h_flex()
-                                    .h_full()
-                                    .border_l_1()
-                                    .rounded_r_lg()
-                                    .border_color(cx.theme().colors().border)
-                                    .bg(Self::edit_prediction_line_popover_bg_color(cx))
-                                    .gap_1()
-                                    .py_1()
-                                    .px_2()
-                                    .child(self.render_edit_prediction_popover_keystroke(
-                                        keystroke, key_color, cx,
-                                    ))
-                                    .child(Label::new("Preview").into_any_element())
-                                    .opacity(if has_completion { 1.0 } else { 0.4 }),
-                            )
-                        } else {
-                            el.child(
-                                h_flex()
-                                    .h_full()
-                                    .border_l_1()
-                                    .rounded_r_lg()
-                                    .border_color(cx.theme().colors().border)
-                                    .bg(Self::edit_prediction_line_popover_bg_color(cx))
-                                    .gap_1()
-                                    .py_1()
-                                    .px_2()
-                                    .child(self.render_edit_prediction_popover_keystroke(
-                                        keystroke, key_color, cx,
-                                    ))
-                                    .opacity(if has_completion { 1.0 } else { 0.4 }),
-                            )
-                        }
-                    },
-                )
-                .into_any(),
-        )
-    }
-
-    fn render_edit_prediction_cursor_popover_preview(
-        &self,
-        completion: &EditPredictionState,
-        cursor_point: Point,
-        style: &EditorStyle,
-        cx: &mut Context<Editor>,
-    ) -> Option<Div> {
-        use text::ToPoint as _;
-
-        fn render_relative_row_jump(
-            prefix: impl Into<String>,
-            current_row: u32,
-            target_row: u32,
-        ) -> Div {
-            let (row_diff, arrow) = if target_row < current_row {
-                (current_row - target_row, IconName::ArrowUp)
-            } else {
-                (target_row - current_row, IconName::ArrowDown)
-            };
-
-            h_flex()
-                .child(
-                    Label::new(format!("{}{}", prefix.into(), row_diff))
-                        .color(Color::Muted)
-                        .size(LabelSize::Small),
-                )
-                .child(Icon::new(arrow).color(Color::Muted).size(IconSize::Small))
-        }
-
-        let supports_jump = self
-            .edit_prediction_provider
-            .as_ref()
-            .map(|provider| provider.provider.supports_jump_to_edit())
-            .unwrap_or(true);
-
-        let icons = Self::get_prediction_provider_icons(&self.edit_prediction_provider, cx);
-
-        match &completion.completion {
-            EditPrediction::MoveWithin {
-                target, snapshot, ..
-            } => {
-                if !supports_jump {
-                    return None;
-                }
-                let (target, _) = self.display_snapshot(cx).anchor_to_buffer_anchor(*target)?;
-
-                Some(
-                    h_flex()
-                        .px_2()
-                        .gap_2()
-                        .flex_1()
-                        .child(if target.to_point(snapshot).row > cursor_point.row {
-                            Icon::new(icons.down)
-                        } else {
-                            Icon::new(icons.up)
-                        })
-                        .child(Label::new("Jump to Edit")),
-                )
-            }
-            EditPrediction::MoveOutside { snapshot, .. } => {
-                let file_name = snapshot
-                    .file()
-                    .map(|file| file.file_name(cx))
-                    .unwrap_or("untitled");
-                Some(
-                    h_flex()
-                        .px_2()
-                        .gap_2()
-                        .flex_1()
-                        .child(Icon::new(icons.base))
-                        .child(Label::new(format!("Jump to {file_name}"))),
-                )
-            }
-            EditPrediction::Edit {
-                edits,
-                edit_preview,
-                snapshot,
-                ..
-            } => {
-                let first_edit_row = self
-                    .display_snapshot(cx)
-                    .anchor_to_buffer_anchor(edits.first()?.0.start)?
-                    .0
-                    .to_point(snapshot)
-                    .row;
-
-                let (highlighted_edits, has_more_lines) =
-                    if let Some(edit_preview) = edit_preview.as_ref() {
-                        crate::edit_prediction_edit_text(
-                            snapshot,
-                            edits,
-                            edit_preview,
-                            true,
-                            &self.display_snapshot(cx),
-                            cx,
-                        )
-                        .first_line_preview()
-                    } else {
-                        crate::edit_prediction_fallback_text(edits, cx).first_line_preview()
-                    };
-
-                let styled_text = gpui::StyledText::new(highlighted_edits.text)
-                    .with_default_highlights(&style.text, highlighted_edits.highlights);
-
-                let preview = h_flex()
-                    .gap_1()
-                    .min_w_16()
-                    .child(styled_text)
-                    .when(has_more_lines, |parent| parent.child("…"));
-
-                let left = if supports_jump && first_edit_row != cursor_point.row {
-                    render_relative_row_jump("", cursor_point.row, first_edit_row)
-                        .into_any_element()
-                } else {
-                    Icon::new(icons.base).into_any_element()
-                };
-
-                Some(
-                    h_flex()
-                        .h_full()
-                        .flex_1()
-                        .gap_2()
-                        .pr_1()
-                        .overflow_x_hidden()
-                        .font(
-                            theme_settings::ThemeSettings::get_global(cx)
-                                .buffer_font
-                                .clone(),
-                        )
-                        .child(left)
-                        .child(preview),
-                )
-            }
         }
     }
 
@@ -7251,7 +4972,13 @@ impl Editor {
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
             this.insert("", window, cx);
             linked_edits.apply_with_left_expansion(cx);
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             refresh_linked_ranges(this, window, cx);
         });
     }
@@ -7274,7 +5001,13 @@ impl Editor {
             let linked_edits = this.linked_edits_for_selections(Arc::from(""), cx);
             this.insert("", window, cx);
             linked_edits.apply(cx);
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             refresh_linked_ranges(this, window, cx);
         });
     }
@@ -7459,7 +5192,13 @@ impl Editor {
         self.transact(window, cx, |this, window, cx| {
             this.buffer.update(cx, |b, cx| b.edit(edits, None, cx));
             this.change_selections(Default::default(), window, cx, |s| s.select(selections));
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
         });
     }
 
@@ -7588,7 +5327,7 @@ impl Editor {
             let snapshot = buffer.snapshot(cx);
             for selection in &selections {
                 let settings = buffer.language_settings_at(selection.start, cx);
-                let tab_size = settings.tab_size.get();
+                let tab_size = settings.tab_size;
                 let mut rows = selection.spanned_rows(false, &display_map);
 
                 // Avoid re-outdenting a row that has already been outdented by a
@@ -7602,17 +5341,7 @@ impl Editor {
                 for row in rows.iter_rows() {
                     let indent_size = snapshot.indent_size_for_line(row);
                     if indent_size.len > 0 {
-                        let deletion_len = match indent_size.kind {
-                            IndentKind::Space => {
-                                let columns_to_prev_tab_stop = indent_size.len % tab_size;
-                                if columns_to_prev_tab_stop == 0 {
-                                    tab_size
-                                } else {
-                                    columns_to_prev_tab_stop
-                                }
-                            }
-                            IndentKind::Tab => 1,
-                        };
+                        let deletion_len = indent_size.outdent_len(tab_size);
                         let start = if has_multiple_rows
                             || deletion_len > selection.start.column
                             || indent_size.len < selection.start.column
@@ -8120,24 +5849,29 @@ impl Editor {
         );
     }
 
-    fn add_edit_breakpoint_block(
+    fn add_edit_block(
         &mut self,
         anchor: Anchor,
-        breakpoint: &Breakpoint,
-        edit_action: BreakpointPromptEditAction,
+        base_text: &str,
+        placeholder_text: &str,
+        confirm: Option<PromptEditorCallback>,
+        cancel: Option<PromptEditorCallback>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let weak_editor = cx.weak_entity();
         let bp_prompt = cx.new(|cx| {
-            BreakpointPromptEditor::new(
-                weak_editor,
-                anchor,
-                breakpoint.clone(),
-                edit_action,
-                window,
-                cx,
-            )
+            let mut prompt_editor =
+                PromptEditor::new(weak_editor, placeholder_text, base_text, window, cx);
+
+            if let Some(callback) = confirm {
+                prompt_editor = prompt_editor.on_confirm(callback);
+            }
+            if let Some(callback) = cancel {
+                prompt_editor = prompt_editor.on_cancel(callback);
+            }
+
+            prompt_editor
         });
 
         let height = bp_prompt.update(cx, |this, cx| {
@@ -8163,6 +5897,61 @@ impl Editor {
         bp_prompt.update(cx, |prompt, _| {
             prompt.add_block_ids(block_ids);
         });
+    }
+
+    fn add_edit_breakpoint_block(
+        &mut self,
+        anchor: Anchor,
+        breakpoint: &Breakpoint,
+        edit_action: BreakpointPromptEditAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let base_text: &str = match edit_action {
+            BreakpointPromptEditAction::Log => breakpoint.message.as_ref(),
+            BreakpointPromptEditAction::Condition => breakpoint.condition.as_ref(),
+            BreakpointPromptEditAction::HitCondition => breakpoint.hit_condition.as_ref(),
+        }
+        .map(|msg| msg.as_ref())
+        .unwrap_or_default();
+
+        let placeholder_text = match edit_action {
+            BreakpointPromptEditAction::Log => {
+                "Message to log when a breakpoint is hit. Expressions within {} are interpolated."
+            }
+            BreakpointPromptEditAction::Condition => {
+                "Condition when a breakpoint is hit. Expressions within {} are interpolated."
+            }
+            BreakpointPromptEditAction::HitCondition => "How many breakpoint hits to ignore",
+        };
+
+        let breakpoint = breakpoint.clone();
+        self.add_edit_block(
+            anchor,
+            base_text,
+            placeholder_text,
+            Some(Box::new(move |message: String, editor: &mut Self, cx| {
+                editor.edit_breakpoint_at_anchor(
+                    anchor,
+                    breakpoint,
+                    match edit_action {
+                        BreakpointPromptEditAction::Log => {
+                            BreakpointEditAction::EditLogMessage(message.into())
+                        }
+                        BreakpointPromptEditAction::Condition => {
+                            BreakpointEditAction::EditCondition(message.into())
+                        }
+                        BreakpointPromptEditAction::HitCondition => {
+                            BreakpointEditAction::EditHitCondition(message.into())
+                        }
+                    },
+                    cx,
+                );
+            })),
+            None,
+            window,
+            cx,
+        );
     }
 
     pub(crate) fn breakpoint_at_row(
@@ -8270,13 +6059,13 @@ impl Editor {
                     .first()
                     .and_then(|bookmark| {
                         let bookmark_row = buffer_snapshot
-                            .summary_for_anchor::<text::PointUtf16>(&bookmark.anchor())
+                            .summary_for_anchor::<text::PointUtf16>(&bookmark.anchor)
                             .row;
 
                         if bookmark_row == row {
                             snapshot
                                 .buffer_snapshot()
-                                .anchor_in_excerpt(bookmark.anchor())
+                                .anchor_in_excerpt(bookmark.anchor)
                         } else {
                             None
                         }
@@ -8598,7 +6387,7 @@ impl Editor {
 
             self.go_to_line::<ActiveDebugLine>(
                 multibuffer_anchor,
-                Some(cx.theme().colors().editor_debugger_active_line_background),
+                |cx| cx.theme().colors().editor_debugger_active_line_background,
                 window,
                 cx,
             );
@@ -9247,7 +7036,6 @@ impl Editor {
 
         let mut new_selections = Vec::new();
         let mut edits = Vec::new();
-        let mut selection_adjustment = 0isize;
 
         for selection in self.selections.all_adjusted(&self.display_snapshot(cx)) {
             let selection_is_empty = selection.is_empty();
@@ -9262,23 +7050,24 @@ impl Editor {
                 )
             };
 
-            let text = buffer.text_for_range(start..end).collect::<String>();
-            let old_length = text.len() as isize;
-            let text = callback(&text);
+            let old_text = buffer.text_for_range(start..end).collect::<String>();
+            let new_text = callback(&old_text);
 
             new_selections.push(Selection {
-                start: MultiBufferOffset((start.0 as isize - selection_adjustment) as usize),
-                end: MultiBufferOffset(
-                    ((start.0 + text.len()) as isize - selection_adjustment) as usize,
-                ),
+                start: buffer.anchor_before(start),
+                end: buffer.anchor_after(end),
                 goal: SelectionGoal::None,
                 id: selection.id,
                 reversed: selection.reversed,
             });
 
-            selection_adjustment += old_length - text.len() as isize;
+            if new_text != old_text {
+                edits.push((start..end, new_text));
+            }
+        }
 
-            edits.push((start..end, text));
+        if edits.is_empty() {
+            return;
         }
 
         self.transact(window, cx, |this, window, cx| {
@@ -9758,467 +7547,16 @@ impl Editor {
         });
     }
 
-    pub fn cut_common(
+    fn restore_selections(
         &mut self,
-        cut_no_selection_line: bool,
+        selections: Option<Arc<[Selection<Anchor>]>>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> ClipboardItem {
-        let mut text = String::new();
-        let buffer = self.buffer.read(cx).snapshot(cx);
-        let mut selections = self.selections.all::<Point>(&self.display_snapshot(cx));
-        let mut clipboard_selections = Vec::with_capacity(selections.len());
-        {
-            let max_point = buffer.max_point();
-            let mut is_first = true;
-            let mut prev_selection_was_entire_line = false;
-            for selection in &mut selections {
-                let is_entire_line =
-                    (selection.is_empty() && cut_no_selection_line) || self.selections.line_mode();
-                if is_entire_line {
-                    selection.start = Point::new(selection.start.row, 0);
-                    if !selection.is_empty() && selection.end.column == 0 {
-                        selection.end = cmp::min(max_point, selection.end);
-                    } else {
-                        selection.end = cmp::min(max_point, Point::new(selection.end.row + 1, 0));
-                    }
-                    selection.goal = SelectionGoal::None;
-                }
-                if is_first {
-                    is_first = false;
-                } else if !prev_selection_was_entire_line {
-                    text += "\n";
-                }
-                prev_selection_was_entire_line = is_entire_line;
-                let mut len = 0;
-                for chunk in buffer.text_for_range(selection.start..selection.end) {
-                    text.push_str(chunk);
-                    len += chunk.len();
-                }
-
-                clipboard_selections.push(ClipboardSelection::for_buffer(
-                    len,
-                    is_entire_line,
-                    selection.range(),
-                    &buffer,
-                    self.project.as_ref(),
-                    cx,
-                ));
-            }
-        }
-
-        self.transact(window, cx, |this, window, cx| {
-            this.change_selections(Default::default(), window, cx, |s| {
-                s.select(selections);
+    ) {
+        if let Some(selections) = selections.filter(|selections| !selections.is_empty()) {
+            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+                s.select_anchors(selections.to_vec());
             });
-            this.insert("", window, cx);
-        });
-        ClipboardItem::new_string_with_json_metadata(text, clipboard_selections)
-    }
-
-    pub fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut Context<Self>) {
-        if self.read_only(cx) {
-            return;
-        }
-        let item = self.cut_common(true, window, cx);
-        cx.write_to_clipboard(item);
-    }
-
-    pub fn kill_ring_cut(&mut self, _: &KillRingCut, window: &mut Window, cx: &mut Context<Self>) {
-        if self.read_only(cx) {
-            return;
-        }
-        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-            s.move_with(&mut |snapshot, sel| {
-                if sel.is_empty() {
-                    sel.end = DisplayPoint::new(sel.end.row(), snapshot.line_len(sel.end.row()));
-                }
-                if sel.is_empty() {
-                    sel.end = DisplayPoint::new(sel.end.row() + 1_u32, 0);
-                }
-            });
-        });
-        let item = self.cut_common(false, window, cx);
-        cx.set_global(KillRing(item))
-    }
-
-    pub fn kill_ring_yank(
-        &mut self,
-        _: &KillRingYank,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let (text, metadata) = if let Some(KillRing(item)) = cx.try_global() {
-            if let Some(ClipboardEntry::String(kill_ring)) = item.entries().first() {
-                (kill_ring.text().to_string(), kill_ring.metadata_json())
-            } else {
-                return;
-            }
-        } else {
-            return;
-        };
-        self.do_paste(&text, metadata, false, window, cx);
-    }
-
-    pub fn copy_and_trim(&mut self, _: &CopyAndTrim, _: &mut Window, cx: &mut Context<Self>) {
-        self.do_copy(true, cx);
-    }
-
-    pub fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        self.do_copy(false, cx);
-    }
-
-    fn do_copy(&self, strip_leading_indents: bool, cx: &mut Context<Self>) {
-        let selections = self.selections.all::<Point>(&self.display_snapshot(cx));
-        let buffer = self.buffer.read(cx).read(cx);
-        let mut text = String::new();
-        let mut clipboard_selections = Vec::with_capacity(selections.len());
-
-        let max_point = buffer.max_point();
-        let mut is_first = true;
-        for selection in &selections {
-            let mut start = selection.start;
-            let mut end = selection.end;
-            let is_entire_line = selection.is_empty() || self.selections.line_mode();
-            let mut add_trailing_newline = false;
-            if is_entire_line {
-                start = Point::new(start.row, 0);
-                let next_line_start = Point::new(end.row + 1, 0);
-                if next_line_start <= max_point {
-                    end = next_line_start;
-                } else {
-                    // We're on the last line without a trailing newline.
-                    // Copy to the end of the line and add a newline afterwards.
-                    end = Point::new(end.row, buffer.line_len(MultiBufferRow(end.row)));
-                    add_trailing_newline = true;
-                }
-            }
-
-            let mut trimmed_selections = Vec::new();
-            if strip_leading_indents && end.row.saturating_sub(start.row) > 0 {
-                let row = MultiBufferRow(start.row);
-                let first_indent = buffer.indent_size_for_line(row);
-                if first_indent.len == 0 || start.column > first_indent.len {
-                    trimmed_selections.push(start..end);
-                } else {
-                    trimmed_selections.push(
-                        Point::new(row.0, first_indent.len)
-                            ..Point::new(row.0, buffer.line_len(row)),
-                    );
-                    for row in start.row + 1..=end.row {
-                        let mut line_len = buffer.line_len(MultiBufferRow(row));
-                        if row == end.row {
-                            line_len = end.column;
-                        }
-                        if line_len == 0 {
-                            trimmed_selections.push(Point::new(row, 0)..Point::new(row, line_len));
-                            continue;
-                        }
-                        let row_indent_size = buffer.indent_size_for_line(MultiBufferRow(row));
-                        if row_indent_size.len >= first_indent.len {
-                            trimmed_selections
-                                .push(Point::new(row, first_indent.len)..Point::new(row, line_len));
-                        } else {
-                            trimmed_selections.clear();
-                            trimmed_selections.push(start..end);
-                            break;
-                        }
-                    }
-                }
-            } else {
-                trimmed_selections.push(start..end);
-            }
-
-            let is_multiline_trim = trimmed_selections.len() > 1;
-            let mut selection_len: usize = 0;
-            let prev_selection_was_entire_line = is_entire_line && !is_multiline_trim;
-
-            for trimmed_range in trimmed_selections {
-                if is_first {
-                    is_first = false;
-                } else if is_multiline_trim || !prev_selection_was_entire_line {
-                    text.push('\n');
-                    if is_multiline_trim {
-                        selection_len += 1;
-                    }
-                }
-                for chunk in buffer.text_for_range(trimmed_range.start..trimmed_range.end) {
-                    text.push_str(chunk);
-                    selection_len += chunk.len();
-                }
-                if add_trailing_newline {
-                    text.push('\n');
-                    selection_len += 1;
-                }
-            }
-
-            clipboard_selections.push(ClipboardSelection::for_buffer(
-                selection_len,
-                is_entire_line,
-                start..end,
-                &buffer,
-                self.project.as_ref(),
-                cx,
-            ));
-        }
-
-        cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
-            text,
-            clipboard_selections,
-        ));
-    }
-
-    pub fn do_paste(
-        &mut self,
-        text: &String,
-        clipboard_selections: Option<Vec<ClipboardSelection>>,
-        handle_entire_lines: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.read_only(cx) {
-            return;
-        }
-
-        self.finalize_last_transaction(cx);
-
-        let clipboard_text = Cow::Borrowed(text.as_str());
-
-        self.transact(window, cx, |this, window, cx| {
-            let had_active_edit_prediction = this.has_active_edit_prediction();
-            let display_map = this.display_snapshot(cx);
-            let old_selections = this.selections.all::<MultiBufferOffset>(&display_map);
-            let cursor_offset = this
-                .selections
-                .last::<MultiBufferOffset>(&display_map)
-                .head();
-
-            if let Some(mut clipboard_selections) = clipboard_selections {
-                let all_selections_were_entire_line =
-                    clipboard_selections.iter().all(|s| s.is_entire_line);
-                let first_selection_indent_column =
-                    clipboard_selections.first().map(|s| s.first_line_indent);
-                if clipboard_selections.len() != old_selections.len() {
-                    clipboard_selections.drain(..);
-                }
-                let mut auto_indent_on_paste = true;
-
-                this.buffer.update(cx, |buffer, cx| {
-                    let snapshot = buffer.read(cx);
-                    auto_indent_on_paste = snapshot
-                        .language_settings_at(cursor_offset, cx)
-                        .auto_indent_on_paste;
-
-                    let mut start_offset = 0;
-                    let mut edits = Vec::new();
-                    let mut original_indent_columns = Vec::new();
-                    for (ix, selection) in old_selections.iter().enumerate() {
-                        let to_insert;
-                        let entire_line;
-                        let original_indent_column;
-                        if let Some(clipboard_selection) = clipboard_selections.get(ix) {
-                            let end_offset = start_offset + clipboard_selection.len;
-                            to_insert = &clipboard_text[start_offset..end_offset];
-                            entire_line = clipboard_selection.is_entire_line;
-                            start_offset = if entire_line {
-                                end_offset
-                            } else {
-                                end_offset + 1
-                            };
-                            original_indent_column = Some(clipboard_selection.first_line_indent);
-                        } else {
-                            to_insert = &*clipboard_text;
-                            entire_line = all_selections_were_entire_line;
-                            original_indent_column = first_selection_indent_column
-                        }
-
-                        let (range, to_insert) =
-                            if selection.is_empty() && handle_entire_lines && entire_line {
-                                // If the corresponding selection was empty when this slice of the
-                                // clipboard text was written, then the entire line containing the
-                                // selection was copied. If this selection is also currently empty,
-                                // then paste the line before the current line of the buffer.
-                                let column = selection.start.to_point(&snapshot).column as usize;
-                                let line_start = selection.start - column;
-                                (line_start..line_start, Cow::Borrowed(to_insert))
-                            } else {
-                                let language = snapshot.language_at(selection.head());
-                                let range = selection.range();
-                                if let Some(language) = language
-                                    && language.name() == "Markdown"
-                                {
-                                    edit_for_markdown_paste(
-                                        &snapshot,
-                                        range,
-                                        to_insert,
-                                        url::Url::parse(to_insert).ok(),
-                                    )
-                                } else {
-                                    (range, Cow::Borrowed(to_insert))
-                                }
-                            };
-
-                        edits.push((range, to_insert));
-                        original_indent_columns.push(original_indent_column);
-                    }
-                    drop(snapshot);
-
-                    buffer.edit(
-                        edits,
-                        if auto_indent_on_paste {
-                            Some(AutoindentMode::Block {
-                                original_indent_columns,
-                            })
-                        } else {
-                            None
-                        },
-                        cx,
-                    );
-                });
-
-                let selections = this
-                    .selections
-                    .all::<MultiBufferOffset>(&this.display_snapshot(cx));
-                this.change_selections(Default::default(), window, cx, |s| s.select(selections));
-            } else {
-                let url = url::Url::parse(&clipboard_text).ok();
-
-                let auto_indent_mode = if !clipboard_text.is_empty() {
-                    Some(AutoindentMode::Block {
-                        original_indent_columns: Vec::new(),
-                    })
-                } else {
-                    None
-                };
-
-                let selection_anchors = this.buffer.update(cx, |buffer, cx| {
-                    let snapshot = buffer.snapshot(cx);
-
-                    let anchors = old_selections
-                        .iter()
-                        .map(|s| {
-                            let anchor = snapshot.anchor_after(s.head());
-                            s.map(|_| anchor)
-                        })
-                        .collect::<Vec<_>>();
-
-                    let mut edits = Vec::new();
-
-                    // When pasting text without metadata (e.g. copied from an
-                    // external editor using multiple cursors) and the number of
-                    // lines matches the number of selections, distribute one
-                    // line per cursor instead of pasting the whole text at each.
-                    let lines: Vec<&str> = clipboard_text.split('\n').collect();
-                    let distribute_lines =
-                        old_selections.len() > 1 && lines.len() == old_selections.len();
-
-                    for (ix, selection) in old_selections.iter().enumerate() {
-                        let language = snapshot.language_at(selection.head());
-                        let range = selection.range();
-
-                        let text_for_cursor: &str = if distribute_lines {
-                            lines[ix]
-                        } else {
-                            &clipboard_text
-                        };
-
-                        let (edit_range, edit_text) = if let Some(language) = language
-                            && language.name() == "Markdown"
-                        {
-                            edit_for_markdown_paste(&snapshot, range, text_for_cursor, url.clone())
-                        } else {
-                            (range, Cow::Borrowed(text_for_cursor))
-                        };
-
-                        edits.push((edit_range, edit_text));
-                    }
-
-                    drop(snapshot);
-                    buffer.edit(edits, auto_indent_mode, cx);
-
-                    anchors
-                });
-
-                this.change_selections(Default::default(), window, cx, |s| {
-                    s.select_anchors(selection_anchors);
-                });
-            }
-
-            //   🤔                 |    ..     | show_in_menu |
-            // | ..                  |   true        true
-            // | had_edit_prediction |   false       true
-
-            let trigger_in_words =
-                this.show_edit_predictions_in_menu() || !had_active_edit_prediction;
-
-            this.trigger_completion_on_input(text, trigger_in_words, window, cx);
-        });
-    }
-
-    pub fn diff_clipboard_with_selection(
-        &mut self,
-        _: &DiffClipboardWithSelection,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let selections = self
-            .selections
-            .all::<MultiBufferOffset>(&self.display_snapshot(cx));
-
-        if selections.is_empty() {
-            log::warn!("There should always be at least one selection in Zed. This is a bug.");
-            return;
-        };
-
-        let clipboard_text = cx.read_from_clipboard().and_then(|item| {
-            item.entries().iter().find_map(|entry| match entry {
-                ClipboardEntry::String(text) => Some(text.text().to_string()),
-                _ => None,
-            })
-        });
-
-        let Some(clipboard_text) = clipboard_text else {
-            log::warn!("Clipboard doesn't contain text.");
-            return;
-        };
-
-        window.dispatch_action(
-            Box::new(DiffClipboardWithSelectionData {
-                clipboard_text,
-                editor: cx.entity(),
-            }),
-            cx,
-        );
-    }
-
-    pub fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(item) = cx.read_from_clipboard() {
-            self.paste_item(&item, window, cx);
-        }
-    }
-
-    pub fn paste_item(
-        &mut self,
-        item: &ClipboardItem,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.read_only(cx) {
-            return;
-        }
-        let clipboard_string = item.entries().iter().find_map(|entry| match entry {
-            ClipboardEntry::String(s) => Some(s),
-            _ => None,
-        });
-        match clipboard_string {
-            Some(clipboard_string) => self.do_paste(
-                clipboard_string.text(),
-                clipboard_string.metadata_json::<Vec<ClipboardSelection>>(),
-                true,
-                window,
-                cx,
-            ),
-            _ => self.do_paste(&item.text().unwrap_or_default(), None, true, window, cx),
         }
     }
 
@@ -10228,23 +7566,21 @@ impl Editor {
         }
 
         if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.undo(cx)) {
-            if let Some((selections, _)) =
-                self.selection_history.transaction(transaction_id).cloned()
-            {
-                self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_anchors(selections.to_vec());
-                });
-            } else {
-                log::error!(
-                    "No entry in selection_history found for undo. \
-                     This may correspond to a bug where undo does not update the selection. \
-                     If this is occurring, please add details to \
-                     https://github.com/zed-industries/zed/issues/22692"
-                );
+            let transaction = self.selection_history.transaction(transaction_id);
+            if transaction.is_none() {
+                log::error!("No selection history for undone transaction; selection unchanged");
             }
+            let selections = transaction.map(|transaction| transaction.undo.clone());
+            self.restore_selections(selections, window, cx);
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
-            self.refresh_edit_prediction(true, false, window, cx);
+            self.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             cx.emit(EditorEvent::Edited { transaction_id });
             cx.emit(EditorEvent::TransactionUndone { transaction_id });
         }
@@ -10256,23 +7592,20 @@ impl Editor {
         }
 
         if let Some(transaction_id) = self.buffer.update(cx, |buffer, cx| buffer.redo(cx)) {
-            if let Some((_, Some(selections))) =
-                self.selection_history.transaction(transaction_id).cloned()
-            {
-                self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                    s.select_anchors(selections.to_vec());
-                });
-            } else {
-                log::error!(
-                    "No entry in selection_history found for redo. \
-                     This may correspond to a bug where undo does not update the selection. \
-                     If this is occurring, please add details to \
-                     https://github.com/zed-industries/zed/issues/22692"
-                );
-            }
+            let selections = self
+                .selection_history
+                .transaction(transaction_id)
+                .and_then(|transaction| transaction.redo.clone());
+            self.restore_selections(selections, window, cx);
             self.request_autoscroll(Autoscroll::fit(), cx);
             self.unmark_text(window, cx);
-            self.refresh_edit_prediction(true, false, window, cx);
+            self.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
             cx.emit(EditorEvent::Edited { transaction_id });
         }
     }
@@ -10376,10 +7709,9 @@ impl Editor {
         }
         let provider = self.semantics_provider.clone()?;
         let selection = self.selections.newest_anchor().clone();
-        let (cursor_buffer, cursor_buffer_position) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(selection.head(), cx)?;
+        let cursor = self.rename_target_anchor(&selection, cx);
+        let (cursor_buffer, cursor_buffer_position) =
+            self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
         let (tail_buffer, cursor_buffer_position_end) = self
             .buffer
             .read(cx)
@@ -10407,7 +7739,7 @@ impl Editor {
 
                     this.take_rename(false, window, cx);
                     let buffer = this.buffer.read(cx).read(cx);
-                    let cursor_offset = selection.head().to_offset(&buffer);
+                    let cursor_offset = cursor.to_offset(&buffer);
                     let rename_start =
                         cursor_offset.saturating_sub_usize(cursor_offset_in_rename_range);
                     let rename_end = rename_start + rename_buffer_range.len();
@@ -10672,7 +8004,6 @@ impl Editor {
 
         self.selections
             .disjoint_anchor_ranges()
-            .filter(|range| range.start != range.end)
             .flat_map(|range| [range.start, range.end])
             .filter_map(|anchor| snapshot.anchor_to_buffer_anchor(anchor))
             .filter_map(|(_, buffer_snapshot)| multi_buffer.buffer(buffer_snapshot.remote_id()))
@@ -10778,7 +8109,7 @@ impl Editor {
                 // will take you back to where you made the last edit, instead of staying where you scrolled
                 self.selection_history
                     .transaction(transaction_id_prev)
-                    .map(|t| t.0.clone())
+                    .map(|t| t.undo.clone())
             })
             .unwrap_or_else(|| self.selections.disjoint_anchors_arc());
 
@@ -10891,6 +8222,7 @@ impl Editor {
                     project.restart_language_servers_for_buffers(
                         multi_buffer.all_buffers().into_iter().collect(),
                         HashSet::default(),
+                        true,
                         cx,
                     );
                 });
@@ -10942,6 +8274,10 @@ impl Editor {
         _: &mut Context<Self>,
     ) {
         window.show_character_palette();
+    }
+
+    pub fn supports_minimap(&self, cx: &App) -> bool {
+        !self.minimap_visibility.disabled() && self.buffer_kind(cx) == ItemBufferKind::Singleton
     }
 
     pub fn toggle_minimap(
@@ -10999,10 +8335,8 @@ impl Editor {
             .buffer
             .update(cx, |buffer, cx| buffer.end_transaction_at(now, cx))
         {
-            if let Some((_, end_selections)) =
-                self.selection_history.transaction_mut(transaction_id)
-            {
-                *end_selections = Some(self.selections.disjoint_anchors_arc());
+            if let Some(transaction) = self.selection_history.transaction_mut(transaction_id) {
+                transaction.redo = Some(self.selections.disjoint_anchors_arc());
             } else {
                 log::error!("unexpectedly ended a transaction that wasn't started by this editor");
             }
@@ -11017,7 +8351,7 @@ impl Editor {
     pub fn modify_transaction_selection_history(
         &mut self,
         transaction_id: TransactionId,
-        modify: impl FnOnce(&mut (Arc<[Selection<Anchor>]>, Option<Arc<[Selection<Anchor>]>>)),
+        modify: impl FnOnce(&mut TransactionSelections),
     ) -> bool {
         self.selection_history
             .transaction_mut(transaction_id)
@@ -11386,7 +8720,13 @@ impl Editor {
                     (selection.range(), uuid.to_string())
                 });
             this.edit(edits, cx);
-            this.refresh_edit_prediction(true, false, window, cx);
+            this.refresh_edit_prediction(
+                true,
+                false,
+                EditPredictionRequestTrigger::BufferEdit,
+                window,
+                cx,
+            );
         });
     }
 
@@ -11447,7 +8787,7 @@ impl Editor {
     pub fn highlight_rows<T: 'static>(
         &mut self,
         range: Range<Anchor>,
-        color: Hsla,
+        color: fn(&App) -> Hsla,
         options: RowHighlightOptions,
         cx: &mut Context<Self>,
     ) {
@@ -11559,12 +8899,15 @@ impl Editor {
     }
 
     /// For a highlight given context type, gets all anchor ranges that will be used for row highlighting.
-    pub fn highlighted_rows<T: 'static>(&self) -> impl '_ + Iterator<Item = (Range<Anchor>, Hsla)> {
+    pub fn highlighted_rows<'a, T: 'static>(
+        &'a self,
+        cx: &'a App,
+    ) -> impl 'a + Iterator<Item = (Range<Anchor>, Hsla)> {
         self.highlighted_rows
             .get(&TypeId::of::<T>())
             .map_or(&[] as &[_], |vec| vec.as_slice())
             .iter()
-            .map(|highlight| (highlight.range.clone(), highlight.color))
+            .map(|highlight| (highlight.range.clone(), (highlight.color)(cx)))
     }
 
     /// Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
@@ -11601,7 +8944,7 @@ impl Editor {
                                 LineHighlight {
                                     include_gutter: highlight.options.include_gutter,
                                     border: None,
-                                    background: highlight.color.into(),
+                                    background: (highlight.color)(cx).into(),
                                     type_id: Some(highlight.type_id),
                                 },
                             );
@@ -12173,7 +9516,7 @@ impl Editor {
         match event {
             multi_buffer::Event::Edited {
                 edited_buffer,
-                is_local,
+                source,
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
@@ -12184,7 +9527,7 @@ impl Editor {
                 self.refresh_matching_bracket_highlights(&snapshot, cx);
                 self.refresh_outline_symbols_at_cursor(cx);
                 self.refresh_sticky_headers(&snapshot, cx);
-                if *is_local && self.has_active_edit_prediction() {
+                if source.is_local() && self.has_active_edit_prediction() {
                     self.update_visible_edit_prediction(window, cx);
                 }
 
@@ -12265,6 +9608,8 @@ impl Editor {
                     self.registered_buffers.remove(buffer_id);
                     self.clear_runnables(Some(*buffer_id));
                     self.semantic_token_state.invalidate_buffer(buffer_id);
+                    self.lsp_document_symbols.remove(buffer_id);
+                    self.lsp_document_links.per_buffer.remove(buffer_id);
                     self.display_map.update(cx, |display_map, cx| {
                         display_map.invalidate_semantic_highlights(*buffer_id);
                         display_map.clear_lsp_folding_ranges(*buffer_id, cx);
@@ -12341,6 +9686,13 @@ impl Editor {
         let theme_settings = theme_settings::ThemeSettings::get_global(cx);
         let theme = cx.theme();
         let accent_colors = theme.accents().clone();
+        let editor_background = theme.colors().editor_background;
+        let auto_accent_colors =
+            AccentColors(crate::bracket_colorization::bracket_colorization_accents(
+                &accent_colors.0,
+                theme.appearance,
+                editor_background,
+            ));
 
         let accent_overrides = theme_settings
             .theme_overrides
@@ -12360,7 +9712,7 @@ impl Editor {
             .collect();
 
         Some(AccentData {
-            colors: accent_colors,
+            colors: auto_accent_colors,
             overrides: accent_overrides,
         })
     }
@@ -12403,16 +9755,21 @@ impl Editor {
         }
         self.refresh_runnables(None, window, cx);
         self.update_edit_prediction_settings(cx);
-        self.refresh_edit_prediction(true, false, window, cx);
+        self.refresh_edit_prediction(true, false, EditPredictionRequestTrigger::Other, window, cx);
         self.refresh_inline_values(cx);
 
         let old_cursor_shape = self.cursor_shape;
-        let old_show_breadcrumbs = self.show_breadcrumbs;
+        let old_breadcrumbs_visible = self.breadcrumbs_visible();
 
         {
             let editor_settings = EditorSettings::get_global(cx);
             self.scroll_manager.vertical_scroll_margin = editor_settings.vertical_scroll_margin;
-            self.show_breadcrumbs = editor_settings.toolbar.breadcrumbs;
+            if self.breadcrumbs_visibility.settings_visibility()
+                != editor_settings.toolbar.breadcrumbs
+            {
+                self.breadcrumbs_visibility =
+                    BreadcrumbsVisibility::new(editor_settings.toolbar.breadcrumbs);
+            }
             self.cursor_shape = editor_settings.cursor_shape.unwrap_or_default();
         }
 
@@ -12420,7 +9777,7 @@ impl Editor {
             cx.emit(EditorEvent::CursorShapeChanged);
         }
 
-        if old_show_breadcrumbs != self.show_breadcrumbs {
+        if old_breadcrumbs_visible != self.breadcrumbs_visible() {
             cx.emit(EditorEvent::BreadcrumbsChanged);
         }
 
@@ -12486,6 +9843,17 @@ impl Editor {
             let was_inline = self.code_lens.is_some();
             if code_lens_inline != was_inline {
                 self.toggle_code_lens(code_lens_inline, window, cx);
+            }
+
+            let lsp_document_links_enabled = EditorSettings::get_global(cx).lsp_document_links;
+            if lsp_document_links_enabled != self.lsp_document_links.enabled {
+                self.lsp_document_links.enabled = lsp_document_links_enabled;
+                if lsp_document_links_enabled {
+                    self.refresh_document_links(None, cx);
+                } else {
+                    self.lsp_document_links.per_buffer.clear();
+                    self.lsp_document_links.refresh_task = Task::ready(());
+                }
             }
 
             self.refresh_inlay_hints(
@@ -13418,6 +10786,7 @@ impl Editor {
         }
         self.refresh_semantic_tokens(for_buffer, None, cx);
         self.refresh_document_colors(for_buffer, window, cx);
+        self.refresh_document_links(for_buffer, cx);
         self.refresh_folding_ranges(for_buffer, window, cx);
         self.refresh_code_lenses(for_buffer, window, cx);
         self.refresh_document_symbols(for_buffer, cx);
@@ -13545,7 +10914,7 @@ impl Editor {
         };
 
         breadcrumbs.extend(symbols.iter().map(|symbol| HighlightedText {
-            text: symbol.text.clone().into(),
+            text: symbol.text.clone(),
             highlights: symbol.highlight_ranges.clone(),
         }));
         Some(breadcrumbs)
@@ -13596,6 +10965,7 @@ impl Editor {
         self.colorize_brackets(false, cx);
         self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
         self.resolve_visible_code_lenses(cx);
+
         if !self.buffer().read(cx).is_singleton() || self.needs_initial_data_update {
             self.needs_initial_data_update = false;
             self.update_lsp_data(None, window, cx);
@@ -13623,26 +10993,6 @@ impl Editor {
             offset => Some(offset),
         }
     }
-}
-
-fn edit_for_markdown_paste<'a>(
-    buffer: &MultiBufferSnapshot,
-    range: Range<MultiBufferOffset>,
-    to_insert: &'a str,
-    url: Option<url::Url>,
-) -> (Range<MultiBufferOffset>, Cow<'a, str>) {
-    if url.is_none() {
-        return (range, Cow::Borrowed(to_insert));
-    };
-
-    let old_text = buffer.text_for_range(range.clone()).collect::<String>();
-
-    let new_text = if range.is_empty() || url::Url::parse(&old_text).is_ok() {
-        Cow::Borrowed(to_insert)
-    } else {
-        Cow::Owned(format!("[{old_text}]({to_insert})"))
-    };
-    (range, new_text)
 }
 
 fn process_completion_for_edit(
@@ -14222,7 +11572,7 @@ impl EditorSnapshot {
                 self.git_blame_gutter_max_author_length
                     .map(|max_author_length| {
                         let renderer = cx.global::<GlobalBlameRenderer>().0.clone();
-                        const MAX_RELATIVE_TIMESTAMP: &str = "60 minutes ago";
+                        const MAX_RELATIVE_TIMESTAMP: &str = "2 years, 11 months ago";
 
                         /// The number of characters to dedicate to gaps and margins.
                         const SPACING_WIDTH: usize = 4;
@@ -14322,30 +11672,50 @@ impl EditorSnapshot {
         current_selection_head: DisplayRow,
         count_wrapped_lines: bool,
     ) -> HashMap<DisplayRow, u32> {
-        let initial_offset =
-            self.relative_line_delta(current_selection_head, rows.start, count_wrapped_lines);
-
-        self.row_infos(rows.start)
+        let mut row_infos = self
+            .row_infos(rows.start)
             .take(rows.len())
             .enumerate()
-            .map(|(i, row_info)| (DisplayRow(rows.start.0 + i as u32), row_info))
+            .map(|(index, row_info)| (DisplayRow(rows.start.0 + index as u32), row_info))
             .filter(|(_row, row_info)| {
                 row_info.buffer_row.is_some()
                     || (count_wrapped_lines && row_info.wrapped_buffer_row.is_some())
             })
-            .enumerate()
-            .filter_map(|(i, (row, row_info))| {
+            .peekable();
+
+        // We find the first row that actually passes the filter and calculate its
+        // delta independently. This ensures accuracy when scrolling, as the first
+        // visible row in `rows` might be a wrap part that is filtered out, which
+        // would otherwise offset the counter for subsequent lines if we used
+        // `rows.start` as the base for enumeration.
+        let Some((first_row, _)) = row_infos.peek() else {
+            return HashMap::default();
+        };
+
+        let mut current_delta =
+            self.relative_line_delta(current_selection_head, *first_row, count_wrapped_lines);
+
+        row_infos
+            .filter_map(|(row, row_info)| {
+                let is_deleted = row_info
+                    .diff_status
+                    .is_some_and(|status| status.is_deleted());
+
+                if !self.number_deleted_lines && is_deleted {
+                    // Even if we don't number this line, it still counts as a unit
+                    // of distance for the relative numbers of lines below it.
+                    current_delta += 1;
+                    return None;
+                }
+
                 // We want to ensure here that the current line has absolute
                 // numbering, even if we are in a soft-wrapped line. With the
                 // exception that if we are in a deleted line, we should number this
                 // relative with 0, as otherwise it would have no line number at all
-                let relative_line_number = (initial_offset + i as i64).unsigned_abs() as u32;
+                let relative_line_number = current_delta.unsigned_abs() as u32;
+                current_delta += 1;
 
-                (relative_line_number != 0
-                    || row_info
-                        .diff_status
-                        .is_some_and(|status| status.is_deleted()))
-                .then_some((row, relative_line_number))
+                (relative_line_number != 0 || is_deleted).then_some((row, relative_line_number))
             })
             .collect()
     }
@@ -14421,8 +11791,11 @@ pub enum EditorEvent {
     RestoreRequested {
         hunks: Vec<MultiBufferDiffHunk>,
     },
+    /// Emitted when an underlying buffer changes, including edits made through another editor.
     BufferEdited,
+    /// Emitted when this editor creates, undoes, or redoes an edit transaction.
     Edited {
+        /// The transaction that changed the editor's buffer.
         transaction_id: clock::Lamport,
     },
     Reparsed(BufferId),
@@ -14564,6 +11937,21 @@ impl ui_input::ErasedEditor for ErasedEditorImpl {
         });
     }
 
+    fn set_multiline(&self, max_lines: Option<usize>, _window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |this, cx| {
+            if let Some(max_lines) = max_lines {
+                this.set_mode(EditorMode::AutoHeight {
+                    min_lines: 1,
+                    max_lines: Some(max_lines),
+                });
+                this.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
+            } else {
+                this.set_mode(EditorMode::SingleLine);
+            }
+            cx.notify();
+        });
+    }
+
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.0.read(cx).focus_handle(cx)
     }
@@ -14608,6 +11996,12 @@ impl ui_input::ErasedEditor for ErasedEditorImpl {
         });
     }
 
+    fn select_all(&self, window: &mut Window, cx: &mut App) {
+        self.0.update(cx, |editor, cx| {
+            editor.select_all(&Default::default(), window, cx);
+        });
+    }
+
     fn subscribe(
         &self,
         mut callback: Box<dyn FnMut(ui_input::ErasedEditorEvent, &mut Window, &mut App) + 'static>,
@@ -14627,6 +12021,13 @@ impl ui_input::ErasedEditor for ErasedEditorImpl {
     fn set_masked(&self, masked: bool, _window: &mut Window, cx: &mut App) {
         self.0.update(cx, |editor, cx| {
             editor.set_masked(masked, cx);
+        });
+    }
+
+    fn set_read_only(&self, read_only: bool, cx: &mut App) {
+        self.0.update(cx, |editor, cx| {
+            editor.set_read_only(read_only);
+            cx.notify();
         });
     }
 }
@@ -14653,56 +12054,6 @@ impl<T> DerefMut for InvalidationStack<T> {
 impl InvalidationRegion for SnippetState {
     fn ranges(&self) -> &[Range<Anchor>] {
         &self.ranges[self.active_index]
-    }
-}
-
-fn edit_prediction_edit_text(
-    current_snapshot: &BufferSnapshot,
-    edits: &[(Range<Anchor>, impl AsRef<str>)],
-    edit_preview: &EditPreview,
-    include_deletions: bool,
-    multibuffer_snapshot: &MultiBufferSnapshot,
-    cx: &App,
-) -> HighlightedText {
-    let edits = edits
-        .iter()
-        .filter_map(|(anchor, text)| {
-            Some((
-                multibuffer_snapshot
-                    .anchor_range_to_buffer_anchor_range(anchor.clone())?
-                    .1,
-                text,
-            ))
-        })
-        .collect::<Vec<_>>();
-
-    edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx)
-}
-
-fn edit_prediction_fallback_text(edits: &[(Range<Anchor>, Arc<str>)], cx: &App) -> HighlightedText {
-    // Fallback for providers that don't provide edit_preview (like Copilot)
-    // Just show the raw edit text with basic styling
-    let mut text = String::new();
-    let mut highlights = Vec::new();
-
-    let insertion_highlight_style = HighlightStyle {
-        color: Some(cx.theme().colors().text),
-        ..Default::default()
-    };
-
-    for (_, edit_text) in edits {
-        let start_offset = text.len();
-        text.push_str(edit_text);
-        let end_offset = text.len();
-
-        if start_offset < end_offset {
-            highlights.push((start_offset..end_offset, insertion_highlight_style));
-        }
-    }
-
-    HighlightedText {
-        text: text.into(),
-        highlights,
     }
 }
 
@@ -14878,47 +12229,38 @@ fn collapse_multiline_range(range: Range<Point>) -> Range<Point> {
         range.start..range.start
     }
 }
-pub struct KillRing(ClipboardItem);
-impl Global for KillRing {}
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
+#[derive(Copy, Clone, Debug)]
 enum BreakpointPromptEditAction {
     Log,
     Condition,
     HitCondition,
 }
 
-struct BreakpointPromptEditor {
+type PromptEditorCallback = Box<dyn FnOnce(String, &mut Editor, &mut Context<Editor>) + 'static>;
+
+struct PromptEditor {
     pub(crate) prompt: Entity<Editor>,
     editor: WeakEntity<Editor>,
-    breakpoint_anchor: Anchor,
-    breakpoint: Breakpoint,
-    edit_action: BreakpointPromptEditAction,
+    confirm_callback: Option<PromptEditorCallback>,
+    cancel_callback: Option<PromptEditorCallback>,
     block_ids: HashSet<CustomBlockId>,
     editor_margins: Arc<Mutex<EditorMargins>>,
     _subscriptions: Vec<Subscription>,
 }
 
-impl BreakpointPromptEditor {
+impl PromptEditor {
     const MAX_LINES: u8 = 4;
 
     fn new(
         editor: WeakEntity<Editor>,
-        breakpoint_anchor: Anchor,
-        breakpoint: Breakpoint,
-        edit_action: BreakpointPromptEditAction,
+        placeholder_text: &str,
+        base_text: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let base_text = match edit_action {
-            BreakpointPromptEditAction::Log => breakpoint.message.as_ref(),
-            BreakpointPromptEditAction::Condition => breakpoint.condition.as_ref(),
-            BreakpointPromptEditAction::HitCondition => breakpoint.hit_condition.as_ref(),
-        }
-        .map(|msg| msg.to_string())
-        .unwrap_or_default();
-
         let buffer = cx.new(|cx| Buffer::local(base_text, cx));
         let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
 
@@ -14935,15 +12277,7 @@ impl BreakpointPromptEditor {
             );
             prompt.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
             prompt.set_show_cursor_when_unfocused(false, cx);
-            prompt.set_placeholder_text(
-                match edit_action {
-                    BreakpointPromptEditAction::Log => "Message to log when a breakpoint is hit. Expressions within {} are interpolated.",
-                    BreakpointPromptEditAction::Condition => "Condition when a breakpoint is hit. Expressions within {} are interpolated.",
-                    BreakpointPromptEditAction::HitCondition => "How many breakpoint hits to ignore",
-                },
-                window,
-                cx,
-            );
+            prompt.set_placeholder_text(placeholder_text, window, cx);
 
             prompt
         });
@@ -14951,13 +12285,22 @@ impl BreakpointPromptEditor {
         Self {
             prompt,
             editor,
-            breakpoint_anchor,
-            breakpoint,
-            edit_action,
+            confirm_callback: None,
+            cancel_callback: None,
             editor_margins: Arc::new(Mutex::new(EditorMargins::default())),
             block_ids: Default::default(),
             _subscriptions: vec![],
         }
+    }
+
+    fn on_confirm(mut self, confirm: PromptEditorCallback) -> Self {
+        self.confirm_callback = Some(confirm);
+        self
+    }
+
+    fn on_cancel(mut self, cancel: PromptEditorCallback) -> Self {
+        self.cancel_callback = Some(cancel);
+        self
     }
 
     pub(crate) fn add_block_ids(&mut self, block_ids: Vec<CustomBlockId>) {
@@ -14972,28 +12315,15 @@ impl BreakpointPromptEditor {
                 .buffer
                 .read(cx)
                 .as_singleton()
-                .expect("A multi buffer in breakpoint prompt isn't possible")
+                .expect("A multi buffer in prompt isn't possible")
                 .read(cx)
                 .as_rope()
                 .to_string();
 
             editor.update(cx, |editor, cx| {
-                editor.edit_breakpoint_at_anchor(
-                    self.breakpoint_anchor,
-                    self.breakpoint.clone(),
-                    match self.edit_action {
-                        BreakpointPromptEditAction::Log => {
-                            BreakpointEditAction::EditLogMessage(message.into())
-                        }
-                        BreakpointPromptEditAction::Condition => {
-                            BreakpointEditAction::EditCondition(message.into())
-                        }
-                        BreakpointPromptEditAction::HitCondition => {
-                            BreakpointEditAction::EditHitCondition(message.into())
-                        }
-                    },
-                    cx,
-                );
+                if let Some(confirm) = self.confirm_callback.take() {
+                    confirm(message, editor, cx);
+                }
 
                 editor.remove_blocks(self.block_ids.clone(), None, cx);
                 cx.focus_self(window);
@@ -15004,6 +12334,21 @@ impl BreakpointPromptEditor {
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut Context<Self>) {
         self.editor
             .update(cx, |editor, cx| {
+                let message = self
+                    .prompt
+                    .read(cx)
+                    .buffer
+                    .read(cx)
+                    .as_singleton()
+                    .expect("A multi buffer in prompt isn't possible")
+                    .read(cx)
+                    .as_rope()
+                    .to_string();
+
+                if let Some(cancel) = self.cancel_callback.take() {
+                    cancel(message, editor, cx);
+                }
+
                 editor.remove_blocks(self.block_ids.clone(), None, cx);
                 window.focus(&editor.focus_handle, cx);
             })
@@ -15063,7 +12408,7 @@ impl BreakpointPromptEditor {
     }
 }
 
-impl Render for BreakpointPromptEditor {
+impl Render for PromptEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size(cx);
         let editor_margins = *self.editor_margins.lock();
@@ -15108,71 +12453,9 @@ impl Render for BreakpointPromptEditor {
     }
 }
 
-impl Focusable for BreakpointPromptEditor {
+impl Focusable for PromptEditor {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.prompt.focus_handle(cx)
-    }
-}
-
-fn all_edits_insertions_or_deletions(
-    edits: &Vec<(Range<Anchor>, Arc<str>)>,
-    snapshot: &MultiBufferSnapshot,
-) -> bool {
-    let mut all_insertions = true;
-    let mut all_deletions = true;
-
-    for (range, new_text) in edits.iter() {
-        let range_is_empty = range.to_offset(snapshot).is_empty();
-        let text_is_empty = new_text.is_empty();
-
-        if range_is_empty != text_is_empty {
-            if range_is_empty {
-                all_deletions = false;
-            } else {
-                all_insertions = false;
-            }
-        } else {
-            return false;
-        }
-
-        if !all_insertions && !all_deletions {
-            return false;
-        }
-    }
-    all_insertions || all_deletions
-}
-
-struct MissingEditPredictionKeybindingTooltip;
-
-impl Render for MissingEditPredictionKeybindingTooltip {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        ui::tooltip_container(cx, |container, cx| {
-            container
-                .flex_shrink_0()
-                .max_w_80()
-                .min_h(rems_from_px(124.))
-                .justify_between()
-                .child(
-                    v_flex()
-                        .flex_1()
-                        .text_ui_sm(cx)
-                        .child(Label::new("Conflict with Accept Keybinding"))
-                        .child("Your keymap currently overrides the default accept keybinding. To continue, assign one keybinding for the `editor::AcceptEditPrediction` action.")
-                )
-                .child(
-                    h_flex()
-                        .pb_1()
-                        .gap_1()
-                        .items_end()
-                        .w_full()
-                        .child(Button::new("open-keymap", "Assign Keybinding").size(ButtonSize::Compact).on_click(|_ev, window, cx| {
-                            window.dispatch_action(zed_actions::OpenKeymapFile.boxed_clone(), cx)
-                        }))
-                        .child(Button::new("see-docs", "See Docs").size(ButtonSize::Compact).on_click(|_ev, _window, cx| {
-                            cx.open_url("https://zed.dev/docs/completions#edit-predictions-missing-keybinding");
-                        })),
-                )
-        })
     }
 }
 

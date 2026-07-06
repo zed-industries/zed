@@ -27,14 +27,6 @@ impl FeatureFlag for AcpBetaFeatureFlag {
 }
 register_feature_flag!(AcpBetaFeatureFlag);
 
-pub struct AgentSharingFeatureFlag;
-
-impl FeatureFlag for AgentSharingFeatureFlag {
-    const NAME: &'static str = "agent-sharing";
-    type Value = PresenceFlag;
-}
-register_feature_flag!(AgentSharingFeatureFlag);
-
 pub struct DiffReviewFeatureFlag;
 
 impl FeatureFlag for DiffReviewFeatureFlag {
@@ -47,17 +39,20 @@ impl FeatureFlag for DiffReviewFeatureFlag {
 }
 register_feature_flag!(DiffReviewFeatureFlag);
 
-pub struct UpdatePlanToolFeatureFlag;
+/// Gates the `create_thread` and `list_agents_and_models` tools, which let
+/// the agent spawn independent sibling threads that show up in the agent
+/// panel sidebar.
+pub struct CreateThreadToolFeatureFlag;
 
-impl FeatureFlag for UpdatePlanToolFeatureFlag {
-    const NAME: &'static str = "update-plan-tool";
+impl FeatureFlag for CreateThreadToolFeatureFlag {
+    const NAME: &'static str = "create-thread-tool";
     type Value = PresenceFlag;
 
     fn enabled_for_staff() -> bool {
-        false
+        true
     }
 }
-register_feature_flag!(UpdatePlanToolFeatureFlag);
+register_feature_flag!(CreateThreadToolFeatureFlag);
 
 pub struct LspToolFeatureFlag;
 
@@ -124,14 +119,13 @@ impl FeatureFlag for AutoWatchFeatureFlag {
 }
 register_feature_flag!(AutoWatchFeatureFlag);
 
-pub struct SkillsFeatureFlag;
+/// Wraps agent-run terminal commands in an OS-level sandbox where supported
+/// (currently macOS Seatbelt only). When off, terminal commands run with the
+/// agent's full ambient permissions, as they always have.
+pub struct SandboxingFeatureFlag;
 
-impl FeatureFlag for SkillsFeatureFlag {
-    const NAME: &'static str = "skills";
+impl FeatureFlag for SandboxingFeatureFlag {
+    const NAME: &'static str = "sandboxing";
     type Value = PresenceFlag;
-
-    fn enabled_for_staff() -> bool {
-        true
-    }
 }
-register_feature_flag!(SkillsFeatureFlag);
+register_feature_flag!(SandboxingFeatureFlag);

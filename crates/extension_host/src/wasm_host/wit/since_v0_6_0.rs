@@ -26,7 +26,6 @@ wasmtime::component::bindgen!({
         "zed:extension/common": latest::zed::extension::common,
         "zed:extension/http-client": latest::zed::extension::http_client,
         "zed:extension/nodejs": latest::zed::extension::nodejs,
-        "zed:extension/platform": latest::zed::extension::platform,
         "zed:extension/process": latest::zed::extension::process,
         "zed:extension/slash-command": latest::zed::extension::slash_command,
         "zed:extension/context-server": latest::zed::extension::context_server,
@@ -381,6 +380,33 @@ impl ExtensionImports for WasmState {
 
     async fn make_file_executable(&mut self, path: String) -> wasmtime::Result<Result<(), String>> {
         latest::ExtensionImports::make_file_executable(self, path).await
+    }
+}
+
+impl From<latest::platform::Architecture> for platform::Architecture {
+    fn from(value: latest::platform::Architecture) -> Self {
+        match value {
+            latest::platform::Architecture::Aarch64 => Self::Aarch64,
+            latest::platform::Architecture::X8664 => Self::X8664,
+        }
+    }
+}
+
+impl From<latest::platform::Os> for platform::Os {
+    fn from(value: latest::platform::Os) -> Self {
+        match value {
+            latest::platform::Os::Linux => Self::Linux,
+            latest::platform::Os::Mac => Self::Mac,
+            latest::platform::Os::Windows => Self::Windows,
+        }
+    }
+}
+
+impl platform::Host for WasmState {
+    async fn current_platform(&mut self) -> Result<(platform::Os, platform::Architecture)> {
+        latest::platform::Host::current_platform(self)
+            .await
+            .map(|(os, arch)| (os.into(), arch.into()))
     }
 }
 
