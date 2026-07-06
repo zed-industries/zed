@@ -809,7 +809,7 @@ tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex",
 tree-sitter-html = "0.23"
 tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.24"
-tree-sitter-md = { git = "https://github.com/zed-industries/tree-sitter-markdown", rev = "6aaf487c925b67ccb8869825a7580b36be01d107" } # fork of 9a23c1a with serialize() buffer-overflow fix; https://github.com/tree-sitter-grammars/tree-sitter-markdown/issues/243
+tree-sitter-md = { git = "https://github.com/zed-industries/tree-sitter-markdown", rev = "b596e737286780d7bfa9fcddceaeeb754574b352" } # fork of 9a23c1a with serialize() buffer-overflow fix; https://github.com/tree-sitter-grammars/tree-sitter-markdown/issues/243
 tree-sitter-python = "0.25"
 tree-sitter-regex = "0.24"
 tree-sitter-ruby = "0.23"
