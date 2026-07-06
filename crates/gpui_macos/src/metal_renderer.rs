@@ -83,6 +83,10 @@ impl InstanceBufferPool {
         device: &metal::Device,
         unified_memory: bool,
     ) -> InstanceBuffer {
+        // The draw functions align each offset up to a 256-byte boundary before
+        // computing a pointer into the buffer, so the buffer size must itself be
+        // a multiple of 256 for that pointer arithmetic to stay in bounds.
+        debug_assert!(self.buffer_size % 256 == 0);
         let buffer = self.buffers.pop().unwrap_or_else(|| {
             let options = if unified_memory {
                 MTLResourceOptions::StorageModeShared
@@ -1081,14 +1085,13 @@ impl MetalRenderer {
         );
 
         let shadow_bytes_len = mem::size_of_val(shadows);
-        let buffer_contents =
-            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
-
         let next_offset = *instance_offset + shadow_bytes_len;
         if next_offset > instance_buffer.size {
             return false;
         }
 
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
         unsafe {
             ptr::copy_nonoverlapping(
                 shadows.as_ptr() as *const u8,
@@ -1144,14 +1147,13 @@ impl MetalRenderer {
         );
 
         let quad_bytes_len = mem::size_of_val(quads);
-        let buffer_contents =
-            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
-
         let next_offset = *instance_offset + quad_bytes_len;
         if next_offset > instance_buffer.size {
             return false;
         }
 
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
         unsafe {
             ptr::copy_nonoverlapping(quads.as_ptr() as *const u8, buffer_contents, quad_bytes_len);
         }
@@ -1293,14 +1295,13 @@ impl MetalRenderer {
         );
 
         let underline_bytes_len = mem::size_of_val(underlines);
-        let buffer_contents =
-            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
-
         let next_offset = *instance_offset + underline_bytes_len;
         if next_offset > instance_buffer.size {
             return false;
         }
 
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
         unsafe {
             ptr::copy_nonoverlapping(
                 underlines.as_ptr() as *const u8,
@@ -1334,9 +1335,6 @@ impl MetalRenderer {
         align_offset(instance_offset);
 
         let sprite_bytes_len = mem::size_of_val(sprites);
-        let buffer_contents =
-            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
-
         let next_offset = *instance_offset + sprite_bytes_len;
         if next_offset > instance_buffer.size {
             return false;
@@ -1375,6 +1373,8 @@ impl MetalRenderer {
         );
         command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
 
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
         unsafe {
             ptr::copy_nonoverlapping(
                 sprites.as_ptr() as *const u8,
@@ -1441,14 +1441,13 @@ impl MetalRenderer {
         command_encoder.set_fragment_texture(SpriteInputIndex::AtlasTexture as u64, Some(&texture));
 
         let sprite_bytes_len = mem::size_of_val(sprites);
-        let buffer_contents =
-            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
-
         let next_offset = *instance_offset + sprite_bytes_len;
         if next_offset > instance_buffer.size {
             return false;
         }
 
+        let buffer_contents =
+            unsafe { (instance_buffer.metal_buffer.contents() as *mut u8).add(*instance_offset) };
         unsafe {
             ptr::copy_nonoverlapping(
                 sprites.as_ptr() as *const u8,
