@@ -120,8 +120,14 @@ where
                 // minidump request.
                 client.ping().ok();
                 let r = client.request_dump(crash_context);
-                if let Err(e) = &r {
-                    eprintln!("failed to request dump: {:?}", e);
+                if r.is_err() {
+                    // On Linux this closure runs in an async-signal context on the
+                    // faulting thread. A heap-corruption crash may have faulted inside
+                    // malloc, so `eprintln!` (which allocates and takes the stderr lock)
+                    // could reenter the allocator or deadlock. Emit a fixed message with
+                    // a single `write` syscall, which is async-signal-safe.
+                    const MESSAGE: &[u8] = b"failed to request dump\n";
+                    libc::write(2, MESSAGE.as_ptr() as *const _, MESSAGE.len() as _);
                 }
                 #[cfg(target_os = "macos")]
                 macos::resume_all_other_threads();
