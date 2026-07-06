@@ -1591,18 +1591,20 @@ fn parse_ime_composition_string(ctx: HIMC, comp_type: IME_COMPOSITION_STRING) ->
     unsafe {
         let string_len = ImmGetCompositionStringW(ctx, comp_type, None, 0);
         if string_len >= 0 {
-            let mut buffer = vec![0u8; string_len as usize + 2];
+            let string_len = string_len as usize;
+            // `ImmGetCompositionStringW` writes UTF-16 code units but measures lengths in bytes.
+            // Read straight into a `Vec<u16>` (rather than reinterpreting a byte buffer, which is
+            // only 1-byte aligned) so the resulting `[u16]` has the 2-byte alignment it requires.
+            // `string_len / 2 + 1` code units always covers `string_len` bytes.
+            let mut buffer = vec![0u16; string_len / 2 + 1];
             ImmGetCompositionStringW(
                 ctx,
                 comp_type,
                 Some(buffer.as_mut_ptr() as _),
                 string_len as _,
             );
-            let wstring = std::slice::from_raw_parts::<u16>(
-                buffer.as_mut_ptr().cast::<u16>(),
-                string_len as usize / 2,
-            );
-            Some(wstring.to_vec())
+            buffer.truncate(string_len / 2);
+            Some(buffer)
         } else {
             None
         }
