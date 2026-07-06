@@ -2959,7 +2959,6 @@ impl GitGraph {
 
         let is_tree_view = self.changed_files_view_mode.is_tree();
         let view_toggle = IconButton::new("toggle-changed-files-view", IconName::ListTree)
-            .shape(ui::IconButtonShape::Square)
             .icon_size(IconSize::Small)
             .toggle_state(self.changed_files_view_mode.is_tree())
             .tooltip({
@@ -3180,6 +3179,7 @@ impl GitGraph {
                         h_flex()
                             .p_2()
                             .pr_3()
+                            .pb_1()
                             .gap_1()
                             .w_full()
                             .justify_between()
@@ -3831,22 +3831,26 @@ impl GitGraph {
             // which causes problems with text reflow when using flexbox.
             // grid, on the other hand, doesn't appear to give taffy the same
             // problems.
-            .grid()
+            .w_full()
+            .max_h(line_height * 12.)
             .py_2()
             .pl_2()
-            .w_full()
-            .gap_1()
+            .grid()
             .grid_cols(1)
-            // Value of 12 taken from ./commit_view.rs:725
-            .max_h(line_height * 12.)
+            .gap_1()
             .child(
                 div()
-                    .id("commit-message")
-                    .text_sm()
+                    .relative()
                     .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(scroll_handle)
-                    .child(MarkdownElement::new(message.clone(), message_style))
+                    .child(
+                        div()
+                            .id("commit-message")
+                            .text_sm()
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(scroll_handle)
+                            .child(MarkdownElement::new(message.clone(), message_style)),
+                    )
                     .vertical_scrollbar_for(scroll_handle, window, cx),
             )
             .into_any_element()
