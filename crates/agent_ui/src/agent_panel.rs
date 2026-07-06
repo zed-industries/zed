@@ -360,7 +360,7 @@ struct SerializedAgentPanel {
 struct SerializedActiveThread {
     /// For drafts this is `None`; use `thread_id` to address them instead.
     session_id: Option<String>,
-    /// Optional for backwards-compatibility with older serialized payloads that only carried `session_id`.
+    /// Optional for back-compat with older serialized payloads that only carried `session_id`.
     #[serde(default)]
     thread_id: Option<ThreadId>,
     agent_type: Agent,
