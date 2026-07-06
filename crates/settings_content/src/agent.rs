@@ -486,12 +486,6 @@ impl AgentSettingsContent {
             .allow_fs_write_all = Some(true);
     }
 
-    pub fn allow_sandbox_git_access(&mut self) {
-        self.sandbox_permissions
-            .get_or_insert_default()
-            .allow_git_access = Some(true);
-    }
-
     pub fn allow_sandbox_unsandboxed(&mut self) {
         self.sandbox_permissions
             .get_or_insert_default()
@@ -799,11 +793,6 @@ pub struct SandboxPermissionsContent {
     /// (`github.com`) or a leading-`*.` subdomain wildcard (`*.npmjs.org`).
     /// Default: []
     pub network_hosts: Option<ExtendingVec<String>>,
-
-    /// Whether sandboxed terminal commands may always access protected Git
-    /// metadata paths without prompting.
-    /// Default: false
-    pub allow_git_access: Option<bool>,
 
     /// Whether sandboxed terminal commands may always write anywhere on the
     /// filesystem without prompting.
@@ -1145,7 +1134,6 @@ mod tests {
             &["github.com".to_string(), "*.npmjs.org".to_string()]
         );
         settings.allow_sandbox_fs_write_all();
-        settings.allow_sandbox_git_access();
         settings.allow_sandbox_unsandboxed();
         settings.add_sandbox_write_path(PathBuf::from("/tmp/build"));
 
@@ -1160,7 +1148,6 @@ mod tests {
                 .as_slice(),
             &["github.com".to_string(), "*.npmjs.org".to_string()]
         );
-        assert_eq!(sandbox_permissions.allow_git_access, Some(true));
         assert_eq!(sandbox_permissions.allow_fs_write_all, Some(true));
         assert_eq!(sandbox_permissions.allow_unsandboxed, Some(true));
         assert_eq!(

@@ -5,6 +5,8 @@ use indoc::formatdoc;
 use indoc::indoc;
 use serde_json::json;
 
+use crate::tasks::workflows::steps::GitRef;
+use crate::tasks::workflows::steps::RefSha;
 use crate::tasks::workflows::steps::{
     CheckoutStep, DownloadArtifactStep, IfNoFilesFound, ResultEncoding, TokenPermissions,
     UploadArtifactStep, cache_rust_dependencies_namespace,
@@ -13,8 +15,7 @@ use crate::tasks::workflows::vars::JobOutput;
 use crate::tasks::workflows::{
     runners,
     steps::{
-        self, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob, RepositoryTarget, ZippyGitIdentity,
-        generate_token, named,
+        self, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob, RepositoryTarget, generate_token, named,
     },
     vars::{self, StepOutput, WorkflowInput},
 };
@@ -155,8 +156,7 @@ fn fetch_extension_repos(filter_repos_input: &WorkflowInput) -> (NamedJob, JobOu
 
     let job = Job::default()
         .cond(Expression::new(format!(
-            "{DEFAULT_REPOSITORY_OWNER_GUARD} && github.ref == 'refs/heads/main'"
-        )))
+            "{DEFAULT_REPOSITORY_OWNER_GUARD} && (github.ref == 'refs/tags/{ROLLOUT_TAG_NAME}' || github.ref == 'refs/heads/main')")))
         .runs_on(runners::LINUX_SMALL)
         .timeout_minutes(10u32)
         .outputs([
@@ -336,19 +336,6 @@ fn create_rollout_tag(rollout_job: &NamedJob, filter_repos_input: &WorkflowInput
         steps::checkout_repo().with_full_history().with_token(token)
     }
 
-    fn update_rollout_tag() -> Step<Run> {
-        named::bash(formatdoc! {r#"
-            if git rev-parse "{ROLLOUT_TAG_NAME}" >/dev/null 2>&1; then
-                git tag -d "{ROLLOUT_TAG_NAME}"
-                git push origin ":refs/tags/{ROLLOUT_TAG_NAME}" || true
-            fi
-
-            echo "Creating new tag '{ROLLOUT_TAG_NAME}' at $(git rev-parse --short HEAD)"
-            git tag "{ROLLOUT_TAG_NAME}"
-            git push origin "{ROLLOUT_TAG_NAME}"
-        "#})
-    }
-
     let (authenticate, token) =
         generate_token(vars::ZED_ZIPPY_APP_ID, vars::ZED_ZIPPY_APP_PRIVATE_KEY)
             .for_repository(RepositoryTarget::current())
@@ -365,7 +352,12 @@ fn create_rollout_tag(rollout_job: &NamedJob, filter_repos_input: &WorkflowInput
         .timeout_minutes(1u32)
         .add_step(authenticate)
         .add_step(checkout_zed_repo(&token))
-        .add_step(update_rollout_tag().with_zippy_git_identity());
+        .add_step(steps::update_ref(
+            GitRef::Tag(ROLLOUT_TAG_NAME.to_owned()),
+            RefSha::Context,
+            &token,
+            true,
+        ));
 
     named::job(job)
 }

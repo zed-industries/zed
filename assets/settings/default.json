@@ -73,7 +73,7 @@
   "agent_buffer_font_size": 12,
   // The default font size for the commit editor in the git panel and commit modal.
   "git_commit_buffer_font_size": 12,
-  // The default font size for the markdown preview. Falls back to the editor font size if unset.
+  // The default font size for the markdown preview. Falls back to the UI font size if unset.
   "markdown_preview_font_size": null,
   // The font family for the markdown preview. Falls back to the UI font family if unset.
   "markdown_preview_font_family": null,
@@ -162,8 +162,7 @@
   // May take 2 values:
   //  1. Open directories as a new workspace in the current Zed window's sidebar
   //         "cli_default_open_behavior": "existing_window"
-  //  2. Open directories in a new window (reuse existing windows for files
-  //     that are already part of an open project)
+  //  2. Open paths in a new window, unless they are subpaths of an existing project
   //         "cli_default_open_behavior": "new_window"
   "cli_default_open_behavior": "existing_window",
   // The default behavior when opening projects from the UI.
@@ -1025,11 +1024,6 @@
     // Choices: project_diff, file_diff, view_file
     // Default: project_diff
     "entry_primary_click_action": "project_diff",
-  },
-  "message_editor": {
-    // Whether to automatically replace emoji shortcodes with emoji characters.
-    // For example: typing `:wave:` gets replaced with `👋`.
-    "auto_replace_emoji_shortcode": true,
   },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available

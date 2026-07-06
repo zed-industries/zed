@@ -801,6 +801,10 @@ pub(super) fn clear_saved_screen(term: &mut Term<ZedListener>) {
     }
 }
 
+pub(super) fn shrink_to_used(term: &mut Term<ZedListener>) {
+    term.grid_mut().truncate();
+}
+
 fn adjusted_last_hovered_word(
     grid: &Grid<AlacCell>,
     last_content: &Content,
