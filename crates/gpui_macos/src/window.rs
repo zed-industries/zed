@@ -60,7 +60,7 @@ use raw_window_handle as rwh;
 use smallvec::SmallVec;
 use std::{
     cell::Cell,
-    ffi::{CStr, c_void},
+    ffi::c_void,
     mem,
     ops::Range,
     path::PathBuf,
@@ -1132,13 +1132,17 @@ impl MacWindow {
                 nil
             };
 
-            let value_str = if !value.is_null() {
-                CStr::from_ptr(NSString::UTF8String(value)).to_string_lossy()
+            // `objectForKey:` may hand back a non-string value (e.g. an `NSNumber`
+            // or `__NSCFBoolean`); sending `UTF8String` to those would be undefined.
+            // Guard on the class and otherwise fall back to the default preference.
+            let is_string: BOOL = if value.is_null() {
+                NO
             } else {
-                "".into()
+                msg_send![value, isKindOfClass: class!(NSString)]
             };
+            let value_str = if is_string == YES { value.to_str() } else { "" };
 
-            match value_str.as_ref() {
+            match value_str {
                 "manual" => Some(UserTabbingPreference::Never),
                 "always" => Some(UserTabbingPreference::Always),
                 _ => Some(UserTabbingPreference::InFullScreen),
@@ -1775,13 +1779,18 @@ impl PlatformWindow for MacWindow {
                             nil
                         };
 
-                        let action_str = if !action.is_null() {
-                            CStr::from_ptr(NSString::UTF8String(action)).to_string_lossy()
+                        // `objectForKey:` may hand back a non-string value (e.g. an
+                        // `NSNumber` or `__NSCFBoolean`); sending `UTF8String` to those
+                        // would be undefined. Guard on the class and otherwise fall back
+                        // to the default (zoom) action.
+                        let is_string: BOOL = if action.is_null() {
+                            NO
                         } else {
-                            "".into()
+                            msg_send![action, isKindOfClass: class!(NSString)]
                         };
+                        let action_str = if is_string == YES { action.to_str() } else { "" };
 
-                        match action_str.as_ref() {
+                        match action_str {
                             "None" => {
                                 // "Do Nothing" selected, so do no action
                             }
