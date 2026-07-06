@@ -16,6 +16,8 @@ use std::{
 use http_proxy::ProxyHandle;
 #[cfg(not(target_os = "windows"))]
 use http_proxy::{Allowlist, HostPattern, ProxyConfig, ProxyEvent, UpstreamProxy};
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd as _;
 
 #[cfg(target_os = "linux")]
 mod linux_bubblewrap;
@@ -30,7 +32,7 @@ mod windows_wsl;
 pub(crate) const WSL_SANDBOX_UNAVAILABLE_PREFIX: &str = "Windows sandboxing via WSL is unavailable";
 
 /// An opaque handle to a location on the **host** filesystem the sandbox may
-/// grant access to (a writable subtree, a `.git` directory, …).
+/// grant access to or protect (for example, a writable or protected subtree).
 ///
 /// The entire purpose of this type is to capture the *security-relevant identity*
 /// of a host location once, up front, in a form the enforcement layer can use
@@ -83,7 +85,7 @@ impl HostFilesystemLocation {
     /// On macOS this canonicalizes the path; on Linux it opens an `O_PATH`
     /// descriptor to it; on Windows it records nothing. The caller is
     /// responsible for having already *validated* `path` (e.g. confirmed it is
-    /// inside the project, or that a `.git` is not a symlink) — capturing it here
+    /// inside the project, or safe to treat as a protected path) — capturing it here
     /// pins that decision against later tampering. To be race-free, capture
     /// should happen as part of, or immediately after, that validation, and the
     /// resulting value should be passed around unchanged from then on (never
@@ -95,8 +97,8 @@ impl HostFilesystemLocation {
         #[cfg(target_os = "macos")]
         {
             // `canonicalize_allowing_missing_leaf` resolves through the existing
-            // parent so a not-yet-created leaf (e.g. a `.git` before `git init`)
-            // still yields the real path Seatbelt will match against.
+            // parent so a not-yet-created leaf still yields the real path
+            // Seatbelt will match against.
             let canonical_path = canonicalize_allowing_missing_leaf(path);
             Ok(Self {
                 canonical_path,
@@ -196,7 +198,10 @@ impl PartialEq for HostFilesystemLocation {
     fn eq(&self, other: &Self) -> bool {
         #[cfg(target_os = "linux")]
         {
-            match (linux_fd_identity(&self.fd), linux_fd_identity(&other.fd)) {
+            match (
+                linux_fd_identity(self.fd.as_raw_fd()),
+                linux_fd_identity(other.fd.as_raw_fd()),
+            ) {
                 (Some(a), Some(b)) => a == b,
                 // An `fstat` on an `O_PATH` fd we own should never fail; if it
                 // somehow does we can't prove identity, so report "not equal"
@@ -230,9 +235,8 @@ impl Eq for HostFilesystemLocation {}
 /// The `(device, inode)` pair behind an `O_PATH` descriptor, used to decide
 /// whether two [`HostFilesystemLocation`]s refer to the same filesystem object.
 #[cfg(target_os = "linux")]
-fn linux_fd_identity(fd: &std::os::fd::OwnedFd) -> Option<(u64, u64)> {
-    use std::os::fd::AsRawFd as _;
-    let stat = nix::sys::stat::fstat(fd.as_raw_fd()).ok()?;
+fn linux_fd_identity(fd: std::os::fd::RawFd) -> Option<(u64, u64)> {
+    let stat = nix::sys::stat::fstat(fd).ok()?;
     Some((stat.st_dev as u64, stat.st_ino as u64))
 }
 
@@ -279,20 +283,23 @@ impl From<PathBuf> for SandboxFilesystemLocation {
 pub struct SandboxPolicy {
     pub fs: SandboxFsPolicy,
     pub network: SandboxNetPolicy,
-    pub git: GitSandboxPolicy,
 }
 
 /// Filesystem policy for a sandboxed command.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum SandboxFsPolicy {
-    /// Allow unrestricted filesystem writes.
-    Unrestricted,
+    /// Allow unrestricted filesystem writes except for protected paths, which
+    /// remain readable but not writable.
+    Unrestricted {
+        protected_paths: Vec<HostFilesystemLocation>,
+    },
     /// Reads are allowed everywhere; writes are confined to these locations
     /// (and the standard ephemeral locations the platform provides). Each is a
     /// [`HostFilesystemLocation`] captured at validation time, never a bare path
     /// the enforcement layer would re-resolve.
     Restricted {
         writable_paths: Vec<HostFilesystemLocation>,
+        protected_paths: Vec<HostFilesystemLocation>,
     },
 }
 
@@ -308,94 +315,148 @@ pub enum SandboxNetPolicy {
     Restricted { allowed_domains: Vec<String> },
 }
 
-/// Policy for the project's Git directories (`.git`). The agent computes the
-/// directory list because locating it requires Git knowledge the sandbox layer
-/// can't derive itself — a linked worktree's `.git` is a gitlink pointing at a
-/// common dir elsewhere, and discovered repositories can live outside the
-/// project. Both variants carry the same dirs; the variant selects how they're
-/// treated.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum GitSandboxPolicy {
-    /// `.git` contents are protected: read-only on Linux and Windows/WSL;
-    /// content reads and writes denied on macOS (metadata stays visible either
-    /// way).
-    Denied {
-        git_dirs: Vec<HostFilesystemLocation>,
-    },
-    /// `.git` contents are writable (these dirs are made writable).
-    Allowed {
-        git_dirs: Vec<HostFilesystemLocation>,
-    },
-}
-
-impl Default for GitSandboxPolicy {
-    /// Git directories protected, none known — the safe default.
-    fn default() -> Self {
-        GitSandboxPolicy::Denied {
-            git_dirs: Vec::new(),
-        }
-    }
-}
-
-impl GitSandboxPolicy {
-    /// The `.git` directories this policy governs, regardless of variant.
-    pub fn git_dirs(&self) -> &[HostFilesystemLocation] {
-        match self {
-            GitSandboxPolicy::Denied { git_dirs } | GitSandboxPolicy::Allowed { git_dirs } => {
-                git_dirs
-            }
-        }
-    }
-
-    /// Whether `.git` contents are writable.
-    pub fn allows_writes(&self) -> bool {
-        matches!(self, GitSandboxPolicy::Allowed { .. })
-    }
-
-    /// Combine two layers: `Allowed` (more permissive) wins, and the governed
-    /// `.git` directories union.
-    pub fn merge(self, other: GitSandboxPolicy) -> GitSandboxPolicy {
-        let allowed = self.allows_writes() || other.allows_writes();
-        let (GitSandboxPolicy::Denied { mut git_dirs }
-        | GitSandboxPolicy::Allowed { mut git_dirs }) = self;
-        let (GitSandboxPolicy::Denied {
-            git_dirs: other_dirs,
-        }
-        | GitSandboxPolicy::Allowed {
-            git_dirs: other_dirs,
-        }) = other;
-        for path in other_dirs {
-            if !git_dirs.contains(&path) {
-                git_dirs.push(path);
-            }
-        }
-        if allowed {
-            GitSandboxPolicy::Allowed { git_dirs }
-        } else {
-            GitSandboxPolicy::Denied { git_dirs }
-        }
-    }
-}
+/// Host paths that should remain readable but not writable, even when they fall
+/// under a writable subtree.
+///
+/// The caller computes this list because the sandbox layer does not know which
+/// application-specific paths need stronger protection.
+pub type ProtectedPaths = Vec<HostFilesystemLocation>;
 
 impl SandboxPolicy {
-    /// Combine two policies into the least-restrictive policy that satisfies
-    /// both (a set union per dimension). Used to layer the user's persistent
-    /// settings, this thread's grants, and a command's request into the single
-    /// policy that is actually enforced.
+    /// Combine two policy layers. Filesystem/network grants are unioned into the
+    /// least-restrictive policy that satisfies both layers, while protected paths
+    /// within restricted filesystem policies are unioned so every layer's
+    /// protected subtrees remain protected.
     pub fn merge(self, other: SandboxPolicy) -> SandboxPolicy {
         SandboxPolicy {
             fs: self.fs.merge(other.fs),
             network: self.network.merge(other.network),
-            git: self.git.merge(other.git),
         }
     }
 
-    /// Replace the Git policy, keeping the fs/network policy. The UI builds the
-    /// fs/network halves from settings/grants (which don't know the project's
-    /// `.git` locations) and then attaches the agent-computed Git policy here.
-    pub fn with_git(mut self, git: GitSandboxPolicy) -> Self {
-        self.git = git;
+    /// Replace the protected paths in the filesystem policy, keeping writable
+    /// paths and network policy unchanged.
+    pub fn with_protected_paths(mut self, protected_paths: Vec<HostFilesystemLocation>) -> Self {
+        match &mut self.fs {
+            SandboxFsPolicy::Unrestricted {
+                protected_paths: existing,
+            }
+            | SandboxFsPolicy::Restricted {
+                protected_paths: existing,
+                ..
+            } => *existing = protected_paths,
+        }
         self
+    }
+}
+
+fn merge_locations(
+    mut locations: Vec<HostFilesystemLocation>,
+    other: Vec<HostFilesystemLocation>,
+) -> Vec<HostFilesystemLocation> {
+    for location in other {
+        if !locations.contains(&location) {
+            locations.push(location);
+        }
+    }
+    locations
+}
+
+fn validate_writable_paths_do_not_overlap_protected_paths(
+    writable_paths: &[HostFilesystemLocation],
+    protected_paths: &[HostFilesystemLocation],
+) -> Result<(), SandboxError> {
+    for writable_path in writable_paths {
+        for protected_path in protected_paths {
+            if writable_path_overlaps_protected_path(writable_path, protected_path) {
+                return Err(SandboxError::InvalidRequest(format!(
+                    "writable sandbox path `{}` overlaps protected path `{}`",
+                    writable_path.untrusted_path_display(),
+                    protected_path.untrusted_path_display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn writable_path_overlaps_protected_path(
+    writable_path: &HostFilesystemLocation,
+    protected_path: &HostFilesystemLocation,
+) -> bool {
+    linux_location_is_equal_or_descendant(writable_path, protected_path)
+}
+
+#[cfg(target_os = "macos")]
+fn writable_path_overlaps_protected_path(
+    writable_path: &HostFilesystemLocation,
+    protected_path: &HostFilesystemLocation,
+) -> bool {
+    writable_path
+        .macos_canonical_path()
+        .starts_with(protected_path.macos_canonical_path())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn writable_path_overlaps_protected_path(
+    writable_path: &HostFilesystemLocation,
+    protected_path: &HostFilesystemLocation,
+) -> bool {
+    writable_path
+        .untrusted_path_for_display
+        .starts_with(&protected_path.untrusted_path_for_display)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_location_is_equal_or_descendant(
+    location: &HostFilesystemLocation,
+    ancestor: &HostFilesystemLocation,
+) -> bool {
+    use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
+
+    if location == ancestor {
+        return true;
+    }
+
+    let Ok(mut current) = location.linux_dup_fd() else {
+        log::warn!("failed to duplicate sandbox location fd while checking protected path overlap");
+        return false;
+    };
+
+    loop {
+        let parent = unsafe {
+            let fd = libc::openat(
+                current.as_raw_fd(),
+                c"..".as_ptr(),
+                libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
+            );
+            if fd < 0 {
+                return false;
+            }
+            OwnedFd::from_raw_fd(fd)
+        };
+
+        let Some(parent_identity) = linux_fd_identity(parent.as_raw_fd()) else {
+            log::warn!("failed to fstat parent fd while checking protected path overlap");
+            return false;
+        };
+        let Some(current_identity) = linux_fd_identity(current.as_raw_fd()) else {
+            log::warn!("failed to fstat current fd while checking protected path overlap");
+            return false;
+        };
+        let Some(ancestor_identity) = linux_fd_identity(ancestor.linux_fd().as_raw_fd()) else {
+            log::warn!("failed to fstat protected fd while checking protected path overlap");
+            return false;
+        };
+
+        if parent_identity == ancestor_identity {
+            return true;
+        }
+        if parent_identity == current_identity {
+            return false;
+        }
+        current = parent;
     }
 }
 
@@ -403,22 +464,49 @@ impl SandboxFsPolicy {
     /// Unrestricted access dominates; otherwise the writable subtrees union.
     pub fn merge(self, other: SandboxFsPolicy) -> SandboxFsPolicy {
         match (self, other) {
-            (SandboxFsPolicy::Unrestricted, _) | (_, SandboxFsPolicy::Unrestricted) => {
-                SandboxFsPolicy::Unrestricted
-            }
+            (
+                SandboxFsPolicy::Unrestricted {
+                    protected_paths: protected_a,
+                },
+                SandboxFsPolicy::Unrestricted {
+                    protected_paths: protected_b,
+                },
+            ) => SandboxFsPolicy::Unrestricted {
+                protected_paths: merge_locations(protected_a, protected_b),
+            },
+            (
+                SandboxFsPolicy::Unrestricted {
+                    protected_paths: protected_a,
+                },
+                SandboxFsPolicy::Restricted {
+                    protected_paths: protected_b,
+                    ..
+                },
+            )
+            | (
+                SandboxFsPolicy::Restricted {
+                    protected_paths: protected_a,
+                    ..
+                },
+                SandboxFsPolicy::Unrestricted {
+                    protected_paths: protected_b,
+                },
+            ) => SandboxFsPolicy::Unrestricted {
+                protected_paths: merge_locations(protected_a, protected_b),
+            },
             (
                 SandboxFsPolicy::Restricted {
-                    writable_paths: mut a,
+                    writable_paths: writable_a,
+                    protected_paths: protected_a,
                 },
-                SandboxFsPolicy::Restricted { writable_paths: b },
-            ) => {
-                for path in b {
-                    if !a.contains(&path) {
-                        a.push(path);
-                    }
-                }
-                SandboxFsPolicy::Restricted { writable_paths: a }
-            }
+                SandboxFsPolicy::Restricted {
+                    writable_paths: writable_b,
+                    protected_paths: protected_b,
+                },
+            ) => SandboxFsPolicy::Restricted {
+                writable_paths: merge_locations(writable_a, writable_b),
+                protected_paths: merge_locations(protected_a, protected_b),
+            },
         }
     }
 }
@@ -537,6 +625,7 @@ impl std::error::Error for SandboxError {}
 struct FsSetup {
     allow_fs_write: bool,
     writable_paths: Vec<HostFilesystemLocation>,
+    protected_paths: Vec<HostFilesystemLocation>,
 }
 
 /// Resolved network plan derived from [`SandboxNetPolicy`]. For the restricted
@@ -563,8 +652,6 @@ enum NetSetup {
 pub struct Sandbox {
     fs: FsSetup,
     network: NetSetup,
-    /// The project's `.git` directories and whether they're writable.
-    git: GitSandboxPolicy,
     /// In-process network proxy for the restricted-network case, spawned on the
     /// first `wrap`. Dropped on a background thread (the join blocks).
     proxy: Option<ProxyHandle>,
@@ -598,14 +685,25 @@ impl Sandbox {
     /// availability is checked separately via [`Sandbox::can_create`].
     pub fn new(policy: SandboxPolicy) -> Result<Self, SandboxError> {
         let fs = match policy.fs {
-            SandboxFsPolicy::Unrestricted => FsSetup {
+            SandboxFsPolicy::Unrestricted { protected_paths } => FsSetup {
                 allow_fs_write: true,
                 writable_paths: Vec::new(),
+                protected_paths,
             },
-            SandboxFsPolicy::Restricted { writable_paths } => FsSetup {
-                allow_fs_write: false,
+            SandboxFsPolicy::Restricted {
                 writable_paths,
-            },
+                protected_paths,
+            } => {
+                validate_writable_paths_do_not_overlap_protected_paths(
+                    &writable_paths,
+                    &protected_paths,
+                )?;
+                FsSetup {
+                    allow_fs_write: false,
+                    writable_paths,
+                    protected_paths,
+                }
+            }
         };
 
         let network = match policy.network {
@@ -619,7 +717,6 @@ impl Sandbox {
         Ok(Self {
             fs,
             network,
-            git: policy.git,
             proxy: None,
             #[cfg(target_os = "linux")]
             validation_fd_sender: None,
@@ -657,7 +754,7 @@ impl Sandbox {
         {
             let permissions = linux_bubblewrap::SandboxPermissions {
                 network: linux_probe_network(&policy.network),
-                allow_fs_write: matches!(policy.fs, SandboxFsPolicy::Unrestricted),
+                allow_fs_write: matches!(policy.fs, SandboxFsPolicy::Unrestricted { .. }),
             };
             linux_bubblewrap::check_can_create_sandbox(permissions).map_err(map_linux_status)
         }
@@ -773,19 +870,11 @@ impl Sandbox {
         Ok(Some((port, proxy.socket_path().map(PathBuf::from))))
     }
 
-    /// Split the policy's `.git` directories into (writable, protected) sets for
-    /// the enforcement layers. When the whole filesystem is writable the split
-    /// is empty (Git protection is moot); otherwise `Allowed` git dirs are
-    /// writable and `Denied` git dirs are protected.
+    /// Return the protected paths for the enforcement layer. Even with broad
+    /// filesystem writes, protected paths remain readable but not writable.
     #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
-    fn git_path_split(&self) -> (Vec<HostFilesystemLocation>, Vec<HostFilesystemLocation>) {
-        if self.fs.allow_fs_write {
-            return (Vec::new(), Vec::new());
-        }
-        match &self.git {
-            GitSandboxPolicy::Allowed { git_dirs } => (git_dirs.clone(), Vec::new()),
-            GitSandboxPolicy::Denied { git_dirs } => (Vec::new(), git_dirs.clone()),
-        }
+    fn protected_paths(&self) -> Vec<HostFilesystemLocation> {
+        self.fs.protected_paths.clone()
     }
 
     #[cfg(target_os = "linux")]
@@ -806,7 +895,7 @@ impl Sandbox {
             network,
             allow_fs_write: self.fs.allow_fs_write,
         };
-        let (git_writable, git_protected) = self.git_path_split();
+        let protected_paths = self.protected_paths();
         // Build the writable binds as (captured fd, bind path) pairs in lockstep.
         // The bind *path* is derived from the pinned inode (readlink of the
         // captured `O_PATH` fd), never from an attacker-influenceable string; the
@@ -815,7 +904,7 @@ impl Sandbox {
         // its path on the validator side.
         let mut writable_owned: Vec<PathBuf> = Vec::new();
         let mut writable_fds: Vec<std::os::fd::OwnedFd> = Vec::new();
-        for location in self.fs.writable_paths.iter().chain(git_writable.iter()) {
+        for location in &self.fs.writable_paths {
             let Some(path) = linux_location_path(location) else {
                 continue;
             };
@@ -835,11 +924,11 @@ impl Sandbox {
             }
         }
         let writable: Vec<&Path> = writable_owned.iter().map(PathBuf::as_path).collect();
-        let protected_owned: Vec<PathBuf> = git_protected
+        let protected_owned: Vec<PathBuf> = protected_paths
             .iter()
             .filter_map(linux_location_path)
             .collect();
-        let protected_git_dirs: Vec<&Path> = protected_owned.iter().map(PathBuf::as_path).collect();
+        let protected_paths: Vec<&Path> = protected_owned.iter().map(PathBuf::as_path).collect();
 
         // Stand up the host endpoint that sends the captured fds to the
         // in-sandbox validator, when this run has writable binds to verify. It's
@@ -876,7 +965,7 @@ impl Sandbox {
             bridge_program,
             permissions,
             &writable,
-            &protected_git_dirs,
+            &protected_paths,
             command.cwd.as_deref(),
             &command.program,
             &command.args,
@@ -910,23 +999,18 @@ impl Sandbox {
             network,
             allow_fs_write: self.fs.allow_fs_write,
         };
-        let (git_writable, git_protected) = self.git_path_split();
+        let protected_paths = self.protected_paths();
         // Each location's canonical path was resolved exactly once at capture
         // time; pass it straight through as the Seatbelt rule literal. The
         // profile generator must NOT re-canonicalize (that reopened the
         // verify-vs-enforce gap); see `generate_seatbelt_config`.
-        let mut writable: Vec<&Path> = self
+        let writable: Vec<&Path> = self
             .fs
             .writable_paths
             .iter()
             .map(HostFilesystemLocation::macos_canonical_path)
             .collect();
-        writable.extend(
-            git_writable
-                .iter()
-                .map(HostFilesystemLocation::macos_canonical_path),
-        );
-        let protected: Vec<&Path> = git_protected
+        let protected: Vec<&Path> = protected_paths
             .iter()
             .map(HostFilesystemLocation::macos_canonical_path)
             .collect();
@@ -972,12 +1056,8 @@ impl Sandbox {
             .iter()
             .map(|location| location.windows_path().to_path_buf())
             .collect();
-        let (writable_git_locations, protected_git_locations) = self.git_path_split();
-        let writable_git_paths: Vec<PathBuf> = writable_git_locations
-            .iter()
-            .map(|location| location.windows_path().to_path_buf())
-            .collect();
-        let protected_git_paths: Vec<PathBuf> = protected_git_locations
+        let protected_paths: Vec<PathBuf> = self
+            .protected_paths()
             .iter()
             .map(|location| location.windows_path().to_path_buf())
             .collect();
@@ -985,8 +1065,7 @@ impl Sandbox {
             command.program.clone(),
             command.args.clone(),
             writable_paths,
-            writable_git_paths,
-            protected_git_paths,
+            protected_paths,
             permissions,
             command.cwd.clone(),
             command.env.clone(),
@@ -1232,37 +1311,106 @@ mod tests {
     use super::*;
 
     #[test]
+    fn restricted_fs_rejects_writable_paths_inside_protected_paths() {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let repo_dir = temp_dir.path().join("repo");
+        let git_dir = repo_dir.join(".git");
+        let hooks_dir = git_dir.join("hooks");
+        std::fs::create_dir_all(&hooks_dir).expect("create git hooks dir");
+
+        let protected_git = HostFilesystemLocation::new(&git_dir).expect("capture git dir");
+        let writable_git = HostFilesystemLocation::new(&git_dir).expect("capture git dir");
+        let writable_hooks = HostFilesystemLocation::new(&hooks_dir).expect("capture hooks dir");
+
+        for writable_path in [writable_git, writable_hooks] {
+            let result = Sandbox::new(SandboxPolicy {
+                fs: SandboxFsPolicy::Restricted {
+                    writable_paths: vec![writable_path],
+                    protected_paths: vec![protected_git.clone()],
+                },
+                network: SandboxNetPolicy::Blocked,
+            });
+
+            assert!(matches!(result, Err(SandboxError::InvalidRequest(_))));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn restricted_fs_protected_overlap_check_uses_captured_fds_not_path_text() {
+        use std::os::unix::fs as unix_fs;
+
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let repo_dir = temp_dir.path().join("repo");
+        let git_dir = repo_dir.join(".git");
+        let real_git_dir = repo_dir.join("real-git");
+        let outside_dir = temp_dir.path().join("outside");
+        let outside_hooks_dir = outside_dir.join("hooks");
+        std::fs::create_dir_all(&git_dir).expect("create git dir");
+        std::fs::create_dir_all(&outside_hooks_dir).expect("create outside hooks dir");
+
+        let protected_git = HostFilesystemLocation::new(&git_dir).expect("capture git dir");
+        std::fs::rename(&git_dir, &real_git_dir).expect("move git dir aside");
+        unix_fs::symlink(&outside_dir, &git_dir).expect("replace git dir with symlink");
+        let writable_displayed_inside_git =
+            HostFilesystemLocation::new(git_dir.join("hooks")).expect("capture symlink target");
+
+        Sandbox::new(SandboxPolicy {
+            fs: SandboxFsPolicy::Restricted {
+                writable_paths: vec![writable_displayed_inside_git],
+                protected_paths: vec![protected_git],
+            },
+            network: SandboxNetPolicy::Blocked,
+        })
+        .expect("captured writable fd is outside protected metadata");
+    }
+
+    #[test]
     fn fs_merge_unrestricted_dominates_else_unions_paths() {
         // Writable paths are captured as real `HostFilesystemLocation`s (keyed on
         // the inode), so the union/dedup test needs three distinct real dirs.
         let dir_a = tempfile::tempdir().expect("create temp dir a");
         let dir_b = tempfile::tempdir().expect("create temp dir b");
         let dir_c = tempfile::tempdir().expect("create temp dir c");
+        let dir_d = tempfile::tempdir().expect("create temp dir d");
         let location = |dir: &tempfile::TempDir| {
             HostFilesystemLocation::new(dir.path()).expect("capture temp dir")
         };
 
         let a = SandboxFsPolicy::Restricted {
             writable_paths: vec![location(&dir_a), location(&dir_b)],
+            protected_paths: vec![location(&dir_c)],
         };
         let b = SandboxFsPolicy::Restricted {
             writable_paths: vec![location(&dir_b), location(&dir_c)],
+            protected_paths: vec![location(&dir_c), location(&dir_d)],
         };
         assert_eq!(
             a.clone().merge(b),
             SandboxFsPolicy::Restricted {
                 writable_paths: vec![location(&dir_a), location(&dir_b), location(&dir_c)],
+                protected_paths: vec![location(&dir_c), location(&dir_d)],
             }
         );
         assert_eq!(
-            a.merge(SandboxFsPolicy::Unrestricted),
-            SandboxFsPolicy::Unrestricted
+            a.merge(SandboxFsPolicy::Unrestricted {
+                protected_paths: vec![location(&dir_a)],
+            }),
+            SandboxFsPolicy::Unrestricted {
+                protected_paths: vec![location(&dir_c), location(&dir_a)],
+            }
         );
         assert_eq!(
-            SandboxFsPolicy::Unrestricted.merge(SandboxFsPolicy::Restricted {
+            SandboxFsPolicy::Unrestricted {
+                protected_paths: vec![location(&dir_d)],
+            }
+            .merge(SandboxFsPolicy::Restricted {
                 writable_paths: vec![location(&dir_a)],
+                protected_paths: vec![location(&dir_c)],
             }),
-            SandboxFsPolicy::Unrestricted
+            SandboxFsPolicy::Unrestricted {
+                protected_paths: vec![location(&dir_d), location(&dir_c)],
+            }
         );
     }
 
@@ -1343,8 +1491,8 @@ mod tests {
 /// doesn't exist yet.
 ///
 /// `std::fs::canonicalize` fails if any component is missing, which would leave
-/// a not-yet-created path (e.g. a `.git` directory before `git init`) in a
-/// non-canonical form. The sandbox layers canonicalize the writable parent
+/// a not-yet-created path in a non-canonical form. The sandbox layers
+/// canonicalize the writable parent
 /// (the worktree root) but, with a plain `canonicalize`, fall back to the raw
 /// path for a missing child; the two then disagree when a component is a
 /// symlink (`/tmp` -> `/private/tmp` on macOS), and the protection rule for the
@@ -1353,9 +1501,9 @@ mod tests {
 /// consistent with its parent. If neither the path nor its parent can be
 /// canonicalized, the path is returned unchanged.
 //
-// Only the macOS Seatbelt layer uses this (Linux skips not-yet-existing `.git`
-// dirs rather than emitting a rule for them), so it's gated to macOS to avoid a
-// dead-code warning elsewhere.
+// Only the macOS Seatbelt layer uses this (Linux skips not-yet-existing
+// protected paths rather than emitting a rule for them), so it's gated to macOS
+// to avoid a dead-code warning elsewhere.
 #[cfg(target_os = "macos")]
 pub(crate) fn canonicalize_allowing_missing_leaf(path: &std::path::Path) -> std::path::PathBuf {
     if let Ok(canonical) = path.canonicalize() {
@@ -1386,7 +1534,7 @@ mod macos_tests {
 
         // A path whose leaf doesn't exist yet still resolves through its parent,
         // so it stays consistent with how the parent directory canonicalizes
-        // (this is the `.git`-before-`git init` case).
+        // (for example, when protecting a not-yet-created child path).
         let missing = dir.path().join("not-created-yet");
         assert_eq!(
             canonicalize_allowing_missing_leaf(&missing),

@@ -827,6 +827,7 @@ impl WorktreeStore {
                         visible,
                         abs_path: response.canonicalized_path,
                         root_repo_common_dir: response.root_repo_common_dir,
+                        root_repo_is_linked_worktree: response.root_repo_is_linked_worktree,
                     },
                     client,
                     path_style,
@@ -1155,6 +1156,7 @@ impl WorktreeStore {
                     root_repo_common_dir: worktree
                         .root_repo_common_dir()
                         .map(|p| p.to_string_lossy().into_owned()),
+                    root_repo_is_linked_worktree: worktree.root_repo_is_linked_worktree(),
                 }
             })
             .collect()
@@ -1371,7 +1373,9 @@ impl WorktreeStore {
                     .root_repo_common_dir()
                     .map(|dir| crate::git_store::repo_identity_path(dir))
                     .filter(|repo_path| {
-                        *repo_path == folder_path.as_path() || !folder_path.starts_with(*repo_path)
+                        snapshot.root_repo_is_linked_worktree()
+                            || *repo_path == folder_path.as_path()
+                            || !folder_path.starts_with(*repo_path)
                     })
                     .map(Path::to_path_buf)
                     .unwrap_or_else(|| folder_path.clone());
