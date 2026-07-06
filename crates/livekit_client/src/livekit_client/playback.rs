@@ -858,9 +858,10 @@ mod macos {
                 tx.unbounded_send(()).ok();
             })));
 
-            // Get the current default device ID
-            let device_id = unsafe {
-                // Listen for default device changes
+            // Listen for default device changes. If this registration fails
+            // nothing has been registered yet, so dropping the callback here is
+            // harmless.
+            unsafe {
                 coreaudio::Error::from_os_status(AudioObjectAddPropertyListener(
                     kAudioObjectSystemObject,
                     &AudioObjectPropertyAddress {
@@ -875,8 +876,26 @@ mod macos {
                     Some(property_listener_handler_shim),
                     &*callback as *const _ as *mut _,
                 ))?;
+            }
 
-                // Also listen for changes to the device configuration
+            // Construct `Self` now that the system-level listener is registered,
+            // so that `Drop` always unregisters it. Registering the
+            // device-specific listener below can fail (for example if the device
+            // is unplugged mid-setup); if we returned `Err` at that point `Self`
+            // would never be built, `Drop` would never run, and the freed
+            // callback would remain registered as the system listener, causing a
+            // use-after-free on the next default-device change.
+            let mut this = Self {
+                rx,
+                callback,
+                input,
+                device_id: 0,
+            };
+
+            // Also listen for changes to the device configuration. Failure here
+            // is non-fatal: we simply won't receive stream-format notifications,
+            // and `device_id` stays 0 so `Drop` skips this listener.
+            unsafe {
                 let device_id = if input {
                     let mut input_device: AudioObjectID = 0;
                     let mut prop_size = std::mem::size_of::<AudioObjectID>() as u32;
@@ -922,8 +941,8 @@ mod macos {
                 };
 
                 if device_id != 0 {
-                    // Listen for format changes on the device
-                    coreaudio::Error::from_os_status(AudioObjectAddPropertyListener(
+                    // Listen for format changes on the device.
+                    match coreaudio::Error::from_os_status(AudioObjectAddPropertyListener(
                         device_id,
                         &AudioObjectPropertyAddress {
                             mSelector: coreaudio::sys::kAudioDevicePropertyStreamFormat,
@@ -935,19 +954,17 @@ mod macos {
                             mElement: kAudioObjectPropertyElementMaster,
                         },
                         Some(property_listener_handler_shim),
-                        &*callback as *const _ as *mut _,
-                    ))?;
+                        &*this.callback as *const _ as *mut _,
+                    )) {
+                        Ok(()) => this.device_id = device_id,
+                        Err(error) => log::warn!(
+                            "Failed to register audio device stream format listener: {error}"
+                        ),
+                    }
                 }
+            }
 
-                device_id
-            };
-
-            Ok(Self {
-                rx,
-                callback,
-                input,
-                device_id,
-            })
+            Ok(this)
         }
     }
 
