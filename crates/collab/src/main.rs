@@ -48,7 +48,6 @@ fn main() -> Result<()> {
         .block_on(async_main())
 }
 
-#[expect(clippy::result_large_err)]
 async fn async_main() -> Result<()> {
     let mut args = args().skip(1);
     match args.next().as_deref() {
