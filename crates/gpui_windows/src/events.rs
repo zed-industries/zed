@@ -14,7 +14,6 @@ use windows::{
             WindowsAndMessaging::*,
         },
     },
-    core::PCWSTR,
 };
 
 use crate::*;
@@ -1144,14 +1143,31 @@ impl WindowsWindowInner {
     }
 
     fn handle_system_theme_changed(&self, handle: HWND, lparam: LPARAM) -> Option<isize> {
-        // lParam is a pointer to a string that indicates the area containing the system parameter
-        // that was changed.
-        let parameter = PCWSTR::from_raw(lparam.0 as _);
-        if unsafe { !parameter.is_null() && !parameter.is_empty() }
-            && let Some(parameter_string) = unsafe { parameter.to_string() }.log_err()
-        {
+        // lParam is a pointer to a NUL-terminated wide string naming the area containing the
+        // system parameter that was changed. It comes straight off the message queue, so bound
+        // how far we walk it: the value is only ever compared against "ImmersiveColorSet", and
+        // scanning for the terminator without a limit would let a malformed message walk us off
+        // the end of the buffer.
+        let pointer = lparam.0 as *const u16;
+        if pointer.is_null() {
+            return Some(0);
+        }
+        const MAX_UNITS: usize = 64;
+        let mut units = Vec::with_capacity(MAX_UNITS);
+        for offset in 0..MAX_UNITS {
+            // SAFETY: `pointer` is non-null and we advance one unit at a time only while the
+            // preceding unit was a non-NUL part of the string, stopping at the terminator, so we
+            // never read past the end of a well-formed NUL-terminated buffer.
+            let unit = unsafe { pointer.add(offset).read() };
+            if unit == 0 {
+                break;
+            }
+            units.push(unit);
+        }
+        if !units.is_empty() {
+            let parameter_string = String::from_utf16_lossy(&units);
             log::info!("System settings changed: {}", parameter_string);
-            if parameter_string.as_str() == "ImmersiveColorSet" {
+            if parameter_string == "ImmersiveColorSet" {
                 let new_appearance = system_appearance()
                     .context("unable to get system appearance when handling ImmersiveColorSet")
                     .log_err()?;
