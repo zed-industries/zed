@@ -27,10 +27,15 @@ const CRASH_HANDLER_PING_TIMEOUT: Duration = Duration::from_secs(60);
 const CRASH_HANDLER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Force a backtrace to be printed on panic.
+///
+/// This only installs the panic hook. It intentionally does not touch
+/// `RUST_BACKTRACE`: a panic hook runs on a live, multithreaded process
+/// (including for caught panics), and mutating the environment there races other
+/// threads' `getenv`, which is a use-after-free in glibc. Callers that want a
+/// backtrace must set `RUST_BACKTRACE` themselves at single-threaded startup.
 pub fn force_backtrace() {
     let old_hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
-        unsafe { env::set_var("RUST_BACKTRACE", "1") };
         old_hook(info);
         // prevent the macOS crash dialog from popping up
         if cfg!(target_os = "macos") {

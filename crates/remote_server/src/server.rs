@@ -567,6 +567,16 @@ pub fn execute_run(
 ) -> Result<()> {
     init_paths()?;
 
+    // Enable Rust backtraces so the panic hook installed by `crashes::force_backtrace`
+    // (used when the crash handler is not installed) prints a backtrace. This has to
+    // happen while we are still single-threaded, before the gpui app and rayon pool
+    // below spawn threads: mutating the environment after other threads exist races with
+    // concurrent `getenv` calls. The `crashes` crate deliberately never touches the
+    // environment itself for this reason.
+    // SAFETY: this is the earliest point in the server's startup and no threads have
+    // been spawned yet.
+    unsafe { env::set_var("RUST_BACKTRACE", "1") };
+
     let startup_time = Instant::now();
     let app = gpui_platform::headless();
     let pid = std::process::id();
