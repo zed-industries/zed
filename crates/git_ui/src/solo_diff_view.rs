@@ -727,7 +727,7 @@ impl Render for SoloDiffGitToolbar {
             .children(diff_stat.map(|stat| {
                 DiffStat::new("solo-diff-stat", stat.added as usize, stat.deleted as usize)
             }))
-            .child(Divider::vertical())
+            .child(Divider::vertical().ml_1())
             .child(
                 h_group_sm()
                     .child(

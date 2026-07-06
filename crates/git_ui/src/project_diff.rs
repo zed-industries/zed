@@ -1738,12 +1738,23 @@ impl Render for ProjectDiffToolbar {
         let button_states = project_diff.read(cx).button_states(cx);
         let review_count = project_diff.read(cx).total_review_comment_count();
 
+        let (additions, deletions) = project_diff.read(cx).calculate_changed_lines(cx);
+        let is_multibuffer_empty = project_diff.read(cx).multibuffer.read(cx).is_empty();
+
         h_flex()
             .my_neg_1()
             .py_1()
             .gap_1p5()
             .flex_wrap()
             .justify_between()
+            .when(!is_multibuffer_empty, |this| {
+                this.child(DiffStat::new(
+                    "project-diff-stat",
+                    additions as usize,
+                    deletions as usize,
+                ))
+                .child(Divider::vertical().ml_1())
+            })
             // n.b. the only reason these arrows are here is because we don't
             // support "undo" for staging so we need a way to go back.
             .child(
@@ -1972,13 +1983,12 @@ impl Render for BranchDiffToolbar {
 
         let show_review_button = !is_multibuffer_empty && is_ai_enabled;
 
-        h_group_xl()
+        h_flex()
             .my_neg_1()
             .py_1()
-            .items_center()
+            .gap_1p5()
             .flex_wrap()
-            .justify_end()
-            .gap_2()
+            .justify_between()
             .when(!is_multibuffer_empty, |this| {
                 this.child(DiffStat::new(
                     "branch-diff-stat",
@@ -1986,7 +1996,7 @@ impl Render for BranchDiffToolbar {
                     deletions as usize,
                 ))
             })
-            .child(Divider::vertical())
+            .child(Divider::vertical().ml_1())
             .child(
                 PopoverMenu::new("branch-diff-base-branch-picker")
                     .menu(move |window, cx| {
@@ -2035,10 +2045,6 @@ impl Render for BranchDiffToolbar {
                             Icon::new(IconName::ZedAssistant)
                                 .size(IconSize::Small)
                                 .color(Color::Muted),
-                        )
-                        .key_binding(
-                            KeyBinding::for_action_in(&ReviewDiff, &focus_handle, cx)
-                                .map(|s| s.size(rems_from_px(12.))),
                         )
                         .tooltip(move |_, cx| {
                             Tooltip::with_meta_in(
