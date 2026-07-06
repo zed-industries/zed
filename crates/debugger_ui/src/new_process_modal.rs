@@ -106,9 +106,7 @@ impl NewProcessModal {
                         let delegate =
                             DebugDelegate::new(debug_panel.downgrade(), task_store.clone());
                         Picker::list(delegate, window, cx)
-                            .modal(false)
-                            .height(rems(24.))
-                            .no_vertical_padding()
+                            .embedded()
                             .list_measure_all()
                     });
 

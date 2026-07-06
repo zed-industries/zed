@@ -170,14 +170,13 @@ enum DiffKind {
     SinceOid(Option<git::Oid>),
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum GitAccess {
     /// Either:
     /// - the user owns `.git`
     /// - the user doesn't own `.git`, but has both of:
     ///   - OS-level read permissions
     ///   - the directory is marked as safe (git config safe.directory)
-    #[default]
     Yes,
 
     /// The user is not the owner of `.git`, and one of the following is true:
@@ -486,6 +485,7 @@ pub enum RepositoryEvent {
     GitWorktreeListChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
     GraphEvent((LogSource, LogOrder), GitGraphEvent),
+    GitDirectoryChanged,
 }
 
 #[derive(Clone, Debug)]
@@ -1817,13 +1817,21 @@ impl GitStore {
         cx: &mut Context<Self>,
     ) {
         let mut removed_ids = Vec::new();
+
+        let is_trusted = TrustedWorktrees::try_get_global(cx)
+            .map(|trusted_worktrees| {
+                trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                    trusted_worktrees.can_trust(&self.worktree_store, worktree_id, cx)
+                })
+            })
+            .unwrap_or(false);
+
         for update in updated_git_repositories.iter() {
             if let Some((id, existing)) = self.repositories.iter().find(|(_, repo)| {
-                let existing_work_directory_abs_path =
-                    repo.read(cx).work_directory_abs_path.clone();
-                Some(&existing_work_directory_abs_path)
+                let existing_work_directory_abs_path = &repo.read(cx).work_directory_abs_path;
+                Some(existing_work_directory_abs_path)
                     == update.old_work_directory_abs_path.as_ref()
-                    || Some(&existing_work_directory_abs_path)
+                    || Some(existing_work_directory_abs_path)
                         == update.new_work_directory_abs_path.as_ref()
             }) {
                 let repo_id = *id;
@@ -1842,17 +1850,6 @@ impl GitStore {
                             update.repository_dir_abs_path.clone()
                         && let Some(common_dir_abs_path) = update.common_dir_abs_path.clone()
                     {
-                        let is_trusted = TrustedWorktrees::try_get_global(cx)
-                            .map(|trusted_worktrees| {
-                                trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                                    trusted_worktrees.can_trust(
-                                        &self.worktree_store,
-                                        worktree_id,
-                                        cx,
-                                    )
-                                })
-                            })
-                            .unwrap_or(false);
                         existing.update(cx, |existing, cx| {
                             existing.reinitialize_local_backend(
                                 new_work_directory_abs_path,
@@ -1888,16 +1885,7 @@ impl GitStore {
                 ..
             } = update
             {
-                let repository_dir_abs_path = repository_dir_abs_path.clone();
-                let common_dir_abs_path = common_dir_abs_path.clone();
                 let id = RepositoryId(next_repository_id.fetch_add(1, atomic::Ordering::Release));
-                let is_trusted = TrustedWorktrees::try_get_global(cx)
-                    .map(|trusted_worktrees| {
-                        trusted_worktrees.update(cx, |trusted_worktrees, cx| {
-                            trusted_worktrees.can_trust(&self.worktree_store, worktree_id, cx)
-                        })
-                    })
-                    .unwrap_or(false);
                 let git_store = cx.weak_entity();
                 let repo = cx.new(|cx| {
                     let mut repo = Repository::local(
@@ -2146,6 +2134,7 @@ impl GitStore {
                         || update.new_work_directory_abs_path.as_ref() == Some(repo_abs_path)
                 }) {
                     repository.reload_buffer_diff_bases(cx);
+                    cx.emit(RepositoryEvent::GitDirectoryChanged);
                 }
             });
         }
@@ -5421,6 +5410,10 @@ impl Repository {
             .starts_with(&self.snapshot.work_directory_abs_path)
     }
 
+    pub fn commit_message_buffer(&self) -> Option<&Entity<Buffer>> {
+        self.commit_message_buffer.as_ref()
+    }
+
     pub fn open_commit_buffer(
         &mut self,
         languages: Option<Arc<LanguageRegistry>>,
@@ -8632,8 +8625,14 @@ impl Repository {
 
                 let changed_path_statuses = cx
                     .background_spawn(async move {
-                        let mut changed_paths =
-                            changed_paths.into_iter().flatten().collect::<BTreeSet<_>>();
+                        let changed_paths = GitStore::coalesce_repo_paths(
+                            changed_paths
+                                .into_iter()
+                                .flatten()
+                                .collect::<BTreeSet<_>>()
+                                .into_iter()
+                                .collect(),
+                        );
                         let changed_paths_vec = changed_paths.iter().cloned().collect::<Vec<_>>();
 
                         let status_task = backend.status(&changed_paths_vec);
@@ -8654,12 +8653,34 @@ impl Repository {
 
                         let mut changed_path_statuses = Vec::new();
                         let prev_statuses = prev_snapshot.statuses_by_path.clone();
+                        let current_status_paths = statuses
+                            .entries
+                            .iter()
+                            .map(|(repo_path, _)| repo_path.clone())
+                            .collect::<BTreeSet<_>>();
+
+                        for path in &changed_paths {
+                            let mut cursor = prev_statuses.cursor::<PathProgress>(());
+                            cursor.seek_forward(&PathTarget::Path(path), Bias::Left);
+                            while let Some(entry) = cursor.item() {
+                                if !entry.repo_path.starts_with(path) {
+                                    break;
+                                }
+
+                                if !current_status_paths.contains(&entry.repo_path) {
+                                    changed_path_statuses.push(Edit::Remove(PathKey(
+                                        entry.repo_path.as_ref().clone(),
+                                    )));
+                                }
+                                cursor.next();
+                            }
+                        }
+
                         let mut cursor = prev_statuses.cursor::<PathProgress>(());
 
                         for (repo_path, status) in &*statuses.entries {
                             let current_diff_stat = diff_stats.get(repo_path).copied();
 
-                            changed_paths.remove(repo_path);
                             if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left)
                                 && cursor.item().is_some_and(|entry| {
                                     entry.status == *status && entry.diff_stat == current_diff_stat
@@ -8673,13 +8694,6 @@ impl Repository {
                                 status: *status,
                                 diff_stat: current_diff_stat,
                             }));
-                        }
-                        let mut cursor = prev_statuses.cursor::<PathProgress>(());
-                        for path in changed_paths.into_iter() {
-                            if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left) {
-                                changed_path_statuses
-                                    .push(Edit::Remove(PathKey(path.as_ref().clone())));
-                            }
                         }
                         anyhow::Ok(changed_path_statuses)
                     })

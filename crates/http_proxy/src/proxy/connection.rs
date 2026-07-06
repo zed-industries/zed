@@ -18,6 +18,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine as _;
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpStream, ToSocketAddrs as _};
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -52,11 +54,82 @@ const UPSTREAM_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Top-level entry from the listener thread. Owns the client connection
 /// and the runtime state; emits events; never returns errors that escape
 /// the connection (those are logged at the listener level).
-pub(crate) fn handle(client: TcpStream, state: Arc<RuntimeState>) -> Result<()> {
-    // Performance baseline: TCP_NODELAY eliminates the Nagle delay that
-    // otherwise stalls small interactive payloads (git protocol negotiation,
-    // npm metadata pings, etc.).
-    if let Err(error) = client.set_nodelay(true) {
+pub(crate) enum ClientStream {
+    Tcp(TcpStream),
+    #[cfg(unix)]
+    Unix(UnixStream),
+}
+
+impl ClientStream {
+    fn try_clone(&self) -> std::io::Result<Self> {
+        match self {
+            Self::Tcp(stream) => stream.try_clone().map(Self::Tcp),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.try_clone().map(Self::Unix),
+        }
+    }
+
+    fn set_read_timeout(&self, duration: Option<Duration>) -> std::io::Result<()> {
+        match self {
+            Self::Tcp(stream) => stream.set_read_timeout(duration),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.set_read_timeout(duration),
+        }
+    }
+}
+
+impl Read for ClientStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Tcp(stream) => stream.read(buf),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.read(buf),
+        }
+    }
+}
+
+impl Write for ClientStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Tcp(stream) => stream.write(buf),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Self::Tcp(stream) => stream.flush(),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.flush(),
+        }
+    }
+}
+
+trait StreamIo: Read + Write + Send + 'static {
+    fn shutdown(&self, how: Shutdown) -> std::io::Result<()>;
+}
+
+impl StreamIo for ClientStream {
+    fn shutdown(&self, how: Shutdown) -> std::io::Result<()> {
+        match self {
+            Self::Tcp(stream) => stream.shutdown(how),
+            #[cfg(unix)]
+            Self::Unix(stream) => stream.shutdown(how),
+        }
+    }
+}
+
+impl StreamIo for TcpStream {
+    fn shutdown(&self, how: Shutdown) -> std::io::Result<()> {
+        TcpStream::shutdown(self, how)
+    }
+}
+
+pub(crate) fn handle(client: ClientStream, state: Arc<RuntimeState>) -> Result<()> {
+    if let ClientStream::Tcp(stream) = &client
+        && let Err(error) = stream.set_nodelay(true)
+    {
         log::debug!("[http_proxy] failed to set TCP_NODELAY on client socket: {error}");
     }
 
@@ -106,7 +179,7 @@ pub(crate) fn handle(client: TcpStream, state: Arc<RuntimeState>) -> Result<()> 
 /// Reads request headers (until `\r\n\r\n`) from the client. Returns the
 /// full buffer (which may include some bytes after the headers) and the
 /// offset where the headers ended. Capped at [`MAX_HEADER_BYTES`].
-fn read_request_headers(client: &mut TcpStream) -> Result<(Vec<u8>, usize)> {
+fn read_request_headers(client: &mut ClientStream) -> Result<(Vec<u8>, usize)> {
     let mut buf = Vec::with_capacity(4096);
     let mut tmp = [0u8; 4096];
     let mut searched = 0usize;
@@ -418,6 +491,16 @@ fn plan_route(host: &str, port: u16, state: &RuntimeState) -> Result<Route, Rout
 /// already blocks them for direct connections from the sandbox; the proxy
 /// (which runs outside the sandbox) must not reopen them.
 fn is_forbidden_ip(ip: IpAddr) -> bool {
+    // Escape hatch for the NixOS sandbox integration tests only: their echo
+    // servers live on the VM's private network, which this filter would
+    // otherwise reject. It is compiled in ONLY under the
+    // `nixos-integration-tests` feature (enabled via `sandbox/nixos-test` when
+    // building `bwrap_test_helper`), so in a real Zed build the env var has no
+    // effect and cannot disable DNS-rebinding/SSRF protection.
+    #[cfg(feature = "nixos-integration-tests")]
+    if std::env::var_os("ZED_SANDBOX_PROXY_ALLOW_LOCAL_IPS").is_some() {
+        return false;
+    }
     match ip {
         IpAddr::V4(v4) => is_forbidden_ipv4(v4),
         IpAddr::V6(v6) => {
@@ -448,7 +531,7 @@ fn is_forbidden_ipv4(ip: Ipv4Addr) -> bool {
 }
 
 fn handle_connect(
-    mut client: TcpStream,
+    mut client: ClientStream,
     host: String,
     port: u16,
     leftover_body: Vec<u8>,
@@ -540,7 +623,7 @@ fn handle_connect(
 }
 
 fn handle_http_forward(
-    mut client: TcpStream,
+    mut client: ClientStream,
     method: String,
     host: String,
     port: u16,
@@ -741,7 +824,7 @@ fn connect_via_upstream(
 /// Send a 511 response with `Via` and `Proxy-Status` headers and an
 /// explanatory body. Closes the connection afterwards.
 fn deny_request(
-    client: &mut TcpStream,
+    client: &mut ClientStream,
     state: &RuntimeState,
     host: String,
     port: u16,
@@ -809,7 +892,7 @@ fn emit(state: &RuntimeState, event: ProxyEvent) {
 /// Returns `(client→remote bytes, remote→client bytes)`. Errors are
 /// swallowed — partial transfer is fine, the caller just emits whatever
 /// totals we got.
-fn pump_bidir(client: TcpStream, upstream: TcpStream) -> (u64, u64) {
+fn pump_bidir(client: ClientStream, upstream: TcpStream) -> (u64, u64) {
     // Two clones per direction so each side owns the half it touches.
     // `try_clone` dups the underlying fd, so reads/writes on the two
     // halves don't contend for the same kernel state.
@@ -852,7 +935,7 @@ fn pump_bidir(client: TcpStream, upstream: TcpStream) -> (u64, u64) {
 
 /// Copy bytes from `from` to `to` until EOF on the read side or write
 /// failure. Half-closes `to` for writes when done so the partner sees EOF.
-fn copy_one_way(mut from: TcpStream, mut to: TcpStream) -> u64 {
+fn copy_one_way(mut from: impl Read, mut to: impl StreamIo) -> u64 {
     let mut total = 0u64;
     let mut buf = vec![0u8; PUMP_BUFFER_SIZE];
     loop {

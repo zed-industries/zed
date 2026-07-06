@@ -17,7 +17,12 @@ use crate::allowlist::Allowlist;
 use anyhow::{Context, Result};
 use futures::channel::mpsc;
 use std::net::{Ipv4Addr, TcpListener, TcpStream};
+#[cfg(unix)]
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(unix)]
+use std::sync::atomic::AtomicU64;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 
@@ -140,6 +145,8 @@ pub enum ProxyEvent {
 /// connection threads finish on their own as soon as either side closes.
 pub struct ProxyHandle {
     port: u16,
+    socket_path: Option<PathBuf>,
+    cleanup_directory: Option<PathBuf>,
     /// Listener thread sees this flip to `true` after `accept` returns and
     /// then exits.
     shutdown: Arc<AtomicBool>,
@@ -187,14 +194,89 @@ impl ProxyHandle {
 
         Ok(ProxyHandle {
             port,
+            socket_path: None,
+            cleanup_directory: None,
             shutdown,
             listener_thread: Some(listener_thread),
         })
     }
 
-    /// The bound port. Stable for the lifetime of this handle.
+    /// Spawns the proxy on a fresh pathname Unix socket under the system temp
+    /// directory and reserves a loopback port number for the in-sandbox bridge.
+    #[cfg(unix)]
+    pub fn spawn_unix_temp(config: ProxyConfig) -> Result<ProxyHandle> {
+        let directory = unique_temp_socket_directory();
+        let path = directory.join("proxy.sock");
+        Self::spawn_unix_with_cleanup(path, Some(directory), config)
+    }
+
+    /// Spawns the proxy on a pathname Unix socket and reserves a loopback port
+    /// number for the in-sandbox bridge to listen on.
+    #[cfg(unix)]
+    pub fn spawn_unix(path: impl AsRef<Path>, config: ProxyConfig) -> Result<ProxyHandle> {
+        Self::spawn_unix_with_cleanup(path.as_ref().to_path_buf(), None, config)
+    }
+
+    #[cfg(unix)]
+    fn spawn_unix_with_cleanup(
+        path: PathBuf,
+        cleanup_directory: Option<PathBuf>,
+        config: ProxyConfig,
+    ) -> Result<ProxyHandle> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create proxy socket directory {}",
+                    parent.display()
+                )
+            })?;
+        }
+        if path.exists() {
+            std::fs::remove_file(&path).with_context(|| {
+                format!("failed to remove stale proxy socket {}", path.display())
+            })?;
+        }
+
+        let listener = UnixListener::bind(&path)
+            .with_context(|| format!("failed to bind proxy Unix socket {}", path.display()))?;
+        let port = reserve_loopback_port()?;
+
+        let _ = config.events.unbounded_send(ProxyEvent::Ready { port });
+
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let runtime_state = Arc::new(RuntimeState {
+            allowlist: config.allowlist,
+            upstream: config.upstream,
+            events: config.events,
+            active_connections: AtomicUsize::new(0),
+        });
+
+        let listener_thread = thread::Builder::new()
+            .name("http-proxy-unix-listener".to_string())
+            .stack_size(128 * 1024)
+            .spawn({
+                let shutdown = shutdown.clone();
+                move || run_unix_listener(listener, runtime_state, shutdown)
+            })
+            .context("failed to spawn proxy Unix listener thread")?;
+
+        Ok(ProxyHandle {
+            port,
+            socket_path: Some(path),
+            cleanup_directory,
+            shutdown,
+            listener_thread: Some(listener_thread),
+        })
+    }
+
+    /// The loopback TCP port clients should use for proxy environment variables.
     pub fn port(&self) -> u16 {
         self.port
+    }
+
+    /// Path of the Unix socket listener, for Linux bridge mode.
+    pub fn socket_path(&self) -> Option<&Path> {
+        self.socket_path.as_deref()
     }
 }
 
@@ -207,7 +289,14 @@ impl Drop for ProxyHandle {
         // listener wakes up, accepts the connection, sees the shutdown
         // flag, breaks the loop. The accepted connection's worker thread
         // will read the empty stream and exit too.
-        let _ = TcpStream::connect((Ipv4Addr::LOCALHOST, self.port));
+        if let Some(path) = &self.socket_path {
+            #[cfg(unix)]
+            let _ = UnixStream::connect(path);
+            #[cfg(not(unix))]
+            let _ = path;
+        } else {
+            let _ = TcpStream::connect((Ipv4Addr::LOCALHOST, self.port));
+        }
 
         if let Some(thread) = self.listener_thread.take() {
             // Give the listener a chance to clean up. A join error means the
@@ -217,7 +306,39 @@ impl Drop for ProxyHandle {
                 log::warn!("[http_proxy] listener thread panicked");
             }
         }
+        if let Some(path) = &self.socket_path
+            && let Err(error) = std::fs::remove_file(path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            log::debug!(
+                "[http_proxy] failed to remove proxy Unix socket {}: {error}",
+                path.display()
+            );
+        }
+        if let Some(directory) = &self.cleanup_directory
+            && let Err(error) = std::fs::remove_dir(directory)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            log::debug!(
+                "[http_proxy] failed to remove proxy socket directory {}: {error}",
+                directory.display()
+            );
+        }
     }
+}
+
+#[cfg(unix)]
+fn unique_temp_socket_directory() -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    std::env::temp_dir().join(format!(
+        "zed-proxy-{}-{nanos}-{counter}",
+        std::process::id()
+    ))
 }
 
 /// State shared across all connection threads for a single proxy instance.
@@ -238,6 +359,16 @@ impl Drop for ConnectionSlot {
     }
 }
 
+#[cfg(unix)]
+fn reserve_loopback_port() -> Result<u16> {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .context("failed to reserve proxy bridge port")?;
+    Ok(listener
+        .local_addr()
+        .context("failed to read reserved proxy bridge port")?
+        .port())
+}
+
 fn run_listener(listener: TcpListener, state: Arc<RuntimeState>, shutdown: Arc<AtomicBool>) {
     for stream in listener.incoming() {
         if shutdown.load(Ordering::SeqCst) {
@@ -245,34 +376,7 @@ fn run_listener(listener: TcpListener, state: Arc<RuntimeState>, shutdown: Arc<A
             break;
         }
         match stream {
-            Ok(stream) => {
-                let previous = state.active_connections.fetch_add(1, Ordering::SeqCst);
-                if previous >= MAX_CONCURRENT_CONNECTIONS {
-                    state.active_connections.fetch_sub(1, Ordering::SeqCst);
-                    log::warn!(
-                        "[http_proxy] dropping connection: {MAX_CONCURRENT_CONNECTIONS} \
-                         connections already active"
-                    );
-                    drop(stream);
-                    continue;
-                }
-                let slot = ConnectionSlot(state.clone());
-                let state = state.clone();
-                let result = thread::Builder::new()
-                    .name("http-proxy-conn".to_string())
-                    // Connection workers do bidir copy with a 64 KiB buffer
-                    // and a few syscall stack frames. 128 KiB is plenty.
-                    .stack_size(128 * 1024)
-                    .spawn(move || {
-                        let _slot = slot;
-                        if let Err(e) = connection::handle(stream, state) {
-                            log::debug!("[http_proxy] connection handler error: {e}");
-                        }
-                    });
-                if let Err(e) = result {
-                    log::warn!("[http_proxy] failed to spawn connection thread: {e}");
-                }
-            }
+            Ok(stream) => spawn_connection(connection::ClientStream::Tcp(stream), &state),
             Err(e) => {
                 // EMFILE / per-process fd exhaustion is the realistic
                 // failure here. Log and keep going — accept errors are
@@ -280,5 +384,46 @@ fn run_listener(listener: TcpListener, state: Arc<RuntimeState>, shutdown: Arc<A
                 log::warn!("[http_proxy] accept failed: {e}");
             }
         }
+    }
+}
+
+#[cfg(unix)]
+fn run_unix_listener(listener: UnixListener, state: Arc<RuntimeState>, shutdown: Arc<AtomicBool>) {
+    for stream in listener.incoming() {
+        if shutdown.load(Ordering::SeqCst) {
+            log::debug!("[http_proxy] Unix listener stopping (shutdown signaled)");
+            break;
+        }
+        match stream {
+            Ok(stream) => spawn_connection(connection::ClientStream::Unix(stream), &state),
+            Err(error) => log::warn!("[http_proxy] Unix accept failed: {error}"),
+        }
+    }
+}
+
+fn spawn_connection(stream: connection::ClientStream, state: &Arc<RuntimeState>) {
+    let previous = state.active_connections.fetch_add(1, Ordering::SeqCst);
+    if previous >= MAX_CONCURRENT_CONNECTIONS {
+        state.active_connections.fetch_sub(1, Ordering::SeqCst);
+        log::warn!(
+            "[http_proxy] dropping connection: {MAX_CONCURRENT_CONNECTIONS} \
+             connections already active"
+        );
+        drop(stream);
+        return;
+    }
+    let slot = ConnectionSlot(state.clone());
+    let state = state.clone();
+    let result = thread::Builder::new()
+        .name("http-proxy-conn".to_string())
+        .stack_size(128 * 1024)
+        .spawn(move || {
+            let _slot = slot;
+            if let Err(error) = connection::handle(stream, state) {
+                log::debug!("[http_proxy] connection handler error: {error}");
+            }
+        });
+    if let Err(error) = result {
+        log::warn!("[http_proxy] failed to spawn connection thread: {error}");
     }
 }

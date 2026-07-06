@@ -69,6 +69,8 @@ actions!(
         OpenLicenses,
         /// Opens the Zed status page.
         OpenStatusPage,
+        /// Opens the Zed merch store.
+        GetMerch,
         /// Opens the telemetry log.
         OpenTelemetryLog,
         /// Opens the performance profiler.
@@ -144,6 +146,18 @@ pub struct OpenSettingsAt {
     /// A path to a specific setting (e.g. `theme.mode`)
     pub path: String,
     /// The settings file to select before opening `path`. When omitted, the
+    /// existing settings file selection is preserved.
+    #[serde(default)]
+    pub target: Option<OpenSettingsAtTarget>,
+}
+
+#[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct OpenSettingsPage {
+    /// A settings page title (e.g. `AI`).
+    pub page: String,
+    /// The settings file to select before opening `page`. When omitted, the
     /// existing settings file selection is preserved.
     #[serde(default)]
     pub target: Option<OpenSettingsAtTarget>,
@@ -527,7 +541,7 @@ pub mod agent {
     actions!(
         agent,
         [
-            /// Opens the agent settings panel.
+            /// Opens the agent settings UI.
             #[action(deprecated_aliases = ["agent::OpenConfiguration"])]
             OpenSettings,
             /// Opens the agent onboarding modal.
