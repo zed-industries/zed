@@ -1302,14 +1302,14 @@ mod tests {
 
         cx.update(|cx| {
             use gpui::UpdateGlobal;
-            settings::SettingsStore::update_global(cx, |store: &mut settings::SettingsStore, cx| {
-                store
-                    .set_user_settings(
-                        r#"{"git": {"inline_blame": {"enabled": false}}}"#,
-                        cx,
-                    )
-                    .expect("failed to set user settings");
-            });
+            settings::SettingsStore::update_global(
+                cx,
+                |store: &mut settings::SettingsStore, cx| {
+                    store
+                        .set_user_settings(r#"{"git": {"inline_blame": {"enabled": false}}}"#, cx)
+                        .expect("failed to set user settings");
+                },
+            );
         });
 
         let fs = FakeFs::new(cx.executor());
@@ -1352,7 +1352,10 @@ mod tests {
 
         // Verify blame is not loaded yet
         editor.update(cx, |editor, _cx| {
-            assert!(editor.blame().is_none(), "blame should not be loaded initially");
+            assert!(
+                editor.blame().is_none(),
+                "blame should not be loaded initially"
+            );
         });
 
         // Focus the editor so that blame generation proceeds
@@ -1384,11 +1387,7 @@ mod tests {
                 "observation should be consumed after blame data is generated"
             );
             assert!(
-                editor
-                    .blame()
-                    .unwrap()
-                    .read(cx)
-                    .has_generated_entries(),
+                editor.blame().unwrap().read(cx).has_generated_entries(),
                 "blame should have generated entries"
             );
         });
