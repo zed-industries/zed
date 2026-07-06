@@ -12,6 +12,7 @@ use crate::{
 use cocoa::{
     appkit::{NSEvent, NSEventModifierFlags, NSEventPhase, NSEventType},
     base::{YES, id},
+    foundation::NSUInteger,
 };
 use core_foundation::data::{CFDataGetBytePtr, CFDataRef};
 use core_graphics::event::CGKeyCode;
@@ -106,16 +107,19 @@ pub(crate) unsafe fn platform_input_from_native(
     window_height: Option<Pixels>,
 ) -> Option<PlatformInput> {
     unsafe {
-        let event_type = native_event.eventType();
-
-        // Filter out event types that aren't in the NSEventType enum.
+        // AppKit can deliver raw event types that fall outside the `NSEventType`
+        // enum (e.g. SmartMagnify=32, QuickLook=33, DirectTouch=37, ChangeMode=38,
+        // and values added in future macOS releases). Materializing an out-of-range
+        // value as the Rust enum is undefined behavior, so read the raw integer
+        // first and only convert to `NSEventType` once it matches a known-valid
+        // discriminant.
         // See https://github.com/servo/cocoa-rs/issues/155#issuecomment-323482792 for details.
-        match event_type as u64 {
-            0 | 21 | 32 | 33 | 35 | 36 | 37 => {
-                return None;
-            }
-            _ => {}
+        let raw_event_type: NSUInteger = msg_send![native_event, r#type];
+        if !matches!(raw_event_type, 1..=20 | 22..=27 | 29..=31 | 34) {
+            return None;
         }
+
+        let event_type = native_event.eventType();
 
         match event_type {
             NSEventType::NSFlagsChanged => {
