@@ -2916,11 +2916,20 @@ fn external_paths_from_event(dragging_info: *mut Object) -> Option<ExternalPaths
     if filenames == nil {
         return None;
     }
+    // A hostile drag source controls the property-list value returned here. Blindly
+    // messaging it as an `NSArray` of `NSString`s (count/iterate/UTF8String) could
+    // raise an Objective-C exception that unwinds through this `extern "C"` frame,
+    // so validate the class of the plist and of every element before use.
+    let is_array: BOOL = unsafe { msg_send![filenames, isKindOfClass: class!(NSArray)] };
+    if is_array != YES {
+        return None;
+    }
     for file in unsafe { filenames.iter() } {
-        let path = unsafe {
-            let f = NSString::UTF8String(file);
-            CStr::from_ptr(f).to_string_lossy().into_owned()
-        };
+        let is_string: BOOL = unsafe { msg_send![file, isKindOfClass: class!(NSString)] };
+        if is_string != YES {
+            continue;
+        }
+        let path = unsafe { file.to_str().to_owned() };
         paths.push(PathBuf::from(path))
     }
     Some(ExternalPaths(paths))
