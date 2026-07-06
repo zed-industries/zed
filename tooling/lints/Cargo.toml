@@ -3,7 +3,7 @@ name = "lints"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Dylint lints for catching bad Zed specific patterns."
+description = "Dylint lints for catching bad Zed specific code patterns."
 
 [lib]
 crate-type = ["cdylib"]
