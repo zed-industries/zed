@@ -9,7 +9,11 @@ use cocoa::{
     base::{id, nil},
     foundation::{NSArray, NSData, NSFastEnumeration},
 };
-use objc::{class, msg_send, runtime::Object, sel, sel_impl};
+use objc::{
+    class, msg_send,
+    runtime::{BOOL, Object, YES},
+    sel, sel_impl,
+};
 use smallvec::SmallVec;
 use strum::IntoEnumIterator as _;
 
@@ -72,13 +76,15 @@ impl Pasteboard {
             // frames is undefined behavior. Validate the classes before use and
             // skip any entries that don't conform.
             let filenames = NSPasteboard::propertyListForType(self.inner, NSFilenamesPboardType);
-            let filenames_is_array: bool =
-                filenames != nil && msg_send![filenames, isKindOfClass: class!(NSArray)];
+            let filenames_is_array = filenames != nil && {
+                let is_array: BOOL = msg_send![filenames, isKindOfClass: class!(NSArray)];
+                is_array == YES
+            };
             if filenames_is_array && NSArray::count(filenames) > 0 {
                 let mut paths = SmallVec::new();
                 for file in filenames.iter() {
-                    let is_string: bool = msg_send![file, isKindOfClass: class!(NSString)];
-                    if !is_string {
+                    let is_string: BOOL = msg_send![file, isKindOfClass: class!(NSString)];
+                    if is_string != YES {
                         continue;
                     }
                     let path = NSStringExt::to_str(&file).to_owned();
