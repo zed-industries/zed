@@ -3247,7 +3247,6 @@ impl AgentPanel {
             cx,
         );
         if let Some(original) = saved_selected_agent {
-            // Restore the last-used-agent in persistent storage as well.
             self.set_selected_agent_and_persist(original, cx);
         }
         let thread_id = thread.conversation_view.read(cx).thread_id;
