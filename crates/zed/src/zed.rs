@@ -5849,9 +5849,7 @@ mod tests {
         cx.update(|cx| {
             let keymap = cx.key_bindings();
             let keymap = keymap.borrow();
-            let has_ai_binding = keymap
-                .bindings()
-                .any(|binding| is_ai_keybinding(binding));
+            let has_ai_binding = keymap.bindings().any(|binding| is_ai_keybinding(binding));
             assert!(
                 has_ai_binding,
                 "expected AI-namespaced bindings in the default keymap before disabling AI"
