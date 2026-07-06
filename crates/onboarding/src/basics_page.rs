@@ -581,8 +581,6 @@ fn render_registry_agent_button(
                     });
                 }
             });
-            // Select the newly installed agent in the agent panel so it's
-            // the one that launches when the panel is opened.
             window.dispatch_action(
                 Box::new(zed_actions::agent::SelectAgent {
                     agent: agent_id.clone(),
