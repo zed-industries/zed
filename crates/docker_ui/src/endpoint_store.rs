@@ -60,14 +60,19 @@ pub enum DockerAction {
 }
 
 impl DockerAction {
-    /// Whether this action can change running state or delete data. Mirrors
-    /// exactly the `docker` subcommands that mutate the daemon's state, as
-    /// opposed to read-only actions like `start`/`pull`/`inspect`/`logs`.
+    /// Whether this action can discard running state or delete data, and
+    /// therefore requires confirmation via [`crate::ConfirmModal`] before it
+    /// reaches [`DockerEndpointStore::dispatch_action`] on a writable
+    /// endpoint. This is orthogonal to the `read_only` gate in
+    /// `dispatch_action`, which blocks EVERY `DockerAction` (destructive or
+    /// not) on a read-only endpoint; `is_destructive` only decides whether a
+    /// writable endpoint additionally needs a confirmation step first.
     ///
     /// NOTE: `start_container` is intentionally NOT destructive: bringing up
-    /// an already-stopped container is the inverse of the read-only gate's
-    /// concern (it can't discard running state or data). `pull_image` is also
-    /// non-destructive: it only downloads an image and is always allowed.
+    /// an already-stopped container can't discard running state or data, so
+    /// it dispatches without confirmation on a writable endpoint (though it's
+    /// still blocked like any other action on a read-only one). `pull_image`
+    /// is also non-destructive: it only downloads an image.
     pub fn is_destructive(&self) -> bool {
         match self {
             DockerAction::StartContainer { .. } | DockerAction::PullImage { .. } => false,
@@ -499,17 +504,24 @@ impl DockerEndpointStore {
     /// Runs `action` against `endpoint_name` and refreshes that endpoint on
     /// success.
     ///
-    /// This is the SAFETY-CRITICAL gate: a destructive action
-    /// (`DockerAction::is_destructive`) against a `read_only` endpoint
-    /// returns immediately WITHOUT invoking the `DockerClient` at all. This
-    /// check is re-applied here rather than trusted to the caller (e.g. a
-    /// disabled button or a confirm modal that failed to gate correctly), so
-    /// that even a caller bug can never reach the client on a read-only
-    /// endpoint.
+    /// This is the SAFETY-CRITICAL gate and the single chokepoint every
+    /// `DockerAction` passes through (start/stop/restart/remove/pull/compose)
+    /// on its way to the `DockerClient`: ANY action against a `read_only`
+    /// endpoint returns immediately WITHOUT invoking the `DockerClient` at
+    /// all, not just destructive ones. Read paths (logs/inspect) never call
+    /// this method in the first place, so they remain unaffected. This check
+    /// is re-applied here rather than trusted to the caller (e.g. a disabled
+    /// button or a confirm modal that failed to gate correctly), so that even
+    /// a caller bug can never reach the client on a read-only endpoint. A
+    /// read-only endpoint is therefore truly view-only, including
+    /// non-destructive mutations like Start/Pull.
     ///
     /// Callers are expected to have already shown a [`crate::ConfirmModal`]
     /// for destructive actions and only invoke this method once the user
-    /// confirmed; this method itself does not prompt.
+    /// confirmed; this method itself does not prompt. The confirm
+    /// requirement stays keyed to `DockerAction::is_destructive` and is
+    /// unaffected by this gate: it decides whether a writable endpoint needs
+    /// confirmation, not whether the action is allowed at all.
     pub fn dispatch_action(
         &mut self,
         endpoint_name: &str,
@@ -523,10 +535,8 @@ impl DockerEndpointStore {
         else {
             return;
         };
-        if action.is_destructive() && state.endpoint.read_only {
-            log::warn!(
-                "blocked destructive docker action on read-only endpoint {endpoint_name}: {action:?}"
-            );
+        if state.endpoint.read_only {
+            log::warn!("blocked docker action on read-only endpoint {endpoint_name}: {action:?}");
             return;
         }
 
@@ -579,8 +589,10 @@ impl DockerEndpointStore {
         .detach();
     }
 
-    /// Starts the container with `id` on `endpoint_name`. Not destructive:
-    /// always allowed regardless of `read_only`.
+    /// Starts the container with `id` on `endpoint_name`. Not destructive (so
+    /// never requires confirmation on a writable endpoint), but still blocked
+    /// on read-only endpoints by [`Self::dispatch_action`], since it's a
+    /// state-mutating action like any other.
     pub fn start_container(&mut self, endpoint_name: &str, id: String, cx: &mut Context<Self>) {
         self.dispatch_action(endpoint_name, DockerAction::StartContainer { id }, cx);
     }
@@ -597,8 +609,10 @@ impl DockerEndpointStore {
         self.dispatch_action(endpoint_name, DockerAction::RestartContainer { id }, cx);
     }
 
-    /// Pulls `reference` on `endpoint_name`. Not destructive: always allowed
-    /// regardless of `read_only`.
+    /// Pulls `reference` on `endpoint_name`. Not destructive (so never
+    /// requires confirmation on a writable endpoint), but still blocked on
+    /// read-only endpoints by [`Self::dispatch_action`], since it's a
+    /// state-mutating action like any other.
     pub fn pull_image(&mut self, endpoint_name: &str, reference: String, cx: &mut Context<Self>) {
         self.dispatch_action(endpoint_name, DockerAction::PullImage { reference }, cx);
     }
@@ -1108,12 +1122,13 @@ mod tests {
     }
 
     /// SAFETY-CRITICAL: this is the lowest-level proof of the read-only
-    /// gate. Every destructive action must bail out of `dispatch_action`
-    /// before invoking the `DockerClient`, for a `read_only` endpoint.
+    /// gate. EVERY action — destructive or not — must bail out of
+    /// `dispatch_action` before invoking the `DockerClient`, for a
+    /// `read_only` endpoint. This includes non-destructive actions like
+    /// `start`/`pull`: a read-only endpoint is fully view-only, not just
+    /// protected from destructive mutations.
     #[gpui::test]
-    async fn dispatch_action_blocks_all_destructive_actions_on_read_only_endpoint(
-        cx: &mut TestAppContext,
-    ) {
+    async fn dispatch_action_blocks_all_actions_on_read_only_endpoint(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
         set_one_ssh_endpoint(cx); // "prod" is read_only: true
@@ -1124,7 +1139,11 @@ mod tests {
         };
         let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
 
-        let destructive_actions = [
+        let all_actions = [
+            DockerAction::StartContainer { id: "api".into() },
+            DockerAction::PullImage {
+                reference: "img:latest".into(),
+            },
             DockerAction::StopContainer { id: "api".into() },
             DockerAction::RestartContainer { id: "api".into() },
             DockerAction::RemoveImage { id: "img".into() },
@@ -1140,8 +1159,7 @@ mod tests {
                 service: None,
             },
         ];
-        for action in destructive_actions {
-            assert!(action.is_destructive());
+        for action in all_actions {
             store.update(cx, |s, cx| s.dispatch_action("prod", action, cx));
         }
         cx.run_until_parked();
@@ -1156,20 +1174,21 @@ mod tests {
             .collect();
         assert!(
             non_discovery_calls.is_empty(),
-            "no destructive action should reach the client on a read-only endpoint; calls: {:?}",
+            "no action, destructive or not, should reach the client on a read-only endpoint; calls: {:?}",
             non_discovery_calls
         );
     }
 
-    /// Non-destructive actions (start/pull) are always allowed, even on a
-    /// read-only endpoint.
+    /// Non-destructive actions (start/pull) are allowed on a WRITABLE
+    /// endpoint without going through a confirmation step (unlike destructive
+    /// actions, which require `ConfirmModal` at the `DockerPanel` layer
+    /// before ever calling `dispatch_action`).
     #[gpui::test]
-    async fn dispatch_action_allows_non_destructive_actions_on_read_only_endpoint(
+    async fn dispatch_action_allows_non_destructive_actions_on_writable_endpoint(
         cx: &mut TestAppContext,
     ) {
-        init_test(cx);
+        init_test(cx); // "local" endpoint defaults to read_only: false
         cx.executor().allow_parking();
-        set_one_ssh_endpoint(cx); // "prod" is read_only: true
         let fake = Arc::new(FakeDockerClient::new_with_container("api"));
         let factory: ClientFactory = {
             let fake = fake.clone();
@@ -1179,7 +1198,7 @@ mod tests {
 
         store.update(cx, |s, cx| {
             s.dispatch_action(
-                "prod",
+                "local",
                 DockerAction::StartContainer { id: "api".into() },
                 cx,
             )
@@ -1195,7 +1214,7 @@ mod tests {
             fake.calls()
                 .iter()
                 .any(|c| c.starts_with("start_container")),
-            "non-destructive actions must be allowed on a read-only endpoint"
+            "non-destructive actions must be allowed on a writable endpoint"
         );
     }
 

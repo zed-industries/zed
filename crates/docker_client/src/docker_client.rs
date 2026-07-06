@@ -103,12 +103,16 @@ fn endpoint_kind_from_docker_endpoint(docker_endpoint: &str) -> EndpointKind {
 /// configured endpoints. Configured entries always win by name: a context
 /// whose name clashes with a configured endpoint is ignored, and the
 /// configured endpoint keeps whatever `read_only` the user set. Every other
-/// context becomes a new [`DockerEndpoint`] with `read_only: true`:
-/// auto-discovered endpoints (possibly production) are view-only until the
-/// user explicitly adds them to `docker.connections` with `read_only: false`.
-/// This also prevents a subtle downgrade: if the user deletes a configured
-/// `read_only: true` endpoint but the underlying `docker context` still
-/// exists, re-running discovery must not resurrect it as writable.
+/// context becomes a new [`DockerEndpoint`] whose `read_only` is derived from
+/// its kind: `EndpointKind::Ssh` contexts default to `read_only: true`
+/// (a remote, possibly-production host is view-only until the user
+/// explicitly adds it to `docker.connections` with `read_only: false`), while
+/// `EndpointKind::Local` contexts default to `read_only: false` (it's the
+/// user's own machine, so it's safe to manage out of the box). This also
+/// prevents a subtle downgrade for remote hosts: if the user deletes a
+/// configured `read_only: true` SSH endpoint but the underlying `docker
+/// context` still exists, re-running discovery must not resurrect it as
+/// writable.
 pub fn merge_endpoints(
     configured: Vec<DockerEndpoint>,
     contexts: Vec<DockerContext>,
@@ -118,10 +122,12 @@ pub fn merge_endpoints(
         if merged.iter().any(|endpoint| endpoint.name == context.name) {
             continue;
         }
+        let kind = endpoint_kind_from_docker_endpoint(&context.docker_endpoint);
+        let read_only = matches!(kind, EndpointKind::Ssh { .. });
         merged.push(DockerEndpoint {
             name: context.name,
-            kind: endpoint_kind_from_docker_endpoint(&context.docker_endpoint),
-            read_only: true,
+            kind,
+            read_only,
         });
     }
     merged
@@ -228,25 +234,28 @@ mod tests {
         assert!(matches!(staging.kind, EndpointKind::Ssh { .. }));
         assert!(
             staging.read_only,
-            "auto-imported contexts must default to read_only: true"
+            "auto-imported SSH contexts must default to read_only: true (remote, possibly production)"
         );
 
         let default = merged.iter().find(|e| e.name == "default").unwrap();
         assert!(matches!(default.kind, EndpointKind::Local));
         assert!(
-            default.read_only,
-            "auto-imported contexts must default to read_only: true"
+            !default.read_only,
+            "auto-imported LOCAL contexts must default to read_only: false (the user's own machine)"
         );
     }
 
-    /// Resurrection scenario: a configured `read_only: true` endpoint is
+    /// Resurrection scenario: a configured `read_only: true` SSH endpoint is
     /// removed from settings, but `docker context ls` still reports a
     /// context with the same name (e.g. the user only deleted the
-    /// `docker.connections` entry, not the underlying docker context). The
-    /// re-imported endpoint must come back read-only, never silently
-    /// downgraded to writable.
+    /// `docker.connections` entry, not the underlying docker context). This
+    /// proves the remote-resurrection case specifically stays read-only:
+    /// since imported SSH contexts always default to `read_only: true`
+    /// regardless of what was previously configured, the re-imported
+    /// endpoint must come back read-only, never silently downgraded to
+    /// writable.
     #[test]
-    fn removed_configured_endpoint_resurrects_as_read_only() {
+    fn removed_configured_ssh_endpoint_resurrects_as_read_only() {
         let configured = vec![]; // "prod" no longer configured
         let contexts = vec![DockerContext {
             name: "prod".into(),
@@ -256,7 +265,7 @@ mod tests {
         let prod = merged.iter().find(|e| e.name == "prod").unwrap();
         assert!(
             prod.read_only,
-            "a context resurrecting a removed configured endpoint must be read-only, not writable"
+            "a context resurrecting a removed configured SSH endpoint must be read-only, not writable"
         );
     }
 }

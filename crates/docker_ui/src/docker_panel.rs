@@ -52,6 +52,7 @@ enum TreeRow {
         name: String,
         status: EndpointStatus,
         expanded: bool,
+        read_only: bool,
     },
     Category {
         label: &'static str,
@@ -194,6 +195,7 @@ impl DockerPanel {
                 name: endpoint_name.clone(),
                 status: state.status.clone(),
                 expanded: endpoint_expanded,
+                read_only: state.endpoint.read_only,
             });
 
             if !endpoint_expanded {
@@ -336,7 +338,8 @@ impl DockerPanel {
                 name,
                 status,
                 expanded,
-            } => self.render_endpoint_row(index, name, status, *expanded, cx),
+                read_only,
+            } => self.render_endpoint_row(index, name, status, *expanded, *read_only, cx),
             TreeRow::Category {
                 label,
                 node,
@@ -391,6 +394,7 @@ impl DockerPanel {
         name: &str,
         status: &EndpointStatus,
         expanded: bool,
+        read_only: bool,
         cx: &Context<Self>,
     ) -> AnyElement {
         let node = TreeNodeId::Endpoint(name.to_string());
@@ -422,9 +426,20 @@ impl DockerPanel {
                             })
                             .size(IconSize::Small),
                     )
-                    .child(Label::new(endpoint_name)),
+                    .child(Label::new(endpoint_name))
+                    .when(read_only, |this| {
+                        this.child(
+                            Icon::new(IconName::Lock)
+                                .color(Color::Muted)
+                                .size(IconSize::Small),
+                        )
+                    }),
             )
             .on_click(cx.listener(move |this, _, _, cx| this.toggle_node(node.clone(), cx)));
+
+        if read_only {
+            item = item.tooltip(Tooltip::text("read-only endpoint"));
+        }
 
         if let EndpointStatus::Error(message) = status {
             let message = message.clone();
@@ -1103,6 +1118,64 @@ mod tests {
             _ => false,
         });
         assert!(found, "expected an expanded container row named `api`");
+    }
+
+    /// Fix D: the endpoint row must carry `read_only` straight from
+    /// `EndpointState.endpoint.read_only`, so the tree can render the
+    /// read-only lock marker without re-deriving the flag.
+    #[gpui::test]
+    fn build_rows_reflects_endpoint_read_only_flag(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.executor().allow_parking();
+
+        let fake = Arc::new(FakeDockerClient::new());
+        let factory = Arc::new(move || fake.clone() as Arc<dyn DockerClient>);
+        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
+        let endpoint_name =
+            store.read_with(cx, |store, _| store.endpoints()[0].endpoint.name.clone());
+
+        let panel = cx.new(|cx| DockerPanel::new_for_test(store.clone(), cx));
+
+        let read_only_before = panel.read_with(cx, |panel, cx| {
+            panel
+                .build_rows(cx)
+                .iter()
+                .find_map(|row| match row {
+                    TreeRow::Endpoint {
+                        name, read_only, ..
+                    } if name == &endpoint_name => Some(*read_only),
+                    _ => None,
+                })
+                .expect("endpoint row should exist")
+        });
+        assert!(
+            !read_only_before,
+            "the synthetic local endpoint defaults to writable"
+        );
+
+        store.update(cx, |store, cx| {
+            if let Some(state) = store.endpoint_mut_for_test(&endpoint_name) {
+                state.endpoint.read_only = true;
+            }
+            cx.notify();
+        });
+
+        let read_only_after = panel.read_with(cx, |panel, cx| {
+            panel
+                .build_rows(cx)
+                .iter()
+                .find_map(|row| match row {
+                    TreeRow::Endpoint {
+                        name, read_only, ..
+                    } if name == &endpoint_name => Some(*read_only),
+                    _ => None,
+                })
+                .expect("endpoint row should exist")
+        });
+        assert!(
+            read_only_after,
+            "build_rows should reflect the endpoint becoming read-only"
+        );
     }
 
     /// SAFETY-CRITICAL: invoking a destructive action against a read-only
