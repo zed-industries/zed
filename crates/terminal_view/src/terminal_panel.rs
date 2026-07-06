@@ -5,6 +5,7 @@ use crate::{
     persistence::{
         SerializedItems, SerializedTerminalPanel, deserialize_terminal_panel, serialize_pane_group,
     },
+    split_working_directory,
 };
 use breadcrumbs::Breadcrumbs;
 use collections::HashMap;
@@ -452,11 +453,11 @@ impl TerminalPanel {
             terminal_view
                 .as_ref()
                 .and_then(|terminal_view| {
-                    terminal_view
-                        .read(cx)
-                        .terminal()
-                        .read(cx)
-                        .working_directory()
+                    split_working_directory(
+                        workspace,
+                        cx,
+                        terminal_view.read(cx).terminal().read(cx),
+                    )
                 })
                 .or_else(|| default_working_directory(workspace, cx))
         } else {

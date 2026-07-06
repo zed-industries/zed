@@ -1745,10 +1745,15 @@ impl Item for TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Option<Entity<Self>>> {
+        let workspace = self.workspace.clone();
+        let terminal_entity = self.terminal().clone();
+        let cwd = workspace
+            .read_with(cx, |workspace, cx| {
+                split_working_directory(workspace, cx, terminal_entity.read(cx))
+            })
+            .ok()
+            .flatten();
         let Ok(terminal) = self.project.update(cx, |project, cx| {
-            let cwd = project
-                .active_project_directory(cx)
-                .map(|it| it.to_path_buf());
             project.clone_terminal(self.terminal(), cx, cwd)
         }) else {
             return Task::ready(None);
@@ -2115,8 +2120,22 @@ impl SearchableItem for TerminalView {
 /// local `is_dir` checks) is skipped -- returning `None` lets the remote shell
 /// open in the remote user's home directory by default.
 pub fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
+    resolve_working_directory(
+        &TerminalSettings::get_global(cx).working_directory,
+        workspace,
+        cx,
+    )
+}
+
+/// Resolves an explicit `WorkingDirectory` strategy against the given workspace.
+/// Shared by both new-terminal and split-terminal working directory resolution.
+fn resolve_working_directory(
+    directory: &WorkingDirectory,
+    workspace: &Workspace,
+    cx: &App,
+) -> Option<PathBuf> {
     let is_remote = workspace.project().read(cx).is_remote();
-    let directory = match &TerminalSettings::get_global(cx).working_directory {
+    let directory = match directory {
         WorkingDirectory::CurrentFileDirectory => workspace
             .project()
             .read(cx)
@@ -2136,6 +2155,24 @@ pub fn default_working_directory(workspace: &Workspace, cx: &App) -> Option<Path
         directory
     } else {
         directory.or_else(dirs::home_dir)
+    }
+}
+
+/// Resolves the working directory to use when splitting/cloning a terminal,
+/// respecting the user's `terminal.split_working_directory` setting.
+pub fn split_working_directory(
+    workspace: &Workspace,
+    cx: &App,
+    terminal: &Terminal,
+) -> Option<PathBuf> {
+    match TerminalSettings::get_global(cx)
+        .split_working_directory
+        .as_working_directory()
+    {
+        None => terminal
+            .working_directory()
+            .or_else(|| default_working_directory(workspace, cx)),
+        Some(directory) => resolve_working_directory(&directory, workspace, cx),
     }
 }
 
@@ -2164,9 +2201,10 @@ fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, VisualTestContext};
+    use gpui::{TestAppContext, UpdateGlobal, VisualTestContext};
     use project::{Entry, Project, ProjectPath, Worktree};
     use remote::RemoteClient;
+    use settings::SplitWorkingDirectory;
     use std::path::{Path, PathBuf};
     use util::paths::PathStyle;
     use util::rel_path::RelPath;
@@ -2479,6 +2517,84 @@ mod tests {
         cx.update(|cx| {
             let res = project.read(cx).active_entry_directory(cx);
             assert_eq!(res, Some(Path::new("/root/").to_path_buf()));
+        });
+    }
+
+    // Split working directory tests
+    #[gpui::test]
+    async fn split_current_terminal_directory_falls_back_to_default_working_directory(
+        cx: &mut TestAppContext,
+    ) {
+        let (project, workspace, window_handle) = init_test_with_window(cx).await;
+        let (_wt, _entry) = create_folder_wt(project.clone(), "/root/", cx).await;
+        let (_pane, terminal, _view) =
+            add_display_only_terminal(&project, window_handle, false, cx);
+
+        cx.update(|cx| {
+            let workspace = workspace.read(cx);
+            let terminal = terminal.read(cx);
+            assert_eq!(terminal.working_directory(), None);
+            assert_eq!(
+                split_working_directory(workspace, cx, terminal),
+                Some(Path::new("/root/").to_path_buf())
+            );
+        });
+    }
+
+    // A directory-strategy setting overrides the source terminal's cwd: AlwaysHome
+    // resolves to the home directory regardless of the terminal or the project.
+    #[gpui::test]
+    async fn split_always_home_overrides_terminal_cwd(cx: &mut TestAppContext) {
+        let (project, workspace, window_handle) = init_test_with_window(cx).await;
+        let (_wt, _entry) = create_folder_wt(project.clone(), "/root/", cx).await;
+        let (_pane, terminal, _view) =
+            add_display_only_terminal(&project, window_handle, false, cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .terminal
+                        .get_or_insert_default()
+                        .project
+                        .split_working_directory = Some(SplitWorkingDirectory::AlwaysHome);
+                });
+            });
+            let workspace = workspace.read(cx);
+            let terminal = terminal.read(cx);
+            assert_eq!(
+                split_working_directory(workspace, cx, terminal),
+                dirs::home_dir()
+            );
+        });
+    }
+
+    // A directory-strategy setting resolves via the workspace: CurrentProjectDirectory
+    // returns the project directory rather than the source terminal's cwd.
+    #[gpui::test]
+    async fn split_current_project_directory_ignores_terminal_cwd(cx: &mut TestAppContext) {
+        let (project, workspace, window_handle) = init_test_with_window(cx).await;
+        let (_wt, _entry) = create_folder_wt(project.clone(), "/root/", cx).await;
+        let (_pane, terminal, _view) =
+            add_display_only_terminal(&project, window_handle, false, cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings
+                        .terminal
+                        .get_or_insert_default()
+                        .project
+                        .split_working_directory =
+                        Some(SplitWorkingDirectory::CurrentProjectDirectory);
+                });
+            });
+            let workspace = workspace.read(cx);
+            let terminal = terminal.read(cx);
+            assert_eq!(
+                split_working_directory(workspace, cx, terminal),
+                Some(Path::new("/root/").to_path_buf())
+            );
         });
     }
 

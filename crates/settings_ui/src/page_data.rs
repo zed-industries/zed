@@ -6520,7 +6520,7 @@ fn debugger_page() -> SettingsPage {
 }
 
 fn terminal_page() -> SettingsPage {
-    fn environment_section() -> [SettingsPageItem; 5] {
+    fn environment_section() -> [SettingsPageItem; 6] {
         [
                 SettingsPageItem::SectionHeader("Environment"),
                 SettingsPageItem::DynamicItem(DynamicItem {
@@ -6838,6 +6838,119 @@ fn terminal_page() -> SettingsPage {
                                             .as_mut()
                                         {
                                             Some(settings::WorkingDirectory::Always { directory }) => *directory = value,
+                                            _ => return,
+                                        }
+                                    },
+                                }),
+                                metadata: None,
+                            }],
+                        })
+                        .collect(),
+                }),
+                SettingsPageItem::DynamicItem(DynamicItem {
+                    discriminant: SettingItem {
+                        files: USER | PROJECT,
+                        title: "Split Working Directory",
+                        description: "What working directory to use when splitting or cloning a terminal.",
+                        field: Box::new(SettingField {
+                            organization_override: None,
+                            json_path: Some("terminal.split_working_directory$"),
+                            pick: |settings_content| {
+                                Some(&dynamic_variants::<settings::SplitWorkingDirectory>()[
+                                    settings_content
+                                        .terminal
+                                        .as_ref()?
+                                        .project
+                                        .split_working_directory
+                                        .as_ref()?
+                                        .discriminant() as usize
+                                ])
+                            },
+                            write: |settings_content, value, _| {
+                                let Some(value) = value else {
+                                    if let Some(terminal) = settings_content.terminal.as_mut() {
+                                        terminal.project.split_working_directory = None;
+                                    }
+                                    return;
+                                };
+                                let settings_value = settings_content
+                                    .terminal
+                                    .get_or_insert_default()
+                                    .project
+                                    .split_working_directory
+                                    .get_or_insert_with(|| {
+                                        settings::SplitWorkingDirectory::CurrentTerminalDirectory
+                                    });
+                                *settings_value = match value {
+                                    settings::SplitWorkingDirectoryDiscriminants::CurrentTerminalDirectory => {
+                                        settings::SplitWorkingDirectory::CurrentTerminalDirectory
+                                    }
+                                    settings::SplitWorkingDirectoryDiscriminants::CurrentFileDirectory => {
+                                        settings::SplitWorkingDirectory::CurrentFileDirectory
+                                    },
+                                    settings::SplitWorkingDirectoryDiscriminants::CurrentProjectDirectory => {
+                                        settings::SplitWorkingDirectory::CurrentProjectDirectory
+                                    }
+                                    settings::SplitWorkingDirectoryDiscriminants::FirstProjectDirectory => {
+                                        settings::SplitWorkingDirectory::FirstProjectDirectory
+                                    }
+                                    settings::SplitWorkingDirectoryDiscriminants::AlwaysHome => {
+                                        settings::SplitWorkingDirectory::AlwaysHome
+                                    }
+                                    settings::SplitWorkingDirectoryDiscriminants::Always => {
+                                        let directory = match settings_value {
+                                            settings::SplitWorkingDirectory::Always { .. } => return,
+                                            _ => String::new(),
+                                        };
+                                        settings::SplitWorkingDirectory::Always { directory }
+                                    }
+                                };
+                            },
+                        }),
+                        metadata: None,
+                    },
+                    pick_discriminant: |settings_content| {
+                        Some(
+                            settings_content
+                                .terminal
+                                .as_ref()?
+                                .project
+                                .split_working_directory
+                                .as_ref()?
+                                .discriminant() as usize,
+                        )
+                    },
+                    fields: dynamic_variants::<settings::SplitWorkingDirectory>()
+                        .into_iter()
+                        .map(|variant| match variant {
+                            settings::SplitWorkingDirectoryDiscriminants::CurrentTerminalDirectory => vec![],
+                            settings::SplitWorkingDirectoryDiscriminants::CurrentFileDirectory => vec![],
+                            settings::SplitWorkingDirectoryDiscriminants::CurrentProjectDirectory => vec![],
+                            settings::SplitWorkingDirectoryDiscriminants::FirstProjectDirectory => vec![],
+                            settings::SplitWorkingDirectoryDiscriminants::AlwaysHome => vec![],
+                            settings::SplitWorkingDirectoryDiscriminants::Always => vec![SettingItem {
+                                files: USER | PROJECT,
+                                title: "Directory",
+                                description: "The directory path to use (will be shell expanded).",
+                                field: Box::new(SettingField {
+                                    organization_override: None,
+                                    json_path: Some("terminal.split_working_directory.always"),
+                                    pick: |settings_content| {
+                                        match settings_content.terminal.as_ref()?.project.split_working_directory.as_ref() {
+                                            Some(settings::SplitWorkingDirectory::Always { directory }) => Some(directory),
+                                            _ => None,
+                                        }
+                                    },
+                                    write: |settings_content, value, _| {
+                                        let value = value.unwrap_or_default();
+                                        match settings_content
+                                            .terminal
+                                            .get_or_insert_default()
+                                            .project
+                                            .split_working_directory
+                                            .as_mut()
+                                        {
+                                            Some(settings::SplitWorkingDirectory::Always { directory }) => *directory = value,
                                             _ => return,
                                         }
                                     },

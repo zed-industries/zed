@@ -1852,6 +1852,29 @@
     //        }
     //      }
     "working_directory": "current_project_directory",
+    // What working directory to use when splitting or cloning a terminal.
+    // May take 6 values:
+    // 1. Use the working directory of the terminal that's being split.
+    //      "split_working_directory": "current_terminal_directory"
+    // 2. Use the current file's directory, falling back to the project
+    //    directory, then the first project in the workspace.
+    //      "split_working_directory": "current_file_directory"
+    // 3. Use the current file's project directory. Fallback to the
+    //    first project directory strategy if unsuccessful.
+    //      "split_working_directory": "current_project_directory"
+    // 4. Use the first project in this workspace's directory.
+    //      "split_working_directory": "first_project_directory"
+    // 5. Always use this platform's home directory (if we can find it)
+    //     "split_working_directory": "always_home"
+    // 6. Always use a specific directory. This value will be shell expanded.
+    //    If this path is not a valid directory the terminal will default to
+    //    this platform's home directory  (if we can find it)
+    //      "split_working_directory": {
+    //        "always": {
+    //          "directory": "~/zed/projects/"
+    //        }
+    //      }
+    "split_working_directory": "current_terminal_directory",
     // Set the cursor blinking behavior in the terminal.
     // May take 3 values:
     //  1. Never blink the cursor, ignoring the terminal mode

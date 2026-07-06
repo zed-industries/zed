@@ -955,6 +955,7 @@ impl VsCodeSettings {
                 .read_string(&format!("terminal.integrated.{platform}Exec"))
                 .map(|s| Shell::Program(s)),
             working_directory: None,
+            split_working_directory: None,
             env,
             detect_venv: None,
             path_hyperlink_regexes: None,

@@ -79,6 +79,27 @@ Control where new terminals start:
 }
 ```
 
+## Split Working Directory
+
+Control where a terminal starts when you split or clone an existing one:
+
+| Value                                         | Behavior                                                                                                          |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `"current_terminal_directory"`                | Uses the working directory of the terminal being split (default)                                                  |
+| `"current_file_directory"`                    | Uses the current file's directory, falling back to the project directory, then the first project in the workspace |
+| `"current_project_directory"`                 | Uses the current file's project directory                                                                         |
+| `"first_project_directory"`                   | Uses the first project in your workspace                                                                          |
+| `"always_home"`                               | Always starts in your home directory                                                                              |
+| `{ "always": { "directory": "~/projects" } }` | Always starts in a specific directory                                                                             |
+
+```json [settings]
+{
+  "terminal": {
+    "split_working_directory": "current_terminal_directory"
+  }
+}
+```
+
 ## Environment Variables
 
 Add environment variables to all terminal sessions:
