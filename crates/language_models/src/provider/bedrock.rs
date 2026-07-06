@@ -1,4 +1,3 @@
-use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -9,11 +8,8 @@ use aws_config::{BehaviorVersion, Region};
 use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};
 use aws_credential_types::{Credentials, Token};
 use aws_http_client::AwsHttpClient;
-use aws_sigv4::http_request::{
-    SignableBody, SignableRequest, SignatureLocation, SigningSettings, sign,
-};
+use aws_sigv4::http_request::{SignableBody, SignableRequest, SigningSettings, sign};
 use aws_sigv4::sign::v4;
-use base64::Engine as _;
 use bedrock::BedrockSystemContentBlock;
 use bedrock::bedrock_client::Client as BedrockClient;
 use bedrock::bedrock_client::config::timeout::TimeoutConfig;
@@ -31,12 +27,18 @@ use bedrock::{
 };
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
-use futures::{FutureExt, Stream, StreamExt, future::BoxFuture, stream::BoxStream};
+use futures::{
+    AsyncBufReadExt, AsyncReadExt, FutureExt, Stream, StreamExt, future::BoxFuture, io::BufReader,
+    stream::BoxStream,
+};
 use gpui::{
     App, AsyncApp, Context, Entity, FocusHandle, Subscription, Task, TaskExt, Window, actions,
 };
 use gpui_tokio::Tokio;
-use http_client::HttpClient;
+use http_client::{
+    AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest, RequestBuilderExt,
+    http::{HeaderValue, header::AUTHORIZATION},
+};
 use language_model::{
     AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
@@ -46,9 +48,7 @@ use language_model::{
     LanguageModelToolUse, MessageContent, ProviderSettingsView, RateLimiter, Role,
     SubPageProviderSettings, TokenUsage, env_var,
 };
-use open_ai::responses::{
-    Request as OpenAiResponseRequest, stream_response as stream_openai_response,
-};
+use open_ai::responses::Request as OpenAiResponseRequest;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -57,7 +57,7 @@ use settings::{
     Settings, SettingsStore,
 };
 use std::sync::LazyLock;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
@@ -68,11 +68,8 @@ use crate::provider::open_ai::{
     ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
     into_open_ai_response,
 };
-use http_client::CustomHeaders;
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
-use open_ai::{
-    ReasoningEffort, ResponseStreamEvent, stream_completion as stream_openai_completion,
-};
+use open_ai::{ReasoningEffort, RequestError, ResponseStreamEvent};
 
 actions!(bedrock, [Tab, TabPrev]);
 
@@ -256,66 +253,90 @@ fn mantle_endpoint_url(region: &str, model: &MantleModel) -> String {
     )
 }
 
-/// Derives a short-term Bedrock API key by locally SigV4-presigning a
-/// `CallWithBearerToken` request (same approach as AWS's
-/// `aws-bedrock-token-generator` libraries). No network round trip is
-/// needed, so there's no need to cache the result.
-fn sign_bedrock_bearer_token(credentials: &Credentials, region: &str) -> Result<String> {
-    sign_bedrock_bearer_token_at(credentials, region, SystemTime::now())
+enum MantleAuth {
+    ApiKey { api_key: String },
+    SigV4 { credentials: Credentials },
 }
 
-fn sign_bedrock_bearer_token_at(
+impl MantleAuth {
+    fn apply(&self, request: &mut HttpRequest<AsyncBody>, body: &[u8], region: &str) -> Result<()> {
+        match self {
+            MantleAuth::ApiKey { api_key } => {
+                let value = HeaderValue::from_str(&format!("Bearer {}", api_key.trim()))
+                    .context("building Mantle bearer token authorization header")?;
+                request.headers_mut().insert(AUTHORIZATION, value);
+            }
+            MantleAuth::SigV4 { credentials } => {
+                sign_mantle_request_sigv4(request, body, credentials, region)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn sign_mantle_request_sigv4(
+    request: &mut HttpRequest<AsyncBody>,
+    body: &[u8],
+    credentials: &Credentials,
+    region: &str,
+) -> Result<()> {
+    sign_mantle_request_sigv4_at(request, body, credentials, region, SystemTime::now())
+}
+
+fn sign_mantle_request_sigv4_at(
+    request: &mut HttpRequest<AsyncBody>,
+    body: &[u8],
     credentials: &Credentials,
     region: &str,
     time: SystemTime,
-) -> Result<String> {
-    const BEDROCK_BEARER_TOKEN_URL: &str =
-        "https://bedrock.amazonaws.com/?Action=CallWithBearerToken";
-    const BEDROCK_BEARER_TOKEN_DURATION: Duration = Duration::from_secs(12 * 60 * 60);
-
-    let identity = credentials.clone().into();
-
-    let mut signing_settings = SigningSettings::default();
-    signing_settings.signature_location = SignatureLocation::QueryParams;
-    signing_settings.expires_in = Some(BEDROCK_BEARER_TOKEN_DURATION);
-
-    let signing_params = v4::SigningParams::builder()
-        .identity(&identity)
-        .region(region)
-        .name("bedrock")
-        .time(time)
-        .settings(signing_settings)
-        .build()?
-        .into();
-
-    let signable_request = SignableRequest::new(
-        "POST",
-        BEDROCK_BEARER_TOKEN_URL,
-        std::iter::once(("host", "bedrock.amazonaws.com")),
-        SignableBody::Bytes(&[]),
-    )?;
-
-    let (instructions, _signature) = sign(signable_request, &signing_params)?.into_parts();
-
-    // `instructions.params()` returns raw (unencoded) values; percent-encode
-    // them the same way `aws_smithy_http::query_writer::QueryWriter` does,
-    // since that's the representation used when computing the signature.
-    let mut presigned_url = BEDROCK_BEARER_TOKEN_URL.to_string();
-    for (name, value) in instructions.params() {
-        presigned_url.push('&');
-        presigned_url.push_str(&aws_smithy_http::query::fmt_string(name));
-        presigned_url.push('=');
-        presigned_url.push_str(&aws_smithy_http::query::fmt_string(value.as_ref()));
+) -> Result<()> {
+    if !request
+        .headers()
+        .contains_key(http_client::http::header::HOST)
+        && let Some(authority) = request.uri().authority()
+    {
+        let host = HeaderValue::from_str(authority.as_str())
+            .context("invalid host header derived from Mantle request URI")?;
+        request
+            .headers_mut()
+            .insert(http_client::http::header::HOST, host);
     }
 
-    let presigned_url = presigned_url
-        .strip_prefix("https://")
-        .unwrap_or(&presigned_url);
+    let identity = credentials.clone().into();
+    let signing_params: aws_sigv4::http_request::SigningParams = v4::SigningParams::builder()
+        .identity(&identity)
+        .region(region)
+        .name("bedrock-mantle")
+        .time(time)
+        .settings(SigningSettings::default())
+        .build()
+        .context("building Mantle SigV4 signing params")?
+        .into();
 
-    Ok(format!(
-        "bedrock-api-key-{}",
-        base64::engine::general_purpose::STANDARD.encode(format!("{presigned_url}&Version=1"))
-    ))
+    let method = request.method().as_str();
+    let uri = request.uri().to_string();
+    let headers = request
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            value
+                .to_str()
+                .map(|value| (name.as_str(), value))
+                .with_context(|| format!("header {name} is not valid UTF-8 and cannot be signed"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    let signable_request =
+        SignableRequest::new(method, uri, headers.into_iter(), SignableBody::Bytes(body))
+            .context("constructing Mantle SigV4 request")?;
+
+    let (instructions, _signature) = sign(signable_request, &signing_params)
+        .context("signing Mantle request with SigV4")?
+        .into_parts();
+    instructions.apply_to_request_http1x(request);
+
+    Ok(())
 }
 
 pub struct State {
@@ -691,7 +712,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                     .into()
             })
             .description(InlineDescription::Text(
-                "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials. Mantle-only models (e.g. GPT-5.5, GPT-5.4, Grok 4.3) additionally require the `bedrock-mantle:CallWithBearerToken` IAM permission.".into(),
+                "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials. Mantle-only models (e.g. GPT-5.5, GPT-5.4, Grok 4.3) additionally require IAM permissions for the `bedrock-mantle` endpoint.".into(),
             )),
         ))
     }
@@ -1069,22 +1090,18 @@ fn mantle_supported_effort_levels(model: &MantleModel) -> Vec<LanguageModelEffor
         .collect()
 }
 
-/// Special-cases the 403 from having `bedrock:CallWithBearerToken` but not
-/// the separate `bedrock-mantle:CallWithBearerToken` permission Mantle
-/// models require — the most common misconfiguration, and one the generic
-/// HTTP error doesn't explain.
-fn map_mantle_error(
-    model: &MantleModel,
-    error: open_ai::RequestError,
-) -> LanguageModelCompletionError {
-    if let open_ai::RequestError::HttpResponseError { status_code, .. } = &error
+/// Special-cases Mantle authorization failures with a message that points at
+/// the separate `bedrock-mantle` IAM policy namespace instead of regular
+/// `bedrock-runtime` permissions.
+fn map_mantle_error(model: &MantleModel, error: RequestError) -> LanguageModelCompletionError {
+    if let RequestError::HttpResponseError { status_code, .. } = &error
         && *status_code == http_client::http::StatusCode::FORBIDDEN
     {
         return LanguageModelCompletionError::PermissionError {
             provider: PROVIDER_NAME,
             message: format!(
-                "Bedrock Mantle denied this request for {}. Mantle-only models require the \
-                 `bedrock-mantle:CallWithBearerToken` IAM permission (for example via the \
+                "Bedrock Mantle denied this request for {}. Mantle-only models require IAM \
+                 permissions for the `bedrock-mantle` endpoint (for example via the \
                  `AmazonBedrockMantleInferenceAccess` managed policy) in addition to whatever \
                  permissions your existing Bedrock credentials already have.",
                 model.display_name()
@@ -1122,30 +1139,29 @@ async fn resolve_mantle_credentials_provider(
     Ok(provider.clone())
 }
 
-/// Produces the `Authorization: Bearer` token for `bedrock-mantle` requests.
-/// A configured API key is used as-is; every other auth method resolves AWS
-/// credentials and signs a short-term token via `sign_bedrock_bearer_token`.
-async fn resolve_mantle_bearer_token(
+/// Resolves provider settings into concrete Mantle request auth. A configured
+/// Bedrock API key is sent as bearer auth; every AWS-credential-based method
+/// signs the Mantle HTTP request directly with SigV4.
+async fn resolve_mantle_auth(
     credentials_provider: Arc<OnceCell<SharedCredentialsProvider>>,
     auth: Option<BedrockAuth>,
     region: String,
-) -> Result<String> {
+) -> Result<MantleAuth> {
     match auth {
-        Some(BedrockAuth::ApiKey { api_key }) => Ok(api_key),
+        Some(BedrockAuth::ApiKey { api_key }) => Ok(MantleAuth::ApiKey { api_key }),
         Some(BedrockAuth::IamCredentials {
             access_key_id,
             secret_access_key,
             session_token,
-        }) => {
-            let credentials = Credentials::new(
+        }) => Ok(MantleAuth::SigV4 {
+            credentials: Credentials::new(
                 access_key_id,
                 secret_access_key,
                 session_token,
                 None,
                 "zed-bedrock-provider",
-            );
-            sign_bedrock_bearer_token(&credentials, &region)
-        }
+            ),
+        }),
         Some(BedrockAuth::NamedProfile { profile_name })
         | Some(BedrockAuth::SingleSignOn { profile_name }) => {
             let provider = resolve_mantle_credentials_provider(
@@ -1158,7 +1174,7 @@ async fn resolve_mantle_bearer_token(
                 .provide_credentials()
                 .await
                 .context("failed to resolve AWS credentials")?;
-            sign_bedrock_bearer_token(&credentials, &region)
+            Ok(MantleAuth::SigV4 { credentials })
         }
         Some(BedrockAuth::Automatic) | None => {
             let provider =
@@ -1168,9 +1184,115 @@ async fn resolve_mantle_bearer_token(
                 .provide_credentials()
                 .await
                 .context("failed to resolve AWS credentials")?;
-            sign_bedrock_bearer_token(&credentials, &region)
+            Ok(MantleAuth::SigV4 { credentials })
         }
     }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum MantleChatStreamResult {
+    Ok(ResponseStreamEvent),
+    Err { error: MantleChatStreamError },
+}
+
+#[derive(Deserialize)]
+struct MantleChatStreamError {
+    message: String,
+}
+
+fn parse_mantle_chat_stream_line(line: &str) -> Result<ResponseStreamEvent> {
+    match serde_json::from_str(line) {
+        Ok(MantleChatStreamResult::Ok(response)) => Ok(response),
+        Ok(MantleChatStreamResult::Err { error }) => Err(anyhow!(error.message)),
+        Err(error) => {
+            log::error!(
+                "Failed to parse Mantle chat completion stream event: `{}`\nResponse: `{}`",
+                error,
+                line,
+            );
+            Err(anyhow!(error))
+        }
+    }
+}
+
+fn parse_mantle_response_stream_line(line: &str) -> Result<open_ai::responses::StreamEvent> {
+    serde_json::from_str(line).map_err(|error| {
+        log::error!(
+            "Failed to parse Mantle responses stream event: `{}`\nResponse: `{}`",
+            error,
+            line,
+        );
+        anyhow!(error)
+    })
+}
+
+async fn stream_mantle_sse<Request, Event>(
+    client: &dyn HttpClient,
+    provider_name: &str,
+    url: &str,
+    region: &str,
+    auth: &MantleAuth,
+    request: Request,
+    extra_headers: &CustomHeaders,
+    parse_stream_line: fn(&str) -> Result<Event>,
+) -> std::result::Result<BoxStream<'static, Result<Event>>, RequestError>
+where
+    Request: Serialize,
+    Event: Send + 'static,
+{
+    let body = serde_json::to_vec(&request).map_err(|error| RequestError::Other(error.into()))?;
+    let mut request = HttpRequest::builder()
+        .method(Method::POST)
+        .uri(url)
+        .header("Content-Type", "application/json")
+        .extra_headers(extra_headers)
+        .body(AsyncBody::from(body.clone()))
+        .map_err(|error| RequestError::Other(error.into()))?;
+
+    auth.apply(&mut request, &body, region)
+        .map_err(RequestError::Other)?;
+
+    let mut response = client.send(request).await?;
+    if response.status().is_success() {
+        let reader = BufReader::new(response.into_body());
+        Ok(reader
+            .lines()
+            .filter_map(move |line| async move {
+                match line {
+                    Ok(line) => {
+                        let line = line
+                            .strip_prefix("data: ")
+                            .or_else(|| line.strip_prefix("data:"))?;
+                        if line == "[DONE]" || line.is_empty() {
+                            None
+                        } else {
+                            Some(parse_stream_line(line))
+                        }
+                    }
+                    Err(error) => Some(Err(anyhow!(error))),
+                }
+            })
+            .boxed())
+    } else {
+        let mut body = String::new();
+        response
+            .body_mut()
+            .read_to_string(&mut body)
+            .await
+            .map_err(|error| RequestError::Other(error.into()))?;
+
+        Err(RequestError::HttpResponseError {
+            provider: provider_name.to_owned(),
+            status_code: response.status(),
+            body,
+            headers: response.headers().clone(),
+        })
+    }
+}
+
+fn strip_unsupported_mantle_response_fields(request: &mut OpenAiResponseRequest) {
+    request.context_management = None;
 }
 
 struct BedrockMantleModel {
@@ -1183,28 +1305,16 @@ struct BedrockMantleModel {
 }
 
 impl BedrockMantleModel {
-    fn stream_openai_request<Request, Event, StreamRequest, StreamFuture>(
+    fn stream_mantle_request<Request, Event>(
         &self,
         request: Request,
         cx: &AsyncApp,
-        stream_request: StreamRequest,
+        endpoint: &'static str,
+        parse_stream_line: fn(&str) -> Result<Event>,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<Event>>, LanguageModelCompletionError>>
     where
-        Request: Send + 'static,
+        Request: Serialize + Send + 'static,
         Event: Send + 'static,
-        StreamRequest: FnOnce(
-                Arc<dyn HttpClient>,
-                String,
-                String,
-                String,
-                Request,
-                CustomHeaders,
-            ) -> StreamFuture
-            + Send
-            + 'static,
-        StreamFuture: Future<Output = Result<BoxStream<'static, Result<Event>>, open_ai::RequestError>>
-            + Send
-            + 'static,
     {
         let http_client = self.http_client.clone();
         let model = self.model.clone();
@@ -1212,7 +1322,7 @@ impl BedrockMantleModel {
         let (auth, region) = cx.read_entity(&self.state, |state, _cx| {
             (state.auth.clone(), state.get_region())
         });
-        let api_url = mantle_endpoint_url(&region, &model);
+        let url = format!("{}/{}", mantle_endpoint_url(&region, &model), endpoint);
         let extra_headers = cx.read_entity(&self.state, |_, cx| {
             AllLanguageModelSettings::get_global(cx)
                 .bedrock
@@ -1222,16 +1332,18 @@ impl BedrockMantleModel {
         let provider_name = PROVIDER_NAME.0.to_string();
 
         let future = self.request_limiter.stream(async move {
-            let api_key = resolve_mantle_bearer_token(credentials_provider, auth, region)
+            let auth = resolve_mantle_auth(credentials_provider, auth, region.clone())
                 .await
                 .map_err(LanguageModelCompletionError::Other)?;
-            stream_request(
-                http_client,
-                provider_name,
-                api_url,
-                api_key,
+            stream_mantle_sse(
+                http_client.as_ref(),
+                &provider_name,
+                &url,
+                &region,
+                &auth,
                 request,
-                extra_headers,
+                &extra_headers,
+                parse_stream_line,
             )
             .await
             .map_err(|err| map_mantle_error(&model, err))
@@ -1248,20 +1360,11 @@ impl BedrockMantleModel {
         'static,
         Result<BoxStream<'static, Result<ResponseStreamEvent>>, LanguageModelCompletionError>,
     > {
-        self.stream_openai_request(
+        self.stream_mantle_request(
             request,
             cx,
-            |http_client, provider_name, api_url, api_key, request, extra_headers| async move {
-                stream_openai_completion(
-                    http_client.as_ref(),
-                    &provider_name,
-                    &api_url,
-                    &api_key,
-                    request,
-                    &extra_headers,
-                )
-                .await
-            },
+            "chat/completions",
+            parse_mantle_chat_stream_line,
         )
     }
 
@@ -1276,21 +1379,9 @@ impl BedrockMantleModel {
             LanguageModelCompletionError,
         >,
     > {
-        self.stream_openai_request(
-            request,
-            cx,
-            |http_client, provider_name, api_url, api_key, request, extra_headers| async move {
-                stream_openai_response(
-                    http_client.as_ref(),
-                    &provider_name,
-                    &api_url,
-                    &api_key,
-                    request,
-                    &extra_headers,
-                )
-                .await
-            },
-        )
+        let mut request = request;
+        strip_unsupported_mantle_response_fields(&mut request);
+        self.stream_mantle_request(request, cx, "responses", parse_mantle_response_stream_line)
     }
 }
 
@@ -2426,7 +2517,7 @@ mod tests {
     }
 
     #[test]
-    fn test_sign_bedrock_bearer_token_produces_expected_shape() {
+    fn test_sign_mantle_request_sigv4_uses_mantle_service() {
         let credentials = Credentials::new(
             "AKIDEXAMPLE",
             "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
@@ -2434,24 +2525,43 @@ mod tests {
             None,
             "test",
         );
+        let body = br#"{"model":"openai.gpt-5.5"}"#;
+        let mut request = HttpRequest::builder()
+            .method(Method::POST)
+            .uri("https://bedrock-mantle.us-east-1.api.aws/openai/v1/responses")
+            .header("Content-Type", "application/json")
+            .body(AsyncBody::from(body.to_vec()))
+            .unwrap();
+        let time = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
 
-        let token = sign_bedrock_bearer_token(&credentials, "us-east-1").unwrap();
-        let encoded = token
-            .strip_prefix("bedrock-api-key-")
-            .expect("token should have the bedrock-api-key- prefix");
-        let decoded = String::from_utf8(
-            base64::engine::general_purpose::STANDARD
-                .decode(encoded)
-                .unwrap(),
-        )
-        .unwrap();
+        sign_mantle_request_sigv4_at(&mut request, body, &credentials, "us-east-1", time).unwrap();
 
-        assert!(decoded.starts_with("bedrock.amazonaws.com/?Action=CallWithBearerToken"));
-        assert!(decoded.contains("X-Amz-Algorithm="));
-        assert!(decoded.contains("X-Amz-Credential="));
-        assert!(decoded.contains("X-Amz-Signature="));
-        assert!(decoded.contains("X-Amz-Expires=43200"));
-        assert!(decoded.ends_with("&Version=1"));
+        assert_eq!(
+            request
+                .headers()
+                .get(http_client::http::header::HOST)
+                .and_then(|value| value.to_str().ok()),
+            Some("bedrock-mantle.us-east-1.api.aws")
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get("x-amz-date")
+                .and_then(|value| value.to_str().ok()),
+            Some("20231114T221320Z")
+        );
+        let authorization = request
+            .headers()
+            .get(AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .unwrap();
+        assert!(authorization.starts_with("AWS4-HMAC-SHA256 "));
+        assert!(
+            authorization
+                .contains("Credential=AKIDEXAMPLE/20231114/us-east-1/bedrock-mantle/aws4_request")
+        );
+        assert!(authorization.contains("SignedHeaders=content-type;host"));
+        assert!(authorization.contains("Signature="));
     }
 
     #[test]
@@ -2537,23 +2647,25 @@ mod tests {
     }
 
     #[test]
-    fn test_sign_bedrock_bearer_token_matches_reference_algorithm() {
-        // Cross-checked byte-for-byte against Python's `aws-bedrock-token-generator`
-        // reference implementation (botocore's `SigV4QueryAuth`) using the same
-        // well-known test credentials, region, and a fixed timestamp.
-        let credentials = Credentials::new(
-            "AKIDEXAMPLE",
-            "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
-            None,
-            None,
-            "test",
+    fn test_strip_unsupported_mantle_response_fields_removes_context_management() {
+        let mut request = into_open_ai_response(
+            LanguageModelRequest {
+                compact_at_tokens: Some(10_000),
+                ..Default::default()
+            },
+            "openai.gpt-5.5",
+            true,
+            false,
+            Some(128_000),
+            Some(ReasoningEffort::Medium),
+            false,
         );
-        let time = std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        let token = sign_bedrock_bearer_token_at(&credentials, "us-east-1", time).unwrap();
 
-        assert_eq!(
-            token,
-            "bedrock-api-key-YmVkcm9jay5hbWF6b25hd3MuY29tLz9BY3Rpb249Q2FsbFdpdGhCZWFyZXJUb2tlbiZYLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUFLSURFWEFNUExFJTJGMjAyMzExMTQlMkZ1cy1lYXN0LTElMkZiZWRyb2NrJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyMzExMTRUMjIxMzIwWiZYLUFtei1FeHBpcmVzPTQzMjAwJlgtQW16LVNpZ25lZEhlYWRlcnM9aG9zdCZYLUFtei1TaWduYXR1cmU9OGE4NDYxMjQyM2RhMzRkMWEzZjYxMDU1NDhkODI3MGU0Nzk1ZDc0YTE0NDZlYjk2YjY3MWYxN2IxNDc4YWMzZCZWZXJzaW9uPTE="
-        );
+        assert!(request.context_management.is_some());
+        strip_unsupported_mantle_response_fields(&mut request);
+        assert!(request.context_management.is_none());
+
+        let request = serde_json::to_value(&request).unwrap();
+        assert!(request.get("context_management").is_none());
     }
 }

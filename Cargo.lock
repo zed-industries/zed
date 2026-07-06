@@ -9810,7 +9810,6 @@ dependencies = [
  "aws-config",
  "aws-credential-types",
  "aws-sigv4",
- "aws-smithy-http",
  "aws_http_client",
  "base64 0.22.1",
  "bedrock",
