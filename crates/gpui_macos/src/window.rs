@@ -1787,7 +1787,11 @@ impl PlatformWindow for MacWindow {
                         } else {
                             msg_send![action, isKindOfClass: class!(NSString)]
                         };
-                        let action_str = if is_string == YES { action.to_str() } else { "" };
+                        let action_str = if is_string == YES {
+                            action.to_str()
+                        } else {
+                            ""
+                        };
 
                         match action_str {
                             "None" => {
