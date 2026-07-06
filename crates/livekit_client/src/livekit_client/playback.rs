@@ -672,8 +672,14 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
 
     // Motivation for this unsafe code is to avoid zero-initializing the frame
     // data, since `to_argb` writes all bytes anyway. We reserve capacity and
-    // write straight into the uninitialized spare capacity rather than forming a
-    // `&mut [u8]` over uninitialized memory (which would itself be UB).
+    // form a `&mut [u8]` over the uninitialized spare capacity. This is sound
+    // because a `&mut [u8]` is allowed to cover uninitialized bytes as long as
+    // they are only written (never read) while uninitialized: `u8` has no
+    // invalid bit patterns, so writing into uninitialized `u8`s has no validity
+    // concern. `to_argb` (libyuv) fully overwrites all `byte_len` bytes without
+    // reading them, and we only call `set_len(byte_len)` after that complete
+    // write. (`to_argb`'s FFI signature takes `&mut [u8]`, so `MaybeUninit` is
+    // not an option here.)
     let mut argb_image = Vec::<u8>::with_capacity(byte_len);
     unsafe {
         let argb_frame_slice = std::slice::from_raw_parts_mut(
@@ -1039,6 +1045,12 @@ mod macos {
                 // here could let that in-flight callback run against freed memory.
                 // Leaking a single small allocation is a cheap price to avoid the
                 // use-after-free.
+                //
+                // Note this is not strictly a one-time leak: `DeviceChangeListener::new`
+                // is recreated in a loop on each device-change event (see the
+                // `.next().await` loop that drives it), so one wrapper leaks per
+                // device-change event. The accumulation is bounded by the number
+                // of such events over a session, which is negligible in practice.
             }
         }
     }
