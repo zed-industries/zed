@@ -2877,7 +2877,7 @@ impl Terminal {
     }
 
     pub fn clone_builder(&self, cx: &App, cwd: Option<PathBuf>) -> Task<Result<TerminalBuilder>> {
-        let working_directory = self.working_directory().or_else(|| cwd);
+        let working_directory = cwd.or_else(|| self.working_directory());
         TerminalBuilder::new(
             working_directory,
             None,

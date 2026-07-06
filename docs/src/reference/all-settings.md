@@ -4715,6 +4715,78 @@ Example command to set the title: `echo -e "\e]2;New Title\007";`
 }
 ```
 
+### Terminal: Split Working Directory
+
+- Description: What working directory to use when splitting or cloning a terminal.
+- Setting: `split_working_directory`
+- Default: `"current_terminal_directory"`
+
+**Options**
+
+1. Use working directory of the terminal being split.
+
+```json [settings]
+{
+  "terminal": {
+    "split_working_directory": "current_terminal_directory"
+  }
+}
+```
+
+2. Use the current file's directory, falling back to the project directory, then the first project in the workspace.
+
+```json [settings]
+{
+  "terminal": {
+    "split_working_directory": "current_file_directory"
+  }
+}
+```
+
+3. Use the current file's project directory. Fallback to the first project directory strategy if unsuccessful.
+
+```json [settings]
+{
+  "terminal": {
+    "split_working_directory": "current_project_directory"
+  }
+}
+```
+
+4. Use the first project in this workspace's directory.
+
+```json [settings]
+{
+  "terminal": {
+    "split_working_directory": "first_project_directory"
+  }
+}
+```
+
+5. Always use this platform's home directory If we can find it)
+
+```json [settings]
+{
+  "terminal": {
+    "split_working_directory": "always_home"
+  }
+}
+```
+
+6. Always use a specific directory. This value will be shell expanded. If this path is not a valid directory the terminal will default to this platform's home directory (if we can find it)
+
+```json [settings]
+{
+  "terminal": {
+    "split_working_directory": {
+      "always": {
+        "directory": "~/zed/projects/"
+      }
+    }
+  }
+}
+```
+
 ### Terminal: Path Hyperlink Regexes
 
 - Description: Regexes used to identify path hyperlinks. The regexes can be specified in two forms - a single regex string, or an array of strings (which will be collected into a single multi-line regex string).

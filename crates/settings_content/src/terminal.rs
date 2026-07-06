@@ -17,6 +17,10 @@ pub struct ProjectTerminalSettingsContent {
     ///
     /// Default: current_project_directory
     pub working_directory: Option<WorkingDirectory>,
+    /// What working directory to use when splitting/cloning a terminal.
+    ///
+    /// Default: current_terminal_directory
+    pub split_working_directory: Option<SplitWorkingDirectory>,
     /// Any key-value pairs added to this list will be added to the terminal's
     /// environment. Use `:` to separate multiple values.
     ///
@@ -246,6 +250,60 @@ pub enum WorkingDirectory {
     /// If this path is not a valid directory the terminal will default to
     /// this platform's home directory  (if it can be found).
     Always { directory: String },
+}
+
+#[derive(
+    Clone,
+    Debug,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    JsonSchema,
+    MergeFrom,
+    strum::EnumDiscriminants,
+)]
+#[strum_discriminants(derive(strum::VariantArray, strum::VariantNames, strum::FromRepr))]
+#[serde(rename_all = "snake_case")]
+pub enum SplitWorkingDirectory {
+    /// Use the working directory of the terminal being split.
+    CurrentTerminalDirectory,
+    /// Use the current file's directory, falling back to the project directory,
+    /// then the first project in the workspace.
+    CurrentFileDirectory,
+    /// Use the current file's project directory. Fallback to the
+    /// first project directory strategy if unsuccessful.
+    CurrentProjectDirectory,
+    /// Use the first project in this workspace's directory. Fallback to using
+    /// this platform's home directory.
+    FirstProjectDirectory,
+    /// Always use this platform's home directory (if it can be found).
+    AlwaysHome,
+    /// Always use a specific directory. This value will be shell expanded.
+    /// If this path is not a valid directory the terminal will default to
+    /// this platform's home directory  (if it can be found).
+    Always { directory: String },
+}
+
+impl SplitWorkingDirectory {
+    pub fn as_working_directory(&self) -> Option<WorkingDirectory> {
+        match self {
+            SplitWorkingDirectory::CurrentTerminalDirectory => None,
+            SplitWorkingDirectory::CurrentFileDirectory => {
+                Some(WorkingDirectory::CurrentFileDirectory)
+            }
+            SplitWorkingDirectory::CurrentProjectDirectory => {
+                Some(WorkingDirectory::CurrentProjectDirectory)
+            }
+            SplitWorkingDirectory::FirstProjectDirectory => {
+                Some(WorkingDirectory::FirstProjectDirectory)
+            }
+            SplitWorkingDirectory::AlwaysHome => Some(WorkingDirectory::AlwaysHome),
+            SplitWorkingDirectory::Always { directory } => Some(WorkingDirectory::Always {
+                directory: directory.clone(),
+            }),
+        }
+    }
 }
 
 #[with_fallible_options]
