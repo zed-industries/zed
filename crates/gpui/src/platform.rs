@@ -33,11 +33,11 @@ pub(crate) type PlatformScreenCaptureFrame = core_video::image_buffer::CVImageBu
 
 use crate::{
     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
-    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Font, FontId, FontMetrics, FontRun,
-    ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
-    PlatformInput, Point, Priority, RenderGlyphParams, RenderImage, RenderImageParams,
-    RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size, SvgRenderer,
-    SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
+    DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, Font, FontId, FontMetrics,
+    FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap, LineLayout, Pixels,
+    PlatformGestures, PlatformInput, Point, Priority, RenderGlyphParams, RenderImage,
+    RenderImageParams, RenderSvgParams, Scene, ShapedGlyph, ShapedRun, SharedString, Size,
+    SvgRenderer, SystemWindowTab, Task, Window, WindowControlArea, hash, point, px, size,
 };
 use anyhow::Result;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -189,6 +189,34 @@ pub trait Platform: 'static {
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
     fn on_system_wake(&self, callback: Box<dyn FnMut()>);
+
+    // Mobile platform methods. On mobile the OS owns the application
+    // lifecycle: apps are backgrounded, foregrounded, and killed at the
+    // system's discretion, and must react rather than decide.
+
+    /// Registers a callback invoked whenever the application's lifecycle
+    /// phase changes. See [`AppLifecyclePhase`] for the phase vocabulary and
+    /// its mapping onto iOS and Android.
+    ///
+    /// Desktop platforms never invoke this; the default implementation drops
+    /// the callback.
+    fn on_app_lifecycle(&self, _callback: Box<dyn FnMut(AppLifecyclePhase)>) {}
+
+    /// Registers a callback invoked when the OS signals memory pressure
+    /// (iOS `didReceiveMemoryWarning`, Android `onTrimMemory`). Applications
+    /// should drop caches; on mobile, failure to react invites the OS to
+    /// kill the process.
+    ///
+    /// Desktop platforms never invoke this; the default implementation drops
+    /// the callback.
+    fn on_memory_warning(&self, _callback: Box<dyn FnMut()>) {}
+
+    /// The platform's gesture recognition services, if it provides any
+    /// beyond gpui's portable recognizers. See
+    /// [`PlatformGestures`](crate::PlatformGestures).
+    fn gestures(&self) -> Option<Rc<dyn PlatformGestures>> {
+        None
+    }
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
@@ -617,6 +645,94 @@ pub struct RequestFrameOptions {
     pub force_render: bool,
 }
 
+/// The application's lifecycle phase, as owned and reported by a mobile OS.
+///
+/// Focus and visibility are distinct concepts and must not be conflated:
+/// `Inactive` means visible but not receiving input (a system dialog on
+/// top), while `Background` means not visible at all, with process death
+/// possible at any time thereafter.
+///
+/// | Phase        | iOS                          | Android      |
+/// |--------------|------------------------------|--------------|
+/// | `Active`     | `didBecomeActive`            | `onResume`   |
+/// | `Inactive`   | `willResignActive`           | `onPause`    |
+/// | `Background` | `didEnterBackground`         | `onStop`     |
+/// | `Foreground` | `willEnterForeground`        | `onStart`    |
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum AppLifecyclePhase {
+    /// Foreground and receiving input.
+    Active,
+    /// Foreground (visible) but not receiving input.
+    Inactive,
+    /// Not visible. The GPU surface may be destroyed while backgrounded and
+    /// the process may be killed without further notice.
+    Background,
+    /// Becoming visible again, before input is restored.
+    Foreground,
+}
+
+/// Regions of a window that are obscured or reserved by the system.
+///
+/// Insets are *data*; avoidance is *policy*. The window's bounds and surface
+/// stay truthful and full-size — the presence of a notch or soft keyboard
+/// never resizes the window — and it is up to the application (or a paved-
+/// path layout behavior built on this data) to decide how content should
+/// avoid the obscured regions. `resize` remains a genuinely separate channel
+/// (rotation, multi-window), answering "how big am I" where insets answer
+/// "how much of me is unobstructed".
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct WindowInsets {
+    /// Regions covered by system UI or hardware: status bar, display
+    /// cutouts/notch, home indicator, navigation bars.
+    /// (iOS: `safeAreaInsets`. Android: `WindowInsets` of types
+    /// `systemBars() | displayCutout()`.)
+    pub safe_area: Edges<Pixels>,
+    /// The region covered by the soft keyboard, when present.
+    /// (iOS: derived from `keyboardWillShow`/frame-change notifications.
+    /// Android: `WindowInsets.Type.ime()`.)
+    ///
+    /// Expressed as edges rather than a bottom height to accommodate
+    /// floating and split keyboards.
+    pub ime: Edges<Pixels>,
+}
+
+impl WindowInsets {
+    /// The combined inset content should avoid: the per-edge maximum of all
+    /// inset kinds. Kinds overlap — the keyboard covers the home-indicator
+    /// region — so they are combined by `max`, never summed.
+    pub fn effective(&self) -> Edges<Pixels> {
+        Edges {
+            top: self.safe_area.top.max(self.ime.top),
+            right: self.safe_area.right.max(self.ime.right),
+            bottom: self.safe_area.bottom.max(self.ime.bottom),
+            left: self.safe_area.left.max(self.ime.left),
+        }
+    }
+}
+
+/// A change in the state of the focused text input, pushed from gpui core to
+/// the platform so that platform text machinery (iOS `UITextInput` /
+/// `UITextInteraction`, Android `InputConnection`) can react without polling.
+///
+/// The core guarantee that makes these signals useful: they are delivered
+/// when the state *actually changes*, never as a per-frame side effect of
+/// input-handler re-registration.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum TextInputStateChange {
+    /// An editable element gained focus. Mobile platforms typically summon
+    /// the soft keyboard (iOS `becomeFirstResponder`, Android
+    /// `showSoftInput`).
+    FocusGained,
+    /// The focused editable element lost focus. Mobile platforms typically
+    /// dismiss the soft keyboard.
+    FocusLost,
+    /// The selection or caret moved (iOS `UITextInputDelegate` selection
+    /// notifications, Android `InputConnection.updateSelection`).
+    SelectionChanged,
+    /// The document content changed outside of platform-initiated edits.
+    ContentChanged,
+}
+
 #[expect(missing_docs)]
 pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn bounds(&self) -> Bounds<Pixels>;
@@ -716,6 +832,52 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<Pixels>);
+
+    // Mobile platform methods.
+
+    /// The regions of this window currently obscured or reserved by the
+    /// system. Zero on platforms without such regions.
+    fn insets(&self) -> WindowInsets {
+        WindowInsets::default()
+    }
+
+    /// Registers a callback invoked whenever [`Self::insets`] change.
+    ///
+    /// Contract: fires continuously during animated transitions (Android
+    /// `WindowInsetsAnimation` progress; on iOS the platform interpolates
+    /// the keyboard animation curve on frame ticks) and is exact at rest.
+    fn on_insets_changed(&self, _callback: Box<dyn FnMut(WindowInsets)>) {}
+
+    /// Sets the handler for the system back action (Android back
+    /// button/gesture; no source on iOS or desktop).
+    ///
+    /// The modern Android contract (`OnBackInvokedCallback`, predictive
+    /// back) requires *declaring ahead of time* whether back would be
+    /// handled — the OS chooses its animation before invoking the handler —
+    /// so this is a declared handler plus [`Self::set_back_enabled`], not a
+    /// return-a-bool-at-invocation API. When disabled or unset, the OS
+    /// default proceeds (typically finishing the activity).
+    fn set_back_handler(&self, _callback: Box<dyn FnMut()>) {}
+
+    /// Declares whether the application would currently handle the system
+    /// back action (e.g. navigation depth > 0). Call whenever the answer
+    /// changes.
+    fn set_back_enabled(&self, _enabled: bool) {}
+
+    /// Requests that the soft keyboard be shown. Raw, faithful platform
+    /// control (iOS `becomeFirstResponder`, Android `showSoftInput`); the
+    /// default *policy* (summon on [`TextInputStateChange::FocusGained`])
+    /// lives in the platform implementation, and this method exists for
+    /// applications that need explicit control.
+    fn show_soft_keyboard(&self) {}
+
+    /// Requests that the soft keyboard be hidden.
+    fn hide_soft_keyboard(&self) {}
+
+    /// Called by gpui core when the focused text input's state changes.
+    /// See [`TextInputStateChange`]. Never called as a per-frame side
+    /// effect; platforms may rely on these signals instead of polling.
+    fn text_input_state_changed(&self, _change: TextInputStateChange) {}
 
     fn play_system_bell(&self) {}
 
@@ -1330,6 +1492,32 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    /// See [`InputHandler::set_selected_text_range`].
+    pub fn set_selected_text_range(&mut self, range_utf16: Range<usize>) {
+        self.cx
+            .update(|window, cx| {
+                self.handler
+                    .set_selected_text_range(range_utf16, window, cx)
+            })
+            .ok();
+    }
+
+    /// See [`InputHandler::element_bounds`].
+    pub fn element_bounds(&mut self) -> Option<Bounds<Pixels>> {
+        self.cx
+            .update(|window, cx| self.handler.element_bounds(window, cx))
+            .ok()
+            .flatten()
+    }
+
+    /// See [`InputHandler::text_length_utf16`].
+    pub fn text_length_utf16(&mut self) -> Option<usize> {
+        self.cx
+            .update(|window, cx| self.handler.text_length_utf16(window, cx))
+            .ok()
+            .flatten()
+    }
+
     #[allow(dead_code)]
     pub fn accepts_text_input(&mut self, window: &mut Window, cx: &mut App) -> bool {
         self.handler.accepts_text_input(window, cx)
@@ -1447,6 +1635,42 @@ pub trait InputHandler: 'static {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<usize>;
+
+    /// Set the range of the user's currently selected text.
+    ///
+    /// This is the reverse data-flow direction from [`Self::selected_text_range`]:
+    /// platforms call it when the system text machinery moves the selection on the
+    /// application's behalf — e.g. the user drags a system selection handle or
+    /// invokes Select All from system UI (iOS `UITextInput setSelectedTextRange:`,
+    /// Android `InputConnection.setSelection`).
+    ///
+    /// range_utf16 is in terms of UTF-16 characters, from 0 to the length of the document
+    fn set_selected_text_range(
+        &mut self,
+        _range_utf16: Range<usize>,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) {
+    }
+
+    /// Get the bounds of the focused text element in window coordinates, if known.
+    ///
+    /// This is the pull counterpart to the [`PlatformWindow::update_ime_position`]
+    /// push: mobile platforms ask for the focused element's geometry when they
+    /// need it (e.g. to frame system text-interaction UI overlaid on the focused
+    /// element), while macOS is built around the push path. Both are supported.
+    fn element_bounds(&mut self, _window: &mut Window, _cx: &mut App) -> Option<Bounds<Pixels>> {
+        None
+    }
+
+    /// Get the length of the document in UTF-16 characters, if known.
+    ///
+    /// Platform text protocols with a random-access document model (iOS
+    /// `UITextInput`'s `endOfDocument`) need this constantly; without it they
+    /// are forced to probe via [`Self::text_for_range`] with an unbounded range.
+    fn text_length_utf16(&mut self, _window: &mut Window, _cx: &mut App) -> Option<usize> {
+        None
+    }
 
     /// Allows a given input context to opt into getting raw key repeats instead of
     /// sending these to the platform.

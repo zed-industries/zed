@@ -982,6 +982,10 @@ impl Frame {
 enum InputModality {
     Mouse,
     Keyboard,
+    /// The user is interacting through a touch screen. There is no cursor:
+    /// hover-dependent and focus-visible styling behave as with `Mouse`
+    /// (suppressed keyboard focus rings), but no hover states are produced.
+    Touch,
 }
 
 /// Holds the state for a specific window.
@@ -4530,6 +4534,7 @@ impl Window {
         self.last_input_modality = match &event {
             PlatformInput::KeyDown(_) => InputModality::Keyboard,
             PlatformInput::MouseMove(_) | PlatformInput::MouseDown(_) => InputModality::Mouse,
+            PlatformInput::Touch(_) => InputModality::Touch,
             _ => self.last_input_modality,
         };
         if self.last_input_modality != old_modality {
@@ -4623,6 +4628,14 @@ impl Window {
                     PlatformInput::FileDrop(FileDropEvent::Exited)
                 }
             },
+            // Touch dispatch is fully separate from mouse dispatch: touch
+            // events must never update `mouse_position`, `modifiers`, hover
+            // state, or cursor style, and platforms must never synthesize
+            // mouse events from touches. See `TouchEvent` for the dispatch
+            // contract (implicit capture at `Started`, keyed on stable
+            // element identity). Core-side touch dispatch is not implemented
+            // yet, so the event currently ends here.
+            PlatformInput::Touch(touch) => PlatformInput::Touch(touch),
             PlatformInput::KeyDown(_) | PlatformInput::KeyUp(_) => event,
         };
 
