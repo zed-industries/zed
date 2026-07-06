@@ -1951,33 +1951,11 @@ impl AgentPanel {
                 if conversation_view.entity_id() == draft.entity_id()
         );
 
-        if matches!(self.base_view, BaseView::AgentThread { .. }) && !showing_new_draft {
-            cx.background_spawn({
-                let kvp = KeyValueStore::global(cx);
-                async move {
-                    write_global_last_used_agent(kvp, agent).await;
-                }
-            })
-            .detach();
-            return;
-        }
-
-        self.set_selected_agent_and_persist(agent, cx);
-
-        if showing_new_draft {
+        if matches!(self.base_view, BaseView::AgentThread { .. }) && showing_new_draft {
+            self.set_selected_agent_and_persist(agent, cx);
             self.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
-        } else if let Some(draft) = self.draft_thread.clone()
-            && !self.draft_has_content(&draft, cx)
-            && *draft.read(cx).agent_key() != self.selected_agent
-        {
-            let old_draft_id = draft.read(cx).thread_id;
-            ThreadMetadataStore::global(cx).update(cx, |store, cx| {
-                store.delete(old_draft_id, cx);
-            });
-            self.draft_thread = None;
-            self._draft_editor_observation = None;
+            cx.notify();
         }
-        cx.notify();
     }
 
     pub fn new_terminal(
@@ -11363,15 +11341,17 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_select_agent_action_selects_without_opening_panel(cx: &mut TestAppContext) {
+    async fn test_select_agent_action_updates_visible_draft(cx: &mut TestAppContext) {
         init_test(cx);
+        let fs = FakeFs::new(cx.executor());
         cx.update(|cx| {
             agent::ThreadStore::init_global(cx);
             language_model::LanguageModelRegistry::test(cx);
+            <dyn fs::Fs>::set_global(fs.clone(), cx);
         });
 
-        let fs = FakeFs::new(cx.executor());
-        let project = Project::test(fs.clone(), [], cx).await;
+        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
         let multi_workspace =
             cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
         let workspace = multi_workspace
@@ -11387,8 +11367,14 @@ mod tests {
             panel
         });
 
-        // Dispatched by the onboarding page after installing an external
-        // agent, so the agent launches when the panel is next opened.
+        panel.update_in(cx, |panel, window, cx| {
+            panel.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
+        });
+
+        let initial_draft_id = panel.read_with(cx, |panel, _cx| {
+            panel.draft_thread.as_ref().unwrap().entity_id()
+        });
+
         cx.dispatch_action(SelectAgent {
             agent: "my-configured-agent".to_string(),
         });
@@ -11398,23 +11384,24 @@ mod tests {
             id: "my-configured-agent".into(),
         };
 
-        panel.read_with(cx, |panel, _cx| {
+        panel.read_with(cx, |panel, cx| {
+            let draft = panel.draft_thread.as_ref().expect("draft should exist");
+            assert_ne!(
+                draft.entity_id(),
+                initial_draft_id,
+                "changing agents should replace the visible draft"
+            );
             assert_eq!(
                 panel.selected_agent, expected_agent,
                 "the action should update the panel's selected agent"
             );
-            assert!(
-                panel.active_conversation_view().is_none(),
-                "selecting an agent should not create or open a thread"
-            );
-            assert!(
-                panel.draft_thread.is_none(),
-                "selecting an agent should not create a draft thread"
+            assert_eq!(
+                *draft.read(cx).agent_key(),
+                expected_agent,
+                "the visible draft should use the selected agent"
             );
         });
 
-        // The selection is persisted globally so panels loaded later (e.g. in
-        // a new workspace) launch the configured agent.
         let kvp = cx.update(|_, cx| KeyValueStore::global(cx));
         assert_eq!(
             read_global_last_used_agent(&kvp),
@@ -11459,8 +11446,7 @@ mod tests {
         let thread_agent = panel.read_with(cx, |panel, _cx| panel.selected_agent.clone());
 
         // Installing an agent (e.g. from onboarding or the ACP registry page)
-        // selects it globally, but must not retarget the visible thread or
-        // its toolbar icon.
+        // must not retarget the visible thread or its toolbar icon.
         cx.dispatch_action(SelectAgent {
             agent: "newly-installed-agent".to_string(),
         });
@@ -11474,12 +11460,12 @@ mod tests {
         });
 
         let kvp = cx.update(|_, cx| KeyValueStore::global(cx));
-        assert_eq!(
+        assert_ne!(
             read_global_last_used_agent(&kvp),
             Some(Agent::Custom {
                 id: "newly-installed-agent".into()
             }),
-            "the newly installed agent should still become the global last-used agent"
+            "the newly installed agent should not become the global last-used agent while an existing thread is visible"
         );
     }
 
