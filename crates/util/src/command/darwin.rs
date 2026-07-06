@@ -174,14 +174,30 @@ impl Command {
             .as_deref()
             .unwrap_or_else(|| Path::new("."));
 
-        // Optimization: if no environment modifications were requested, pass None
-        // to spawn_posix so it uses the `environ` global directly, avoiding a
-        // full copy of the environment. This matches std::process::Command behavior.
-        let envs = if self.env_clear || !self.envs.is_empty() {
+        // The login-shell environment is captured into a shared map at startup
+        // rather than being written into this process's own environment (see
+        // `util::login_shell_environment`), so we merge it in here to keep it
+        // reaching child processes.
+        let login_shell_env = crate::login_shell_environment();
+
+        // Build the child's environment explicitly whenever there are env
+        // modifications or a captured login-shell environment to layer in.
+        // Otherwise (as an optimization, and matching std::process::Command) pass
+        // None so spawn_posix inherits the process's environment directly.
+        let envs = if self.env_clear || !self.envs.is_empty() || login_shell_env.is_some() {
             let mut result = BTreeMap::<OsString, OsString>::new();
             if !self.env_clear {
+                // Snapshot the process environment under std's lock rather than
+                // reading the raw `environ` global directly (which would race any
+                // concurrent env mutation), then layer the captured login-shell
+                // environment on top.
                 for (key, val) in std::env::vars_os() {
                     result.insert(key, val);
+                }
+                if let Some(login_shell_env) = login_shell_env {
+                    for (key, val) in login_shell_env {
+                        result.insert(OsString::from(key), OsString::from(val));
+                    }
                 }
             }
             for (key, maybe_val) in &self.envs {
