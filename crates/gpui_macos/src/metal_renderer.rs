@@ -1540,6 +1540,17 @@ impl MetalRenderer {
                 )
                 .unwrap();
 
+            // CVMetalTextureGetTexture can return null (e.g. if the texture
+            // cache failed to wrap the plane); constructing a TextureRef from
+            // null would be undefined behavior, so skip the surface instead.
+            let y_texture_ptr = unsafe { CVMetalTextureGetTexture(y_texture.as_concrete_TypeRef()) };
+            let cb_cr_texture_ptr =
+                unsafe { CVMetalTextureGetTexture(cb_cr_texture.as_concrete_TypeRef()) };
+            if y_texture_ptr.is_null() || cb_cr_texture_ptr.is_null() {
+                log::error!("CVMetalTextureGetTexture returned null; skipping surface");
+                continue;
+            }
+
             align_offset(instance_offset);
             let next_offset = *instance_offset + mem::size_of::<Surface>();
             if next_offset > instance_buffer.size {
@@ -1556,14 +1567,11 @@ impl MetalRenderer {
                 mem::size_of_val(&texture_size) as u64,
                 &texture_size as *const Size<DevicePixels> as *const _,
             );
-            // let y_texture = y_texture.get_texture().unwrap().
             command_encoder.set_fragment_texture(SurfaceInputIndex::YTexture as u64, unsafe {
-                let texture = CVMetalTextureGetTexture(y_texture.as_concrete_TypeRef());
-                Some(metal::TextureRef::from_ptr(texture as *mut _))
+                Some(metal::TextureRef::from_ptr(y_texture_ptr as *mut _))
             });
             command_encoder.set_fragment_texture(SurfaceInputIndex::CbCrTexture as u64, unsafe {
-                let texture = CVMetalTextureGetTexture(cb_cr_texture.as_concrete_TypeRef());
-                Some(metal::TextureRef::from_ptr(texture as *mut _))
+                Some(metal::TextureRef::from_ptr(cb_cr_texture_ptr as *mut _))
             });
 
             unsafe {
