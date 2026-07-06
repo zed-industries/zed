@@ -4,7 +4,7 @@ use cloud_llm_client::{EditPredictionRejectReason, PredictEditsRequestTrigger};
 use edit_prediction_types::{PredictedCursorPosition, interpolate_edits};
 use gpui::{AsyncApp, Entity, SharedString};
 use language::{Anchor, Buffer, BufferSnapshot, EditPreview, TextBufferSnapshot};
-use zeta_prompt::ZetaPromptInput;
+use zeta_prompt::{Zeta2PromptInput, Zeta3PromptInput};
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]
 pub struct EditPredictionId(pub SharedString);
@@ -21,12 +21,17 @@ impl std::fmt::Display for EditPredictionId {
     }
 }
 
+#[derive(Clone, serde::Serialize)]
+#[serde(tag = "version", content = "input")]
+pub enum EditPredictionInputs {
+    V2(Zeta2PromptInput),
+    V3(Zeta3PromptInput),
+}
+
 /// A prediction response that was returned from the provider, whether it was ultimately valid or not.
 pub struct EditPredictionResult {
-    pub id: EditPredictionId,
-    pub prediction: Result<EditPrediction, EditPredictionRejectReason>,
-    pub display_prediction: Option<EditPrediction>,
-    pub model_version: Option<String>,
+    pub prediction: EditPrediction,
+    pub reject_reason: Option<EditPredictionRejectReason>,
     pub e2e_latency: std::time::Duration,
 }
 
@@ -38,71 +43,52 @@ impl EditPredictionResult {
         edits: Arc<[(Range<Anchor>, Arc<str>)]>,
         cursor_position: Option<PredictedCursorPosition>,
         editable_range: Option<Range<Anchor>>,
-        inputs: ZetaPromptInput,
+        inputs: EditPredictionInputs,
         model_version: Option<String>,
         trigger: PredictEditsRequestTrigger,
         e2e_latency: std::time::Duration,
         cx: &mut AsyncApp,
     ) -> Self {
-        if edits.is_empty() {
-            let empty_edits = Arc::new([]);
-            return Self {
-                id: id.clone(),
-                prediction: Err(EditPredictionRejectReason::Empty),
-                display_prediction: Some(EditPrediction {
-                    id,
-                    edits: empty_edits,
-                    cursor_position: None,
-                    editable_range,
-                    snapshot: edited_buffer_snapshot.clone(),
-                    edit_preview: EditPreview::unchanged(edited_buffer_snapshot),
-                    buffer: edited_buffer.clone(),
-                    inputs,
-                    model_version: model_version.clone(),
-                    trigger,
-                }),
-                model_version,
-                e2e_latency,
-            };
-        }
+        let (edits, reject_reason, new_snapshot): (
+            Arc<[(Range<Anchor>, Arc<str>)]>,
+            Option<EditPredictionRejectReason>,
+            Option<BufferSnapshot>,
+        ) = if edits.is_empty() {
+            (
+                Arc::default(),
+                Some(EditPredictionRejectReason::Empty),
+                None,
+            )
+        } else {
+            edited_buffer.read_with(cx, |buffer, _cx| {
+                let new_snapshot = buffer.snapshot();
+                match interpolate_edits(&edited_buffer_snapshot, &new_snapshot, &edits) {
+                    Some(edits) if edits.is_empty() => (
+                        Arc::default(),
+                        Some(EditPredictionRejectReason::InterpolatedEmpty),
+                        None,
+                    ),
+                    Some(edits) => (Arc::from(edits), None, Some(new_snapshot)),
+                    None => (
+                        Arc::default(),
+                        Some(EditPredictionRejectReason::InterpolateFailed),
+                        None,
+                    ),
+                }
+            })
+        };
+        let snapshot = new_snapshot.unwrap_or_else(|| edited_buffer_snapshot.clone());
 
-        let (edits, snapshot) = edited_buffer.read_with(cx, |buffer, _cx| {
-            let new_snapshot = buffer.snapshot();
-            let edits: Option<Arc<[(Range<Anchor>, Arc<str>)]>> =
-                interpolate_edits(&edited_buffer_snapshot, &new_snapshot, &edits).map(Arc::from);
-
-            (edits, new_snapshot)
-        });
-
-        let Some(edits) = edits else {
-            let empty_edits: Arc<[(Range<Anchor>, Arc<str>)]> = Vec::new().into();
-            return Self {
-                id: id.clone(),
-                prediction: Err(EditPredictionRejectReason::InterpolatedEmpty),
-                display_prediction: Some(EditPrediction {
-                    id,
-                    edits: empty_edits,
-                    cursor_position: None,
-                    editable_range,
-                    snapshot: edited_buffer_snapshot.clone(),
-                    edit_preview: EditPreview::unchanged(edited_buffer_snapshot),
-                    inputs,
-                    buffer: edited_buffer.clone(),
-                    model_version: model_version.clone(),
-                    trigger,
-                }),
-                model_version,
-                e2e_latency,
-            };
+        let edit_preview = if !edits.is_empty() {
+            edited_buffer
+                .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
+                .await
+        } else {
+            EditPreview::unchanged(edited_buffer_snapshot)
         };
 
-        let edit_preview = edited_buffer
-            .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
-            .await;
-
         Self {
-            id: id.clone(),
-            prediction: Ok(EditPrediction {
+            prediction: EditPrediction {
                 id,
                 edits,
                 cursor_position,
@@ -111,11 +97,10 @@ impl EditPredictionResult {
                 edit_preview,
                 inputs,
                 buffer: edited_buffer.clone(),
-                model_version: model_version.clone(),
+                model_version,
                 trigger,
-            }),
-            display_prediction: None,
-            model_version,
+            },
+            reject_reason,
             e2e_latency,
         }
     }
@@ -129,8 +114,8 @@ pub struct EditPrediction {
     pub editable_range: Option<Range<Anchor>>,
     pub snapshot: BufferSnapshot,
     pub edit_preview: EditPreview,
+    pub inputs: EditPredictionInputs,
     pub buffer: Entity<Buffer>,
-    pub inputs: zeta_prompt::ZetaPromptInput,
     pub model_version: Option<String>,
     pub trigger: PredictEditsRequestTrigger,
 }
@@ -164,7 +149,7 @@ mod tests {
     use super::*;
     use gpui::{App, Entity, TestAppContext, prelude::*};
     use language::{Buffer, ToOffset as _};
-    use zeta_prompt::ZetaPromptInput;
+    use zeta_prompt::Zeta2PromptInput;
 
     #[gpui::test]
     async fn test_edit_prediction_basic_interpolation(cx: &mut TestAppContext) {
@@ -187,7 +172,7 @@ mod tests {
             edit_preview,
             model_version: None,
             trigger: PredictEditsRequestTrigger::Other,
-            inputs: ZetaPromptInput {
+            inputs: EditPredictionInputs::V2(Zeta2PromptInput {
                 events: vec![],
                 related_files: Some(vec![]),
                 active_buffer_diagnostics: vec![],
@@ -200,7 +185,7 @@ mod tests {
                 in_open_source_repo: false,
                 can_collect_data: false,
                 repo_url: None,
-            },
+            }),
         };
 
         cx.update(|cx| {

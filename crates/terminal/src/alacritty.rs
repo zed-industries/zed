@@ -355,6 +355,8 @@ impl ViMotion {
             Self::WordRight => AlacViMotion::WordRight,
             Self::WordRightEnd => AlacViMotion::WordRightEnd,
             Self::Bracket => AlacViMotion::Bracket,
+            Self::ParagraphUp => AlacViMotion::ParagraphUp,
+            Self::ParagraphDown => AlacViMotion::ParagraphDown,
         }
     }
 }
@@ -796,6 +798,10 @@ pub(super) fn clear_saved_screen(term: &mut Term<ZedListener>) {
     if (new_cursor.line.0 as usize) < term.screen_lines() - 1 {
         term.grid_mut().reset_region((new_cursor.line + 1)..);
     }
+}
+
+pub(super) fn shrink_to_used(term: &mut Term<ZedListener>) {
+    term.grid_mut().truncate();
 }
 
 pub(super) fn make_content(term: &Term<ZedListener>, last_content: &Content) -> Content {

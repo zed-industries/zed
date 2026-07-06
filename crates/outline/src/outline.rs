@@ -7,8 +7,8 @@ use editor::{MultiBufferOffset, RowHighlightOptions, SelectionEffects};
 use fuzzy_nucleo::StringMatch;
 use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable, HighlightStyle,
-    ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window, div,
-    rems,
+    ParentElement, Point, Rems, Render, Styled, StyledText, Task, TextStyle, WeakEntity, Window,
+    div, rems,
 };
 use language::{Outline, OutlineItem, OutlineSearchEntry};
 use picker::{Picker, PickerDelegate};
@@ -143,7 +143,6 @@ impl ModalView for OutlineView {
 impl Render for OutlineView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .w(rems(34.))
             .on_action(cx.listener(
                 |_this: &mut OutlineView,
                  _: &zed_actions::outline::ToggleOutline,
@@ -180,7 +179,10 @@ impl OutlineView {
         let delegate = OutlineViewDelegate::new(cx.entity().downgrade(), outline, editor, cx);
         let picker = cx.new(|cx| {
             Picker::uniform_list(delegate, window, cx)
-                .max_height(Some(vh(0.75, window)))
+                .max_height(Rems::from_pixels(
+                    window.viewport_size().height * 0.75,
+                    window,
+                ))
                 .show_scrollbar(true)
         });
         OutlineView { picker }
@@ -246,7 +248,7 @@ impl OutlineViewDelegate {
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
                 active_editor.highlight_rows::<OutlineRowHighlights>(
                     outline_item.range.start..outline_item.range.end,
-                    cx.theme().colors().editor_highlighted_line_background,
+                    |cx| cx.theme().colors().editor_highlighted_line_background,
                     RowHighlightOptions {
                         autoscroll: true,
                         ..Default::default()
@@ -261,6 +263,10 @@ impl OutlineViewDelegate {
 
 impl PickerDelegate for OutlineViewDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "outline view"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Search buffer symbols...".into()
@@ -377,7 +383,7 @@ impl PickerDelegate for OutlineViewDelegate {
 
         self.active_editor.update(cx, |active_editor, cx| {
             let highlight = active_editor
-                .highlighted_rows::<OutlineRowHighlights>()
+                .highlighted_rows::<OutlineRowHighlights>(cx)
                 .next();
             if let Some((rows, _)) = highlight {
                 active_editor.change_selections(

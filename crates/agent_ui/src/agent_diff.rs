@@ -28,7 +28,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{CommonAnimationExt, IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
+use ui::{CommonAnimationExt, Divider, IconButtonShape, KeyBinding, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -1099,7 +1099,7 @@ impl Render for AgentDiffToolbar {
                                     }),
                             )
                             .into_any_element(),
-                        vertical_divider().into_any_element(),
+                        Divider::vertical().into_any_element(),
                         h_flex()
                             .gap_0p5()
                             .child(
@@ -1141,7 +1141,7 @@ impl Render for AgentDiffToolbar {
                     .mr_1()
                     .gap_1()
                     .children(content)
-                    .child(vertical_divider())
+                    .child(Divider::vertical())
                     .when_some(editor.read(cx).workspace(), |this, _workspace| {
                         this.child(
                             IconButton::new("review", IconName::ListTodo)
@@ -1158,7 +1158,7 @@ impl Render for AgentDiffToolbar {
                                 }),
                         )
                     })
-                    .child(vertical_divider())
+                    .child(Divider::vertical())
                     .on_action({
                         let editor = editor.clone();
                         move |_action: &OpenAgentDiff, window, cx| {
@@ -1431,11 +1431,14 @@ impl AgentDiff {
                 self.update_reviewing_editors(workspace, window, cx);
             }
             AcpThreadEvent::TitleUpdated
+            | AcpThreadEvent::StatusChanged
             | AcpThreadEvent::TokenUsageUpdated
             | AcpThreadEvent::SubagentSpawned(_)
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::ToolAuthorizationRequested(_)
             | AcpThreadEvent::ToolAuthorizationReceived(_)
+            | AcpThreadEvent::ElicitationRequested(_)
+            | AcpThreadEvent::ElicitationResponded(_)
             | AcpThreadEvent::PromptCapabilitiesUpdated
             | AcpThreadEvent::AvailableCommandsUpdated(_)
             | AcpThreadEvent::Retry(_)

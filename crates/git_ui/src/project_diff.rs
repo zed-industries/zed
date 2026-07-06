@@ -33,14 +33,13 @@ use project::{
         branch_diff::{self, BranchDiffEvent, DiffBase},
     },
 };
-use settings::{Settings, SettingsStore};
+use settings::{GitPanelGroupBy, GitPanelSortBy, Settings, SettingsStore};
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     CommonAnimationExt as _, DiffStat, Divider, KeyBinding, PopoverMenu, Tooltip, prelude::*,
-    vertical_divider,
 };
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
@@ -91,10 +90,6 @@ pub struct ProjectDiff {
     _task: Task<Result<()>>,
     _subscription: Subscription,
 }
-
-const CONFLICT_SORT_PREFIX: u64 = 1;
-const TRACKED_SORT_PREFIX: u64 = 2;
-const NEW_SORT_PREFIX: u64 = 3;
 
 impl ProjectDiff {
     pub(crate) fn register(workspace: &mut Workspace, cx: &mut Context<Workspace>) {
@@ -575,14 +570,20 @@ impl ProjectDiff {
             },
         );
 
-        let mut was_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
+        let mut was_sort_by = GitPanelSettings::get_global(cx).sort_by;
+        let mut was_group_by = GitPanelSettings::get_global(cx).group_by;
+        let mut was_tree_view = GitPanelSettings::get_global(cx).tree_view;
         let mut was_collapse_untracked_diff =
             GitPanelSettings::get_global(cx).collapse_untracked_diff;
         cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
-            let is_sort_by_path = GitPanelSettings::get_global(cx).sort_by_path;
-            let is_collapse_untracked_diff =
-                GitPanelSettings::get_global(cx).collapse_untracked_diff;
-            if is_sort_by_path != was_sort_by_path
+            let settings = GitPanelSettings::get_global(cx);
+            let sort_by = settings.sort_by;
+            let group_by = settings.group_by;
+            let tree_view = settings.tree_view;
+            let is_collapse_untracked_diff = settings.collapse_untracked_diff;
+            if sort_by != was_sort_by
+                || group_by != was_group_by
+                || tree_view != was_tree_view
                 || is_collapse_untracked_diff != was_collapse_untracked_diff
             {
                 this._task = {
@@ -592,7 +593,9 @@ impl ProjectDiff {
                     })
                 }
             }
-            was_sort_by_path = is_sort_by_path;
+            was_sort_by = sort_by;
+            was_group_by = group_by;
+            was_tree_view = tree_view;
             was_collapse_untracked_diff = is_collapse_untracked_diff;
         })
         .detach();
@@ -634,8 +637,7 @@ impl ProjectDiff {
             return;
         };
         let repo = git_repo.read(cx);
-        let sort_prefix = sort_prefix(repo, &entry.repo_path, entry.status, cx);
-        let path_key = PathKey::with_sort_prefix(sort_prefix, entry.repo_path.as_ref().clone());
+        let path_key = project_diff_path_key(repo, &entry.repo_path, entry.status, cx);
 
         self.move_to_path(path_key, window, cx)
     }
@@ -660,8 +662,7 @@ impl ProjectDiff {
             .status_for_path(&repo_path)
             .map(|entry| entry.status)
             .unwrap_or(FileStatus::Untracked);
-        let sort_prefix = sort_prefix(&git_repo.read(cx), &repo_path, status, cx);
-        let path_key = PathKey::with_sort_prefix(sort_prefix, repo_path.as_ref().clone());
+        let path_key = project_diff_path_key(&git_repo.read(cx), &repo_path, status, cx);
         self.move_to_path(path_key, window, cx)
     }
 
@@ -890,7 +891,8 @@ impl ProjectDiff {
             }
         };
 
-        let mut needs_fold = None;
+        let buffer_id = snapshot.text.remote_id();
+        let mut needs_fold = false;
 
         let (was_empty, is_excerpt_newly_added) = self.editor.update(cx, |editor, cx| {
             let was_empty = editor.rhs_editor().read(cx).buffer().read(cx).is_empty();
@@ -927,7 +929,7 @@ impl ProjectDiff {
                         || (file_status.is_untracked()
                             && GitPanelSettings::get_global(cx).collapse_untracked_diff))
                 {
-                    needs_fold = Some(snapshot.text.remote_id());
+                    needs_fold = true;
                 }
             })
         });
@@ -949,7 +951,7 @@ impl ProjectDiff {
             self.move_to_path(path_key, window, cx);
         }
 
-        needs_fold
+        needs_fold.then_some(buffer_id)
     }
 
     fn buffer_ranges_changed(
@@ -994,13 +996,12 @@ impl ProjectDiff {
             let mut entries = BTreeMap::new();
             if let Some(repo) = repo {
                 let repo = repo.read(cx);
-
                 for diff_buffer in buffers_to_load {
-                    let sort_prefix =
-                        sort_prefix(&repo, &diff_buffer.repo_path, diff_buffer.file_status, cx);
-                    let path_key = PathKey::with_sort_prefix(
-                        sort_prefix,
-                        diff_buffer.repo_path.as_ref().clone(),
+                    let path_key = project_diff_path_key(
+                        &repo,
+                        &diff_buffer.repo_path,
+                        diff_buffer.file_status,
+                        cx,
                     );
                     previous_paths.remove(&path_key);
                     entries.insert(path_key, diff_buffer);
@@ -1083,12 +1084,64 @@ impl ProjectDiff {
             })
             .collect()
     }
+
+    /// Returns the real (worktree-relative) path of each excerpted buffer, in
+    /// the order the excerpts appear in the multibuffer. Unlike
+    /// [`Self::excerpt_paths`], this resolves the buffer's actual `File` rather
+    /// than the (possibly synthetic) `PathKey` path used for sorting.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn excerpt_file_paths(&self, cx: &App) -> Vec<String> {
+        let multibuffer = self
+            .editor()
+            .read(cx)
+            .rhs_editor()
+            .read(cx)
+            .buffer()
+            .clone();
+        let snapshot = multibuffer.read(cx).snapshot(cx);
+        let mut result = Vec::new();
+        let mut last_buffer_id = None;
+        for excerpt in snapshot.excerpts() {
+            let buffer_id = excerpt.context.start.buffer_id;
+            if last_buffer_id == Some(buffer_id) {
+                continue;
+            }
+            last_buffer_id = Some(buffer_id);
+            if let Some(buffer) = multibuffer.read(cx).buffer(buffer_id)
+                && let Some(file) = buffer.read(cx).file()
+            {
+                result.push(file.path().as_unix_str().to_string());
+            }
+        }
+        result
+    }
 }
 
-fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: &App) -> u64 {
-    let settings = GitPanelSettings::get_global(cx);
+const CONFLICT_SORT_PREFIX: u64 = 1;
+const TRACKED_SORT_PREFIX: u64 = 2;
+const NEW_SORT_PREFIX: u64 = 3;
 
-    if settings.sort_by_path && !settings.tree_view {
+/// Computes a stable [`PathKey`] for a buffer in the project diff.
+///
+/// The key is an intrinsic function of the file's own repo path and status; it
+/// never depends on which other buffers happen to be present in the
+/// multibuffer. This is required because the multibuffer uses the path key both
+/// to order excerpts and to identify which excerpts belong to a given buffer, so
+/// a key that shifted as files were added or removed would break that identity.
+///
+/// Status grouping is encoded in the `sort_prefix`, and the within-group order
+/// is encoded in the (possibly synthetic) path so that `PathKey`'s natural
+/// ordering reproduces the git panel's order. The path here is only ever used
+/// for sorting and multibuffer identity; the path shown in the UI comes from the
+/// buffer's own `File`.
+fn project_diff_path_key(
+    repo: &Repository,
+    repo_path: &RepoPath,
+    status: FileStatus,
+    cx: &App,
+) -> PathKey {
+    let settings = GitPanelSettings::get_global(cx);
+    let sort_prefix = if settings.group_by != GitPanelGroupBy::Status {
         TRACKED_SORT_PREFIX
     } else if repo.had_conflict_on_last_merge_head_change(repo_path) {
         CONFLICT_SORT_PREFIX
@@ -1096,7 +1149,61 @@ fn sort_prefix(repo: &Repository, repo_path: &RepoPath, status: FileStatus, cx: 
         NEW_SORT_PREFIX
     } else {
         TRACKED_SORT_PREFIX
+    };
+    let path = project_diff_sort_path(repo_path, settings.tree_view, settings.sort_by);
+    PathKey::with_sort_prefix(sort_prefix, path)
+}
+
+fn project_diff_sort_path(
+    repo_path: &RelPath,
+    tree_view: bool,
+    sort_by: GitPanelSortBy,
+) -> Arc<RelPath> {
+    if tree_view {
+        tree_sort_path(repo_path)
+    } else {
+        match sort_by {
+            GitPanelSortBy::Path => repo_path.into_arc(),
+            GitPanelSortBy::Name => name_sort_path(repo_path),
+        }
     }
+}
+
+/// Builds a synthetic path that sorts by file name first, falling back to the
+/// full path to keep the key unique per file.
+fn name_sort_path(repo_path: &RelPath) -> Arc<RelPath> {
+    let Some(file_name) = repo_path.file_name() else {
+        return repo_path.into_arc();
+    };
+    let synthetic = format!("{}/{}", file_name, repo_path.as_unix_str());
+    RelPath::unix(&synthetic)
+        .map(|path| path.into_arc())
+        .unwrap_or_else(|_| repo_path.into_arc())
+}
+
+/// Builds a synthetic path whose natural component-wise ordering reproduces a
+/// folder-first tree order. Each directory component is prefixed with a NUL
+/// byte, which can never appear in a real path component and sorts before every
+/// printable character, so at each level directories sort before files.
+fn tree_sort_path(repo_path: &RelPath) -> Arc<RelPath> {
+    let components: Vec<&str> = repo_path.components().collect();
+    if components.len() <= 1 {
+        return repo_path.into_arc();
+    }
+    let last = components.len() - 1;
+    let mut synthetic = String::new();
+    for (index, component) in components.into_iter().enumerate() {
+        if index > 0 {
+            synthetic.push('/');
+        }
+        if index < last {
+            synthetic.push('\0');
+        }
+        synthetic.push_str(component);
+    }
+    RelPath::unix(&synthetic)
+        .map(|path| path.into_arc())
+        .unwrap_or_else(|_| repo_path.into_arc())
 }
 
 impl EventEmitter<EditorEvent> for ProjectDiff {}
@@ -1631,16 +1738,59 @@ impl Render for ProjectDiffToolbar {
         let button_states = project_diff.read(cx).button_states(cx);
         let review_count = project_diff.read(cx).total_review_comment_count();
 
-        h_group_xl()
+        let (additions, deletions) = project_diff.read(cx).calculate_changed_lines(cx);
+        let is_multibuffer_empty = project_diff.read(cx).multibuffer.read(cx).is_empty();
+
+        h_flex()
             .my_neg_1()
             .py_1()
-            .items_center()
+            .gap_1p5()
             .flex_wrap()
             .justify_between()
+            .when(!is_multibuffer_empty, |this| {
+                this.child(DiffStat::new(
+                    "project-diff-stat",
+                    additions as usize,
+                    deletions as usize,
+                ))
+                .child(Divider::vertical().ml_1())
+            })
+            // n.b. the only reason these arrows are here is because we don't
+            // support "undo" for staging so we need a way to go back.
             .child(
                 h_group_sm()
-                    .when(button_states.selection, |el| {
-                        el.child(
+                    .child(
+                        IconButton::new("up", IconName::ArrowUp)
+                            .icon_size(IconSize::Small)
+                            .disabled(!button_states.prev_next)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Go to Previous Hunk",
+                                &GoToPreviousHunk,
+                                &focus_handle,
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&GoToPreviousHunk, window, cx)
+                            })),
+                    )
+                    .child(
+                        IconButton::new("down", IconName::ArrowDown)
+                            .icon_size(IconSize::Small)
+                            .disabled(!button_states.prev_next)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Go to Next Hunk",
+                                &GoToHunk,
+                                &focus_handle,
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&GoToHunk, window, cx)
+                            })),
+                    ),
+            )
+            .child(Divider::vertical())
+            .child(
+                h_group_sm()
+                    .when(button_states.selection, |this| {
+                        this.child(
                             Button::new("stage", "Toggle Staged")
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Toggle Staged",
@@ -1653,127 +1803,83 @@ impl Render for ProjectDiffToolbar {
                                 })),
                         )
                     })
-                    .when(!button_states.selection, |el| {
-                        el.child(
+                    .when(!button_states.selection, |this| {
+                        this.child(
                             Button::new("stage", "Stage")
+                                .disabled(!button_states.stage)
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Stage and go to next hunk",
+                                    "Stage and Go to Next Hunk",
                                     &StageAndNext,
                                     &focus_handle,
                                 ))
-                                .disabled(
-                                    !button_states.prev_next
-                                        && !button_states.stage_all
-                                        && !button_states.unstage_all,
-                                )
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&StageAndNext, window, cx)
                                 })),
                         )
                         .child(
                             Button::new("unstage", "Unstage")
+                                .disabled(!button_states.unstage)
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Unstage and go to next hunk",
+                                    "Unstage and Go to Next Hunk",
                                     &UnstageAndNext,
                                     &focus_handle,
                                 ))
-                                .disabled(
-                                    !button_states.prev_next
-                                        && !button_states.stage_all
-                                        && !button_states.unstage_all,
-                                )
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&UnstageAndNext, window, cx)
                                 })),
                         )
                     }),
             )
-            // n.b. the only reason these arrows are here is because we don't
-            // support "undo" for staging so we need a way to go back.
-            .child(
-                h_group_sm()
-                    .child(
-                        IconButton::new("up", IconName::ArrowUp)
-                            .shape(ui::IconButtonShape::Square)
+            .child(Divider::vertical())
+            .when(
+                button_states.unstage_all && !button_states.stage_all,
+                |this| {
+                    this.child(
+                        Button::new("unstage-all", "Unstage All")
+                            .width(rems_from_px(80.))
                             .tooltip(Tooltip::for_action_title_in(
-                                "Go to previous hunk",
-                                &GoToPreviousHunk,
+                                "Unstage All Changes",
+                                &UnstageAll,
                                 &focus_handle,
                             ))
-                            .disabled(!button_states.prev_next)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&GoToPreviousHunk, window, cx)
-                            })),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.unstage_all(window, cx)),
+                            ),
                     )
-                    .child(
-                        IconButton::new("down", IconName::ArrowDown)
-                            .shape(ui::IconButtonShape::Square)
-                            .tooltip(Tooltip::for_action_title_in(
-                                "Go to next hunk",
-                                &GoToHunk,
-                                &focus_handle,
-                            ))
-                            .disabled(!button_states.prev_next)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&GoToHunk, window, cx)
-                            })),
-                    ),
+                },
             )
-            .child(vertical_divider())
-            .child(
-                h_group_sm()
-                    .when(
-                        button_states.unstage_all && !button_states.stage_all,
-                        |el| {
-                            el.child(
-                                Button::new("unstage-all", "Unstage All")
-                                    .tooltip(Tooltip::for_action_title_in(
-                                        "Unstage all changes",
-                                        &UnstageAll,
-                                        &focus_handle,
-                                    ))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.unstage_all(window, cx)
-                                    })),
-                            )
-                        },
-                    )
-                    .when(
-                        !button_states.unstage_all || button_states.stage_all,
-                        |el| {
-                            el.child(
-                                // todo make it so that changing to say "Unstaged"
-                                // doesn't change the position.
-                                div().child(
-                                    Button::new("stage-all", "Stage All")
-                                        .disabled(!button_states.stage_all)
-                                        .tooltip(Tooltip::for_action_title_in(
-                                            "Stage all changes",
-                                            &StageAll,
-                                            &focus_handle,
-                                        ))
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.stage_all(window, cx)
-                                        })),
-                                ),
-                            )
-                        },
-                    )
-                    .child(
-                        Button::new("commit", "Commit")
+            .when(
+                !button_states.unstage_all || button_states.stage_all,
+                |this| {
+                    this.child(
+                        Button::new("stage-all", "Stage All")
+                            .width(rems_from_px(80.))
+                            .disabled(!button_states.stage_all)
                             .tooltip(Tooltip::for_action_title_in(
-                                "Commit",
-                                &Commit,
+                                "Stage All Changes",
+                                &StageAll,
                                 &focus_handle,
                             ))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&Commit, window, cx);
-                            })),
-                    ),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.stage_all(window, cx)),
+                            ),
+                    )
+                },
             )
-            // "Send Review to Agent" button (only shown when there are review comments)
+            .child(Divider::vertical())
+            .child(
+                Button::new("commit", "Commit")
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Commit",
+                        &Commit,
+                        &focus_handle,
+                    ))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.dispatch_action(&Commit, window, cx);
+                    })),
+            )
             .when(review_count > 0, |el| {
-                el.child(vertical_divider()).child(
+                el.child(Divider::vertical()).child(
                     render_send_review_to_agent_button(review_count, &focus_handle).on_click(
                         cx.listener(|this, _, window, cx| {
                             this.dispatch_action(&SendReviewToAgent, window, cx)
@@ -1877,13 +1983,20 @@ impl Render for BranchDiffToolbar {
 
         let show_review_button = !is_multibuffer_empty && is_ai_enabled;
 
-        h_group_xl()
+        h_flex()
             .my_neg_1()
             .py_1()
-            .items_center()
+            .gap_1p5()
             .flex_wrap()
-            .justify_end()
-            .gap_2()
+            .justify_between()
+            .when(!is_multibuffer_empty, |this| {
+                this.child(DiffStat::new(
+                    "branch-diff-stat",
+                    additions as usize,
+                    deletions as usize,
+                ))
+            })
+            .child(Divider::vertical().ml_1())
             .child(
                 PopoverMenu::new("branch-diff-base-branch-picker")
                     .menu(move |window, cx| {
@@ -1905,6 +2018,7 @@ impl Render for BranchDiffToolbar {
                                     .ok();
                             },
                         );
+
                         Some(branch_picker::select_popover(
                             workspace.clone(),
                             repository.clone(),
@@ -1915,23 +2029,14 @@ impl Render for BranchDiffToolbar {
                         ))
                     })
                     .trigger_with_tooltip(
-                        Button::new("branch-diff-base-branch", base_ref_label)
-                            .color(Color::Muted)
-                            .end_icon(
-                                Icon::new(IconName::ChevronDown)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted),
-                            ),
-                        Tooltip::text("Select base branch"),
+                        Button::new("branch-diff-base-branch", base_ref_label).end_icon(
+                            Icon::new(IconName::ChevronDown)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        ),
+                        Tooltip::text("Select Base Branch"),
                     ),
             )
-            .when(!is_multibuffer_empty, |this| {
-                this.child(DiffStat::new(
-                    "branch-diff-stat",
-                    additions as usize,
-                    deletions as usize,
-                ))
-            })
             .when(show_review_button, |this| {
                 let focus_handle = focus_handle.clone();
                 this.child(Divider::vertical()).child(
@@ -1941,7 +2046,6 @@ impl Render for BranchDiffToolbar {
                                 .size(IconSize::Small)
                                 .color(Color::Muted),
                         )
-                        .key_binding(KeyBinding::for_action_in(&ReviewDiff, &focus_handle, cx))
                         .tooltip(move |_, cx| {
                             Tooltip::with_meta_in(
                                 "Review Diff",
@@ -1957,7 +2061,7 @@ impl Render for BranchDiffToolbar {
                 )
             })
             .when(review_count > 0, |this| {
-                this.child(vertical_divider()).child(
+                this.child(Divider::vertical()).child(
                     render_send_review_to_agent_button(review_count, &focus_handle).on_click(
                         cx.listener(|this, _, window, cx| {
                             this.dispatch_action(&SendReviewToAgent, window, cx)
@@ -1997,7 +2101,7 @@ mod tests {
     use gpui::TestAppContext;
     use project::FakeFs;
     use serde_json::json;
-    use settings::{DiffViewStyle, SettingsStore};
+    use settings::{DiffViewStyle, GitPanelGroupBy, GitPanelSortBy, SettingsStore};
     use std::path::Path;
     use unindent::Unindent as _;
     use util::{
@@ -2119,7 +2223,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::with_sort_prefix(TRACKED_SORT_PREFIX, rel_path("foo").into_arc()),
+                PathKey::with_sort_prefix(2, rel_path("foo").into_arc()),
                 window,
                 cx,
             );
@@ -2140,7 +2244,7 @@ mod tests {
 
         let editor = cx.update_window_entity(&diff, |diff, window, cx| {
             diff.move_to_path(
-                PathKey::with_sort_prefix(TRACKED_SORT_PREFIX, rel_path("bar").into_arc()),
+                PathKey::with_sort_prefix(2, rel_path("bar").into_arc()),
                 window,
                 cx,
             );
@@ -2728,6 +2832,111 @@ mod tests {
             "
             .unindent(),
         );
+    }
+
+    #[gpui::test]
+    async fn test_sort_by_name_tie_breaks_on_path(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let git_panel = settings.git_panel.get_or_insert_default();
+                    git_panel.sort_by = Some(GitPanelSortBy::Name);
+                    git_panel.group_by = Some(GitPanelGroupBy::None);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "lib": { "foo.rs": "LIB FOO\n" },
+                "src": { "foo.rs": "SRC FOO\n" },
+                "m.rs": "M\n",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("lib/foo.rs", "lib foo\n".into()),
+                ("src/foo.rs", "src foo\n".into()),
+                ("m.rs", "m\n".into()),
+            ],
+        );
+        cx.run_until_parked();
+
+        // Sorted by file name, the two `foo.rs` files come before `m.rs`, and the
+        // tie between them is broken by the full path (`lib/` before `src/`).
+        // A plain path sort would instead order them `lib/foo.rs`, `m.rs`,
+        // `src/foo.rs`.
+        let paths = diff.read_with(cx, |diff, cx| diff.excerpt_file_paths(cx));
+        assert_eq!(paths, vec!["lib/foo.rs", "src/foo.rs", "m.rs"]);
+    }
+
+    #[gpui::test]
+    async fn test_tree_view_orders_directories_before_files(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let git_panel = settings.git_panel.get_or_insert_default();
+                    git_panel.tree_view = Some(true);
+                    git_panel.group_by = Some(GitPanelGroupBy::None);
+                });
+            });
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "src": {
+                    "a.rs": "A\n",
+                    "m.rs": "M\n",
+                    "sub": { "b.rs": "B\n" },
+                },
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let diff = cx.new_window_entity(|window, cx| {
+            ProjectDiff::new(project.clone(), workspace, window, cx)
+        });
+        cx.run_until_parked();
+
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[
+                ("src/a.rs", "a\n".into()),
+                ("src/m.rs", "m\n".into()),
+                ("src/sub/b.rs", "b\n".into()),
+            ],
+        );
+        cx.run_until_parked();
+
+        // In tree view the `src/sub/` directory sorts before the files directly
+        // in `src/`. A plain path sort would interleave them as `src/a.rs`,
+        // `src/m.rs`, `src/sub/b.rs`.
+        let paths = diff.read_with(cx, |diff, cx| diff.excerpt_file_paths(cx));
+        assert_eq!(paths, vec!["src/sub/b.rs", "src/a.rs", "src/m.rs"]);
     }
 
     #[gpui::test]

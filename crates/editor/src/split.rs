@@ -6,9 +6,10 @@ use std::{
 use buffer_diff::{BufferDiff, BufferDiffSnapshot};
 use collections::HashMap;
 
+use fs::Fs;
 use gpui::{
-    Action, AppContext as _, Entity, EventEmitter, Focusable, Font, Pixels, Subscription,
-    WeakEntity, canvas,
+    Action, Entity, EventEmitter, Focusable, Font, Pixels, Subscription, WeakEntity, canvas,
+    prelude::*,
 };
 use itertools::Itertools;
 use language::{Buffer, Capability, HighlightedText};
@@ -18,12 +19,10 @@ use multi_buffer::{
 };
 use project::Project;
 use rope::Point;
-use settings::{DiffViewStyle, SeedQuerySetting, Settings, SettingsStore};
+use settings::{DiffViewStyle, SeedQuerySetting, Settings, SettingsStore, update_settings_file};
 use text::{Bias, BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
-use ui::{
-    App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
-    Styled as _, Window, div,
-};
+
+use ui::{Toggleable as _, Tooltip, prelude::*, render_modifiers};
 
 use crate::{
     display_map::CompanionExcerptPatch,
@@ -41,7 +40,7 @@ use crate::{
     actions::{DisableBreakpoint, EditLogBreakpoint, EnableBreakpoint, ToggleBreakpoint},
     display_map::Companion,
 };
-use zed_actions::assistant::InlineAssist;
+use zed_actions::{OpenSettingsAt, assistant::InlineAssist};
 
 pub(crate) fn patches_for_lhs_range(
     rhs_snapshot: &MultiBufferSnapshot,
@@ -401,6 +400,124 @@ fn patch_for_excerpt(
 #[action(namespace = editor)]
 pub struct ToggleSplitDiff;
 
+/// Unified/split diff view toggle buttons, shared by the toolbars of every
+/// diff view (project diff, branch diff, solo diff) so they can't drift apart.
+#[derive(gpui::IntoElement)]
+pub struct DiffStyleControls {
+    splittable_editor: Entity<SplittableEditor>,
+}
+
+impl DiffStyleControls {
+    pub fn new(splittable_editor: Entity<SplittableEditor>) -> Self {
+        Self { splittable_editor }
+    }
+
+    fn set_diff_view_style(
+        splittable_editor: &Entity<SplittableEditor>,
+        diff_view_style: DiffViewStyle,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        update_settings_file(<dyn Fs>::global(cx), cx, move |settings, _| {
+            settings.editor.diff_view_style = Some(diff_view_style);
+        });
+
+        splittable_editor.update(cx, |editor, cx| {
+            if editor.diff_view_style() != diff_view_style {
+                editor.toggle_split(&ToggleSplitDiff, window, cx);
+            }
+        });
+    }
+}
+
+impl RenderOnce for DiffStyleControls {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl gpui::IntoElement {
+        let editor = self.splittable_editor.read(cx);
+        let diff_view_style = editor.diff_view_style();
+        let is_split_set = diff_view_style == DiffViewStyle::Split;
+        let is_split_pending = is_split_set && !editor.is_split();
+        let min_columns = EditorSettings::get_global(cx).minimum_split_diff_width as u32;
+
+        let split_icon = if is_split_pending {
+            IconName::DiffSplitAuto
+        } else {
+            IconName::DiffSplit
+        };
+
+        h_flex()
+            .gap_1()
+            .child(
+                IconButton::new("diff-style-unified", IconName::DiffUnified)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(diff_view_style == DiffViewStyle::Unified)
+                    .tooltip(Tooltip::text("Unified"))
+                    .on_click({
+                        let splittable_editor = self.splittable_editor.clone();
+                        move |_, window, cx| {
+                            Self::set_diff_view_style(
+                                &splittable_editor,
+                                DiffViewStyle::Unified,
+                                window,
+                                cx,
+                            );
+                        }
+                    }),
+            )
+            .child(
+                IconButton::new("diff-style-split", split_icon)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(is_split_set)
+                    .tooltip(Tooltip::element(move |_, cx| {
+                        let message = if is_split_pending {
+                            format!("Split when wider than {} columns", min_columns).into()
+                        } else {
+                            SharedString::from("Split")
+                        };
+
+                        v_flex()
+                            .child(message)
+                            .child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .text_ui_sm(cx)
+                                    .text_color(Color::Muted.color(cx))
+                                    .children(render_modifiers(
+                                        &gpui::Modifiers::secondary_key(),
+                                        PlatformStyle::platform(),
+                                        None,
+                                        Some(TextSize::Small.rems(cx).into()),
+                                        false,
+                                    ))
+                                    .child("click to change min width"),
+                            )
+                            .into_any_element()
+                    }))
+                    .on_click({
+                        let splittable_editor = self.splittable_editor.clone();
+                        move |_, window, cx| {
+                            if window.modifiers().secondary() {
+                                window.dispatch_action(
+                                    OpenSettingsAt {
+                                        path: "minimum_split_diff_width".to_string(),
+                                        target: None,
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                );
+                            } else {
+                                Self::set_diff_view_style(
+                                    &splittable_editor,
+                                    DiffViewStyle::Split,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }
+                    }),
+            )
+    }
+}
+
 pub struct SplittableEditor {
     rhs_multibuffer: Entity<MultiBuffer>,
     rhs_editor: Entity<Editor>,
@@ -601,9 +718,9 @@ impl SplittableEditor {
             return;
         }
 
-        let is_rhs_singleton = self.rhs_multibuffer.read(cx).is_singleton();
+        let rhs_has_headers = self.rhs_multibuffer.read(cx).snapshot(cx).show_headers();
         let lhs_multibuffer = cx.new(|cx| {
-            let mut multibuffer = if is_rhs_singleton {
+            let mut multibuffer = if !rhs_has_headers {
                 MultiBuffer::without_headers(Capability::ReadOnly)
             } else {
                 MultiBuffer::new(Capability::ReadOnly)

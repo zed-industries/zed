@@ -1,6 +1,6 @@
 use crate::{AgentMessage, AgentMessageContent, UserMessage, UserMessageContent};
-use acp_thread::UserMessageId;
-use agent_client_protocol::schema as acp;
+use acp_thread::ClientUserMessageId;
+use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentProfileId;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -62,13 +62,11 @@ pub struct DbThread {
     #[serde(default)]
     pub cumulative_token_usage: language_model::TokenUsage,
     #[serde(default)]
-    pub request_token_usage: HashMap<acp_thread::UserMessageId, language_model::TokenUsage>,
+    pub request_token_usage: HashMap<acp_thread::ClientUserMessageId, language_model::TokenUsage>,
     #[serde(default)]
     pub model: Option<DbLanguageModel>,
     #[serde(default)]
     pub profile: Option<AgentProfileId>,
-    #[serde(default)]
-    pub imported: bool,
     #[serde(default)]
     pub subagent_context: Option<crate::SubagentContext>,
     #[serde(default)]
@@ -83,6 +81,40 @@ pub struct DbThread {
     pub ui_scroll_position: Option<SerializedScrollPosition>,
     #[serde(default)]
     pub sandboxed_terminal_temp_dir: Option<PathBuf>,
+    /// Sandbox escalations the user approved "for the rest of this thread".
+    /// Persisted so reopening a thread keeps its grants. See
+    /// [`crate::sandboxing::ThreadSandboxGrants`].
+    #[serde(default)]
+    pub sandbox_grants: DbSandboxGrants,
+}
+
+/// Serialized form of the sandbox permissions the user granted "for the rest of
+/// this thread" (the "Allow for this thread" prompt option). Stored inside the
+/// thread blob; round-trips with [`crate::sandboxing::ThreadSandboxGrants`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct DbSandboxGrants {
+    /// Canonicalized paths granted write access; each covers its whole subtree.
+    #[serde(default)]
+    pub write_paths: Vec<PathBuf>,
+    /// Host patterns granted network access, in canonical string form (e.g.
+    /// `github.com`, `*.npmjs.org`). Parsed back into patterns on load.
+    #[serde(default)]
+    pub network_hosts: Vec<String>,
+    /// Whether arbitrary-host network access was granted.
+    #[serde(default)]
+    pub network_any_host: bool,
+    /// Whether unrestricted filesystem writes (the broad escape hatch) were
+    /// granted.
+    #[serde(default)]
+    pub allow_fs_write_all: bool,
+
+    /// Whether the model-requested fully-unsandboxed escape was granted.
+    #[serde(default)]
+    pub unsandboxed: bool,
+    /// Whether running commands unsandboxed was allowed because the OS sandbox
+    /// could not be created (the fallback prompt's "for this thread" option).
+    #[serde(default)]
+    pub sandbox_fallback: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -125,7 +157,6 @@ impl SharedThread {
             request_token_usage: Default::default(),
             model: self.model,
             profile: None,
-            imported: true,
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
@@ -133,6 +164,7 @@ impl SharedThread {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            sandbox_grants: DbSandboxGrants::default(),
         }
     }
 
@@ -207,7 +239,7 @@ impl DbThread {
                         content.push(UserMessageContent::Text(msg.context));
                     }
 
-                    let id = UserMessageId::new();
+                    let id = ClientUserMessageId::new();
                     last_user_message_id = Some(id.clone());
 
                     crate::Message::User(UserMessage {
@@ -309,7 +341,6 @@ impl DbThread {
             request_token_usage,
             model: thread.model,
             profile: thread.profile,
-            imported: false,
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
@@ -317,6 +348,7 @@ impl DbThread {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            sandbox_grants: DbSandboxGrants::default(),
         })
     }
 }
@@ -634,31 +666,48 @@ impl ThreadsDatabase {
         let connection = self.connection.clone();
 
         self.executor.spawn(async move {
-            let sandboxed_terminal_temp_dir = {
+            let sandboxed_terminal_temp_dirs = {
                 let connection = connection.lock();
+
+                let mut select_children =
+                    connection.select_bound::<Arc<str>, Arc<str>>(indoc! {"
+                    SELECT id FROM threads WHERE parent_id = ?
+                "})?;
+
+                // Collect target thread together with all of its transitive
+                // subagent threads
+                let mut ids_to_delete = vec![id.0.clone()];
+                let mut frontier = vec![id.0.clone()];
+                while let Some(parent) = frontier.pop() {
+                    for child in select_children(parent)? {
+                        ids_to_delete.push(child.clone());
+                        frontier.push(child);
+                    }
+                }
 
                 let mut select =
                     connection.select_bound::<Arc<str>, (DataType, Vec<u8>)>(indoc! {"
                     SELECT data_type, data FROM threads WHERE id = ? LIMIT 1
                 "})?;
 
-                let sandboxed_terminal_temp_dir = select(id.0.clone())?
-                    .into_iter()
-                    .next()
-                    .and_then(|(data_type, data)| {
-                        Self::sandboxed_terminal_temp_dir(data_type, data)
-                    });
-
                 let mut delete = connection.exec_bound::<Arc<str>>(indoc! {"
                     DELETE FROM threads WHERE id = ?
                 "})?;
 
-                delete(id.0)?;
+                let mut sandboxed_terminal_temp_dirs = Vec::new();
+                for thread_id in ids_to_delete {
+                    if let Some(temp_dir) = select(thread_id.clone())?.into_iter().next().and_then(
+                        |(data_type, data)| Self::sandboxed_terminal_temp_dir(data_type, data),
+                    ) {
+                        sandboxed_terminal_temp_dirs.push(temp_dir);
+                    }
+                    delete(thread_id)?;
+                }
 
-                sandboxed_terminal_temp_dir
+                sandboxed_terminal_temp_dirs
             };
 
-            if let Some(temp_dir) = sandboxed_terminal_temp_dir {
+            for temp_dir in sandboxed_terminal_temp_dirs {
                 Self::remove_sandboxed_terminal_temp_dir(temp_dir);
             }
 
@@ -728,23 +777,6 @@ mod tests {
         assert_eq!(restored.updated_at, original.updated_at);
     }
 
-    #[test]
-    fn test_imported_flag_defaults_to_false() {
-        // Simulate deserializing a thread without the imported field (backwards compatibility).
-        let json = r#"{
-            "title": "Old Thread",
-            "messages": [],
-            "updated_at": "2024-01-01T00:00:00Z"
-        }"#;
-
-        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
-
-        assert!(
-            !db_thread.imported,
-            "Legacy threads without imported field should default to false"
-        );
-    }
-
     fn session_id(value: &str) -> acp::SessionId {
         acp::SessionId::new(Arc::<str>::from(value))
     }
@@ -760,7 +792,6 @@ mod tests {
             request_token_usage: HashMap::default(),
             model: None,
             profile: None,
-            imported: false,
             subagent_context: None,
             speed: None,
             thinking_enabled: false,
@@ -768,6 +799,7 @@ mod tests {
             draft_prompt: None,
             ui_scroll_position: None,
             sandboxed_terminal_temp_dir: None,
+            sandbox_grants: DbSandboxGrants::default(),
         }
     }
 
@@ -887,6 +919,54 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_sandbox_grants_default_when_absent() {
+        let json = r#"{
+            "title": "Old Thread",
+            "messages": [],
+            "updated_at": "2024-01-01T00:00:00Z"
+        }"#;
+
+        let db_thread: DbThread = serde_json::from_str(json).expect("Failed to deserialize");
+
+        assert_eq!(
+            db_thread.sandbox_grants,
+            DbSandboxGrants::default(),
+            "Legacy threads without sandbox_grants should default to empty grants"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_sandbox_grants_roundtrip_through_save_load(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+        let thread_id = session_id("sandbox-grants-thread");
+        let mut thread = make_thread(
+            "Sandbox Grants Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        let grants = DbSandboxGrants {
+            write_paths: vec![PathBuf::from("/tmp/build")],
+            network_hosts: vec!["github.com".to_string(), "*.npmjs.org".to_string()],
+            network_any_host: false,
+            allow_fs_write_all: false,
+            unsandboxed: true,
+            sandbox_fallback: true,
+        };
+        thread.sandbox_grants = grants.clone();
+
+        database
+            .save_thread(thread_id.clone(), thread, PathList::default())
+            .await
+            .unwrap();
+
+        let loaded = database
+            .load_thread(thread_id)
+            .await
+            .unwrap()
+            .expect("thread should exist");
+        assert_eq!(loaded.sandbox_grants, grants);
+    }
+
     #[gpui::test]
     async fn test_sandboxed_terminal_temp_dir_roundtrips_through_save_load(
         cx: &mut TestAppContext,
@@ -941,6 +1021,62 @@ mod tests {
         database.delete_thread(thread_id).await.unwrap();
 
         assert!(!temp_dir.exists());
+    }
+
+    #[gpui::test]
+    async fn test_delete_thread_deletes_subagent_threads(cx: &mut TestAppContext) {
+        let database = ThreadsDatabase::new(cx.executor()).unwrap();
+
+        let parent_id = session_id("parent-thread");
+        let child_id = session_id("child-thread");
+        let grandchild_id = session_id("grandchild-thread");
+        let unrelated_id = session_id("unrelated-thread");
+
+        let parent_thread = make_thread(
+            "Parent Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+
+        let mut child_thread = make_thread(
+            "Child Subagent Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        child_thread.subagent_context = Some(crate::SubagentContext {
+            parent_thread_id: parent_id.clone(),
+            depth: 1,
+        });
+
+        let mut grandchild_thread = make_thread(
+            "Grandchild Subagent Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+        grandchild_thread.subagent_context = Some(crate::SubagentContext {
+            parent_thread_id: child_id.clone(),
+            depth: 2,
+        });
+
+        let unrelated_thread = make_thread(
+            "Unrelated Thread",
+            Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+        );
+
+        for (id, thread) in [
+            (parent_id.clone(), parent_thread),
+            (child_id.clone(), child_thread),
+            (grandchild_id.clone(), grandchild_thread),
+            (unrelated_id.clone(), unrelated_thread),
+        ] {
+            database
+                .save_thread(id, thread, PathList::default())
+                .await
+                .unwrap();
+        }
+
+        database.delete_thread(parent_id.clone()).await.unwrap();
+
+        let remaining = database.list_threads().await.unwrap();
+        let remaining_ids: Vec<_> = remaining.iter().map(|thread| thread.id.clone()).collect();
+        assert_eq!(remaining_ids, vec![unrelated_id]);
     }
 
     #[gpui::test]

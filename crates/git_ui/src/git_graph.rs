@@ -19,12 +19,13 @@ use git::{
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength,
     DismissEvent, DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable,
-    Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollStrategy,
+    Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollHandle, ScrollStrategy,
     ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
     px, uniform_list,
 };
 use language::line_diff;
+use markdown::{Markdown, MarkdownElement};
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrevious};
 use picker::{Picker, PickerDelegate};
 use project::{
@@ -57,6 +58,7 @@ use ui::{
     prelude::*, render_redistributable_columns_resize_handles, render_table_header,
     table_row::TableRow,
 };
+use util::{ResultExt, debug_panic};
 use workspace::{
     ModalView, Workspace,
     item::{Item, ItemEvent, TabTooltipContent},
@@ -108,7 +110,10 @@ impl CommitTagPicker {
             tag_names,
             selected_index: 0,
         };
-        let picker = cx.new(|cx| Picker::nonsearchable_uniform_list(delegate, window, cx));
+        let picker = cx.new(|cx| {
+            Picker::nonsearchable_uniform_list(delegate, window, cx)
+                .initial_width(COMMIT_TAG_LIST_WIDTH_IN_REMS)
+        });
         Self { picker }
     }
 }
@@ -124,9 +129,7 @@ impl Focusable for CommitTagPicker {
 
 impl Render for CommitTagPicker {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .w(COMMIT_TAG_LIST_WIDTH_IN_REMS)
-            .child(self.picker.clone())
+        v_flex().child(self.picker.clone())
     }
 }
 
@@ -138,6 +141,10 @@ struct CommitTagPickerDelegate {
 
 impl PickerDelegate for CommitTagPickerDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "commit-tag"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Copy Tag".into()
@@ -1317,6 +1324,12 @@ struct GitGraphContextMenu {
     _subscription: Subscription,
 }
 
+struct DetailPanelCommitMessage {
+    sha: Oid,
+    message: Entity<Markdown>,
+    scroll_handle: ScrollHandle,
+}
+
 pub struct GitGraph {
     focus_handle: FocusHandle,
     search_state: SearchState,
@@ -1334,6 +1347,8 @@ pub struct GitGraph {
     selected_commit_diff: Option<CommitDiff>,
     selected_commit_diff_stats: Option<(usize, usize)>,
     _commit_diff_task: Option<Task<()>>,
+    selected_commit_message: Option<DetailPanelCommitMessage>,
+    _selected_commit_message_task: Option<Task<()>>,
     commit_details_split_state: Entity<SplitState>,
     repo_id: RepositoryId,
     changed_files_scroll_handle: UniformListScrollHandle,
@@ -1554,6 +1569,8 @@ impl GitGraph {
             graph_canvas_bounds: Rc::new(Cell::new(None)),
             selected_commit_diff: None,
             selected_commit_diff_stats: None,
+            selected_commit_message: None,
+            _selected_commit_message_task: None,
             log_source,
             log_order,
             commit_details_split_state: cx.new(|_cx| SplitState::new()),
@@ -2174,13 +2191,16 @@ impl GitGraph {
             return;
         };
 
-        let sha = commit.data.sha.to_string();
-
         let Some(repository) = self.get_repository(cx) else {
             return;
         };
 
-        let diff_receiver = repository.update(cx, |repo, _| repo.load_commit_diff(sha));
+        let commit_message_handle = commit.data.sha;
+        let diff_handle = commit.data.sha.to_string();
+
+        self.load_selected_commit_message(cx, &commit_message_handle, &repository);
+
+        let diff_receiver = repository.update(cx, |repo, _| repo.load_commit_diff(diff_handle));
 
         self._commit_diff_task = Some(cx.spawn(async move |this, cx| {
             if let Ok(Ok(diff)) = diff_receiver.await {
@@ -2195,6 +2215,70 @@ impl GitGraph {
         }));
 
         cx.emit(ItemEvent::Edit);
+        cx.notify();
+    }
+
+    fn load_selected_commit_message(
+        &mut self,
+        cx: &mut Context<'_, Self>,
+        sha: &Oid,
+        repository: &Entity<Repository>,
+    ) {
+        if self
+            .selected_commit_message
+            .as_ref()
+            .is_some_and(|old| old.sha == *sha)
+        {
+            return;
+        }
+
+        self._selected_commit_message_task = None;
+        match repository.update(cx, |repo, cx| {
+            repo.fetch_commit_data(*sha, true, cx).clone()
+        }) {
+            CommitDataState::Loaded(commit_data) => {
+                self.set_selected_commit_message(cx, commit_data.sha, commit_data.message.clone());
+            }
+            CommitDataState::Loading(Some(receiver)) => {
+                self._selected_commit_message_task = Some(cx.spawn(async move |this, cx| {
+                    if let Ok(commit_data) = receiver.await {
+                        this.update(cx, |this, cx| {
+                            this.set_selected_commit_message(
+                                cx,
+                                commit_data.sha,
+                                commit_data.message.clone(),
+                            );
+                        })
+                        .log_err();
+                    }
+                }))
+            }
+            _ => {
+                debug_panic!(
+                    "Fetched commit data asynchronously, but was not given a listener or cached commit data."
+                );
+            }
+        };
+    }
+
+    fn set_selected_commit_message(
+        &mut self,
+        cx: &mut Context<'_, GitGraph>,
+        sha: Oid,
+        message: SharedString,
+    ) {
+        let languages = self
+            .workspace
+            .read_with(cx, |workspace, cx| {
+                workspace.project().read(cx).languages().clone()
+            })
+            .log_err();
+        self.selected_commit_message = Some(DetailPanelCommitMessage {
+            sha,
+            message: cx.new(|cx| Markdown::new(message, languages, None, cx)),
+            scroll_handle: ScrollHandle::new(),
+        });
+        self._selected_commit_message_task = None;
         cx.notify();
     }
 
@@ -2810,15 +2894,13 @@ impl GitGraph {
             .copied()
             .unwrap_or_else(|| accent_colors.0.first().copied().unwrap_or_default());
 
-        // todo(git graph): We should use the full commit message here
-        let (author_name, author_email, commit_timestamp, commit_message) = match &data {
+        let (author_name, author_email, commit_timestamp) = match &data {
             CommitDataState::Loaded(data) => (
                 data.author_name.clone(),
                 data.author_email.clone(),
                 Some(data.commit_timestamp),
-                data.subject.clone(),
             ),
-            CommitDataState::Loading(_) => ("Loading…".into(), "".into(), None, "Loading…".into()),
+            CommitDataState::Loading(_) => ("Loading…".into(), "".into(), None),
         };
 
         let date_string = commit_timestamp
@@ -2912,6 +2994,8 @@ impl GitGraph {
                                     this.selected_entry_idx = None;
                                     this.selected_commit_diff = None;
                                     this.selected_commit_diff_stats = None;
+                                    this.selected_commit_message = None;
+                                    this._selected_commit_message_task = None;
                                     this.changed_files_expanded_dirs.clear();
                                     this._commit_diff_task = None;
                                     cx.notify();
@@ -3086,7 +3170,7 @@ impl GitGraph {
                     ),
             )
             .child(Divider::horizontal())
-            .child(div().p_2().child(Label::new(commit_message)))
+            .child(self.render_commit_message(window, cx))
             .child(Divider::horizontal())
             .child(
                 v_flex()
@@ -3715,6 +3799,53 @@ impl GitGraph {
                         cx.stop_propagation();
                     }))
                     .on_drag(DraggedSplitHandle, |_, _, _, cx| cx.new(|_| gpui::Empty)),
+            )
+            .into_any_element()
+    }
+
+    fn render_commit_message(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let Some(DetailPanelCommitMessage {
+            message,
+            scroll_handle,
+            ..
+        }) = self.selected_commit_message.as_ref()
+        else {
+            return Empty.into_any_element();
+        };
+
+        let message_style = editor::hover_markdown_style(window, cx);
+        let rem_size = window.rem_size();
+        let line_height = message_style
+            .base_text_style
+            .line_height_in_pixels(rem_size);
+
+        div()
+            // Using grid over flexbox because the structure of this side
+            // panel prvents taffy from calculating a concrete width correctly,
+            // which causes problems with text reflow when using flexbox.
+            // grid, on the other hand, doesn't appear to give taffy the same
+            // problems.
+            .grid()
+            .py_2()
+            .pl_2()
+            .w_full()
+            .gap_1()
+            .grid_cols(1)
+            // Value of 12 taken from ./commit_view.rs:725
+            .max_h(line_height * 12.)
+            .child(
+                div()
+                    .id("commit-message")
+                    .text_sm()
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(scroll_handle)
+                    .child(MarkdownElement::new(message.clone(), message_style))
+                    .vertical_scrollbar_for(scroll_handle, window, cx),
             )
             .into_any_element()
     }
@@ -4620,7 +4751,7 @@ mod tests {
     use collections::{HashMap, HashSet};
     use fs::FakeFs;
     use git::Oid;
-    use git::repository::InitialGraphCommitData;
+    use git::repository::{CommitData, InitialGraphCommitData};
     use gpui::{TestAppContext, UpdateGlobal};
     use project::git_store::{GitStoreEvent, RepositoryEvent};
     use project::{Project, TaskSourceKind, task_store::TaskSettingsLocation};
@@ -5970,6 +6101,132 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_git_graph_search_matches_commit_hash_prefix(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+
+        let first_sha = Oid::from_bytes(&[1; 20]).unwrap();
+        let target_sha = Oid::from_bytes(&[2; 20]).unwrap();
+        let third_sha = Oid::from_bytes(&[3; 20]).unwrap();
+        let commits = vec![
+            Arc::new(InitialGraphCommitData {
+                sha: first_sha,
+                parents: smallvec![target_sha],
+                ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: target_sha,
+                parents: smallvec![third_sha],
+                ref_names: vec![],
+            }),
+            Arc::new(InitialGraphCommitData {
+                sha: third_sha,
+                parents: smallvec![],
+                ref_names: vec![],
+            }),
+        ];
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+        fs.set_commit_data(
+            Path::new("/project/.git"),
+            [
+                (
+                    CommitData {
+                        sha: first_sha,
+                        parents: smallvec![target_sha],
+                        author_name: "Author".into(),
+                        author_email: "author@example.com".into(),
+                        commit_timestamp: 1,
+                        subject: "Add feature".into(),
+                        message: "Add feature".into(),
+                    },
+                    false,
+                ),
+                (
+                    CommitData {
+                        sha: target_sha,
+                        parents: smallvec![third_sha],
+                        author_name: "Author".into(),
+                        author_email: "author@example.com".into(),
+                        commit_timestamp: 2,
+                        subject: "Fix branch loading".into(),
+                        message: "Fix branch loading".into(),
+                    },
+                    false,
+                ),
+                (
+                    CommitData {
+                        sha: third_sha,
+                        parents: smallvec![],
+                        author_name: "Author".into(),
+                        author_email: "author@example.com".into(),
+                        commit_timestamp: 3,
+                        subject: "Update docs".into(),
+                        message: "Update docs".into(),
+                    },
+                    false,
+                ),
+            ],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        git_graph.update(cx, |graph, cx| {
+            graph.search_for_test("0202020".into(), cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.search_matches_for_test(), vec![target_sha]);
+            let selected_sha = graph
+                .selected_entry_idx
+                .and_then(|idx| graph.graph_data.commits.get(idx))
+                .map(|commit| commit.data.sha);
+            assert_eq!(selected_sha, Some(target_sha));
+        });
+
+        git_graph.update(cx, |graph, cx| {
+            graph.search_for_test("docs".into(), cx);
+        });
+        cx.run_until_parked();
+
+        git_graph.read_with(&*cx, |graph, _| {
+            assert_eq!(graph.search_matches_for_test(), vec![third_sha]);
+        });
+    }
+
+    #[gpui::test]
     async fn test_graph_data_reloaded_after_stash_change(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -6900,5 +7157,177 @@ mod tests {
             Some("v1.0".into())
         );
         assert_eq!(GitGraph::ref_name_from_decoration("HEAD"), None);
+    }
+
+    #[gpui::test]
+    async fn test_commit_message_rendered_as_markdown(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+
+        let commit_sha = Oid::from_bytes(&[1; 20]).unwrap();
+        let commits = vec![Arc::new(InitialGraphCommitData {
+            sha: commit_sha,
+            parents: smallvec![],
+            ref_names: vec!["HEAD -> main".into()],
+        })];
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+        fs.set_commit_data(
+            Path::new("/project/.git"),
+            [(
+                CommitData {
+                    sha: commit_sha,
+                    parents: smallvec![],
+                    author_name: "Author".into(),
+                    author_email: "author@example.com".into(),
+                    commit_timestamp: 1_700_000_000,
+                    subject: "Fix crash".into(),
+                    message: "Fix crash\n\nThis fixes a crash that occurred when...".into(),
+                },
+                false,
+            )],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        // Select the commit to trigger loading the commit message
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_first(&menu::SelectFirst, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Verify the commit message was loaded as markdown
+        git_graph.read_with(&*cx, |graph, app| {
+            let message = graph
+                .selected_commit_message
+                .as_ref()
+                .expect("selected_commit_message should be Some");
+            assert_eq!(message.sha, commit_sha);
+            let source = message.message.read_with(app, |m, _| m.source().to_owned());
+            assert!(source.contains("Fix crash"));
+            assert!(source.contains("This fixes a crash"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_commit_message_not_reloaded_for_same_sha(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({ ".git": {}, "file.txt": "content" }),
+        )
+        .await;
+
+        let commit_sha = Oid::from_bytes(&[1; 20]).unwrap();
+        let commits = vec![Arc::new(InitialGraphCommitData {
+            sha: commit_sha,
+            parents: smallvec![],
+            ref_names: vec!["HEAD -> main".into()],
+        })];
+        fs.set_graph_commits(Path::new("/project/.git"), commits);
+        fs.set_commit_data(
+            Path::new("/project/.git"),
+            [(
+                CommitData {
+                    sha: commit_sha,
+                    parents: smallvec![],
+                    author_name: "Author".into(),
+                    author_email: "author@example.com".into(),
+                    commit_timestamp: 1_700_000_000,
+                    subject: "Fix crash".into(),
+                    message: "Fix crash\n\nBody text.".into(),
+                },
+                false,
+            )],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("should have a repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace_weak =
+            multi_workspace.read_with(&*cx, |multi, _| multi.workspace().downgrade());
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        // Select the commit to load the message
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_first(&menu::SelectFirst, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Verify message is loaded
+        let message_entity_id = git_graph.read_with(&*cx, |graph, _| {
+            graph
+                .selected_commit_message
+                .as_ref()
+                .map(|m| m.message.entity_id())
+        });
+        assert!(message_entity_id.is_some());
+
+        // Select the same commit again to trigger the early-return logic
+        git_graph.update_in(cx, |graph, window, cx| {
+            graph.select_first(&menu::SelectFirst, window, cx);
+        });
+        cx.run_until_parked();
+
+        // Verify the message entity is the same (not replaced)
+        git_graph.read_with(&*cx, |graph, _| {
+            let new_entity_id = graph
+                .selected_commit_message
+                .as_ref()
+                .map(|m| m.message.entity_id());
+            assert_eq!(message_entity_id, new_entity_id);
+        });
     }
 }
