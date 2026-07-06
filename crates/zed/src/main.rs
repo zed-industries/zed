@@ -447,7 +447,9 @@ fn main() {
         app.background_executor()
             .spawn(async {
                 #[cfg(unix)]
-                util::load_login_shell_environment().await.log_err();
+                if let Some(environment) = util::load_login_shell_environment().await.log_err() {
+                    util::set_login_shell_environment(environment);
+                }
                 shell_env_loaded_tx.send(()).ok();
             })
             .detach();
