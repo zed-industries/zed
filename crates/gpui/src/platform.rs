@@ -686,6 +686,16 @@ pub struct WindowInsets {
     /// cutouts/notch, home indicator, navigation bars.
     /// (iOS: `safeAreaInsets`. Android: `WindowInsets` of types
     /// `systemBars() | displayCutout()`.)
+    ///
+    /// Cutouts are rectangles, not full edges; the per-edge inset is the
+    /// deepest intrusion anywhere along that edge, so the inset rectangle is
+    /// the largest area guaranteed clear of all obstructions at once. This
+    /// deliberately writes off the unobstructed corners flanking a cutout
+    /// (the OS status bar occupies them, and display corner rounding makes
+    /// them unsafe regardless), and it is the maximum fidelity iOS exposes.
+    /// Android additionally reports exact cutout `boundingRects`; if
+    /// ear-level layout is ever needed, that is an additive extension (e.g.
+    /// `cutout_rects: Vec<Bounds<Pixels>>`), not a change to this model.
     pub safe_area: Edges<Pixels>,
     /// The region covered by the soft keyboard, when present.
     /// (iOS: derived from `keyboardWillShow`/frame-change notifications.
