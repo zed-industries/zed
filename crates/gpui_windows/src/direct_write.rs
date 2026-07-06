@@ -608,7 +608,7 @@ impl DirectWriteState {
             }
 
             let mut runs = Vec::new();
-            let renderer_context = RendererContext {
+            let mut renderer_context = RendererContext {
                 text_system: self,
                 components,
                 index_converter: StringIndexConverter::new(text),
@@ -616,7 +616,7 @@ impl DirectWriteState {
                 width: 0.0,
             };
             text_layout.Draw(
-                Some((&raw const renderer_context).cast::<c_void>()),
+                Some((&raw mut renderer_context).cast::<c_void>().cast_const()),
                 &components.text_renderer.0,
                 0.0,
                 0.0,
