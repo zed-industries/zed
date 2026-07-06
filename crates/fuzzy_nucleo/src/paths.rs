@@ -342,8 +342,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                     }
                 });
             }
-        })
-        .await;
+        });
 
     matcher::return_matchers(matchers);
     if cancel_flag.load(atomic::Ordering::Acquire) {

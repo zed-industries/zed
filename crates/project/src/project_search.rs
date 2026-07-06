@@ -361,8 +361,7 @@ impl Search {
 
                             drop(find_all_matches_rx);
                             drop(candidate_searcher);
-                        })
-                        .await;
+                        });
                 });
 
                 let (sorted_matches_tx, sorted_matches_rx) = unbounded();

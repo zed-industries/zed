@@ -115,35 +115,39 @@ impl BackgroundExecutor {
 
     /// Scoped lets you start a number of tasks and waits
     /// for all of them to complete before returning.
-    pub async fn scoped<'scope, F>(&self, scheduler: F)
+    ///
+    /// This is a synchronous, blocking call: it spawns the futures registered
+    /// by `scheduler` onto the background executor and blocks the current
+    /// thread until they have all resolved. Being synchronous is what keeps it
+    /// sound (see the safety comment on [`Scope::spawn`]): the futures borrow
+    /// the caller's frame and are only kept alive by the blocking `Scope` drop.
+    /// If this instead returned an intermediate future, that future could be
+    /// polled once (spawning the borrowing background tasks) and then leaked
+    /// with `mem::forget`, skipping the blocking drop and freeing the borrowed
+    /// frame while the background threads were still reading it.
+    pub fn scoped<'scope, F>(&self, scheduler: F)
     where
         F: FnOnce(&mut Scope<'scope>),
     {
-        let mut scope = Scope::new(self.clone(), Priority::default());
-        (scheduler)(&mut scope);
-        let spawned = mem::take(&mut scope.futures)
-            .into_iter()
-            .map(|f| self.spawn_with_priority(scope.priority, f))
-            .collect::<Vec<_>>();
-        for task in spawned {
-            task.await;
-        }
+        self.scoped_priority(Priority::default(), scheduler)
     }
 
     /// Scoped lets you start a number of tasks and waits
     /// for all of them to complete before returning.
-    pub async fn scoped_priority<'scope, F>(&self, priority: Priority, scheduler: F)
+    ///
+    /// See [`Self::scoped`] for why this is a synchronous, blocking call.
+    pub fn scoped_priority<'scope, F>(&self, priority: Priority, scheduler: F)
     where
         F: FnOnce(&mut Scope<'scope>),
     {
-        let mut scope = Scope::new(self.clone(), priority);
+        let mut scope = Scope::new(self.clone());
         (scheduler)(&mut scope);
-        let spawned = mem::take(&mut scope.futures)
-            .into_iter()
-            .map(|f| self.spawn_with_priority(scope.priority, f))
-            .collect::<Vec<_>>();
-        for task in spawned {
-            task.await;
+        // Spawn every registered future onto the background executor and detach
+        // it. Dropping `scope` at the end of this function blocks until all of
+        // them have resolved (see `Scope::drop`), which upholds the contract
+        // that the borrowed `'scope` data outlives the spawned work.
+        for future in mem::take(&mut scope.futures) {
+            self.spawn_with_priority(priority, future).detach();
         }
     }
 
@@ -383,7 +387,6 @@ impl ForegroundExecutor {
 /// Scope manages a set of tasks that are enqueued and waited on together. See [`BackgroundExecutor::scoped`].
 pub struct Scope<'a> {
     executor: BackgroundExecutor,
-    priority: Priority,
     futures: Vec<Pin<Box<dyn Future<Output = ()> + Send + 'static>>>,
     tx: Option<mpsc::Sender<()>>,
     rx: mpsc::Receiver<()>,
@@ -391,11 +394,10 @@ pub struct Scope<'a> {
 }
 
 impl<'a> Scope<'a> {
-    fn new(executor: BackgroundExecutor, priority: Priority) -> Self {
+    fn new(executor: BackgroundExecutor) -> Self {
         let (tx, rx) = mpsc::channel(1);
         Self {
             executor,
-            priority,
             tx: Some(tx),
             rx,
             futures: Default::default(),
@@ -433,6 +435,13 @@ impl<'a> Scope<'a> {
 
 impl Drop for Scope<'_> {
     fn drop(&mut self) {
+        // Drop any futures that were registered but never spawned (for example
+        // if the `scheduler` closure panicked before they were spawned). Each
+        // un-spawned future holds a clone of `tx`, so we must drop them before
+        // blocking on `rx` below; otherwise those senders would keep the
+        // channel open forever and this drop would deadlock.
+        self.futures.clear();
+
         self.tx.take().unwrap();
 
         // Wait until the channel is closed, which means that all of the spawned

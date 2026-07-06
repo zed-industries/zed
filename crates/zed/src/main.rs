@@ -1811,7 +1811,7 @@ fn load_embedded_fonts(cx: &App) {
     let embedded_fonts = Mutex::new(Vec::new());
     let executor = cx.background_executor();
 
-    cx.foreground_executor().block_on(executor.scoped(|scope| {
+    executor.scoped(|scope| {
         for font_path in &font_paths {
             if !font_path.ends_with(".ttf") {
                 continue;
@@ -1822,7 +1822,7 @@ fn load_embedded_fonts(cx: &App) {
                 embedded_fonts.lock().push(font_bytes);
             });
         }
-    }));
+    });
 
     cx.text_system()
         .add_fonts(embedded_fonts.into_inner())

@@ -248,8 +248,7 @@ pub async fn match_path_sets<'a, Set: PathMatchCandidateSet<'a>>(
                     }
                 })
             }
-        })
-        .await;
+        });
 
     if cancel_flag.load(atomic::Ordering::Acquire) {
         return Vec::new();

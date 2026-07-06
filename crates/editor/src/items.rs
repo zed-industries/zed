@@ -2004,8 +2004,7 @@ impl SearchableItem for Editor {
                                     _ = tx.send(chunk_result);
                                 });
                             }
-                        })
-                        .await;
+                        });
 
                     for rx in results {
                         if let Ok(results) = rx.await {

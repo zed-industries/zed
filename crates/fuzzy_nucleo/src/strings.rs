@@ -151,8 +151,7 @@ where
                     .ok();
                 });
             }
-        })
-        .await;
+        });
 
     matcher::return_matchers(matchers);
 

@@ -4942,8 +4942,7 @@ impl BackgroundScanner {
                         }
                     });
                 }
-            })
-            .await;
+            });
     }
 
     async fn send_status_update(
@@ -5496,8 +5495,7 @@ impl BackgroundScanner {
                         }
                     });
                 }
-            })
-            .await;
+            });
     }
 
     async fn ignores_needing_update(&self) -> Vec<Arc<Path>> {

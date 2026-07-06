@@ -2633,7 +2633,7 @@ pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut A
         return;
     }
 
-    cx.foreground_executor().block_on(executor.scoped(|scope| {
+    executor.scoped(|scope| {
         for load_target in themes_to_load {
             let theme_registry = &theme_registry;
             let reload_tasks = &reload_tasks;
@@ -2663,7 +2663,7 @@ pub(crate) fn eager_load_active_theme_and_icon_theme(fs: Arc<dyn Fs>, cx: &mut A
                 }
             });
         }
-    }));
+    });
 
     for reload_target in reload_tasks.into_inner() {
         match reload_target {

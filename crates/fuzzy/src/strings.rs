@@ -187,8 +187,7 @@ where
                     );
                 });
             }
-        })
-        .await;
+        });
 
     if cancel_flag.load(atomic::Ordering::Acquire) {
         return Vec::new();
