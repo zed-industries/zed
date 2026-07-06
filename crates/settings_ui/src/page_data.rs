@@ -30,17 +30,13 @@ const DEFAULT_AUDIO_INPUT: AudioInputDeviceName = AudioInputDeviceName(None);
 const DEFAULT_EMPTY_AUDIO_INPUT: Option<&AudioInputDeviceName> = Some(&DEFAULT_AUDIO_INPUT);
 
 macro_rules! concat_sections {
-    (@vec, $($arr:expr),+ $(,)?) => {{
-        let iter = std::iter::empty::<SettingsPageItem>()$(.chain($arr))+;
-        let (lower_bound, upper_bound) = iter.size_hint();
-        let mut out = Vec::with_capacity(upper_bound.unwrap_or(lower_bound));
-        out.extend(iter);
-        out
-    }};
+    (@vec, $($arr:expr),+ $(,)?) => {
+        std::iter::empty::<SettingsPageItem>()$(.chain($arr))+.collect::<Vec<_>>()
+    };
 
-    ($($arr:expr),+ $(,)?) => {{
+    ($($arr:expr),+ $(,)?) => {
         concat_sections!(@vec, $($arr),+).into_boxed_slice()
-    }};
+    };
 }
 
 pub(crate) fn settings_data(cx: &App) -> Vec<SettingsPage> {
