@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -1182,14 +1183,29 @@ struct BedrockMantleModel {
 }
 
 impl BedrockMantleModel {
-    fn stream_completion(
+    fn stream_openai_request<Request, Event, StreamRequest, StreamFuture>(
         &self,
-        request: open_ai::Request,
+        request: Request,
         cx: &AsyncApp,
-    ) -> BoxFuture<
-        'static,
-        Result<BoxStream<'static, Result<ResponseStreamEvent>>, LanguageModelCompletionError>,
-    > {
+        stream_request: StreamRequest,
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<Event>>, LanguageModelCompletionError>>
+    where
+        Request: Send + 'static,
+        Event: Send + 'static,
+        StreamRequest: FnOnce(
+                Arc<dyn HttpClient>,
+                String,
+                String,
+                String,
+                Request,
+                CustomHeaders,
+            ) -> StreamFuture
+            + Send
+            + 'static,
+        StreamFuture: Future<Output = Result<BoxStream<'static, Result<Event>>, open_ai::RequestError>>
+            + Send
+            + 'static,
+    {
         let http_client = self.http_client.clone();
         let model = self.model.clone();
         let credentials_provider = self.credentials_provider.clone();
@@ -1203,25 +1219,50 @@ impl BedrockMantleModel {
                 .custom_headers
                 .clone()
         });
+        let provider_name = PROVIDER_NAME.0.to_string();
 
         let future = self.request_limiter.stream(async move {
             let api_key = resolve_mantle_bearer_token(credentials_provider, auth, region)
                 .await
                 .map_err(LanguageModelCompletionError::Other)?;
-            let response = stream_openai_completion(
-                http_client.as_ref(),
-                PROVIDER_NAME.0.as_ref(),
-                &api_url,
-                &api_key,
+            stream_request(
+                http_client,
+                provider_name,
+                api_url,
+                api_key,
                 request,
-                &extra_headers,
+                extra_headers,
             )
             .await
-            .map_err(|err| map_mantle_error(&model, err))?;
-            Ok(response)
+            .map_err(|err| map_mantle_error(&model, err))
         });
 
         async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    fn stream_completion(
+        &self,
+        request: open_ai::Request,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<BoxStream<'static, Result<ResponseStreamEvent>>, LanguageModelCompletionError>,
+    > {
+        self.stream_openai_request(
+            request,
+            cx,
+            |http_client, provider_name, api_url, api_key, request, extra_headers| async move {
+                stream_openai_completion(
+                    http_client.as_ref(),
+                    &provider_name,
+                    &api_url,
+                    &api_key,
+                    request,
+                    &extra_headers,
+                )
+                .await
+            },
+        )
     }
 
     fn stream_response(
@@ -1235,38 +1276,21 @@ impl BedrockMantleModel {
             LanguageModelCompletionError,
         >,
     > {
-        let http_client = self.http_client.clone();
-        let model = self.model.clone();
-        let credentials_provider = self.credentials_provider.clone();
-        let (auth, region) = cx.read_entity(&self.state, |state, _cx| {
-            (state.auth.clone(), state.get_region())
-        });
-        let api_url = mantle_endpoint_url(&region, &model);
-        let extra_headers = cx.read_entity(&self.state, |_, cx| {
-            AllLanguageModelSettings::get_global(cx)
-                .bedrock
-                .custom_headers
-                .clone()
-        });
-
-        let future = self.request_limiter.stream(async move {
-            let api_key = resolve_mantle_bearer_token(credentials_provider, auth, region)
+        self.stream_openai_request(
+            request,
+            cx,
+            |http_client, provider_name, api_url, api_key, request, extra_headers| async move {
+                stream_openai_response(
+                    http_client.as_ref(),
+                    &provider_name,
+                    &api_url,
+                    &api_key,
+                    request,
+                    &extra_headers,
+                )
                 .await
-                .map_err(LanguageModelCompletionError::Other)?;
-            let response = stream_openai_response(
-                http_client.as_ref(),
-                PROVIDER_NAME.0.as_ref(),
-                &api_url,
-                &api_key,
-                request,
-                &extra_headers,
-            )
-            .await
-            .map_err(|err| map_mantle_error(&model, err))?;
-            Ok(response)
-        });
-
-        async move { Ok(future.await?.boxed()) }.boxed()
+            },
+        )
     }
 }
 
