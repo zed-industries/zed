@@ -27,12 +27,18 @@ impl Connection {
         };
 
         unsafe {
-            sqlite3_open_v2(
+            let result = sqlite3_open_v2(
                 CString::new(uri)?.as_ptr(),
                 &mut connection.sqlite3,
                 flags,
                 ptr::null(),
             );
+
+            // On allocation failure `sqlite3_open_v2` leaves the handle null. Every call below
+            // dereferences it, so bail out before touching the handle.
+            if connection.sqlite3.is_null() {
+                anyhow::bail!("sqlite3_open_v2 failed to allocate a connection (code {result})");
+            }
 
             // Turn on extended error codes
             sqlite3_extended_result_codes(connection.sqlite3, 1);
