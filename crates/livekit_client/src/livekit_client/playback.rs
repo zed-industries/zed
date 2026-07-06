@@ -829,15 +829,28 @@ mod macos {
     /// Implementation from: https://github.com/zed-industries/cpal/blob/fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50/src/host/coreaudio/macos/property_listener.rs#L15
     pub struct CoreAudioDefaultDeviceChangeListener {
         rx: UnboundedReceiver<()>,
-        callback: Box<PropertyListenerCallbackWrapper>,
+        // Raw pointer to a heap-allocated `PropertyListenerCallbackWrapper` that
+        // is registered with CoreAudio as the context for its property
+        // listeners. It is intentionally leaked rather than freed on `Drop` (see
+        // below), so that a HAL callback already dispatching on the CoreAudio
+        // notification thread can never observe a freed closure.
+        callback: *mut PropertyListenerCallbackWrapper,
         input: bool,
         device_id: AudioObjectID, // Store the device ID to properly remove listeners
     }
 
     trait _AssertSend: Send {}
+    // SAFETY: the only field that is not `Send` is `callback`, a raw pointer to
+    // a heap-allocated `PropertyListenerCallbackWrapper` whose closure is
+    // `Send + Sync`.
+    unsafe impl Send for CoreAudioDefaultDeviceChangeListener {}
     impl _AssertSend for CoreAudioDefaultDeviceChangeListener {}
 
-    struct PropertyListenerCallbackWrapper(Box<dyn FnMut() + Send>);
+    // The closure is stored as `Fn` (not `FnMut`) so that the shim can invoke it
+    // through a shared reference. The same wrapper pointer is registered on more
+    // than one `AudioObject`, so callbacks may dispatch concurrently and must
+    // never be turned into aliasing `&mut` references.
+    struct PropertyListenerCallbackWrapper(Box<dyn Fn() + Send + Sync>);
 
     unsafe extern "C" fn property_listener_handler_shim(
         _: AudioObjectID,
@@ -846,6 +859,7 @@ mod macos {
         callback: *mut ::std::os::raw::c_void,
     ) -> OSStatus {
         let wrapper = callback as *mut PropertyListenerCallbackWrapper;
+        // Invoke through a shared reference (`Fn`), never `&mut`.
         unsafe { (*wrapper).0() };
         0
     }
@@ -877,6 +891,10 @@ mod macos {
                     &*callback as *const _ as *mut _,
                 ))?;
             }
+
+            // Leak the wrapper: from here on it is only referenced through a raw
+            // pointer held by CoreAudio, and `Drop` deliberately never frees it.
+            let callback = Box::into_raw(callback);
 
             // Construct `Self` now that the system-level listener is registered,
             // so that `Drop` always unregisters it. Registering the
@@ -954,7 +972,7 @@ mod macos {
                             mElement: kAudioObjectPropertyElementMaster,
                         },
                         Some(property_listener_handler_shim),
-                        &*this.callback as *const _ as *mut _,
+                        this.callback as *mut _,
                     )) {
                         Ok(()) => this.device_id = device_id,
                         Err(error) => log::warn!(
@@ -984,7 +1002,7 @@ mod macos {
                         mElement: kAudioObjectPropertyElementMaster,
                     },
                     Some(property_listener_handler_shim),
-                    &*self.callback as *const _ as *mut _,
+                    self.callback as *mut _,
                 );
 
                 // Remove the device-specific property listener if we have a valid device ID
@@ -1001,9 +1019,16 @@ mod macos {
                             mElement: kAudioObjectPropertyElementMaster,
                         },
                         Some(property_listener_handler_shim),
-                        &*self.callback as *const _ as *mut _,
+                        self.callback as *mut _,
                     );
                 }
+
+                // Intentionally leak the wrapper: `AudioObjectRemovePropertyListener`
+                // does not synchronize with a callback that is already executing
+                // on the CoreAudio notification thread, so freeing the closure
+                // here could let that in-flight callback run against freed memory.
+                // Leaking a single small allocation is a cheap price to avoid the
+                // use-after-free.
             }
         }
     }
