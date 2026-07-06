@@ -8,10 +8,6 @@ pub struct WebDisplay {
     browser_window: web_sys::Window,
 }
 
-// Safety: WASM is single-threaded — there is no concurrent access to `web_sys::Window`.
-unsafe impl Send for WebDisplay {}
-unsafe impl Sync for WebDisplay {}
-
 impl WebDisplay {
     pub fn new(browser_window: web_sys::Window) -> Self {
         WebDisplay {
