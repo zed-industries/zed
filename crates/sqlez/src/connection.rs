@@ -192,6 +192,13 @@ impl Connection {
 
                 return Some((err_msg, offset as usize + sub_statement_correction));
             }
+            // Several `sqlite3_prepare_v2` failure paths (OOM, shared-cache schema lock, TOOBIG)
+            // return a code other than the plain syntax-error code while leaving `*pzTail` unset
+            // (still null). The syntax-error branch above won't fire in those cases, so guard
+            // against calling `CStr::from_ptr` on a null pointer here.
+            if remaining_sql_ptr.is_null() {
+                return None;
+            }
             remaining_sql = unsafe { CStr::from_ptr(remaining_sql_ptr) };
             alter_table = None;
         }
