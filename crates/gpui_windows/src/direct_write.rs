@@ -1174,6 +1174,10 @@ impl DirectWriteState {
             };
         }
 
+        // Release the mapping now that the rows have been copied out; leaving `staging_texture`
+        // mapped would leak the mapping and keep the resource pinned for later reuse.
+        unsafe { device_context.Unmap(&staging_texture, 0) };
+
         // Convert from premultiplied to straight alpha
         for chunk in rasterized.chunks_exact_mut(4) {
             let b = chunk[0] as f32;
