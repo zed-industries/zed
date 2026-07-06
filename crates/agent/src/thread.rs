@@ -1986,6 +1986,7 @@ impl Thread {
             cx.emit(TokenUsageUpdated(new_usage));
         }
         self.prompt_capabilities_tx.send(new_caps).log_err();
+        cx.emit(ModelChanged);
 
         for subagent in &self.running_subagents {
             subagent
@@ -4789,6 +4790,10 @@ impl EventEmitter<TokenUsageUpdated> for Thread {}
 pub struct TitleUpdated;
 
 impl EventEmitter<TitleUpdated> for Thread {}
+
+pub struct ModelChanged;
+
+impl EventEmitter<ModelChanged> for Thread {}
 
 /// A channel-based wrapper that delivers tool input to a running tool.
 ///

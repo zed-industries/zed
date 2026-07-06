@@ -924,6 +924,20 @@ impl ThreadView {
                     cx.notify();
                 },
             ));
+
+            // A "no model selected" error is stale as soon as the thread has a
+            // usable model
+            if let Some(native_thread) = native_connection.thread(thread.read(cx).session_id(), cx)
+            {
+                subscriptions.push(cx.subscribe(
+                    &native_thread,
+                    |this: &mut Self, _thread, _event: &agent::ModelChanged, cx| {
+                        if matches!(this.thread_error, Some(ThreadError::NoModelSelected)) {
+                            this.clear_thread_error(cx);
+                        }
+                    },
+                ));
+            }
         }
 
         subscriptions.push(cx.observe(&message_editor, |this, editor, cx| {
@@ -10585,17 +10599,6 @@ impl ThreadView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
-        // A "no model selected" error is stale once the thread has a usable
-        // model
-        if matches!(self.thread_error, Some(ThreadError::NoModelSelected))
-            && self.as_native_thread(cx).is_some_and(|thread| {
-                matches!(thread.read(cx).thread_model(), agent::ThreadModel::Ready(_))
-            })
-        {
-            self.clear_thread_error(cx);
-            return None;
-        }
-
         let callout = match self.thread_error.as_ref()? {
             ThreadError::Other { message, .. } => {
                 self.render_any_thread_error(message.clone(), window, cx)
