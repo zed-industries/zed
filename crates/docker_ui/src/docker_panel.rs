@@ -5,7 +5,7 @@ use std::sync::Arc;
 use docker_client::ContainerState;
 use gpui::{
     Action, AnyElement, App, AsyncWindowContext, Context, Entity, EventEmitter, FocusHandle,
-    Focusable, ListSizingBehavior, ParentElement, Pixels, Render, Styled, Subscription, Task,
+    Focusable, ListSizingBehavior, ParentElement, Pixels, Render, Styled, Subscription,
     UniformListScrollHandle, WeakEntity, Window, actions, px, uniform_list,
 };
 use ui::{Indicator, ListItem, Tooltip, prelude::*};
@@ -16,11 +16,13 @@ use workspace::{
 };
 
 use crate::confirm_modal::ConfirmModal;
-use crate::detail_view::{DetailView, InspectState, LogsState, SelectedItem};
+use crate::detail_view::{DetailView, SelectedItem};
 use crate::endpoint_store::default_client_factory;
 use crate::endpoint_store::{
     DockerAction, DockerEndpointStore, EndpointStatus, EndpointStoreEvent,
 };
+use crate::inspect_tab::open_inspect_tab;
+use crate::logs_tab::open_logs_tab;
 
 actions!(
     docker_panel,
@@ -100,12 +102,6 @@ pub struct DockerPanel {
     focus_handle: FocusHandle,
     expanded: HashSet<TreeNodeId>,
     selected: Option<SelectedItem>,
-    inspect: Option<InspectState>,
-    logs: Option<LogsState>,
-    /// Holds the in-flight logs-follow task, if any, so switching selection
-    /// or requesting logs again cancels the previous stream rather than
-    /// leaking a `docker logs -f` process indefinitely.
-    _logs_task: Task<()>,
     /// Set while a `ConfirmModal` is open for a destructive action; cleared
     /// on Confirm or Cancel. See [`Self::request_action`].
     pending_confirmation: Option<PendingConfirmation>,
@@ -153,9 +149,6 @@ impl DockerPanel {
             focus_handle: cx.focus_handle(),
             expanded: HashSet::new(),
             selected: None,
-            inspect: None,
-            logs: None,
-            _logs_task: Task::ready(()),
             pending_confirmation: None,
             scroll_handle: UniformListScrollHandle::new(),
             _subscriptions: subscriptions,
@@ -616,18 +609,6 @@ impl DockerPanel {
             .into_any_element()
     }
 
-    /// Clears everything tied to the previously selected row before a new
-    /// selection is applied. In particular, replacing `_logs_task` drops the
-    /// previous task, which cancels any in-flight `docker logs -f` stream
-    /// (see `load_logs`'s doc comment on `kill_on_drop`). Every selection
-    /// handler (container/image/compose) must call this first so switching
-    /// away from a container's Logs tab can never leak the child process.
-    fn reset_detail_state(&mut self) {
-        self.logs = None;
-        self.inspect = None;
-        self._logs_task = Task::ready(());
-    }
-
     fn select_container(
         &mut self,
         endpoint_name: String,
@@ -635,7 +616,6 @@ impl DockerPanel {
         name: String,
         cx: &mut Context<Self>,
     ) {
-        self.reset_detail_state();
         self.selected = Some(SelectedItem::Container {
             endpoint_name,
             id,
@@ -652,7 +632,6 @@ impl DockerPanel {
         tag: String,
         cx: &mut Context<Self>,
     ) {
-        self.reset_detail_state();
         self.selected = Some(SelectedItem::Image {
             endpoint_name,
             id,
@@ -663,7 +642,6 @@ impl DockerPanel {
     }
 
     fn select_compose(&mut self, endpoint_name: String, project: String, cx: &mut Context<Self>) {
-        self.reset_detail_state();
         self.selected = Some(SelectedItem::Compose {
             endpoint_name,
             project,
@@ -671,124 +649,78 @@ impl DockerPanel {
         cx.notify();
     }
 
-    /// Fetches `docker inspect` output for the container with `id` on the
-    /// currently selected endpoint. Always allowed: Inspect is a read
-    /// action, never gated by `read_only`.
-    pub(crate) fn load_inspect(&mut self, id: String, cx: &mut Context<Self>) {
-        let Some(endpoint_name) = self
-            .selected
-            .as_ref()
-            .map(|s| s.endpoint_name().to_string())
-        else {
+    /// Opens a full-size center-pane tab streaming `docker logs -f` for the
+    /// container with `id` on the currently selected endpoint. Always
+    /// allowed: Logs is a read action, never gated by `read_only`. A no-op if
+    /// there is no `Workspace` (e.g. a bare panel built via `new_for_test`).
+    pub(crate) fn open_logs_tab(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((endpoint, name)) = self.selected_container_context(&id, cx) else {
             return;
         };
-        let store = self.store.read(cx);
-        let Some(endpoint) = store.endpoint(&endpoint_name).cloned() else {
+        let Some(workspace) = self.workspace.clone() else {
             return;
         };
-        let client = store.make_client();
-
-        let task = gpui_tokio::Tokio::spawn_result(cx, async move {
-            client.inspect_container(&endpoint, &id).await
-        });
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            this.update(cx, |this, cx| match result {
-                Ok(json) => {
-                    if let Some(SelectedItem::Container { id, .. }) = this.selected.as_ref() {
-                        this.inspect = Some(InspectState {
-                            id: id.clone(),
-                            json,
-                        });
-                        cx.notify();
-                    }
-                }
-                Err(error) => {
-                    log::warn!("docker inspect failed: {error:#}");
-                }
+        let client = self.store.read(cx).make_client();
+        workspace
+            .update(cx, |workspace, cx| {
+                open_logs_tab(workspace, endpoint, id, name, client, window, cx);
             })
-            .ok();
-        })
-        .detach();
+            .log_err();
     }
 
-    /// Streams `docker logs -f` for the container with `id` on the currently
-    /// selected endpoint, capping the displayed tail at
-    /// `MAX_DISPLAYED_LOG_LINES` lines. Always allowed: Logs is a read
-    /// action, never gated by `read_only`. Replaces any previous
-    /// `_logs_task`, which cancels that stream (dropping its receiver lets
-    /// `CliDockerClient::container_logs`'s `kill_on_drop` child exit).
-    pub(crate) fn load_logs(&mut self, id: String, cx: &mut Context<Self>) {
-        const MAX_DISPLAYED_LOG_LINES: usize = 500;
-        const TAIL: usize = 200;
-
-        let Some(endpoint_name) = self
-            .selected
-            .as_ref()
-            .map(|s| s.endpoint_name().to_string())
-        else {
+    /// Opens a full-size center-pane tab showing `docker inspect` output for
+    /// the container with `id` on the currently selected endpoint. Always
+    /// allowed: Inspect is a read action, never gated by `read_only`. A no-op
+    /// if there is no `Workspace`.
+    pub(crate) fn open_inspect_tab(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((endpoint, name)) = self.selected_container_context(&id, cx) else {
             return;
         };
-        let store = self.store.read(cx);
-        let Some(endpoint) = store.endpoint(&endpoint_name).cloned() else {
+        let Some(workspace) = self.workspace.clone() else {
             return;
         };
-        let client = store.make_client();
-
-        self.logs = Some(LogsState::new(id.clone()));
-
-        let task = gpui_tokio::Tokio::spawn_result(cx, async move {
-            client.container_logs(&endpoint, &id, TAIL).await
-        });
-        self._logs_task = cx.spawn(async move |this, cx| {
-            use futures::StreamExt as _;
-
-            let mut receiver = match task.await {
-                Ok(receiver) => receiver,
-                Err(error) => {
-                    log::warn!("docker logs failed: {error:#}");
-                    return;
-                }
-            };
-            while let Some(chunk) = receiver.next().await {
-                let updated = this.update(cx, |this, cx| {
-                    if let Some(logs) = this.logs.as_mut() {
-                        logs.lines.push(chunk.line);
-                        if logs.lines.len() > MAX_DISPLAYED_LOG_LINES {
-                            let overflow = logs.lines.len() - MAX_DISPLAYED_LOG_LINES;
-                            logs.lines.drain(0..overflow);
-                        }
-                        // Only pull the view down to the tail while
-                        // following; paused, the scroll position is left
-                        // alone so the user can read back through history
-                        // without it jumping. The buffer stays capped at
-                        // MAX_DISPLAYED_LOG_LINES regardless of follow state.
-                        if logs.follow {
-                            logs.scroll_handle.scroll_to_bottom();
-                        }
-                        cx.notify();
-                    }
-                });
-                if updated.is_err() {
-                    return;
-                }
-            }
-        });
+        let client = self.store.read(cx).make_client();
+        workspace
+            .update(cx, |workspace, cx| {
+                open_inspect_tab(workspace, endpoint, id, name, client, window, cx);
+            })
+            .log_err();
     }
 
-    /// Flips the follow/pause toggle for the currently open logs stream.
-    /// Switching back to follow immediately snaps to the tail; pausing
-    /// leaves the scroll position where the user left it. The background
-    /// stream in `load_logs` keeps appending to `lines` either way (still
-    /// capped at MAX_DISPLAYED_LOG_LINES), so pausing only freezes scroll.
-    pub(crate) fn toggle_logs_follow(&mut self, cx: &mut Context<Self>) {
-        if let Some(logs) = self.logs.as_mut() {
-            logs.follow = !logs.follow;
-            if logs.follow {
-                logs.scroll_handle.scroll_to_bottom();
-            }
-            cx.notify();
-        }
+    /// Resolves the endpoint and display name for the container `id`, used by
+    /// both `open_logs_tab` and `open_inspect_tab`. Only returns a value when
+    /// `id` matches the currently selected container: the Logs/Inspect
+    /// buttons are only rendered for the selected container's detail pane, so
+    /// a mismatch means the selection changed out from under a stale button
+    /// closure and the click should be a no-op rather than opening a tab for
+    /// the wrong container.
+    fn selected_container_context(
+        &self,
+        id: &str,
+        cx: &Context<Self>,
+    ) -> Option<(docker_client::DockerEndpoint, String)> {
+        let selected = self.selected.as_ref()?;
+        let name = match selected {
+            SelectedItem::Container {
+                id: selected_id,
+                name,
+                ..
+            } if selected_id == id => name.clone(),
+            _ => return None,
+        };
+        let endpoint_name = selected.endpoint_name().to_string();
+        let endpoint = self.store.read(cx).endpoint(&endpoint_name)?.clone();
+        Some((endpoint, name))
     }
 
     fn render_detail_pane(&self, cx: &Context<Self>) -> AnyElement {
@@ -833,8 +765,6 @@ impl DockerPanel {
             container,
             image,
             compose,
-            inspect: self.inspect.as_ref(),
-            logs: self.logs.as_ref(),
         }
         .render(cx)
     }
@@ -1344,16 +1274,19 @@ mod tests {
         );
     }
 
-    /// The logs buffer must fill from the streamed `LogChunk`s the client
-    /// yields, in order, regardless of the follow/pause toggle (Task 11).
+    /// Logs and Inspect now open as full-size center tabs owned by
+    /// `DockerLogsView`/`DockerInspectView` (see `logs_tab.rs`/
+    /// `inspect_tab.rs` for the streaming/follow/inspect-fetch tests); the
+    /// panel itself no longer holds any logs/inspect state. `new_for_test`
+    /// panels have no `Workspace` to add a tab to, so `open_logs_tab`/
+    /// `open_inspect_tab` must no-op cleanly (not panic) in that case, which
+    /// is what a caller bug or an unexpected `None` workspace should do.
     #[gpui::test]
-    async fn logs_stream_fills_buffer(cx: &mut TestAppContext) {
+    async fn open_logs_and_inspect_tab_noop_without_workspace(cx: &mut TestAppContext) {
         init_test(cx);
         cx.executor().allow_parking();
 
-        let mut fake = FakeDockerClient::new_with_container("api");
-        fake.log_lines = vec!["a".into(), "b".into()];
-        let fake = Arc::new(fake);
+        let fake = Arc::new(FakeDockerClient::new_with_container("api"));
         let factory = {
             let fake = fake.clone();
             Arc::new(move || fake.clone() as Arc<dyn DockerClient>)
@@ -1362,176 +1295,34 @@ mod tests {
         let endpoint_name =
             store.read_with(cx, |store, _| store.endpoints()[0].endpoint.name.clone());
 
-        let panel = cx.new(|cx| DockerPanel::new_for_test(store.clone(), cx));
+        let cx = cx.add_empty_window();
+        let panel =
+            cx.update(|_window, cx| cx.new(|cx| DockerPanel::new_for_test(store.clone(), cx)));
         panel.update(cx, |panel, cx| {
             panel.select_container(endpoint_name.clone(), "api-id".into(), "api".into(), cx);
         });
 
-        panel.update(cx, |panel, cx| {
-            panel.load_logs("api-id".into(), cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.open_logs_tab("api-id".into(), window, cx);
+            panel.open_inspect_tab("api-id".into(), window, cx);
         });
+        cx.run_until_parked();
 
-        wait_until(cx, |cx| {
-            panel.read_with(cx, |panel, _| {
-                panel
-                    .logs
-                    .as_ref()
-                    .is_some_and(|logs| logs.lines == vec!["a".to_string(), "b".to_string()])
-            })
-        })
-        .await;
-
-        panel.read_with(cx, |panel, _| {
-            let logs = panel.logs.as_ref().expect("logs state should be present");
-            assert_eq!(logs.lines, vec!["a".to_string(), "b".to_string()]);
-            assert!(logs.follow, "follow should default to true");
-        });
-    }
-
-    /// Selecting ANY row (container/image/compose) must cancel an in-flight
-    /// `docker logs -f` stream: `self.logs` must be cleared even when the
-    /// newly-selected row is not a container. Guards against leaking the
-    /// `docker logs -f` child process when the user switches from a
-    /// container's Logs tab straight to an Image/Compose row.
-    #[gpui::test]
-    async fn selecting_non_container_row_clears_logs(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.executor().allow_parking();
-
-        let mut fake = FakeDockerClient::new_with_container("api");
-        fake.log_lines = vec!["a".into(), "b".into()];
-        let fake = Arc::new(fake);
-        let factory = {
-            let fake = fake.clone();
-            Arc::new(move || fake.clone() as Arc<dyn DockerClient>)
-        };
-        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
-        let endpoint_name =
-            store.read_with(cx, |store, _| store.endpoints()[0].endpoint.name.clone());
-
-        let panel = cx.new(|cx| DockerPanel::new_for_test(store.clone(), cx));
-        panel.update(cx, |panel, cx| {
-            panel.select_container(endpoint_name.clone(), "api-id".into(), "api".into(), cx);
-        });
-        panel.update(cx, |panel, cx| {
-            panel.load_logs("api-id".into(), cx);
-        });
-
-        wait_until(cx, |cx| {
-            panel.read_with(cx, |panel, _| {
-                panel
-                    .logs
-                    .as_ref()
-                    .is_some_and(|logs| !logs.lines.is_empty())
-            })
-        })
-        .await;
-
-        // Selecting an image row (not a container) must still clear the
-        // logs state and cancel the in-flight follow task.
-        panel.update(cx, |panel, cx| {
-            panel.select_image(
-                endpoint_name.clone(),
-                "img-id".into(),
-                "repo".into(),
-                "latest".into(),
-                cx,
-            );
-        });
-
-        panel.read_with(cx, |panel, _| {
-            assert!(
-                panel.logs.is_none(),
-                "logs state must be cleared when selecting a non-container row"
-            );
-        });
-
-        // Selecting a compose row must have the same effect.
-        panel.update(cx, |panel, cx| {
-            panel.select_container(endpoint_name.clone(), "api-id".into(), "api".into(), cx);
-        });
-        panel.update(cx, |panel, cx| {
-            panel.load_logs("api-id".into(), cx);
-        });
-        wait_until(cx, |cx| {
-            panel.read_with(cx, |panel, _| {
-                panel
-                    .logs
-                    .as_ref()
-                    .is_some_and(|logs| !logs.lines.is_empty())
-            })
-        })
-        .await;
-
-        panel.update(cx, |panel, cx| {
-            panel.select_compose(endpoint_name.clone(), "proj".into(), cx);
-        });
-
-        panel.read_with(cx, |panel, _| {
-            assert!(
-                panel.logs.is_none(),
-                "logs state must be cleared when selecting a compose row"
-            );
-        });
-    }
-
-    /// Toggling follow/pause must flip the observable `follow` flag; this is
-    /// the behavior the toggle button in `detail_view` drives.
-    #[gpui::test]
-    async fn toggle_logs_follow_flips_flag(cx: &mut TestAppContext) {
-        init_test(cx);
-        cx.executor().allow_parking();
-
-        let mut fake = FakeDockerClient::new_with_container("api");
-        fake.log_lines = vec!["a".into()];
-        let fake = Arc::new(fake);
-        let factory = {
-            let fake = fake.clone();
-            Arc::new(move || fake.clone() as Arc<dyn DockerClient>)
-        };
-        let store = cx.new(|cx| DockerEndpointStore::new(factory, cx));
-        let endpoint_name =
-            store.read_with(cx, |store, _| store.endpoints()[0].endpoint.name.clone());
-
-        let panel = cx.new(|cx| DockerPanel::new_for_test(store.clone(), cx));
-        panel.update(cx, |panel, cx| {
-            panel.select_container(endpoint_name.clone(), "api-id".into(), "api".into(), cx);
-        });
-        panel.update(cx, |panel, cx| {
-            panel.load_logs("api-id".into(), cx);
-        });
-
-        wait_until(cx, |cx| {
-            panel.read_with(cx, |panel, _| {
-                panel
-                    .logs
-                    .as_ref()
-                    .is_some_and(|logs| !logs.lines.is_empty())
-            })
-        })
-        .await;
-
-        panel.read_with(cx, |panel, _| {
-            assert!(
-                panel.logs.as_ref().expect("logs present").follow,
-                "follow should default to true"
-            );
-        });
-
-        panel.update(cx, |panel, cx| panel.toggle_logs_follow(cx));
-        panel.read_with(cx, |panel, _| {
-            assert!(
-                !panel.logs.as_ref().expect("logs present").follow,
-                "toggling once should pause following"
-            );
-        });
-
-        panel.update(cx, |panel, cx| panel.toggle_logs_follow(cx));
-        panel.read_with(cx, |panel, _| {
-            assert!(
-                panel.logs.as_ref().expect("logs present").follow,
-                "toggling twice should resume following"
-            );
-        });
+        // Neither a stream nor an inspect fetch should have started: with no
+        // `Workspace` to host a tab, both calls must bail out before ever
+        // reaching the client.
+        assert!(
+            !fake.calls().iter().any(|c| c.starts_with("container_logs")),
+            "open_logs_tab must no-op without a workspace; calls: {:?}",
+            fake.calls()
+        );
+        assert!(
+            !fake
+                .calls()
+                .iter()
+                .any(|c| c.starts_with("inspect_container")),
+            "open_inspect_tab must no-op without a workspace; calls: {:?}",
+            fake.calls()
+        );
     }
 }

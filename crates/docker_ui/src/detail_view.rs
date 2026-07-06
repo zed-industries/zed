@@ -1,5 +1,5 @@
 use docker_client::{ComposeProject, Container, DockerEndpoint, Image};
-use gpui::{AnyElement, Context, InteractiveElement, ParentElement, ScrollHandle, Styled};
+use gpui::{AnyElement, Context};
 use ui::{Tooltip, prelude::*};
 
 use crate::docker_panel::DockerPanel;
@@ -32,42 +32,6 @@ impl SelectedItem {
             SelectedItem::Container { endpoint_name, .. }
             | SelectedItem::Image { endpoint_name, .. }
             | SelectedItem::Compose { endpoint_name, .. } => endpoint_name,
-        }
-    }
-}
-
-/// The raw-JSON inspect output for the selected container, if it has been
-/// fetched. `None` before the user opens Inspect or after switching selection.
-#[derive(Clone, Debug, Default)]
-pub struct InspectState {
-    pub id: String,
-    pub json: String,
-}
-
-/// The tail of streamed log lines for the selected container, if Logs has
-/// been opened.
-///
-/// `follow` gates whether newly-appended lines pull the view down to the
-/// tail: the background stream in `DockerPanel::load_logs` keeps pushing
-/// into `lines` regardless of `follow`. The displayed buffer is capped at
-/// `MAX_DISPLAYED_LOG_LINES` (500) either way, evicting the oldest lines past
-/// that cap; pausing only freezes the scroll position, it does not exempt
-/// the buffer from that cap.
-#[derive(Clone, Debug)]
-pub struct LogsState {
-    pub id: String,
-    pub lines: Vec<String>,
-    pub follow: bool,
-    pub scroll_handle: ScrollHandle,
-}
-
-impl LogsState {
-    pub fn new(id: String) -> Self {
-        Self {
-            id,
-            lines: Vec::new(),
-            follow: true,
-            scroll_handle: ScrollHandle::new(),
         }
     }
 }
@@ -109,8 +73,6 @@ pub struct DetailView<'a> {
     pub container: Option<&'a Container>,
     pub image: Option<&'a Image>,
     pub compose: Option<&'a ComposeProject>,
-    pub inspect: Option<&'a InspectState>,
-    pub logs: Option<&'a LogsState>,
 }
 
 impl<'a> DetailView<'a> {
@@ -133,15 +95,9 @@ impl<'a> DetailView<'a> {
         };
 
         match selected {
-            SelectedItem::Container { id, name, .. } => render_container_detail(
-                id,
-                name,
-                self.container,
-                endpoint,
-                self.inspect,
-                self.logs,
-                cx,
-            ),
+            SelectedItem::Container { id, name, .. } => {
+                render_container_detail(id, name, self.container, endpoint, cx)
+            }
             SelectedItem::Image {
                 id,
                 repository,
@@ -160,8 +116,6 @@ fn render_container_detail(
     name: &str,
     container: Option<&Container>,
     endpoint: &DockerEndpoint,
-    inspect: Option<&InspectState>,
-    logs: Option<&LogsState>,
     cx: &Context<DockerPanel>,
 ) -> AnyElement {
     let status = container.map(|c| c.status.clone()).unwrap_or_default();
@@ -202,60 +156,15 @@ fn render_container_detail(
                 ))
                 .child(Button::new("logs-container", "Logs").on_click(cx.listener({
                     let id = id.to_string();
-                    move |this, _, _window, cx| this.load_logs(id.clone(), cx)
+                    move |this, _, window, cx| this.open_logs_tab(id.clone(), window, cx)
                 })))
                 .child(
                     Button::new("inspect-container", "Inspect").on_click(cx.listener({
                         let id = id.to_string();
-                        move |this, _, _window, cx| this.load_inspect(id.clone(), cx)
+                        move |this, _, window, cx| this.open_inspect_tab(id.clone(), window, cx)
                     })),
                 ),
         )
-        .when_some(
-            inspect.filter(|inspect| inspect.id == id),
-            |this, inspect| {
-                this.child(
-                    v_flex()
-                        .id("container-inspect-scroll")
-                        .flex_1()
-                        .overflow_y_scroll()
-                        .p_2()
-                        .bg(cx.theme().colors().editor_background)
-                        .child(
-                            Label::new(inspect.json.clone())
-                                .buffer_font(cx)
-                                .size(LabelSize::Small),
-                        ),
-                )
-            },
-        )
-        .when_some(logs.filter(|logs| logs.id == id), |this, logs| {
-            let follow_label = if logs.follow { "Following" } else { "Paused" };
-            this.child(
-                h_flex().gap_2().child(
-                    Button::new("toggle-follow-logs", follow_label)
-                        .toggle_state(logs.follow)
-                        .on_click(cx.listener(|this, _, _window, cx| {
-                            this.toggle_logs_follow(cx);
-                        })),
-                ),
-            )
-            .child(
-                v_flex()
-                    .id("container-logs-scroll")
-                    .flex_1()
-                    .overflow_y_scroll()
-                    .track_scroll(&logs.scroll_handle)
-                    .p_2()
-                    .bg(cx.theme().colors().editor_background)
-                    .children(logs.lines.iter().map(|line| {
-                        Label::new(line.clone())
-                            .buffer_font(cx)
-                            .size(LabelSize::Small)
-                            .into_any_element()
-                    })),
-            )
-        })
         .into_any_element()
 }
 

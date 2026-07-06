@@ -82,8 +82,12 @@ restart`/`compose up`. Проверка выполняется на уровне
 **Compose**. Выбор строки в дереве открывает деталку справа:
 
 - **Container**: статус, порты; кнопки Start/Stop/Restart (с подтверждением
-  для Stop/Restart), Logs (потоковый хвост `docker logs -f`) и Inspect
-  (полный вывод `docker inspect` в виде JSON).
+  для Stop/Restart), Logs и Inspect. Logs и Inspect открываются как
+  полноразмерные вкладки в центральной рабочей области (как SQL/таблицы у
+  database-панели), а не внутри узкого дока: Logs — потоковый хвост `docker
+  logs -f` с переключателем follow/pause, Inspect — полный вывод `docker
+  inspect` в виде JSON. Закрытие вкладки Logs останавливает поток и
+  завершает дочерний процесс `docker logs -f`.
 - **Image**: репозиторий/тег/размер; Pull (без подтверждения) и Remove (с
   подтверждением).
 - **Compose project**: статус; Up/Down/Restart (Up и Restart — с
