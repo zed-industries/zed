@@ -3,7 +3,10 @@ use std::path::Path;
 use crate::tasks::workflows::{
     release::ReleaseBundleJobs,
     runners::{Arch, Platform, ReleaseChannel},
-    steps::{FluentBuilder, IfNoFilesFound, NamedJob, UploadArtifactStep, dependant_job, named},
+    steps::{
+        CommonPermissionSets, FluentBuilder, IfNoFilesFound, NamedJob, UploadArtifactStep,
+        dependant_job, named,
+    },
     vars::{self, assets, bundle_envs},
 };
 
@@ -23,6 +26,7 @@ pub fn run_bundling() -> Workflow {
         windows_x86_64: bundle_windows(Arch::X86_64, None, &[]),
     };
     named::workflow()
+        .with_minimal_permissions()
         .on(Event::default().pull_request(
             PullRequest::default().types([PullRequestType::Labeled, PullRequestType::Synchronize]),
         ))

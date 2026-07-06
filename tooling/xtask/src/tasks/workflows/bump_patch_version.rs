@@ -2,7 +2,7 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, CheckoutStep, CommonJobConditions, named},
+    steps::{self, CheckoutStep, CommonJobConditions, CommonPermissionSets, named},
     vars::{StepOutput, WorkflowInput},
 };
 
@@ -10,6 +10,7 @@ pub fn bump_patch_version() -> Workflow {
     let branch = WorkflowInput::string("branch", None).description("Branch name to run on");
     let bump_patch_version_job = run_bump_patch_version(&branch);
     named::workflow()
+        .with_minimal_permissions()
         .on(Event::default()
             .workflow_dispatch(WorkflowDispatch::default().add_input(branch.name, branch.input())))
         .concurrency(
@@ -80,6 +81,7 @@ fn run_bump_patch_version(branch: &WorkflowInput) -> steps::NamedJob {
     named::job(
         Job::default()
             .with_repository_owner_guard()
+            .permissions(Permissions::default().contents(Level::Write))
             .runs_on(runners::LINUX_DEFAULT)
             .add_step(authenticate)
             .add_step(checkout_branch(branch, &token))
