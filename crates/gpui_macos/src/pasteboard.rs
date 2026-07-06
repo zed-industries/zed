@@ -1,4 +1,4 @@
-use std::ffi::{CStr, c_void};
+use std::ffi::c_void;
 use std::path::PathBuf;
 
 use cocoa::{
@@ -7,13 +7,13 @@ use cocoa::{
         NSPasteboardTypeTIFF,
     },
     base::{id, nil},
-    foundation::{NSArray, NSData, NSFastEnumeration, NSString},
+    foundation::{NSArray, NSData, NSFastEnumeration},
 };
-use objc::{msg_send, runtime::Object, sel, sel_impl};
+use objc::{class, msg_send, runtime::Object, sel, sel_impl};
 use smallvec::SmallVec;
 use strum::IntoEnumIterator as _;
 
-use crate::ns_string;
+use crate::{NSStringExt, ns_string};
 use gpui::{
     ClipboardEntry, ClipboardItem, ClipboardString, ExternalPaths, Image, ImageFormat, hash,
 };
@@ -35,26 +35,53 @@ impl Pasteboard {
 
     #[cfg(test)]
     pub fn unique() -> Self {
-        unsafe { Self::new(NSPasteboard::pasteboardWithUniqueName(nil)) }
+        unsafe {
+            // `pasteboardWithUniqueName` returns an autoreleased (+0) pasteboard.
+            // Retain it so it outlives any autorelease pool active during the test.
+            let inner = NSPasteboard::pasteboardWithUniqueName(nil);
+            let _: id = msg_send![inner, retain];
+            Self::new(inner)
+        }
     }
 
     unsafe fn new(inner: id) -> Self {
+        // `ns_string` returns autoreleased (+0) objects, but these type identifiers
+        // are stored for the lifetime of the `Pasteboard`. Retain them so they
+        // survive draining of any autorelease pool active when `new` is called.
+        let text_hash_type = unsafe { ns_string("zed-text-hash") };
+        let metadata_type = unsafe { ns_string("zed-metadata") };
+        unsafe {
+            let _: id = msg_send![text_hash_type, retain];
+            let _: id = msg_send![metadata_type, retain];
+        }
         Self {
             inner,
-            text_hash_type: unsafe { ns_string("zed-text-hash") },
-            metadata_type: unsafe { ns_string("zed-metadata") },
+            text_hash_type,
+            metadata_type,
         }
     }
 
     pub fn read(&self) -> Option<ClipboardItem> {
         unsafe {
-            // Check for file paths first
+            // Check for file paths first.
+            //
+            // The property list is supplied by whatever app last owned the
+            // pasteboard, so it may not actually be an array of strings.
+            // Messaging it as one when it isn't would raise an Objective-C
+            // exception, and unwinding an ObjC exception through these Rust
+            // frames is undefined behavior. Validate the classes before use and
+            // skip any entries that don't conform.
             let filenames = NSPasteboard::propertyListForType(self.inner, NSFilenamesPboardType);
-            if filenames != nil && NSArray::count(filenames) > 0 {
+            let filenames_is_array: bool =
+                filenames != nil && msg_send![filenames, isKindOfClass: class!(NSArray)];
+            if filenames_is_array && NSArray::count(filenames) > 0 {
                 let mut paths = SmallVec::new();
                 for file in filenames.iter() {
-                    let f = NSString::UTF8String(file);
-                    let path = CStr::from_ptr(f).to_string_lossy().into_owned();
+                    let is_string: bool = msg_send![file, isKindOfClass: class!(NSString)];
+                    if !is_string {
+                        continue;
+                    }
+                    let path = NSStringExt::to_str(&file).to_owned();
                     paths.push(PathBuf::from(path));
                 }
                 if !paths.is_empty() {
