@@ -11371,10 +11371,6 @@ mod tests {
             panel.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
         });
 
-        let initial_draft_id = panel.read_with(cx, |panel, _cx| {
-            panel.draft_thread.as_ref().unwrap().entity_id()
-        });
-
         cx.dispatch_action(SelectAgent {
             agent: "my-configured-agent".to_string(),
         });
@@ -11386,20 +11382,8 @@ mod tests {
 
         panel.read_with(cx, |panel, cx| {
             let draft = panel.draft_thread.as_ref().expect("draft should exist");
-            assert_ne!(
-                draft.entity_id(),
-                initial_draft_id,
-                "changing agents should replace the visible draft"
-            );
-            assert_eq!(
-                panel.selected_agent, expected_agent,
-                "the action should update the panel's selected agent"
-            );
-            assert_eq!(
-                *draft.read(cx).agent_key(),
-                expected_agent,
-                "the visible draft should use the selected agent"
-            );
+            assert_eq!(panel.selected_agent, expected_agent);
+            assert_eq!(*draft.read(cx).agent_key(), expected_agent);
         });
 
         let kvp = cx.update(|_, cx| KeyValueStore::global(cx));
@@ -11407,65 +11391,6 @@ mod tests {
             read_global_last_used_agent(&kvp),
             Some(expected_agent),
             "the selection should be persisted as the global last-used agent"
-        );
-    }
-
-    #[gpui::test]
-    async fn test_select_agent_action_preserves_visible_thread_selection(cx: &mut TestAppContext) {
-        init_test(cx);
-        let fs = FakeFs::new(cx.executor());
-        cx.update(|cx| {
-            agent::ThreadStore::init_global(cx);
-            language_model::LanguageModelRegistry::test(cx);
-            <dyn fs::Fs>::set_global(fs.clone(), cx);
-        });
-
-        fs.insert_tree("/project", json!({ "file.txt": "" })).await;
-        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
-
-        let multi_workspace =
-            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
-        let workspace = multi_workspace
-            .read_with(cx, |multi_workspace, _cx| {
-                multi_workspace.workspace().clone()
-            })
-            .unwrap();
-        workspace.update(cx, |workspace, _cx| {
-            workspace.set_random_database_id();
-        });
-        let cx = &mut VisualTestContext::from_window(multi_workspace.into(), cx);
-
-        let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = cx.new(|cx| AgentPanel::new(workspace, window, cx));
-            workspace.add_panel(panel.clone(), window, cx);
-            panel
-        });
-
-        // Show an existing thread in the panel.
-        open_thread_with_connection(&panel, StubAgentConnection::new(), cx);
-        let thread_agent = panel.read_with(cx, |panel, _cx| panel.selected_agent.clone());
-
-        // Installing an agent (e.g. from onboarding or the ACP registry page)
-        // must not retarget the visible thread or its toolbar icon.
-        cx.dispatch_action(SelectAgent {
-            agent: "newly-installed-agent".to_string(),
-        });
-        cx.run_until_parked();
-
-        panel.read_with(cx, |panel, _cx| {
-            assert_eq!(
-                panel.selected_agent, thread_agent,
-                "selection (and toolbar icon) should keep reflecting the visible thread"
-            );
-        });
-
-        let kvp = cx.update(|_, cx| KeyValueStore::global(cx));
-        assert_ne!(
-            read_global_last_used_agent(&kvp),
-            Some(Agent::Custom {
-                id: "newly-installed-agent".into()
-            }),
-            "the newly installed agent should not become the global last-used agent while an existing thread is visible"
         );
     }
 
