@@ -179,7 +179,10 @@ impl Replayer {
                     editor.replay_insert_event(&text, utf16_range_to_replace.clone(), window, cx)
                 })
             }
-            ReplayableAction::SnippetInsertion { snippet_source } => {
+            ReplayableAction::SnippetInsertion {
+                snippet_source,
+                utf16_range_to_replace,
+            } => {
                 let Some(workspace) = Workspace::for_window(window, cx) else {
                     return;
                 };
@@ -191,7 +194,12 @@ impl Replayer {
                     return;
                 };
                 editor.update(cx, |editor, cx| {
-                    editor.replay_snippet_insertion(&snippet_source, window, cx)
+                    editor.replay_snippet_insertion(
+                        &snippet_source,
+                        utf16_range_to_replace.clone(),
+                        window,
+                        cx,
+                    )
                 })
             }
         }
