@@ -168,6 +168,10 @@ impl MarkdownStyle {
     ) -> Self {
         let theme_settings = ThemeSettings::get_global(cx);
         let is_preview = matches!(font, MarkdownFont::Preview);
+        // pi gives assistant code blocks rounded corners and more-defined inline
+        // code; scope these to the agent transcript so other markdown surfaces
+        // keep their current look.
+        let is_agent = matches!(font, MarkdownFont::Agent);
 
         let buffer_font_weight = theme_settings.buffer_font.weight;
         let (buffer_font_size, ui_font_size) = match font {
@@ -250,6 +254,12 @@ impl MarkdownStyle {
                     right: Some(AbsoluteLength::Pixels(px(1.))),
                     bottom: Some(AbsoluteLength::Pixels(px(1.))),
                 },
+                corner_radii: gpui::CornersRefinement {
+                    top_left: is_agent.then(|| AbsoluteLength::Pixels(px(6.))),
+                    top_right: is_agent.then(|| AbsoluteLength::Pixels(px(6.))),
+                    bottom_right: is_agent.then(|| AbsoluteLength::Pixels(px(6.))),
+                    bottom_left: is_agent.then(|| AbsoluteLength::Pixels(px(6.))),
+                },
                 border_color: Some(colors.border_variant),
                 background: Some(colors.editor_background.into()),
                 text: TextStyleRefinement {
@@ -268,7 +278,11 @@ impl MarkdownStyle {
                 font_features: Some(theme_settings.buffer_font.features.clone()),
                 font_size: Some(buffer_font_size.into()),
                 font_weight: Some(buffer_font_weight),
-                background_color: Some(colors.editor_foreground.opacity(0.08)),
+                background_color: Some(
+                    colors
+                        .editor_foreground
+                        .opacity(if is_agent { 0.12 } else { 0.08 }),
+                ),
                 ..Default::default()
             },
             link: TextStyleRefinement {

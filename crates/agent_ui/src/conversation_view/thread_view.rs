@@ -7294,55 +7294,62 @@ impl ThreadView {
 
         v_flex()
             .gap_1()
-            .child(
-                h_flex()
-                    .id(header_id)
-                    .group(&card_header_id)
-                    .relative()
-                    .w_full()
-                    .pr_1()
-                    .justify_between()
-                    .child(
-                        h_flex()
-                            .h(window.line_height() - px(2.))
-                            .gap_1p5()
-                            .overflow_hidden()
-                            .child(
-                                Icon::new(IconName::ToolThink)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                div()
-                                    .text_size(self.tool_name_font_size())
-                                    .text_color(cx.theme().colors().text_muted)
-                                    .child("Thinking"),
-                            ),
-                    )
-                    .child(
-                        Disclosure::new(("expand", entry_ix), is_open)
-                            .opened_icon(IconName::ChevronUp)
-                            .closed_icon(IconName::ChevronDown)
-                            .visible_on_hover(&card_header_id)
-                            .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
-                                this.toggle_thinking_block_expansion(key, window, cx);
-                            })),
-                    )
-                    .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
-                        this.toggle_thinking_block_expansion(key, window, cx);
-                    })),
-            )
+            .when(!is_open, |this| {
+                this.child(
+                    h_flex()
+                        .id(header_id)
+                        .group(&card_header_id)
+                        .relative()
+                        .w_full()
+                        .pr_1()
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .h(window.line_height() - px(2.))
+                                .gap_1p5()
+                                .overflow_hidden()
+                                .child(
+                                    Icon::new(IconName::ToolThink)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(self.tool_name_font_size())
+                                        .text_color(cx.theme().colors().text_muted)
+                                        .child("Thinking"),
+                                ),
+                        )
+                        .child(
+                            Disclosure::new(("expand", entry_ix), is_open)
+                                .opened_icon(IconName::ChevronUp)
+                                .closed_icon(IconName::ChevronDown)
+                                .visible_on_hover(&card_header_id)
+                                .on_click(cx.listener(
+                                    move |this, _event: &ClickEvent, window, cx| {
+                                        this.toggle_thinking_block_expansion(key, window, cx);
+                                    },
+                                )),
+                        )
+                        .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
+                            this.toggle_thinking_block_expansion(key, window, cx);
+                        })),
+                )
+            })
             .when(is_open, |this| {
                 this.child(
                     div()
+                        .relative()
+                        .group(SharedString::from(format!(
+                            "thinking-body-{entry_ix}-{chunk_ix}"
+                        )))
                         .when(is_constrained, |this| this.relative())
                         .child(
                             div()
                                 .id(("thinking-content", chunk_ix))
-                                .ml_1p5()
                                 .pl_3p5()
-                                .border_l_1()
-                                .border_color(self.tool_card_border_color(cx))
+                                .border_l_2()
+                                .border_color(cx.theme().colors().text_accent.opacity(0.6))
                                 .when(is_constrained, |this| this.max_h_64())
                                 .when_some(scroll_handle, |this, scroll_handle| {
                                     this.track_scroll(&scroll_handle)
@@ -7350,9 +7357,41 @@ impl ThreadView {
                                 .overflow_hidden()
                                 .child(self.render_markdown(
                                     chunk,
-                                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                    {
+                                        let mut style =
+                                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
+                                                .with_muted_text(cx);
+                                        style.base_text_style.font_style = gpui::FontStyle::Italic;
+                                        style
+                                    },
                                     cx,
                                 )),
+                        )
+                        // pi-style: hover reveals a collapse chevron so the
+                        // expanded trace stays chrome-free by default.
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .right_1()
+                                .visible_on_hover(SharedString::from(format!(
+                                    "thinking-body-{entry_ix}-{chunk_ix}"
+                                )))
+                                .child(
+                                    Disclosure::new(
+                                        SharedString::from(format!(
+                                            "collapse-thinking-{entry_ix}-{chunk_ix}"
+                                        )),
+                                        true,
+                                    )
+                                    .opened_icon(IconName::ChevronUp)
+                                    .closed_icon(IconName::ChevronDown)
+                                    .on_click(cx.listener(
+                                        move |this, _event: &ClickEvent, window, cx| {
+                                            this.toggle_thinking_block_expansion(key, window, cx);
+                                        },
+                                    )),
+                                ),
                         )
                         .when(is_constrained, |this| {
                             this.child(
@@ -7606,6 +7645,8 @@ impl ThreadView {
         style.container_style.text.font_size = Some(rems_from_px(12.).into());
         style.container_style.text.line_height = Some(rems_from_px(17.).into());
         style.height_is_multiple_of_line_height = true;
+        // pi renders the bash command string in the accent color.
+        style.base_text_style.color = cx.theme().colors().text_accent;
         // Soft-wrap the command instead of horizontally scrolling it: the card is
         // narrow, and in scroll mode a long command wraps anyway but its wrapped
         // lines don't pick up the code block's left padding. Wrap mode lays the
@@ -7613,7 +7654,6 @@ impl ThreadView {
         // line (wrapped or not) is padded consistently.
         style.code_block_overflow_x_scroll = false;
 
-        let header_bg = self.tool_card_header_bg(cx);
         let run_command_label = if is_preview {
             Some(
                 h_flex().h_6().child(
@@ -7645,9 +7685,20 @@ impl ThreadView {
             .group(group)
             .relative()
             .p_1p5()
-            .bg(header_bg)
             .when(is_preview, |this| this.pt_1().children(run_command_label))
-            .child(markdown_element)
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_start()
+                    .gap_1p5()
+                    .child(
+                        Label::new("$")
+                            .buffer_font(cx)
+                            .size(LabelSize::Small)
+                            .color(Color::Accent),
+                    )
+                    .child(div().flex_1().min_w_0().child(markdown_element)),
+            )
             .child(div().absolute().top_1().right_1().child(copy_button))
     }
 
@@ -7735,7 +7786,6 @@ impl ThreadView {
             .flex_none()
             .gap_1()
             .justify_between()
-            .rounded_t_md()
             .child(
                 div()
                     .id(("command-target-path", terminal.entity_id()))
@@ -7867,8 +7917,7 @@ impl ThreadView {
                             )))
                         }),
                 )
-            })
-;
+            });
 
         let terminal_view = self
             .entry_view_state
@@ -7880,10 +7929,10 @@ impl ThreadView {
             .when(layout == ToolCallLayout::Standalone, |this| {
                 this.my_1p5()
                     .mx_5()
-                    .border_1()
+                    .border_l_2()
                     .when(tool_failed || command_failed, |card| card.border_dashed())
-                    .border_color(border_color)
-                    .rounded_md()
+                    .border_color(self.tool_status_border(&tool_call.status, cx))
+                    .bg(self.tool_status_bg(&tool_call.status, cx))
             })
             .overflow_hidden()
             .child(
@@ -7905,7 +7954,6 @@ impl ThreadView {
                         .when(tool_failed || command_failed, |card| card.border_dashed())
                         .border_color(border_color)
                         .bg(cx.theme().colors().editor_background)
-                        .rounded_b_md()
                         .text_ui_sm(cx)
                         .h_full()
                         .children(terminal_view.map(|terminal_view| {
@@ -8389,15 +8437,20 @@ impl ThreadView {
                 ) {
                     this
                 } else if use_card_layout {
+                    // pi keeps tools flat: a status wash + 2px status-colored
+                    // left rail with square corners, not a rounded boxed card.
                     this.my_1p5()
-                        .rounded_md()
-                        .border_1()
+                        .border_l_2()
                         .when(failed_or_canceled, |this| this.border_dashed())
-                        .border_color(self.tool_card_border_color(cx))
-                        .bg(cx.theme().colors().editor_background)
+                        .border_color(self.tool_status_border(&tool_call.status, cx))
+                        .bg(self.tool_status_bg(&tool_call.status, cx))
                         .overflow_hidden()
                 } else {
                     this.my_1()
+                        .border_l_2()
+                        .border_color(self.tool_status_border(&tool_call.status, cx))
+                        .bg(self.tool_status_bg(&tool_call.status, cx))
+                        .pl_1p5()
                 }
             })
             .when(layout == ToolCallLayout::Standalone, |this| {
@@ -8428,8 +8481,6 @@ impl ThreadView {
                             .justify_between()
                             .when(use_card_layout, |this| {
                                 this.p_0p5()
-                                    .rounded_t(rems_from_px(5.))
-                                    .bg(self.tool_card_header_bg(cx))
                             })
                             .child(self.render_tool_call_label(
                                 entry_ix,
@@ -9628,17 +9679,20 @@ impl ThreadView {
                             this.text_color(cx.theme().colors().text_muted)
                         }
                     })
-                    .child(
-                        self.render_markdown(
-                            tool_call.label.clone(),
-                            MarkdownStyle {
-                                prevent_mouse_interaction: true,
-                                ..MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
-                                    .with_muted_text(cx)
-                            },
-                            cx,
-                        ),
-                    )
+                    .child(self.render_markdown(
+                        tool_call.label.clone(),
+                        {
+                            let mut style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+                            style.prevent_mouse_interaction = true;
+                            // pi accents the primary argument (tool paths /
+                            // patterns are inline code in the title) as bright
+                            // accent text rather than a boxed code chip.
+                            style.inline_code.color = Some(cx.theme().colors().text_accent);
+                            style.inline_code.background_color = None;
+                            style
+                        },
+                        cx,
+                    ))
                     .tooltip(Tooltip::text("Go to File"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_tool_call_location(entry_ix, 0, window, cx);
@@ -9649,7 +9703,14 @@ impl ThreadView {
                     .w_full()
                     .child(self.render_markdown(
                         tool_call.label.clone(),
-                        MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_muted_text(cx),
+                        {
+                            let mut style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+                            // pi accents the primary argument (inline code in the
+                            // title) as bright accent text, not a boxed chip.
+                            style.inline_code.color = Some(cx.theme().colors().text_accent);
+                            style.inline_code.background_color = None;
+                            style
+                        },
                         cx,
                     ))
                     .into_any()
@@ -10179,39 +10240,19 @@ impl ThreadView {
         };
 
         let card_header_id = format!("subagent-header-{}", entry_ix);
-        let status_icon = format!("status-icon-{}", entry_ix);
         let diff_stat_id = format!("subagent-diff-{}", entry_ix);
 
+        // pi conveys status by tinting the whole card (below), not with a ✓/✗
+        // glyph: keep the spinner while the subagent runs, otherwise show a
+        // neutral agent marker regardless of success/failure/cancel.
         let icon = h_flex().w_4().justify_center().child(if is_running {
             SpinnerLabel::new()
                 .size(LabelSize::Small)
                 .into_any_element()
-        } else if is_cancelled {
-            div()
-                .id(status_icon)
-                .child(
-                    Icon::new(IconName::Circle)
-                        .size(IconSize::Small)
-                        .color(Color::Custom(
-                            cx.theme().colors().icon_disabled.opacity(0.5),
-                        )),
-                )
-                .tooltip(Tooltip::text("Subagent Cancelled"))
-                .into_any_element()
-        } else if is_failed {
-            div()
-                .id(status_icon)
-                .child(
-                    Icon::new(IconName::Close)
-                        .size(IconSize::Small)
-                        .color(Color::Error),
-                )
-                .tooltip(Tooltip::text("Subagent Failed"))
-                .into_any_element()
         } else {
-            Icon::new(IconName::Check)
+            Icon::new(self.agent_icon)
                 .size(IconSize::Small)
-                .color(Color::Success)
+                .color(Color::Muted)
                 .into_any_element()
         });
 
@@ -10229,10 +10270,12 @@ impl ThreadView {
 
         v_flex()
             .w_full()
-            .rounded_md()
-            .border_1()
+            // pi-style: a flat block with a status-colored left rail + wash
+            // instead of a neutral rounded border box.
+            .border_l_2()
             .when(has_no_title_or_canceled, |this| this.border_dashed())
-            .border_color(self.tool_card_border_color(cx))
+            .border_color(self.tool_status_border(&tool_call.status, cx))
+            .bg(self.tool_status_bg(&tool_call.status, cx))
             .overflow_hidden()
             .child(
                 h_flex()
@@ -10241,9 +10284,6 @@ impl ThreadView {
                     .p_1()
                     .w_full()
                     .justify_between()
-                    .when(!has_no_title_or_canceled, |this| {
-                        this.bg(self.tool_card_header_bg(cx))
-                    })
                     .child(
                         h_flex()
                             .id(format!("subagent-title-{}", entry_ix))
@@ -10553,6 +10593,34 @@ impl ThreadView {
 
     fn tool_card_border_color(&self, cx: &Context<Self>) -> Hsla {
         cx.theme().colors().border.opacity(0.8)
+    }
+
+    fn tool_status_bg(&self, status: &ToolCallStatus, cx: &Context<Self>) -> Hsla {
+        let colors = cx.theme().colors();
+        let base = colors.editor_background;
+        let (tint, alpha) = match status {
+            ToolCallStatus::Failed | ToolCallStatus::Rejected | ToolCallStatus::Canceled => {
+                (cx.theme().status().error, 0.08)
+            }
+            ToolCallStatus::WaitingForConfirmation { .. }
+            | ToolCallStatus::Pending
+            | ToolCallStatus::InProgress => (colors.text_accent, 0.06),
+            ToolCallStatus::Completed => (cx.theme().status().success, 0.05),
+        };
+        base.blend(tint.opacity(alpha))
+    }
+
+    fn tool_status_border(&self, status: &ToolCallStatus, cx: &Context<Self>) -> Hsla {
+        let colors = cx.theme().colors();
+        match status {
+            ToolCallStatus::Failed | ToolCallStatus::Rejected | ToolCallStatus::Canceled => {
+                cx.theme().status().error.opacity(0.7)
+            }
+            ToolCallStatus::WaitingForConfirmation { .. }
+            | ToolCallStatus::Pending
+            | ToolCallStatus::InProgress => colors.text_accent.opacity(0.7),
+            ToolCallStatus::Completed => cx.theme().status().success.opacity(0.6),
+        }
     }
 
     fn tool_name_font_size(&self) -> Rems {
