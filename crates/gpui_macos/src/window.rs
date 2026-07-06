@@ -22,7 +22,6 @@ use cocoa::{
         NSUserDefaults,
     },
 };
-use dispatch2::DispatchQueue;
 use gpui::{
     AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, CursorStyle, ExternalPaths,
     FileDropEvent, ForegroundExecutor, KeyDownEvent, Keystroke, Modifiers, ModifiersChangedEvent,
@@ -1221,34 +1220,33 @@ impl PlatformWindow for MacWindow {
     }
 
     fn merge_all_windows(&self) {
-        let native_window = self.0.lock().native_window;
-        extern "C" fn merge_windows_async(context: *mut std::ffi::c_void) {
-            unsafe {
-                let native_window = context as id;
-                let _: () = msg_send![native_window, mergeAllWindows:nil];
-            }
-        }
-
-        unsafe {
-            DispatchQueue::main()
-                .exec_async_f(native_window as *mut std::ffi::c_void, merge_windows_async);
-        }
+        let this = self.0.lock();
+        let window = this.native_window;
+        let closed = this.closed.clone();
+        // Route through the foreground executor and skip if the window has been
+        // closed, matching `resize`/`zoom`: messaging a freed `native_window` from a
+        // deferred main-queue block would hard fault.
+        this.foreground_executor
+            .spawn(async move {
+                if_window_not_closed(closed, || unsafe {
+                    let _: () = msg_send![window, mergeAllWindows: nil];
+                })
+            })
+            .detach();
     }
 
     fn move_tab_to_new_window(&self) {
-        let native_window = self.0.lock().native_window;
-        extern "C" fn move_tab_async(context: *mut std::ffi::c_void) {
-            unsafe {
-                let native_window = context as id;
-                let _: () = msg_send![native_window, moveTabToNewWindow:nil];
-                let _: () = msg_send![native_window, makeKeyAndOrderFront: nil];
-            }
-        }
-
-        unsafe {
-            DispatchQueue::main()
-                .exec_async_f(native_window as *mut std::ffi::c_void, move_tab_async);
-        }
+        let this = self.0.lock();
+        let window = this.native_window;
+        let closed = this.closed.clone();
+        this.foreground_executor
+            .spawn(async move {
+                if_window_not_closed(closed, || unsafe {
+                    let _: () = msg_send![window, moveTabToNewWindow: nil];
+                    let _: () = msg_send![window, makeKeyAndOrderFront: nil];
+                })
+            })
+            .detach();
     }
 
     fn toggle_window_tab_overview(&self) {
