@@ -72,16 +72,22 @@ jobs:
 
           # Map directory names to package names
           FILE_CHANGED_PKGS=""
+          UNMAPPED_DIRS=""
           for dir in $CHANGED_DIRS; do
-            pkg=$(echo "$DIR_TO_PKG" | grep "^${dir}=" | cut -d= -f2 | head -1)
+            # `|| true` so a directory without a workspace package (e.g. the
+            # tooling/lints dylint sub-workspace) doesn't kill the script
+            # under `set -eo pipefail` via grep's exit code.
+            pkg=$(echo "$DIR_TO_PKG" | grep "^${dir}=" | cut -d= -f2 | head -1 || true)
             if [ -n "$pkg" ]; then
               FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$pkg")
             else
-              # Fall back to directory name if no mapping found
-              FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$dir")
+              # No workspace package for this directory, so we can't compute
+              # reverse-deps for it; fall back to running the full suite.
+              UNMAPPED_DIRS=$(printf '%s\n%s' "$UNMAPPED_DIRS" "$dir")
             fi
           done
           FILE_CHANGED_PKGS=$(echo "$FILE_CHANGED_PKGS" | grep -v '^$' | sort -u || true)
+          UNMAPPED_DIRS=$(echo "$UNMAPPED_DIRS" | grep -v '^$' | sort -u || true)
 
           # If assets/ changed, add crates that depend on those assets
           if echo "$CHANGED_FILES" | grep -qP '^assets/'; then
@@ -91,7 +97,10 @@ jobs:
           # Combine all changed packages
           ALL_CHANGED_PKGS=$(echo "$FILE_CHANGED_PKGS" | grep -v '^$' || true)
 
-          if [ -z "$ALL_CHANGED_PKGS" ]; then
+          if [ -n "$UNMAPPED_DIRS" ]; then
+            echo "Changed directories without workspace packages: $UNMAPPED_DIRS; will run all tests"
+            echo "changed_packages=" >> "$GITHUB_OUTPUT"
+          elif [ -z "$ALL_CHANGED_PKGS" ]; then
             echo "No package changes detected, will run all tests"
             echo "changed_packages=" >> "$GITHUB_OUTPUT"
           else
