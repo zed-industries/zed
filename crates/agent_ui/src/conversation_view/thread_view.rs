@@ -4899,7 +4899,7 @@ impl ThreadView {
                             );
                         }),
                 )
-                .child(Divider::vertical().h_4())
+                .child(Divider::vertical())
                 .into_any_element(),
         )
     }
