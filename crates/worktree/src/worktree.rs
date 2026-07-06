@@ -5471,31 +5471,30 @@ impl BackgroundScanner {
         }
         drop(ignore_queue_tx);
 
-        self.executor
-            .scoped(|scope| {
-                for _ in 0..self.executor.num_cpus() {
-                    scope.spawn(async {
-                        loop {
-                            select_biased! {
-                                // Process any path refresh requests before moving on to process
-                                // the queue of ignore statuses.
-                                request = self.next_scan_request().fuse() => {
-                                    let Ok(request) = request else { break };
-                                    if !self.process_scan_request(request, true).await {
-                                        return;
-                                    }
-                                }
-
-                                // Recursively process directories whose ignores have changed.
-                                job = ignore_queue_rx.recv().fuse() => {
-                                    let Ok(job) = job else { break };
-                                    self.update_ignore_status(job, &prev_snapshot).await;
+        self.executor.scoped(|scope| {
+            for _ in 0..self.executor.num_cpus() {
+                scope.spawn(async {
+                    loop {
+                        select_biased! {
+                            // Process any path refresh requests before moving on to process
+                            // the queue of ignore statuses.
+                            request = self.next_scan_request().fuse() => {
+                                let Ok(request) = request else { break };
+                                if !self.process_scan_request(request, true).await {
+                                    return;
                                 }
                             }
+
+                            // Recursively process directories whose ignores have changed.
+                            job = ignore_queue_rx.recv().fuse() => {
+                                let Ok(job) = job else { break };
+                                self.update_ignore_status(job, &prev_snapshot).await;
+                            }
                         }
-                    });
-                }
-            });
+                    }
+                });
+            }
+        });
     }
 
     async fn ignores_needing_update(&self) -> Vec<Arc<Path>> {

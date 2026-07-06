@@ -1956,55 +1956,54 @@ impl SearchableItem for Editor {
                     let query = query.clone();
 
                     let mut results = Vec::new();
-                    executor
-                        .scoped(|scope| {
-                            for search_range in chunk_search_range(
-                                search_buffer.text.clone(),
-                                &query,
-                                num_cpus as u32,
-                                search_range,
-                            ) {
-                                let query = query.clone();
-                                let buffer = buffer.clone();
+                    executor.scoped(|scope| {
+                        for search_range in chunk_search_range(
+                            search_buffer.text.clone(),
+                            &query,
+                            num_cpus as u32,
+                            search_range,
+                        ) {
+                            let query = query.clone();
+                            let buffer = buffer.clone();
 
-                                let (tx, rx) = oneshot::channel();
-                                results.push(rx);
-                                scope.spawn(async move {
-                                    let chunk_result = query
-                                        .search(
-                                            search_buffer,
-                                            Some(search_range.start..search_range.end),
-                                        )
-                                        .await
-                                        .into_iter()
-                                        .filter_map(|match_range| {
-                                            if let Some(deleted_hunk_anchor) = deleted_hunk_anchor {
-                                                let start = search_buffer.anchor_after(
-                                                    search_range.start + match_range.start,
-                                                );
-                                                let end = search_buffer.anchor_before(
-                                                    search_range.start + match_range.end,
-                                                );
-                                                Some(
-                                                    deleted_hunk_anchor.with_diff_base_anchor(start)
-                                                        ..deleted_hunk_anchor
-                                                            .with_diff_base_anchor(end),
-                                                )
-                                            } else {
-                                                let start = search_buffer.anchor_after(
-                                                    search_range.start + match_range.start,
-                                                );
-                                                let end = search_buffer.anchor_before(
-                                                    search_range.start + match_range.end,
-                                                );
-                                                buffer.anchor_range_in_buffer(start..end)
-                                            }
-                                        })
-                                        .collect::<Vec<_>>();
-                                    _ = tx.send(chunk_result);
-                                });
-                            }
-                        });
+                            let (tx, rx) = oneshot::channel();
+                            results.push(rx);
+                            scope.spawn(async move {
+                                let chunk_result = query
+                                    .search(
+                                        search_buffer,
+                                        Some(search_range.start..search_range.end),
+                                    )
+                                    .await
+                                    .into_iter()
+                                    .filter_map(|match_range| {
+                                        if let Some(deleted_hunk_anchor) = deleted_hunk_anchor {
+                                            let start = search_buffer.anchor_after(
+                                                search_range.start + match_range.start,
+                                            );
+                                            let end = search_buffer.anchor_before(
+                                                search_range.start + match_range.end,
+                                            );
+                                            Some(
+                                                deleted_hunk_anchor.with_diff_base_anchor(start)
+                                                    ..deleted_hunk_anchor
+                                                        .with_diff_base_anchor(end),
+                                            )
+                                        } else {
+                                            let start = search_buffer.anchor_after(
+                                                search_range.start + match_range.start,
+                                            );
+                                            let end = search_buffer.anchor_before(
+                                                search_range.start + match_range.end,
+                                            );
+                                            buffer.anchor_range_in_buffer(start..end)
+                                        }
+                                    })
+                                    .collect::<Vec<_>>();
+                                _ = tx.send(chunk_result);
+                            });
+                        }
+                    });
 
                     for rx in results {
                         if let Ok(results) = rx.await {
