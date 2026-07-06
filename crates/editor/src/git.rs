@@ -175,12 +175,54 @@ impl Editor {
         cx.notify();
     }
 
+    /// Make all diff hunks render with the "unstaged" appearance, regardless
+    /// of whether they have a secondary hunk. Intended for views whose diffs
+    /// aren't related to the git index (e.g. agent diffs).
+    pub fn set_render_diff_hunks_as_unstaged(
+        &mut self,
+        render_as_unstaged: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.render_diff_hunks_as_unstaged = render_as_unstaged;
+        cx.notify();
+    }
+
     pub fn git_blame_inline_enabled(&self) -> bool {
         self.git_blame_inline_enabled
     }
 
     pub fn blame(&self) -> Option<&Entity<GitBlame>> {
         self.blame.as_ref()
+    }
+
+    pub fn active_git_blame_entry(&self, cx: &mut App) -> Option<BlameEntry> {
+        if !self.show_git_blame_inline
+            || self.newest_selection_head_on_empty_line(cx)
+            || !self.has_blame_entries(cx)
+        {
+            return None;
+        }
+
+        let blame = self.blame.as_ref()?;
+        let snapshot = self.display_snapshot(cx);
+        let cursor = self.selections.newest::<Point>(&snapshot).head();
+        let (buffer, point) = snapshot.buffer_snapshot().point_to_buffer_point(cursor)?;
+
+        blame
+            .update(cx, |blame, cx| {
+                blame
+                    .blame_for_rows(
+                        &[RowInfo {
+                            buffer_id: Some(buffer.remote_id()),
+                            buffer_row: Some(point.row),
+                            ..Default::default()
+                        }],
+                        cx,
+                    )
+                    .next()
+            })
+            .flatten()
+            .map(|(_, entry)| entry)
     }
 
     pub fn show_git_blame_gutter(&self) -> bool {
@@ -230,6 +272,7 @@ impl Editor {
 
     pub fn end_temporary_diff_override(&mut self, cx: &mut Context<Self>) {
         self.temporary_diff_override = false;
+        self.render_diff_hunks_as_unstaged = false;
         self.set_render_diff_hunk_controls(Arc::new(render_diff_hunk_controls), cx);
         self.buffer.update(cx, |buffer, cx| {
             buffer.set_all_diff_hunks_collapsed(cx);
@@ -595,6 +638,29 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let just_started = self.blame.is_none();
+        if just_started {
+            self.start_git_blame(true, window, cx);
+        }
+        let Some(blame) = self.blame.as_ref() else {
+            return;
+        };
+
+        if just_started && !blame.read(cx).has_generated_entries() {
+            let subscription = cx.observe_in(blame, window, |editor, blame, window, cx| {
+                if blame.read(cx).has_generated_entries() {
+                    editor.pending_blame_hover_observation.take();
+                    editor.show_blame_hover_popover(window, cx);
+                }
+            });
+            self.pending_blame_hover_observation = Some(subscription);
+            return;
+        }
+
+        self.show_blame_hover_popover(window, cx);
+    }
+
+    fn show_blame_hover_popover(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let snapshot = self.snapshot(window, cx);
         let cursor = self
             .selections
@@ -604,9 +670,6 @@ impl Editor {
             return;
         };
 
-        if self.blame.is_none() {
-            self.start_git_blame(true, window, cx);
-        }
         let Some(blame) = self.blame.as_ref() else {
             return;
         };
@@ -1590,7 +1653,9 @@ impl Editor {
     }
 
     pub(super) fn render_git_blame_inline(&self, window: &Window, cx: &App) -> bool {
-        self.show_git_blame_inline
+        ProjectSettings::get_global(cx).git.inline_blame.location
+            == project::project_settings::InlineBlameLocation::Inline
+            && self.show_git_blame_inline
             && (self.focus_handle.is_focused(window) || self.inline_blame_popover.is_some())
             && !self.newest_selection_head_on_empty_line(cx)
             && self.has_blame_entries(cx)

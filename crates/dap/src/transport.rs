@@ -617,8 +617,8 @@ impl Transport for TcpTransport {
                                 if has_process {
                                     let status = process.lock().as_mut().unwrap().try_status();
                                     if let Ok(Some(_)) = status {
-                                        let process = process.lock().take().unwrap().into_inner();
-                                        let output = process.output().await?;
+                                        let child = process.lock().take().unwrap();
+                                        let output = child.output().await?;
                                         let output = if output.stderr.is_empty() {
                                             String::from_utf8_lossy(&output.stdout).to_string()
                                         } else {

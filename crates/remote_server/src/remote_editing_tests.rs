@@ -13,16 +13,21 @@ use collections::{HashMap, HashSet};
 use language_model::{LanguageModelRegistry, LanguageModelToolResultContent};
 use languages::rust_lang;
 
+use editor::{
+    Editor, SelectionEffects,
+    actions::{ConfirmCodeAction, ToggleCodeActions},
+    code_context_menus::CodeContextMenu,
+};
 use extension::ExtensionHostProxy;
 use fs::{FakeFs, Fs};
 use git::{
     Oid,
     repository::{CommitData, Worktree as GitWorktree},
 };
-use gpui::{AppContext as _, Entity, SharedString, TestAppContext};
+use gpui::{AppContext as _, Entity, SharedString, TestAppContext, UpdateGlobal, VisualContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
-    Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding,
+    Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LineEnding, Point,
     language_settings::{AllLanguageSettings, LanguageSettings},
 };
 use lsp::{
@@ -180,6 +185,107 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
             "fn one() -> usize { 100 }"
         );
     });
+}
+
+#[gpui::test]
+async fn test_remote_telemetry_event_forwarding(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    // This mirrors `init_test`, but retains the server-side session so the test
+    // can drive a forwarded telemetry event over the proto channel (as
+    // `init_telemetry_forwarding` does on a real remote server).
+    let server_fs = FakeFs::new(server_cx.executor());
+    server_fs
+        .insert_tree(
+            path!("/code"),
+            json!({ "project1": { "README.md": "# project 1" } }),
+        )
+        .await;
+
+    cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+    server_cx.update(|cx| release_channel::init(semver::Version::new(0, 0, 0), cx));
+    init_logger();
+
+    let (opts, server_session, _) = RemoteClient::fake_server(cx, server_cx);
+    let http_client = Arc::new(BlockedHttpClient);
+    let node_runtime = NodeRuntime::unavailable();
+    let languages = Arc::new(LanguageRegistry::new(cx.executor()));
+    let proxy = Arc::new(ExtensionHostProxy::new());
+    server_cx.update(HeadlessProject::init);
+    let headless = server_cx.new(|cx| {
+        HeadlessProject::new(
+            crate::HeadlessAppState {
+                session: server_session.clone(),
+                fs: server_fs.clone(),
+                http_client,
+                node_runtime,
+                languages,
+                extension_host_proxy: proxy,
+                startup_time: std::time::Instant::now(),
+            },
+            false,
+            cx,
+        )
+    });
+
+    let ssh = RemoteClient::connect_mock(opts, cx).await;
+    let project = build_project(ssh, cx);
+    project
+        .update(cx, {
+            let headless = headless.clone();
+            |_, cx| cx.on_release(|_, _| drop(headless))
+        })
+        .detach();
+
+    // The remote server forwards a bare `FlexibleEvent` as JSON; mirror that
+    // here by sending the proto message the forwarding task would send.
+    let event_json = json!({
+        "event_type": "fs_watcher_poll",
+        "event_properties": { "path": "/code/project1" },
+    })
+    .to_string();
+    server_session
+        .send(proto::TelemetryEvent {
+            project_id: proto::REMOTE_SERVER_PROJECT_ID,
+            event_json,
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let events = project.read_with(cx, |project, _| {
+        project.client().telemetry().queued_events()
+    });
+    assert_eq!(
+        events.len(),
+        1,
+        "the forwarded event should be reported once"
+    );
+    let event = &events[0];
+    assert_eq!(event.event_type, "fs_watcher_poll");
+    // The event's original properties survive the round-trip.
+    assert_eq!(
+        event.event_properties.get("path"),
+        Some(&serde_json::Value::String("/code/project1".to_string()))
+    );
+    // The client stamps the remote host metadata it learned at connection time.
+    // The mock connection reports a Linux/x86_64 host over a "mock" connection.
+    assert_eq!(
+        event.event_properties.get("remote"),
+        Some(&serde_json::Value::Bool(true))
+    );
+    assert_eq!(
+        event.event_properties.get("remote_connection_type"),
+        Some(&serde_json::Value::String("mock".to_string()))
+    );
+    assert_eq!(
+        event.event_properties.get("remote_os_name"),
+        Some(&serde_json::Value::String("Linux".to_string()))
+    );
+    assert_eq!(
+        event.event_properties.get("remote_architecture"),
+        Some(&serde_json::Value::String("x86_64".to_string()))
+    );
 }
 
 async fn do_search_and_assert(
@@ -779,6 +885,465 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     buffer.update(cx, |buffer, _| {
         assert_eq!(buffer.text(), "fn two() -> usize { 1 }")
     })
+}
+
+#[gpui::test]
+async fn test_remote_code_action_resolve(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+        editor::init(cx);
+    });
+
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+
+    let capabilities = lsp::ServerCapabilities {
+        code_action_provider: Some(lsp::CodeActionProviderCapability::Options(
+            lsp::CodeActionOptions {
+                resolve_provider: Some(true),
+                ..lsp::CodeActionOptions::default()
+            },
+        )),
+        ..lsp::ServerCapabilities::default()
+    };
+
+    cx.update_entity(&project, |project, _| {
+        project.languages().register_test_language(LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: capabilities.clone(),
+                ..FakeLspAdapter::default()
+            },
+        );
+    });
+
+    server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName("rust-analyzer".into()),
+            capabilities,
+            Some(Box::new(|fake_lsp| {
+                fake_lsp.set_request_handler::<lsp::request::CodeActionRequest, _, _>(
+                    |_, _| async move {
+                        Ok(Some(vec![lsp::CodeActionOrCommand::CodeAction(
+                            lsp::CodeAction {
+                                title: "Use two".to_string(),
+                                data: Some(serde_json::json!({ "id": "action" })),
+                                ..lsp::CodeAction::default()
+                            },
+                        )]))
+                    },
+                );
+                fake_lsp.set_request_handler::<lsp::request::CodeActionResolveRequest, _, _>(
+                    |mut action, _| async move {
+                        action.edit = Some(lsp::WorkspaceEdit {
+                            changes: Some(
+                                [(
+                                    lsp::Uri::from_file_path(path!("/code/project1/src/lib.rs"))
+                                        .unwrap(),
+                                    vec![lsp::TextEdit::new(
+                                        lsp::Range::new(
+                                            lsp::Position::new(0, 3),
+                                            lsp::Position::new(0, 6),
+                                        ),
+                                        "two".to_string(),
+                                    )],
+                                )]
+                                .into_iter()
+                                .collect(),
+                            ),
+                            ..lsp::WorkspaceEdit::default()
+                        });
+                        Ok(action)
+                    },
+                );
+            })),
+        );
+    });
+
+    cx.run_until_parked();
+
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.languages().add(rust_lang());
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap()
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+    cx.run_until_parked();
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let cx = cx.add_empty_window();
+    let workspace = cx.new_window_entity(|window, cx| {
+        workspace::Workspace::test_new(project.clone(), window, cx)
+    });
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx)
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+    });
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 0)..Point::new(0, 0)]);
+        });
+    });
+    cx.executor()
+        .advance_clock(editor::CODE_ACTIONS_DEBOUNCE_TIMEOUT * 2);
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_code_actions(
+            &ToggleCodeActions {
+                deployed_from: None,
+                quick_launch: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    editor.update(cx, |editor, _| assert!(editor.context_menu_visible()));
+
+    let confirm_action = editor
+        .update_in(cx, |editor, window, cx| {
+            Editor::confirm_code_action(editor, &ConfirmCodeAction { item_ix: Some(0) }, window, cx)
+        })
+        .unwrap();
+    confirm_action.await.unwrap();
+
+    buffer.read_with(cx, |buffer, _| {
+        assert_eq!(buffer.text(), "fn two() -> usize { 1 }");
+    });
+}
+
+#[gpui::test]
+async fn test_remote_code_lens_fetch_after_lsp_starts(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+
+    let capabilities = lsp::ServerCapabilities {
+        code_lens_provider: Some(lsp::CodeLensOptions {
+            resolve_provider: None,
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
+
+    cx.update_entity(&project, |project, _| {
+        project.languages().register_test_language(LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: capabilities.clone(),
+                ..FakeLspAdapter::default()
+            },
+        );
+    });
+
+    cx.run_until_parked();
+
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.languages().add(rust_lang());
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap()
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+    cx.run_until_parked();
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    // Prime the code lens cache while no LSP server exists on the host.
+    // This simulates the race where the editor fetches code lenses during
+    // initial paint before the language server has started.
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
+    let initial_actions = lsp_store
+        .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(&buffer, cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        initial_actions.map(|a| a.len()),
+        Some(0),
+        "Before any LSP starts, code lenses should be empty"
+    );
+
+    // Now register the LSP on the host. This triggers server startup and
+    // buffer registration, propagating capabilities to the client.
+    server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName("rust-analyzer".into()),
+            capabilities,
+            Some(Box::new(|fake_lsp| {
+                fake_lsp.set_request_handler::<lsp::request::CodeLensRequest, _, _>(
+                    |_, _| async move {
+                        Ok(Some(vec![lsp::CodeLens {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 0),
+                                lsp::Position::new(0, 9),
+                            ),
+                            command: Some(lsp::Command {
+                                title: "1 reference".to_string(),
+                                command: "lens_cmd".to_string(),
+                                arguments: None,
+                            }),
+                            data: None,
+                        }]))
+                    },
+                );
+            })),
+        );
+    });
+
+    // Trigger re-evaluation of language servers for the already-open buffer.
+    server_cx.update_entity(&headless, |headless, cx| {
+        headless.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.restart_all_language_servers(cx);
+        });
+    });
+    cx.run_until_parked();
+
+    // A subsequent fetch must bypass the stale (empty) cache now that a
+    // new server is available.
+    let actions = lsp_store
+        .update(cx, |lsp_store, cx| lsp_store.code_lens_actions(&buffer, cx))
+        .await
+        .unwrap();
+    let actions = actions.expect("Should have code lens actions after LSP starts");
+    assert_eq!(
+        actions.len(),
+        1,
+        "Should have fetched one code lens from the newly started LSP"
+    );
+    assert_eq!(
+        actions.values().next().unwrap().lsp_action.title(),
+        "1 reference",
+    );
+}
+
+#[gpui::test]
+async fn test_remote_code_lens_resolve(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
+        release_channel::init(semver::Version::new(0, 0, 0), cx);
+        editor::init(cx);
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.code_lens = Some(settings::CodeLens::Menu);
+            });
+        });
+    });
+
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        path!("/code"),
+        json!({
+            "project1": {
+                ".git": {},
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
+
+    let capabilities = lsp::ServerCapabilities {
+        code_lens_provider: Some(lsp::CodeLensOptions {
+            resolve_provider: Some(true),
+        }),
+        ..lsp::ServerCapabilities::default()
+    };
+
+    cx.update_entity(&project, |project, _| {
+        project.languages().register_test_language(LanguageConfig {
+            name: "Rust".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["rs".into()],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        project.languages().register_fake_lsp_adapter(
+            "Rust",
+            FakeLspAdapter {
+                name: "rust-analyzer",
+                capabilities: capabilities.clone(),
+                ..FakeLspAdapter::default()
+            },
+        );
+    });
+
+    server_cx.update(|cx| {
+        headless.read(cx).languages.register_fake_lsp_server(
+            LanguageServerName("rust-analyzer".into()),
+            capabilities,
+            Some(Box::new(|fake_lsp| {
+                fake_lsp.set_request_handler::<lsp::request::CodeLensRequest, _, _>(
+                    |_, _| async move {
+                        Ok(Some(vec![lsp::CodeLens {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 0),
+                                lsp::Position::new(0, 9),
+                            ),
+                            command: None,
+                            data: Some(serde_json::json!({ "id": "lens" })),
+                        }]))
+                    },
+                );
+                fake_lsp.set_request_handler::<lsp::request::CodeLensResolve, _, _>(
+                    |lens, _| async move {
+                        Ok(lsp::CodeLens {
+                            command: Some(lsp::Command {
+                                title: "1 reference".to_string(),
+                                command: "noop".to_string(),
+                                arguments: None,
+                            }),
+                            ..lens
+                        })
+                    },
+                );
+            })),
+        );
+    });
+
+    cx.run_until_parked();
+
+    let worktree_id = project
+        .update(cx, |project, cx| {
+            project.languages().add(rust_lang());
+            project.find_or_create_worktree(path!("/code/project1"), true, cx)
+        })
+        .await
+        .unwrap()
+        .0
+        .read_with(cx, |worktree, _| worktree.id());
+    cx.run_until_parked();
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_buffer_with_lsp((worktree_id, rel_path("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let cx = cx.add_empty_window();
+    let workspace = cx.new_window_entity(|window, cx| {
+        workspace::Workspace::test_new(project.clone(), window, cx)
+    });
+    let editor = cx.new_window_entity(|window, cx| {
+        Editor::for_buffer(buffer.clone(), Some(project.clone()), window, cx)
+    });
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_ranges([Point::new(0, 0)..Point::new(0, 0)]);
+        });
+    });
+    cx.executor()
+        .advance_clock(editor::CODE_ACTIONS_DEBOUNCE_TIMEOUT * 2);
+    cx.run_until_parked();
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.toggle_code_actions(
+            &ToggleCodeActions {
+                deployed_from: None,
+                quick_launch: false,
+            },
+            window,
+            cx,
+        );
+    });
+    cx.run_until_parked();
+
+    editor.update(cx, |editor, _| {
+        assert!(editor.context_menu_visible());
+        let menu = editor.context_menu().borrow();
+        let actions_menu = match menu.as_ref() {
+            Some(CodeContextMenu::CodeActions(m)) => m,
+            _ => panic!("Expected code actions menu to be visible"),
+        };
+        let item = actions_menu
+            .actions
+            .get(0)
+            .expect("Expected at least one item in menu");
+        assert_eq!(item.label(), "1 reference");
+    });
 }
 
 #[gpui::test]
@@ -1596,13 +2161,17 @@ async fn test_remote_root_repo_common_dir(cx: &mut TestAppContext, server_cx: &m
         .unwrap();
     cx.executor().run_until_parked();
 
-    let common_dir = worktree_main.read_with(cx, |worktree, _| {
-        worktree.snapshot().root_repo_common_dir().cloned()
+    let (common_dir, is_linked_worktree) = worktree_main.read_with(cx, |worktree, _| {
+        (
+            worktree.snapshot().root_repo_common_dir().cloned(),
+            worktree.snapshot().root_repo_is_linked_worktree(),
+        )
     });
     assert_eq!(
         common_dir.as_deref(),
         Some(Path::new("/code/main_repo/.git")),
     );
+    assert!(!is_linked_worktree);
 
     // Linked worktree: root_repo_common_dir should point to the main repo's .git.
     let (worktree_linked, _) = project
@@ -1613,12 +2182,32 @@ async fn test_remote_root_repo_common_dir(cx: &mut TestAppContext, server_cx: &m
         .unwrap();
     cx.executor().run_until_parked();
 
-    let common_dir = worktree_linked.read_with(cx, |worktree, _| {
-        worktree.snapshot().root_repo_common_dir().cloned()
+    let (common_dir, is_linked_worktree) = worktree_linked.read_with(cx, |worktree, _| {
+        (
+            worktree.snapshot().root_repo_common_dir().cloned(),
+            worktree.snapshot().root_repo_is_linked_worktree(),
+        )
     });
     assert_eq!(
         common_dir.as_deref(),
         Some(Path::new("/code/main_repo/.git")),
+    );
+    assert!(is_linked_worktree);
+
+    let main_worktree_paths = project.read_with(cx, |project, cx| {
+        project
+            .worktree_paths(cx)
+            .main_worktree_path_list()
+            .ordered_paths()
+            .map(|path| path.to_path_buf())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        main_worktree_paths,
+        vec![
+            PathBuf::from("/code/main_repo"),
+            PathBuf::from("/code/main_repo"),
+        ]
     );
 
     // No git repo: root_repo_common_dir should be None.
@@ -1630,10 +2219,14 @@ async fn test_remote_root_repo_common_dir(cx: &mut TestAppContext, server_cx: &m
         .unwrap();
     cx.executor().run_until_parked();
 
-    let common_dir = worktree_no_git.read_with(cx, |worktree, _| {
-        worktree.snapshot().root_repo_common_dir().cloned()
+    let (common_dir, is_linked_worktree) = worktree_no_git.read_with(cx, |worktree, _| {
+        (
+            worktree.snapshot().root_repo_common_dir().cloned(),
+            worktree.snapshot().root_repo_is_linked_worktree(),
+        )
     });
     assert_eq!(common_dir, None);
+    assert!(!is_linked_worktree);
 }
 
 #[gpui::test]
@@ -2473,8 +3066,8 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
     authorization
         .response
         .send(acp_thread::SelectedPermissionOutcome::new(
-            agent_client_protocol::schema::PermissionOptionId::new("allow"),
-            agent_client_protocol::schema::PermissionOptionKind::AllowOnce,
+            agent_client_protocol::schema::v1::PermissionOptionId::new("allow"),
+            agent_client_protocol::schema::v1::PermissionOptionKind::AllowOnce,
         ))
         .unwrap();
 
@@ -2523,8 +3116,8 @@ async fn test_adding_remote_skill(cx: &mut TestAppContext, server_cx: &mut TestA
     authorization
         .response
         .send(acp_thread::SelectedPermissionOutcome::new(
-            agent_client_protocol::schema::PermissionOptionId::new("allow"),
-            agent_client_protocol::schema::PermissionOptionKind::AllowOnce,
+            agent_client_protocol::schema::v1::PermissionOptionId::new("allow"),
+            agent_client_protocol::schema::v1::PermissionOptionKind::AllowOnce,
         ))
         .unwrap();
 

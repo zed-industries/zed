@@ -192,6 +192,28 @@ Define extensions which should be installed (`true`) or never installed (`false`
 }
 ```
 
+## Auto Update extensions
+
+- Description: Disable auto-updates for specific extensions.
+- Setting: `auto_update_extensions`
+- Default: `{}`
+
+**Options**
+
+By default, every installed extension is auto-updated when Zed starts.
+Add an extension here with `false` to pin it to its currently installed version.
+
+```json [settings]
+{
+  "auto_update_extensions": {
+    "html": false
+  }
+}
+```
+
+Selecting **Install Another Version…** from an extension's `⋯` menu on the Extensions
+page ({#action zed::Extensions}) does this automatically.
+
 ## Autosave
 
 - Description: When to automatically save edited buffers.
@@ -2303,7 +2325,8 @@ Example:
 {
   "git": {
     "inline_blame": {
-      "enabled": true
+      "enabled": true,
+      "location": "inline"
     }
   }
 }
@@ -2335,7 +2358,19 @@ Example:
 }
 ```
 
-3. Show a commit summary next to the commit date and author:
+3. Show git blame in the status bar at the bottom of the window:
+
+```json [settings]
+{
+  "git": {
+    "inline_blame": {
+      "location": "status_bar"
+    }
+  }
+}
+```
+
+4. Show a commit summary next to the commit date and author:
 
 ```json [settings]
 {
@@ -2347,7 +2382,7 @@ Example:
 }
 ```
 
-4. Use this as the minimum column at which to display inline blame information:
+5. Use this as the minimum column at which to display inline blame information:
 
 ```json [settings]
 {
@@ -2359,7 +2394,7 @@ Example:
 }
 ```
 
-5. Set the padding between the end of the line and the inline blame hint, in ems:
+6. Set the padding between the end of the line and the inline blame hint, in ems:
 
 ```json [settings]
 {
@@ -2993,7 +3028,7 @@ Configuration for various AI model providers including API URLs and authenticati
 
 - Description: Format for line indicator in the status bar
 - Setting: `line_indicator_format`
-- Default: `"short"`
+- Default: `"long"`
 
 **Options**
 
@@ -3353,7 +3388,7 @@ Examples:
 
 - Description: The direction that you want to split panes horizontally
 - Setting: `pane_split_direction_horizontal`
-- Default: `"up"`
+- Default: `"down"`
 
 **Options**
 
@@ -3377,7 +3412,7 @@ Examples:
 
 - Description: The direction that you want to split panes vertically
 - Setting: `pane_split_direction_vertical`
-- Default: `"left"`
+- Default: `"right"`
 
 **Options**
 
@@ -5307,7 +5342,7 @@ Run the {#action theme_selector::Toggle} action in the command palette to see a 
 
 ## Agent
 
-Visit [the Configuration page](../ai/configuration.md) under the AI section to learn more about all the agent-related settings.
+Visit [AI Quick Start](../ai/quick-start.md) under the AI section to learn more about AI setup.
 
 ## Collaboration Panel
 
@@ -5364,7 +5399,8 @@ See the [debugger page](../debugger.md) for more information about debugging sup
     "default_width": 360,
     "status_style": "icon",
     "fallback_branch_name": "main",
-    "sort_by_path": false,
+    "sort_by": "path",
+    "group_by": "status",
     "collapse_untracked_diff": false,
     "scrollbar": {
       "show": null
@@ -5381,7 +5417,8 @@ See the [debugger page](../debugger.md) for more information about debugging sup
 - `default_width`: Default width of the git panel
 - `status_style`: How to display git status. Can be `label_color` or `icon`
 - `fallback_branch_name`: What branch name to use if `init.defaultBranch` is not set
-- `sort_by_path`: Whether to sort entries in the panel by path or by status (the default)
+- `sort_by`: How to sort entries in the git panel. Can be `path` or `name`
+- `group_by`: How to group entries in the git panel. Can be `none` or `status`
 - `collapse_untracked_diff`: Whether to collapse untracked files in the diff panel
 - `scrollbar`: When to show the scrollbar in the git panel
 - `starts_open`: Whether the git panel should open on startup
