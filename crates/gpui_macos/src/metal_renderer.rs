@@ -87,7 +87,7 @@ impl InstanceBufferPool {
         // The draw functions align each offset up to a 256-byte boundary before
         // computing a pointer into the buffer, so the buffer size must itself be
         // a multiple of 256 for that pointer arithmetic to stay in bounds.
-        debug_assert!(self.buffer_size % 256 == 0);
+        debug_assert!(self.buffer_size.is_multiple_of(256));
         let buffer = self.buffers.pop().unwrap_or_else(|| {
             let options = if unified_memory {
                 MTLResourceOptions::StorageModeShared
