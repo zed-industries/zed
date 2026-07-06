@@ -2326,7 +2326,8 @@ Example:
 {
   "git": {
     "inline_blame": {
-      "enabled": true
+      "enabled": true,
+      "location": "inline"
     }
   }
 }
@@ -2358,7 +2359,19 @@ Example:
 }
 ```
 
-3. Show a commit summary next to the commit date and author:
+3. Show git blame in the status bar at the bottom of the window:
+
+```json [settings]
+{
+  "git": {
+    "inline_blame": {
+      "location": "status_bar"
+    }
+  }
+}
+```
+
+4. Show a commit summary next to the commit date and author:
 
 ```json [settings]
 {
@@ -2370,7 +2383,7 @@ Example:
 }
 ```
 
-4. Use this as the minimum column at which to display inline blame information:
+5. Use this as the minimum column at which to display inline blame information:
 
 ```json [settings]
 {
@@ -2382,7 +2395,7 @@ Example:
 }
 ```
 
-5. Set the padding between the end of the line and the inline blame hint, in ems:
+6. Set the padding between the end of the line and the inline blame hint, in ems:
 
 ```json [settings]
 {
