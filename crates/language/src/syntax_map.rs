@@ -101,6 +101,9 @@ pub struct SyntaxMapMatch<'a> {
 
 struct SyntaxMapCapturesLayer<'a> {
     depth: usize,
+    // Field order is load-bearing: `captures` borrows `_query_cursor` (see the
+    // SAFETY note at the `transmute` in `SyntaxMapCaptures::new`) and must be
+    // dropped first, so it has to be declared before `_query_cursor`.
     captures: QueryCaptures<'a, 'a, TextProvider<'a>, &'a [u8]>,
     next_capture: Option<QueryCapture<'a>>,
     grammar_index: usize,
@@ -113,6 +116,9 @@ struct SyntaxMapMatchesLayer<'a> {
     next_pattern_index: usize,
     next_captures: Vec<QueryCapture<'a>>,
     has_next: bool,
+    // Field order is load-bearing: `matches` borrows `_query_cursor` (see the
+    // SAFETY note at the `transmute` in `SyntaxMapMatches::new`) and must be
+    // dropped first, so it has to be declared before `_query_cursor`.
     matches: QueryMatches<'a, 'a, TextProvider<'a>, &'a [u8]>,
     query: &'a Query,
     grammar_index: usize,
@@ -1118,6 +1124,24 @@ impl<'a> SyntaxMapCaptures<'a> {
             let mut query_cursor = QueryCursorHandle::new();
 
             // TODO - add a Tree-sitter API to remove the need for this.
+            //
+            // SAFETY: We fabricate a `'static` mutable borrow of the cursor so
+            // that the resulting `QueryCaptures` can be stored alongside the
+            // cursor in the same struct. This relies on two invariants:
+            //
+            //  1. `QueryCaptures` does not actually retain this transmuted
+            //     reference: it stores a raw `*mut ffi::TSQueryCursor` copied
+            //     out of it (heap-stable, independent of where the handle
+            //     lives), so the fake `'static` lifetime never escapes.
+            //  2. In `SyntaxMapCapturesLayer` the `captures` field is declared
+            //     before `_query_cursor`, so the iterator is dropped before the
+            //     cursor is recycled into the pool by `QueryCursorHandle::drop`.
+            //     If that order flipped, the cursor would be reset and reused
+            //     while `captures` still pointed at it.
+            //
+            // Invariant (1) is not part of tree-sitter's public contract, so it
+            // must be re-verified whenever the `tree-sitter` dependency is
+            // bumped.
             let cursor = unsafe {
                 std::mem::transmute::<&mut tree_sitter::QueryCursor, &'static mut QueryCursor>(
                     query_cursor.deref_mut(),
@@ -1253,6 +1277,24 @@ impl<'a> SyntaxMapMatches<'a> {
             let mut query_cursor = QueryCursorHandle::new();
 
             // TODO - add a Tree-sitter API to remove the need for this.
+            //
+            // SAFETY: We fabricate a `'static` mutable borrow of the cursor so
+            // that the resulting `QueryMatches` can be stored alongside the
+            // cursor in the same struct. This relies on two invariants:
+            //
+            //  1. `QueryMatches` does not actually retain this transmuted
+            //     reference: it stores a raw `*mut ffi::TSQueryCursor` copied
+            //     out of it (heap-stable, independent of where the handle
+            //     lives), so the fake `'static` lifetime never escapes.
+            //  2. In `SyntaxMapMatchesLayer` the `matches` field is declared
+            //     before `_query_cursor`, so the iterator is dropped before the
+            //     cursor is recycled into the pool by `QueryCursorHandle::drop`.
+            //     If that order flipped, the cursor would be reset and reused
+            //     while `matches` still pointed at it.
+            //
+            // Invariant (1) is not part of tree-sitter's public contract, so it
+            // must be re-verified whenever the `tree-sitter` dependency is
+            // bumped.
             let cursor = unsafe {
                 std::mem::transmute::<&mut tree_sitter::QueryCursor, &'static mut QueryCursor>(
                     query_cursor.deref_mut(),
