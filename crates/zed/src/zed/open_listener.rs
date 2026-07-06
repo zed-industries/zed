@@ -816,13 +816,7 @@ async fn open_workspaces(
     cwd: Option<PathBuf>,
     cx: &mut AsyncApp,
 ) -> Result<()> {
-    if paths.is_empty()
-        && diff_paths.is_empty()
-        && !matches!(
-            open_behavior,
-            cli::OpenBehavior::AlwaysNew | cli::OpenBehavior::PreferNewWindow
-        )
-    {
+    if paths.is_empty() && diff_paths.is_empty() && open_behavior != cli::OpenBehavior::AlwaysNew {
         return restore_or_create_workspace(app_state, cx).await;
     }
 
