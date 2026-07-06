@@ -3294,29 +3294,39 @@ impl Workspace {
                     .count()
             })?;
 
-            #[cfg(target_os = "macos")]
-            let save_last_workspace = false;
+            let (remaining_workspaces, on_last_window_closed_is_quit) = cx.update(|_window, cx| {
+                let remaining = cx.windows()
+                    .iter()
+                    .filter_map(|window| window.downcast::<MultiWorkspace>())
+                    .filter_map(|multi_workspace| {
+                        multi_workspace
+                            .update(cx, |multi_workspace, _, cx| {
+                                multi_workspace.workspace().read(cx).removing
+                            })
+                            .ok()
+                    })
+                    .filter(|removing| !removing)
+                    .count();
 
-            // On Linux and Windows, closing the last window should restore the last workspace.
-            #[cfg(not(target_os = "macos"))]
-            let save_last_workspace = {
-                let remaining_workspaces = cx.update(|_window, cx| {
-                    cx.windows()
-                        .iter()
-                        .filter_map(|window| window.downcast::<MultiWorkspace>())
-                        .filter_map(|multi_workspace| {
-                            multi_workspace
-                                .update(cx, |multi_workspace, _, cx| {
-                                    multi_workspace.workspace().read(cx).removing
-                                })
-                                .ok()
-                        })
-                        .filter(|removing| !removing)
-                        .count()
-                })?;
+                let is_quit = {
+                    #[cfg(target_os = "macos")]
+                    {
+                        WorkspaceSettings::get_global(cx)
+                            .on_last_window_closed
+                            .is_quit_app()
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        true
+                    }
+                };
 
-                close_intent != CloseIntent::ReplaceWindow && remaining_workspaces == 0
-            };
+                (remaining, is_quit)
+            })?;
+
+            let save_last_workspace = close_intent != CloseIntent::ReplaceWindow
+                && remaining_workspaces == 0
+                && on_last_window_closed_is_quit;
 
             if let Some(active_call) = active_call
                 && workspace_count == 1
