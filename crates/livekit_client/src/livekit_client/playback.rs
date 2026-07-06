@@ -658,20 +658,28 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
     use image::{Frame, RgbaImage};
     use livekit::webrtc::prelude::VideoFormatType;
     use smallvec::SmallVec;
-    use std::alloc::{Layout, alloc};
 
     let width = buffer.width();
     let height = buffer.height();
     let stride = width * 4;
     let byte_len = (stride * height) as usize;
-    let argb_image = unsafe {
-        // Motivation for this unsafe code is to avoid initializing the frame data, since to_argb
-        // will write all bytes anyway.
-        let start_ptr = alloc(Layout::array::<u8>(byte_len).log_err()?);
-        if start_ptr.is_null() {
-            return None;
-        }
-        let argb_frame_slice = std::slice::from_raw_parts_mut(start_ptr, byte_len);
+
+    // A zero-size frame (for example a 0x0 remote frame) has nothing to render,
+    // and allocating a zero-size buffer below would be undefined behavior.
+    if byte_len == 0 {
+        return None;
+    }
+
+    // Motivation for this unsafe code is to avoid zero-initializing the frame
+    // data, since `to_argb` writes all bytes anyway. We reserve capacity and
+    // write straight into the uninitialized spare capacity rather than forming a
+    // `&mut [u8]` over uninitialized memory (which would itself be UB).
+    let mut argb_image = Vec::<u8>::with_capacity(byte_len);
+    unsafe {
+        let argb_frame_slice = std::slice::from_raw_parts_mut(
+            argb_image.spare_capacity_mut().as_mut_ptr().cast::<u8>(),
+            byte_len,
+        );
         buffer.to_argb(
             VideoFormatType::ARGB,
             argb_frame_slice,
@@ -679,8 +687,10 @@ fn video_frame_buffer_from_webrtc(buffer: Box<dyn VideoBuffer>) -> Option<Remote
             width as i32,
             height as i32,
         );
-        Vec::from_raw_parts(start_ptr, byte_len, byte_len)
-    };
+        // SAFETY: `to_argb` initialized the first `byte_len` bytes above, and
+        // `byte_len` does not exceed the reserved capacity.
+        argb_image.set_len(byte_len);
+    }
 
     // TODO: Unclear why providing argb_image to RgbaImage works properly.
     let image = RgbaImage::from_raw(width, height, argb_image)
