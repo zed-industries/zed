@@ -17,6 +17,12 @@ pub struct FetchHttpClient {
     user_agent: Option<http_client::http::header::HeaderValue>,
 }
 
+// When the `multithreaded` feature is enabled, safe code must not be able to
+// obtain a `FetchHttpClient` without going through the `unsafe` constructors,
+// whose contract is what makes the `AssertSend` wrapper in `send` sound. A safe
+// `Default` impl would be a hole in that contract, so it is only provided in
+// single-threaded builds.
+#[cfg(not(feature = "multithreaded"))]
 impl Default for FetchHttpClient {
     fn default() -> Self {
         Self { user_agent: None }
@@ -29,7 +35,7 @@ impl FetchHttpClient {
     ///
     /// The caller must ensure that the created `FetchHttpClient` is only used in a single thread environment.
     pub unsafe fn new() -> Self {
-        Self::default()
+        Self { user_agent: None }
     }
 
     /// # Safety
@@ -61,12 +67,27 @@ impl FetchHttpClient {
 
 /// Wraps a `!Send` future to satisfy the `Send` bound on `BoxFuture`.
 ///
-/// Safety: only valid in WASM contexts where the `FetchHttpClient` is
-/// confined to a single thread (guaranteed by the caller via unsafe
-/// constructors when `multithreaded` is enabled, or by the absence of
-/// threads when it is not).
+/// The wrapped future dereferences `JsValue`s (`web_sys::Request`,
+/// `js_sys::Promise`, etc.), which are per-thread JS heap indices and are
+/// `!Send` for good reason: touching one from a different `wasm_thread` worker
+/// than the one that created it corrupts the JS heap at the boundary.
+///
+/// This wrapper is therefore only sound when the future is guaranteed never to
+/// migrate across workers, i.e. when the owning `FetchHttpClient` is confined
+/// to a single thread. Under the default `multithreaded` feature that
+/// guarantee can only be established by the caller through the `unsafe`
+/// constructors ([`FetchHttpClient::new`] / [`FetchHttpClient::with_user_agent`]),
+/// whose contract requires exactly this confinement; there is deliberately no
+/// safe `Default`/constructor in that configuration. Without the feature there
+/// are no worker threads, so the confinement holds unconditionally.
 struct AssertSend<F>(F);
 
+// SAFETY: `AssertSend` is only ever constructed inside `FetchHttpClient::send`.
+// A `FetchHttpClient` can only exist under the `multithreaded` feature via the
+// `unsafe` constructors, whose safety contract requires the client (and hence
+// every future it produces) to stay confined to a single thread. Given that
+// confinement the wrapped `JsValue`s are never touched from another worker, so
+// asserting `Send` cannot cause cross-worker access.
 unsafe impl<F> Send for AssertSend<F> {}
 
 impl<F: Future> Future for AssertSend<F> {
