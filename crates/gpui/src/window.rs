@@ -312,19 +312,18 @@ pub(crate) fn with_element_arena<R>(f: impl FnOnce(&mut Arena) -> R) -> R {
 /// `ArenaClearNeeded::clear` is deferred rather than freeing memory the outer
 /// draw still references (see `Arena::clear`).
 ///
-/// The scope must be ended by calling [`ElementArenaScope::exit`] with the
-/// same arena that was entered. It can't happen in `Drop` because `Drop` has
-/// no access to the `App` that owns the arena, and holding a reference here
-/// would either borrow the `App` for the whole draw or require dereferencing
-/// a raw pointer. If the guard is instead dropped — normally only possible
-/// when a panic unwinds a draw — the thread-local is still restored, but the
-/// arena's scope depth stays elevated and subsequent clears are deferred:
-/// that leaks memory rather than freeing memory that may still be referenced.
-/// (A mid-draw panic aborts the process in practice, but a harness that
-/// catches panics around draws would disable arena clearing from then on.)
+/// Call [`ElementArenaScope::exit`] with the same arena that was entered to
+/// obtain the [`ArenaClearNeeded`] token the draw now owes; requiring `exit`
+/// makes it impossible to request a clear before the scope has ended. The
+/// scope's teardown — restoring the thread-local and balancing `begin_scope`
+/// with `end_scope` — happens in `Drop`, so the arena's scope depth stays
+/// balanced on every path, including when a panic unwinds a draw before `exit`
+/// is reached. (If teardown lived only in `exit`, such a panic would leave the
+/// scope depth permanently elevated and defer every future clear, leaking
+/// memory unboundedly.)
 pub(crate) struct ElementArenaScope {
-    /// Identity of the entered arena. Only ever compared against another
-    /// pointer in `exit`; never dereferenced.
+    /// The entered arena: compared against the argument in `exit`, and
+    /// dereferenced in `Drop` to end its scope (see the SAFETY note there).
     entered: *const RefCell<Arena>,
     previous: Option<*const RefCell<Arena>>,
     exited: bool,
@@ -360,27 +359,35 @@ impl ElementArenaScope {
             "ElementArenaScope::exit called with a different arena than was entered"
         );
         self.exited = true;
-        CURRENT_ELEMENT_ARENA.with(|current| {
-            current.set(self.previous);
-        });
-        arena.borrow_mut().end_scope();
+        // Teardown (restoring the thread-local and ending the arena's
+        // clear-deferral scope) runs in `Drop`, which fires both here — `self`
+        // is dropped as `exit` returns, before the token reaches the caller —
+        // and when a panic unwinds the draw before `exit` is reached.
         ArenaClearNeeded::new(arena)
     }
 }
 
 impl Drop for ElementArenaScope {
     fn drop(&mut self) {
-        if !self.exited {
-            CURRENT_ELEMENT_ARENA.with(|current| {
-                current.set(self.previous);
-            });
-            if !std::thread::panicking() {
-                debug_assert!(false, "ElementArenaScope dropped without calling exit()");
-                log::error!(
-                    "ElementArenaScope dropped without calling exit(); \
-                     element arena clears will be deferred indefinitely"
-                );
-            }
+        // Teardown lives here (rather than in `exit`) so it runs exactly once on
+        // every path: `exit` consumes and drops the guard on the normal path,
+        // and unwinding drops it on the panic path. Balancing `begin_scope` here
+        // keeps the arena's scope depth correct even when a draw panics; if this
+        // only happened in `exit`, a panic between `enter` and `exit` would leave
+        // the depth elevated and defer every future clear.
+        CURRENT_ELEMENT_ARENA.with(|current| {
+            current.set(self.previous);
+        });
+        // SAFETY: `entered` came from a `&RefCell<Arena>` in `enter`, and the
+        // arena (owned by the `App` being drawn) outlives this guard on both the
+        // normal and unwinding paths, since the guard is a local of the draw.
+        unsafe { &*self.entered }.borrow_mut().end_scope();
+        if !self.exited && !std::thread::panicking() {
+            debug_assert!(false, "ElementArenaScope dropped without calling exit()");
+            log::error!(
+                "ElementArenaScope dropped without calling exit(); \
+                 the arena clear for this draw was never requested"
+            );
         }
     }
 }
@@ -2830,8 +2837,8 @@ impl Window {
             });
         }
 
-        // End the arena scope explicitly: `ElementArenaScope::drop` can't do it
-        // because it has no access to `cx` (see its docs).
+        // Exit the scope to obtain the arena-clear token this draw owes; the
+        // scope's teardown itself happens in `ElementArenaScope::drop`.
         arena_scope.exit(&cx.element_arena)
     }
 
