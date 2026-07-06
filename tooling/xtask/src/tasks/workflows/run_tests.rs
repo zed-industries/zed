@@ -38,12 +38,17 @@ pub(crate) fn run_tests() -> Workflow {
     );
     let should_check_licences =
         PathCondition::new("run_licenses", r"^(Cargo.lock|script/.*licenses)");
+    // `tooling/lints` is a separate workspace (its own `[workspace]` and pinned
+    // nightly toolchain) that isn't part of the root workspace, so its dylint UI
+    // tests never run as part of the main suite. Run them when it changes.
+    let should_run_lint_tests = PathCondition::new("run_lint_tests", r"^tooling/lints/");
 
     let orchestrate = orchestrate(&[
         &should_check_scripts,
         &should_check_docs,
         &should_check_licences,
         &should_run_tests,
+        &should_run_lint_tests,
     ]);
 
     let mut jobs = vec![
@@ -76,6 +81,9 @@ pub(crate) fn run_tests() -> Workflow {
             .and_not_in_merge_queue()
             .then(miri_scheduler()),
         should_run_tests.and_not_in_merge_queue().then(doctests()),
+        should_run_lint_tests
+            .and_not_in_merge_queue()
+            .then(lints_tests()),
         should_run_tests
             .and_not_in_merge_queue()
             .then(check_workspace_binaries()),
@@ -222,11 +230,15 @@ fn orchestrate_impl(rules: &[&PathCondition], target: OrchestrateTarget) -> Name
           FILE_CHANGED_PKGS=""
           for dir in $CHANGED_DIRS; do
             pkg=$(echo "$DIR_TO_PKG" | grep "^${dir}=" | cut -d= -f2 | head -1 || true)
+            # Only include directories that map to a real root-workspace package.
+            # Some directories (e.g. tooling/lints) are separate workspaces with no
+            # root-workspace package; fabricating a package name from the raw
+            # directory here would produce an invalid nextest filterset such as
+            # "rdeps(lints)" and fail the run with "operator didn't match any
+            # packages". Unmapped directories fall through to the "no package
+            # changes detected" path below, which runs the full suite.
             if [ -n "$pkg" ]; then
               FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$pkg")
-            else
-              # Fall back to directory name if no mapping found
-              FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$dir")
             fi
           done
           FILE_CHANGED_PKGS=$(echo "$FILE_CHANGED_PKGS" | grep -v '^$' | sort -u || true)
@@ -764,6 +776,45 @@ fn doctests() -> NamedJob {
             .add_step(steps::show_sccache_stats(Platform::Linux))
             .add_step(steps::cleanup_cargo_config(Platform::Linux)),
     ))
+}
+
+/// Runs the dylint UI tests for the `tooling/lints` workspace. That workspace
+/// is intentionally kept out of the root workspace and pins its own nightly
+/// toolchain (see `tooling/lints/rust-toolchain.toml`), so its tests are never
+/// exercised by the main suite. They are plain `cargo test` invocations that
+/// build the lint library and run the UI fixtures via `dylint_testing`.
+fn lints_tests() -> NamedJob {
+    // Path to the separate dylint workspace, relative to the repo root.
+    const LINTS_DIR: &str = "tooling/lints";
+
+    fn install_dylint() -> Step<Run> {
+        // `dylint-link` is used as the linker for the lint library (see
+        // `tooling/lints/.cargo/config.toml`) and is required to build the
+        // tests; `cargo-dylint` is pinned to the same 6.x line as the
+        // `dylint_linting`/`dylint_testing` crates the library depends on.
+        named::bash(r#"cargo install cargo-dylint dylint-link --version "^6.0""#)
+    }
+
+    fn install_lints_toolchain() -> Step<Run> {
+        // With no toolchain argument, `rustup` installs the toolchain and
+        // components declared in `rust-toolchain.toml` of the current directory.
+        named::bash("rustup toolchain install").working_directory(LINTS_DIR)
+    }
+
+    fn run_lints_tests() -> Step<Run> {
+        named::bash("cargo test").working_directory(LINTS_DIR)
+    }
+
+    named::job(
+        release_job(&[])
+            .runs_on(runners::LINUX_DEFAULT)
+            .add_step(steps::harden_runner())
+            .add_step(steps::checkout_repo())
+            .add_step(steps::cache_rust_dependencies_namespace())
+            .add_step(install_dylint())
+            .add_step(install_lints_toolchain())
+            .add_step(run_lints_tests()),
+    )
 }
 
 fn check_licenses() -> NamedJob {

@@ -76,11 +76,15 @@ jobs:
           FILE_CHANGED_PKGS=""
           for dir in $CHANGED_DIRS; do
             pkg=$(echo "$DIR_TO_PKG" | grep "^${dir}=" | cut -d= -f2 | head -1 || true)
+            # Only include directories that map to a real root-workspace package.
+            # Some directories (e.g. tooling/lints) are separate workspaces with no
+            # root-workspace package; fabricating a package name from the raw
+            # directory here would produce an invalid nextest filterset such as
+            # "rdeps(lints)" and fail the run with "operator didn't match any
+            # packages". Unmapped directories fall through to the "no package
+            # changes detected" path below, which runs the full suite.
             if [ -n "$pkg" ]; then
               FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$pkg")
-            else
-              # Fall back to directory name if no mapping found
-              FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$dir")
             fi
           done
           FILE_CHANGED_PKGS=$(echo "$FILE_CHANGED_PKGS" | grep -v '^$' | sort -u || true)
@@ -111,6 +115,7 @@ jobs:
         check_pattern "run_docs" '^(docs/|crates/.*\.rs)' -qP
         check_pattern "run_licenses" '^(Cargo.lock|script/.*licenses)' -qP
         check_pattern "run_tests" '^(docs/|script/update_top_ranking_issues/|\.github/(ISSUE_TEMPLATE|workflows/(?!run_tests))|extensions/)' -qvP
+        check_pattern "run_lint_tests" '^tooling/lints/' -qP
         # Detect changed extension directories (excluding extensions/workflows)
         CHANGED_EXTENSIONS=$(echo "$CHANGED_FILES" | grep -oP '^extensions/[^/]+(?=/)' | sort -u | grep -v '^extensions/workflows$' || true)
         # Filter out deleted extensions
@@ -133,6 +138,7 @@ jobs:
       run_docs: ${{ steps.filter.outputs.run_docs }}
       run_licenses: ${{ steps.filter.outputs.run_licenses }}
       run_tests: ${{ steps.filter.outputs.run_tests }}
+      run_lint_tests: ${{ steps.filter.outputs.run_lint_tests }}
       changed_extensions: ${{ steps.filter.outputs.changed_extensions }}
   check_style:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -549,6 +555,34 @@ jobs:
       run: |
         rm -rf ./../.cargo
     timeout-minutes: 60
+  lints_tests:
+    needs:
+    - orchestrate
+    if: needs.orchestrate.outputs.run_lint_tests == 'true' && github.event_name != 'merge_group'
+    runs-on: namespace-profile-16x32-ubuntu-2204
+    steps:
+    - name: steps::harden_runner
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+      with:
+        egress-policy: audit
+    - name: steps::checkout_repo
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      with:
+        clean: false
+    - name: steps::cache_rust_dependencies_namespace
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
+      with:
+        cache: rust
+        path: ~/.rustup
+    - name: run_tests::lints_tests::install_dylint
+      run: cargo install cargo-dylint dylint-link --version "^6.0"
+    - name: run_tests::lints_tests::install_lints_toolchain
+      run: rustup toolchain install
+      working-directory: tooling/lints
+    - name: run_tests::lints_tests::run_lints_tests
+      run: cargo test
+      working-directory: tooling/lints
+    timeout-minutes: 60
   check_workspace_binaries:
     needs:
     - orchestrate
@@ -892,6 +926,7 @@ jobs:
     - run_tests_mac
     - miri_scheduler
     - doctests
+    - lints_tests
     - check_workspace_binaries
     - build_visual_tests_binary
     - check_wasm
@@ -924,6 +959,7 @@ jobs:
         check_result "run_tests_mac" "$RESULT_RUN_TESTS_MAC"
         check_result "miri_scheduler" "$RESULT_MIRI_SCHEDULER"
         check_result "doctests" "$RESULT_DOCTESTS"
+        check_result "lints_tests" "$RESULT_LINTS_TESTS"
         check_result "check_workspace_binaries" "$RESULT_CHECK_WORKSPACE_BINARIES"
         check_result "build_visual_tests_binary" "$RESULT_BUILD_VISUAL_TESTS_BINARY"
         check_result "check_wasm" "$RESULT_CHECK_WASM"
@@ -946,6 +982,7 @@ jobs:
         RESULT_RUN_TESTS_MAC: ${{ needs.run_tests_mac.result }}
         RESULT_MIRI_SCHEDULER: ${{ needs.miri_scheduler.result }}
         RESULT_DOCTESTS: ${{ needs.doctests.result }}
+        RESULT_LINTS_TESTS: ${{ needs.lints_tests.result }}
         RESULT_CHECK_WORKSPACE_BINARIES: ${{ needs.check_workspace_binaries.result }}
         RESULT_BUILD_VISUAL_TESTS_BINARY: ${{ needs.build_visual_tests_binary.result }}
         RESULT_CHECK_WASM: ${{ needs.check_wasm.result }}
