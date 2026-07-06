@@ -7,7 +7,9 @@ use cocoa::{
 };
 use core_foundation::base::CFRelease;
 use core_foundation::uuid::{CFUUIDGetUUIDBytes, CFUUIDRef};
-use core_graphics::display::{CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList};
+use core_graphics::display::{
+    CGDirectDisplayID, CGDisplayBounds, CGGetActiveDisplayList, CGMainDisplayID,
+};
 use gpui::{Bounds, DisplayId, Pixels, PlatformDisplay, point, px, size};
 use objc::{msg_send, sel, sel_impl};
 use uuid::Uuid;
@@ -35,6 +37,12 @@ impl MacDisplay {
         // https://chromium.googlesource.com/chromium/src/+/66.0.3359.158/ui/display/mac/screen_mac.mm#56
         unsafe {
             let screens = NSScreen::screens(nil);
+            // On a headless machine `NSScreen.screens` is empty; indexing it
+            // would raise an NSRangeException that unwinds through Rust. Fall
+            // back to the main display id in that case.
+            if NSArray::count(screens) == 0 {
+                return Self(CGMainDisplayID());
+            }
             let screen = cocoa::foundation::NSArray::objectAtIndex(screens, 0);
             let device_description = NSScreen::deviceDescription(screen);
             let screen_number_key: id = ns_string("NSScreenNumber");
