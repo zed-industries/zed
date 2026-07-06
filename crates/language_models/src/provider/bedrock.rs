@@ -5,8 +5,14 @@ use anyhow::{Context as _, Result, anyhow};
 use async_lock::OnceCell;
 use aws_config::stalled_stream_protection::StalledStreamProtectionConfig;
 use aws_config::{BehaviorVersion, Region};
+use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};
 use aws_credential_types::{Credentials, Token};
 use aws_http_client::AwsHttpClient;
+use aws_sigv4::http_request::{
+    SignableBody, SignableRequest, SignatureLocation, SigningSettings, sign,
+};
+use aws_sigv4::sign::v4;
+use base64::Engine as _;
 use bedrock::BedrockSystemContentBlock;
 use bedrock::bedrock_client::Client as BedrockClient;
 use bedrock::bedrock_client::config::timeout::TimeoutConfig;
@@ -20,7 +26,7 @@ use bedrock::{
     BedrockStreamingResponse, BedrockThinkingBlock, BedrockThinkingTextBlock, BedrockTool,
     BedrockToolChoice, BedrockToolConfig, BedrockToolInputSchema, BedrockToolResultBlock,
     BedrockToolResultContentBlock, BedrockToolResultStatus, BedrockToolSpec, BedrockToolUseBlock,
-    Model, value_to_aws_document,
+    ConverseModel, MantleModel, MantleProtocol, value_to_aws_document,
 };
 use collections::{BTreeMap, HashMap};
 use credentials_provider::CredentialsProvider;
@@ -32,25 +38,40 @@ use gpui_tokio::Tokio;
 use http_client::HttpClient;
 use language_model::{
     AuthenticateError, EnvVar, IconOrSvg, InlineDescription, LanguageModel,
-    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
-    LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
-    LanguageModelProviderState, LanguageModelRequest, LanguageModelToolChoice,
-    LanguageModelToolResultContent, LanguageModelToolUse, MessageContent, ProviderSettingsView,
-    RateLimiter, Role, SubPageProviderSettings, TokenUsage, env_var,
+    LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
+    LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
+    LanguageModelToolChoice, LanguageModelToolResultContent, LanguageModelToolSchemaFormat,
+    LanguageModelToolUse, MessageContent, ProviderSettingsView, RateLimiter, Role,
+    SubPageProviderSettings, TokenUsage, env_var,
+};
+use open_ai::responses::{
+    Request as OpenAiResponseRequest, stream_response as stream_openai_response,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use settings::{BedrockAvailableModel as AvailableModel, Settings, SettingsStore};
+use settings::{
+    BedrockAvailableModel as AvailableModel, BedrockMantleAvailableModel as MantleAvailableModel,
+    Settings, SettingsStore,
+};
 use std::sync::LazyLock;
+use std::time::{Duration, SystemTime};
 use strum::{EnumIter, IntoEnumIterator, IntoStaticStr};
 use ui::{ButtonLink, ConfiguredApiCard, Divider, List, ListBulletItem, prelude::*};
 use ui_input::InputField;
 use util::ResultExt;
 
 use crate::AllLanguageModelSettings;
+use crate::provider::open_ai::{
+    ChatCompletionMaxTokensParameter, OpenAiEventMapper, OpenAiResponseEventMapper, into_open_ai,
+    into_open_ai_response,
+};
 use http_client::CustomHeaders;
 use language_model::util::{fix_streamed_json, parse_tool_arguments};
+use open_ai::{
+    ReasoningEffort, ResponseStreamEvent, stream_completion as stream_openai_completion,
+};
 
 actions!(bedrock, [Tab, TabPrev]);
 
@@ -116,6 +137,7 @@ impl BedrockCredentials {
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct AmazonBedrockSettings {
     pub available_models: Vec<AvailableModel>,
+    pub mantle_available_models: Vec<MantleAvailableModel>,
     pub custom_headers: CustomHeaders,
     pub region: Option<String>,
     pub endpoint: Option<String>,
@@ -148,6 +170,13 @@ impl From<settings::BedrockAuthMethodContent> for BedrockAuthMethod {
             settings::BedrockAuthMethodContent::NamedProfile => BedrockAuthMethod::NamedProfile,
             settings::BedrockAuthMethodContent::ApiKey => BedrockAuthMethod::ApiKey,
         }
+    }
+}
+
+fn mantle_protocol_from_settings(value: settings::BedrockMantleProtocolContent) -> MantleProtocol {
+    match value {
+        settings::BedrockMantleProtocolContent::ChatCompletions => MantleProtocol::ChatCompletions,
+        settings::BedrockMantleProtocolContent::Responses => MantleProtocol::Responses,
     }
 }
 
@@ -199,6 +228,94 @@ static ZED_AWS_PROFILE_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_PROFILE");
 static ZED_BEDROCK_REGION_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_REGION");
 static ZED_AWS_ENDPOINT_VAR: LazyLock<EnvVar> = env_var!("ZED_AWS_ENDPOINT");
 static ZED_BEDROCK_BEARER_TOKEN_VAR: LazyLock<EnvVar> = env_var!("ZED_BEDROCK_BEARER_TOKEN");
+
+/// AWS Regions where the `bedrock-mantle` endpoint is available.
+/// See <https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html#regions>.
+const MANTLE_SUPPORTED_REGIONS: &[&str] = &[
+    "us-east-2",
+    "us-east-1",
+    "us-west-2",
+    "ap-southeast-3",
+    "ap-south-1",
+    "ap-southeast-2",
+    "ap-northeast-1",
+    "eu-central-1",
+    "eu-west-1",
+    "eu-west-2",
+    "eu-south-1",
+    "eu-north-1",
+    "sa-east-1",
+    "us-gov-west-1",
+];
+
+fn mantle_endpoint_url(region: &str, model: &MantleModel) -> String {
+    format!(
+        "https://bedrock-mantle.{region}.api.aws/{}",
+        model.path_prefix()
+    )
+}
+
+/// Derives a short-term Bedrock API key by locally SigV4-presigning a
+/// `CallWithBearerToken` request (same approach as AWS's
+/// `aws-bedrock-token-generator` libraries). No network round trip is
+/// needed, so there's no need to cache the result.
+fn sign_bedrock_bearer_token(credentials: &Credentials, region: &str) -> Result<String> {
+    sign_bedrock_bearer_token_at(credentials, region, SystemTime::now())
+}
+
+fn sign_bedrock_bearer_token_at(
+    credentials: &Credentials,
+    region: &str,
+    time: SystemTime,
+) -> Result<String> {
+    const BEDROCK_BEARER_TOKEN_URL: &str =
+        "https://bedrock.amazonaws.com/?Action=CallWithBearerToken";
+    const BEDROCK_BEARER_TOKEN_DURATION: Duration = Duration::from_secs(12 * 60 * 60);
+
+    let identity = credentials.clone().into();
+
+    let mut signing_settings = SigningSettings::default();
+    signing_settings.signature_location = SignatureLocation::QueryParams;
+    signing_settings.expires_in = Some(BEDROCK_BEARER_TOKEN_DURATION);
+
+    let signing_params = v4::SigningParams::builder()
+        .identity(&identity)
+        .region(region)
+        .name("bedrock")
+        .time(time)
+        .settings(signing_settings)
+        .build()?
+        .into();
+
+    let signable_request = SignableRequest::new(
+        "POST",
+        BEDROCK_BEARER_TOKEN_URL,
+        std::iter::once(("host", "bedrock.amazonaws.com")),
+        SignableBody::Bytes(&[]),
+    )?;
+
+    let (instructions, _signature) = sign(signable_request, &signing_params)?.into_parts();
+
+    // `instructions.params()` returns raw (unencoded) values; percent-encode
+    // them the same way `aws_smithy_http::query_writer::QueryWriter` does,
+    // since that's the representation used when computing the signature.
+    let mut presigned_url = BEDROCK_BEARER_TOKEN_URL.to_string();
+    for (name, value) in instructions.params() {
+        presigned_url.push('&');
+        presigned_url.push_str(&aws_smithy_http::query::fmt_string(name));
+        presigned_url.push('=');
+        presigned_url.push_str(&aws_smithy_http::query::fmt_string(value.as_ref()));
+    }
+
+    let presigned_url = presigned_url
+        .strip_prefix("https://")
+        .unwrap_or(&presigned_url);
+
+    Ok(format!(
+        "bedrock-api-key-{}",
+        base64::engine::general_purpose::STANDARD.encode(format!("{presigned_url}&Version=1"))
+    ))
+}
 
 pub struct State {
     /// The resolved authentication method. Settings take priority over UX credentials.
@@ -407,6 +524,7 @@ impl State {
 
 pub struct BedrockLanguageModelProvider {
     http_client: AwsHttpClient,
+    plain_http_client: Arc<dyn HttpClient>,
     handle: tokio::runtime::Handle,
     state: Entity<State>,
 }
@@ -428,13 +546,14 @@ impl BedrockLanguageModelProvider {
         });
 
         Self {
-            http_client: AwsHttpClient::new(http_client),
+            http_client: AwsHttpClient::new(http_client.clone()),
+            plain_http_client: http_client,
             handle: Tokio::handle(cx),
             state,
         }
     }
 
-    fn create_language_model(&self, model: bedrock::Model) -> Arc<dyn LanguageModel> {
+    fn create_language_model(&self, model: bedrock::ConverseModel) -> Arc<dyn LanguageModel> {
         Arc::new(BedrockModel {
             id: LanguageModelId::from(model.id().to_string()),
             model,
@@ -442,6 +561,17 @@ impl BedrockLanguageModelProvider {
             handle: self.handle.clone(),
             state: self.state.clone(),
             client: OnceCell::new(),
+            request_limiter: RateLimiter::new(4),
+        })
+    }
+
+    fn create_mantle_language_model(&self, model: bedrock::MantleModel) -> Arc<dyn LanguageModel> {
+        Arc::new(BedrockMantleModel {
+            id: LanguageModelId::from(model.id().to_string()),
+            model,
+            http_client: self.plain_http_client.clone(),
+            state: self.state.clone(),
+            credentials_provider: Arc::new(OnceCell::new()),
             request_limiter: RateLimiter::new(4),
         })
     }
@@ -461,19 +591,19 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
     }
 
     fn default_model(&self, _cx: &App) -> Option<Arc<dyn LanguageModel>> {
-        Some(self.create_language_model(bedrock::Model::default()))
+        Some(self.create_language_model(bedrock::ConverseModel::default()))
     }
 
     fn default_fast_model(&self, cx: &App) -> Option<Arc<dyn LanguageModel>> {
         let region = self.state.read(cx).get_region();
-        Some(self.create_language_model(bedrock::Model::default_fast(region.as_str())))
+        Some(self.create_language_model(bedrock::ConverseModel::default_fast(region.as_str())))
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
         let mut models = BTreeMap::default();
 
-        for model in bedrock::Model::iter() {
-            if !matches!(model, bedrock::Model::Custom { .. }) {
+        for model in bedrock::ConverseModel::iter() {
+            if !matches!(model, bedrock::ConverseModel::Custom { .. }) {
                 models.insert(model.id().to_string(), model);
             }
         }
@@ -486,7 +616,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         {
             models.insert(
                 model.name.clone(),
-                bedrock::Model::Custom {
+                bedrock::ConverseModel::Custom {
                     name: model.name.clone(),
                     display_name: model.display_name.clone(),
                     max_tokens: model.max_tokens,
@@ -502,10 +632,46 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
             );
         }
 
-        models
+        let mut models: Vec<Arc<dyn LanguageModel>> = models
             .into_values()
             .map(|model| self.create_language_model(model))
-            .collect()
+            .collect();
+
+        let mut mantle_models = BTreeMap::default();
+
+        for model in bedrock::MantleModel::iter() {
+            if !matches!(model, bedrock::MantleModel::Custom { .. }) {
+                mantle_models.insert(model.id().to_string(), model);
+            }
+        }
+
+        // Override with available Mantle models from settings
+        for model in AllLanguageModelSettings::get_global(cx)
+            .bedrock
+            .mantle_available_models
+            .iter()
+        {
+            mantle_models.insert(
+                model.name.clone(),
+                bedrock::MantleModel::Custom {
+                    name: model.name.clone(),
+                    display_name: model.display_name.clone(),
+                    max_tokens: model.max_tokens,
+                    max_output_tokens: model.max_output_tokens,
+                    protocol: mantle_protocol_from_settings(model.protocol),
+                    supports_tools: model.supports_tools.unwrap_or(false),
+                    supports_images: model.supports_images.unwrap_or(false),
+                },
+            );
+        }
+
+        models.extend(
+            mantle_models
+                .into_values()
+                .map(|model| self.create_mantle_language_model(model)),
+        );
+
+        models
     }
 
     fn is_authenticated(&self, cx: &App) -> bool {
@@ -524,7 +690,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                     .into()
             })
             .description(InlineDescription::Text(
-                "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials.".into(),
+                "To use Zed's agent with Bedrock, set a custom authentication strategy in your settings or use static credentials. Mantle-only models (e.g. GPT-5.5, GPT-5.4, Grok 4.3) additionally require the `bedrock-mantle:CallWithBearerToken` IAM permission.".into(),
             )),
         ))
     }
@@ -540,7 +706,7 @@ impl LanguageModelProviderState for BedrockLanguageModelProvider {
 
 struct BedrockModel {
     id: LanguageModelId,
-    model: Model,
+    model: ConverseModel,
     http_client: AwsHttpClient,
     handle: tokio::runtime::Handle,
     client: OnceCell<BedrockClient>,
@@ -840,6 +1006,406 @@ impl LanguageModel for BedrockModel {
     }
 }
 
+/// The default reasoning effort exposed for a Mantle-only model, if any.
+/// AWS documents Grok 4.3's default as "low"; GPT-5.5/5.4 aren't documented,
+/// so mirror Zed's native OpenAI models of the same name, which both
+/// resolve to "medium" (see `openai::Model::reasoning_effort`).
+fn mantle_default_reasoning_effort(model: &MantleModel) -> Option<ReasoningEffort> {
+    match model {
+        MantleModel::Gpt5_5 | MantleModel::Gpt5_4 => Some(ReasoningEffort::Medium),
+        MantleModel::Custom { .. } => None,
+        MantleModel::Grok4_3 => Some(ReasoningEffort::Low),
+    }
+}
+
+/// Whether the model accepts an explicit "none" effort level, as opposed to
+/// reasoning being unconfigurable.
+fn mantle_supports_none_reasoning_effort(model: &MantleModel) -> bool {
+    matches!(model, MantleModel::Grok4_3)
+}
+
+/// Clears `thinking_effort` if it isn't one of the levels Mantle supports
+/// (`low`/`medium`/`high`, plus `none` where allowed). It can be stale if
+/// carried over from a previously selected model with a wider range (e.g.
+/// `xhigh`), and `into_open_ai_response` would otherwise forward it as-is.
+fn normalize_mantle_thinking_effort(request: &mut LanguageModelRequest, model: &MantleModel) {
+    let selected_effort_is_supported = request
+        .thinking_effort
+        .as_deref()
+        .and_then(|effort| effort.parse::<ReasoningEffort>().ok())
+        .is_some_and(|effort| {
+            matches!(
+                effort,
+                ReasoningEffort::Low | ReasoningEffort::Medium | ReasoningEffort::High
+            ) || (effort == ReasoningEffort::None && mantle_supports_none_reasoning_effort(model))
+        });
+
+    if !selected_effort_is_supported {
+        request.thinking_effort = None;
+    }
+}
+
+fn mantle_supported_effort_levels(model: &MantleModel) -> Vec<LanguageModelEffortLevel> {
+    let Some(default_effort) = mantle_default_reasoning_effort(model) else {
+        return Vec::new();
+    };
+
+    // AWS only documents low/medium/high for these models; "none" for Grok
+    // is handled separately via `mantle_supports_none_reasoning_effort`.
+    ReasoningEffort::OPENAI_COMPATIBLE_SELECTABLE
+        .into_iter()
+        .filter(|effort| {
+            matches!(
+                effort,
+                ReasoningEffort::Low | ReasoningEffort::Medium | ReasoningEffort::High
+            )
+        })
+        .map(|effort| LanguageModelEffortLevel {
+            name: effort.label().into(),
+            value: effort.value().into(),
+            is_default: effort == default_effort,
+        })
+        .collect()
+}
+
+/// Special-cases the 403 from having `bedrock:CallWithBearerToken` but not
+/// the separate `bedrock-mantle:CallWithBearerToken` permission Mantle
+/// models require — the most common misconfiguration, and one the generic
+/// HTTP error doesn't explain.
+fn map_mantle_error(
+    model: &MantleModel,
+    error: open_ai::RequestError,
+) -> LanguageModelCompletionError {
+    if let open_ai::RequestError::HttpResponseError { status_code, .. } = &error
+        && *status_code == http_client::http::StatusCode::FORBIDDEN
+    {
+        return LanguageModelCompletionError::PermissionError {
+            provider: PROVIDER_NAME,
+            message: format!(
+                "Bedrock Mantle denied this request for {}. Mantle-only models require the \
+                 `bedrock-mantle:CallWithBearerToken` IAM permission (for example via the \
+                 `AmazonBedrockMantleInferenceAccess` managed policy) in addition to whatever \
+                 permissions your existing Bedrock credentials already have.",
+                model.display_name()
+            ),
+        };
+    }
+    error.into()
+}
+
+/// Resolves an AWS credentials provider for profile/SSO/automatic auth.
+/// Cached in `cell` since building it may read config files from disk;
+/// credentials themselves are still re-resolved on every call. Async so this
+/// never blocks the foreground thread (unlike `BedrockModel::get_or_init_client`).
+async fn resolve_mantle_credentials_provider(
+    cell: &OnceCell<SharedCredentialsProvider>,
+    profile_name: Option<String>,
+    region: String,
+) -> Result<SharedCredentialsProvider> {
+    let provider = cell
+        .get_or_try_init(move || async move {
+            let mut config_builder =
+                aws_config::defaults(BehaviorVersion::latest()).region(Region::new(region));
+
+            if let Some(profile_name) = profile_name.filter(|name| !name.is_empty()) {
+                config_builder = config_builder.profile_name(profile_name);
+            }
+
+            let config = config_builder.load().await;
+            config
+                .credentials_provider()
+                .context("no AWS credentials provider is configured")
+        })
+        .await
+        .context("resolving AWS credentials for Bedrock Mantle")?;
+    Ok(provider.clone())
+}
+
+/// Produces the `Authorization: Bearer` token for `bedrock-mantle` requests.
+/// A configured API key is used as-is; every other auth method resolves AWS
+/// credentials and signs a short-term token via `sign_bedrock_bearer_token`.
+async fn resolve_mantle_bearer_token(
+    credentials_provider: Arc<OnceCell<SharedCredentialsProvider>>,
+    auth: Option<BedrockAuth>,
+    region: String,
+) -> Result<String> {
+    match auth {
+        Some(BedrockAuth::ApiKey { api_key }) => Ok(api_key),
+        Some(BedrockAuth::IamCredentials {
+            access_key_id,
+            secret_access_key,
+            session_token,
+        }) => {
+            let credentials = Credentials::new(
+                access_key_id,
+                secret_access_key,
+                session_token,
+                None,
+                "zed-bedrock-provider",
+            );
+            sign_bedrock_bearer_token(&credentials, &region)
+        }
+        Some(BedrockAuth::NamedProfile { profile_name })
+        | Some(BedrockAuth::SingleSignOn { profile_name }) => {
+            let provider = resolve_mantle_credentials_provider(
+                &credentials_provider,
+                Some(profile_name),
+                region.clone(),
+            )
+            .await?;
+            let credentials = provider
+                .provide_credentials()
+                .await
+                .context("failed to resolve AWS credentials")?;
+            sign_bedrock_bearer_token(&credentials, &region)
+        }
+        Some(BedrockAuth::Automatic) | None => {
+            let provider =
+                resolve_mantle_credentials_provider(&credentials_provider, None, region.clone())
+                    .await?;
+            let credentials = provider
+                .provide_credentials()
+                .await
+                .context("failed to resolve AWS credentials")?;
+            sign_bedrock_bearer_token(&credentials, &region)
+        }
+    }
+}
+
+struct BedrockMantleModel {
+    id: LanguageModelId,
+    model: MantleModel,
+    http_client: Arc<dyn HttpClient>,
+    state: Entity<State>,
+    credentials_provider: Arc<OnceCell<SharedCredentialsProvider>>,
+    request_limiter: RateLimiter,
+}
+
+impl BedrockMantleModel {
+    fn stream_completion(
+        &self,
+        request: open_ai::Request,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<BoxStream<'static, Result<ResponseStreamEvent>>, LanguageModelCompletionError>,
+    > {
+        let http_client = self.http_client.clone();
+        let model = self.model.clone();
+        let credentials_provider = self.credentials_provider.clone();
+        let (auth, region) = cx.read_entity(&self.state, |state, _cx| {
+            (state.auth.clone(), state.get_region())
+        });
+        let api_url = mantle_endpoint_url(&region, &model);
+        let extra_headers = cx.read_entity(&self.state, |_, cx| {
+            AllLanguageModelSettings::get_global(cx)
+                .bedrock
+                .custom_headers
+                .clone()
+        });
+
+        let future = self.request_limiter.stream(async move {
+            let api_key = resolve_mantle_bearer_token(credentials_provider, auth, region)
+                .await
+                .map_err(LanguageModelCompletionError::Other)?;
+            let response = stream_openai_completion(
+                http_client.as_ref(),
+                PROVIDER_NAME.0.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                &extra_headers,
+            )
+            .await
+            .map_err(|err| map_mantle_error(&model, err))?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+
+    fn stream_response(
+        &self,
+        request: OpenAiResponseRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<open_ai::responses::StreamEvent>>,
+            LanguageModelCompletionError,
+        >,
+    > {
+        let http_client = self.http_client.clone();
+        let model = self.model.clone();
+        let credentials_provider = self.credentials_provider.clone();
+        let (auth, region) = cx.read_entity(&self.state, |state, _cx| {
+            (state.auth.clone(), state.get_region())
+        });
+        let api_url = mantle_endpoint_url(&region, &model);
+        let extra_headers = cx.read_entity(&self.state, |_, cx| {
+            AllLanguageModelSettings::get_global(cx)
+                .bedrock
+                .custom_headers
+                .clone()
+        });
+
+        let future = self.request_limiter.stream(async move {
+            let api_key = resolve_mantle_bearer_token(credentials_provider, auth, region)
+                .await
+                .map_err(LanguageModelCompletionError::Other)?;
+            let response = stream_openai_response(
+                http_client.as_ref(),
+                PROVIDER_NAME.0.as_ref(),
+                &api_url,
+                &api_key,
+                request,
+                &extra_headers,
+            )
+            .await
+            .map_err(|err| map_mantle_error(&model, err))?;
+            Ok(response)
+        });
+
+        async move { Ok(future.await?.boxed()) }.boxed()
+    }
+}
+
+impl LanguageModel for BedrockMantleModel {
+    fn id(&self) -> LanguageModelId {
+        self.id.clone()
+    }
+
+    fn name(&self) -> LanguageModelName {
+        LanguageModelName::from(self.model.display_name().to_string())
+    }
+
+    fn provider_id(&self) -> LanguageModelProviderId {
+        PROVIDER_ID
+    }
+
+    fn provider_name(&self) -> LanguageModelProviderName {
+        PROVIDER_NAME
+    }
+
+    fn supports_tools(&self) -> bool {
+        self.model.supports_tools()
+    }
+
+    fn tool_input_format(&self) -> LanguageModelToolSchemaFormat {
+        LanguageModelToolSchemaFormat::JsonSchemaSubset
+    }
+
+    fn supports_images(&self) -> bool {
+        self.model.supports_images()
+    }
+
+    fn supports_tool_choice(&self, choice: LanguageModelToolChoice) -> bool {
+        match choice {
+            LanguageModelToolChoice::Auto | LanguageModelToolChoice::Any => {
+                self.model.supports_tools()
+            }
+            LanguageModelToolChoice::None => true,
+        }
+    }
+
+    fn supports_streaming_tools(&self) -> bool {
+        true
+    }
+
+    fn supports_thinking(&self) -> bool {
+        mantle_default_reasoning_effort(&self.model).is_some()
+    }
+
+    fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
+        mantle_supported_effort_levels(&self.model)
+    }
+
+    fn supports_split_token_display(&self) -> bool {
+        true
+    }
+
+    fn telemetry_id(&self) -> String {
+        format!("bedrock-mantle/{}", self.model.id())
+    }
+
+    fn max_token_count(&self) -> u64 {
+        self.model.max_token_count()
+    }
+
+    fn max_output_tokens(&self) -> Option<u64> {
+        Some(self.model.max_output_tokens())
+    }
+
+    fn stream_completion(
+        &self,
+        mut request: LanguageModelRequest,
+        cx: &AsyncApp,
+    ) -> BoxFuture<
+        'static,
+        Result<
+            BoxStream<'static, Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
+            LanguageModelCompletionError,
+        >,
+    > {
+        let region = cx.read_entity(&self.state, |state, _cx| state.get_region());
+
+        if !MANTLE_SUPPORTED_REGIONS.contains(&region.as_str()) {
+            let display_name = self.model.display_name().to_string();
+            let supported = MANTLE_SUPPORTED_REGIONS.join(", ");
+            return futures::future::ready(Err(LanguageModelCompletionError::Other(anyhow!(
+                "{display_name} is not available in {region} because Bedrock Mantle isn't offered \
+                 there. Try switching to one of the following regions: {supported}."
+            ))))
+            .boxed();
+        }
+
+        let model_id = self.model.request_id().to_string();
+        let max_output_tokens = Some(self.model.max_output_tokens());
+
+        match self.model.protocol() {
+            MantleProtocol::Responses => {
+                normalize_mantle_thinking_effort(&mut request, &self.model);
+                let request = into_open_ai_response(
+                    request,
+                    &model_id,
+                    self.model.supports_tools(),
+                    false,
+                    max_output_tokens,
+                    mantle_default_reasoning_effort(&self.model),
+                    mantle_supports_none_reasoning_effort(&self.model),
+                );
+                let completions = self.stream_response(request, cx);
+                async move {
+                    let mapper = OpenAiResponseEventMapper::new();
+                    Ok(mapper.map_stream(completions.await?).boxed())
+                }
+                .boxed()
+            }
+            MantleProtocol::ChatCompletions => {
+                // The Chat Completions API on Mantle doesn't return reasoning
+                // tokens (per AWS's Grok 4.3 model card).
+                request.thinking_allowed = false;
+                let request = into_open_ai(
+                    request,
+                    &model_id,
+                    self.model.supports_tools(),
+                    false,
+                    max_output_tokens,
+                    ChatCompletionMaxTokensParameter::MaxCompletionTokens,
+                    None,
+                    false,
+                );
+                let completions = self.stream_completion(request, cx);
+                async move {
+                    let mapper = OpenAiEventMapper::new();
+                    Ok(mapper.map_stream(completions.await?).boxed())
+                }
+                .boxed()
+            }
+        }
+    }
+}
+
 fn deny_tool_use_events(
     events: impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>>,
 ) -> impl Stream<Item = Result<LanguageModelCompletionEvent, LanguageModelCompletionError>> {
@@ -895,7 +1461,7 @@ pub fn into_bedrock(
                         }
                         MessageContent::Compaction(_) => None,
                         MessageContent::Thinking { text, signature } => {
-                            if model.contains(Model::DeepSeekR1.request_id()) {
+                            if model.contains(ConverseModel::DeepSeekR1.request_id()) {
                                 // DeepSeekR1 doesn't support thinking blocks
                                 // And the AWS API demands that you strip them
                                 return None;
@@ -918,7 +1484,7 @@ pub fn into_bedrock(
                             ))
                         }
                         MessageContent::RedactedThinking(blob) => {
-                            if model.contains(Model::DeepSeekR1.request_id()) {
+                            if model.contains(ConverseModel::DeepSeekR1.request_id()) {
                                 // DeepSeekR1 doesn't support thinking blocks
                                 // And the AWS API demands that you strip them
                                 return None;
@@ -1832,6 +2398,138 @@ mod tests {
                 Some(BedrockInnerContent::CachePoint(_))
             ),
             "a cache-marked message with content should end with a cache point"
+        );
+    }
+
+    #[test]
+    fn test_sign_bedrock_bearer_token_produces_expected_shape() {
+        let credentials = Credentials::new(
+            "AKIDEXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+            None,
+            None,
+            "test",
+        );
+
+        let token = sign_bedrock_bearer_token(&credentials, "us-east-1").unwrap();
+        let encoded = token
+            .strip_prefix("bedrock-api-key-")
+            .expect("token should have the bedrock-api-key- prefix");
+        let decoded = String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(encoded)
+                .unwrap(),
+        )
+        .unwrap();
+
+        assert!(decoded.starts_with("bedrock.amazonaws.com/?Action=CallWithBearerToken"));
+        assert!(decoded.contains("X-Amz-Algorithm="));
+        assert!(decoded.contains("X-Amz-Credential="));
+        assert!(decoded.contains("X-Amz-Signature="));
+        assert!(decoded.contains("X-Amz-Expires=43200"));
+        assert!(decoded.ends_with("&Version=1"));
+    }
+
+    #[test]
+    fn test_mantle_endpoint_url_uses_openai_path_prefix() {
+        assert_eq!(
+            mantle_endpoint_url("us-east-1", &MantleModel::Gpt5_5),
+            "https://bedrock-mantle.us-east-1.api.aws/openai/v1"
+        );
+        assert_eq!(
+            mantle_endpoint_url("us-west-2", &MantleModel::Grok4_3),
+            "https://bedrock-mantle.us-west-2.api.aws/openai/v1"
+        );
+        assert_eq!(
+            mantle_endpoint_url(
+                "us-east-1",
+                &MantleModel::Custom {
+                    name: "vendor.custom-model".to_string(),
+                    display_name: None,
+                    max_tokens: 128_000,
+                    max_output_tokens: None,
+                    protocol: MantleProtocol::ChatCompletions,
+                    supports_tools: false,
+                    supports_images: false,
+                }
+            ),
+            "https://bedrock-mantle.us-east-1.api.aws/v1"
+        );
+    }
+
+    #[test]
+    fn test_mantle_protocol_from_settings() {
+        assert_eq!(
+            mantle_protocol_from_settings(settings::BedrockMantleProtocolContent::ChatCompletions),
+            MantleProtocol::ChatCompletions
+        );
+        assert_eq!(
+            mantle_protocol_from_settings(settings::BedrockMantleProtocolContent::Responses),
+            MantleProtocol::Responses
+        );
+    }
+
+    #[test]
+    fn test_mantle_supported_regions_matches_docs() {
+        assert!(MANTLE_SUPPORTED_REGIONS.contains(&"us-east-1"));
+        assert!(MANTLE_SUPPORTED_REGIONS.contains(&"eu-west-1"));
+        assert!(!MANTLE_SUPPORTED_REGIONS.contains(&"ap-southeast-1"));
+    }
+
+    #[test]
+    fn test_normalize_mantle_thinking_effort_clears_unsupported_selection() {
+        // `xhigh` isn't one of the effort levels Mantle supports for GPT-5.5,
+        // so a stale selection carried over from another model gets cleared.
+        let mut request = LanguageModelRequest {
+            thinking_effort: Some("xhigh".to_string()),
+            ..Default::default()
+        };
+        normalize_mantle_thinking_effort(&mut request, &MantleModel::Gpt5_5);
+        assert_eq!(request.thinking_effort, None);
+
+        // A supported selection is left untouched.
+        let mut request = LanguageModelRequest {
+            thinking_effort: Some("high".to_string()),
+            ..Default::default()
+        };
+        normalize_mantle_thinking_effort(&mut request, &MantleModel::Gpt5_5);
+        assert_eq!(request.thinking_effort, Some("high".to_string()));
+
+        // `none` is only supported where `mantle_supports_none_reasoning_effort`
+        // is true (Grok 4.3).
+        let mut request = LanguageModelRequest {
+            thinking_effort: Some("none".to_string()),
+            ..Default::default()
+        };
+        normalize_mantle_thinking_effort(&mut request, &MantleModel::Gpt5_5);
+        assert_eq!(request.thinking_effort, None);
+
+        let mut request = LanguageModelRequest {
+            thinking_effort: Some("none".to_string()),
+            ..Default::default()
+        };
+        normalize_mantle_thinking_effort(&mut request, &MantleModel::Grok4_3);
+        assert_eq!(request.thinking_effort, Some("none".to_string()));
+    }
+
+    #[test]
+    fn test_sign_bedrock_bearer_token_matches_reference_algorithm() {
+        // Cross-checked byte-for-byte against Python's `aws-bedrock-token-generator`
+        // reference implementation (botocore's `SigV4QueryAuth`) using the same
+        // well-known test credentials, region, and a fixed timestamp.
+        let credentials = Credentials::new(
+            "AKIDEXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+            None,
+            None,
+            "test",
+        );
+        let time = std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let token = sign_bedrock_bearer_token_at(&credentials, "us-east-1", time).unwrap();
+
+        assert_eq!(
+            token,
+            "bedrock-api-key-YmVkcm9jay5hbWF6b25hd3MuY29tLz9BY3Rpb249Q2FsbFdpdGhCZWFyZXJUb2tlbiZYLUFtei1BbGdvcml0aG09QVdTNC1ITUFDLVNIQTI1NiZYLUFtei1DcmVkZW50aWFsPUFLSURFWEFNUExFJTJGMjAyMzExMTQlMkZ1cy1lYXN0LTElMkZiZWRyb2NrJTJGYXdzNF9yZXF1ZXN0JlgtQW16LURhdGU9MjAyMzExMTRUMjIxMzIwWiZYLUFtei1FeHBpcmVzPTQzMjAwJlgtQW16LVNpZ25lZEhlYWRlcnM9aG9zdCZYLUFtei1TaWduYXR1cmU9OGE4NDYxMjQyM2RhMzRkMWEzZjYxMDU1NDhkODI3MGU0Nzk1ZDc0YTE0NDZlYjk2YjY3MWYxN2IxNDc4YWMzZCZWZXJzaW9uPTE="
         );
     }
 }

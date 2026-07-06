@@ -543,6 +543,8 @@ aws-credential-types = { version = "1.2.8", features = [
 aws-sdk-bedrockruntime = { version = "1.112.0", features = [
     "behavior-version-latest",
 ] }
+aws-sigv4 = "1.4.0"
+aws-smithy-http = "0.63.4"
 aws-smithy-runtime-api = { version = "1.9.2", features = ["http-1x", "client"] }
 aws-smithy-types = { version = "1.3.4", features = ["http-body-1-x"] }
 backtrace = "0.3"
