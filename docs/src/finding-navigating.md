@@ -23,6 +23,10 @@ The Project Panel ({#kb project_panel::ToggleFocus}) shows a tree view of your w
 
 Open any file in your project with {#kb file_finder::Toggle}. Type part of the filename or path to narrow results.
 
+## Text Finder
+
+Quickly find any string in your project and open the file with {#kb project_search::OpenTextFinder}. Changed your mind and want a more detailed search with extra filters? Move to the project search using the button in the Actions menu in the right bottom corner.
+
 ## Project Search
 
 Search across all files with {#kb pane::DeploySearch}. Type the query in the search field, then press Enter to run the search.
@@ -52,15 +56,16 @@ Quickly switch between open tabs with {#kb tab_switcher::Toggle}. Tabs are sorte
 
 ## Quick Reference
 
-| Task              | Keybinding                       |
-| ----------------- | -------------------------------- |
-| Command Palette   | {#kb command_palette::Toggle}    |
-| Open file         | {#kb file_finder::Toggle}        |
-| Project search    | {#kb pane::DeploySearch}         |
-| Go to definition  | {#kb editor::GoToDefinition}     |
-| Find references   | {#kb editor::FindAllReferences}  |
-| Symbol in file    | {#kb outline::Toggle}            |
-| Symbol in project | {#kb project_symbols::Toggle}    |
-| Outline Panel     | {#kb outline_panel::ToggleFocus} |
-| Tab Switcher      | {#kb tab_switcher::Toggle}       |
-| Project Panel     | {#kb project_panel::ToggleFocus} |
+| Task               | Keybinding                           |
+| ------------------ | ------------------------------------ |
+| Command Palette    | {#kb command_palette::Toggle}        |
+| Open file          | {#kb file_finder::Toggle}            |
+| Project search     | {#kb pane::DeploySearch}             |
+| Text search picker | {#kb project_search::OpenTextFinder} |
+| Go to definition   | {#kb editor::GoToDefinition}         |
+| Find references    | {#kb editor::FindAllReferences}      |
+| Symbol in file     | {#kb outline::Toggle}                |
+| Symbol in project  | {#kb project_symbols::Toggle}        |
+| Outline Panel      | {#kb outline_panel::ToggleFocus}     |
+| Tab Switcher       | {#kb tab_switcher::Toggle}           |
+| Project Panel      | {#kb project_panel::ToggleFocus}     |

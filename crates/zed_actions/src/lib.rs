@@ -69,6 +69,8 @@ actions!(
         OpenLicenses,
         /// Opens the Zed status page.
         OpenStatusPage,
+        /// Opens the Zed merch store.
+        GetMerch,
         /// Opens the telemetry log.
         OpenTelemetryLog,
         /// Opens the performance profiler.

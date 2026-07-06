@@ -20,8 +20,8 @@ use sum_tree::Bias;
 use text::BufferId;
 use theme::ActiveTheme;
 use ui::{
-    ButtonLike, ContextMenu, Indicator, KeyBinding, Tooltip, prelude::*, right_click_menu,
-    text_for_keystroke,
+    ButtonLike, ContextMenu, DiffStat, Indicator, KeyBinding, Tooltip, prelude::*,
+    right_click_menu, text_for_keystroke,
 };
 use util::ResultExt;
 use workspace::{ItemHandle, ItemSettings, OpenInTerminal, OpenTerminal, RevealInProjectPanel};
@@ -624,6 +624,13 @@ pub(crate) fn render_buffer_header(
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
+    let buffer_id = for_excerpt.buffer_id();
+    let header_hovered_state = window.use_keyed_state(
+        ("buffer-header-hovered", buffer_id.to_proto()),
+        cx,
+        |_, _| false,
+    );
+    let header_hovered = *header_hovered_state.read(cx);
     let editor_read = editor.read(cx);
     let multi_buffer = editor_read.buffer.read(cx);
     let is_read_only = editor_read.read_only(cx);
@@ -637,11 +644,16 @@ pub(crate) fn render_buffer_header(
         None
     };
 
-    let buffer_id = for_excerpt.buffer_id();
     let file_status = multi_buffer
         .all_diff_hunks_expanded()
         .then(|| editor_read.status_for_buffer_id(buffer_id, cx))
         .flatten();
+    let diff_stat = multi_buffer
+        .all_diff_hunks_expanded()
+        .then(|| multibuffer_snapshot.diff_for_buffer_id(buffer_id))
+        .flatten()
+        .map(|diff| diff.changed_row_counts())
+        .filter(|(added, removed)| *added > 0 || *removed > 0);
     let indicator = multi_buffer.buffer(buffer_id).and_then(|buffer| {
         let buffer = buffer.read(cx);
         let indicator_color = match (buffer.has_conflict(), buffer.is_dirty()) {
@@ -681,6 +693,14 @@ pub(crate) fn render_buffer_header(
 
     let header = div()
         .id(("buffer-header", buffer_id.to_proto()))
+        .on_hover(move |hovered, _window, cx| {
+            header_hovered_state.update(cx, |state, cx| {
+                if *state != *hovered {
+                    *state = *hovered;
+                    cx.notify();
+                }
+            });
+        })
         .p(BUFFER_HEADER_PADDING)
         .w_full()
         .h(FILE_HEADER_HEIGHT as f32 * window.line_height())
@@ -886,36 +906,47 @@ pub(crate) fn render_buffer_header(
                                     })
                             },
                         ))
-                        .when(can_open_excerpts && relative_path.is_some(), |this| {
+                        .when_some(diff_stat, |this, (added, removed)| {
                             this.child(
-                                div()
-                                    .when(!is_selected, |this| {
-                                        this.visible_on_hover("buffer-header-group")
-                                    })
-                                    .child(
-                                        Button::new("open-file-button", "Open File")
-                                            .style(ButtonStyle::OutlinedGhost)
-                                            .when(is_selected, |this| {
-                                                this.key_binding(KeyBinding::for_action_in(
-                                                    &OpenExcerpts,
-                                                    &focus_handle,
-                                                    cx,
-                                                ))
-                                            })
-                                            .on_click(window.listener_for(editor, {
-                                                let jump_data = jump_data.clone();
-                                                move |editor, e: &ClickEvent, window, cx| {
-                                                    editor.open_excerpts_common(
-                                                        Some(jump_data.clone()),
-                                                        e.modifiers().secondary(),
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                            })),
-                                    ),
+                                div().flex_shrink_0().child(
+                                    DiffStat::new(
+                                        ("buffer-header-diff-stat", buffer_id.to_proto()),
+                                        added as usize,
+                                        removed as usize,
+                                    )
+                                    .label_size(LabelSize::Small),
+                                ),
                             )
                         })
+                        .when(
+                            can_open_excerpts
+                                && relative_path.is_some()
+                                && (is_selected || header_hovered),
+                            |this| {
+                                this.child(
+                                    Button::new("open-file-button", "Open File")
+                                        .style(ButtonStyle::OutlinedGhost)
+                                        .when(is_selected, |this| {
+                                            this.key_binding(KeyBinding::for_action_in(
+                                                &OpenExcerpts,
+                                                &focus_handle,
+                                                cx,
+                                            ))
+                                        })
+                                        .on_click(window.listener_for(editor, {
+                                            let jump_data = jump_data.clone();
+                                            move |editor, e: &ClickEvent, window, cx| {
+                                                editor.open_excerpts_common(
+                                                    Some(jump_data.clone()),
+                                                    e.modifiers().secondary(),
+                                                    window,
+                                                    cx,
+                                                );
+                                            }
+                                        })),
+                                )
+                            },
+                        )
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(window.listener_for(editor, {
                             let buffer_id = for_excerpt.buffer_id();

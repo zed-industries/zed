@@ -65,7 +65,7 @@ use serde::{Deserialize, Serialize};
 use settings::{LanguageModelSelection, Settings as _, SettingsStore, SidebarSide};
 use std::any::TypeId;
 use std::path::{Path, PathBuf};
-use workspace::Workspace;
+use workspace::{OpenOptions, Workspace};
 
 use crate::agent_configuration::ManageProfilesModal;
 pub use crate::agent_connection_store::{ActiveAcpConnection, AgentConnectionStore};
@@ -118,40 +118,68 @@ pub(crate) fn resolve_agent_image(
     None
 }
 
+/// Opens `abs_path` in the workspace, moving the cursor to `point` when one
+/// is given. Paths outside every worktree are only opened when a file exists
+/// there, so broken agent links don't create empty buffers.
 pub(crate) fn open_abs_path_at_point(
     workspace: &mut Workspace,
     abs_path: PathBuf,
-    point: Point,
+    point: Option<Point>,
     window: &mut Window,
     cx: &mut Context<Workspace>,
-) -> bool {
-    let project = workspace.project();
-    let Some(path) = project.update(cx, |project, cx| project.find_project_path(abs_path, cx))
-    else {
-        return false;
-    };
-
-    let item = workspace.open_path(path, None, true, window, cx);
+) {
+    let project_path = workspace
+        .project()
+        .update(cx, |project, cx| project.find_project_path(&abs_path, cx));
+    let fs = workspace.project().read(cx).fs().clone();
+    let workspace = cx.weak_entity();
     window
         .spawn(cx, async move |cx| {
-            let Some(editor) = item.await?.downcast::<Editor>() else {
+            let item = if let Some(project_path) = project_path {
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_path(project_path, None, true, window, cx)
+                    })?
+                    .await?
+            } else {
+                let metadata = fs.metadata(&abs_path).await?;
+                anyhow::ensure!(
+                    metadata.is_some_and(|metadata| !metadata.is_dir),
+                    "no file found at path {abs_path:?}"
+                );
+                workspace
+                    .update_in(cx, |workspace, window, cx| {
+                        workspace.open_abs_path(
+                            abs_path,
+                            OpenOptions {
+                                focus: Some(true),
+                                ..Default::default()
+                            },
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await?
+            };
+            let Some(point) = point else {
                 return Ok(());
             };
-            let range = point..point;
+            let Some(editor) = item.downcast::<Editor>() else {
+                return Ok(());
+            };
             editor
                 .update_in(cx, |editor, window, cx| {
                     editor.change_selections(
                         SelectionEffects::scroll(Autoscroll::center()),
                         window,
                         cx,
-                        |selections| selections.select_ranges([range]),
+                        |selections| selections.select_ranges([point..point]),
                     );
                 })
                 .ok();
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
-    true
 }
 
 pub const DEFAULT_THREAD_TITLE: &str = "New Agent Thread";

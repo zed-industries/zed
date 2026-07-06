@@ -170,14 +170,13 @@ enum DiffKind {
     SinceOid(Option<git::Oid>),
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub enum GitAccess {
     /// Either:
     /// - the user owns `.git`
     /// - the user doesn't own `.git`, but has both of:
     ///   - OS-level read permissions
     ///   - the directory is marked as safe (git config safe.directory)
-    #[default]
     Yes,
 
     /// The user is not the owner of `.git`, and one of the following is true:
@@ -486,6 +485,7 @@ pub enum RepositoryEvent {
     GitWorktreeListChanged,
     PendingOpsChanged { pending_ops: SumTree<PendingOps> },
     GraphEvent((LogSource, LogOrder), GitGraphEvent),
+    GitDirectoryChanged,
 }
 
 #[derive(Clone, Debug)]
@@ -2134,6 +2134,7 @@ impl GitStore {
                         || update.new_work_directory_abs_path.as_ref() == Some(repo_abs_path)
                 }) {
                     repository.reload_buffer_diff_bases(cx);
+                    cx.emit(RepositoryEvent::GitDirectoryChanged);
                 }
             });
         }
