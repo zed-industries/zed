@@ -214,7 +214,10 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_NCDESTROY => unsafe {
             // The window is going away and no further messages will reference the state, so
-            // reclaim and drop the boxed `DialogInfo` exactly once.
+            // reclaim and drop the boxed `DialogInfo` here. This frees it at most once, and only
+            // if `WM_NCDESTROY` actually runs: the normal exit path uses `PostQuitMessage` (which
+            // unwinds the message loop without destroying the window) and simply leaks the box to
+            // process exit, as before.
             let raw = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut RefCell<DialogInfo>;
             if !raw.is_null() {
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);

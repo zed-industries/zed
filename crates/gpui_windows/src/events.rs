@@ -1153,9 +1153,13 @@ impl WindowsWindowInner {
         const MAX_UNITS: usize = 64;
         let mut units = Vec::with_capacity(MAX_UNITS);
         for offset in 0..MAX_UNITS {
-            // SAFETY: `pointer` is non-null and we advance one unit at a time only while the
-            // preceding unit was a non-NUL part of the string, stopping at the terminator, so we
-            // never read past the end of a well-formed NUL-terminated buffer.
+            // SAFETY: `pointer` is non-null. For a well-formed NUL-terminated buffer we stop at
+            // the terminator and never read past the end. For a malformed, non-NUL-terminated
+            // buffer (e.g. a hostile message) `pointer.add(offset)` can still walk past the real
+            // allocation, so this is technically an over-read; the `MAX_UNITS` cap only *mitigates*
+            // that rather than eliminating it. It is nonetheless a strict improvement over the
+            // prior unbounded scan, and the cap cannot cause us to miss the only value we compare
+            // against ("ImmersiveColorSet", 17 units), which fits well within the limit.
             let unit = unsafe { pointer.add(offset).read() };
             if unit == 0 {
                 break;
