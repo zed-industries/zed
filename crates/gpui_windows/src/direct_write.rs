@@ -67,6 +67,12 @@ struct GPUState {
     blend_state: ID3D11BlendState,
     vertex_shader: ID3D11VertexShader,
     pixel_shader: ID3D11PixelShader,
+    // The thread that created this `GPUState`. The color-glyph rasterizer drives the *shared* D3D11
+    // immediate context (`Map`/`Unmap`/`Draw`/`CopyResource`) that `DirectXRenderer` and
+    // `DirectXAtlas` also use. An immediate `ID3D11DeviceContext` is not thread-safe, so all of that
+    // must happen on the single UI thread. We record the owning thread here to assert the invariant
+    // in debug builds.
+    owner_thread: std::thread::ThreadId,
 }
 
 struct DirectWriteState {
@@ -158,6 +164,7 @@ impl GPUState {
             blend_state,
             vertex_shader,
             pixel_shader,
+            owner_thread: std::thread::current().id(),
         })
     }
 }
@@ -881,6 +888,18 @@ impl DirectWriteState {
         params: &RenderGlyphParams,
         glyph_bounds: Bounds<DevicePixels>,
     ) -> Result<Vec<u8>> {
+        // INVARIANT: the code below drives the *shared* D3D11 immediate context
+        // (`Map`/`Unmap`/`Draw`/`CopyResource`), which `DirectXRenderer` and `DirectXAtlas` also
+        // touch. An immediate `ID3D11DeviceContext` is not thread-safe, so this must run on the
+        // single UI thread that created the `GPUState`. Giving the emoji rasterizer its own
+        // device/immediate context would lift this constraint (see the PR description); until then,
+        // assert we are on the owning thread in debug builds.
+        debug_assert_eq!(
+            std::thread::current().id(),
+            self.gpu_state.owner_thread,
+            "color glyph rasterization must run on the GPUState owner thread; \
+             the D3D11 immediate context is not thread-safe",
+        );
         let bitmap_size = glyph_bounds.size;
         let subpixel_shift = params
             .subpixel_variant
