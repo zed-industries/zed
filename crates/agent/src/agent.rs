@@ -17,6 +17,10 @@ pub use db::*;
 use itertools::Itertools;
 pub use native_agent_server::NativeAgentServer;
 pub use pattern_extraction::*;
+pub use sandboxing::{
+    ThreadSandbox, sandbox_worktree_writable_paths, settings_sandbox_policy,
+    settings_thread_sandbox,
+};
 pub use shell_command_parser::extract_commands;
 pub use templates::*;
 pub use thread::*;
@@ -25,14 +29,15 @@ pub use tool_permissions::*;
 pub use tools::*;
 
 use acp_thread::{
-    AcpThread, AgentModelSelector, AgentSessionInfo, AgentSessionList, AgentSessionListRequest,
-    AgentSessionListResponse, TokenUsageRatio, UserMessageId,
+    AcpThread, AgentModelId, AgentModelSelector, AgentSessionInfo, AgentSessionList,
+    AgentSessionListRequest, AgentSessionListResponse, ClientUserMessageId, TokenUsageRatio,
 };
-use agent_client_protocol::schema as acp;
+use agent_client_protocol::schema::v1 as acp;
 use agent_skills::{
-    MAX_SKILL_DESCRIPTIONS_SIZE, ProjectSkillGroup, Skill, SkillIndex, SkillLoadError,
-    SkillScopeId, SkillSource, SkillSummary, builtin_skills, global_skills_dir,
-    load_skills_from_directory, project_skills_relative_path,
+    AGENTS_DIR_NAME, MAX_SKILL_DESCRIPTIONS_SIZE, MAX_SKILL_FILE_SIZE, ProjectSkillGroup,
+    SKILL_FILE_NAME, Skill, SkillIndex, SkillLoadError, SkillLoadWarning, SkillScopeId,
+    SkillSource, SkillSummary, builtin_skills, global_skills_dir, load_skills_from_directory,
+    parse_skill_frontmatter, project_skills_relative_path, read_skill_body_from_content,
 };
 use anyhow::{Context as _, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -46,9 +51,13 @@ use gpui::{
     App, AppContext, AsyncApp, Context, Entity, EntityId, SharedString, Subscription, Task,
     TaskExt, WeakEntity,
 };
-use language_model::{IconOrSvg, LanguageModel, LanguageModelProvider, LanguageModelRegistry};
+use language_model::{
+    IconOrSvg, LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelRegistry,
+};
 use project::{
-    AgentId, Project, ProjectItem, ProjectPath, Worktree, trusted_worktrees::TrustedWorktrees,
+    AgentId, Project, ProjectItem, ProjectPath, Worktree, WorktreeId,
+    trusted_worktrees::TrustedWorktrees,
 };
 use prompt_store::{ProjectContext, RULES_FILE_NAMES, RulesFileContext, WorktreeContext};
 use serde::{Deserialize, Serialize};
@@ -71,21 +80,67 @@ pub struct RulesLoadingError {
     pub message: SharedString,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SkillLoadingIssueKind {
+    LoadFailed,
+    DescriptionTooLong,
+    CatalogBudgetExceeded,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SkillLoadingError {
+pub struct SkillLoadingIssue {
     pub project_id: EntityId,
     pub path: PathBuf,
     pub message: SharedString,
+    pub kind: SkillLoadingIssueKind,
 }
 
-/// Emitted whenever the set of skill loading errors for a project changes.
-/// The `errors` field is the full replacement list; subscribers should treat
-/// it as a snapshot rather than appending. An empty `errors` list means all
-/// previously-reported errors have been resolved.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SkillLoadingIssueData {
+    path: PathBuf,
+    message: String,
+    kind: SkillLoadingIssueKind,
+}
+
+impl SkillLoadingIssueData {
+    fn from_load_error(error: SkillLoadError) -> Self {
+        Self {
+            path: error.path,
+            message: error.message,
+            kind: SkillLoadingIssueKind::LoadFailed,
+        }
+    }
+
+    fn from_load_warning(skill: &Skill, warning: &SkillLoadWarning) -> Self {
+        let kind = match warning {
+            SkillLoadWarning::DescriptionTooLong { .. } => {
+                SkillLoadingIssueKind::DescriptionTooLong
+            }
+        };
+        Self {
+            path: skill.skill_file_path.clone(),
+            message: warning.message(),
+            kind,
+        }
+    }
+
+    fn catalog_budget_exceeded(path: PathBuf, message: String) -> Self {
+        Self {
+            path,
+            message,
+            kind: SkillLoadingIssueKind::CatalogBudgetExceeded,
+        }
+    }
+}
+
+/// Emitted whenever the set of skill loading issues for a project changes.
+/// The `issues` field is the full replacement list; subscribers should treat
+/// it as a snapshot rather than appending. An empty `issues` list means all
+/// previously-reported issues have been resolved.
 #[derive(Clone, Debug)]
-pub struct SkillLoadingErrorsUpdated {
+pub struct SkillLoadingIssuesUpdated {
     pub project_id: EntityId,
-    pub errors: Vec<SkillLoadingError>,
+    pub issues: Vec<SkillLoadingIssue>,
 }
 
 #[derive(Clone, Debug)]
@@ -94,6 +149,7 @@ pub struct NativeAvailableSkill {
     pub description: String,
     pub source: SharedString,
     pub skill_file_path: PathBuf,
+    pub warning: Option<SharedString>,
 }
 
 impl From<&Skill> for NativeAvailableSkill {
@@ -103,15 +159,40 @@ impl From<&Skill> for NativeAvailableSkill {
             description: skill.description.clone(),
             source: skill.source.display_label().to_string().into(),
             skill_file_path: skill.skill_file_path.clone(),
+            warning: skill
+                .load_warnings
+                .first()
+                .map(|warning| warning.message().into()),
         }
     }
+}
+
+pub const COMPACT_COMMAND_NAME: &str = "compact";
+
+/// Returns the set of MCP prompt names that must be server-qualified
+/// (`/<server>.<name>`) to stay unambiguous in the slash-command popup: names
+/// shared by more than one MCP prompt, or names colliding with a reserved
+/// built-in command (e.g. `/compact`). A built-in always wins an unqualified
+/// invocation, so colliding MCP prompts are only reachable when prefixed.
+fn ambiguous_mcp_prompt_names<'a>(
+    reserved: impl IntoIterator<Item = &'a str>,
+    prompt_names: impl IntoIterator<Item = &'a str>,
+) -> HashSet<&'a str> {
+    let mut counts: HashMap<&str, usize> = HashMap::default();
+    for name in reserved.into_iter().chain(prompt_names) {
+        *counts.entry(name).or_insert(0) += 1;
+    }
+    counts
+        .into_iter()
+        .filter_map(|(name, count)| (count > 1).then_some(name))
+        .collect()
 }
 
 struct ProjectState {
     project: Entity<Project>,
     project_context: Entity<ProjectContext>,
     skills: Arc<Vec<Skill>>,
-    skill_loading_errors: Vec<SkillLoadingError>,
+    skill_loading_issues: Vec<SkillLoadingIssue>,
     project_context_needs_refresh: watch::Sender<()>,
     _maintain_project_context: Task<Result<()>>,
     context_server_registry: Entity<ContextServerRegistry>,
@@ -137,7 +218,7 @@ struct PendingSession {
 
 pub struct LanguageModels {
     /// Access language model by ID
-    models: HashMap<acp::ModelId, Arc<dyn LanguageModel>>,
+    models: HashMap<AgentModelId, Arc<dyn LanguageModel>>,
     /// Cached list for returning language model information
     model_list: acp_thread::AgentModelList,
     refresh_models_rx: watch::Receiver<()>,
@@ -211,7 +292,11 @@ impl LanguageModels {
         self.refresh_models_rx.clone()
     }
 
-    pub fn model_from_id(&self, model_id: &acp::ModelId) -> Option<Arc<dyn LanguageModel>> {
+    pub fn notify_model_selection_changed(&mut self) {
+        self.refresh_models_tx.send(()).ok();
+    }
+
+    pub fn model_from_id(&self, model_id: &AgentModelId) -> Option<Arc<dyn LanguageModel>> {
         self.models.get(model_id).cloned()
     }
 
@@ -229,11 +314,12 @@ impl LanguageModels {
             }),
             is_latest: model.is_latest(),
             cost: model.model_cost_info().map(|cost| cost.to_shared_string()),
+            disabled: model.is_disabled(),
         }
     }
 
-    fn model_id(model: &Arc<dyn LanguageModel>) -> acp::ModelId {
-        acp::ModelId::new(format!("{}/{}", model.provider_id().0, model.id().0))
+    fn model_id(model: &Arc<dyn LanguageModel>) -> AgentModelId {
+        AgentModelId::new(format!("{}/{}", model.provider_id().0, model.id().0))
     }
 
     fn authenticate_all_language_model_providers(cx: &mut App) -> Task<()> {
@@ -288,9 +374,31 @@ impl LanguageModels {
                 }
             }
 
-            cx.update(language_models::update_environment_fallback_model);
+            cx.update(|cx| {
+                LanguageModelRegistry::global(cx)
+                    .update(cx, |registry, cx| registry.refresh_fallback_model(cx))
+            });
         })
     }
+}
+
+/// Implemented by the UI layer to provide the ability for agent tools to create
+/// sibling threads that appear in the agent panel.
+///
+/// `agent_ui::AgentPanel` installs an implementation of this trait on the
+/// `NativeAgent` when it sets up a connection. Tools in a native-agent thread
+/// then discover and use the host via `NativeThreadEnvironment`. The UI side
+/// is responsible for keeping the installed host current; a host whose
+/// backing UI has been torn down will fail its first request with a clear
+/// error rather than being detected up front.
+pub trait SiblingThreadHost {
+    fn create_sibling_thread(
+        &self,
+        request: SiblingThreadRequest,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<SiblingThreadInfo>>;
+
+    fn list_available_agents(&self, cx: &mut App) -> Result<AvailableAgents>;
 }
 
 pub struct NativeAgent {
@@ -304,6 +412,8 @@ pub struct NativeAgent {
     templates: Arc<Templates>,
     /// Cached model information
     models: LanguageModels,
+    /// Handler installed by the UI for `create_thread` / `list_agents_and_models` tools.
+    sibling_thread_host: Option<Rc<dyn SiblingThreadHost>>,
     fs: Arc<dyn Fs>,
     _subscriptions: Vec<Subscription>,
     /// Tracks the lifecycle of global skills directory observation. We
@@ -331,7 +441,7 @@ enum SkillsState {
     Watching,
 }
 
-impl gpui::EventEmitter<SkillLoadingErrorsUpdated> for NativeAgent {}
+impl gpui::EventEmitter<SkillLoadingIssuesUpdated> for NativeAgent {}
 
 static RULES_FILE_REL_PATHS: LazyLock<Vec<Arc<RelPath>>> = LazyLock::new(|| {
     RULES_FILE_NAMES
@@ -340,11 +450,106 @@ static RULES_FILE_REL_PATHS: LazyLock<Vec<Arc<RelPath>>> = LazyLock::new(|| {
         .collect()
 });
 
+static AGENTS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
+    RelPath::unix(AGENTS_DIR_NAME)
+        .ok()
+        .map(|path| path.into_arc())
+});
+
 static SKILLS_PREFIX: LazyLock<Option<Arc<RelPath>>> = LazyLock::new(|| {
     RelPath::unix(project_skills_relative_path())
         .ok()
         .map(|path| path.into_arc())
 });
+
+struct ProjectSkillFile {
+    relative_path: Arc<RelPath>,
+    display_path: PathBuf,
+    size: u64,
+}
+
+async fn expand_worktree_directory(
+    worktree: &Entity<Worktree>,
+    path: &RelPath,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let expand_task = worktree.update(cx, |worktree, cx| {
+        let entry_id = worktree
+            .entry_for_path(path)
+            .filter(|entry| entry.is_dir())
+            .map(|entry| entry.id);
+        entry_id.and_then(|entry_id| worktree.expand_entry(entry_id, cx))
+    });
+
+    if let Some(expand_task) = expand_task {
+        expand_task.await?;
+    }
+
+    Ok(())
+}
+
+async fn expand_project_skills_directories(
+    worktree: &Entity<Worktree>,
+    cx: &mut AsyncApp,
+) -> Result<()> {
+    let agents_dir = RelPath::unix(AGENTS_DIR_NAME)?;
+    let Some(skills_prefix) = SKILLS_PREFIX.as_ref() else {
+        return Ok(());
+    };
+
+    expand_worktree_directory(worktree, agents_dir, cx).await?;
+    expand_worktree_directory(worktree, skills_prefix, cx).await?;
+
+    let skill_dirs = worktree.update(cx, |worktree, _cx| {
+        worktree
+            .child_entries(skills_prefix)
+            .filter(|entry| entry.is_dir())
+            .map(|entry| entry.path.clone())
+            .collect::<Vec<_>>()
+    });
+    for skill_dir in skill_dirs {
+        expand_worktree_directory(worktree, &skill_dir, cx).await?;
+    }
+
+    Ok(())
+}
+
+fn project_skill_files_from_worktree(worktree: &Worktree) -> Vec<ProjectSkillFile> {
+    let Some(skills_prefix) = SKILLS_PREFIX.as_ref() else {
+        return Vec::new();
+    };
+    let Ok(skill_file_name) = RelPath::unix(SKILL_FILE_NAME) else {
+        return Vec::new();
+    };
+
+    let mut skill_files = Vec::new();
+    for skill_dir in worktree.child_entries(skills_prefix) {
+        if !skill_dir.is_dir() {
+            continue;
+        }
+
+        let relative_path = skill_dir.path.join(skill_file_name);
+        let Some(skill_file) = worktree.entry_for_path(&relative_path) else {
+            continue;
+        };
+        if !skill_file.is_file() {
+            continue;
+        }
+
+        skill_files.push(ProjectSkillFile {
+            display_path: worktree.absolutize(&relative_path),
+            relative_path,
+            size: skill_file.size,
+        });
+    }
+
+    skill_files.sort_by(|a, b| {
+        a.relative_path
+            .as_unix_str()
+            .cmp(b.relative_path.as_unix_str())
+    });
+    skill_files
+}
 
 impl NativeAgent {
     pub fn new(
@@ -356,10 +561,15 @@ impl NativeAgent {
         log::debug!("Creating new NativeAgent");
 
         cx.new(|cx| {
-            let subscriptions = vec![cx.subscribe(
-                &LanguageModelRegistry::global(cx),
-                Self::handle_models_updated_event,
-            )];
+            let subscriptions = vec![
+                cx.subscribe(
+                    &LanguageModelRegistry::global(cx),
+                    Self::handle_models_updated_event,
+                ),
+                // Flush thread content on quit so an in-flight async save
+                // can't leave a thread orphaned ("no thread found with ID").
+                cx.on_app_quit(Self::flush_threads_on_quit),
+            ];
 
             if !cx.has_global::<SkillIndex>() {
                 cx.set_global(SkillIndex::default());
@@ -372,6 +582,7 @@ impl NativeAgent {
                 projects: HashMap::default(),
                 templates,
                 models: LanguageModels::new(cx),
+                sibling_thread_host: None,
                 fs,
                 _subscriptions: subscriptions,
                 skills_state: SkillsState::default(),
@@ -498,6 +709,14 @@ impl NativeAgent {
         }
     }
 
+    pub fn set_sibling_thread_host(&mut self, host: Rc<dyn SiblingThreadHost>) {
+        self.sibling_thread_host = Some(host);
+    }
+
+    pub fn sibling_thread_host(&self) -> Option<Rc<dyn SiblingThreadHost>> {
+        self.sibling_thread_host.clone()
+    }
+
     fn new_session(
         &mut self,
         project: Entity<Project>,
@@ -585,9 +804,9 @@ impl NativeAgent {
             // after the thread is constructed are still visible to the
             // model — without this, the catalog and tool would drift out
             // of sync until the session was reopened.
-            thread.add_tool(SkillTool::new(
+            thread.add_tool(SkillTool::with_body_resolver(
                 skills_resolver_for_project(weak.clone(), project_id),
-                self.fs.clone(),
+                skill_body_resolver_for_project(project.clone(), self.fs.clone()),
             ));
         });
 
@@ -686,7 +905,7 @@ impl NativeAgent {
                 project,
                 project_context,
                 skills: Arc::new(Vec::new()),
-                skill_loading_errors: Vec::new(),
+                skill_loading_issues: Vec::new(),
                 project_context_needs_refresh: project_context_needs_refresh_tx,
                 _maintain_project_context: cx.spawn(async move |this, cx| {
                     Self::maintain_project_context(
@@ -727,34 +946,35 @@ impl NativeAgent {
                     cx,
                 ))
             })??;
-            let (project_context, skills, skill_errors) = task.await;
+            let (project_context, skills, skill_issue_data) = task.await;
             let skills = Arc::new(skills);
-            let skill_loading_errors: Vec<SkillLoadingError> = skill_errors
+            let skill_loading_issues: Vec<SkillLoadingIssue> = skill_issue_data
                 .into_iter()
-                .map(|skill_error| SkillLoadingError {
+                .map(|issue| SkillLoadingIssue {
                     project_id,
-                    path: skill_error.path,
-                    message: skill_error.message.into(),
+                    path: issue.path,
+                    message: issue.message.into(),
+                    kind: issue.kind,
                 })
                 .collect();
             this.update(cx, |this, cx| {
-                // Only emit SkillLoadingErrorsUpdated when the error list
+                // Only emit SkillLoadingIssuesUpdated when the issue list
                 // actually changed. Refreshes happen frequently (prompt-store
                 // updates, rules-file edits, worktree events, trust-state
                 // changes), and re-emitting an unchanged list causes the UI
-                // to redisplay errors the user has already dismissed.
+                // to redisplay issues the user has already dismissed.
                 // Transitions from non-empty to empty still count as a change,
                 // so subscribers continue to receive an empty list to clear
-                // previously-displayed errors when they get resolved.
-                let errors_changed = this
+                // previously-displayed issues when they get resolved.
+                let issues_changed = this
                     .projects
                     .get(&project_id)
-                    .map(|state| state.skill_loading_errors != skill_loading_errors)
+                    .map(|state| state.skill_loading_issues != skill_loading_issues)
                     .unwrap_or(true);
 
                 if let Some(state) = this.projects.get_mut(&project_id) {
                     state.skills = skills;
-                    state.skill_loading_errors = skill_loading_errors.clone();
+                    state.skill_loading_issues = skill_loading_issues.clone();
                     // Only push the new `ProjectContext` through if it
                     // differs from the current one. The system prompt is
                     // re-rendered from this on every turn, so an unchanged
@@ -773,10 +993,10 @@ impl NativeAgent {
                             }
                         });
                 }
-                if errors_changed {
-                    cx.emit(SkillLoadingErrorsUpdated {
+                if issues_changed {
+                    cx.emit(SkillLoadingIssuesUpdated {
                         project_id,
-                        errors: skill_loading_errors,
+                        issues: skill_loading_issues,
                     });
                 }
                 // Skills appear in the slash-command list, so a change in
@@ -796,7 +1016,7 @@ impl NativeAgent {
         project: &Entity<Project>,
         fs: Arc<dyn Fs>,
         cx: &mut App,
-    ) -> Task<(ProjectContext, Vec<Skill>, Vec<SkillLoadError>)> {
+    ) -> Task<(ProjectContext, Vec<Skill>, Vec<SkillLoadingIssueData>)> {
         let worktrees = project.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
         let worktree_tasks = worktrees
             .iter()
@@ -830,9 +1050,8 @@ impl NativeAgent {
         let trusted_worktrees = TrustedWorktrees::try_get_global(cx);
         let worktree_store = project.read(cx).worktree_store();
         let project_skills_task = {
-            let project_skills_futures: Vec<
-                futures::future::BoxFuture<'static, Vec<Result<Skill, SkillLoadError>>>,
-            > = worktrees
+            let project = project.clone();
+            let trusted_worktrees = worktrees
                 .iter()
                 .filter_map(|worktree| {
                     let worktree_id = worktree.read(cx).id();
@@ -844,36 +1063,95 @@ impl NativeAgent {
                     if !is_trusted {
                         return None;
                     }
+
                     let worktree_snapshot = worktree.read(cx);
-                    let abs_path = worktree_snapshot.abs_path();
                     let worktree_root_name: Arc<str> = worktree_snapshot.root_name_str().into();
-                    // Capture scan_complete *before* spawning so we don't have to re-borrow
-                    // the worktree from inside the async task (which would require a cx).
                     let scan_complete = worktree_snapshot
                         .as_local()
                         .map(|local| local.scan_complete());
-                    let skills_dir = abs_path.join(project_skills_relative_path());
-                    let fs = fs.clone();
-                    Some(
-                        async move {
-                            if let Some(scan_complete) = scan_complete {
-                                scan_complete.await;
-                            }
-                            load_skills_from_directory(
-                                &fs,
-                                &skills_dir,
-                                SkillSource::ProjectLocal {
-                                    worktree_id: SkillScopeId(worktree_id.to_usize()),
-                                    worktree_root_name,
-                                },
-                            )
-                            .await
-                        }
-                        .boxed(),
-                    )
+                    Some((
+                        worktree.clone(),
+                        worktree_id,
+                        worktree_root_name,
+                        scan_complete,
+                    ))
                 })
-                .collect();
-            cx.background_spawn(async move { future::join_all(project_skills_futures).await })
+                .collect::<Vec<_>>();
+
+            cx.spawn(async move |cx| {
+                let mut project_skills_results = Vec::new();
+                for (worktree, worktree_id, worktree_root_name, scan_complete) in trusted_worktrees
+                {
+                    if let Some(scan_complete) = scan_complete {
+                        scan_complete.await;
+                    }
+                    if let Err(error) = expand_project_skills_directories(&worktree, cx).await {
+                        project_skills_results.push(vec![Err(SkillLoadError {
+                            path: PathBuf::from(project_skills_relative_path()),
+                            message: format!("Failed to scan project skills: {}", error),
+                        })]);
+                        continue;
+                    }
+
+                    let skill_files = worktree.update(cx, |worktree, _cx| {
+                        project_skill_files_from_worktree(worktree)
+                    });
+                    let source = SkillSource::ProjectLocal {
+                        worktree_id: SkillScopeId(worktree_id.to_usize()),
+                        worktree_root_name,
+                    };
+
+                    let mut worktree_results = Vec::new();
+                    for skill_file in skill_files {
+                        if skill_file.size > MAX_SKILL_FILE_SIZE as u64 {
+                            worktree_results.push(Err(SkillLoadError {
+                                path: skill_file.display_path.clone(),
+                                message: format!(
+                                    "SKILL.md file exceeds maximum size of {}KB",
+                                    MAX_SKILL_FILE_SIZE / 1024
+                                ),
+                            }));
+                            continue;
+                        }
+
+                        let buffer = match project
+                            .update(cx, |project, cx| {
+                                project.open_buffer(
+                                    (worktree_id, skill_file.relative_path.clone()),
+                                    cx,
+                                )
+                            })
+                            .await
+                        {
+                            Ok(buffer) => buffer,
+                            Err(error) => {
+                                worktree_results.push(Err(SkillLoadError {
+                                    path: skill_file.display_path.clone(),
+                                    message: format!("Failed to read file: {}", error),
+                                }));
+                                continue;
+                            }
+                        };
+
+                        let content = cx
+                            .update(|cx| buffer.read(cx).as_text_snapshot().as_rope().to_string());
+
+                        worktree_results.push(
+                            parse_skill_frontmatter(
+                                &skill_file.display_path,
+                                &content,
+                                source.clone(),
+                            )
+                            .map_err(|error| SkillLoadError {
+                                path: skill_file.display_path,
+                                message: error.to_string(),
+                            }),
+                        );
+                    }
+                    project_skills_results.push(worktree_results);
+                }
+                project_skills_results
+            })
         };
         cx.spawn(async move |_cx| {
             let worktrees = future::join_all(worktree_tasks).await;
@@ -897,8 +1175,20 @@ impl NativeAgent {
             // model-facing catalog.
             let global_skills = global_skills_task.await;
             let project_skills_results = project_skills_task.await;
-            let (skills, mut skill_errors) =
+            let (skills, skill_errors) =
                 combine_skills(global_skills, project_skills_results.into_iter().flatten());
+            let mut skill_issues = skill_errors
+                .into_iter()
+                .map(SkillLoadingIssueData::from_load_error)
+                .collect::<Vec<_>>();
+            for skill in &skills {
+                skill_issues.extend(
+                    skill
+                        .load_warnings
+                        .iter()
+                        .map(|warning| SkillLoadingIssueData::from_load_warning(skill, warning)),
+                );
+            }
 
             // Apply project-overrides-global before catalog selection
             // so the model sees at most one entry per name. The full
@@ -907,13 +1197,13 @@ impl NativeAgent {
             let overridden = apply_skill_overrides(&skills);
 
             // Enforce the catalog size budget here so that skills which
-            // don't fit produce a load error in the UI rather than being
+            // don't fit produce an issue in the UI rather than being
             // silently swallowed by ProjectContext.
-            let (catalog_skills, budget_errors) = select_catalog_skills(&overridden);
-            skill_errors.extend(budget_errors);
+            let (catalog_skills, budget_issues) = select_catalog_skills(&overridden);
+            skill_issues.extend(budget_issues);
 
             let project_context = ProjectContext::new(worktrees).with_skills(catalog_skills);
-            (project_context, skills, skill_errors)
+            (project_context, skills, skill_issues)
         })
     }
 
@@ -1062,7 +1352,7 @@ impl NativeAgent {
                     RULES_FILE_REL_PATHS
                         .iter()
                         .any(|rules_path| path_ref == rules_path.as_ref())
-                        || SKILLS_PREFIX
+                        || AGENTS_PREFIX
                             .as_ref()
                             .is_some_and(|prefix| path_ref.starts_with(prefix))
                 }) {
@@ -1087,12 +1377,8 @@ impl NativeAgent {
 
         for session in self.sessions.values_mut() {
             session.thread.update(cx, |thread, cx| {
-                if thread.model().is_none()
-                    && let Some(model) = default_model.clone()
-                {
-                    thread.set_model(model, cx);
-                    cx.notify();
-                }
+                thread.ensure_model(default_model.as_ref(), cx);
+
                 if let Some(model) = summarization_model.clone() {
                     if thread.summarization_model().is_none()
                         || matches!(event, language_model::Event::ThreadSummaryModelChanged)
@@ -1214,25 +1500,30 @@ impl NativeAgent {
         cx: &App,
     ) -> Vec<acp::AvailableCommand> {
         let Some(state) = project_state else {
-            return vec![];
+            return Vec::new();
         };
+        let compact_command = acp::AvailableCommand::new(
+            COMPACT_COMMAND_NAME,
+            "Summarize the conversation so far to free up context",
+        )
+        .meta(acp_thread::meta_with_command_category(
+            acp_thread::CommandCategory::Native,
+        ));
+
         let registry = state.context_server_registry.read(cx);
 
-        let mut prompt_name_counts: HashMap<&str, usize> = HashMap::default();
-        for context_server_prompt in registry.prompts() {
-            *prompt_name_counts
-                .entry(context_server_prompt.prompt.name.as_str())
-                .or_insert(0) += 1;
-        }
+        // Reserve the built-in command name so a same-named MCP prompt is
+        // force-prefixed (`/<server>.compact`) and stays reachable: an
+        // unqualified `/compact` always routes to the native command.
+        let ambiguous_prompt_names = ambiguous_mcp_prompt_names(
+            [COMPACT_COMMAND_NAME],
+            registry.prompts().map(|p| p.prompt.name.as_str()),
+        );
 
         let mcp_commands = registry.prompts().flat_map(|context_server_prompt| {
             let prompt = &context_server_prompt.prompt;
 
-            let should_prefix = prompt_name_counts
-                .get(prompt.name.as_str())
-                .copied()
-                .unwrap_or(0)
-                > 1;
+            let should_prefix = ambiguous_prompt_names.contains(prompt.name.as_str());
 
             let name = if should_prefix {
                 format!("{}.{}", context_server_prompt.server_id, prompt.name)
@@ -1241,7 +1532,10 @@ impl NativeAgent {
             };
 
             let mut command =
-                acp::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default());
+                acp::AvailableCommand::new(name, prompt.description.clone().unwrap_or_default())
+                    .meta(acp_thread::meta_with_command_category(
+                        acp_thread::CommandCategory::Mcp,
+                    ));
 
             match prompt.arguments.as_deref() {
                 Some([arg]) => {
@@ -1261,7 +1555,9 @@ impl NativeAgent {
             Some(command)
         });
 
-        mcp_commands.collect()
+        std::iter::once(compact_command)
+            .chain(mcp_commands)
+            .collect()
     }
 
     pub fn load_thread(
@@ -1352,6 +1648,7 @@ impl NativeAgent {
                         NativeAgentConnection::handle_thread_events(
                             events,
                             acp_thread.downgrade(),
+                            None,
                             cx,
                         )
                     })
@@ -1433,36 +1730,19 @@ impl NativeAgent {
     }
 
     fn save_thread(&mut self, thread: Entity<Thread>, cx: &mut Context<Self>) {
-        if thread.read(cx).is_empty() {
-            return;
-        }
-
         let id = thread.read(cx).id().clone();
+        let Some(session) = self.sessions.get(&id) else {
+            return;
+        };
+        let Some((id, folder_paths, db_thread)) = self.thread_save_payload(session, cx) else {
+            return;
+        };
+
+        let database_future = ThreadsDatabase::connect(cx);
+        let thread_store = self.thread_store.clone();
         let Some(session) = self.sessions.get_mut(&id) else {
             return;
         };
-
-        let project_id = session.project_id;
-        let Some(state) = self.projects.get(&project_id) else {
-            return;
-        };
-
-        let folder_paths = PathList::new(
-            &state
-                .project
-                .read(cx)
-                .visible_worktrees(cx)
-                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
-                .collect::<Vec<_>>(),
-        );
-
-        let draft_prompt = session.acp_thread.read(cx).draft_prompt().map(Vec::from);
-        let database_future = ThreadsDatabase::connect(cx);
-        let db_thread = thread.update(cx, |thread, cx| {
-            thread.set_draft_prompt(draft_prompt);
-            thread.to_db(cx)
-        });
-        let thread_store = self.thread_store.clone();
         session.pending_save = cx.spawn(async move |_, cx| {
             let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
                 return Ok(());
@@ -1477,9 +1757,71 @@ impl NativeAgent {
         });
     }
 
+    /// Builds everything needed to persist a session's thread content,
+    /// capturing the current draft prompt from the ACP thread. Returns `None`
+    /// if the thread is empty or its project state is gone.
+    fn thread_save_payload(
+        &self,
+        session: &Session,
+        cx: &mut App,
+    ) -> Option<(acp::SessionId, PathList, Task<DbThread>)> {
+        if session.thread.read(cx).is_empty() {
+            return None;
+        }
+        let state = self.projects.get(&session.project_id)?;
+        let folder_paths = PathList::new(
+            &state
+                .project
+                .read(cx)
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).abs_path().to_path_buf())
+                .collect::<Vec<_>>(),
+        );
+        let draft_prompt = session.acp_thread.read(cx).draft_prompt().map(Vec::from);
+        let id = session.thread.read(cx).id().clone();
+        let db_thread = session.thread.update(cx, |thread, cx| {
+            thread.set_draft_prompt(draft_prompt);
+            thread.to_db(cx)
+        });
+        Some((id, folder_paths, db_thread))
+    }
+
+    /// Commits every non-empty thread's content on shutdown so the async
+    /// `save_thread` losing the race can't leave metadata without content.
+    fn flush_threads_on_quit(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> impl Future<Output = ()> + use<> {
+        let database_future = ThreadsDatabase::connect(cx);
+
+        let mut saves = Vec::new();
+        for session in self.sessions.values() {
+            saves.extend(self.thread_save_payload(session, cx));
+        }
+
+        async move {
+            let Some(database) = database_future.await.map_err(|err| anyhow!(err)).log_err() else {
+                return;
+            };
+            // All quit observers share `gpui::SHUTDOWN_TIMEOUT`, so run the
+            // saves concurrently instead of one at a time.
+            future::join_all(saves.into_iter().map(|(id, folder_paths, db_thread)| {
+                let database = database.clone();
+                async move {
+                    let db_thread = db_thread.await;
+                    database
+                        .save_thread(id, db_thread, folder_paths)
+                        .await
+                        .log_err();
+                }
+            }))
+            .await;
+        }
+    }
+
     fn send_mcp_prompt(
         &self,
-        message_id: UserMessageId,
+        client_user_message_id: ClientUserMessageId,
         session_id: acp::SessionId,
         prompt_name: String,
         server_id: ContextServerId,
@@ -1513,7 +1855,7 @@ impl NativeAgent {
 
             thread.update(cx, |thread, cx| {
                 thread.push_acp_user_block(
-                    message_id,
+                    client_user_message_id,
                     original_content.into_iter().skip(1),
                     path_style,
                     cx,
@@ -1526,7 +1868,7 @@ impl NativeAgent {
 
                 match role {
                     context_server::types::Role::User => {
-                        let id = acp_thread::UserMessageId::new();
+                        let id = acp_thread::ClientUserMessageId::new();
 
                         acp_thread.update(cx, |acp_thread, cx| {
                             acp_thread.push_user_content_block_with_indent(
@@ -1569,10 +1911,48 @@ impl NativeAgent {
                 }
             })?;
 
+            let connection = this.upgrade().map(NativeAgentConnection);
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
                     acp_thread.downgrade(),
+                    connection,
+                    cx,
+                )
+            })
+            .await
+        })
+    }
+
+    /// Run a summary-based context compaction in response to the built-in
+    /// `/compact` slash command.
+    fn send_compact_command(
+        &self,
+        client_user_message_id: ClientUserMessageId,
+        session_id: acp::SessionId,
+        cx: &mut Context<Self>,
+    ) -> Task<Result<acp::PromptResponse>> {
+        cx.spawn(async move |this, cx| {
+            let (acp_thread, thread) = this.update(cx, |this, _cx| {
+                let session = this
+                    .sessions
+                    .get(&session_id)
+                    .context("Failed to get session")?;
+                anyhow::Ok((session.acp_thread.clone(), session.thread.clone()))
+            })??;
+
+            let response_stream =
+                thread.update(cx, |thread, cx| thread.compact(client_user_message_id, cx))?;
+            acp_thread.update(cx, |acp_thread, cx| {
+                acp_thread.update_token_usage(None, cx);
+            });
+
+            let connection = this.upgrade().map(NativeAgentConnection);
+            cx.update(|cx| {
+                NativeAgentConnection::handle_thread_events(
+                    response_stream,
+                    acp_thread.downgrade(),
+                    connection,
                     cx,
                 )
             })
@@ -1590,7 +1970,7 @@ impl NativeAgent {
     /// instructions followed by the user's request.
     fn send_skill_invocation(
         &self,
-        message_id: UserMessageId,
+        client_user_message_id: ClientUserMessageId,
         session_id: acp::SessionId,
         skill: Skill,
         original_content: Vec<acp::ContentBlock>,
@@ -1600,7 +1980,8 @@ impl NativeAgent {
             return Task::ready(Err(anyhow!("Project state not found for session")));
         };
         let path_style = state.project.read(cx).path_style(cx);
-        let fs = self.fs.clone();
+        let read_skill_body =
+            skill_body_resolver_for_project(state.project.clone(), self.fs.clone());
 
         cx.spawn(async move |this, cx| {
             let (acp_thread, thread) = this.update(cx, |this, _cx| {
@@ -1624,14 +2005,12 @@ impl NativeAgent {
             let body = if let Some(embedded) = skill.embedded_body {
                 embedded.to_string()
             } else {
-                agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "Failed to read skill body from {}",
-                            skill.skill_file_path.display()
-                        )
-                    })?
+                read_skill_body(skill.clone(), cx).await.with_context(|| {
+                    format!(
+                        "Failed to read skill body from {}",
+                        skill.skill_file_path.display()
+                    )
+                })?
             };
             let envelope = crate::tools::render_skill_envelope(&skill, &body);
             let envelope_block = acp::ContentBlock::Text(acp::TextContent::new(envelope));
@@ -1650,7 +2029,7 @@ impl NativeAgent {
             // the user can see what context was loaded for the skill. The
             // user's own typed message is already rendered by the normal
             // prompt flow, so we don't push it to the UI again here.
-            let injected_id = acp_thread::UserMessageId::new();
+            let injected_id = acp_thread::ClientUserMessageId::new();
             acp_thread.update(cx, |acp_thread, cx| {
                 acp_thread.push_user_content_block_with_indent(
                     Some(injected_id),
@@ -1667,15 +2046,17 @@ impl NativeAgent {
             combined.extend(user_blocks);
 
             thread.update(cx, |thread, cx| {
-                thread.push_acp_user_block(message_id, combined, path_style, cx);
+                thread.push_acp_user_block(client_user_message_id, combined, path_style, cx);
             });
 
             let response_stream = thread.update(cx, |thread, cx| thread.send_existing(cx))?;
 
+            let connection = this.upgrade().map(NativeAgentConnection);
             cx.update(|cx| {
                 NativeAgentConnection::handle_thread_events(
                     response_stream,
                     acp_thread.downgrade(),
+                    connection,
                     cx,
                 )
             })
@@ -1767,12 +2148,18 @@ impl NativeAgentConnection {
             Ok(stream) => stream,
             Err(err) => return Task::ready(Err(err)),
         };
-        Self::handle_thread_events(response_stream, acp_thread.downgrade(), cx)
+        Self::handle_thread_events(
+            response_stream,
+            acp_thread.downgrade(),
+            Some(self.clone()),
+            cx,
+        )
     }
 
     fn handle_thread_events(
         mut events: mpsc::UnboundedReceiver<Result<ThreadEvent>>,
         acp_thread: WeakEntity<AcpThread>,
+        connection: Option<NativeAgentConnection>,
         cx: &App,
     ) -> Task<Result<acp::PromptResponse>> {
         cx.spawn(async move |cx| {
@@ -1830,6 +2217,14 @@ impl NativeAgentConnection {
                                 })
                                 .detach();
                             }
+                            ThreadEvent::ToolCallAuthorizationResolved {
+                                tool_call_id,
+                                outcome,
+                            } => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.authorize_tool_call(tool_call_id, outcome, cx);
+                                })?;
+                            }
                             ThreadEvent::ToolCall(tool_call) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.upsert_tool_call(tool_call, cx)
@@ -1840,17 +2235,35 @@ impl NativeAgentConnection {
                                     thread.update_tool_call(update, cx)
                                 })??;
                             }
-                            ThreadEvent::Plan(plan) => {
-                                acp_thread.update(cx, |thread, cx| thread.update_plan(plan, cx))?;
-                            }
                             ThreadEvent::SubagentSpawned(session_id) => {
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.subagent_spawned(session_id, cx);
                                 })?;
                             }
                             ThreadEvent::Retry(status) => {
+                                if acp_thread::refusal_fallback_model_from_meta(&status.meta)
+                                    .is_some()
+                                {
+                                    if let Some(connection) = &connection {
+                                        cx.update(|cx| {
+                                            connection.0.update(cx, |agent, _| {
+                                                agent.models.notify_model_selection_changed();
+                                            });
+                                        });
+                                    }
+                                }
                                 acp_thread.update(cx, |thread, cx| {
                                     thread.update_retry_status(status, cx)
+                                })?;
+                            }
+                            ThreadEvent::ContextCompaction(compaction) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.push_context_compaction(compaction, cx);
+                                })?;
+                            }
+                            ThreadEvent::ContextCompactionUpdate(update) => {
+                                acp_thread.update(cx, |thread, cx| {
+                                    thread.update_context_compaction(update, cx);
                                 })?;
                             }
                             ThreadEvent::Stop(stop_reason) => {
@@ -1889,6 +2302,12 @@ struct Command<'a> {
 }
 
 impl<'a> Command<'a> {
+    fn is_unqualified(&self, prompt_name: &str) -> bool {
+        self.prompt_name == prompt_name
+            && self.explicit_server_id.is_none()
+            && self.skill_scope.is_none()
+    }
+
     fn parse(prompt: &'a [acp::ContentBlock]) -> Option<Self> {
         let acp::ContentBlock::Text(text_content) = prompt.first()? else {
             return None;
@@ -1975,7 +2394,7 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
         })
     }
 
-    fn select_model(&self, model_id: acp::ModelId, cx: &mut App) -> Task<Result<()>> {
+    fn select_model(&self, model_id: AgentModelId, cx: &mut App) -> Task<Result<()>> {
         log::debug!(
             "Setting model for session {}: {}",
             self.session_id,
@@ -2068,6 +2487,27 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
         )))
     }
 
+    fn favorite_model_ids(&self, cx: &mut App) -> HashSet<AgentModelId> {
+        agent_settings::AgentSettings::get_global(cx)
+            .favorite_model_ids()
+            .into_iter()
+            .map(AgentModelId::from)
+            .collect()
+    }
+
+    fn toggle_favorite_model(&self, model_id: AgentModelId, should_be_favorite: bool, cx: &App) {
+        let selection = model_id_to_selection(&model_id, cx);
+        let fs = self.connection.0.read(cx).fs.clone();
+        update_settings_file(fs, cx, move |settings, _| {
+            let agent = settings.agent.get_or_insert_default();
+            if should_be_favorite {
+                agent.add_favorite_model(selection.clone());
+            } else {
+                agent.remove_favorite_model(&selection);
+            }
+        });
+    }
+
     fn watch(&self, cx: &mut App) -> Option<watch::Receiver<()>> {
         Some(self.connection.0.read(cx).models.watch())
     }
@@ -2075,6 +2515,44 @@ impl acp_thread::AgentModelSelector for NativeAgentModelSelector {
     fn should_render_footer(&self) -> bool {
         true
     }
+}
+
+fn model_id_to_selection(model_id: &AgentModelId, cx: &App) -> LanguageModelSelection {
+    let id = model_id.as_ref();
+    let (provider, model) = id.split_once('/').unwrap_or(("", id));
+
+    let provider_id = LanguageModelProviderId(provider.to_string().into());
+    let model_id = LanguageModelId(model.to_string().into());
+    let resolved = LanguageModelRegistry::global(cx)
+        .read(cx)
+        .provider(&provider_id)
+        .and_then(|provider| {
+            provider
+                .provided_models(cx)
+                .into_iter()
+                .find(|model| model.id() == model_id)
+        });
+
+    let Some(resolved) = resolved else {
+        return LanguageModelSelection {
+            provider: provider.to_owned().into(),
+            model: model.to_owned(),
+            enable_thinking: false,
+            effort: None,
+            speed: None,
+        };
+    };
+
+    let current_user_selection = agent_settings::AgentSettings::get_global(cx)
+        .default_model
+        .as_ref()
+        .filter(|selection| {
+            selection.provider.0 == resolved.provider_id().0.as_ref()
+                && selection.model == resolved.id().0.as_ref()
+        })
+        .cloned();
+
+    agent_settings::language_model_to_selection(&resolved, current_user_selection.as_ref())
 }
 
 pub static ZED_AGENT_ID: LazyLock<AgentId> = LazyLock::new(|| AgentId::new("Zed Agent"));
@@ -2144,149 +2622,25 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
         }) as Rc<dyn AgentModelSelector>)
     }
 
+    fn client_user_message_ids(
+        &self,
+        _cx: &App,
+    ) -> Option<Rc<dyn acp_thread::AgentSessionClientUserMessageIds>> {
+        let prompt: Rc<dyn acp_thread::AgentSessionClientUserMessageIds> = Rc::new(self.clone());
+        Some(prompt)
+    }
+
     fn prompt(
         &self,
-        id: acp_thread::UserMessageId,
         params: acp::PromptRequest,
         cx: &mut App,
     ) -> Task<Result<acp::PromptResponse>> {
-        let session_id = params.session_id.clone();
-        log::info!("Received prompt request for session: {}", session_id);
-        log::debug!("Prompt blocks count: {}", params.prompt.len());
-
-        let Some(project_state) = self.0.read(cx).session_project_state(&session_id) else {
-            log::error!("Session not found in prompt: {}", session_id);
-            if self.0.read(cx).sessions.contains_key(&session_id) {
-                log::error!(
-                    "Session found in sessions map, but not in project state: {}",
-                    session_id
-                );
-            }
-            return Task::ready(Err(anyhow::anyhow!("Session not found")));
-        };
-
-        if let Some(parsed_command) = Command::parse(&params.prompt) {
-            // Skill scope qualifiers (`/:<name>` and
-            // `/<worktree>:<name>`) use a colon separator that can't
-            // collide with MCP's `/<server>.<name>` grammar. The popup
-            // inserts a qualified form for every skill so picking the
-            // global row unambiguously runs the global skill even when
-            // a same-named project-local one exists.
-            if let Some(scope) = parsed_command.skill_scope
-                && let Some(skill) = project_state.skills.iter().find(|skill| {
-                    skill.name == parsed_command.prompt_name && skill.source.matches_scope(scope)
-                })
-            {
-                let skill = skill.clone();
-                return self.0.update(cx, |agent, cx| {
-                    agent.send_skill_invocation(id, session_id.clone(), skill, params.prompt, cx)
-                });
-            }
-
-            // MCP prompts and skills both register slash commands. MCP
-            // prompts are checked first — if a user has both an MCP prompt
-            // and a skill with the same name, the MCP prompt wins (matching
-            // the order they appear in the catalog).
-            let registry = project_state.context_server_registry.read(cx);
-
-            let explicit_server_id = parsed_command
-                .explicit_server_id
-                .map(|server_id| ContextServerId(server_id.into()));
-
-            if let Some(prompt) =
-                registry.find_prompt(explicit_server_id.as_ref(), parsed_command.prompt_name)
-            {
-                let arguments = if !parsed_command.arg_value.is_empty()
-                    && let Some(arg_name) = prompt
-                        .prompt
-                        .arguments
-                        .as_ref()
-                        .and_then(|args| args.first())
-                        .map(|arg| arg.name.clone())
-                {
-                    HashMap::from_iter([(arg_name, parsed_command.arg_value.to_string())])
-                } else {
-                    Default::default()
-                };
-
-                let prompt_name = prompt.prompt.name.clone();
-                let server_id = prompt.server_id.clone();
-
-                return self.0.update(cx, |agent, cx| {
-                    agent.send_mcp_prompt(
-                        id,
-                        session_id.clone(),
-                        prompt_name,
-                        server_id,
-                        arguments,
-                        params.prompt,
-                        cx,
-                    )
-                });
-            }
-
-            // Unqualified skill match (`/skill-name` with no scope
-            // prefix and no MCP server prefix). Slash commands work
-            // for *all* skills regardless of `disable_model_invocation`
-            // — that flag only hides the skill from the model's catalog.
-            // The user explicitly typed the name, so they get to invoke
-            // it.
-            //
-            // Inlined rather than calling `apply_skill_overrides` so
-            // we don't clone the entire skill list on every prompt
-            // (including prompts like `/help` that aren't skills at
-            // all). The resolution rule matches the override-applied
-            // view: among skills with the matching name, pick the one
-            // with the highest source precedence, so the slash command
-            // picks the same entry the model sees in its catalog.
-            // Ties (e.g. two project-local skills from different
-            // worktrees) resolve to the first in iteration order to
-            // match `apply_skill_overrides`.
-            if parsed_command.explicit_server_id.is_none()
-                && parsed_command.skill_scope.is_none()
-                && !project_state.skills.is_empty()
-            {
-                let prompt_name = parsed_command.prompt_name;
-                let resolved = project_state
-                    .skills
-                    .iter()
-                    .filter(|skill| skill.name == prompt_name)
-                    .reduce(|best, candidate| {
-                        if candidate.source.precedence() > best.source.precedence() {
-                            candidate
-                        } else {
-                            best
-                        }
-                    });
-                if let Some(skill) = resolved {
-                    let skill = skill.clone();
-                    return self.0.update(cx, |agent, cx| {
-                        agent.send_skill_invocation(
-                            id,
-                            session_id.clone(),
-                            skill,
-                            params.prompt,
-                            cx,
-                        )
-                    });
-                }
-            }
-        };
-
-        let path_style = project_state.project.read(cx).path_style(cx);
-
-        self.run_turn(session_id, cx, move |thread, cx| {
-            let content: Vec<UserMessageContent> = params
-                .prompt
-                .into_iter()
-                .map(|block| UserMessageContent::from_content_block(block, path_style))
-                .collect::<Vec<_>>();
-            log::debug!("Converted prompt to message: {} chars", content.len());
-            log::debug!("Message id: {:?}", id);
-            log::debug!("Message content: {:?}", content);
-
-            thread.update(cx, |thread, cx| thread.send(id, content, cx))
-        })
+        acp_thread::AgentSessionClientUserMessageIds::prompt(
+            self,
+            acp_thread::AgentSessionClientUserMessageIds::new_id(self),
+            params,
+            cx,
+        )
     }
 
     fn retry(
@@ -2359,6 +2713,167 @@ impl acp_thread::AgentConnection for NativeAgentConnection {
     }
 }
 
+impl acp_thread::AgentSessionClientUserMessageIds for NativeAgentConnection {
+    fn prompt(
+        &self,
+        client_user_message_id: acp_thread::ClientUserMessageId,
+        params: acp::PromptRequest,
+        cx: &mut App,
+    ) -> Task<Result<acp::PromptResponse>> {
+        let session_id = params.session_id.clone();
+        log::info!("Received prompt request for session: {}", session_id);
+        log::debug!("Prompt blocks count: {}", params.prompt.len());
+
+        let Some(project_state) = self.0.read(cx).session_project_state(&session_id) else {
+            log::error!("Session not found in prompt: {}", session_id);
+            if self.0.read(cx).sessions.contains_key(&session_id) {
+                log::error!(
+                    "Session found in sessions map, but not in project state: {}",
+                    session_id
+                );
+            }
+            return Task::ready(Err(anyhow::anyhow!("Session not found")));
+        };
+
+        if let Some(parsed_command) = Command::parse(&params.prompt) {
+            if parsed_command.is_unqualified(COMPACT_COMMAND_NAME) {
+                return self.0.update(cx, |agent, cx| {
+                    agent.send_compact_command(client_user_message_id, session_id, cx)
+                });
+            }
+
+            // Skill scope qualifiers (`/:<name>` and
+            // `/<worktree>:<name>`) use a colon separator that can't
+            // collide with MCP's `/<server>.<name>` grammar. The popup
+            // inserts a qualified form for every skill so picking the
+            // global row unambiguously runs the global skill even when
+            // a same-named project-local one exists.
+            if let Some(scope) = parsed_command.skill_scope
+                && let Some(skill) = project_state.skills.iter().find(|skill| {
+                    skill.name == parsed_command.prompt_name && skill.source.matches_scope(scope)
+                })
+            {
+                let skill = skill.clone();
+                return self.0.update(cx, |agent, cx| {
+                    agent.send_skill_invocation(
+                        client_user_message_id,
+                        session_id.clone(),
+                        skill,
+                        params.prompt,
+                        cx,
+                    )
+                });
+            }
+
+            // MCP prompts and skills both register slash commands. MCP
+            // prompts are checked first — if a user has both an MCP prompt
+            // and a skill with the same name, the MCP prompt wins (matching
+            // the order they appear in the catalog).
+            let registry = project_state.context_server_registry.read(cx);
+
+            let explicit_server_id = parsed_command
+                .explicit_server_id
+                .map(|server_id| ContextServerId(server_id.into()));
+
+            if let Some(prompt) =
+                registry.find_prompt(explicit_server_id.as_ref(), parsed_command.prompt_name)
+            {
+                let arguments = if !parsed_command.arg_value.is_empty()
+                    && let Some(arg_name) = prompt
+                        .prompt
+                        .arguments
+                        .as_ref()
+                        .and_then(|args| args.first())
+                        .map(|arg| arg.name.clone())
+                {
+                    HashMap::from_iter([(arg_name, parsed_command.arg_value.to_string())])
+                } else {
+                    Default::default()
+                };
+
+                let prompt_name = prompt.prompt.name.clone();
+                let server_id = prompt.server_id.clone();
+
+                return self.0.update(cx, |agent, cx| {
+                    agent.send_mcp_prompt(
+                        client_user_message_id,
+                        session_id.clone(),
+                        prompt_name,
+                        server_id,
+                        arguments,
+                        params.prompt,
+                        cx,
+                    )
+                });
+            }
+
+            // Unqualified skill match (`/skill-name` with no scope
+            // prefix and no MCP server prefix). Slash commands work
+            // for *all* skills regardless of `disable_model_invocation`
+            // — that flag only hides the skill from the model's catalog.
+            // The user explicitly typed the name, so they get to invoke
+            // it.
+            //
+            // Inlined rather than calling `apply_skill_overrides` so
+            // we don't clone the entire skill list on every prompt
+            // (including prompts like `/help` that aren't skills at
+            // all). The resolution rule matches the override-applied
+            // view: among skills with the matching name, pick the one
+            // with the highest source precedence, so the slash command
+            // picks the same entry the model sees in its catalog.
+            // Ties (e.g. two project-local skills from different
+            // worktrees) resolve to the first in iteration order to
+            // match `apply_skill_overrides`.
+            if parsed_command.explicit_server_id.is_none()
+                && parsed_command.skill_scope.is_none()
+                && !project_state.skills.is_empty()
+            {
+                let prompt_name = parsed_command.prompt_name;
+                let resolved = project_state
+                    .skills
+                    .iter()
+                    .filter(|skill| skill.name == prompt_name)
+                    .reduce(|best, candidate| {
+                        if candidate.source.precedence() > best.source.precedence() {
+                            candidate
+                        } else {
+                            best
+                        }
+                    });
+                if let Some(skill) = resolved {
+                    let skill = skill.clone();
+                    return self.0.update(cx, |agent, cx| {
+                        agent.send_skill_invocation(
+                            client_user_message_id,
+                            session_id.clone(),
+                            skill,
+                            params.prompt,
+                            cx,
+                        )
+                    });
+                }
+            }
+        };
+
+        let path_style = project_state.project.read(cx).path_style(cx);
+
+        self.run_turn(session_id, cx, move |thread, cx| {
+            let content: Vec<UserMessageContent> = params
+                .prompt
+                .into_iter()
+                .map(|block| UserMessageContent::from_content_block(block, path_style))
+                .collect::<Vec<_>>();
+            log::debug!("Converted prompt to message: {} chars", content.len());
+            log::debug!("Client user message id: {:?}", client_user_message_id);
+            log::debug!("Message content: {:?}", content);
+
+            thread.update(cx, |thread, cx| {
+                thread.send(client_user_message_id, content, cx)
+            })
+        })
+    }
+}
+
 impl acp_thread::AgentTelemetry for NativeAgentConnection {
     fn thread_data(
         &self,
@@ -2420,7 +2935,7 @@ impl AgentSessionList for NativeAgentSessionList {
         Task::ready(Ok(AgentSessionListResponse::new(sessions)))
     }
 
-    fn supports_delete(&self, _cx: &App) -> bool {
+    fn supports_delete(&self) -> bool {
         true
     }
 
@@ -2458,9 +2973,13 @@ struct NativeAgentSessionTruncate {
 }
 
 impl acp_thread::AgentSessionTruncate for NativeAgentSessionTruncate {
-    fn run(&self, message_id: acp_thread::UserMessageId, cx: &mut App) -> Task<Result<()>> {
+    fn run(
+        &self,
+        client_user_message_id: acp_thread::ClientUserMessageId,
+        cx: &mut App,
+    ) -> Task<Result<()>> {
         match self.thread.update(cx, |thread, cx| {
-            thread.truncate(message_id.clone(), cx)?;
+            thread.truncate(client_user_message_id.clone(), cx)?;
             Ok(thread.latest_token_usage())
         }) {
             Ok(usage) => {
@@ -2616,38 +3135,67 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         sandbox_wrap: Option<acp_thread::SandboxWrap>,
         cx: &mut AsyncApp,
     ) -> Task<Result<Rc<dyn TerminalHandle>>> {
-        // Use a per-thread temp directory for all terminal commands, even when
-        // sandboxing is disabled, so the model can't infer sandbox state from
-        // `$TMPDIR` changing between conversations.
+        // On Seatbelt-style sandboxes (macOS) there's no tmpfs overlay, so to
+        // give the command a writable temp area we point `$TMPDIR`/`$TMP`/
+        // `$TEMP` at a per-thread directory inside the sandbox's writable
+        // scope. Doing this even when sandboxing is disabled keeps `$TMPDIR`
+        // stable so the model can't infer sandbox state from it.
+        //
+        // Only do this for local projects. For remote projects the temp
+        // directory would be created on the client, but the terminal runs on
+        // the remote host, so pointing `$TMPDIR` (and the sandbox writable
+        // scope) at a client-side path would leak client environment into the
+        // remote terminal and reference a directory that doesn't exist there.
+        //
+        // Linux and Windows are excluded: the bwrap sandbox (run directly on
+        // Linux, and via WSL on Windows) already mounts a fresh, writable
+        // `tmpfs` over `/tmp`, so the environment looks like a normal
+        // filesystem with no special `$TMPDIR` (which would only make the
+        // sandbox more obviously Zed-specific). On Windows a per-thread
+        // `$TMPDIR` would also be a Windows path that's meaningless inside
+        // WSL, and adding it to the writable scope would bind a stray
+        // `/mnt/<drive>/...` path.
+        #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(unused_mut))]
         let mut extra_env = extra_env;
+        #[cfg_attr(any(target_os = "linux", target_os = "windows"), allow(unused_mut))]
         let mut sandbox_wrap = sandbox_wrap;
-        match self
-            .thread
-            .update(cx, |thread, cx| thread.sandboxed_terminal_temp_dir(cx))
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
-            Ok(Ok(temp_dir)) => {
-                // Canonicalize so the path matches what the sandbox resolves
-                // symlinks to (e.g. `/var` -> `/private/var` on macOS).
-                // `$TMPDIR` and the writable-scope entry below must agree, and
-                // they must agree with the path the kernel actually checks.
-                let temp_dir = temp_dir.canonicalize().unwrap_or(temp_dir);
-                let temp_dir_string = temp_dir.to_string_lossy().into_owned();
-                extra_env.extend([
-                    acp::EnvVariable::new("TMPDIR", &temp_dir_string),
-                    acp::EnvVariable::new("TMP", &temp_dir_string),
-                    acp::EnvVariable::new("TEMP", &temp_dir_string),
-                ]);
-                // The command's `$TMPDIR` must live inside the sandbox's
-                // writable scope. The per-thread temp directory is owned here
-                // (not in the terminal tool that assembles the rest of the
-                // writable set), so add it whenever the command is sandboxed.
-                if let Some(sandbox_wrap) = &mut sandbox_wrap {
-                    sandbox_wrap.writable_paths.push(temp_dir);
+            let temp_dir = self.thread.update(cx, |thread, cx| {
+                thread
+                    .project()
+                    .read(cx)
+                    .is_local()
+                    .then(|| thread.sandboxed_terminal_temp_dir(cx))
+            });
+            match temp_dir {
+                Ok(Some(Ok(temp_dir))) => {
+                    // Canonicalize so the path matches what the sandbox
+                    // resolves symlinks to (e.g. `/var` -> `/private/var` on
+                    // macOS). `$TMPDIR` and the writable-scope entry below must
+                    // agree, and they must agree with the path the kernel
+                    // actually checks.
+                    let temp_dir = temp_dir.canonicalize().unwrap_or(temp_dir);
+                    let temp_dir_string = temp_dir.to_string_lossy().into_owned();
+                    extra_env.extend([
+                        acp::EnvVariable::new("TMPDIR", &temp_dir_string),
+                        acp::EnvVariable::new("TMP", &temp_dir_string),
+                        acp::EnvVariable::new("TEMP", &temp_dir_string),
+                    ]);
+                    // The command's `$TMPDIR` must live inside the sandbox's
+                    // writable scope. The per-thread temp directory is owned
+                    // here (not in the terminal tool that assembles the rest
+                    // of the writable set), so add it whenever the command is
+                    // sandboxed.
+                    if let Some(sandbox_wrap) = &mut sandbox_wrap {
+                        sandbox_wrap.writable_paths.push(temp_dir);
+                    }
                 }
-            }
-            Ok(Err(error)) => return Task::ready(Err(error)),
-            Err(error) => return Task::ready(Err(error)),
-        };
+                Ok(None) => {}
+                Ok(Some(Err(error))) => return Task::ready(Err(error)),
+                Err(error) => return Task::ready(Err(error)),
+            };
+        }
         let task = self.acp_thread.update(cx, |thread, cx| {
             thread.create_terminal(
                 command,
@@ -2692,6 +3240,40 @@ impl ThreadEnvironment for NativeThreadEnvironment {
         cx: &mut App,
     ) -> Result<Rc<dyn SubagentHandle>> {
         self.resume_subagent_thread(session_id, cx)
+    }
+
+    fn create_sibling_thread(
+        &self,
+        request: SiblingThreadRequest,
+        cx: &mut AsyncApp,
+    ) -> Task<Result<SiblingThreadInfo>> {
+        let host = match self
+            .agent
+            .read_with(cx, |agent, _| agent.sibling_thread_host())
+        {
+            Ok(Some(host)) => host,
+            Ok(None) => {
+                return Task::ready(Err(anyhow!(
+                    "No sibling-thread host is registered. This usually means the \
+                     agent panel hasn't been initialized in this workspace."
+                )));
+            }
+            Err(err) => return Task::ready(Err(err)),
+        };
+        host.create_sibling_thread(request, cx)
+    }
+
+    fn list_available_agents(&self, cx: &mut App) -> Result<AvailableAgents> {
+        let host = self
+            .agent
+            .read_with(cx, |agent, _| agent.sibling_thread_host())?
+            .ok_or_else(|| {
+                anyhow!(
+                    "No sibling-thread host is registered. This usually means the \
+                     agent panel hasn't been initialized in this workspace."
+                )
+            })?;
+        host.list_available_agents(cx)
     }
 }
 
@@ -2892,9 +3474,9 @@ impl TerminalHandle for AcpTerminalHandle {
 /// Returns `SkillSummary` values rather than full `Skill`s so that the
 /// (potentially ~100KB) skill bodies aren't cloned just to be discarded by
 /// `ProjectContext::new`, which only needs the summary fields.
-fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadError>) {
+fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadingIssueData>) {
     let mut kept = Vec::new();
-    let mut errors = Vec::new();
+    let mut issues = Vec::new();
     let mut dropped: Vec<&Skill> = Vec::new();
     let mut total_size = 0usize;
     let mut budget_exceeded = false;
@@ -2947,13 +3529,13 @@ fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadE
             }
             message
         };
-        errors.push(SkillLoadError {
-            path: first.skill_file_path.clone(),
+        issues.push(SkillLoadingIssueData::catalog_budget_exceeded(
+            first.skill_file_path.clone(),
             message,
-        });
+        ));
     }
 
-    (kept, errors)
+    (kept, issues)
 }
 
 /// Build a closure that, when called, reads the latest `state.skills`
@@ -2962,7 +3544,7 @@ fn select_catalog_skills(skills: &[Skill]) -> (Vec<SkillSummary>, Vec<SkillLoadE
 /// same entry the model sees in its catalog. Run at invocation time
 /// (not thread-build time) so skill changes after thread construction
 /// become visible without re-registering the tool.
-pub(crate) fn skills_resolver_for_project(
+pub fn skills_resolver_for_project(
     weak_agent: WeakEntity<NativeAgent>,
     project_id: EntityId,
 ) -> impl Fn(&App) -> Arc<Vec<Skill>> + Send + Sync + 'static {
@@ -2977,6 +3559,50 @@ pub(crate) fn skills_resolver_for_project(
                     .map(|state| Arc::new(apply_skill_overrides(&state.skills)))
             })
             .unwrap_or_else(|| Arc::new(Vec::new()))
+    }
+}
+
+pub fn skill_body_resolver_for_project(
+    project: Entity<Project>,
+    fs: Arc<dyn Fs>,
+) -> impl Fn(Skill, &mut AsyncApp) -> Task<Result<String>> + Send + Sync + 'static {
+    move |skill, cx| match skill.source.clone() {
+        SkillSource::ProjectLocal { worktree_id, .. } => {
+            let project = project.clone();
+            cx.spawn(async move |cx| {
+                let worktree_id = WorktreeId::from_usize(worktree_id.0);
+                let worktree = project
+                    .update(cx, |project, cx| project.worktree_for_id(worktree_id, cx))
+                    .context("no such worktree")?;
+                expand_project_skills_directories(&worktree, cx).await?;
+                let relative_path = worktree.update(cx, |worktree, _cx| {
+                    let worktree_root = worktree.abs_path();
+                    worktree
+                        .path_style()
+                        .strip_prefix(&skill.skill_file_path, &worktree_root)
+                        .map(|relative_path| relative_path.into_arc())
+                        .context("skill file is not inside its worktree")
+                })?;
+
+                let buffer = project
+                    .update(cx, |project, cx| {
+                        project.open_buffer((worktree_id, relative_path), cx)
+                    })
+                    .await?;
+                let content =
+                    cx.update(|cx| buffer.read(cx).as_text_snapshot().as_rope().to_string());
+
+                read_skill_body_from_content(&skill.skill_file_path, &content).map_err(Into::into)
+            })
+        }
+        SkillSource::BuiltIn | SkillSource::Global => {
+            let fs = fs.clone();
+            cx.background_spawn(async move {
+                agent_skills::read_skill_body(fs.as_ref(), &skill.skill_file_path)
+                    .await
+                    .map_err(Into::into)
+            })
+        }
     }
 }
 
@@ -3078,12 +3704,14 @@ mod internal_tests {
 
     use super::*;
     use acp_thread::{AgentConnection, AgentModelGroupName, AgentModelInfo, MentionUri};
+    use agent_settings::COMPACTION_PROMPT;
     use fs::FakeFs;
     use gpui::TestAppContext;
     use indoc::formatdoc;
     use language_model::fake_provider::{FakeLanguageModel, FakeLanguageModelProvider};
     use language_model::{
-        LanguageModelCompletionEvent, LanguageModelProviderId, LanguageModelProviderName,
+        CompletionIntent, LanguageModelCompletionEvent, LanguageModelProviderId,
+        LanguageModelProviderName,
     };
     use serde_json::json;
     use settings::SettingsStore;
@@ -3096,9 +3724,268 @@ mod internal_tests {
             source: SkillSource::Global,
             directory_path: PathBuf::from(format!("/home/user/.agents/skills/{name}")),
             skill_file_path: PathBuf::from(format!("/home/user/.agents/skills/{name}/SKILL.md")),
+            load_warnings: Vec::new(),
             disable_model_invocation: false,
             embedded_body: None,
         }
+    }
+
+    async fn setup_native_agent_session(
+        cx: &mut TestAppContext,
+    ) -> (
+        Rc<NativeAgentConnection>,
+        Entity<NativeAgent>,
+        Entity<Project>,
+        Entity<AcpThread>,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [Path::new("/a")], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs, cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+
+        (connection, agent, project, acp_thread)
+    }
+
+    fn native_thread_for_session(
+        agent: &Entity<NativeAgent>,
+        session_id: &acp::SessionId,
+        cx: &App,
+    ) -> Entity<Thread> {
+        agent.read_with(cx, |agent, _cx| {
+            agent.sessions.get(session_id).unwrap().thread.clone()
+        })
+    }
+
+    fn request_texts_after_system(
+        messages: &[language_model::LanguageModelRequestMessage],
+    ) -> Vec<String> {
+        messages
+            .iter()
+            .skip(1)
+            .map(language_model::LanguageModelRequestMessage::string_contents)
+            .collect()
+    }
+
+    #[gpui::test]
+    async fn test_compact_command_is_available(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone());
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            let commands = acp_thread.read(cx).available_commands();
+
+            let compact = commands.iter().find(|command| command.name == "compact");
+            let compact = compact.expect("compact command should be available");
+            assert_eq!(
+                acp_thread::command_category_from_meta(&compact.meta),
+                Some(acp_thread::CommandCategory::Native),
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_compact_prompt_routes_to_manual_compaction(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+        let model = Arc::new(FakeLanguageModel::default());
+        let old_message_id = ClientUserMessageId::new();
+
+        cx.update(|cx| {
+            let path_style = project.read(cx).path_style(cx);
+            thread.update(cx, |thread, cx| {
+                thread.set_model(model.clone(), cx);
+                thread.push_acp_user_block(
+                    old_message_id,
+                    [acp::ContentBlock::from("old user")],
+                    path_style,
+                    cx,
+                );
+                thread.push_acp_agent_block("old assistant".into(), cx);
+            });
+        });
+
+        let compact_message_id = ClientUserMessageId::new();
+        let prompt_task = cx.update(|cx| {
+            acp_thread::AgentSessionClientUserMessageIds::prompt(
+                connection.as_ref(),
+                compact_message_id,
+                acp::PromptRequest::new(session_id.clone(), vec!["/compact".into()]),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let request = model.pending_completions().pop().unwrap();
+        assert_eq!(
+            request.intent,
+            Some(CompletionIntent::ThreadContextSummarization)
+        );
+        assert_eq!(
+            request_texts_after_system(&request.messages),
+            vec![
+                "old user".to_string(),
+                "old assistant".to_string(),
+                COMPACTION_PROMPT.to_string(),
+            ]
+        );
+
+        model.send_completion_stream_text_chunk(&request, "summary");
+        model.end_completion_stream(&request);
+        cx.run_until_parked();
+        prompt_task.await.unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_threads_flushed_to_database_on_app_quit(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let (connection, agent, project, acp_thread) = setup_native_agent_session(cx).await;
+        let session_id = cx.update(|cx| acp_thread.read(cx).session_id().clone());
+        let thread = cx.update(|cx| native_thread_for_session(&agent, &session_id, cx));
+
+        // A second session whose thread stays empty must be skipped by the
+        // quit flush rather than persisted as an empty row.
+        let empty_acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let empty_session_id = cx.update(|cx| empty_acp_thread.read(cx).session_id().clone());
+
+        // Give the first thread content so it's no longer an empty draft, plus
+        // an in-progress draft prompt that the flush must capture.
+        cx.update(|cx| {
+            let path_style = project.read(cx).path_style(cx);
+            thread.update(cx, |thread, cx| {
+                thread.push_acp_user_block(
+                    ClientUserMessageId::new(),
+                    [acp::ContentBlock::from("hello from the user")],
+                    path_style,
+                    cx,
+                );
+            });
+            acp_thread.update(cx, |acp_thread, cx| {
+                acp_thread
+                    .set_draft_prompt(Some(vec![acp::ContentBlock::from("draft in progress")]), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        // Reproduce the orphaned state from the bug: the sidebar metadata and
+        // serialized panel still reference the session, but the per-session
+        // async content save never landed, so the content row is absent.
+        let database = cx.update(|cx| ThreadsDatabase::connect(cx)).await.unwrap();
+        database.delete_thread(session_id.clone()).await.unwrap();
+        assert!(
+            database
+                .load_thread(session_id.clone())
+                .await
+                .unwrap()
+                .is_none(),
+            "precondition: content row should be missing before the quit flush"
+        );
+
+        // Quit through the real shutdown path so the `on_app_quit`
+        // registration is exercised, not just the flush itself.
+        cx.update(|cx| cx.shutdown());
+
+        let restored = database
+            .load_thread(session_id.clone())
+            .await
+            .unwrap()
+            .expect("thread content should be persisted to the database on quit");
+        assert_eq!(
+            restored.messages.len(),
+            1,
+            "the user message should survive the quit flush"
+        );
+        assert_eq!(
+            restored.draft_prompt,
+            Some(vec![acp::ContentBlock::from("draft in progress")]),
+            "the current draft prompt should be captured by the quit flush"
+        );
+        assert!(
+            database
+                .load_thread(empty_session_id)
+                .await
+                .unwrap()
+                .is_none(),
+            "empty threads should not be persisted by the quit flush"
+        );
+    }
+
+    #[test]
+    fn test_ambiguous_mcp_prompt_names() {
+        // Reserving the built-in `/compact` forces a same-named MCP prompt to be
+        // server-qualified so it stays reachable; unique names stay bare.
+        let ambiguous = ambiguous_mcp_prompt_names([COMPACT_COMMAND_NAME], ["compact", "deploy"]);
+        assert!(ambiguous.contains("compact"));
+        assert!(!ambiguous.contains("deploy"));
+
+        // Without the reservation, a unique MCP prompt is left bare.
+        let ambiguous = ambiguous_mcp_prompt_names([], ["compact", "deploy"]);
+        assert!(ambiguous.is_empty());
+
+        // Two MCP prompts sharing a name are both qualified regardless of
+        // reservation.
+        let ambiguous = ambiguous_mcp_prompt_names([], ["dup", "dup", "unique"]);
+        assert!(ambiguous.contains("dup"));
+        assert!(!ambiguous.contains("unique"));
+    }
+
+    #[test]
+    fn test_qualified_compact_commands_are_not_native_compact() {
+        let unqualified_blocks = [acp::ContentBlock::from("/compact")];
+        let unqualified = Command::parse(&unqualified_blocks).unwrap();
+        assert!(unqualified.is_unqualified("compact"));
+
+        let mcp_blocks = [acp::ContentBlock::from("/server.compact")];
+        let mcp_qualified = Command::parse(&mcp_blocks).unwrap();
+        assert_eq!(mcp_qualified.prompt_name, "compact");
+        assert_eq!(mcp_qualified.explicit_server_id, Some("server"));
+        assert!(!mcp_qualified.is_unqualified("compact"));
+
+        let skill_blocks = [acp::ContentBlock::from("/:compact")];
+        let skill_qualified = Command::parse(&skill_blocks).unwrap();
+        assert_eq!(skill_qualified.prompt_name, "compact");
+        assert_eq!(skill_qualified.skill_scope, Some(""));
+        assert!(!skill_qualified.is_unqualified("compact"));
     }
 
     fn make_project_skill(name: &str, description: &str, worktree: &str) -> Skill {
@@ -3111,6 +3998,7 @@ mod internal_tests {
             },
             directory_path: PathBuf::from(format!("/{worktree}/.agents/skills/{name}")),
             skill_file_path: PathBuf::from(format!("/{worktree}/.agents/skills/{name}/SKILL.md")),
+            load_warnings: Vec::new(),
             disable_model_invocation: false,
             embedded_body: None,
         }
@@ -3123,6 +4011,7 @@ mod internal_tests {
             source: SkillSource::BuiltIn,
             directory_path: PathBuf::from(format!("/builtin/{name}")),
             skill_file_path: PathBuf::from(format!("/builtin/{name}/SKILL.md")),
+            load_warnings: Vec::new(),
             disable_model_invocation: false,
             embedded_body: Some("built-in body"),
         }
@@ -3286,10 +4175,10 @@ mod internal_tests {
     }
 
     #[test]
-    fn test_select_catalog_skills_emits_errors_for_dropped_skills() {
+    fn test_select_catalog_skills_emits_issue_for_dropped_skills() {
         // Each skill's name + description occupies ~10KB. With a 50KB
         // budget, only the first ~5 visible skills fit; the rest must
-        // appear as load errors so the UI can surface them.
+        // appear as loading issues so the UI can surface them.
         let description = "x".repeat(10 * 1024);
         let mut skills = Vec::new();
         let total = 10;
@@ -3301,12 +4190,13 @@ mod internal_tests {
                 source: SkillSource::Global,
                 directory_path: PathBuf::from(format!("/skills/{name}")),
                 skill_file_path: PathBuf::from(format!("/skills/{name}/SKILL.md")),
+                load_warnings: Vec::new(),
                 disable_model_invocation: false,
                 embedded_body: None,
             });
         }
 
-        let (kept, errors) = select_catalog_skills(&skills);
+        let (kept, issues) = select_catalog_skills(&skills);
 
         assert!(
             kept.len() < skills.len(),
@@ -3315,9 +4205,9 @@ mod internal_tests {
             skills.len(),
         );
         assert_eq!(
-            errors.len(),
+            issues.len(),
             1,
-            "all dropped skills should be consolidated into a single error, got {errors:?}",
+            "all dropped skills should be consolidated into a single issue, got {issues:?}",
         );
 
         let kept_size: usize = kept
@@ -3329,33 +4219,34 @@ mod internal_tests {
             "kept skills must fit in the budget (got {kept_size} bytes)",
         );
 
-        let error = &errors[0];
+        let issue = &issues[0];
+        assert_eq!(issue.kind, SkillLoadingIssueKind::CatalogBudgetExceeded);
         assert!(
-            error.message.contains("50KB") && error.message.contains("budget"),
-            "error message {:?} should describe the budget",
-            error.message,
+            issue.message.contains("50KB") && issue.message.contains("budget"),
+            "issue message {:?} should describe the budget",
+            issue.message,
         );
         assert_eq!(
-            error.path,
+            issue.path,
             skills[kept.len()].skill_file_path,
-            "error path should match the first dropped skill",
+            "issue path should match the first dropped skill",
         );
 
         for dropped_skill in &skills[kept.len()..total] {
             let name = &dropped_skill.name;
             assert!(
-                error.message.contains(name.as_str()),
-                "error message {:?} should mention the dropped skill name {name:?}",
-                error.message,
+                issue.message.contains(name.as_str()),
+                "issue message {:?} should mention the dropped skill name {name:?}",
+                issue.message,
             );
             let bullet_line = format!("- {name}");
             assert!(
-                error
+                issue
                     .message
                     .lines()
                     .any(|line| line.starts_with(&bullet_line)),
-                "error message {:?} should contain a bullet line starting with {bullet_line:?}",
-                error.message,
+                "issue message {:?} should contain a bullet line starting with {bullet_line:?}",
+                issue.message,
             );
         }
     }
@@ -3376,6 +4267,7 @@ mod internal_tests {
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/skill-01-first"),
             skill_file_path: PathBuf::from("/skills/skill-01-first/SKILL.md"),
+            load_warnings: Vec::new(),
             disable_model_invocation: false,
             embedded_body: None,
         };
@@ -3385,6 +4277,7 @@ mod internal_tests {
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/skill-02-overflows"),
             skill_file_path: PathBuf::from("/skills/skill-02-overflows/SKILL.md"),
+            load_warnings: Vec::new(),
             disable_model_invocation: false,
             embedded_body: None,
         };
@@ -3394,6 +4287,7 @@ mod internal_tests {
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/skill-03-would-fit"),
             skill_file_path: PathBuf::from("/skills/skill-03-would-fit/SKILL.md"),
+            load_warnings: Vec::new(),
             disable_model_invocation: false,
             embedded_body: None,
         };
@@ -3409,29 +4303,30 @@ mod internal_tests {
         );
 
         let skills = vec![first.clone(), second.clone(), third.clone()];
-        let (kept, errors) = select_catalog_skills(&skills);
+        let (kept, issues) = select_catalog_skills(&skills);
 
         let kept_names: Vec<&str> = kept.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(kept_names, vec![first.name.as_str()]);
 
-        assert_eq!(errors.len(), 1, "expected a single consolidated error");
-        assert_eq!(errors[0].path, second.skill_file_path);
+        assert_eq!(issues.len(), 1, "expected a single consolidated issue");
+        assert_eq!(issues[0].kind, SkillLoadingIssueKind::CatalogBudgetExceeded);
+        assert_eq!(issues[0].path, second.skill_file_path);
         assert!(
-            errors[0].message.contains(second.name.as_str()),
-            "error message {:?} should mention {:?}",
-            errors[0].message,
+            issues[0].message.contains(second.name.as_str()),
+            "issue message {:?} should mention {:?}",
+            issues[0].message,
             second.name,
         );
         assert!(
-            errors[0].message.contains(third.name.as_str()),
-            "error message {:?} should mention {:?}",
-            errors[0].message,
+            issues[0].message.contains(third.name.as_str()),
+            "issue message {:?} should mention {:?}",
+            issues[0].message,
             third.name,
         );
         assert!(
-            errors[0].message.contains("- "),
-            "error message {:?} should use bullet form when multiple skills are dropped",
-            errors[0].message,
+            issues[0].message.contains("- "),
+            "issue message {:?} should use bullet form when multiple skills are dropped",
+            issues[0].message,
         );
     }
 
@@ -3441,7 +4336,7 @@ mod internal_tests {
         // must not appear in the catalog returned by `select_catalog_skills`,
         // even when they would otherwise fit in the budget. They also don't
         // count against the budget, so a hidden skill larger than the entire
-        // budget shouldn't generate a load error or prevent later visible
+        // budget shouldn't generate a loading issue or prevent later visible
         // skills from fitting.
         let huge_description = "y".repeat(MAX_SKILL_DESCRIPTIONS_SIZE * 2);
         let hidden = Skill {
@@ -3450,6 +4345,7 @@ mod internal_tests {
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/hidden-huge"),
             skill_file_path: PathBuf::from("/skills/hidden-huge/SKILL.md"),
+            load_warnings: Vec::new(),
             disable_model_invocation: true,
             embedded_body: None,
         };
@@ -3459,13 +4355,14 @@ mod internal_tests {
             source: SkillSource::Global,
             directory_path: PathBuf::from("/skills/visible"),
             skill_file_path: PathBuf::from("/skills/visible/SKILL.md"),
+            load_warnings: Vec::new(),
             disable_model_invocation: false,
             embedded_body: None,
         };
 
-        let (kept, errors) = select_catalog_skills(&[hidden, visible]);
+        let (kept, issues) = select_catalog_skills(&[hidden, visible]);
 
-        assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
+        assert!(issues.is_empty(), "expected no issues, got: {issues:?}");
         let kept_names: Vec<&str> = kept.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(kept_names, vec!["visible"]);
     }
@@ -3621,6 +4518,208 @@ mod internal_tests {
             assert_eq!(user.len(), 1);
             assert_eq!(user[0].description, "Second version");
         });
+    }
+
+    #[gpui::test]
+    async fn test_global_skill_with_long_description_loads_with_warning(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
+        let skill_dir = skills_dir.join("long-description");
+        let skill_path = skill_dir.join("SKILL.md");
+        let long_description = "a".repeat(agent_skills::MAX_SKILL_DESCRIPTION_LEN + 1);
+        fs.create_dir(&skill_dir).await.unwrap();
+        fs.insert_file(
+            &skill_path,
+            format!("---\nname: long-description\ndescription: {long_description}\n---\n\nbody")
+                .into_bytes(),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let project_id = project.entity_id();
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+        });
+
+        let connection = NativeAgentConnection(agent.clone());
+        let acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection.clone()).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let loaded_skill = agent.read_with(cx, |agent, cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let user = user_skills(&state.skills);
+            assert_eq!(user.len(), 1);
+            assert_eq!(user[0].name, "long-description");
+            assert_eq!(user[0].description, long_description);
+
+            let catalog_names: Vec<&str> = state
+                .project_context
+                .read(cx)
+                .skills()
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect();
+            assert!(
+                catalog_names.contains(&"long-description"),
+                "long-description skill should remain in the model catalog: {catalog_names:?}"
+            );
+
+            assert!(
+                state.skill_loading_issues.iter().any(|issue| {
+                    issue.kind == SkillLoadingIssueKind::DescriptionTooLong
+                        && issue.path == skill_path
+                        && issue.message.to_string().contains("1024-byte limit")
+                }),
+                "expected a description-length warning issue, got {:?}",
+                state.skill_loading_issues
+            );
+
+            (*user[0]).clone()
+        });
+
+        let session_id = acp_thread.read_with(cx, |thread, _cx| thread.session_id().clone());
+        cx.update(|cx| {
+            let available_skills = connection.available_skills(&session_id, cx);
+            let available_skill = available_skills
+                .iter()
+                .find(|skill| skill.name == "long-description")
+                .expect("long-description should appear in available skills");
+            assert_eq!(available_skill.description, long_description);
+            assert!(
+                available_skill
+                    .warning
+                    .as_ref()
+                    .is_some_and(|warning| warning.contains("1024-byte limit")),
+                "available skill should expose warning text, got {:?}",
+                available_skill.warning
+            );
+        });
+
+        let body = agent_skills::read_skill_body(fs.as_ref(), &loaded_skill.skill_file_path)
+            .await
+            .expect("body should load despite description-length warning");
+        assert_eq!(body, "body");
+    }
+
+    #[gpui::test]
+    async fn test_symlinked_global_skills_load_and_reload(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let skills_dir = global_skills_dir();
+        let external_skill_dir = PathBuf::from(path!("/external/my-skill"));
+        let skill_link_dir = skills_dir.join("my-skill");
+        let skill_link_path = skill_link_dir.join("SKILL.md");
+
+        fs.insert_tree(
+            &external_skill_dir,
+            json!({
+                "SKILL.md": "---\nname: my-skill\ndescription: First symlinked version\n---\n\nbody-v1"
+            }),
+        )
+        .await;
+        fs.create_dir(&skills_dir).await.unwrap();
+        fs.create_symlink(&skill_link_dir, external_skill_dir)
+            .await
+            .unwrap();
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let project_id = project.entity_id();
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        cx.update(|cx| {
+            agent.update(cx, |agent, cx| agent.ensure_skills_scan_started(cx));
+        });
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let loaded_skill = agent.read_with(cx, |agent, cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let user = user_skills(&state.skills);
+            assert_eq!(user.len(), 1);
+            assert_eq!(user[0].name, "my-skill");
+            assert_eq!(user[0].description, "First symlinked version");
+            assert_eq!(user[0].source, SkillSource::Global);
+            assert_eq!(user[0].skill_file_path, skill_link_path);
+
+            let catalog_skills = state.project_context.read(cx).skills();
+            let catalog_skill = catalog_skills
+                .iter()
+                .find(|skill| skill.name == "my-skill")
+                .expect("symlinked skill should be included in the model-facing catalog");
+            assert_eq!(catalog_skill.description, "First symlinked version");
+            assert_eq!(
+                catalog_skill.location,
+                skill_link_path.to_string_lossy().as_ref()
+            );
+
+            (*user[0]).clone()
+        });
+        let body = agent_skills::read_skill_body(fs.as_ref(), &loaded_skill.skill_file_path)
+            .await
+            .unwrap();
+        assert_eq!(body, "body-v1");
+
+        fs.write(
+            &skill_link_path,
+            b"---\nname: my-skill\ndescription: Second symlinked version\n---\n\nbody-v2",
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let reloaded_skill = agent.read_with(cx, |agent, cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let user = user_skills(&state.skills);
+            assert_eq!(user.len(), 1);
+            assert_eq!(user[0].name, "my-skill");
+            assert_eq!(user[0].description, "Second symlinked version");
+            assert_eq!(user[0].source, SkillSource::Global);
+            assert_eq!(user[0].skill_file_path, skill_link_path);
+
+            let catalog_skills = state.project_context.read(cx).skills();
+            let catalog_skill = catalog_skills
+                .iter()
+                .find(|skill| skill.name == "my-skill")
+                .expect("reloaded symlinked skill should be included in the model-facing catalog");
+            assert_eq!(catalog_skill.description, "Second symlinked version");
+            assert_eq!(
+                catalog_skill.location,
+                skill_link_path.to_string_lossy().as_ref()
+            );
+
+            (*user[0]).clone()
+        });
+        let body = agent_skills::read_skill_body(fs.as_ref(), &reloaded_skill.skill_file_path)
+            .await
+            .unwrap();
+        assert_eq!(body, "body-v2");
     }
 
     #[gpui::test]
@@ -4153,6 +5252,294 @@ mod internal_tests {
         });
     }
 
+    /// Open a session against a freshly created project and trust its only
+    /// worktree, so project-local skills load. Returns the agent, the
+    /// project, and the worktree id of the project root.
+    async fn open_trusted_project_skills(
+        cx: &mut TestAppContext,
+        fs: Arc<FakeFs>,
+        root: &str,
+    ) -> (Entity<NativeAgent>, Entity<Project>, WorktreeId) {
+        use collections::{HashMap, HashSet};
+        use project::trusted_worktrees::{self, PathTrust, TrustedWorktrees};
+
+        cx.update(|cx| {
+            trusted_worktrees::init(HashMap::default(), cx);
+        });
+
+        let project = Project::test_with_worktree_trust(fs.clone(), [Path::new(root)], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent =
+            cx.update(|cx| NativeAgent::new(thread_store, Templates::new(), fs.clone(), cx));
+
+        let connection = NativeAgentConnection(agent.clone());
+        let _acp_thread = cx
+            .update(|cx| {
+                Rc::new(connection).new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new(root)]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let worktree_id = project.read_with(cx, |project, cx| {
+            project.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        cx.update(|cx| {
+            let trusted_worktrees = TrustedWorktrees::try_get_global(cx)
+                .expect("trusted worktrees global initialized by test_with_worktree_trust");
+            trusted_worktrees.update(cx, |trusted_worktrees, cx| {
+                trusted_worktrees.trust(
+                    &project.read(cx).worktree_store(),
+                    HashSet::from_iter([PathTrust::Worktree(worktree_id)]),
+                    cx,
+                );
+            });
+        });
+        cx.run_until_parked();
+
+        (agent, project, worktree_id)
+    }
+
+    /// The body resolver for a project-local skill must read the file
+    /// through a project buffer rather than the local filesystem. This is
+    /// what makes project skills resolvable in remote workspaces, where
+    /// the `fs` the agent holds is the client's filesystem and not where
+    /// the project files actually live. We prove the buffer path is used
+    /// by editing the buffer in memory (without saving) and asserting the
+    /// resolver returns the edited body, not the on-disk body.
+    #[gpui::test]
+    async fn test_project_skill_body_resolves_through_buffer(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": {
+                    "skills": {
+                        "my-skill": {
+                            "SKILL.md": "---\nname: my-skill\ndescription: A project skill\n---\n\ndisk body"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let (agent, project, worktree_id) =
+            open_trusted_project_skills(cx, fs.clone(), "/project").await;
+        let project_id = project.entity_id();
+
+        let skill = agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            user_skills(&state.skills)
+                .into_iter()
+                .find(|s| s.name == "my-skill")
+                .cloned()
+                .expect("project skill should be loaded")
+        });
+        assert!(matches!(skill.source, SkillSource::ProjectLocal { .. }));
+
+        let resolver =
+            cx.update(|_cx| super::skill_body_resolver_for_project(project.clone(), fs.clone()));
+
+        let body = cx
+            .update(|cx| resolver(skill.clone(), &mut cx.to_async()))
+            .await
+            .unwrap();
+        assert_eq!(body, "disk body");
+
+        // Edit the buffer in memory without writing to disk.
+        let relative_path: Arc<RelPath> = rel_path(".agents/skills/my-skill/SKILL.md").into();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, relative_path), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text(
+                "---\nname: my-skill\ndescription: A project skill\n---\n\nedited body",
+                cx,
+            );
+        });
+
+        let body = cx
+            .update(|cx| resolver(skill.clone(), &mut cx.to_async()))
+            .await
+            .unwrap();
+        assert_eq!(
+            body, "edited body",
+            "resolver must read the in-memory buffer, not the on-disk file"
+        );
+    }
+
+    /// A project SKILL.md whose on-disk size exceeds the cap must be
+    /// rejected with a size-limit error and excluded from the loaded
+    /// skills, exercising the size guard in `load_project_skills`.
+    #[gpui::test]
+    async fn test_oversized_project_skill_reports_error(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let oversized = format!(
+            "---\nname: huge-skill\ndescription: Too big\n---\n\n{}",
+            "a".repeat(MAX_SKILL_FILE_SIZE + 1)
+        );
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": { "skills": { "huge-skill": { "SKILL.md": oversized } } }
+            }),
+        )
+        .await;
+
+        let (agent, project, _worktree_id) =
+            open_trusted_project_skills(cx, fs.clone(), "/project").await;
+        let project_id = project.entity_id();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            assert!(
+                user_skills(&state.skills).is_empty(),
+                "oversized skill must not load: {:?}",
+                user_skills(&state.skills)
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+            );
+            assert!(
+                state
+                    .skill_loading_issues
+                    .iter()
+                    .any(|issue| issue.kind == SkillLoadingIssueKind::LoadFailed
+                        && issue.message.to_string().contains("maximum size")),
+                "expected a size-limit error, got {:?}",
+                state.skill_loading_issues
+            );
+        });
+    }
+
+    /// A malformed project SKILL.md must surface a per-skill load error
+    /// without preventing sibling skills in the same worktree from
+    /// loading.
+    #[gpui::test]
+    async fn test_malformed_project_skill_reports_error(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": {
+                    "skills": {
+                        "good": {
+                            "SKILL.md": "---\nname: good\ndescription: Fine\n---\n\nbody"
+                        },
+                        "bad": {
+                            "SKILL.md": "this file has no frontmatter"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let (agent, project, _worktree_id) =
+            open_trusted_project_skills(cx, fs.clone(), "/project").await;
+        let project_id = project.entity_id();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let names: Vec<&str> = user_skills(&state.skills)
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect();
+            assert_eq!(names, vec!["good"], "only the valid skill should load");
+            assert!(
+                state
+                    .skill_loading_issues
+                    .iter()
+                    .any(|issue| issue.kind == SkillLoadingIssueKind::LoadFailed
+                        && issue.path.ends_with("bad/SKILL.md")),
+                "expected an error for the malformed skill, got {:?}",
+                state.skill_loading_issues
+            );
+        });
+    }
+
+    /// The skill catalog (metadata) is also loaded through project
+    /// buffers, and the broadened `.agents` refresh trigger must rebuild
+    /// it when files under `.agents` change. We edit the SKILL.md buffer
+    /// in memory, then touch an unrelated file directly under `.agents`
+    /// (not under `.agents/skills`) and assert the catalog reflects the
+    /// in-memory edit. Under the previous `.agents/skills`-only trigger
+    /// this refresh would not have fired.
+    #[gpui::test]
+    async fn test_project_skill_metadata_refreshes_from_buffer(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/project",
+            json!({
+                ".agents": {
+                    "skills": {
+                        "my-skill": {
+                            "SKILL.md": "---\nname: my-skill\ndescription: Original\n---\n\nbody"
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let (agent, project, worktree_id) =
+            open_trusted_project_skills(cx, fs.clone(), "/project").await;
+        let project_id = project.entity_id();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let skill = user_skills(&state.skills)
+                .into_iter()
+                .find(|s| s.name == "my-skill")
+                .expect("skill should be loaded");
+            assert_eq!(skill.description, "Original");
+        });
+
+        let relative_path: Arc<RelPath> = rel_path(".agents/skills/my-skill/SKILL.md").into();
+        let buffer = project
+            .update(cx, |project, cx| {
+                project.open_buffer((worktree_id, relative_path), cx)
+            })
+            .await
+            .unwrap();
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_text(
+                "---\nname: my-skill\ndescription: Edited in buffer\n---\n\nbody",
+                cx,
+            );
+        });
+
+        // Touch a file directly under `.agents` (not under
+        // `.agents/skills`) to trigger the broadened refresh path.
+        fs.insert_file("/project/.agents/marker.txt", b"hello".to_vec())
+            .await;
+        cx.run_until_parked();
+
+        agent.read_with(cx, |agent, _cx| {
+            let state = agent.projects.get(&project_id).unwrap();
+            let skill = user_skills(&state.skills)
+                .into_iter()
+                .find(|s| s.name == "my-skill")
+                .expect("skill should still be loaded");
+            assert_eq!(
+                skill.description, "Edited in buffer",
+                "catalog must reflect the in-memory buffer after a refresh"
+            );
+        });
+    }
+
     #[gpui::test]
     async fn test_listing_models(cx: &mut TestAppContext) {
         init_test(cx);
@@ -4196,13 +5583,14 @@ mod internal_tests {
             IndexMap::from_iter([(
                 AgentModelGroupName("Fake".into()),
                 vec![AgentModelInfo {
-                    id: acp::ModelId::new("fake/fake"),
+                    id: AgentModelId::new("fake/fake"),
                     name: "Fake".into(),
                     description: None,
                     icon: Some(acp_thread::AgentModelIcon::Named(
                         ui::IconName::ZedAssistant
                     )),
                     is_latest: false,
+                    disabled: None,
                     cost: None,
                 }]
             )])
@@ -4255,7 +5643,7 @@ mod internal_tests {
 
         // Select a model
         let selector = connection.model_selector(&session_id).unwrap();
-        let model_id = acp::ModelId::new("fake/fake");
+        let model_id = AgentModelId::new("fake/fake");
         cx.update(|cx| selector.select_model(model_id.clone(), cx))
             .await
             .unwrap();
@@ -4306,7 +5694,7 @@ mod internal_tests {
         agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(acp::ModelId::new("fake-corp/fake-thinking"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), cx))
             .await
             .unwrap();
         cx.run_until_parked();
@@ -4380,7 +5768,7 @@ mod internal_tests {
 
         // Select the thinking model via select_model.
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(acp::ModelId::new("fake-corp/fake-thinking"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), cx))
             .await
             .unwrap();
 
@@ -4397,7 +5785,7 @@ mod internal_tests {
 
         // Switch back to the non-thinking model.
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(acp::ModelId::new("fake/fake"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake/fake"), cx))
             .await
             .unwrap();
 
@@ -4514,7 +5902,7 @@ mod internal_tests {
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(acp::ModelId::new("fake-corp/fake-thinking"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/fake-thinking"), cx))
             .await
             .unwrap();
 
@@ -4617,7 +6005,7 @@ mod internal_tests {
         let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
 
         let selector = connection.model_selector(&session_id).unwrap();
-        cx.update(|cx| selector.select_model(acp::ModelId::new("fake-corp/custom-model-id"), cx))
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), cx))
             .await
             .unwrap();
 
@@ -4671,6 +6059,212 @@ mod internal_tests {
                 reloaded_model.id().0.as_ref(),
                 "custom-model-id",
                 "reloaded thread should have the same model, not fall back to the default"
+            );
+        });
+
+        drop(reloaded_acp_thread);
+    }
+
+    async fn persist_thread_with_fake_corp_model(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<NativeAgent>,
+        Rc<NativeAgentConnection>,
+        Entity<Project>,
+        acp::SessionId,
+        Arc<FakeLanguageModelProvider>,
+    ) {
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree("/", json!({ "a": {} })).await;
+        let project = Project::test(fs.clone(), [path!("/a").as_ref()], cx).await;
+        let thread_store = cx.new(|cx| ThreadStore::new(cx));
+        let agent = cx
+            .update(|cx| NativeAgent::new(thread_store.clone(), Templates::new(), fs.clone(), cx));
+        let connection = Rc::new(NativeAgentConnection(agent.clone()));
+
+        let model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "fake-corp",
+            "custom-model-id",
+            "Custom Model Display Name",
+            false,
+        ));
+        let provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("fake-corp".to_string()),
+                LanguageModelProviderName::from("Fake Corp".to_string()),
+            )
+            .with_models(vec![model.clone()]),
+        );
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+            });
+        });
+        agent.update(cx, |agent, cx| agent.models.refresh_list(cx));
+
+        let acp_thread = cx
+            .update(|cx| {
+                connection.clone().new_session(
+                    project.clone(),
+                    PathList::new(&[Path::new("/a")]),
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        let session_id = acp_thread.read_with(cx, |thread, _| thread.session_id().clone());
+
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("fake-corp/custom-model-id"), cx))
+            .await
+            .unwrap();
+
+        let send = acp_thread.update(cx, |thread, cx| thread.send(vec!["Hello".into()], cx));
+        let send = cx.foreground_executor().spawn(send);
+        cx.run_until_parked();
+        model.send_last_completion_stream_text_chunk("Response.");
+        model.end_last_completion_stream();
+        send.await.unwrap();
+        cx.run_until_parked();
+
+        cx.update(|cx| connection.clone().close_session(&session_id, cx))
+            .await
+            .unwrap();
+        drop(acp_thread);
+
+        (agent, connection, project, session_id, provider)
+    }
+
+    fn unregister_fake_corp(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.unregister_provider(
+                    LanguageModelProviderId::from("fake-corp".to_string()),
+                    cx,
+                );
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_loaded_thread_resolves_model_when_provider_loads_late(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (agent, _connection, project, session_id, provider) =
+            persist_thread_with_fake_corp_model(cx).await;
+
+        // Simulate a restart where the provider hasn't fetched its model list
+        // yet, so the saved selection can't be resolved at load time.
+        unregister_fake_corp(cx);
+
+        let reloaded_acp_thread = agent
+            .update(cx, |agent, cx| {
+                agent.open_thread(session_id.clone(), project.clone(), cx)
+            })
+            .await
+            .unwrap();
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        thread.read_with(cx, |thread, _| {
+            assert!(
+                thread.model().is_none(),
+                "should not fall back to an unrelated model"
+            );
+        });
+
+        // The original selection is persisted even while unresolved, so a save
+        // during the window can't overwrite the user's choice with a fallback.
+        let db_thread = thread.read_with(cx, |thread, cx| thread.to_db(cx)).await;
+        let saved = db_thread.model.expect("selection should be persisted");
+        assert_eq!(saved.provider, "fake-corp");
+        assert_eq!(saved.model, "custom-model-id");
+
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread
+                    .model()
+                    .expect("model should resolve once provider loads")
+                    .id()
+                    .0
+                    .as_ref(),
+                "custom-model-id"
+            );
+        });
+
+        drop(reloaded_acp_thread);
+    }
+
+    #[gpui::test]
+    async fn test_explicit_model_selection_cancels_pending(cx: &mut TestAppContext) {
+        init_test(cx);
+        let (agent, connection, project, session_id, provider) =
+            persist_thread_with_fake_corp_model(cx).await;
+
+        unregister_fake_corp(cx);
+
+        let reloaded_acp_thread = agent
+            .update(cx, |agent, cx| {
+                agent.open_thread(session_id.clone(), project.clone(), cx)
+            })
+            .await
+            .unwrap();
+        let thread = agent.read_with(cx, |agent, _| {
+            agent.sessions.get(&session_id).unwrap().thread.clone()
+        });
+        thread.read_with(cx, |thread, _| {
+            assert!(thread.model().is_none());
+        });
+
+        // The user explicitly picks a different, available model.
+        let other_model = Arc::new(FakeLanguageModel::with_id_and_thinking(
+            "other-corp",
+            "other-model-id",
+            "Other Model",
+            false,
+        ));
+        let other_provider = Arc::new(
+            FakeLanguageModelProvider::new(
+                LanguageModelProviderId::from("other-corp".to_string()),
+                LanguageModelProviderName::from("Other Corp".to_string()),
+            )
+            .with_models(vec![other_model.clone()]),
+        );
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(other_provider, cx);
+            });
+        });
+        cx.run_until_parked();
+
+        let selector = connection.model_selector(&session_id).unwrap();
+        cx.update(|cx| selector.select_model(AgentModelId::new("other-corp/other-model-id"), cx))
+            .await
+            .unwrap();
+
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(thread.model().unwrap().id().0.as_ref(), "other-model-id");
+        });
+
+        // The original provider returning must not clobber the explicit choice.
+        cx.update(|cx| {
+            LanguageModelRegistry::global(cx).update(cx, |registry, cx| {
+                registry.register_provider(provider.clone(), cx);
+            });
+        });
+        cx.run_until_parked();
+
+        thread.read_with(cx, |thread, _| {
+            assert_eq!(
+                thread.model().unwrap().id().0.as_ref(),
+                "other-model-id",
+                "a late provider load must not override the explicit selection"
             );
         });
 
