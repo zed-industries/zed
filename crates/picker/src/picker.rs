@@ -1049,7 +1049,8 @@ impl<D: PickerDelegate> Picker<D> {
             return;
         }
         self.set_selected_index(ix, None, false, window, cx);
-        if self.delegate.supports_multi_select() && self.select_instead_of_open {
+        if self.delegate.supports_multi_select() && (secondary || self.select_instead_of_open) {
+            self.select_instead_of_open = true;
             self.delegate.toggle_item_selected(ix, window, cx);
             cx.notify();
         } else {
