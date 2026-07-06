@@ -498,7 +498,7 @@ struct TreeViewState {
     // Length equals the number of visible entries.
     // This is needed because some entries (like collapsed directories) may be hidden.
     logical_indices: Vec<usize>,
-    expanded_dirs: HashMap<RepoPath, bool>,
+    expanded_dirs: HashMap<TreeKey, bool>,
     directory_descendants: HashMap<TreeKey, Vec<GitStatusEntry>>,
 }
 
@@ -573,8 +573,8 @@ impl TreeViewState {
             let (child_flattened, mut child_statuses) =
                 self.flatten_tree(terminal, section, depth + 1, seen_directories);
             let key = TreeKey { section, path };
-            let expanded = *self.expanded_dirs.get(&key.path).unwrap_or(&true);
-            self.expanded_dirs.entry(key.path.clone()).or_insert(true);
+            let expanded = *self.expanded_dirs.get(&key).unwrap_or(&true);
+            self.expanded_dirs.entry(key.clone()).or_insert(true);
             seen_directories.insert(key.clone());
 
             self.directory_descendants
@@ -756,7 +756,7 @@ pub struct GitPanel {
     generate_commit_message_task: Option<Task<Option<()>>>,
     entries: Vec<GitListEntry>,
     view_mode: GitPanelViewMode,
-    tree_expanded_dirs: HashMap<RepoPath, bool>,
+    tree_expanded_dirs: HashMap<TreeKey, bool>,
     entries_indices: HashMap<RepoPath, usize>,
     single_staged_entry: Option<GitStatusEntry>,
     single_tracked_entry: Option<GitStatusEntry>,
@@ -1136,8 +1136,8 @@ impl GitPanel {
                     path: RepoPath::from_rel_path(dir),
                 };
 
-                if tree_state.expanded_dirs.get(&key.path) == Some(&false) {
-                    tree_state.expanded_dirs.insert(key.path.clone(), true);
+                if tree_state.expanded_dirs.get(&key) == Some(&false) {
+                    tree_state.expanded_dirs.insert(key, true);
                     needs_rebuild = true;
                 }
 
@@ -3940,7 +3940,7 @@ impl GitPanel {
 
     fn toggle_directory(&mut self, key: &TreeKey, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(state) = self.view_mode.tree_state_mut() {
-            let expanded = state.expanded_dirs.entry(key.path.clone()).or_insert(true);
+            let expanded = state.expanded_dirs.entry(key.clone()).or_insert(true);
             *expanded = !*expanded;
             self.tree_expanded_dirs = state.expanded_dirs.clone();
             self.update_visible_entries(window, cx);
@@ -4353,13 +4353,9 @@ impl GitPanel {
                     }
                 }
 
-                let seen_directory_paths = seen_directories
-                    .iter()
-                    .map(|directory| directory.path.clone())
-                    .collect::<HashSet<_>>();
                 tree_state
                     .expanded_dirs
-                    .retain(|path, _| seen_directory_paths.contains(path));
+                    .retain(|key, _| seen_directories.contains(key));
                 self.tree_expanded_dirs = tree_state.expanded_dirs.clone();
                 self.view_mode = GitPanelViewMode::Tree(tree_state);
             }
@@ -8092,6 +8088,61 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_tree_view_directory_expansion_is_scoped_to_section() {
+        let entry = |path, status| GitStatusEntry {
+            repo_path: repo_path(path),
+            status,
+            staging: StageStatus::Unstaged,
+            diff_stat: None,
+        };
+        let mut state = TreeViewState::default();
+        let mut seen_directories = HashSet::default();
+
+        state.build_tree_entries(
+            Section::Tracked,
+            vec![entry("src/tracked.rs", StatusCode::Modified.worktree())],
+            &mut seen_directories,
+        );
+        state.build_tree_entries(
+            Section::New,
+            vec![entry("src/new.rs", FileStatus::Untracked)],
+            &mut seen_directories,
+        );
+
+        let tracked_key = TreeKey {
+            section: Section::Tracked,
+            path: repo_path("src"),
+        };
+        let new_key = TreeKey {
+            section: Section::New,
+            path: repo_path("src"),
+        };
+        state.expanded_dirs.insert(tracked_key.clone(), false);
+
+        let tracked_entries = state.build_tree_entries(
+            Section::Tracked,
+            vec![entry("src/tracked.rs", StatusCode::Modified.worktree())],
+            &mut seen_directories,
+        );
+        let new_entries = state.build_tree_entries(
+            Section::New,
+            vec![entry("src/new.rs", FileStatus::Untracked)],
+            &mut seen_directories,
+        );
+
+        assert_eq!(state.expanded_dirs.get(&tracked_key), Some(&false));
+        assert_eq!(state.expanded_dirs.get(&new_key), Some(&true));
+        assert!(matches!(
+            tracked_entries.first(),
+            Some((GitListEntry::Directory(entry), _)) if !entry.expanded
+        ));
+        assert!(matches!(
+            new_entries.first(),
+            Some((GitListEntry::Directory(entry), _)) if entry.expanded
+        ));
+    }
+
     fn register_git_commit_language(project: &Entity<Project>, cx: &mut VisualTestContext) {
         project.read_with(cx, |project, _| {
             project.languages().add(Arc::new(language::Language::new(
@@ -9776,7 +9827,7 @@ mod tests {
                 .view_mode
                 .tree_state()
                 .expect("tree view state should exist");
-            assert_eq!(state.expanded_dirs.get(&src_key.path).copied(), Some(false));
+            assert_eq!(state.expanded_dirs.get(&src_key).copied(), Some(false));
         });
 
         let worktree_id =
@@ -9795,7 +9846,7 @@ mod tests {
                 .view_mode
                 .tree_state()
                 .expect("tree view state should exist");
-            assert_eq!(state.expanded_dirs.get(&src_key.path).copied(), Some(true));
+            assert_eq!(state.expanded_dirs.get(&src_key).copied(), Some(true));
 
             let selected_ix = panel.selected_entry.expect("selection should be set");
             assert!(state.logical_indices.contains(&selected_ix));
@@ -9904,7 +9955,7 @@ mod tests {
                 .view_mode
                 .tree_state()
                 .expect("tree view state should exist");
-            assert_eq!(state.expanded_dirs.get(&foo_key.path).copied(), Some(false));
+            assert_eq!(state.expanded_dirs.get(&foo_key).copied(), Some(false));
 
             let foo_idx = panel
                 .entries
