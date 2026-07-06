@@ -8234,6 +8234,7 @@ impl ThreadView {
                                     entry_ix,
                                     &tool_call.id,
                                     details,
+                                    window,
                                     cx,
                                 ))
                             },
@@ -8684,6 +8685,7 @@ impl ThreadView {
         entry_ix: usize,
         tool_call_id: &acp::ToolCallId,
         details: &SandboxAuthorizationDetails,
+        window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let has_network = details.network_all_hosts || !details.network_hosts.is_empty();
@@ -8929,6 +8931,7 @@ impl ThreadView {
                 this.child(self.render_sandbox_confusable_warning(
                     tool_call_id,
                     &confusable_findings,
+                    window,
                     cx,
                 ))
             })
@@ -9008,9 +9011,11 @@ impl ThreadView {
         &self,
         tool_call_id: &acp::ToolCallId,
         findings: &[(String, Vec<unicode_confusables::SuspiciousChar>)],
+        window: &Window,
         cx: &Context<Self>,
     ) -> AnyElement {
         let acknowledged = self.acknowledged_confusable_warnings.contains(tool_call_id);
+        let line_height = window.line_height();
 
         v_flex()
             .w_full()
