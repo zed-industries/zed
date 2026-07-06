@@ -893,15 +893,9 @@ impl MantleModel {
         }
     }
 
-    /// The path segment between the Mantle host and `/chat/completions` or
-    /// `/responses`. AWS serves GPT-5.5/5.4 and Grok 4.3 from `openai/v1/...`,
-    /// unlike models also available elsewhere (e.g. `gpt-oss-120b`), which use
-    /// the generic `v1/...` path.
+    /// The path segment between the Mantle host and `/chat/completions` or `/responses`.
     pub fn path_prefix(&self) -> &str {
-        match self {
-            Self::Gpt5_5 | Self::Gpt5_4 | Self::Grok4_3 => "openai/v1",
-            Self::Custom { .. } => "v1",
-        }
+        "openai/v1"
     }
 
     pub fn max_token_count(&self) -> u64 {

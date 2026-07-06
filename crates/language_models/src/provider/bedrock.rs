@@ -2477,7 +2477,7 @@ mod tests {
                     supports_images: false,
                 }
             ),
-            "https://bedrock-mantle.us-east-1.api.aws/v1"
+            "https://bedrock-mantle.us-east-1.api.aws/openai/v1"
         );
     }
 
