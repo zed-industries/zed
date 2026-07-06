@@ -34,6 +34,7 @@ actions!(text_finder, [ToProjectSearch, Fold, Unfold, ToggleFoldAll]);
 pub struct TextFinder {
     picker: Entity<Picker<Delegate>>,
     init_modifiers: Option<Modifiers>,
+    workspace_id: Option<WorkspaceId>,
     _subscription: Subscription,
 }
 
@@ -158,8 +159,9 @@ impl TextFinder {
             workspace
                 .update_in(cx, |workspace, window, cx| {
                     remove_project_search_tab(project_search_item_id, workspace, window, cx);
+                    let workspace_id = workspace.database_id();
                     workspace.toggle_modal(window, cx, |window, cx| {
-                        Self::new(delegate, None, window, cx)
+                        Self::new(delegate, None, workspace_id, window, cx)
                     });
                 })
                 .ok();
@@ -380,8 +382,9 @@ impl TextFinder {
             let delegate = delegate_task.await;
             workspace
                 .update_in(cx, |workspace, window, cx| {
+                    let workspace_id = workspace.database_id();
                     workspace.toggle_modal(window, cx, |window, cx| {
-                        Self::new(delegate, seed_query, window, cx)
+                        Self::new(delegate, seed_query, workspace_id, window, cx)
                     });
                 })
                 .ok();
@@ -391,6 +394,7 @@ impl TextFinder {
     fn new(
         delegate: Delegate,
         seed_query: Option<SearchSeed>,
+        workspace_id: Option<WorkspaceId>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -418,6 +422,7 @@ impl TextFinder {
         Self {
             picker,
             init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
+            workspace_id,
             _subscription: subscription,
         }
     }
@@ -450,11 +455,7 @@ impl ModalView for TextFinder {
         let query = picker.query(cx);
         if !query.is_empty() {
             let options = picker.delegate.search_options;
-            let workspace_id = self
-                .weak_workspace(cx)
-                .upgrade()
-                .and_then(|workspace| workspace.read(cx).database_id());
-            store_last_search(workspace_id, query, options, cx);
+            store_last_search(self.workspace_id, query, options, cx);
         }
         DismissDecision::Dismiss(true)
     }
