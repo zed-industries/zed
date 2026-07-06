@@ -670,6 +670,18 @@ impl LanguageModel for BedrockModel {
         self.model.supports_thinking()
     }
 
+    fn refusal_fallback_model_id(&self) -> Option<&'static str> {
+        if self
+            .model
+            .id()
+            .starts_with(anthropic::FABLE_MODEL_ID_PREFIX)
+        {
+            Some(anthropic::FABLE_FALLBACK_MODEL_ID)
+        } else {
+            None
+        }
+    }
+
     fn supported_effort_levels(&self) -> Vec<language_model::LanguageModelEffortLevel> {
         if self.model.supports_adaptive_thinking() {
             vec![
@@ -1013,7 +1025,7 @@ pub fn into_bedrock(
                         }
                     })
                     .collect();
-                if message.cache && supports_caching {
+                if message.cache && supports_caching && !bedrock_message_content.is_empty() {
                     bedrock_message_content.push(BedrockInnerContent::CachePoint(
                         CachePointBlock::builder()
                             .r#type(CachePointType::Default)
@@ -1733,5 +1745,93 @@ impl ConfigurationView {
                 .size(LabelSize::Small)
                 .color(Color::Muted)
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use language_model::LanguageModelRequestMessage;
+
+    fn into_bedrock_request(messages: Vec<LanguageModelRequestMessage>) -> bedrock::Request {
+        into_bedrock(
+            LanguageModelRequest {
+                messages,
+                ..Default::default()
+            },
+            "claude-sonnet-4-5".to_string(),
+            1.0,
+            4096,
+            BedrockModelMode::Default,
+            true,
+            true,
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_cache_marked_message_that_filters_to_empty_is_dropped() {
+        let request = into_bedrock_request(vec![
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("What's the weather?".into())],
+                cache: false,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::Assistant,
+                content: vec![MessageContent::Thinking {
+                    text: "Let me think about this...".into(),
+                    signature: None,
+                }],
+                cache: true,
+                reasoning_details: None,
+            },
+            LanguageModelRequestMessage {
+                role: Role::User,
+                content: vec![MessageContent::Text("Summarize this conversation.".into())],
+                cache: false,
+                reasoning_details: None,
+            },
+        ]);
+
+        for message in &request.messages {
+            assert!(
+                message
+                    .content()
+                    .iter()
+                    .any(|block| !matches!(block, BedrockInnerContent::CachePoint(_))),
+                "message must not consist solely of cache points: {:?}",
+                message
+            );
+        }
+        assert!(
+            request
+                .messages
+                .iter()
+                .all(|message| *message.role() == bedrock::BedrockRole::User),
+            "the assistant message stripped to empty content should be dropped entirely"
+        );
+    }
+
+    #[test]
+    fn test_cache_marked_message_with_content_gets_cache_point() {
+        let request = into_bedrock_request(vec![LanguageModelRequestMessage {
+            role: Role::User,
+            content: vec![MessageContent::Text("What's the weather?".into())],
+            cache: true,
+            reasoning_details: None,
+        }]);
+
+        assert_eq!(request.messages.len(), 1);
+        assert!(
+            matches!(
+                request.messages[0].content().last(),
+                Some(BedrockInnerContent::CachePoint(_))
+            ),
+            "a cache-marked message with content should end with a cache point"
+        );
     }
 }
