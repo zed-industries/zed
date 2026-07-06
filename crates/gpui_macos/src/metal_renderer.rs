@@ -1543,7 +1543,8 @@ impl MetalRenderer {
             // CVMetalTextureGetTexture can return null (e.g. if the texture
             // cache failed to wrap the plane); constructing a TextureRef from
             // null would be undefined behavior, so skip the surface instead.
-            let y_texture_ptr = unsafe { CVMetalTextureGetTexture(y_texture.as_concrete_TypeRef()) };
+            let y_texture_ptr =
+                unsafe { CVMetalTextureGetTexture(y_texture.as_concrete_TypeRef()) };
             let cb_cr_texture_ptr =
                 unsafe { CVMetalTextureGetTexture(cb_cr_texture.as_concrete_TypeRef()) };
             if y_texture_ptr.is_null() || cb_cr_texture_ptr.is_null() {

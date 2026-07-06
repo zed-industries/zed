@@ -1462,7 +1462,9 @@ unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
         if absolute_string.is_null() {
             "<null>".to_string()
         } else {
-            CStr::from_ptr(absolute_string).to_string_lossy().into_owned()
+            CStr::from_ptr(absolute_string)
+                .to_string_lossy()
+                .into_owned()
         }
     });
     Ok(PathBuf::from(OsStr::from_bytes(unsafe {
