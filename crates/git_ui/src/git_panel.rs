@@ -81,7 +81,7 @@ use strum::{IntoEnumIterator, VariantNames};
 use theme_settings::ThemeSettings;
 use time::OffsetDateTime;
 use ui::{
-    ButtonLike, Checkbox, Chip, ContextMenu, ContextMenuEntry, Divider, ElevationIndex,
+    ButtonLike, Checkbox, ContextMenu, ContextMenuEntry, Divider, ElevationIndex,
     IndentGuideColors, KeyBinding, PopoverMenu, ProjectEmptyState, RenderedIndentGuide, ScrollAxes,
     Scrollbars, SplitButton, Tab, TintColor, Tooltip, WithScrollbar, prelude::*,
 };
@@ -6781,22 +6781,6 @@ impl GitPanel {
             .hover(|s| s.bg(hover_bg))
             .active(|s| s.bg(active_bg))
             .child(name_row)
-            .when(stage_status == StageStatus::PartiallyStaged, |el| {
-                let unstaged_indicator_id: ElementId =
-                    ElementId::Name(format!("partial_unstaged_indicator_{}", ix).into());
-                el.child(
-                    h_flex().gap_0p5().child(
-                        div()
-                            .id(unstaged_indicator_id)
-                            .cursor_pointer()
-                            .child(Chip::new("U").label_color(Color::Warning))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.view_unstaged_changes(&ViewUnstagedChanges, window, cx);
-                                cx.stop_propagation();
-                            })),
-                    ),
-                )
-            })
             .when(GitPanelSettings::get_global(cx).diff_stats, |el| {
                 el.when_some(entry.diff_stat, move |this, stat| {
                     let id = format!("diff-stat-{}", id_for_diff_stat);

@@ -4590,8 +4590,7 @@ impl BufferGitState {
         self.pending_index_edits = Some(Vec::new());
     }
 
-    fn clear_pending_index_edits_and_hunks(&mut self, cx: &mut Context<Self>) {
-        self.clear_pending_index_edits();
+    fn clear_pending_hunks(&mut self, cx: &mut Context<Self>) {
         for diff in [
             self.uncommitted_diff(),
             self.unstaged_diff(),
@@ -4602,6 +4601,39 @@ impl BufferGitState {
         {
             diff.update(cx, |diff, cx| diff.clear_pending_hunks(cx));
         }
+    }
+
+    fn mark_whole_file_stage_or_unstage_pending(
+        &mut self,
+        stage: bool,
+        buffer_snapshot: &text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(uncommitted_diff) = self.uncommitted_diff() {
+            uncommitted_diff.update(cx, |uncommitted_diff, cx| {
+                uncommitted_diff.mark_all_hunks_pending(stage, buffer_snapshot, cx);
+            });
+        }
+
+        if stage {
+            if let Some(unstaged_diff) = self.unstaged_diff() {
+                unstaged_diff.update(cx, |unstaged_diff, cx| {
+                    unstaged_diff.suppress_all_hunks_pending(buffer_snapshot, cx);
+                });
+            }
+        } else if let Some(staged_diff) = self.staged_diff()
+            && let Some(index_text_buffer) = self.index_text_buffer()
+        {
+            let index_snapshot = index_text_buffer.read(cx).text_snapshot();
+            staged_diff.update(cx, |staged_diff, cx| {
+                staged_diff.suppress_all_hunks_pending(&index_snapshot, cx);
+            });
+        }
+    }
+
+    fn clear_pending_index_edits_and_hunks(&mut self, cx: &mut Context<Self>) {
+        self.clear_pending_index_edits();
+        self.clear_pending_hunks(cx);
     }
 
     fn handle_base_texts_updated(
@@ -6987,27 +7019,15 @@ impl Repository {
                                         else {
                                             continue;
                                         };
-                                        let Some(uncommitted_diff) =
-                                            diff_state.read(cx).uncommitted_diff.as_ref().and_then(
-                                                |uncommitted_diff| uncommitted_diff.upgrade(),
-                                            )
-                                        else {
-                                            continue;
-                                        };
                                         let buffer_snapshot = buffer.read(cx).text_snapshot();
                                         let hunk_staging_operation_count =
                                             diff_state.update(cx, |diff_state, cx| {
-                                                uncommitted_diff.update(
-                                                    cx,
-                                                    |uncommitted_diff, cx| {
-                                                        uncommitted_diff.mark_all_hunks_pending(
-                                                            stage,
-                                                            &buffer_snapshot,
-                                                            cx,
-                                                        );
-                                                    },
-                                                );
-
+                                                diff_state
+                                                    .mark_whole_file_stage_or_unstage_pending(
+                                                        stage,
+                                                        &buffer_snapshot,
+                                                        cx,
+                                                    );
                                                 diff_state.hunk_staging_operation_count += 1;
                                                 diff_state.hunk_staging_operation_count
                                             });
@@ -7074,14 +7094,8 @@ impl Repository {
                                         if result.is_ok() {
                                             diff_state.hunk_staging_operation_count_as_of_write =
                                                 hunk_staging_operation_count;
-                                        } else if let Some(uncommitted_diff) =
-                                            &diff_state.uncommitted_diff
-                                        {
-                                            uncommitted_diff
-                                                .update(cx, |uncommitted_diff, cx| {
-                                                    uncommitted_diff.clear_pending_hunks(cx);
-                                                })
-                                                .ok();
+                                        } else {
+                                            diff_state.clear_pending_hunks(cx);
                                         }
                                     })
                                     .ok();

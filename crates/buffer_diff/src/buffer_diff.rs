@@ -1789,6 +1789,30 @@ impl BufferDiff {
         self.set_pending_hunks(&hunks, buffer, cx);
     }
 
+    pub fn suppress_all_hunks_pending(
+        &mut self,
+        buffer: &text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        let version = buffer.version().clone();
+        let hunks = self
+            .snapshot(cx)
+            .raw_hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(buffer.remote_id()),
+                buffer,
+            )
+            .map(|hunk| {
+                PendingHunk::new(
+                    hunk.buffer_range,
+                    hunk.diff_base_byte_range,
+                    version.clone(),
+                    PendingSense::Suppress,
+                )
+            })
+            .collect::<Vec<_>>();
+        self.set_pending_hunks(&hunks, buffer, cx);
+    }
+
     /// Computes the index-text edits for unstaging the given staged (HEAD-vs-index)
     /// hunks. `index_buffer` is this diff's main buffer (the index text). The
     /// returned edits are in index coordinates.
