@@ -124,9 +124,19 @@ impl AndroidPlatform {
                 }
             }
             MainEvent::WindowResized { .. } | MainEvent::ContentRectChanged { .. } => {
+                log::info!(
+                    "window/content-rect change: content_rect={:?}",
+                    self.app.content_rect()
+                );
                 if let Some(window) = self.window() {
                     window.update_size();
                 }
+            }
+            MainEvent::InsetsChanged { .. } => {
+                log::info!(
+                    "insets changed: content_rect={:?}",
+                    self.app.content_rect()
+                );
             }
             MainEvent::ConfigChanged { .. } => {
                 if let Some(window) = self.window() {
