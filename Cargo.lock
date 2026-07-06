@@ -5492,6 +5492,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "docker_client",
+ "editor",
  "fs",
  "futures 0.3.32",
  "gpui",
@@ -5503,6 +5504,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "ui",
+ "ui_input",
  "util",
  "workspace",
 ]

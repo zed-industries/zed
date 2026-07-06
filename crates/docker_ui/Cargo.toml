@@ -15,6 +15,7 @@ test-support = ["docker_client/test-support"]
 [dependencies]
 anyhow.workspace = true
 docker_client.workspace = true
+editor.workspace = true
 futures.workspace = true
 fs.workspace = true
 gpui.workspace = true
@@ -25,11 +26,13 @@ serde_json.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
+ui_input.workspace = true
 util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
 docker_client = { workspace = true, features = ["test-support"] }
+editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 gpui_tokio.workspace = true
 settings = { workspace = true, features = ["test-support"] }
