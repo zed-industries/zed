@@ -191,6 +191,8 @@ impl DirectXRenderer {
         update_buffer(
             device_context,
             self.globals.global_params_buffer.as_ref().unwrap(),
+            // `global_params_buffer` is allocated to hold exactly one `GlobalParams`.
+            1,
             &[GlobalParams {
                 gamma_ratios: self.font_info.gamma_ratios,
                 viewport_size: [resources.viewport.Width, resources.viewport.Height],
@@ -1031,7 +1033,7 @@ impl<T> PipelineState<T> {
             self.view = view;
             self.buffer_size = new_buffer_size;
         }
-        update_buffer(device_context, &self.buffer, data)
+        update_buffer(device_context, &self.buffer, self.buffer_size, data)
     }
 
     fn draw(
@@ -1535,8 +1537,20 @@ fn create_buffer_view_range(
 fn update_buffer<T>(
     device_context: &ID3D11DeviceContext,
     buffer: &ID3D11Buffer,
+    capacity: usize,
     data: &[T],
 ) -> Result<()> {
+    // `copy_nonoverlapping` below writes `data.len()` elements of `T` into the mapped buffer, which
+    // was allocated with room for `capacity` elements. Writing past that would corrupt GPU memory
+    // beyond the end of the buffer. Callers are responsible for the capacity invariant (dynamic
+    // pipeline buffers grow before reaching this point), so a debug assertion is enough to catch a
+    // regression without paying for a COM `GetDesc` query on this per-frame path.
+    debug_assert!(
+        data.len() <= capacity,
+        "update_buffer: {} elements exceed buffer capacity of {}",
+        data.len(),
+        capacity,
+    );
     unsafe {
         let mut dest = std::mem::zeroed();
         device_context.Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, Some(&mut dest))?;
