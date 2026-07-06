@@ -51,23 +51,52 @@ impl PlatformKeyboardMapper for MacKeyboardMapper {
 }
 
 impl MacKeyboardLayout {
+    fn unknown() -> Self {
+        Self {
+            id: "unknown".to_string(),
+            name: "Unknown".to_string(),
+        }
+    }
+
     pub(crate) fn new() -> Self {
         unsafe {
             let current_keyboard = TISCopyCurrentKeyboardLayoutInputSource();
+            // TIS can return null when there is no current input source (e.g. at the
+            // login window, over some remote sessions, or mid layout-switch).
+            if current_keyboard.is_null() {
+                return Self::unknown();
+            }
 
-            let id: *mut Object = TISGetInputSourceProperty(
+            let id_source: *mut Object = TISGetInputSourceProperty(
                 current_keyboard,
                 kTISPropertyInputSourceID as *const c_void,
             );
-            let id: *const std::os::raw::c_char = msg_send![id, UTF8String];
-            let id = CStr::from_ptr(id).to_str().unwrap().to_string();
-
-            let name: *mut Object = TISGetInputSourceProperty(
+            let name_source: *mut Object = TISGetInputSourceProperty(
                 current_keyboard,
                 kTISPropertyLocalizedName as *const c_void,
             );
-            let name: *const std::os::raw::c_char = msg_send![name, UTF8String];
-            let name = CStr::from_ptr(name).to_str().unwrap().to_string();
+            // TISGetInputSourceProperty may return null for a property, in which case
+            // there is nothing to dereference.
+            if id_source.is_null() || name_source.is_null() {
+                let _: () = msg_send![current_keyboard, release];
+                return Self::unknown();
+            }
+
+            let id_ptr: *const std::os::raw::c_char = msg_send![id_source, UTF8String];
+            let name_ptr: *const std::os::raw::c_char = msg_send![name_source, UTF8String];
+            if id_ptr.is_null() || name_ptr.is_null() {
+                let _: () = msg_send![current_keyboard, release];
+                return Self::unknown();
+            }
+
+            let id = CStr::from_ptr(id_ptr)
+                .to_str()
+                .unwrap_or("unknown")
+                .to_string();
+            let name = CStr::from_ptr(name_ptr)
+                .to_str()
+                .unwrap_or("Unknown")
+                .to_string();
 
             let _: () = msg_send![current_keyboard, release];
 
