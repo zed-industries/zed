@@ -1445,7 +1445,7 @@ impl GitRepository for RealGitRepository {
                 };
 
                 match status_code {
-                    StatusCode::Modified => {
+                    StatusCode::Modified | StatusCode::TypeChanged => {
                         stdin.write_all(commit.as_bytes()).await?;
                         stdin.write_all(b":").await?;
                         stdin.write_all(path.as_bytes()).await?;
@@ -1491,7 +1491,7 @@ impl GitRepository for RealGitRepository {
                 };
 
                 match status_code {
-                    StatusCode::Modified => {
+                    StatusCode::Modified | StatusCode::TypeChanged => {
                         info_line.clear();
                         stdout.read_line(&mut info_line).await?;
                         let len = info_line.trim_end().parse().with_context(|| {
@@ -4029,6 +4029,61 @@ mod tests {
             original_repo_path_from_common_dir(&repository.common_dir).unwrap(),
             repo_dir.path(),
         );
+    }
+
+    #[gpui::test]
+    async fn test_load_commit_with_type_changed_file(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().expect("failed to create temporary repository");
+        git_init_repo(repo_dir.path());
+        fs::write(repo_dir.path().join("file.txt"), "regular contents\n")
+            .expect("failed to write regular file");
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "initial"]);
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .expect("failed to open repository");
+        fs::write(repo_dir.path().join("file.txt"), "target")
+            .expect("failed to write symlink target");
+
+        let symlink_blob = repository
+            .git_binary()
+            .run(&["hash-object", "-w", "file.txt"])
+            .await
+            .expect("failed to write symlink blob");
+        git_command(
+            repo_dir.path(),
+            [
+                OsString::from("update-index"),
+                OsString::from("--cacheinfo"),
+                OsString::from("120000"),
+                OsString::from(symlink_blob),
+                OsString::from("file.txt"),
+            ],
+        );
+        git_command(repo_dir.path(), ["commit", "-m", "type change"]);
+
+        let commit_diff = repository
+            .load_commit("HEAD".to_string(), cx.to_async())
+            .await
+            .expect("failed to load type-changed commit");
+        assert_eq!(commit_diff.files.len(), 1);
+
+        let file = commit_diff
+            .files
+            .first()
+            .expect("type-changed file should be present");
+        assert_eq!(file.path.as_unix_str(), "file.txt");
+        assert_eq!(file.old_text.as_deref(), Some("regular contents\n"));
+        assert_eq!(file.new_text.as_deref(), Some("target"));
+        assert_eq!(file.status(), CommitFileStatus::Modified);
     }
 
     #[gpui::test]
