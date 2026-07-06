@@ -2811,6 +2811,10 @@ extern "C" fn attributed_substring_for_proposed_range(
         unsafe {
             let string: id = msg_send![class!(NSAttributedString), alloc];
             let string: id = msg_send![string, initWithString: ns_string(&selected_text)];
+            // Cocoa expects a +0 (autoreleased) return value here; `alloc` +
+            // `initWithString:` yields +1, so autorelease to avoid leaking one
+            // attributed string per IME/dictation query.
+            let string: id = msg_send![string, autorelease];
             Some(string)
         }
     })
