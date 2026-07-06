@@ -2935,7 +2935,7 @@ impl GitGraph {
             };
 
             CommitAvatar::new(&full_sha, author_email_for_avatar, remote.as_ref())
-                .size(px(40.))
+                .size(px(32.))
                 .render(window, cx)
         };
 
@@ -2973,6 +2973,25 @@ impl GitGraph {
             Rc::default()
         };
 
+        let view_toggle = IconButton::new("toggle-changed-files-view", IconName::ListTree)
+            .shape(ui::IconButtonShape::Square)
+            .icon_size(IconSize::Small)
+            .toggle_state(self.changed_files_view_mode.is_tree())
+            .tooltip({
+                let tooltip = if self.changed_files_view_mode.is_tree() {
+                    "Show Flat View"
+                } else {
+                    "Show Tree View"
+                };
+                move |_, cx| Tooltip::for_action(tooltip, &ToggleChangedFilesView, cx)
+            })
+            .on_click(cx.listener(|this, _, _window, cx| {
+                this.changed_files_view_mode = this.changed_files_view_mode.toggled();
+                this.changed_files_scroll_handle
+                    .scroll_to_item(0, ScrollStrategy::Top);
+                cx.notify();
+            }));
+
         v_flex()
             .min_w(px(300.))
             .h_full()
@@ -3007,17 +3026,12 @@ impl GitGraph {
                             .py_1()
                             .w_full()
                             .items_center()
-                            .gap_1()
                             .child(avatar)
+                            .child(Label::new(author_name).mt_1p5())
                             .child(
-                                v_flex()
-                                    .items_center()
-                                    .child(Label::new(author_name))
-                                    .child(
-                                        Label::new(date_string)
-                                            .color(Color::Muted)
-                                            .size(LabelSize::Small),
-                                    ),
+                                Label::new(date_string)
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
                             ),
                     )
                     .children((!ref_names.is_empty()).then(|| {
@@ -3175,69 +3189,40 @@ impl GitGraph {
             .child(
                 v_flex()
                     .min_w_0()
-                    .p_2()
                     .flex_1()
                     .gap_1()
+                    .overflow_hidden()
                     .child(
                         h_flex()
+                            .p_2()
+                            .pr_3()
                             .gap_1()
                             .w_full()
                             .justify_between()
                             .child(
-                                Label::new(format!(
-                                    "{} Changed {}",
-                                    changed_files_count,
-                                    if changed_files_count == 1 {
-                                        "File"
-                                    } else {
-                                        "Files"
-                                    }
-                                ))
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                            )
-                            .child(
                                 h_flex()
                                     .gap_1()
-                                    .child(DiffStat::new(
-                                        "commit-diff-stat",
-                                        total_lines_added,
-                                        total_lines_removed,
-                                    ))
                                     .child(
-                                        IconButton::new(
-                                            "toggle-changed-files-view",
-                                            IconName::ListTree,
-                                        )
-                                        .shape(ui::IconButtonShape::Square)
-                                        .icon_size(IconSize::Small)
-                                        .toggle_state(self.changed_files_view_mode.is_tree())
-                                        .tooltip({
-                                            let tooltip = if self.changed_files_view_mode.is_tree()
-                                            {
-                                                "Show Flat View"
+                                        Label::new(format!(
+                                            "{} Changed {}",
+                                            changed_files_count,
+                                            if changed_files_count == 1 {
+                                                "File"
                                             } else {
-                                                "Show Tree View"
-                                            };
-                                            move |_, cx| {
-                                                Tooltip::for_action(
-                                                    tooltip,
-                                                    &ToggleChangedFilesView,
-                                                    cx,
-                                                )
+                                                "Files"
                                             }
-                                        })
-                                        .on_click(
-                                            cx.listener(|this, _, _window, cx| {
-                                                this.changed_files_view_mode =
-                                                    this.changed_files_view_mode.toggled();
-                                                this.changed_files_scroll_handle
-                                                    .scroll_to_item(0, ScrollStrategy::Top);
-                                                cx.notify();
-                                            }),
-                                        ),
-                                    ),
-                            ),
+                                        ))
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                    )
+                                    .child(Divider::vertical())
+                                    .child(view_toggle),
+                            )
+                            .child(DiffStat::new(
+                                "commit-diff-stat",
+                                total_lines_added,
+                                total_lines_removed,
+                            )),
                     )
                     .child(
                         div()
@@ -3256,6 +3241,7 @@ impl GitGraph {
                                 let repository = repository.downgrade();
                                 let workspace = self.workspace.clone();
                                 let git_graph = cx.weak_entity();
+
                                 uniform_list(
                                     "changed-files-list",
                                     entry_count,
@@ -3299,7 +3285,6 @@ impl GitGraph {
                                     },
                                 )
                                 .size_full()
-                                .ml_neg_1()
                                 .track_scroll(&self.changed_files_scroll_handle)
                             })
                             .vertical_scrollbar_for(&self.changed_files_scroll_handle, window, cx),
@@ -3310,6 +3295,11 @@ impl GitGraph {
                 h_flex().p_1p5().w_full().child(
                     Button::new("view-commit", "View Commit")
                         .full_width()
+                        .start_icon(
+                            Icon::new(IconName::GitCommit)
+                                .size(IconSize::Small)
+                                .color(Color::Muted),
+                        )
                         .style(ButtonStyle::OutlinedGhost)
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.open_selected_commit_view(window, cx);
@@ -3878,11 +3868,10 @@ impl Render for GitGraph {
             let label = Label::new(message)
                 .color(Color::Muted)
                 .size(LabelSize::Large);
-            div()
+
+            h_flex()
                 .size_full()
-                .h_flex()
                 .gap_1()
-                .items_center()
                 .justify_center()
                 .child(label)
                 .when(is_loading && error.is_none(), |this| {
@@ -3910,12 +3899,10 @@ impl Render for GitGraph {
             h_flex()
                 .size_full()
                 .child(
-                    div()
+                    v_flex()
                         .flex_1()
                         .min_w_0()
                         .size_full()
-                        .flex()
-                        .flex_col()
                         .child(render_table_header(
                             if !is_path_history {
                                 TableRow::from_vec(
