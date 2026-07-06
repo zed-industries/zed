@@ -220,7 +220,7 @@ fn orchestrate_impl(rules: &[&PathCondition], target: OrchestrateTarget) -> Name
           # Map directory names to package names
           FILE_CHANGED_PKGS=""
           for dir in $CHANGED_DIRS; do
-            pkg=$(echo "$DIR_TO_PKG" | grep "^${dir}=" | cut -d= -f2 | head -1)
+            pkg=$(echo "$DIR_TO_PKG" | grep "^${dir}=" | cut -d= -f2 | head -1 || true)
             if [ -n "$pkg" ]; then
               FILE_CHANGED_PKGS=$(printf '%s\n%s' "$FILE_CHANGED_PKGS" "$pkg")
             else
