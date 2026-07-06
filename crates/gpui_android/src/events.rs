@@ -145,6 +145,13 @@ pub(crate) fn handle_input_event(
                             modifiers: Modifiers::default(),
                             click_count,
                         }));
+                        // Mobile keyboard UX: a tap summons the IME when an
+                        // editable has focus after the click lands; dismissal
+                        // then sticks until the next tap (set_input_handler
+                        // deliberately never requests the keyboard).
+                        if window.state.borrow().input_handler.is_some() {
+                            app.show_soft_input(true);
+                        }
                     }
                     TouchGesture::Scrolling { .. } => {
                         window.dispatch_input(PlatformInput::ScrollWheel(ScrollWheelEvent {

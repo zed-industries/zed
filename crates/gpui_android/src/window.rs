@@ -352,8 +352,10 @@ impl PlatformWindow for AndroidWindow {
     }
 
     fn set_input_handler(&mut self, input_handler: PlatformInputHandler) {
+        // Deliberately does not summon the soft keyboard: GPUI re-registers
+        // the handler every frame, so requesting it here re-opens a keyboard
+        // the user just dismissed. Taps summon it instead (events.rs).
         self.inner.state.borrow_mut().input_handler = Some(input_handler);
-        self.inner.app.show_soft_input(true);
     }
 
     fn take_input_handler(&mut self) -> Option<PlatformInputHandler> {
