@@ -1519,21 +1519,33 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
 
         let color_font = unsafe { font_face.IsColorFont().as_bool() };
 
-        let glyph_ids = unsafe { std::slice::from_raw_parts(glyphrun.glyphIndices, glyph_count) };
-        let glyph_advances =
-            unsafe { std::slice::from_raw_parts(glyphrun.glyphAdvances, glyph_count) };
-        let glyph_offsets =
-            unsafe { std::slice::from_raw_parts(glyphrun.glyphOffsets, glyph_count) };
-        let cluster_map = if desc.clusterMap.is_null() {
-            if desc.stringLength != 0 {
-                return Err(Error::new(
-                    E_INVALIDARG,
-                    "DirectWrite returned a null cluster map",
-                ));
-            }
-            &[]
-        } else {
-            unsafe { std::slice::from_raw_parts(desc.clusterMap, desc.stringLength as usize) }
+        let glyph_ids = unsafe {
+            slice_from_nullable(
+                glyphrun.glyphIndices,
+                glyph_count,
+                "DirectWrite returned a null glyph indices array",
+            )?
+        };
+        let glyph_advances = unsafe {
+            slice_from_nullable(
+                glyphrun.glyphAdvances,
+                glyph_count,
+                "DirectWrite returned a null glyph advances array",
+            )?
+        };
+        let glyph_offsets = unsafe {
+            slice_from_nullable(
+                glyphrun.glyphOffsets,
+                glyph_count,
+                "DirectWrite returned a null glyph offsets array",
+            )?
+        };
+        let cluster_map = unsafe {
+            slice_from_nullable(
+                desc.clusterMap,
+                desc.stringLength as usize,
+                "DirectWrite returned a null cluster map",
+            )?
         };
 
         let cluster_analyzer = ClusterAnalyzer::new(cluster_map, glyph_count);
@@ -1611,6 +1623,29 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             E_NOTIMPL,
             "DrawInlineObject unimplemented",
         ))
+    }
+}
+
+/// Interprets an optional DirectWrite array pointer as a slice, treating a
+/// null pointer with a zero length as an empty slice. A null pointer with a
+/// nonzero length fails with `null_error_message`.
+///
+/// # Safety
+///
+/// When `ptr` is non-null, the caller must guarantee that it points to a valid
+/// array of at least `len` elements that outlives the returned slice.
+unsafe fn slice_from_nullable<'a, T>(
+    ptr: *const T,
+    len: usize,
+    null_error_message: &str,
+) -> windows::core::Result<&'a [T]> {
+    if ptr.is_null() {
+        if len != 0 {
+            return Err(Error::new(E_INVALIDARG, null_error_message));
+        }
+        Ok(&[])
+    } else {
+        Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
     }
 }
 
