@@ -87,6 +87,13 @@ impl Connection {
                 self.sqlite3,
                 CString::new("main")?.as_ptr(),
             );
+            // `sqlite3_backup_init` returns null on error (e.g. the same connection is used as
+            // both source and destination). The null check inside `sqlite3_backup_step` only
+            // exists under a SQLite build flag, so guard against the null handle ourselves.
+            if backup.is_null() {
+                destination.last_error()?;
+                anyhow::bail!("sqlite3_backup_init failed");
+            }
             sqlite3_backup_step(backup, -1);
             sqlite3_backup_finish(backup);
             destination.last_error()
