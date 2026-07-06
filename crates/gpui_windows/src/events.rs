@@ -110,7 +110,7 @@ impl WindowsWindowInner {
             WM_SHOWWINDOW => self.handle_window_visibility_changed(handle, wparam),
             WM_GPUI_CURSOR_STYLE_CHANGED => self.handle_cursor_changed(lparam),
             WM_GPUI_FORCE_UPDATE_WINDOW => self.draw_window(handle, true),
-            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(lparam),
+            WM_GPUI_GPU_DEVICE_LOST => self.handle_device_lost(wparam, lparam),
             DM_POINTERHITTEST => self.handle_dm_pointer_hit_test(wparam),
             WM_GETOBJECT => self.handle_wm_getobject(wparam, lparam),
             _ => None,
@@ -1189,7 +1189,16 @@ impl WindowsWindowInner {
         None
     }
 
-    fn handle_device_lost(&self, lparam: LPARAM) -> Option<isize> {
+    fn handle_device_lost(&self, wparam: WPARAM, lparam: LPARAM) -> Option<isize> {
+        // The `lparam` is a raw pointer into another thread's `DirectXDevices`, which we
+        // dereference and walk COM vtables through below. Only the platform's device-loss
+        // recovery posts this message, and it always tags it with our validation number.
+        // Reject anything else so a stray or hostile `WM_USER + 7` can't hand us an
+        // arbitrary pointer to dereference. This mirrors the check in `handle_gpui_events`.
+        if wparam.0 != self.validation_number {
+            log::error!("Wrong validation number while processing device lost message");
+            return None;
+        }
         let devices = lparam.0 as *const DirectXDevices;
         let devices = unsafe { &*devices };
         if let Err(err) = self
