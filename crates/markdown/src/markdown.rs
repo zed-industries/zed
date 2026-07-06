@@ -35,9 +35,10 @@ use gpui::{
     AnyElement, App, BorderStyle, Bounds, ClipboardEntry, ClipboardItem, CursorStyle,
     DispatchPhase, Edges, Entity, FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId,
     Hitbox, Hsla, Image, ImageFormat, ImageSource, KeyContext, Length, MouseButton, MouseDownEvent,
-    MouseEvent, MouseMoveEvent, MouseUpEvent, Point, ScrollHandle, Stateful, StrikethroughStyle,
-    StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign, TextLayout, TextRun,
-    TextStyle, TextStyleRefinement, WrappedLineLayout, actions, img, point, quad,
+    MouseEvent, MouseMoveEvent, MouseUpEvent, Point, Rgba, ScrollHandle, Stateful,
+    StrikethroughStyle, StyleRefinement, StyledImage, StyledText, Subscription, Task, TextAlign,
+    TextLayout, TextRun, TextStyle, TextStyleRefinement, WrappedLineLayout, actions, img, point,
+    quad,
 };
 use language::{CharClassifier, Language, LanguageRegistry, Rope};
 use parser::CodeBlockMetadata;
@@ -868,7 +869,11 @@ impl Markdown {
             return;
         }
         let plain_text = text.text_for_range(self.selection.start..self.selection.end);
-        let html = selection_html(&self.source, self.selection.start..self.selection.end);
+        let html = selection_html(
+            &self.source,
+            self.selection.start..self.selection.end,
+            &text.code_block_html_by_source_offset,
+        );
 
         let mut item = ClipboardItem::new_string(plain_text);
         item.entries.push(ClipboardEntry::Html(html));
@@ -1660,7 +1665,7 @@ impl MarkdownElement {
             let mut metadata_block = div().w_full().rounded_md();
             metadata_block.style().refine(&self.style.code_block);
             builder.push_text_style(self.style.code_block.text.to_owned());
-            builder.push_code_block(None);
+            builder.push_code_block(None, content_range.start);
             builder.push_div(metadata_block, content_range, markdown_end);
             builder.push_text(&source[content_range.clone()], content_range.clone());
             builder.trim_trailing_newline();
@@ -2354,7 +2359,7 @@ impl Element for MarkdownElement {
                                         });
 
                                     builder.push_text_style(self.style.code_block.text.to_owned());
-                                    builder.push_code_block(language);
+                                    builder.push_code_block(language, range.start);
                                     builder.push_div(code_block, range, markdown_end);
                                 }
                                 (CodeBlockRenderer::Custom { .. }, _) => {}
@@ -3166,6 +3171,8 @@ struct MarkdownElementBuilder {
     base_text_style: TextStyle,
     text_style_stack: Vec<TextStyleRefinement>,
     code_block_stack: Vec<Option<Arc<Language>>>,
+    active_code_block_html: Option<CodeBlockHtml>,
+    code_block_html_by_source_offset: HashMap<usize, String>,
     link_depth: usize,
     list_stack: Vec<ListStackEntry>,
     table: TableState,
@@ -3190,6 +3197,13 @@ impl DivStackEntry {
             line_break_mode: LineBreakMode::TextLayout,
         }
     }
+}
+
+/// Accumulates syntax-highlighted HTML for the code block currently being
+/// rendered. Markdown code blocks do not nest, so a single accumulator suffices.
+struct CodeBlockHtml {
+    source_start: usize,
+    body: String,
 }
 
 #[derive(Default)]
@@ -3225,6 +3239,8 @@ impl MarkdownElementBuilder {
             base_text_style,
             text_style_stack: Vec::new(),
             code_block_stack: Vec::new(),
+            active_code_block_html: None,
+            code_block_html_by_source_offset: HashMap::default(),
             link_depth: 0,
             list_stack: Vec::new(),
             table: TableState::default(),
@@ -3393,12 +3409,42 @@ impl MarkdownElementBuilder {
         self.list_stack.pop();
     }
 
-    fn push_code_block(&mut self, language: Option<Arc<Language>>) {
+    fn push_code_block(&mut self, language: Option<Arc<Language>>, source_start: usize) {
+        // Only accumulate HTML for blocks with a resolved language; unhighlighted
+        // blocks fall back to pulldown's plain `<pre><code>` in `selection_html`.
+        if language.is_some() {
+            self.active_code_block_html = Some(CodeBlockHtml {
+                source_start,
+                body: String::new(),
+            });
+        }
         self.code_block_stack.push(language);
     }
 
     fn pop_code_block(&mut self) {
         self.code_block_stack.pop();
+        if let Some(code_block) = self.active_code_block_html.take() {
+            let mut html = String::from("<pre><code>");
+            html.push_str(&code_block.body);
+            html.push_str("</code></pre>");
+            self.code_block_html_by_source_offset
+                .insert(code_block.source_start, html);
+        }
+    }
+
+    fn push_code_block_html(&mut self, text: &str, color: Option<Hsla>) {
+        let Some(code_block) = self.active_code_block_html.as_mut() else {
+            return;
+        };
+        match color {
+            Some(color) => {
+                let rgb = u32::from(Rgba::from(color)) >> 8;
+                code_block.body.push_str(&format!("<span style=\"color:#{rgb:06x}\">"));
+                escape_html_into(&mut code_block.body, text);
+                code_block.body.push_str("</span>");
+            }
+            None => escape_html_into(&mut code_block.body, text),
+        }
     }
 
     fn push_link(&mut self, destination_url: SharedString, source_range: Range<usize>) {
@@ -3427,12 +3473,14 @@ impl MarkdownElementBuilder {
         let text_style = self.text_style();
 
         if let Some(Some(language)) = self.code_block_stack.last() {
+            let language = language.clone();
             let mut offset = 0;
             for (range, highlight_id) in language.highlight_text(&Rope::from(text), 0..text.len()) {
                 if range.start > offset {
                     self.pending_line
                         .runs
                         .push(text_style.to_run(range.start - offset));
+                    self.push_code_block_html(&text[offset..range.start], None);
                 }
 
                 let run_len = range.len();
@@ -3440,8 +3488,10 @@ impl MarkdownElementBuilder {
                     self.pending_line
                         .runs
                         .push(text_style.clone().highlight(highlight).to_run(run_len));
+                    self.push_code_block_html(&text[range.clone()], highlight.color);
                 } else {
                     self.pending_line.runs.push(text_style.to_run(run_len));
+                    self.push_code_block_html(&text[range.clone()], None);
                 }
                 offset = range.end;
             }
@@ -3450,6 +3500,7 @@ impl MarkdownElementBuilder {
                 self.pending_line
                     .runs
                     .push(text_style.to_run(text.len() - offset));
+                self.push_code_block_html(&text[offset..], None);
             }
         } else {
             self.pending_line.runs.push(text_style.to_run(text.len()));
@@ -3574,6 +3625,7 @@ impl MarkdownElementBuilder {
                 lines: self.rendered_lines.into(),
                 links: self.rendered_links.into(),
                 footnote_refs: self.rendered_footnote_refs.into(),
+                code_block_html_by_source_offset: self.code_block_html_by_source_offset,
             },
         }
     }
@@ -3773,6 +3825,11 @@ struct RenderedText {
     lines: Rc<[RenderedLine]>,
     links: Rc<[RenderedLink]>,
     footnote_refs: Rc<[RenderedFootnoteRef]>,
+    // Syntax-highlighted HTML for each rendered code block that had a resolved
+    // language, keyed by the code block's source start offset. Captured here at
+    // render time (where the language + `SyntaxTheme` are available) so `copy`
+    // can emit colored code blocks that match the preview. See `selection_html`.
+    code_block_html_by_source_offset: HashMap<usize, String>,
 }
 
 struct WrappedLineSegment {
@@ -4116,14 +4173,57 @@ impl RenderedText {
 /// drop out-of-range reference definitions, leaving pulldown to mis-parse the
 /// fragment. pulldown event ranges nest, so an intersecting container keeps both
 /// its `Start` and matching `End`, yielding a balanced stream for `push_html`.
-fn selection_html(source: &str, selection: Range<usize>) -> String {
+///
+/// Code blocks whose source start offset is present in `code_block_html` are
+/// replaced with the syntax-highlighted fragment captured during rendering
+/// (see [`RenderedText::code_block_html_by_source_offset`]); pulldown's own
+/// events for that block are skipped. Blocks without a cached fragment fall back
+/// to pulldown's plain `<pre><code>`.
+fn selection_html(
+    source: &str,
+    selection: Range<usize>,
+    code_block_html: &HashMap<usize, String>,
+) -> String {
+    use pulldown_cmark::{Event, Tag, TagEnd};
+
     let mut html = String::new();
-    let events = pulldown_cmark::Parser::new_ext(source, parser::PARSE_OPTIONS)
+    let mut events = pulldown_cmark::Parser::new_ext(source, parser::PARSE_OPTIONS)
         .into_offset_iter()
-        .filter(|(_, range)| range.start < selection.end && range.end > selection.start)
-        .map(|(event, _)| event);
-    pulldown_cmark::html::push_html(&mut html, events);
+        .filter(|(_, range)| range.start < selection.end && range.end > selection.start);
+
+    // Buffer plain events and flush them through `push_html`, splicing in the
+    // cached highlighted fragment wherever a cached code block starts. Code
+    // blocks are top-level siblings, so each flushed segment stays balanced.
+    let mut buffer: Vec<Event> = Vec::new();
+    while let Some((event, range)) = events.next() {
+        if let Event::Start(Tag::CodeBlock(_)) = &event
+            && let Some(fragment) = code_block_html.get(&range.start)
+        {
+            pulldown_cmark::html::push_html(&mut html, buffer.drain(..));
+            html.push_str(fragment);
+            for (event, _) in events.by_ref() {
+                if let Event::End(TagEnd::CodeBlock) = event {
+                    break;
+                }
+            }
+            continue;
+        }
+        buffer.push(event);
+    }
+    pulldown_cmark::html::push_html(&mut html, buffer.drain(..));
     html
+}
+
+fn escape_html_into(out: &mut String, text: &str) {
+    for ch in text.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(ch),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -4683,9 +4783,55 @@ mod tests {
         assert!(plain_text.contains("First paragraph."));
         assert!(plain_text.contains("two"));
 
-        let html = selection_html(source, 0..end);
+        let html = selection_html(source, 0..end, &HashMap::default());
         assert!(html.contains("<h1"), "full-document HTML keeps the heading: {html}");
         assert!(html.contains("<ul>"), "full-document HTML keeps the list: {html}");
+    }
+
+    #[gpui::test]
+    fn test_selection_html_code_block_uses_rendered_fragment(cx: &mut TestAppContext) {
+        let javascript_language = Arc::new(Language::new(
+            LanguageConfig {
+                name: "JavaScript".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["js".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            None,
+        ));
+        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
+        language_registry.add(javascript_language);
+
+        let source = "```javascript\nlet x = a < b && c;\n```";
+        let rendered =
+            render_markdown_with_language_registry(source, Some(language_registry), cx);
+
+        // The rendered code block is cached, keyed by its source start offset.
+        let fragment = rendered
+            .code_block_html_by_source_offset
+            .get(&0)
+            .expect("code block html should be cached")
+            .clone();
+        assert!(fragment.starts_with("<pre><code>"), "fragment: {fragment}");
+        assert!(fragment.ends_with("</code></pre>"), "fragment: {fragment}");
+        // Special characters are HTML-escaped in the cached fragment.
+        assert!(
+            fragment.contains("a &lt; b &amp;&amp; c;"),
+            "escaped: {fragment}"
+        );
+
+        // `selection_html` splices the cached fragment in and skips pulldown's
+        // own code block events (no raw fence markers leak, no double `<pre>`).
+        let html = selection_html(
+            source,
+            0..source.len(),
+            &rendered.code_block_html_by_source_offset,
+        );
+        assert!(html.contains(&fragment), "spliced fragment: {html}");
+        assert_eq!(html.matches("<pre>").count(), 1, "single code block: {html}");
+        assert!(!html.contains("```"), "fence markers should not leak: {html}");
     }
 
     #[gpui::test]
@@ -5705,7 +5851,7 @@ mod tests {
     #[test]
     fn test_selection_html_table() {
         let source = "| a | b |\n|---|---|\n| 1 | 2 |\n";
-        let html = selection_html(source, 0..source.len());
+        let html = selection_html(source, 0..source.len(), &HashMap::default());
         assert!(html.contains("<table>"), "expected a table element: {html}");
         assert!(html.contains("<td>1</td>"), "expected table cell: {html}");
     }
@@ -5713,7 +5859,7 @@ mod tests {
     #[test]
     fn test_selection_html_strikethrough() {
         let source = "hello ~~struck~~ world";
-        let html = selection_html(source, 0..source.len());
+        let html = selection_html(source, 0..source.len(), &HashMap::default());
         assert!(html.contains("<del>struck</del>"), "expected <del>: {html}");
     }
 
@@ -5723,7 +5869,7 @@ mod tests {
         // emits a heading rather than a paragraph because the marker is intact.
         let source = "# Title\n\nbody";
         let start = source.find("Title").unwrap();
-        let html = selection_html(source, start..source.len());
+        let html = selection_html(source, start..source.len(), &HashMap::default());
         assert!(html.contains("<h1"), "expected a heading element: {html}");
         assert!(html.contains("Title"), "expected heading text: {html}");
     }
@@ -5733,7 +5879,7 @@ mod tests {
         // Selection starts inside the fenced block, after the opening ``` line.
         let source = "```\nlet x = 1;\n```\n";
         let start = source.find("let").unwrap();
-        let html = selection_html(source, start..source.len());
+        let html = selection_html(source, start..source.len(), &HashMap::default());
         assert!(html.contains("<pre><code>"), "expected a code block: {html}");
         assert!(html.contains("let x = 1;"), "expected code text: {html}");
         assert!(!html.contains("```"), "fence markers should not leak: {html}");
@@ -5745,7 +5891,7 @@ mod tests {
         // resolve because the whole document is parsed.
         let source = "see [the docs][ref] now\n\n[ref]: https://example.com\n";
         let end = source.find("\n\n").unwrap();
-        let html = selection_html(source, 0..end);
+        let html = selection_html(source, 0..end, &HashMap::default());
         assert!(
             html.contains("href=\"https://example.com\""),
             "reference link should resolve: {html}"
@@ -5753,10 +5899,66 @@ mod tests {
     }
 
     #[test]
+    fn test_selection_html_underscore_emphasis() {
+        // "Underscore" from the review: underscore-delimited emphasis. Under the
+        // full-document parse these serialize the same as the preview. The old
+        // substring copy path could cut a leading/trailing `_`, so a selection
+        // starting mid-emphasis produced a literal underscore; the full parse +
+        // intersection filter keeps the emphasis markers intact.
+        let italic = "an _emphasized_ word";
+        let html = selection_html(italic, 0..italic.len(), &HashMap::default());
+        assert!(html.contains("<em>emphasized</em>"), "italic: {html}");
+
+        let bold = "a __strong__ word";
+        let html = selection_html(bold, 0..bold.len(), &HashMap::default());
+        assert!(html.contains("<strong>strong</strong>"), "bold: {html}");
+
+        // Intraword underscores are literal in CommonMark (no emphasis); the copy
+        // output must match that rather than inventing `<em>`.
+        let intraword = "call snake_case_name here";
+        let html = selection_html(intraword, 0..intraword.len(), &HashMap::default());
+        assert!(
+            html.contains("snake_case_name") && !html.contains("<em>"),
+            "intraword underscores stay literal: {html}"
+        );
+
+        // Selection starting *after* the opening `_` still yields `<em>` because
+        // the whole document is parsed and the marker is never sliced away.
+        let start = italic.find("emphasized").unwrap();
+        let html = selection_html(italic, start..italic.len(), &HashMap::default());
+        assert!(
+            html.contains("<em>emphasized</em>"),
+            "mid-emphasis selection keeps markers: {html}"
+        );
+    }
+
+    #[test]
+    fn test_selection_html_images_pass_through() {
+        // Absolute http(s) and data-URI images are self-contained already, so
+        // the copy path emits their `src` verbatim and they render in external
+        // paste targets. Resolver/relative/local-file images cannot be embedded
+        // synchronously and remain a known limitation (see the design doc).
+        let http = "![cat](https://example.com/cat.png)";
+        let html = selection_html(http, 0..http.len(), &HashMap::default());
+        assert!(
+            html.contains("src=\"https://example.com/cat.png\""),
+            "http image src preserved: {html}"
+        );
+        assert!(html.contains("alt=\"cat\""), "alt text preserved: {html}");
+
+        let data = "![dot](data:image/png;base64,iVBORw0KGgo=)";
+        let html = selection_html(data, 0..data.len(), &HashMap::default());
+        assert!(
+            html.contains("src=\"data:image/png;base64,iVBORw0KGgo=\""),
+            "data-uri image is self-contained: {html}"
+        );
+    }
+
+    #[test]
     fn test_selection_html_balanced_across_list_items() {
         let source = "- one\n- two\n- three\n";
         let start = source.find("two").unwrap();
-        let html = selection_html(source, start..source.len());
+        let html = selection_html(source, start..source.len(), &HashMap::default());
         assert!(html.contains("<ul>") && html.contains("</ul>"), "balanced list: {html}");
         assert_eq!(
             html.matches("<li>").count(),
