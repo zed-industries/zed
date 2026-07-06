@@ -731,8 +731,6 @@ impl MacWindowState {
     }
 }
 
-unsafe impl Send for MacWindowState {}
-
 pub(crate) struct MacWindow(Arc<Mutex<MacWindowState>>);
 
 impl MacWindow {
