@@ -788,7 +788,17 @@ impl ThreadView {
         let parent_session_id = thread.read(cx).parent_session_id().cloned();
 
         let has_slash_completions = session_capabilities.read().has_slash_completions();
-        let placeholder = placeholder_text(agent_display_name.as_ref(), has_slash_completions);
+        let supports_inline_shell = thread
+            .read(cx)
+            .connection()
+            .clone()
+            .downcast::<agent::NativeAgentConnection>()
+            .is_some();
+        let placeholder = placeholder_text(
+            agent_display_name.as_ref(),
+            has_slash_completions,
+            supports_inline_shell,
+        );
 
         let mut should_auto_submit = false;
         let mut show_external_source_prompt_warning = false;
@@ -808,6 +818,8 @@ impl ThreadView {
                 window,
                 cx,
             );
+            // Only the live composer participates in `!`/`!!` shell mode.
+            editor.set_shell_mode_enabled(supports_inline_shell);
             if let Some(content) = initial_content {
                 match content {
                     AgentInitialContent::ThreadSummary { session_id, title } => {
@@ -1487,6 +1499,33 @@ impl ThreadView {
 
         let text = message_editor.read(cx).text(cx);
         let text = text.trim();
+
+        // pi-style inline shell execution from the composer:
+        //   `!cmd`  runs in the project shell and sends its output to the model.
+        //   `!!cmd` runs in a live terminal card in the transcript, not sent to
+        //           the model (matches pi's "excluded from context").
+        if self.as_native_thread(cx).is_some() {
+            if let Some(after_bang) = text.strip_prefix('!') {
+                if let Some(rest) = after_bang.strip_prefix('!') {
+                    let command = rest.trim().to_string();
+                    if !command.is_empty() {
+                        message_editor.update(cx, |editor, cx| editor.clear(window, cx));
+                        self.run_inline_shell_card(command, false, window, cx);
+                        cx.notify();
+                        return;
+                    }
+                } else {
+                    let command = after_bang.trim().to_string();
+                    if !command.is_empty() {
+                        message_editor.update(cx, |editor, cx| editor.clear(window, cx));
+                        self.run_inline_shell_card(command, true, window, cx);
+                        cx.notify();
+                        return;
+                    }
+                }
+            }
+        }
+
         if text == "/login" || text == "/logout" {
             let connection = thread.read(cx).connection().clone();
             let can_login = !connection.auth_methods().is_empty();
@@ -1594,6 +1633,107 @@ impl ThreadView {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    /// Run a command in a live terminal rendered as a pi-style `$ cmd` tool-call
+    /// card in the transcript (streaming output, Stop/Esc). The card itself is
+    /// UI-only; when `include_in_context` is true (`!cmd`) the finished output is
+    /// also injected into the native agent's history as silent context (no model
+    /// turn), and when false (`!!cmd`) it stays display-only — pi's "excluded
+    /// from context" semantics.
+    fn run_inline_shell_card(
+        &mut self,
+        command: String,
+        include_in_context: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.project.upgrade() else {
+            return;
+        };
+        let cwd = project.read(cx).first_project_directory(cx);
+        let thread = self.thread.clone();
+
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // `!!` (excluded-from-context) cards get a distinct id prefix so the
+        // terminal renderer can show them dimmed.
+        let id_prefix = if include_in_context {
+            "user-bash"
+        } else {
+            "user-bash-hidden"
+        };
+        let tool_call_id = acp::ToolCallId::new(format!("{id_prefix}-{seq}"));
+
+        cx.spawn_in(window, async move |this, cx| {
+            let terminal = thread
+                .update(cx, |thread, cx| {
+                    thread.create_terminal(
+                        command.clone(),
+                        Vec::new(),
+                        Vec::new(),
+                        cwd,
+                        Some(1_000_000),
+                        None,
+                        cx,
+                    )
+                })
+                .await?;
+            let terminal_id = terminal.read_with(cx, |terminal, _| terminal.id().clone());
+
+            let build = |status: acp::ToolCallStatus| {
+                acp::ToolCall::new(tool_call_id.clone(), command.clone())
+                    .kind(acp::ToolKind::Execute)
+                    .status(status)
+                    .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
+                        terminal_id.clone(),
+                    ))])
+            };
+
+            thread.update(cx, |thread, cx| {
+                thread.upsert_tool_call(build(acp::ToolCallStatus::InProgress), cx)
+            })?;
+
+            let wait = terminal.read_with(cx, |terminal, _| terminal.wait_for_exit());
+            let exit = wait.await;
+            let status = if exit.exit_code == Some(0) {
+                acp::ToolCallStatus::Completed
+            } else {
+                acp::ToolCallStatus::Failed
+            };
+
+            thread.update(cx, |thread, cx| thread.upsert_tool_call(build(status), cx))?;
+
+            if include_in_context {
+                let output = terminal.read_with(cx, |terminal, cx| terminal.current_output(cx));
+                let mut body = output.output.trim_end().to_string();
+                const MAX_CHARS: usize = 16_000;
+                if body.chars().count() > MAX_CHARS {
+                    let kept: String = body.chars().take(MAX_CHARS).collect();
+                    body = format!("{kept}\n[output truncated]");
+                }
+                let mut block = if body.is_empty() {
+                    format!("$ {command}")
+                } else {
+                    format!("$ {command}\n{body}")
+                };
+                if exit.exit_code != Some(0) {
+                    if let Some(code) = exit.exit_code {
+                        block.push_str(&format!("\n[exited with code {code}]"));
+                    } else if let Some(signal) = &exit.signal {
+                        block.push_str(&format!("\n[terminated by signal {signal}]"));
+                    }
+                }
+                this.update(cx, |this, cx| {
+                    if let Some(native) = this.as_native_thread(cx) {
+                        native.update(cx, |native, cx| native.inject_user_context(block, cx));
+                    }
+                })
+                .ok();
+            }
+            anyhow::Ok(())
+        })
+        .detach();
     }
 
     pub fn send_impl(
@@ -4277,6 +4417,12 @@ impl ThreadView {
 
         let focus_handle = self.message_editor.focus_handle(cx);
         let editor_bg_color = cx.theme().colors().editor_background;
+        // pi-style bash-mode left-rail tint on the composer.
+        let shell_mode = if self.editing_message.is_none() && self.as_native_thread(cx).is_some() {
+            self.message_editor.read(cx).shell_mode()
+        } else {
+            None
+        };
 
         let editor_expanded = self.editor_expanded;
         let (expand_icon, expand_tooltip) = if editor_expanded {
@@ -4320,6 +4466,17 @@ impl ThreadView {
                             .w_full()
                             .min_h_0()
                             .when(fills_container, |this| this.flex_1())
+                            .border_l_2()
+                            .border_color(match shell_mode {
+                                Some(crate::message_editor::InlineShellMode::Visible) => {
+                                    cx.theme().colors().text_accent
+                                }
+                                Some(crate::message_editor::InlineShellMode::Hidden) => {
+                                    cx.theme().colors().text_accent.opacity(0.45)
+                                }
+                                None => cx.theme().colors().border.opacity(0.),
+                            })
+                            .when(shell_mode.is_some(), |this| this.pl_1p5())
                             .pt_1()
                             .pr_2p5()
                             .child(self.message_editor.clone())
@@ -7197,11 +7354,18 @@ impl ThreadView {
                 } else if is_blocked_on_terminal_command {
                     this
                 } else {
+                    // Spinner + a plain, non-animated "Working…" label (pi shows
+                    // the message static rather than pulsing it).
                     this.child(
                         h_flex()
                             .w_2()
                             .justify_center()
                             .child(GeneratingSpinnerElement::new(SpinnerVariant::Dots)),
+                    )
+                    .child(
+                        Label::new("Working…")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
                     )
                 }
             })
@@ -7721,6 +7885,9 @@ impl ThreadView {
             &tool_call.status,
             ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed
         );
+        // `!!` inline-shell runs carry this id prefix and are rendered dim to
+        // signal they are excluded from the model's context (pi's `!!`).
+        let excluded_from_context = tool_call.id.0.starts_with("user-bash-hidden-");
 
         let confirmation_options = match &tool_call.status {
             ToolCallStatus::WaitingForConfirmation { options, .. } => Some(options),
@@ -7927,7 +8094,7 @@ impl ThreadView {
 
         v_flex()
             .when(layout == ToolCallLayout::Standalone, |this| {
-                this.my_1p5()
+                this.my_1()
                     .mx_5()
                     .border_l_2()
                     .when(tool_failed || command_failed, |card| card.border_dashed())
@@ -7935,6 +8102,8 @@ impl ThreadView {
                     .bg(self.tool_status_bg(&tool_call.status, cx))
             })
             .overflow_hidden()
+            // pi renders `!!` (excluded-from-context) shell runs dimmed.
+            .when(excluded_from_context, |this| this.opacity(0.55))
             .child(
                 v_flex()
                     .group(&header_group)
@@ -8439,14 +8608,14 @@ impl ThreadView {
                 } else if use_card_layout {
                     // pi keeps tools flat: a status wash + 2px status-colored
                     // left rail with square corners, not a rounded boxed card.
-                    this.my_1p5()
+                    this.my_1()
                         .border_l_2()
                         .when(failed_or_canceled, |this| this.border_dashed())
                         .border_color(self.tool_status_border(&tool_call.status, cx))
                         .bg(self.tool_status_bg(&tool_call.status, cx))
                         .overflow_hidden()
                 } else {
-                    this.my_1()
+                    this.my_0p5()
                         .border_l_2()
                         .border_color(self.tool_status_border(&tool_call.status, cx))
                         .bg(self.tool_status_bg(&tool_call.status, cx))
@@ -10158,7 +10327,7 @@ impl ThreadView {
             cx,
         );
 
-        v_flex().mx_5().my_1p5().gap_3().child(content)
+        v_flex().mx_5().my_1().gap_3().child(content)
     }
 
     fn render_subagent_card(

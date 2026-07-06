@@ -1821,13 +1821,16 @@ impl ConversationView {
             }
             AcpThreadEvent::AvailableCommandsUpdated(available_commands) => {
                 if let Some(thread_view) = self.thread_view(&session_id) {
-                    let available_skills = thread
+                    let native_connection = thread
                         .read(cx)
                         .connection()
                         .clone()
-                        .downcast::<agent::NativeAgentConnection>()
+                        .downcast::<agent::NativeAgentConnection>();
+                    let supports_inline_shell = native_connection.is_some();
+                    let available_skills = native_connection
+                        .as_ref()
                         .map(|native_connection| {
-                            native_available_skills(&native_connection, &session_id, cx)
+                            native_available_skills(native_connection.as_ref(), &session_id, cx)
                         })
                         .unwrap_or_default();
                     let has_slash_completions =
@@ -1839,8 +1842,11 @@ impl ConversationView {
                         .agent_display_name(&self.agent.agent_id())
                         .unwrap_or_else(|| self.agent.agent_id().0.to_string().into());
 
-                    let new_placeholder =
-                        placeholder_text(agent_display_name.as_ref(), has_slash_completions);
+                    let new_placeholder = placeholder_text(
+                        agent_display_name.as_ref(),
+                        has_slash_completions,
+                        supports_inline_shell,
+                    );
 
                     thread_view.update(cx, |thread_view, cx| {
                         let mut session_capabilities = thread_view.session_capabilities.write();
@@ -3278,19 +3284,28 @@ fn native_available_skills(
         .collect()
 }
 
-fn placeholder_text(agent_name: &str, has_commands: bool) -> String {
+fn placeholder_text(agent_name: &str, has_commands: bool, supports_inline_shell: bool) -> String {
+    let shell_suffix = if supports_inline_shell {
+        ", ! to run a shell command"
+    } else {
+        ""
+    };
+
     if agent_name == agent::ZED_AGENT_ID.as_ref() {
         format!(
-            "Message the {}, @ to include context, / for commands",
-            agent_name
+            "Message the {}, @ to include context, / for commands{}",
+            agent_name, shell_suffix
         )
     } else if has_commands {
         format!(
-            "Message {} — @ to include context, / for commands",
-            agent_name
+            "Message {} — @ to include context, / for commands{}",
+            agent_name, shell_suffix
         )
     } else {
-        format!("Message {} — @ to include context", agent_name)
+        format!(
+            "Message {} — @ to include context{}",
+            agent_name, shell_suffix
+        )
     }
 }
 

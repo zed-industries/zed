@@ -298,28 +298,36 @@ impl MarkdownStyle {
             soft_break_as_hard_break: matches!(font, MarkdownFont::Agent),
             heading_level_styles: matches!(font, MarkdownFont::Agent).then_some(
                 HeadingLevelStyles {
+                    // pi colors transcript headings (its `--md-heading`); use the
+                    // theme accent so they stand out from body text.
                     h1: Some(TextStyleRefinement {
                         font_size: Some(rems(1.15).into()),
+                        color: Some(colors.text_accent),
                         ..Default::default()
                     }),
                     h2: Some(TextStyleRefinement {
                         font_size: Some(rems(1.1).into()),
+                        color: Some(colors.text_accent),
                         ..Default::default()
                     }),
                     h3: Some(TextStyleRefinement {
                         font_size: Some(rems(1.05).into()),
+                        color: Some(colors.text_accent),
                         ..Default::default()
                     }),
                     h4: Some(TextStyleRefinement {
                         font_size: Some(rems(1.).into()),
+                        color: Some(colors.text_accent),
                         ..Default::default()
                     }),
                     h5: Some(TextStyleRefinement {
                         font_size: Some(rems(0.95).into()),
+                        color: Some(colors.text_accent),
                         ..Default::default()
                     }),
                     h6: Some(TextStyleRefinement {
                         font_size: Some(rems(0.875).into()),
+                        color: Some(colors.text_accent),
                         ..Default::default()
                     }),
                 },
