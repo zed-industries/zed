@@ -3014,16 +3014,6 @@ fn display_id_for_screen(screen: id) -> Option<CGDirectDisplayID> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn display_id_for_screen_returns_none_for_null_screen() {
-        assert_eq!(display_id_for_screen(nil), None);
-    }
-}
-
 extern "C" fn blurred_view_init_with_frame(this: &Object, _: Sel, frame: NSRect) -> id {
     unsafe {
         let view = msg_send![super(this, class!(NSVisualEffectView)), initWithFrame: frame];
@@ -3170,5 +3160,15 @@ extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
             callback();
             window_state.lock().toggle_tab_bar_callback = Some(callback);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_id_for_screen_returns_none_for_null_screen() {
+        assert_eq!(display_id_for_screen(nil), None);
     }
 }
