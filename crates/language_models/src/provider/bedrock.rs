@@ -1330,9 +1330,13 @@ impl BedrockMantleModel {
                 .clone()
         });
         let provider_name = PROVIDER_NAME.0.to_string();
+        let auth_task = Tokio::spawn_result(
+            cx,
+            resolve_mantle_auth(credentials_provider, auth, region.clone()),
+        );
 
         let future = self.request_limiter.stream(async move {
-            let auth = resolve_mantle_auth(credentials_provider, auth, region.clone())
+            let auth = auth_task
                 .await
                 .map_err(LanguageModelCompletionError::Other)?;
             stream_mantle_sse(
