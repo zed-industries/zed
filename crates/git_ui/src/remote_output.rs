@@ -31,6 +31,50 @@ pub struct SuccessMessage {
     pub style: SuccessStyle,
 }
 
+pub fn extract_pull_request_url(output: &RemoteCommandOutput) -> Option<String> {
+    let mut expecting_create_url = false;
+
+    for line in output.stderr.lines() {
+        let Some(remote_line) = line.trim_start().strip_prefix("remote:") else {
+            expecting_create_url = false;
+            continue;
+        };
+
+        if is_create_pull_request_prompt(remote_line) {
+            if let Some(url) = extract_url(remote_line) {
+                return Some(url);
+            }
+            expecting_create_url = true;
+            continue;
+        }
+
+        if expecting_create_url {
+            expecting_create_url = false;
+            if let Some(url) = extract_url(remote_line) {
+                return Some(url);
+            }
+        }
+    }
+
+    None
+}
+
+fn is_create_pull_request_prompt(line: &str) -> bool {
+    let line = line.to_ascii_lowercase();
+    (line.contains("create a pull request") && line.contains("by visiting"))
+        || (line.contains("create a merge request") && line.contains("visit"))
+}
+
+fn extract_url(line: &str) -> Option<String> {
+    let http_index = line.find("https://").or_else(|| line.find("http://"))?;
+    let url = line[http_index..]
+        .split_whitespace()
+        .next()?
+        .trim_end_matches(|character| matches!(character, ',' | '.' | ')' | ']' | '>'));
+
+    Some(url.to_string())
+}
+
 pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> SuccessMessage {
     match action {
         RemoteAction::Fetch(remote) => {
@@ -162,8 +206,16 @@ mod tests {
 
         let msg = format_output(&action, output);
 
-        assert!(matches!(msg.style, SuccessStyle::ToastWithLog { .. }));
+        assert!(matches!(&msg.style, SuccessStyle::ToastWithLog { .. }));
         assert_eq!(msg.message, "Pushed test_branch to test_remote");
+        if let SuccessStyle::ToastWithLog { output } = &msg.style {
+            assert_eq!(
+                extract_pull_request_url(output),
+                Some("https://example.com/test/test/pull/new/test".to_string())
+            );
+        } else {
+            panic!("Expected ToastWithLog variant");
+        }
     }
 
     #[test]
@@ -191,8 +243,19 @@ mod tests {
 
         let msg = format_output(&action, output);
 
-        assert!(matches!(msg.style, SuccessStyle::ToastWithLog { .. }));
+        assert!(matches!(&msg.style, SuccessStyle::ToastWithLog { .. }));
         assert_eq!(msg.message, "Pushed test_branch to test_remote");
+        if let SuccessStyle::ToastWithLog { output } = &msg.style {
+            assert_eq!(
+                extract_pull_request_url(output),
+                Some(
+                    "https://example.com/test/test/-/merge_requests/new?merge_request%5Bsource_branch%5D=test"
+                        .to_string()
+                )
+            );
+        } else {
+            panic!("Expected ToastWithLog variant");
+        }
     }
 
     #[test]
@@ -224,8 +287,13 @@ mod tests {
 
         let msg = format_output(&action, output);
 
-        assert!(matches!(msg.style, SuccessStyle::ToastWithLog { .. }));
+        assert!(matches!(&msg.style, SuccessStyle::ToastWithLog { .. }));
         assert_eq!(msg.message, "Pushed test_branch to test_remote");
+        if let SuccessStyle::ToastWithLog { output } = &msg.style {
+            assert_eq!(extract_pull_request_url(output), None);
+        } else {
+            panic!("Expected ToastWithLog variant");
+        }
     }
 
     #[test]
@@ -254,6 +322,7 @@ mod tests {
                 output.stderr,
                 "To http://example.com/test/test.git\n * [new branch]      test -> test\n"
             );
+            assert_eq!(extract_pull_request_url(output), None);
         } else {
             panic!("Expected ToastWithLog variant");
         }

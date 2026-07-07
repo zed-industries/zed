@@ -777,6 +777,7 @@ pub struct GitPanel {
     new_staged_count: usize,
     pending_commit: Option<Task<()>>,
     pending_remote_operation: Option<RemoteOperationKind>,
+    pending_pull_request_url: Option<String>,
     amend_pending: bool,
     original_commit_message: Option<String>,
     pending_commit_message_restores: BTreeMap<String, SerializedCommitMessage>,
@@ -1059,6 +1060,7 @@ impl GitPanel {
                 diff_stat_total: DiffStat::default(),
                 pending_commit: None,
                 pending_remote_operation: None,
+                pending_pull_request_url: None,
                 amend_pending,
                 original_commit_message,
                 pending_commit_message_restores,
@@ -3598,8 +3600,13 @@ impl GitPanel {
         }
     }
 
-    pub fn create_pull_request(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn create_pull_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let result = (|| -> anyhow::Result<()> {
+            if let Some(url) = self.pending_pull_request_url.take() {
+                cx.open_url(url.as_str());
+                return Ok(());
+            }
+
             let repo = self
                 .active_repository
                 .clone()
@@ -4658,6 +4665,9 @@ impl GitPanel {
         };
 
         let is_push = matches!(action, RemoteAction::Push(_, _));
+        if is_push {
+            self.pending_pull_request_url = remote_output::extract_pull_request_url(&info);
+        }
 
         workspace.update(cx, |workspace, cx| {
             let SuccessMessage { message, style } = remote_output::format_output(&action, info);
