@@ -684,7 +684,7 @@ impl PlatformWindow for WebWindow {
         self.inner.state.borrow_mut().renderer.draw(scene);
     }
 
-    fn completed_frame(&self) {
+    fn completed_frame(&self, _request_next_frame: bool) {
         // On web, presentation happens automatically via wgpu surface present
     }
 
