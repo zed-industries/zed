@@ -70,7 +70,7 @@ impl ProjectDiff {
         workspace.register_action(Self::deploy);
         workspace.register_action(
             |workspace, _: &git_actions::ViewUncommittedChanges, window, cx| {
-                Self::deploy_head_diff_at(workspace, None, window, cx);
+                Self::deploy_at(workspace, None, window, cx);
             },
         );
         workspace.register_action(
@@ -95,19 +95,10 @@ impl ProjectDiff {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) {
-        Self::deploy_head_diff_at(workspace, None, window, cx)
+        Self::deploy_at(workspace, None, window, cx)
     }
 
     pub fn deploy_at(
-        workspace: &mut Workspace,
-        entry: Option<GitStatusEntry>,
-        window: &mut Window,
-        cx: &mut Context<Workspace>,
-    ) {
-        Self::deploy_head_diff_at(workspace, entry, window, cx)
-    }
-
-    fn deploy_head_diff_at(
         workspace: &mut Workspace,
         entry: Option<GitStatusEntry>,
         window: &mut Window,
@@ -197,7 +188,7 @@ impl ProjectDiff {
         self.diff.update(cx, |diff, cx| diff.autoscroll(cx));
     }
 
-    pub(crate) fn new(
+    fn new(
         project: Entity<Project>,
         workspace: Entity<Workspace>,
         window: &mut Window,
@@ -491,7 +482,7 @@ impl Item for ProjectDiff {
         self.diff.read(cx).has_conflict(cx)
     }
 
-    fn can_save(&self, _cx: &App) -> bool {
+    fn can_save(&self, _: &App) -> bool {
         true
     }
 

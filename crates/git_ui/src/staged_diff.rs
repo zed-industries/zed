@@ -25,7 +25,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{Divider, Icon, Tooltip, Window, prelude::*};
+use ui::{DiffStat, Divider, Icon, Tooltip, Window, prelude::*};
 use util::ResultExt as _;
 use workspace::{
     ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -624,65 +624,50 @@ impl Render for StagedDiffToolbar {
         let focus_handle = staged_diff.focus_handle(cx);
         let button_states = staged_diff.read(cx).button_states(cx);
 
-        h_group_xl()
+        let diff = staged_diff.read(cx).diff.read(cx);
+        let (additions, deletions) = diff.calculate_changed_lines(cx);
+        let is_multibuffer_empty = diff.multibuffer().read(cx).is_empty();
+
+        h_flex()
             .my_neg_1()
             .py_1()
-            .items_center()
+            .gap_1p5()
             .flex_wrap()
             .justify_between()
-            .child(
-                h_group_sm()
-                    .when(button_states.selection, |el| {
-                        el.child(
-                            Button::new("unstage", "Unstage")
-                                .disabled(!button_states.unstage)
-                                .tooltip(Tooltip::text("Unstage selected hunks"))
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.unstage_selected_staged_hunks(false, window, cx)
-                                })),
-                        )
-                    })
-                    .when(!button_states.selection, |el| {
-                        el.child(
-                            Button::new("unstage", "Unstage")
-                                .tooltip(Tooltip::for_action_title_in(
-                                    "Unstage and go to next hunk",
-                                    &UnstageAndNext,
-                                    &focus_handle,
-                                ))
-                                .disabled(!button_states.prev_next && !button_states.unstage_all)
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    this.unstage_selected_staged_hunks(true, window, cx)
-                                })),
-                        )
-                    }),
-            )
+            .when(!is_multibuffer_empty, |this| {
+                this.child(DiffStat::new(
+                    "staged-diff-stat",
+                    additions as usize,
+                    deletions as usize,
+                ))
+                .child(Divider::vertical().ml_1())
+            })
             // n.b. the only reason these arrows are here is because we don't
             // support "undo" for staging so we need a way to go back.
             .child(
                 h_group_sm()
                     .child(
                         IconButton::new("up", IconName::ArrowUp)
-                            .shape(ui::IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .disabled(!button_states.prev_next)
                             .tooltip(Tooltip::for_action_title_in(
-                                "Go to previous hunk",
+                                "Go to Previous Hunk",
                                 &GoToPreviousHunk,
                                 &focus_handle,
                             ))
-                            .disabled(!button_states.prev_next)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.dispatch_action(&GoToPreviousHunk, window, cx)
                             })),
                     )
                     .child(
                         IconButton::new("down", IconName::ArrowDown)
-                            .shape(ui::IconButtonShape::Square)
+                            .icon_size(IconSize::Small)
+                            .disabled(!button_states.prev_next)
                             .tooltip(Tooltip::for_action_title_in(
-                                "Go to next hunk",
+                                "Go to Next Hunk",
                                 &GoToHunk,
                                 &focus_handle,
                             ))
-                            .disabled(!button_states.prev_next)
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.dispatch_action(&GoToHunk, window, cx)
                             })),
@@ -691,29 +676,54 @@ impl Render for StagedDiffToolbar {
             .child(Divider::vertical())
             .child(
                 h_group_sm()
-                    .child(
-                        Button::new("unstage-all", "Unstage All")
-                            .disabled(!button_states.unstage_all)
-                            .tooltip(Tooltip::for_action_title_in(
-                                "Unstage all changes",
-                                &UnstageAll,
-                                &focus_handle,
-                            ))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.unstage_all(window, cx)),
-                            ),
-                    )
-                    .child(
-                        Button::new("commit", "Commit")
-                            .tooltip(Tooltip::for_action_title_in(
-                                "Commit",
-                                &Commit,
-                                &focus_handle,
-                            ))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&Commit, window, cx);
-                            })),
-                    ),
+                    .when(button_states.selection, |this| {
+                        this.child(
+                            Button::new("unstage", "Unstage")
+                                .disabled(!button_states.unstage)
+                                .tooltip(Tooltip::text("Unstage Selected Hunks"))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.unstage_selected_staged_hunks(false, window, cx)
+                                })),
+                        )
+                    })
+                    .when(!button_states.selection, |this| {
+                        this.child(
+                            Button::new("unstage", "Unstage")
+                                .disabled(!button_states.unstage)
+                                .tooltip(Tooltip::for_action_title_in(
+                                    "Unstage and Go to Next Hunk",
+                                    &UnstageAndNext,
+                                    &focus_handle,
+                                ))
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.unstage_selected_staged_hunks(true, window, cx)
+                                })),
+                        )
+                    }),
+            )
+            .child(Divider::vertical())
+            .child(
+                Button::new("unstage-all", "Unstage All")
+                    .width(rems_from_px(80.))
+                    .disabled(!button_states.unstage_all)
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Unstage All Changes",
+                        &UnstageAll,
+                        &focus_handle,
+                    ))
+                    .on_click(cx.listener(|this, _, window, cx| this.unstage_all(window, cx))),
+            )
+            .child(Divider::vertical())
+            .child(
+                Button::new("commit", "Commit")
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Commit",
+                        &Commit,
+                        &focus_handle,
+                    ))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.dispatch_action(&Commit, window, cx);
+                    })),
             )
     }
 }

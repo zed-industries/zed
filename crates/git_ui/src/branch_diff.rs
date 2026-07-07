@@ -29,7 +29,7 @@ use std::{
     any::{Any, TypeId},
     sync::Arc,
 };
-use ui::{DiffStat, Divider, KeyBinding, PopoverMenu, Tooltip, prelude::*};
+use ui::{DiffStat, Divider, PopoverMenu, Tooltip, prelude::*};
 use workspace::{
     ItemHandle, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
@@ -754,13 +754,20 @@ impl Render for BranchDiffToolbar {
 
         let show_review_button = !is_multibuffer_empty && is_ai_enabled;
 
-        h_group_xl()
+        h_flex()
             .my_neg_1()
             .py_1()
-            .items_center()
+            .gap_1p5()
             .flex_wrap()
-            .justify_end()
-            .gap_2()
+            .justify_between()
+            .when(!is_multibuffer_empty, |this| {
+                this.child(DiffStat::new(
+                    "branch-diff-stat",
+                    additions as usize,
+                    deletions as usize,
+                ))
+            })
+            .child(Divider::vertical().ml_1())
             .child(
                 PopoverMenu::new("branch-diff-base-branch-picker")
                     .menu(move |window, cx| {
@@ -778,6 +785,7 @@ impl Render for BranchDiffToolbar {
                                     .ok();
                             },
                         );
+
                         Some(branch_picker::select_popover(
                             workspace.clone(),
                             repository.clone(),
@@ -788,23 +796,14 @@ impl Render for BranchDiffToolbar {
                         ))
                     })
                     .trigger_with_tooltip(
-                        Button::new("branch-diff-base-branch", base_ref_label)
-                            .color(Color::Muted)
-                            .end_icon(
-                                Icon::new(IconName::ChevronDown)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted),
-                            ),
-                        Tooltip::text("Select base branch"),
+                        Button::new("branch-diff-base-branch", base_ref_label).end_icon(
+                            Icon::new(IconName::ChevronDown)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        ),
+                        Tooltip::text("Select Base Branch"),
                     ),
             )
-            .when(!is_multibuffer_empty, |this| {
-                this.child(DiffStat::new(
-                    "branch-diff-stat",
-                    additions as usize,
-                    deletions as usize,
-                ))
-            })
             .when(show_review_button, |this| {
                 let focus_handle = focus_handle.clone();
                 this.child(Divider::vertical()).child(
@@ -814,7 +813,6 @@ impl Render for BranchDiffToolbar {
                                 .size(IconSize::Small)
                                 .color(Color::Muted),
                         )
-                        .key_binding(KeyBinding::for_action_in(&ReviewDiff, &focus_handle, cx))
                         .tooltip(move |_, cx| {
                             Tooltip::with_meta_in(
                                 "Review Diff",
