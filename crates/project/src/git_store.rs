@@ -656,6 +656,7 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_get_branches);
         client.add_entity_request_handler(Self::handle_get_default_branch);
         client.add_entity_request_handler(Self::handle_change_branch);
+        client.add_entity_request_handler(Self::handle_git_merge);
         client.add_entity_request_handler(Self::handle_create_branch);
         client.add_entity_request_handler(Self::handle_rename_branch);
         client.add_entity_request_handler(Self::handle_create_remote);
@@ -3191,6 +3192,25 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.change_branch(branch_name)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_git_merge(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitMerge>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let ref_name = envelope.payload.ref_name;
+        let squash = envelope.payload.squash;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.merge(ref_name, squash)
             })
             .await??;
 
@@ -8020,6 +8040,34 @@ impl Repository {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
                                 branch_name,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn merge(&mut self, ref_name: String, squash: bool) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        let flag = if squash { "--squash" } else { "--no-edit" };
+        self.send_job(
+            "merge",
+            Some(format!("git merge {flag} {ref_name}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.merge(ref_name, squash).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitMerge {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                ref_name,
+                                squash,
                             })
                             .await?;
 

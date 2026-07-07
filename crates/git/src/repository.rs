@@ -867,6 +867,10 @@ pub trait GitRepository: Send + Sync {
         force: bool,
     ) -> BoxFuture<'_, Result<()>>;
 
+    /// Merges the given commit-ish into the current branch. A squash merge
+    /// stages the changes without committing them.
+    fn merge(&self, ref_name: String, squash: bool) -> BoxFuture<'_, Result<()>>;
+
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
 
     /// Returns the creation time of a linked worktree's git metadata
@@ -2196,6 +2200,19 @@ impl GitRepository for RealGitRepository {
                 git_binary
                     .run(&["branch", "-m", &branch, &new_name])
                     .await?;
+                anyhow::Ok(())
+            })
+            .boxed()
+    }
+
+    fn merge(&self, ref_name: String, squash: bool) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary_in_worktree();
+
+        self.executor
+            .spawn(async move {
+                let git_binary = git_binary?;
+                let flag = if squash { "--squash" } else { "--no-edit" };
+                git_binary.run(&["merge", flag, &ref_name]).await?;
                 anyhow::Ok(())
             })
             .boxed()
@@ -4331,6 +4348,64 @@ mod tests {
                 .to_string()
                 .contains("expected .git file to start with 'gitdir: '"),
             "unexpected error: {error:#}"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_merge_and_squash_merge(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        git_command(repo_dir.path(), ["config", "user.name", "test"]);
+        git_command(repo_dir.path(), ["config", "user.email", "test@zed.dev"]);
+        fs::write(repo_dir.path().join("file.txt"), "one\n").unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "one"]);
+
+        git_command(repo_dir.path(), ["switch", "-c", "feature"]);
+        fs::write(repo_dir.path().join("feature.txt"), "feature\n").unwrap();
+        git_command(repo_dir.path(), ["add", "feature.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "feature"]);
+        git_command(repo_dir.path(), ["switch", "main"]);
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let git = repository.git_binary_in_worktree().unwrap();
+
+        repository
+            .merge("feature".to_string(), false)
+            .await
+            .unwrap();
+        assert!(
+            repo_dir.path().join("feature.txt").exists(),
+            "merging the feature branch should bring its files into main"
+        );
+
+        git_command(repo_dir.path(), ["switch", "-c", "squashed"]);
+        fs::write(repo_dir.path().join("squashed.txt"), "squashed\n").unwrap();
+        git_command(repo_dir.path(), ["add", "squashed.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "squashed"]);
+        git_command(repo_dir.path(), ["switch", "main"]);
+
+        repository
+            .merge("squashed".to_string(), true)
+            .await
+            .unwrap();
+        assert!(
+            repo_dir.path().join("squashed.txt").exists(),
+            "squash merging should bring the branch's files into the working tree"
+        );
+        let staged = git.run(&["diff", "--cached", "--name-only"]).await.unwrap();
+        assert!(
+            staged.contains("squashed.txt"),
+            "squash merging should stage the changes without committing them"
         );
     }
 

@@ -930,6 +930,10 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn merge(&self, _ref_name: String, _squash: bool) -> BoxFuture<'_, Result<()>> {
+        async { Ok(()) }.boxed()
+    }
+
     fn delete_branch(
         &self,
         _is_remote: bool,

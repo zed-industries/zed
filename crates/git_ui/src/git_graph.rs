@@ -1512,6 +1512,17 @@ impl GitGraph {
         self.detach_op_with_error_toast(format!("switch {ref_name}"), receiver, cx);
     }
 
+    fn merge_ref(&mut self, ref_name: SharedString, squash: bool, cx: &mut Context<Self>) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let receiver = repository.update(cx, |repository, _| {
+            repository.merge(ref_name.to_string(), squash)
+        });
+        let flag = if squash { "--squash " } else { "" };
+        self.detach_op_with_error_toast(format!("merge {flag}{ref_name}"), receiver, cx);
+    }
+
     fn create_branch_from(
         &mut self,
         base: SharedString,
@@ -2865,6 +2876,31 @@ impl GitGraph {
                                         },
                                     )),
                             );
+
+                            for squash in [false, true] {
+                                menu = menu.item(match head_branch_name.clone() {
+                                    Some(head_branch) if !is_checked_out => {
+                                        let merge_branch = branch_name.clone();
+                                        let label = if squash {
+                                            format!("Squash Merge into {head_branch}")
+                                        } else {
+                                            format!("Merge into {head_branch}")
+                                        };
+                                        ContextMenuEntry::new(label).handler(window.handler_for(
+                                            &git_graph,
+                                            move |this, _window, cx| {
+                                                this.merge_ref(merge_branch.clone(), squash, cx);
+                                            },
+                                        ))
+                                    }
+                                    _ => ContextMenuEntry::new(if squash {
+                                        "Squash Merge into Current Branch"
+                                    } else {
+                                        "Merge into Current Branch"
+                                    })
+                                    .disabled(true),
+                                });
+                            }
 
                             let create_base = branch_name.clone();
                             menu = menu.entry(
