@@ -354,6 +354,22 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
+        let selection_count = self.selections.count();
+        let first_selection = self.selections.first_anchor();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let first_selection_is_empty = first_selection.start == first_selection.end;
+        let selection_start_point = first_selection.start.to_point(&snapshot);
+        let selection_start_row = selection_start_point.row;
+        let selection_start_column = selection_start_point.column;
+        let Some((_, text_anchor)) = self
+            .buffer
+            .read(cx)
+            .text_anchor_for_position(first_selection.start, cx)
+        else {
+            return;
+        };
+        let buffer_id = text_anchor.buffer_id;
+
         self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.move_with(&mut |snapshot, sel| {
                 if sel.is_empty() {
@@ -365,7 +381,56 @@ impl Editor {
             });
         });
         let item = self.cut_common(false, window, cx);
-        cx.set_global(KillRing(item))
+
+        let Some(item_text) = item.text() else {
+            return;
+        };
+
+        let entry_metadata = item.entries().first().and_then(|entry| match entry {
+            ClipboardEntry::String(entry) => entry.metadata_json::<Vec<ClipboardSelection>>(),
+            _ => None,
+        });
+
+        let can_append = selection_count == 1 && first_selection_is_empty;
+        let item = if can_append
+            && let Some(previous_ring) = cx.try_global::<KillRing>()
+            && previous_ring.can_append
+            && previous_ring.buffer_id == buffer_id
+            && previous_ring.row == selection_start_row
+            && previous_ring.column == selection_start_column
+        {
+            let mut entries = previous_ring
+                .metadata
+                .as_ref()
+                .map_or_else(Vec::new, Clone::clone);
+            if let Some(metadata) = entry_metadata.as_ref() {
+                entries.extend_from_slice(metadata);
+            }
+
+            let mut text = previous_ring.text.clone();
+            text.push_str(&item_text);
+            let text_len = text.len();
+
+            KillRing {
+                text,
+                metadata: kill_ring_metadata_for_text(entries, text_len),
+                row: previous_ring.row,
+                column: previous_ring.column,
+                buffer_id: previous_ring.buffer_id,
+                can_append,
+            }
+        } else {
+            KillRing {
+                text: item_text,
+                metadata: entry_metadata,
+                row: selection_start_row,
+                column: selection_start_column,
+                buffer_id,
+                can_append,
+            }
+        };
+
+        cx.set_global(item)
     }
 
     pub(super) fn kill_ring_yank(
@@ -374,15 +439,15 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (text, metadata) = if let Some(KillRing(item)) = cx.try_global() {
-            if let Some(ClipboardEntry::String(kill_ring)) = item.entries().first() {
-                (kill_ring.text().to_string(), kill_ring.metadata_json())
-            } else {
-                return;
-            }
-        } else {
+        if !cx.has_global::<KillRing>() {
             return;
-        };
+        }
+
+        let (text, metadata) = cx.update_global::<KillRing, _>(|kill_ring, _| {
+            kill_ring.can_append = false;
+            (kill_ring.text.clone(), kill_ring.metadata.clone())
+        });
+
         self.do_paste(&text, metadata, false, window, cx);
     }
 
@@ -536,8 +601,35 @@ impl Editor {
     }
 }
 
-struct KillRing(ClipboardItem);
+struct KillRing {
+    text: String,
+    metadata: Option<Vec<ClipboardSelection>>,
+    row: u32,
+    column: u32,
+    buffer_id: BufferId,
+    can_append: bool,
+}
 impl Global for KillRing {}
+
+fn kill_ring_metadata_for_text(
+    mut metadata: Vec<ClipboardSelection>,
+    text_len: usize,
+) -> Option<Vec<ClipboardSelection>> {
+    match metadata.len() {
+        0 => None,
+        1 => Some(metadata),
+        _ => {
+            let first_selection = metadata.remove(0);
+            Some(vec![ClipboardSelection {
+                len: text_len,
+                is_entire_line: false,
+                first_line_indent: first_selection.first_line_indent,
+                file_path: None,
+                line_range: None,
+            }])
+        }
+    }
+}
 
 fn edit_for_markdown_paste<'a>(
     buffer: &MultiBufferSnapshot,

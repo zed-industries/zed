@@ -626,7 +626,7 @@ impl DiffState {
                     this.buffer_diff_changed(diff, range, cx);
                     cx.emit(Event::BufferDiffChanged);
                 }
-                BufferDiffEvent::BaseTextChanged | BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
+                BufferDiffEvent::BaseTextChanged => {}
             }),
             diff,
             main_buffer: None,
@@ -660,8 +660,7 @@ impl DiffState {
                             );
                             cx.emit(Event::BufferDiffChanged);
                         }
-                        BufferDiffEvent::BaseTextChanged
-                        | BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
+                        BufferDiffEvent::BaseTextChanged => {}
                     }
                 }
             }),

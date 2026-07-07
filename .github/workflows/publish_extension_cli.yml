@@ -11,6 +11,8 @@ on:
         description: Describe why the extension CLI is being bumped and/or what changes are included.
         required: true
         type: string
+permissions:
+  contents: read
 jobs:
   publish_job:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.ref == 'refs/heads/main'
