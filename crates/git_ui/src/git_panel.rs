@@ -4693,7 +4693,14 @@ impl GitPanel {
                         .color(Color::Muted),
                 );
                 match (style, is_push) {
+                    (PushPrLink { label, url }, _) => {
+                        this.action(label, move |_window, cx| cx.open_url(&url))
+                    }
                     (Toast | ToastWithLog { .. }, true) => {
+                        // If we were not able to parse a valid URL from the
+                        // output of a push command, we'll simply dispatch the
+                        // generic `CreatePullRequest` action when the toast
+                        // button is pressed.
                         this.action("Create Pull Request", move |window, cx| {
                             window
                                 .dispatch_action(Box::new(zed_actions::git::CreatePullRequest), cx);
