@@ -887,8 +887,7 @@ impl MantleModel {
     /// Which OpenAI-compatible API this model must be called through.
     pub fn protocol(&self) -> MantleProtocol {
         match self {
-            Self::Gpt5_5 | Self::Gpt5_4 => MantleProtocol::Responses,
-            Self::Grok4_3 => MantleProtocol::ChatCompletions,
+            Self::Gpt5_5 | Self::Gpt5_4 | Self::Grok4_3 => MantleProtocol::Responses,
             Self::Custom { protocol, .. } => *protocol,
         }
     }
@@ -932,6 +931,13 @@ impl MantleModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_builtin_mantle_models_use_responses_protocol() {
+        assert_eq!(MantleModel::Gpt5_5.protocol(), MantleProtocol::Responses);
+        assert_eq!(MantleModel::Gpt5_4.protocol(), MantleProtocol::Responses);
+        assert_eq!(MantleModel::Grok4_3.protocol(), MantleProtocol::Responses);
+    }
 
     #[test]
     fn test_us_region_inference_ids() -> anyhow::Result<()> {
