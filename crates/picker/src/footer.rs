@@ -123,7 +123,7 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn render_preview_controls(
         &self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
@@ -131,6 +131,12 @@ impl<D: PickerDelegate> Picker<D> {
         let below_focus_handle = focus_handle.clone();
         let current = self.preview_layout().unwrap_or(preview::Layout::Hidden);
         let preview_visible = current != preview::Layout::Hidden;
+
+        let diff_split = if self.is_auto_vertical(window) {
+            IconName::DiffSplitAuto
+        } else {
+            IconName::DiffSplit
+        };
 
         h_flex()
             .child(
@@ -163,7 +169,7 @@ impl<D: PickerDelegate> Picker<D> {
                             })),
                     )
                     .child(
-                        IconButton::new("picker-preview-right", IconName::DiffSplit)
+                        IconButton::new("picker-preview-right", diff_split)
                             .icon_size(IconSize::Small)
                             .toggle_state(current == preview::Layout::Right)
                             .tooltip(move |_window, cx| {

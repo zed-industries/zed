@@ -1280,10 +1280,34 @@ impl<D: PickerDelegate> Picker<D> {
     fn preview_layout(&self) -> Option<preview::Layout> {
         self.preview.as_ref().map(|p| p.layout)
     }
+    fn is_auto_vertical(&self, window: &Window) -> bool {
+        self.preview_layout() == Some(preview::Layout::Right)
+            && self
+                .size_bounds
+                .would_clamp_width_if_horizontal(&self.shape, window)
+    }
+    /// To check whether we're rendering vertically instead of
+    /// horizontally due to the auto override
+    fn preview_layout_rendered(&self, window: &Window) -> Option<preview::Layout> {
+        let would_clamp = matches!(
+            self.preview,
+            Some(Preview {
+                layout: preview::Layout::Right,
+                ..
+            })
+        ) && self.is_auto_vertical(window);
+        if would_clamp {
+            Some(preview::Layout::Below)
+        } else {
+            self.preview_layout()
+        }
+    }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn results_width(&self, window: &Window) -> gpui::Pixels {
-        let layout = self.preview_layout().unwrap_or(preview::Layout::Hidden);
+        let layout = self
+            .preview_layout_rendered(window)
+            .unwrap_or(preview::Layout::Hidden);
         let pos = self
             .shape
             .results_position_and_size(layout, &self.size_bounds, window);
