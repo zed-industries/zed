@@ -1,4 +1,4 @@
-use gpui::{Anchor, AnyView, Entity, Pixels, Point};
+use gpui::{Anchor, AnyView, Entity, Pixels, Point, Role};
 
 use crate::{ButtonLike, ContextMenu, PopoverMenu, prelude::*};
 
@@ -34,6 +34,7 @@ pub struct DropdownMenu {
     offset: Option<Point<Pixels>>,
     tab_index: Option<isize>,
     chevron: bool,
+    aria_label: Option<SharedString>,
 }
 
 impl DropdownMenu {
@@ -57,6 +58,7 @@ impl DropdownMenu {
             offset: None,
             tab_index: None,
             chevron: true,
+            aria_label: None,
         }
     }
 
@@ -80,6 +82,7 @@ impl DropdownMenu {
             offset: None,
             tab_index: None,
             chevron: true,
+            aria_label: None,
         }
     }
 
@@ -137,6 +140,13 @@ impl DropdownMenu {
         self.chevron = false;
         self
     }
+
+    /// Sets the label announced by assistive technology.
+    /// Defaults to the trigger's visible label (typically the current value).
+    pub fn aria_label(mut self, label: impl Into<SharedString>) -> Self {
+        self.aria_label = Some(label.into());
+        self
+    }
 }
 
 impl Disableable for DropdownMenu {
@@ -157,11 +167,42 @@ impl RenderOnce for DropdownMenu {
 
         let full_width = self.full_width;
         let trigger_size = self.trigger_size;
+        // Ensure a handle exists so assistive technology can open/close the menu
+        // via the Expand/Collapse accessibility actions (used by UIA on Windows
+        // and AX on macOS; on Linux/AT-SPI the click action is used instead).
+        let handle = self.handle.unwrap_or_default();
+        let expanded = handle.is_deployed();
+
+        let a11y_actions = |button: Button| {
+            let show_handle = handle.clone();
+            let hide_handle = handle.clone();
+            button
+                .on_a11y_action(gpui::accesskit::Action::Expand, move |_, window, cx| {
+                    show_handle.show(window, cx);
+                })
+                .on_a11y_action(gpui::accesskit::Action::Collapse, move |_, _window, cx| {
+                    hide_handle.hide(cx);
+                })
+        };
+        let a11y_actions_element = |button: ButtonLike| {
+            let show_handle = handle.clone();
+            let hide_handle = handle.clone();
+            button
+                .on_a11y_action(gpui::accesskit::Action::Expand, move |_, window, cx| {
+                    show_handle.show(window, cx);
+                })
+                .on_a11y_action(gpui::accesskit::Action::Collapse, move |_, _window, cx| {
+                    hide_handle.hide(cx);
+                })
+        };
 
         let (text_button, element_button) = match self.label {
             LabelKind::Text(text) => (
                 Some(
-                    Button::new(self.id.clone(), text)
+                    a11y_actions(Button::new(self.id.clone(), text))
+                        .aria_role(Role::ComboBox)
+                        .when_some(self.aria_label, |this, label| this.aria_label(label))
+                        .aria_expanded(expanded)
                         .style(button_style)
                         .when_some(self.trigger_icon.filter(|_| self.chevron), |this, icon| {
                             this.end_icon(
@@ -178,7 +219,10 @@ impl RenderOnce for DropdownMenu {
             LabelKind::Element(element) => (
                 None,
                 Some(
-                    ButtonLike::new(self.id.clone())
+                    a11y_actions_element(ButtonLike::new(self.id.clone()))
+                        .aria_role(Role::ComboBox)
+                        .when_some(self.aria_label, |this, label| this.aria_label(label))
+                        .aria_expanded(expanded)
                         .child(element)
                         .style(button_style)
                         .when(self.chevron, |this| {
@@ -198,6 +242,7 @@ impl RenderOnce for DropdownMenu {
 
         let mut popover = PopoverMenu::new((self.id.clone(), "popover"))
             .full_width(self.full_width)
+            .with_handle(handle)
             .menu(move |_window, _cx| Some(self.menu.clone()));
 
         popover = match (text_button, element_button, self.trigger_tooltip) {
@@ -218,7 +263,6 @@ impl RenderOnce for DropdownMenu {
                 None => Anchor::BottomRight,
             })
             .when_some(self.offset, |this, offset| this.offset(offset))
-            .when_some(self.handle, |this, handle| this.with_handle(handle))
     }
 }
 

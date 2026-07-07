@@ -626,7 +626,7 @@ impl DiffState {
                     this.buffer_diff_changed(diff, range, cx);
                     cx.emit(Event::BufferDiffChanged);
                 }
-                BufferDiffEvent::BaseTextChanged | BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
+                BufferDiffEvent::BaseTextChanged => {}
             }),
             diff,
             main_buffer: None,
@@ -660,8 +660,7 @@ impl DiffState {
                             );
                             cx.emit(Event::BufferDiffChanged);
                         }
-                        BufferDiffEvent::BaseTextChanged
-                        | BufferDiffEvent::HunksStagedOrUnstaged(_) => {}
+                        BufferDiffEvent::BaseTextChanged => {}
                     }
                 }
             }),
@@ -6293,6 +6292,7 @@ impl MultiBufferSnapshot {
                 .map(|item| OutlineItem {
                     depth: item.depth,
                     range: Anchor::range_in_buffer(path_key_index, item.range),
+                    selection_range: Anchor::range_in_buffer(path_key_index, item.selection_range),
                     source_range_for_text: Anchor::range_in_buffer(
                         path_key_index,
                         item.source_range_for_text,
@@ -6335,6 +6335,10 @@ impl MultiBufferSnapshot {
                 .flat_map(|item| {
                     Some(OutlineItem {
                         depth: item.depth,
+                        selection_range: Anchor::range_in_buffer(
+                            excerpt.path_key_index,
+                            item.selection_range,
+                        ),
                         source_range_for_text: Anchor::range_in_buffer(
                             excerpt.path_key_index,
                             item.source_range_for_text,
