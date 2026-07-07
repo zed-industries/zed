@@ -201,7 +201,11 @@ impl MarkdownStyle {
         };
 
         let mut text_style = window.text_style();
-        let line_height = buffer_font_size * 1.75;
+        let line_height = if is_agent {
+            ui_font_size * 1.5
+        } else {
+            buffer_font_size * 1.75
+        };
 
         text_style.refine(&TextStyleRefinement {
             font_family: Some(body_font_family),
@@ -242,10 +246,10 @@ impl MarkdownStyle {
                     bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
                 },
                 margin: EdgesRefinement {
-                    top: Some(Length::Definite(px(8.).into())),
+                    top: Some(Length::Definite(px(if is_agent { 6. } else { 8. }).into())),
                     left: Some(Length::Definite(px(0.).into())),
                     right: Some(Length::Definite(px(0.).into())),
-                    bottom: Some(Length::Definite(px(12.).into())),
+                    bottom: Some(Length::Definite(px(if is_agent { 6. } else { 12. }).into())),
                 },
                 border_style: Some(BorderStyle::Solid),
                 border_widths: EdgesRefinement {
@@ -278,11 +282,11 @@ impl MarkdownStyle {
                 font_features: Some(theme_settings.buffer_font.features.clone()),
                 font_size: Some(buffer_font_size.into()),
                 font_weight: Some(buffer_font_weight),
-                background_color: Some(
-                    colors
-                        .editor_foreground
-                        .opacity(if is_agent { 0.12 } else { 0.08 }),
-                ),
+                background_color: Some(colors.editor_foreground.opacity(if is_agent {
+                    0.12
+                } else {
+                    0.08
+                })),
                 ..Default::default()
             },
             link: TextStyleRefinement {
