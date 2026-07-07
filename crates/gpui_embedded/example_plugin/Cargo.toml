@@ -1,0 +1,25 @@
+[package]
+name = "example_plugin"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+description = "Demo GPUI plugin that runs inside the gpui_embedded host"
+
+# Deliberately not part of the zed workspace: compiled to wasm32-wasip2.
+[workspace]
+
+[lib]
+path = "src/example_plugin.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+anyhow = "1.0"
+gpui = { path = "../../gpui", default-features = false }
+gpui_embedded_shared = { path = "../shared" }
+gpui_plugin = { path = "../plugin" }
+image = "0.25"
+
+[profile.release]
+lto = true
+opt-level = "s"

@@ -7833,6 +7833,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui_embedded"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger 0.11.8",
+ "futures 0.3.32",
+ "gpui",
+ "gpui_embedded_shared",
+ "gpui_platform",
+ "image",
+ "log",
+ "serde",
+ "smallvec",
+ "wasmtime",
+ "wasmtime-wasi",
+]
+
+[[package]]
+name = "gpui_embedded_shared"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gpui_linux"
 version = "0.1.0"
 dependencies = [

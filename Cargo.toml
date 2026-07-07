@@ -90,6 +90,8 @@ members = [
     "crates/google_ai",
     "crates/grammars",
     "crates/gpui",
+    "crates/gpui_embedded",
+    "crates/gpui_embedded/shared",
     "crates/gpui_shared_string",
     "crates/gpui_linux",
     "crates/gpui_macos",

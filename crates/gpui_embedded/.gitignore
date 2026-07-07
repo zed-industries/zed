@@ -1,0 +1,5 @@
+plugin/target
+plugin/Cargo.lock
+example_plugin/target
+example_plugin/Cargo.lock
+.agent/

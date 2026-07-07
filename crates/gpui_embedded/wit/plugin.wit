@@ -1,0 +1,419 @@
+package gpui:embedded;
+
+/// An experimental protocol for running GPUI itself inside a Wasm guest ("plugin") whose
+/// rendered output is embedded into a host GPUI application.
+///
+/// The host never blocks a frame on the guest. The guest renders asynchronously into a
+/// retained display list, which the host caches and replays each frame.
+///
+/// Coordinates: all geometry in this protocol is in *logical pixels* (already divided by the
+/// scale factor), relative to the origin of the plugin view's slot in the host window.
+world plugin {
+    // ------------------------------------------------------------------
+    // Geometry & color
+    // ------------------------------------------------------------------
+
+    record point {
+        x: f32,
+        y: f32,
+    }
+
+    record extent {
+        width: f32,
+        height: f32,
+    }
+
+    record bounds {
+        origin: point,
+        size: extent,
+    }
+
+    record hsla {
+        h: f32,
+        s: f32,
+        l: f32,
+        a: f32,
+    }
+
+    record corners {
+        top-left: f32,
+        top-right: f32,
+        bottom-right: f32,
+        bottom-left: f32,
+    }
+
+    record edges {
+        top: f32,
+        right: f32,
+        bottom: f32,
+        left: f32,
+    }
+
+    // ------------------------------------------------------------------
+    // Display list
+    // ------------------------------------------------------------------
+
+    enum border-style {
+        solid,
+        dashed,
+    }
+
+    record quad {
+        bounds: bounds,
+        content-mask: bounds,
+        background: hsla,
+        border-color: hsla,
+        corner-radii: corners,
+        border-widths: edges,
+        border-style: border-style,
+    }
+
+    record shadow {
+        /// Bounds of the element casting the shadow (not the blurred region).
+        bounds: bounds,
+        content-mask: bounds,
+        corner-radii: corners,
+        color: hsla,
+        blur-radius: f32,
+        spread-radius: f32,
+        offset: point,
+    }
+
+    record underline {
+        origin: point,
+        width: f32,
+        content-mask: bounds,
+        color: hsla,
+        thickness: f32,
+        wavy: bool,
+    }
+
+    /// A glyph to be rasterized and painted by the host. `origin` is the glyph's baseline
+    /// origin in logical pixels, exactly as accepted by GPUI's `Window::paint_glyph`.
+    record glyph {
+        font-id: u32,
+        glyph-id: u32,
+        origin: point,
+        font-size: f32,
+        color: hsla,
+        content-mask: bounds,
+        is-emoji: bool,
+    }
+
+    /// One triangle-list vertex of a tessellated path, as produced by GPUI's tessellator.
+    record path-vertex {
+        /// Position in logical pixels, relative to the view origin.
+        xy: point,
+        /// Barycentric-style texture coordinates used for antialiasing.
+        st: point,
+    }
+
+    record path {
+        content-mask: bounds,
+        color: hsla,
+        /// A triangle list; length is always a multiple of three.
+        vertices: list<path-vertex>,
+    }
+
+    /// A bitmap to paint. The pixel data travels separately (and only once) in
+    /// `display-list.new-images`, keyed by `image-id`.
+    record image {
+        image-id: u64,
+        bounds: bounds,
+        content-mask: bounds,
+        corner-radii: corners,
+        grayscale: bool,
+        opacity: f32,
+    }
+
+    variant primitive {
+        quad(quad),
+        shadow(shadow),
+        underline(underline),
+        glyph(glyph),
+        path(path),
+        image(image),
+    }
+
+    /// A primitive plus the draw order it had in the guest scene. Primitives with the same
+    /// order value belong to the same stacking layer; the host must preserve the relative
+    /// ordering of the `order` values when replaying.
+    record placed-primitive {
+        order: u32,
+        prim: primitive,
+    }
+
+    /// Pixel data for an image the host has not seen yet. Bytes are BGRA8 with
+    /// premultiplied alpha, matching GPUI's `RenderImage` frame layout, sized in device
+    /// pixels (already rasterized at the view's scale factor).
+    record image-payload {
+        id: u64,
+        width: u32,
+        height: u32,
+        bytes: list<u8>,
+    }
+
+    record display-list {
+        primitives: list<placed-primitive>,
+        new-images: list<image-payload>,
+    }
+
+    // ------------------------------------------------------------------
+    // Text (guest -> host; the host does all shaping and rasterization)
+    // ------------------------------------------------------------------
+
+    record font-descriptor {
+        family: string,
+        /// CSS-style weight, 100.0 ..= 900.0.
+        weight: f32,
+        italic: bool,
+    }
+
+    record font-metrics {
+        units-per-em: u32,
+        ascent: f32,
+        descent: f32,
+        line-gap: f32,
+        underline-position: f32,
+        underline-thickness: f32,
+        cap-height: f32,
+        x-height: f32,
+        bounding-box: bounds,
+    }
+
+    record font-run {
+        /// Length of this run in UTF-8 bytes.
+        len: u32,
+        font-id: u32,
+    }
+
+    record shaped-glyph {
+        id: u32,
+        position: point,
+        /// UTF-8 byte index of this glyph in the line's text.
+        index: u32,
+        is-emoji: bool,
+    }
+
+    record shaped-run {
+        font-id: u32,
+        glyphs: list<shaped-glyph>,
+    }
+
+    record line-layout {
+        font-size: f32,
+        width: f32,
+        ascent: f32,
+        descent: f32,
+        /// Length of the line in UTF-8 bytes.
+        len: u32,
+        runs: list<shaped-run>,
+    }
+
+    /// Cache key for glyph raster bounds. Mirrors GPUI's `RenderGlyphParams`.
+    record glyph-params {
+        font-id: u32,
+        glyph-id: u32,
+        font-size: f32,
+        subpixel-variant-x: u8,
+        subpixel-variant-y: u8,
+        scale-factor: f32,
+        is-emoji: bool,
+    }
+
+    /// Bounds in device pixels (i32), as returned by the host's glyph rasterizer.
+    record device-bounds {
+        origin-x: s32,
+        origin-y: s32,
+        width: s32,
+        height: s32,
+    }
+
+    import resolve-font: func(font: font-descriptor) -> u32;
+    // Named `font-metrics-for` because WIT functions and types share one namespace, so this
+    // import cannot reuse the `font-metrics` record name.
+    import font-metrics-for: func(font-id: u32) -> font-metrics;
+    import layout-line: func(text: string, font-size: f32, runs: list<font-run>) -> line-layout;
+    import advance: func(font-id: u32, glyph-id: u32) -> extent;
+    import typographic-bounds: func(font-id: u32, glyph-id: u32) -> bounds;
+    import glyph-for-char: func(font-id: u32, ch: char) -> option<u32>;
+    import glyph-raster-bounds: func(params: glyph-params) -> device-bounds;
+
+    // ------------------------------------------------------------------
+    // Input & control
+    // ------------------------------------------------------------------
+
+    enum mouse-button {
+        left,
+        right,
+        middle,
+    }
+
+    record modifiers {
+        control: bool,
+        alt: bool,
+        shift: bool,
+        platform: bool,
+    }
+
+    record mouse-button-event {
+        button: mouse-button,
+        position: point,
+        modifiers: modifiers,
+        click-count: u32,
+    }
+
+    record mouse-move-event {
+        position: point,
+        pressed-button: option<mouse-button>,
+        modifiers: modifiers,
+    }
+
+    record scroll-wheel-event {
+        position: point,
+        delta-x: f32,
+        delta-y: f32,
+        /// Whether the delta is in precise pixels (trackpad) or lines (wheel).
+        precise: bool,
+        modifiers: modifiers,
+    }
+
+    variant mouse-event {
+        down(mouse-button-event),
+        up(mouse-button-event),
+        move(mouse-move-event),
+        scroll(scroll-wheel-event),
+    }
+
+    /// Mirrors GPUI's `Keystroke`.
+    record keystroke {
+        modifiers: modifiers,
+        /// The character printed on the pressed key (e.g. "s", "enter", "backspace").
+        key: string,
+        /// The character this keystroke would type, if any (e.g. "s", or "ß" for option-s).
+        key-char: option<string>,
+    }
+
+    variant key-event {
+        down(key-down-event),
+        up(key-up-event),
+    }
+
+    record key-down-event {
+        keystroke: keystroke,
+        is-held: bool,
+    }
+
+    record key-up-event {
+        keystroke: keystroke,
+    }
+
+    /// Mirrors GPUI's `CursorStyle` (subset).
+    enum cursor-style {
+        arrow,
+        ibeam,
+        crosshair,
+        closed-hand,
+        open-hand,
+        pointing-hand,
+        resize-left-right,
+        resize-up-down,
+        operation-not-allowed,
+    }
+
+    // ------------------------------------------------------------------
+    // Shared entities
+    //
+    // An entity has exactly one *home* side, which owns its state and dispatches messages
+    // to it; the other side holds a projection kept fresh by snapshots. All dispatch is
+    // dynamic on the wire — a method name plus serialized payload — with typed wrappers
+    // layered on in each language. Everything is single-threaded and queued, so ordering
+    // is deterministic and there are no synchronization concerns, only reentrancy rules
+    // (messages are delivered from the effects/tick machinery, never mid-render).
+    // ------------------------------------------------------------------
+
+    /// Announces an entity homed on the sending side, bound to a well-known name so the
+    /// other side can attach projections without sharing types.
+    record shared-entity-announcement {
+        entity-id: u64,
+        type-name: string,
+        name: string,
+    }
+
+    /// A dynamically dispatched message for a shared entity's home side. `sequence` is a
+    /// per-entity monotonic counter assigned by the sender; because all delivery is FIFO
+    /// over a single thread, the home applies messages in sequence order.
+    record shared-message {
+        entity-id: u64,
+        sequence: u64,
+        method: string,
+        payload: list<u8>,
+    }
+
+    /// A serialized state snapshot flowing from an entity's home to its projections.
+    /// `acked-sequence` is the highest sender sequence this state already includes, giving
+    /// projections read-your-writes: a send's future resolves when a snapshot with
+    /// `acked-sequence >= sequence` has been applied to the local replica.
+    record shared-snapshot {
+        entity-id: u64,
+        acked-sequence: u64,
+        payload: list<u8>,
+    }
+
+    /// Announce a guest-homed entity to the host.
+    import announce-shared-entity: func(announcement: shared-entity-announcement);
+
+    /// Send a message to a host-homed entity.
+    import send-shared-message: func(message: shared-message);
+
+    /// Publish a snapshot of a guest-homed entity.
+    import publish-shared-snapshot: func(snapshot: shared-snapshot);
+
+    /// Notify the guest of a host-homed entity.
+    export shared-entity-announced: func(announcement: shared-entity-announcement);
+
+    /// Deliver a message to a guest-homed entity.
+    export deliver-shared-message: func(message: shared-message);
+
+    /// Deliver a snapshot of a host-homed entity to the guest's projections.
+    export deliver-shared-snapshot: func(snapshot: shared-snapshot);
+
+    /// Ask the host to call the `tick` export after at least `delay-ms` milliseconds.
+    /// A delay of zero means "as soon as possible, but not re-entrantly".
+    import request-tick: func(delay-ms: u32);
+
+    /// Publish a freshly rendered display list for the given view. The host caches it and
+    /// repaints its element with the new content.
+    import update-scene: func(view-id: u32, %list: display-list);
+
+    /// Set the mouse cursor style. Applied by the host while the cursor is over the view
+    /// that most recently received a mouse event.
+    import set-cursor-style: func(style: cursor-style);
+
+    // ------------------------------------------------------------------
+    // Exports (host -> guest)
+    // ------------------------------------------------------------------
+
+    /// Initialize the plugin: construct the guest-side GPUI app.
+    export init-plugin: func();
+
+    /// Create a plugin view (a "GPUI plugin window" in the guest) with the given id and
+    /// initial geometry. The guest responds (possibly asynchronously) with `update-scene`.
+    export create-view: func(view-id: u32, size: extent, scale-factor: f32);
+
+    /// Notify the guest that a view's slot was resized or its scale factor changed.
+    export resize-view: func(view-id: u32, size: extent, scale-factor: f32);
+
+    /// Dispatch a mouse event to a view. Positions are in logical pixels relative to the
+    /// view's origin.
+    export handle-mouse: func(view-id: u32, event: mouse-event);
+
+    /// Dispatch a keyboard event to a view. The guest routes it through its own focus
+    /// system; unhandled printable keys fall through to the focused input handler, the same
+    /// way GPUI's Linux backends synthesize text input.
+    export handle-key: func(view-id: u32, event: key-event);
+
+    /// Run the guest's scheduler: execute due timers and queued runnables, then let any
+    /// dirty views redraw (resulting in `update-scene` calls back into the host).
+    export tick: func();
+}
