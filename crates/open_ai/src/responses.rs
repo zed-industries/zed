@@ -310,6 +310,23 @@ pub enum StreamEvent {
         output_index: usize,
         summary_index: usize,
     },
+    #[serde(rename = "response.reasoning.delta")]
+    ReasoningDelta {
+        #[serde(default)]
+        item_id: Option<String>,
+        #[serde(default)]
+        output_index: Option<usize>,
+        delta: String,
+    },
+    #[serde(rename = "response.reasoning.done")]
+    ReasoningDone {
+        #[serde(default)]
+        item_id: Option<String>,
+        #[serde(default)]
+        output_index: Option<usize>,
+        #[serde(default)]
+        text: Option<String>,
+    },
     #[serde(rename = "response.function_call_arguments.delta")]
     FunctionCallArgumentsDelta {
         item_id: String,
