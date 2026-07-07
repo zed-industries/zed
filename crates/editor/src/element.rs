@@ -3,6 +3,7 @@ mod mouse;
 
 #[cfg(test)]
 pub(crate) use header::StickyHeader;
+pub use header::file_status_label_color;
 pub(crate) use header::{header_jump_data, render_buffer_header};
 
 use crate::{
@@ -4623,7 +4624,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (Vec<AnyElement>, Vec<(DisplayRow, Bounds<Pixels>)>) {
-        let render_diff_hunk_controls = editor.read(cx).render_diff_hunk_controls.clone();
+        let diff_hunk_delegate = editor.read(cx).diff_hunk_delegate();
         let hovered_diff_hunk_row = editor.read(cx).hovered_diff_hunk_row;
         let sticky_top = text_hitbox.bounds.top() + sticky_header_height;
 
@@ -4695,7 +4696,7 @@ impl EditorElement {
                         sticky_top.min(max_y)
                     };
 
-                    let mut element = render_diff_hunk_controls(
+                    let mut element = diff_hunk_delegate.render_hunk_controls(
                         display_row_range.start.0,
                         status,
                         multi_buffer_range.clone(),
@@ -6547,8 +6548,11 @@ impl EditorElement {
     }
 
     fn diff_hunk_hollow(&self, status: DiffHunkStatus, cx: &mut App) -> bool {
-        let unstaged =
-            self.editor.read(cx).render_diff_hunks_as_unstaged || status.has_secondary_hunk();
+        let unstaged = !self
+            .editor
+            .read(cx)
+            .diff_hunk_delegate()
+            .render_hunk_as_staged(&status, cx);
         let unstaged_hollow = matches!(
             ProjectSettings::get_global(cx).git.hunk_style,
             GitHunkStyleSetting::UnstagedHollow
@@ -9295,7 +9299,7 @@ impl Element for EditorElement {
                     };
 
                     let (diff_hunk_controls, diff_hunk_control_bounds) =
-                        if is_read_only && !self.editor.read(cx).delegate_stage_and_restore {
+                        if is_read_only && self.editor.read(cx).diff_hunk_delegate.is_none() {
                             (vec![], vec![])
                         } else {
                             self.layout_diff_hunk_controls(

@@ -106,7 +106,7 @@ You can also hold `cmd`/`ctrl` when submitting a message to automatically follow
 
 If you send a prompt to the Agent and then put Zed in the background, you can choose to be notified when its generation wraps up via:
 
-- a visual notification that appears in the top right of your screen
+- a visual desktop notification from your operating system
 - a sound notification
 
 These notifications can be used together or individually, and you can use the `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done` settings keys to customize that, including turning both off entirely.

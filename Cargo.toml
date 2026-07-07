@@ -809,7 +809,7 @@ tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex",
 tree-sitter-html = "0.23"
 tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.24"
-tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", rev = "9a23c1a96c0513d8fc6520972beedd419a973539" }
+tree-sitter-md = { git = "https://github.com/zed-industries/tree-sitter-markdown", rev = "b596e737286780d7bfa9fcddceaeeb754574b352" } # fork of 9a23c1a with serialize() buffer-overflow fix; https://github.com/tree-sitter-grammars/tree-sitter-markdown/issues/243
 tree-sitter-python = "0.25"
 tree-sitter-regex = "0.24"
 tree-sitter-ruby = "0.23"
@@ -828,8 +828,8 @@ usvg = { version = "0.46.0", default-features = false }
 uuid = { version = "1.1.2", features = ["v4", "v5", "v7", "serde"] }
 vte = { version = "0.15.0", features = ["ansi"] }
 walkdir = "2.5"
-wasm-encoder = "0.221"
-wasmparser = "0.221"
+wasm-encoder = "0.252"
+wasmparser = "0.252"
 wasmtime = { version = "36", default-features = false, features = [
     "async",
     "demangle",
@@ -1070,3 +1070,10 @@ ignored = [
     "documented",
     "sea-orm-macros",
 ]
+
+# Dylint discovers our custom lints through this entry, so `cargo dylint --all`
+# runs them without a `--path` argument. The `lints` package pins its own
+# nightly toolchain (see `tooling/lints/rust-toolchain.toml`) and is kept out of
+# this workspace on purpose.
+[workspace.metadata.dylint]
+libraries = [{ path = "tooling/lints" }]
