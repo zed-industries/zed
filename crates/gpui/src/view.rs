@@ -175,6 +175,12 @@ mod any_view {
 pub trait View: 'static + Sized {
     /// This view's identity, if it has one. A view typically holds the backing
     /// entity as a field and returns its [`EntityId`] here.
+    ///
+    /// The id becomes this view's [`ElementId`], so two views keyed on the same
+    /// entity must not be rendered at the same position in the element tree
+    /// (e.g. as siblings under the same parent): their internal element state
+    /// (`use_state`, scroll offsets, etc.) would silently collide. Nesting is
+    /// fine — the id is scoped by the parent path.
     fn entity_id(&self) -> Option<EntityId>;
 
     /// Render this view into an element tree, consuming `self`.
@@ -221,8 +227,8 @@ impl<T: Render> Entity<T> {
     }
 }
 
-/// The element type for [`View`] implementations. Wraps a `View` and hooks
-/// it into. Constructed via [`ViewElement::new`].
+/// The element type for [`View`] implementations. Wraps a `View` and hooks it
+/// into layout, prepaint, and paint. Constructed via [`ViewElement::new`].
 #[doc(hidden)]
 pub struct ViewElement<V: View> {
     view: Option<V>,
@@ -248,8 +254,14 @@ impl<V: View> ViewElement<V> {
 
     /// Enable caching of this view's rendered subtree, laid out at `style`.
     /// The composer supplies the layout style because caching skips rendering
-    /// the contents to measure them. See [`Entity::cached`] for the common case.
-    pub fn cached(mut self, style: StyleRefinement) -> Self {
+    /// the contents to measure them.
+    ///
+    /// Crate-private on purpose: caching is only sound for entity-backed views,
+    /// where [`Context::notify`] is the contract that busts the cache. A stateless
+    /// view has no such contract, so a frozen subtree could never be invalidated.
+    /// Reach this through [`Entity::cached`] or [`AnyView::cached`], which are
+    /// entity-backed by construction.
+    pub(crate) fn cached(mut self, style: StyleRefinement) -> Self {
         self.cached_style = Some(style);
         self
     }

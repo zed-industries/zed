@@ -47,13 +47,28 @@ impl Editor {
             this.stop_blink(cx);
         });
 
+        // The value is shared: anything can write it while we hold a cursor into
+        // it. Observe it so external writes (a) clamp the cursor back onto a char
+        // boundary before the next IME round-trip can slice out of bounds, and
+        // (b) notify us, so an `editor.cached(..)` subtree re-renders — the cache
+        // is keyed on *our* notify, not the value's.
+        let value_sub = cx.observe(&value, |this, value, cx| {
+            let content = value.read(cx);
+            let mut cursor = this.cursor.min(content.len());
+            while cursor > 0 && !content.is_char_boundary(cursor) {
+                cursor -= 1;
+            }
+            this.cursor = cursor;
+            cx.notify();
+        });
+
         Self {
             value,
             focus_handle,
             cursor: 0,
             cursor_visible: false,
             _blink_task: Task::ready(()),
-            _subscriptions: vec![focus_sub, blur_sub],
+            _subscriptions: vec![focus_sub, blur_sub, value_sub],
         }
     }
 

@@ -96,6 +96,29 @@ mod tests {
     }
 
     #[gpui::test]
+    fn external_writes_clamp_the_cursor(cx: &mut TestAppContext) {
+        let (editor, a_value, _b_value, cx) = setup(cx);
+
+        cx.simulate_input("hello");
+        cx.read_entity(&editor, |editor, _| assert_eq!(editor.cursor, 5));
+
+        // Write the shared value from outside the editor. The old cursor (5)
+        // now points into the middle of a multi-byte character; the editor's
+        // observation must clamp it back onto a boundary.
+        cx.update(|_, cx| {
+            a_value.update(cx, |value, cx| {
+                *value = "日本".to_string();
+                cx.notify();
+            })
+        });
+
+        cx.read_entity(&a_value, |value, _| assert_eq!(value, "日本"));
+        cx.read_entity(&editor, |editor, _| {
+            assert_eq!(editor.cursor, 3, "cursor must clamp to a char boundary");
+        });
+    }
+
+    #[gpui::test]
     fn arrows_move_the_cursor(cx: &mut TestAppContext) {
         let (editor, _a_value, _b_value, cx) = setup(cx);
 
