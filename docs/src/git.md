@@ -108,7 +108,12 @@ To view File History:
 
 ## Git Graph
 
-The Git Graph ({#action git_graph::Open}) visualizes your repository's commit history across branches. Right-clicking a branch label opens a context menu with common Git operations, starting with **Check Out Branch**.
+The Git Graph ({#action git_graph::Open}) visualizes your repository's commit history across branches. Right-clicking a branch label, tag label, or commit opens a context menu with common Git operations:
+
+- On a branch label: **Check Out Branch** or **Create Branch from Here…**.
+- On a commit or tag label: **Create Branch from Here…**.
+
+Creating a branch opens a small modal asking for the name.
 
 ## Fetch, Push, and Pull
 
