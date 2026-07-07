@@ -682,6 +682,10 @@ pub struct GitPanelSettingsContent {
 
     /// How to group entries in the git panel.
     ///
+    /// - "none": a single flat list
+    /// - "status": Conflicts / Tracked / Untracked sections
+    /// - "staged": Staged Changes / Changes sections (partially-staged files appear in both)
+    ///
     /// Default: status
     pub group_by: Option<GitPanelGroupBy>,
 
@@ -787,6 +791,9 @@ pub enum GitPanelGroupBy {
     None,
     #[default]
     Status,
+    /// Split entries into "Staged Changes" and "Changes" sections, like VS Code.
+    /// A partially-staged file appears in both sections.
+    Staged,
 }
 
 #[derive(

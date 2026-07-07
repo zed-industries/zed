@@ -984,6 +984,7 @@
     // Default: path
     "sort_by": "path",
     // How to group entries in the git panel.
+    // One of "none", "status", or "staged".
     //
     // Default: status
     "group_by": "status",

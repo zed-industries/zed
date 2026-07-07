@@ -363,6 +363,7 @@ fn file_diff_entry(
                     status: status_entry.status,
                     staging: status_entry.status.staging(),
                     diff_stat: status_entry.diff_stat,
+                    stage_side: None,
                 },
                 repository.clone(),
             ))
