@@ -904,8 +904,10 @@ impl WindowsWindowInner {
                 WindowControlArea::Drag => None,
                 WindowControlArea::Close => Some(HTCLOSE as _),
                 WindowControlArea::Max if self.is_resizable => Some(HTMAXBUTTON as _),
+                WindowControlArea::Max if self.is_movable => Some(HTCAPTION as _),
                 WindowControlArea::Max => Some(HTNOWHERE as _),
                 WindowControlArea::Min if self.is_minimizable => Some(HTMINBUTTON as _),
+                WindowControlArea::Min if self.is_movable => Some(HTCAPTION as _),
                 WindowControlArea::Min => Some(HTNOWHERE as _),
             })
         } else {
@@ -1012,14 +1014,8 @@ impl WindowsWindowInner {
         // Since these are handled in handle_nc_mouse_up_msg we must prevent the default window proc
         if button == MouseButton::Left {
             match wparam.0 as u32 {
-                HTMINBUTTON if self.is_minimizable => {
-                    self.state.nc_button_pressed.set(Some(HTMINBUTTON))
-                }
-                HTMINBUTTON => return Some(0),
-                HTMAXBUTTON if self.is_resizable => {
-                    self.state.nc_button_pressed.set(Some(HTMAXBUTTON))
-                }
-                HTMAXBUTTON => return Some(0),
+                HTMINBUTTON => self.state.nc_button_pressed.set(Some(HTMINBUTTON)),
+                HTMAXBUTTON => self.state.nc_button_pressed.set(Some(HTMAXBUTTON)),
                 HTCLOSE => self.state.nc_button_pressed.set(Some(HTCLOSE)),
                 _ => return None,
             };
@@ -1059,24 +1055,17 @@ impl WindowsWindowInner {
         } else {
         }
 
-        let hit_test = wparam.0 as u32;
-        if button == MouseButton::Left && hit_test == HTMINBUTTON && !self.is_minimizable {
-            return Some(0);
-        }
-        if button == MouseButton::Left && hit_test == HTMAXBUTTON && !self.is_resizable {
-            return Some(0);
-        }
-
         let last_pressed = self.state.nc_button_pressed.take();
         if button == MouseButton::Left
             && let Some(last_pressed) = last_pressed
         {
-            let handled = match (hit_test, last_pressed) {
-                (HTMINBUTTON, HTMINBUTTON) => {
+            let handled = match (wparam.0 as u32, last_pressed) {
+                (HTMINBUTTON, HTMINBUTTON) if self.is_minimizable => {
                     unsafe { ShowWindowAsync(handle, SW_MINIMIZE).ok().log_err() };
                     true
                 }
-                (HTMAXBUTTON, HTMAXBUTTON) => {
+                (HTMINBUTTON, HTMINBUTTON) => true,
+                (HTMAXBUTTON, HTMAXBUTTON) if self.is_resizable => {
                     if self.state.is_maximized() {
                         unsafe { ShowWindowAsync(handle, SW_NORMAL).ok().log_err() };
                     } else {
@@ -1084,6 +1073,7 @@ impl WindowsWindowInner {
                     }
                     true
                 }
+                (HTMAXBUTTON, HTMAXBUTTON) => true,
                 (HTCLOSE, HTCLOSE) => {
                     unsafe {
                         PostMessageW(Some(handle), WM_CLOSE, WPARAM::default(), LPARAM::default())
