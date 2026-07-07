@@ -77,6 +77,10 @@ pub enum Model {
     ClaudeSonnet4,
     #[serde(rename = "claude-haiku-4-5")]
     ClaudeHaiku4_5,
+    #[serde(rename = "claude-sonnet-5")]
+    ClaudeSonnet5,
+    #[serde(rename = "claude-fable-5")]
+    ClaudeFable5,
 
     // -- OpenAI Responses API models --
     #[serde(rename = "gpt-5.5")]
@@ -243,6 +247,8 @@ impl Model {
             Self::ClaudeSonnet4_5 => "claude-sonnet-4-5",
             Self::ClaudeSonnet4 => "claude-sonnet-4",
             Self::ClaudeHaiku4_5 => "claude-haiku-4-5",
+            Self::ClaudeSonnet5 => "claude-sonnet-5",
+            Self::ClaudeFable5 => "claude-fable-5",
 
             Self::Gpt5_5 => "gpt-5.5",
             Self::Gpt5_5Pro => "gpt-5.5-pro",
@@ -302,6 +308,8 @@ impl Model {
             Self::ClaudeSonnet4_5 => "Claude Sonnet 4.5",
             Self::ClaudeSonnet4 => "Claude Sonnet 4",
             Self::ClaudeHaiku4_5 => "Claude Haiku 4.5",
+            Self::ClaudeSonnet5 => "Claude Sonnet 5",
+            Self::ClaudeFable5 => "Claude Fable 5",
 
             Self::Gpt5_5 => "GPT 5.5",
             Self::Gpt5_5Pro => "GPT 5.5 Pro",
@@ -364,11 +372,13 @@ impl Model {
                 }
             }
 
-            Self::ClaudeOpus4_8
+            Self::ClaudeFable5
+            | Self::ClaudeOpus4_8
             | Self::ClaudeOpus4_7
             | Self::ClaudeOpus4_6
             | Self::ClaudeOpus4_5
             | Self::ClaudeOpus4_1
+            | Self::ClaudeSonnet5
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4
@@ -453,6 +463,8 @@ impl Model {
             Self::ClaudeOpus4_5 | Self::ClaudeHaiku4_5 => 200_000,
             Self::ClaudeOpus4_1 => 200_000,
             Self::ClaudeSonnet4 => 1_000_000,
+            Self::ClaudeSonnet5 => 1_000_000,
+            Self::ClaudeFable5 => 1_000_000,
 
             // OpenAI models
             Self::Gpt5_5 | Self::Gpt5_5Pro => 1_050_000,
@@ -514,6 +526,8 @@ impl Model {
             | Self::ClaudeHaiku4_5
             | Self::ClaudeSonnet4 => Some(64_000),
             Self::ClaudeOpus4_1 => Some(32_000),
+            Self::ClaudeSonnet5 => Some(128_000),
+            Self::ClaudeFable5 => Some(128_000),
 
             // OpenAI models
             Self::Gpt5_5
@@ -587,7 +601,9 @@ impl Model {
             | Self::ClaudeSonnet4_6
             | Self::ClaudeSonnet4_5
             | Self::ClaudeSonnet4
-            | Self::ClaudeHaiku4_5 => true,
+            | Self::ClaudeHaiku4_5
+            | Self::ClaudeSonnet5
+            | Self::ClaudeFable5 => true,
 
             // OpenAI models support images
             Self::Gpt5_5
