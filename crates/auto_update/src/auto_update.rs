@@ -412,11 +412,23 @@ impl AutoUpdater {
         // and then spawn the new binary.
         #[cfg(target_os = "windows")]
         let quit_subscription = Some(cx.on_app_quit(|_, _| finalize_auto_update_on_quit()));
-        #[cfg(not(target_os = "windows"))]
+        // On macOS, overwriting the app bundle while the app is running breaks
+        // the system's code signature validation of the running process, which
+        // silently revokes TCC-gated permissions such as Local Network until
+        // relaunch. Updates are therefore staged at download time and only
+        // installed over the bundle once the app quits or restarts.
+        #[cfg(target_os = "macos")]
+        let quit_subscription = Some(cx.on_app_quit(|_, _| {
+            spawn_staged_update_installer_macos();
+            async {}
+        }));
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         let quit_subscription = None;
 
         cx.on_app_restart(|this, _| {
             this.quit_subscription.take();
+            #[cfg(target_os = "macos")]
+            install_staged_update_macos();
         })
         .detach();
 
@@ -1142,9 +1154,8 @@ async fn install_release_macos(
         .with_context(|| format!("invalid running app path {running_app_path:?}"))?;
 
     let mount_path = temp_dir.path().join("Zed");
-    let mut mounted_app_path: OsString = mount_path.join(running_app_filename).into();
+    let mounted_app_path = mount_path.join(running_app_filename);
 
-    mounted_app_path.push("/");
     let mut cmd = new_command("hdiutil");
     cmd.args(["attach", "-nobrowse"])
         .arg(&downloaded_dmg)
@@ -1167,10 +1178,33 @@ async fn install_release_macos(
         background_executor,
     };
 
+    // Stage the new bundle instead of overwriting the running app in place:
+    // modifying the bundle of a running app breaks the system's code signature
+    // validation of the running process, which silently revokes TCC-gated
+    // permissions such as Local Network until relaunch. The staged bundle is
+    // installed over the app on quit or restart.
+    stage_bundle_macos(&mounted_app_path, &staged_app_path_macos(&running_app_path)).await?;
+
+    Ok(None)
+}
+
+/// Copies the bundle at `new_app_path` to `staged_app_path`, staging through a
+/// `.partial` directory so that an interrupted copy can never be mistaken for
+/// a completely staged bundle.
+async fn stage_bundle_macos(new_app_path: &Path, staged_app_path: &Path) -> Result<()> {
+    let partial_staging_path = staged_app_path.with_extension("app.partial");
+    if let Some(staging_dir) = staged_app_path.parent() {
+        fs::create_dir_all(staging_dir)
+            .await
+            .with_context(|| format!("failed to create staging dir {staging_dir:?}"))?;
+    }
+
+    let mut new_app_contents: OsString = new_app_path.to_path_buf().into();
+    new_app_contents.push("/");
     let mut cmd = new_command("rsync");
     cmd.args(["-av", "--delete", "--exclude", "Icon?"])
-        .arg(&mounted_app_path)
-        .arg(&running_app_path);
+        .arg(&new_app_contents)
+        .arg(&partial_staging_path);
     let output = cmd
         .output()
         .await
@@ -1182,7 +1216,116 @@ async fn install_release_macos(
         String::from_utf8_lossy(&output.stderr)
     );
 
-    Ok(None)
+    fs::remove_dir_all(&staged_app_path).await.ok();
+    fs::rename(&partial_staging_path, &staged_app_path)
+        .await
+        .with_context(|| format!("failed to move staged bundle to {staged_app_path:?}"))
+}
+
+fn staged_app_path_macos(running_app_path: &Path) -> PathBuf {
+    let app_filename = running_app_path
+        .file_name()
+        .unwrap_or_else(|| OsStr::new("Zed.app"));
+    paths::data_dir().join("updates").join(app_filename)
+}
+
+/// Returns the path of the app bundle the current process is running from,
+/// if any. Unlike `App::app_path`, this is safe to call on any platform
+/// implementation, including in tests.
+#[cfg(target_os = "macos")]
+fn running_app_bundle_path() -> Option<PathBuf> {
+    let executable_path = std::env::current_exe().ok()?;
+    let bundle_path = executable_path
+        .ancestors()
+        .find(|path| path.extension() == Some(OsStr::new("app")))?;
+    Some(bundle_path.to_path_buf())
+}
+
+/// Installs a staged update, if any, once the current process has exited.
+#[cfg(target_os = "macos")]
+fn spawn_staged_update_installer_macos() {
+    let Some(running_app_path) = running_app_bundle_path() else {
+        return;
+    };
+    let staged_app_path = staged_app_path_macos(&running_app_path);
+    if staged_app_path.exists() {
+        spawn_bundle_installer_macos(std::process::id(), &staged_app_path, &running_app_path);
+    }
+}
+
+/// Spawns a detached process that waits for `app_pid` to exit and then
+/// installs the staged bundle over the app. This cannot happen in the app
+/// itself because the bundle must not be modified while the app is still
+/// running, and quit handlers are not given enough time to wait for the copy
+/// to finish.
+#[cfg(target_os = "macos")]
+fn spawn_bundle_installer_macos(app_pid: u32, staged_app_path: &Path, target_app_path: &Path) {
+    use util::ResultExt;
+
+    let script = r#"
+        while kill -0 $0 2> /dev/null; do
+            sleep 0.1
+        done
+        if [ -d "$1" ]; then
+            rsync -a --delete --exclude 'Icon?' "$1/" "$2/" && rm -rf "$1"
+        fi
+    "#;
+
+    let mut installer_process = util::command::new_std_command("/bin/bash");
+    installer_process
+        .arg("-c")
+        .arg(script)
+        .arg(app_pid.to_string())
+        .arg(staged_app_path)
+        .arg(target_app_path);
+    {
+        use std::os::unix::process::CommandExt;
+        installer_process.process_group(0);
+    }
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the installer must outlive the app, so it cannot be a smol child process"
+    )]
+    installer_process.spawn().log_err();
+}
+
+/// Installs a staged update, if any, before the app restarts.
+#[cfg(target_os = "macos")]
+fn install_staged_update_macos() {
+    let Some(running_app_path) = running_app_bundle_path() else {
+        return;
+    };
+    let staged_app_path = staged_app_path_macos(&running_app_path);
+    if staged_app_path.exists() {
+        install_staged_bundle_macos(&staged_app_path, &running_app_path);
+    }
+}
+
+/// Installs the staged bundle over the app. Blocking here is acceptable: the
+/// app is about to exit, and the relaunched process must come from the
+/// updated bundle.
+#[cfg(target_os = "macos")]
+fn install_staged_bundle_macos(staged_app_path: &Path, target_app_path: &Path) {
+    use util::ResultExt;
+
+    let mut staged_app_contents: OsString = staged_app_path.to_path_buf().into();
+    staged_app_contents.push("/");
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the app is restarting and must not proceed until the staged update is installed"
+    )]
+    let status = util::command::new_std_command("rsync")
+        .args(["-a", "--delete", "--exclude", "Icon?"])
+        .arg(&staged_app_contents)
+        .arg(target_app_path)
+        .status();
+    match status {
+        Ok(status) if status.success() => {
+            std::fs::remove_dir_all(staged_app_path).log_err();
+        }
+        Ok(status) => log::error!("failed to install staged update: rsync exited with {status}"),
+        Err(error) => log::error!("failed to install staged update: {error:?}"),
+    }
 }
 
 async fn cleanup_windows() -> Result<()> {
@@ -1770,5 +1913,124 @@ mod tests {
             newer_version.unwrap(),
             Some(fetched_version.parse().unwrap())
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    mod staged_update {
+        use crate::{
+            install_staged_bundle_macos, spawn_bundle_installer_macos, stage_bundle_macos,
+        };
+        use std::{
+            fs,
+            path::Path,
+            time::{Duration, Instant},
+        };
+        use tempfile::tempdir;
+
+        // Fixture file contents must differ in size across versions: these
+        // files are all written within the same second, and rsync's default
+        // quick-check skips files whose size and mtime both match.
+        fn write_fake_bundle(bundle_path: &Path, files: &[(&str, &str)]) {
+            for (relative_path, contents) in files {
+                let path = bundle_path.join(relative_path);
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(path, contents).unwrap();
+            }
+        }
+
+        fn read(path: &Path) -> Option<String> {
+            fs::read_to_string(path).ok()
+        }
+
+        #[test]
+        fn test_stage_bundle_replaces_previous_and_partial_staging() {
+            let dir = tempdir().unwrap();
+            let new_app_path = dir.path().join("Zed.app");
+            write_fake_bundle(&new_app_path, &[("Contents/MacOS/zed", "new binary v2")]);
+
+            // Leftovers from an older staged version and from an interrupted copy.
+            let staged_app_path = dir.path().join("updates/Zed.app");
+            write_fake_bundle(&staged_app_path, &[("Contents/Resources/stale", "old")]);
+            write_fake_bundle(
+                &dir.path().join("updates/Zed.app.partial"),
+                &[("Contents/MacOS/zed", "truncated")],
+            );
+
+            smol::block_on(stage_bundle_macos(&new_app_path, &staged_app_path)).unwrap();
+
+            assert_eq!(
+                read(&staged_app_path.join("Contents/MacOS/zed")).as_deref(),
+                Some("new binary v2")
+            );
+            assert!(!staged_app_path.join("Contents/Resources/stale").exists());
+            assert!(!dir.path().join("updates/Zed.app.partial").exists());
+            assert!(new_app_path.join("Contents/MacOS/zed").exists());
+        }
+
+        #[test]
+        fn test_install_staged_bundle_replaces_target_and_cleans_up() {
+            let dir = tempdir().unwrap();
+            let staged_app_path = dir.path().join("updates/Zed.app");
+            let target_app_path = dir.path().join("Applications/Zed.app");
+            write_fake_bundle(&staged_app_path, &[("Contents/MacOS/zed", "new binary v2")]);
+            write_fake_bundle(
+                &target_app_path,
+                &[
+                    ("Contents/MacOS/zed", "old binary"),
+                    ("Contents/Resources/removed-in-update", "old"),
+                ],
+            );
+
+            install_staged_bundle_macos(&staged_app_path, &target_app_path);
+
+            assert_eq!(
+                read(&target_app_path.join("Contents/MacOS/zed")).as_deref(),
+                Some("new binary v2")
+            );
+            assert!(
+                !target_app_path
+                    .join("Contents/Resources/removed-in-update")
+                    .exists()
+            );
+            assert!(!staged_app_path.exists());
+        }
+
+        #[test]
+        fn test_bundle_installer_waits_for_app_exit() {
+            let dir = tempdir().unwrap();
+            let staged_app_path = dir.path().join("updates/Zed.app");
+            // The space in the filename exercises the installer script's quoting.
+            let target_app_path = dir.path().join("Applications/Zed Preview.app");
+            write_fake_bundle(&staged_app_path, &[("Contents/MacOS/zed", "new binary v2")]);
+            write_fake_bundle(&target_app_path, &[("Contents/MacOS/zed", "old binary")]);
+
+            #[allow(
+                clippy::disallowed_methods,
+                reason = "the test is about real process lifetimes"
+            )]
+            let mut fake_app = util::command::new_std_command("/bin/sleep")
+                .arg("2")
+                .spawn()
+                .unwrap();
+            spawn_bundle_installer_macos(fake_app.id(), &staged_app_path, &target_app_path);
+
+            // The bundle must not be modified while the app is still running.
+            std::thread::sleep(Duration::from_millis(500));
+            assert_eq!(
+                read(&target_app_path.join("Contents/MacOS/zed")).as_deref(),
+                Some("old binary")
+            );
+
+            fake_app.wait().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while staged_app_path.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            assert_eq!(
+                read(&target_app_path.join("Contents/MacOS/zed")).as_deref(),
+                Some("new binary v2")
+            );
+            assert!(!staged_app_path.exists());
+        }
     }
 }
