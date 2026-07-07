@@ -491,7 +491,10 @@ message Envelope {
     ResolveCodeAction resolve_code_action = 460;
     ResolveCodeActionResponse resolve_code_action_response = 461;
 
-    GitMerge git_merge = 462; // current max
+    GitMerge git_merge = 462;
+    GitCherryPick git_cherry_pick = 463;
+    GitRevert git_revert = 464;
+    GitCheckoutCommit git_checkout_commit = 465; // current max
   }
 
   reserved 87 to 88;

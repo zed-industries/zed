@@ -871,6 +871,15 @@ pub trait GitRepository: Send + Sync {
     /// stages the changes without committing them.
     fn merge(&self, ref_name: String, squash: bool) -> BoxFuture<'_, Result<()>>;
 
+    /// Cherry-picks the given commit onto the current branch.
+    fn cherry_pick(&self, commit: String) -> BoxFuture<'_, Result<()>>;
+
+    /// Creates a new commit reverting the given commit.
+    fn revert(&self, commit: String) -> BoxFuture<'_, Result<()>>;
+
+    /// Checks out the given commit-ish with a detached HEAD.
+    fn checkout_commit(&self, commit: String) -> BoxFuture<'_, Result<()>>;
+
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
 
     /// Returns the creation time of a linked worktree's git metadata
@@ -2213,6 +2222,42 @@ impl GitRepository for RealGitRepository {
                 let git_binary = git_binary?;
                 let flag = if squash { "--squash" } else { "--no-edit" };
                 git_binary.run(&["merge", flag, &ref_name]).await?;
+                anyhow::Ok(())
+            })
+            .boxed()
+    }
+
+    fn cherry_pick(&self, commit: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary_in_worktree();
+
+        self.executor
+            .spawn(async move {
+                let git_binary = git_binary?;
+                git_binary.run(&["cherry-pick", &commit]).await?;
+                anyhow::Ok(())
+            })
+            .boxed()
+    }
+
+    fn revert(&self, commit: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary_in_worktree();
+
+        self.executor
+            .spawn(async move {
+                let git_binary = git_binary?;
+                git_binary.run(&["revert", "--no-edit", &commit]).await?;
+                anyhow::Ok(())
+            })
+            .boxed()
+    }
+
+    fn checkout_commit(&self, commit: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary_in_worktree();
+
+        self.executor
+            .spawn(async move {
+                let git_binary = git_binary?;
+                git_binary.run(&["checkout", "--detach", &commit]).await?;
                 anyhow::Ok(())
             })
             .boxed()
@@ -4407,6 +4452,61 @@ mod tests {
             staged.contains("squashed.txt"),
             "squash merging should stage the changes without committing them"
         );
+    }
+
+    #[gpui::test]
+    async fn test_cherry_pick_revert_and_checkout_commit(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        git_command(repo_dir.path(), ["config", "user.name", "test"]);
+        git_command(repo_dir.path(), ["config", "user.email", "test@zed.dev"]);
+        fs::write(repo_dir.path().join("file.txt"), "one\n").unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "one"]);
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let git = repository.git_binary_in_worktree().unwrap();
+
+        git_command(repo_dir.path(), ["switch", "-c", "side"]);
+        fs::write(repo_dir.path().join("side.txt"), "side\n").unwrap();
+        git_command(repo_dir.path(), ["add", "side.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "side"]);
+        let side_sha = git.run(&["rev-parse", "HEAD"]).await.unwrap();
+        git_command(repo_dir.path(), ["switch", "main"]);
+
+        repository.cherry_pick(side_sha).await.unwrap();
+        assert!(
+            repo_dir.path().join("side.txt").exists(),
+            "cherry-picking should apply the side commit onto main"
+        );
+
+        let picked_sha = git.run(&["rev-parse", "HEAD"]).await.unwrap();
+        repository.revert(picked_sha).await.unwrap();
+        assert!(
+            !repo_dir.path().join("side.txt").exists(),
+            "reverting the cherry-picked commit should remove its files"
+        );
+
+        let first_sha = git
+            .run(&["rev-list", "--max-parents=0", "HEAD"])
+            .await
+            .unwrap();
+        repository.checkout_commit(first_sha.clone()).await.unwrap();
+        assert_eq!(
+            git.run(&["branch", "--show-current"]).await.unwrap(),
+            "",
+            "HEAD should be detached after checking out a commit"
+        );
+        assert_eq!(git.run(&["rev-parse", "HEAD"]).await.unwrap(), first_sha);
     }
 
     #[test]

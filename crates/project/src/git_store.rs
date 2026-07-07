@@ -657,6 +657,9 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_get_default_branch);
         client.add_entity_request_handler(Self::handle_change_branch);
         client.add_entity_request_handler(Self::handle_git_merge);
+        client.add_entity_request_handler(Self::handle_cherry_pick);
+        client.add_entity_request_handler(Self::handle_revert);
+        client.add_entity_request_handler(Self::handle_checkout_commit);
         client.add_entity_request_handler(Self::handle_create_branch);
         client.add_entity_request_handler(Self::handle_rename_branch);
         client.add_entity_request_handler(Self::handle_create_remote);
@@ -3211,6 +3214,60 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.merge(ref_name, squash)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_cherry_pick(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCherryPick>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let commit = envelope.payload.commit;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.cherry_pick(commit)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_revert(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitRevert>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let commit = envelope.payload.commit;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.revert(commit)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_checkout_commit(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCheckoutCommit>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let commit = envelope.payload.commit;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.checkout_commit(commit)
             })
             .await??;
 
@@ -8068,6 +8125,84 @@ impl Repository {
                                 repository_id: id.to_proto(),
                                 ref_name,
                                 squash,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn cherry_pick(&mut self, commit: String) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            "cherry_pick",
+            Some(format!("git cherry-pick {commit}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.cherry_pick(commit).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitCherryPick {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                commit,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn revert(&mut self, commit: String) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            "revert",
+            Some(format!("git revert --no-edit {commit}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.revert(commit).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitRevert {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                commit,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn checkout_commit(&mut self, commit: String) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            "checkout_commit",
+            Some(format!("git checkout --detach {commit}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.checkout_commit(commit).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitCheckoutCommit {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                commit,
                             })
                             .await?;
 

@@ -1523,6 +1523,48 @@ impl GitGraph {
         self.detach_op_with_error_toast(format!("merge {flag}{ref_name}"), receiver, cx);
     }
 
+    fn cherry_pick_commit(&mut self, commit_sha: Oid, cx: &mut Context<Self>) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let receiver = repository.update(cx, |repository, _| {
+            repository.cherry_pick(commit_sha.to_string())
+        });
+        self.detach_op_with_error_toast(
+            format!("cherry-pick {}", commit_sha.display_short()),
+            receiver,
+            cx,
+        );
+    }
+
+    fn revert_commit(&mut self, commit_sha: Oid, cx: &mut Context<Self>) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let receiver = repository.update(cx, |repository, _| {
+            repository.revert(commit_sha.to_string())
+        });
+        self.detach_op_with_error_toast(
+            format!("revert {}", commit_sha.display_short()),
+            receiver,
+            cx,
+        );
+    }
+
+    fn checkout_commit(&mut self, commit_sha: Oid, cx: &mut Context<Self>) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let receiver = repository.update(cx, |repository, _| {
+            repository.checkout_commit(commit_sha.to_string())
+        });
+        self.detach_op_with_error_toast(
+            format!("checkout --detach {}", commit_sha.display_short()),
+            receiver,
+            cx,
+        );
+    }
+
     fn create_branch_from(
         &mut self,
         base: SharedString,
@@ -2924,16 +2966,48 @@ impl GitGraph {
                             );
                         }
                         None => {
-                            let create_base = ref_name
-                                .clone()
-                                .unwrap_or_else(|| SharedString::from(sha.to_string()));
-                            menu = menu.entry(
-                                "Create Branch from Here…",
-                                None,
-                                window.handler_for(&git_graph, move |this, window, cx| {
-                                    this.create_branch_from(create_base.clone(), window, cx);
-                                }),
-                            );
+                            if let Some(tag_name) = ref_name.clone() {
+                                menu = menu.entry(
+                                    "Create Branch from Here…",
+                                    None,
+                                    window.handler_for(&git_graph, move |this, window, cx| {
+                                        this.create_branch_from(tag_name.clone(), window, cx);
+                                    }),
+                                );
+                            } else {
+                                menu = menu.entry(
+                                    "Check Out Commit",
+                                    None,
+                                    window.handler_for(&git_graph, move |this, _window, cx| {
+                                        this.checkout_commit(sha, cx);
+                                    }),
+                                );
+
+                                let create_base = SharedString::from(sha.to_string());
+                                menu = menu.entry(
+                                    "Create Branch from Here…",
+                                    None,
+                                    window.handler_for(&git_graph, move |this, window, cx| {
+                                        this.create_branch_from(create_base.clone(), window, cx);
+                                    }),
+                                );
+
+                                menu = menu.entry(
+                                    "Cherry-Pick Commit",
+                                    None,
+                                    window.handler_for(&git_graph, move |this, _window, cx| {
+                                        this.cherry_pick_commit(sha, cx);
+                                    }),
+                                );
+
+                                menu = menu.entry(
+                                    "Revert Commit",
+                                    None,
+                                    window.handler_for(&git_graph, move |this, _window, cx| {
+                                        this.revert_commit(sha, cx);
+                                    }),
+                                );
+                            }
                         }
                     }
                     menu
@@ -5616,6 +5690,84 @@ mod tests {
                 adversarial, num_commits, error
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_checkout_commit_detaches_head(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            Path::new("/project"),
+            json!({
+                ".git": {},
+                "file.txt": "content",
+            }),
+        )
+        .await;
+        fs.set_branch_name(Path::new("/project/.git"), Some("main"));
+
+        let commit_sha = Oid::try_from("abcdef1234567890abcdef1234567890abcdef12")
+            .expect("commit SHA should be valid");
+        fs.set_graph_commits(
+            Path::new("/project/.git"),
+            vec![Arc::new(InitialGraphCommitData {
+                sha: commit_sha,
+                parents: SmallVec::new(),
+                ref_names: Vec::new(),
+            })],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+        cx.run_until_parked();
+
+        let repository = project.read_with(cx, |project, cx| {
+            project
+                .active_repository(cx)
+                .expect("project should have an active repository")
+        });
+
+        let (multi_workspace, cx) = cx.add_window_view(|window, cx| {
+            workspace::MultiWorkspace::test_new(project.clone(), window, cx)
+        });
+        let workspace = multi_workspace.read_with(&*cx, |multi_workspace, _| {
+            multi_workspace.workspace().clone()
+        });
+        let workspace_weak = workspace.downgrade();
+
+        let git_graph = cx.new_window_entity(|window, cx| {
+            GitGraph::new(
+                repository.read(cx).id,
+                project.read(cx).git_store().clone(),
+                workspace_weak,
+                None,
+                window,
+                cx,
+            )
+        });
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(Box::new(git_graph.clone()), None, true, window, cx);
+        });
+        cx.run_until_parked();
+
+        repository.read_with(&*cx, |repository, _| {
+            assert!(
+                repository.snapshot().branch.is_some(),
+                "a branch should be checked out initially"
+            );
+        });
+
+        git_graph.update_in(cx, |git_graph, _window, cx| {
+            git_graph.checkout_commit(commit_sha, cx);
+        });
+        cx.run_until_parked();
+
+        repository.read_with(&*cx, |repository, _| {
+            assert!(
+                repository.snapshot().branch.is_none(),
+                "HEAD should be detached after checking out a commit"
+            );
+        });
     }
 
     #[gpui::test]

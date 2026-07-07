@@ -206,6 +206,24 @@ message GitMerge {
   bool squash = 4;
 }
 
+message GitCherryPick {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string commit = 3;
+}
+
+message GitRevert {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string commit = 3;
+}
+
+message GitCheckoutCommit {
+  uint64 project_id = 1;
+  uint64 repository_id = 2;
+  string commit = 3;
+}
+
 message GitCreateRemote {
   uint64 project_id = 1;
   uint64 repository_id = 2;
