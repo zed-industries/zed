@@ -1,5 +1,4 @@
 use crate::{
-    branch_diff::BranchDiff,
     diff_multibuffer::{ButtonStates, DiffMultibuffer},
     git_panel::{GitPanel, GitStatusEntry},
     staged_diff::StagedDiff,
@@ -61,15 +60,7 @@ pub struct ProjectDiff {
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     diff: Entity<DiffMultibuffer>,
-
-    pending_item_swap: Option<PendingItemSwap>,
     _diff_observation: Subscription,
-}
-
-enum PendingItemSwap {
-    UnstagedDiff,
-    StagedDiff,
-    BranchDiff { base_ref: SharedString },
 }
 
 impl ProjectDiff {
@@ -246,7 +237,6 @@ impl ProjectDiff {
             project,
             workspace: workspace.downgrade(),
             diff,
-            pending_item_swap: None,
             _diff_observation: observation,
         }
     }
@@ -506,97 +496,6 @@ impl Item for ProjectDiff {
         self.diff.update(cx, |diff, cx| {
             diff.added_to_workspace(workspace, window, cx)
         });
-
-        let Some(swap) = self.pending_item_swap.take() else {
-            return;
-        };
-        let project_diff = cx.entity();
-        let project = self.project.clone();
-        let workspace = self.workspace.clone();
-        let repo = self.diff.read(cx).repo(cx);
-        window
-            .spawn(cx, async move |cx| {
-                cx.update(|window, cx| {
-                    let Some(workspace_handle) = workspace.upgrade() else {
-                        return anyhow::Ok(());
-                    };
-                    workspace_handle.update(cx, |workspace, cx| {
-                        let Some(pane) = workspace.pane_for(&project_diff) else {
-                            return;
-                        };
-                        let Some(index) = pane.read(cx).index_for_item(&project_diff) else {
-                            return;
-                        };
-                        match &swap {
-                            PendingItemSwap::UnstagedDiff => {
-                                let item = cx.new(|cx| {
-                                    UnstagedDiff::new(
-                                        project.clone(),
-                                        workspace_handle.clone(),
-                                        window,
-                                        cx,
-                                    )
-                                });
-                                workspace.add_item(
-                                    pane.clone(),
-                                    Box::new(item),
-                                    Some(index),
-                                    true,
-                                    true,
-                                    window,
-                                    cx,
-                                );
-                            }
-                            PendingItemSwap::StagedDiff => {
-                                let item = cx.new(|cx| {
-                                    StagedDiff::new(
-                                        project.clone(),
-                                        workspace_handle.clone(),
-                                        window,
-                                        cx,
-                                    )
-                                });
-                                workspace.add_item(
-                                    pane.clone(),
-                                    Box::new(item),
-                                    Some(index),
-                                    true,
-                                    true,
-                                    window,
-                                    cx,
-                                );
-                            }
-                            PendingItemSwap::BranchDiff { base_ref } => {
-                                let item = cx.new(|cx| {
-                                    BranchDiff::new_with_base_ref(
-                                        project.clone(),
-                                        workspace_handle.clone(),
-                                        base_ref.clone(),
-                                        repo.clone(),
-                                        window,
-                                        cx,
-                                    )
-                                });
-                                workspace.add_item(
-                                    pane.clone(),
-                                    Box::new(item),
-                                    Some(index),
-                                    true,
-                                    true,
-                                    window,
-                                    cx,
-                                );
-                            }
-                        }
-                        pane.update(cx, |pane, cx| {
-                            pane.remove_item(project_diff.item_id(), false, false, window, cx);
-                        });
-                    });
-                    anyhow::Ok(())
-                })??;
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
     }
 }
 
@@ -623,67 +522,38 @@ impl SerializableItem for ProjectDiff {
     fn deserialize(
         project: Entity<Project>,
         workspace: WeakEntity<Workspace>,
-        workspace_id: workspace::WorkspaceId,
-        item_id: workspace::ItemId,
+        _workspace_id: workspace::WorkspaceId,
+        _item_id: workspace::ItemId,
         window: &mut Window,
         cx: &mut App,
     ) -> Task<Result<Entity<Self>>> {
-        let db = persistence::ProjectDiffDb::global(cx);
         window.spawn(cx, async move |cx| {
-            let diff_base = db.get_project_diff_base(item_id, workspace_id)?;
-
-            let diff = cx.update(|window, cx| {
-                let pending_item_swap = match &diff_base {
-                    DiffBase::Head => None,
-                    DiffBase::Index => Some(PendingItemSwap::UnstagedDiff),
-                    DiffBase::Staged => Some(PendingItemSwap::StagedDiff),
-                    DiffBase::Merge { base_ref } => Some(PendingItemSwap::BranchDiff {
-                        base_ref: base_ref.clone(),
-                    }),
-                };
+            cx.update(|window, cx| {
                 let branch_diff = cx.new(|cx| {
-                    diff_buffer_list::DiffBufferList::new(diff_base, project.clone(), window, cx)
+                    diff_buffer_list::DiffBufferList::new(
+                        DiffBase::Head,
+                        project.clone(),
+                        window,
+                        cx,
+                    )
                 });
                 let workspace = workspace.upgrade().context("workspace gone")?;
-                let project_diff =
-                    cx.new(|cx| ProjectDiff::new_impl(branch_diff, project, workspace, window, cx));
-                if pending_item_swap.is_some() {
-                    project_diff.update(cx, |project_diff, _| {
-                        project_diff.pending_item_swap = pending_item_swap;
-                    });
-                }
-                anyhow::Ok(project_diff)
-            })??;
-
-            Ok(diff)
+                anyhow::Ok(
+                    cx.new(|cx| ProjectDiff::new_impl(branch_diff, project, workspace, window, cx)),
+                )
+            })?
         })
     }
 
     fn serialize(
         &mut self,
-        workspace: &mut Workspace,
-        item_id: workspace::ItemId,
-        _closing: bool,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
+        _: &mut Workspace,
+        _: workspace::ItemId,
+        _: bool,
+        _: &mut Window,
+        _: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
-        let workspace_id = workspace.database_id()?;
-        let diff_base =
-            match persistence::PersistedProjectDiffBase::from_diff_base(self.diff_base(cx)) {
-                Ok(diff_base) => diff_base,
-                Err(error) => {
-                    log::error!("failed to serialize project diff base: {error:#}");
-                    return None;
-                }
-            };
-
-        let db = persistence::ProjectDiffDb::global(cx);
-        Some(cx.background_spawn({
-            async move {
-                db.save_project_diff_base(item_id, workspace_id, diff_base.clone())
-                    .await
-            }
-        }))
+        Some(Task::ready(Ok(())))
     }
 
     fn should_serialize(&self, _: &Self::Event) -> bool {
@@ -698,7 +568,6 @@ pub(crate) mod persistence {
         sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
         sqlez_macros::sql,
     };
-    use gpui::SharedString;
     use project::git_store::diff_buffer_list::DiffBase;
     use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
@@ -707,7 +576,11 @@ pub(crate) mod persistence {
     impl Domain for ProjectDiffDb {
         const NAME: &str = stringify!(ProjectDiffDb);
 
-        const MIGRATIONS: &[&str] = &[sql!(
+        // Legacy databases stored branch diffs under the "ProjectDiff" item
+        // kind, disambiguated by the `diff_base` column. Step 1 rewrites those
+        // item kinds so that each diff view owns its serialized kind.
+        const MIGRATIONS: &[&str] = &[
+            sql!(
                 CREATE TABLE project_diffs(
                     workspace_id INTEGER,
                     item_id INTEGER UNIQUE,
@@ -718,47 +591,27 @@ pub(crate) mod persistence {
                     FOREIGN KEY(workspace_id) REFERENCES workspaces(workspace_id)
                     ON DELETE CASCADE
                 ) STRICT;
-        )];
+            ),
+            r#"
+                UPDATE items SET kind = 'BranchDiff'
+                WHERE kind = 'ProjectDiff' AND EXISTS (
+                    SELECT 1 FROM project_diffs
+                    WHERE project_diffs.item_id = items.item_id
+                    AND project_diffs.workspace_id = items.workspace_id
+                    AND project_diffs.diff_base LIKE '{"Merge"%'
+                );
+            "#,
+        ];
     }
 
     db::static_connection!(ProjectDiffDb, [WorkspaceDb]);
-
-    #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-    pub enum PersistedProjectDiffBase {
-        Head,
-        Index,
-        Staged,
-        Merge { base_ref: SharedString },
-    }
-
-    impl PersistedProjectDiffBase {
-        pub fn into_diff_base(self) -> DiffBase {
-            match self {
-                Self::Head => DiffBase::Head,
-                Self::Index => DiffBase::Index,
-                Self::Staged => DiffBase::Staged,
-                Self::Merge { base_ref } => DiffBase::Merge { base_ref },
-            }
-        }
-
-        pub fn from_diff_base(diff_base: &DiffBase) -> anyhow::Result<Self> {
-            match diff_base {
-                DiffBase::Head => Ok(Self::Head),
-                DiffBase::Index => Ok(Self::Index),
-                DiffBase::Staged => Ok(Self::Staged),
-                DiffBase::Merge { base_ref } => Ok(Self::Merge {
-                    base_ref: base_ref.clone(),
-                }),
-            }
-        }
-    }
 
     impl ProjectDiffDb {
         pub async fn save_project_diff_base(
             &self,
             item_id: ItemId,
             workspace_id: WorkspaceId,
-            diff_base: PersistedProjectDiffBase,
+            diff_base: DiffBase,
         ) -> anyhow::Result<()> {
             self.write(move |connection| {
                 let sql_stmt = sql!(
@@ -791,15 +644,7 @@ pub(crate) mod persistence {
             let Some(diff_base_str) = diff_base_str else {
                 return Ok(DiffBase::Head);
             };
-            if let Ok(diff_base) = serde_json::from_str::<PersistedProjectDiffBase>(&diff_base_str)
-            {
-                return Ok(diff_base.into_diff_base());
-            }
-
-            let diff_base: DiffBase =
-                serde_json::from_str(&diff_base_str).context("deserializing diff base")?;
-            PersistedProjectDiffBase::from_diff_base(&diff_base)
-                .map(|diff_base| diff_base.into_diff_base())
+            serde_json::from_str(&diff_base_str).context("deserializing diff base")
         }
     }
 }
@@ -1107,6 +952,63 @@ mod tests {
     use zed_actions::git as git_actions;
 
     use crate::project_diff::{self, ProjectDiff};
+
+    #[test]
+    fn test_legacy_branch_diff_rows_migrate_to_their_own_kind() {
+        use db::sqlez::{
+            connection::Connection,
+            domain::{Domain as _, Migrator as _},
+        };
+
+        let connection = Connection::open_memory(Some(
+            "test_legacy_branch_diff_rows_migrate_to_their_own_kind",
+        ));
+        connection.exec("PRAGMA foreign_keys = OFF").unwrap()().unwrap();
+        workspace::WorkspaceDb::migrate(&connection).unwrap();
+        connection
+            .migrate(
+                persistence::ProjectDiffDb::NAME,
+                &persistence::ProjectDiffDb::MIGRATIONS[..1],
+                &mut |_, _, _| false,
+            )
+            .unwrap();
+
+        connection
+            .exec(
+                "INSERT INTO workspaces(workspace_id) VALUES (1);
+                INSERT INTO panes(pane_id, workspace_id, active) VALUES (1, 1, 1);
+                INSERT INTO items(item_id, workspace_id, pane_id, kind, position, active) VALUES
+                    (1, 1, 1, 'ProjectDiff', 0, 1),
+                    (2, 1, 1, 'ProjectDiff', 1, 0)",
+            )
+            .unwrap()()
+        .unwrap();
+        let head = serde_json::to_string(&DiffBase::Head).unwrap();
+        let merge = serde_json::to_string(&DiffBase::Merge {
+            base_ref: "main".into(),
+        })
+        .unwrap();
+        connection
+            .exec_bound::<(String, String)>(
+                "INSERT INTO project_diffs(workspace_id, item_id, diff_base) VALUES (1, 1, ?), (1, 2, ?)",
+            )
+            .unwrap()((head, merge))
+        .unwrap();
+
+        persistence::ProjectDiffDb::migrate(&connection).unwrap();
+
+        let kinds = connection
+            .select::<(i64, String)>("SELECT item_id, kind FROM items ORDER BY item_id")
+            .unwrap()()
+        .unwrap();
+        assert_eq!(
+            kinds,
+            [
+                (1, "ProjectDiff".to_string()),
+                (2, "BranchDiff".to_string())
+            ]
+        );
+    }
 
     #[gpui::test]
     async fn test_update_on_uncommit(cx: &mut TestAppContext) {

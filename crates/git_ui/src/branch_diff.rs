@@ -611,7 +611,7 @@ impl SerializableItem for BranchDiff {
         let DiffBase::Merge { base_ref } = self.diff_base(cx).clone() else {
             return None;
         };
-        let diff_base = project_diff::persistence::PersistedProjectDiffBase::Merge { base_ref };
+        let diff_base = DiffBase::Merge { base_ref };
         let db = project_diff::persistence::ProjectDiffDb::global(cx);
         Some(cx.background_spawn(async move {
             db.save_project_diff_base(item_id, workspace_id, diff_base)
