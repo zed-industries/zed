@@ -807,7 +807,6 @@ pub struct GitPanel {
     active_tab: GitPanelTab,
     commit_history_scroll_handle: UniformListScrollHandle,
     commit_history_entries: Option<Rc<[CommitHistoryEntry]>>,
-    commit_history_loading: bool,
     focused_history_entry: Option<usize>,
     history_keyboard_nav: bool,
     _commit_message_buffer_subscription: Option<Subscription>,
@@ -1110,7 +1109,6 @@ impl GitPanel {
                 active_tab: GitPanelTab::Changes,
                 commit_history_scroll_handle: UniformListScrollHandle::new(),
                 commit_history_entries: None,
-                commit_history_loading: false,
                 focused_history_entry: None,
                 history_keyboard_nav: false,
                 _commit_message_buffer_subscription: None,
@@ -5704,9 +5702,7 @@ impl GitPanel {
                 .commit_history_entries
                 .as_ref()
                 .map_or(false, |entries| !entries.is_empty());
-            let is_loading = has_repo
-                && !has_commits
-                && (self.commit_history_entries.is_none() || self.commit_history_loading);
+            let is_loading = self.commit_history_entries.is_none() && has_repo;
             if is_loading {
                 this.child(
                     h_flex()
@@ -5830,7 +5826,6 @@ impl GitPanel {
             GitPanelTab::Changes => {
                 self.focus_handle.focus(window, cx);
                 self.commit_history_entries.take();
-                self.commit_history_loading = false;
                 self.focused_history_entry = None;
                 self._repo_subscriptions.clear();
             }
@@ -5902,7 +5897,6 @@ impl GitPanel {
         };
         let Some(log_source) = log_source else {
             self.commit_history_entries = Some(Rc::from([]));
-            self.commit_history_loading = false;
             return;
         };
 
@@ -5919,8 +5913,11 @@ impl GitPanel {
                 response.is_loading,
             )
         });
-        self.commit_history_entries = Some(entries);
-        self.commit_history_loading = is_loading;
+        self.commit_history_entries = if is_loading && entries.is_empty() {
+            None
+        } else {
+            Some(entries)
+        };
     }
 
     fn commit_history_log_source(
