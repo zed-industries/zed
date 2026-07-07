@@ -8281,7 +8281,6 @@ impl ThreadView {
         window: &Window,
         cx: &Context<Self>,
     ) -> Div {
-        let has_location = tool_call.locations.len() == 1;
         let card_header_id = SharedString::from(format!("inner-tool-call-header-{entry_ix}"));
 
         let failed_or_canceled = match &tool_call.status {
@@ -8597,16 +8596,7 @@ impl ThreadView {
                         .pl_1p5()
                 }
             })
-            .when(layout == ToolCallLayout::Standalone, |this| {
-                this.map(|this| {
-                    if has_location && !use_card_layout {
-                        this.ml_4()
-                    } else {
-                        this.ml_5()
-                    }
-                })
-                .mr_5()
-            })
+            .when(layout == ToolCallLayout::Standalone, |this| this.ml_5().mr_5())
             .map(|this| {
                 if is_terminal_tool {
                     this.child(self.render_collapsible_command(
