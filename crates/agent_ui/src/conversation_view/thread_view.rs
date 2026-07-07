@@ -6079,7 +6079,6 @@ struct AgentStylePalette {
     panel: Hsla,
     line: Hsla,
     text_accent: Hsla,
-    user_message_bg: Hsla,
     tool_pending_bg: Hsla,
     tool_success_bg: Hsla,
     tool_error_bg: Hsla,
@@ -6107,7 +6106,6 @@ impl AgentStylePalette {
             panel,
             line: colors.border,
             text_accent,
-            user_message_bg: panel,
             tool_pending_bg: panel.blend(text_accent.opacity(0.06)),
             tool_success_bg: panel.blend(success.opacity(0.05)),
             tool_error_bg: panel.blend(error.opacity(0.08)),
@@ -6190,9 +6188,6 @@ impl ThreadView {
                 let editing = self.editing_message == Some(entry_ix);
                 let editor_focus = editor.focus_handle(cx).is_focused(window);
                 let focus_border = cx.theme().colors().border_focused;
-                let palette = AgentStylePalette::new(cx);
-                let user_message_bg = palette.user_message_bg;
-                let use_bubble_style = !editing && !editor_focus;
                 // Drop shadows render as a dark halo on transparent windows.
                 let opaque_window = cx.theme().window_background_appearance()
                     == gpui::WindowBackgroundAppearance::Opaque;
@@ -6248,25 +6243,18 @@ impl ThreadView {
                             .relative()
                             .child(
                                 div()
+                                    .py_3()
+                                    .px_2()
                                     .rounded_md()
-                                    .bg(user_message_bg)
+                                    .bg(cx.theme().colors().editor_background)
+                                    .border_1()
+                                    .when(is_indented, |this| {
+                                        this.py_2().px_2().when(opaque_window, |this| {
+                                            this.shadow_sm()
+                                        })
+                                    })
+                                    .border_color(cx.theme().colors().border)
                                     .map(|this| {
-                                        if use_bubble_style {
-                                            return this.py_1p5().px_2p5();
-                                        }
-
-                                        let this = this
-                                            .py_3()
-                                            .px_2()
-                                            .bg(cx.theme().colors().editor_background)
-                                            .border_1()
-                                            .when(is_indented, |this| {
-                                                this.py_2().px_2().when(opaque_window, |this| {
-                                                    this.shadow_sm()
-                                                })
-                                            })
-                                            .border_color(cx.theme().colors().border);
-
                                         if !is_editable {
                                             if is_subagent {
                                                 return this.border_dashed();
