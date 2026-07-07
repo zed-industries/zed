@@ -257,7 +257,7 @@ impl GitRepository for FakeGitRepository {
                 })
                 .collect())
         });
-        self.executor.spawn(async move { fut.await }).boxed()
+        self.executor.spawn(fut).boxed()
     }
 
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>> {
