@@ -6298,7 +6298,7 @@ mod tests {
                 .map(|tag| tag.to_string())
                 .collect::<Vec<String>>()
         });
-        assert_eq!(initial_tags, Vec::new());
+        assert_eq!(initial_tags, Vec::<String>::new());
 
         fs.set_graph_commits(
             Path::new("/project/.git"),
