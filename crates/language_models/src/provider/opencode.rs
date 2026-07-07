@@ -737,11 +737,14 @@ impl LanguageModel for OpenCodeLanguageModel {
                 .boxed()
             }
             ApiProtocol::Google => {
-                let google_request = into_google(
-                    request,
-                    self.model.id().to_string(),
-                    google_ai::GoogleModelMode::Default,
-                );
+                let mode = if self.supports_thinking() && request.thinking_allowed {
+                    google_ai::GoogleModelMode::Thinking {
+                        budget_tokens: None,
+                    }
+                } else {
+                    google_ai::GoogleModelMode::Default
+                };
+                let google_request = into_google(request, self.model.id().to_string(), mode);
                 let stream = self.stream_google(google_request, http_client, extra_headers, cx);
                 async move {
                     let mapper = GoogleEventMapper::new();
