@@ -6062,7 +6062,7 @@ impl GitPanel {
                                                         .saturating_sub(MAX_HISTORY_TAG_CHIPS);
                                                     h_flex()
                                                         .gap_1()
-                                                        .flex_none()
+                                                        .min_w_0()
                                                         .children(
                                                             tag_names
                                                                 .iter()
@@ -6070,6 +6070,7 @@ impl GitPanel {
                                                                 .cloned()
                                                                 .map(|tag_name| {
                                                                     Chip::new(tag_name.clone())
+                                                                        .truncate()
                                                                         .tooltip(Tooltip::text(
                                                                             tag_name,
                                                                         ))
