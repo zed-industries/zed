@@ -4,6 +4,13 @@ use git::repository::{Remote, RemoteCommandOutput};
 use ui::SharedString;
 use util::ResultExt as _;
 
+const PULL_REQUEST_HINTS: &[(&str, &str)] = &[
+    ("Create a pull request", "Create Pull Request"),
+    ("Create pull request", "Create Pull Request"),
+    ("create a merge request", "Create Merge Request"),
+    ("View merge request", "View Merge Request"),
+];
+
 #[derive(Clone)]
 pub enum RemoteAction {
     Fetch(Option<Remote>),
@@ -24,6 +31,7 @@ impl RemoteAction {
 pub enum SuccessStyle {
     Toast,
     ToastWithLog { output: RemoteCommandOutput },
+    PushPrLink { label: &'static str, url: String },
 }
 
 pub struct SuccessMessage {
@@ -31,39 +39,30 @@ pub struct SuccessMessage {
     pub style: SuccessStyle,
 }
 
-pub fn extract_pull_request_url(output: &RemoteCommandOutput) -> Option<String> {
-    let mut expecting_create_url = false;
+fn extract_pull_request_link(output: &RemoteCommandOutput) -> Option<(&'static str, String)> {
+    let mut pending_label: Option<&'static str> = None;
 
     for line in output.stderr.lines() {
         let Some(remote_line) = line.trim_start().strip_prefix("remote:") else {
-            expecting_create_url = false;
+            pending_label = None;
             continue;
         };
 
-        if is_create_pull_request_prompt(remote_line) {
-            if let Some(url) = extract_url(remote_line) {
-                return Some(url);
-            }
-            expecting_create_url = true;
-            continue;
+        if let Some((_, label)) = PULL_REQUEST_HINTS
+            .iter()
+            .find(|(hint, _)| remote_line.contains(hint))
+        {
+            pending_label = Some(label);
         }
 
-        if expecting_create_url {
-            expecting_create_url = false;
-            if let Some(url) = extract_url(remote_line) {
-                return Some(url);
-            }
+        if let Some(url) = extract_url(remote_line)
+            && let Some(label) = pending_label
+        {
+            return Some((label, url));
         }
     }
 
     None
-}
-
-fn is_create_pull_request_prompt(line: &str) -> bool {
-    let line = line.to_ascii_lowercase();
-    (line.contains("create a pull request") && line.contains("by visiting"))
-        || line.contains("create pull request")
-        || (line.contains("create a merge request") && line.contains("visit"))
 }
 
 fn extract_url(line: &str) -> Option<String> {
@@ -167,6 +166,11 @@ pub fn format_output(action: &RemoteAction, output: RemoteCommandOutput) -> Succ
                     message: "Push: Everything is up-to-date".to_string(),
                     style: SuccessStyle::Toast,
                 }
+            } else if let Some((label, url)) = extract_pull_request_link(&output) {
+                SuccessMessage {
+                    message: format!("Pushed {} to {}", branch_name, remote_ref.name),
+                    style: SuccessStyle::PushPrLink { label, url },
+                }
             } else {
                 SuccessMessage {
                     message: format!("Pushed {} to {}", branch_name, remote_ref.name),
@@ -206,16 +210,12 @@ mod tests {
         };
 
         let msg = format_output(&action, output);
-
-        assert!(matches!(&msg.style, SuccessStyle::ToastWithLog { .. }));
-        assert_eq!(msg.message, "Pushed test_branch to test_remote");
-        if let SuccessStyle::ToastWithLog { output } = &msg.style {
-            assert_eq!(
-                extract_pull_request_url(output),
-                Some("https://example.com/test/test/pull/new/test".to_string())
-            );
+        if let SuccessStyle::PushPrLink { label, url } = msg.style {
+            assert_eq!(msg.message, "Pushed test_branch to test_remote");
+            assert_eq!(label, "Create Pull Request");
+            assert_eq!(url, "https://example.com/test/test/pull/new/test");
         } else {
-            panic!("Expected ToastWithLog variant");
+            panic!("Expected PushPrLink variant");
         }
     }
 
@@ -244,18 +244,15 @@ mod tests {
 
         let msg = format_output(&action, output);
 
-        assert!(matches!(&msg.style, SuccessStyle::ToastWithLog { .. }));
-        assert_eq!(msg.message, "Pushed test_branch to test_remote");
-        if let SuccessStyle::ToastWithLog { output } = &msg.style {
+        if let SuccessStyle::PushPrLink { label, url } = msg.style {
+            assert_eq!(msg.message, "Pushed test_branch to test_remote");
+            assert_eq!(label, "Create Merge Request");
             assert_eq!(
-                extract_pull_request_url(output),
-                Some(
-                    "https://example.com/test/test/-/merge_requests/new?merge_request%5Bsource_branch%5D=test"
-                        .to_string()
-                )
-            );
+                url,
+                "https://example.com/test/test/-/merge_requests/new?merge_request%5Bsource_branch%5D=test"
+            )
         } else {
-            panic!("Expected ToastWithLog variant");
+            panic!("Expected PushPrLink variant")
         }
     }
 
@@ -272,8 +269,11 @@ mod tests {
         };
 
         assert_eq!(
-            extract_pull_request_url(&output),
-            Some("https://bitbucket.example.com/projects/TEST/repos/test/pull-requests?create&sourceBranch=refs/heads/test".to_string())
+            extract_pull_request_link(&output),
+            Some((
+                "Create Pull Request",
+                "https://bitbucket.example.com/projects/TEST/repos/test/pull-requests?create&sourceBranch=refs/heads/test".to_string()
+            ))
         );
     }
 
@@ -288,7 +288,9 @@ mod tests {
 
         let output = RemoteCommandOutput {
             stdout: String::new(),
-            // Simulate an extraneous link that should not be found in top 3 lines
+            // Include an unrelated URL outside of the `remote:` lines, in this
+            // case, an OpenSSH warning, to ensure that it is not mistaken for
+            // the merge request link.
             stderr: indoc! {"
                 ** WARNING: connection is not using a post-quantum key exchange algorithm.
                 ** This session may be vulnerable to \"store now, decrypt later\" attacks.
@@ -306,12 +308,12 @@ mod tests {
 
         let msg = format_output(&action, output);
 
-        assert!(matches!(&msg.style, SuccessStyle::ToastWithLog { .. }));
-        assert_eq!(msg.message, "Pushed test_branch to test_remote");
-        if let SuccessStyle::ToastWithLog { output } = &msg.style {
-            assert_eq!(extract_pull_request_url(output), None);
+        if let SuccessStyle::PushPrLink { label, url } = msg.style {
+            assert_eq!(msg.message, "Pushed test_branch to test_remote");
+            assert_eq!(label, "View Merge Request");
+            assert_eq!(url, "https://example.com/test/test/-/merge_requests/99999");
         } else {
-            panic!("Expected ToastWithLog variant");
+            panic!("Expected PushPrLink variant")
         }
     }
 
@@ -341,7 +343,7 @@ mod tests {
                 output.stderr,
                 "To http://example.com/test/test.git\n * [new branch]      test -> test\n"
             );
-            assert_eq!(extract_pull_request_url(output), None);
+            assert_eq!(extract_pull_request_link(output), None);
         } else {
             panic!("Expected ToastWithLog variant");
         }
