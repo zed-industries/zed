@@ -207,23 +207,24 @@ impl Model {
         match self {
             // Models available in both Zen and Go
             Self::Glm5_1
+            | Self::Glm5_2
             | Self::KimiK2_6
+            | Self::KimiK2_7Code
             | Self::MiniMaxM2_7
+            | Self::MiniMaxM3
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
             | Self::Qwen3_6Plus => &[OpenCodeSubscription::Zen, OpenCodeSubscription::Go],
 
             // Go-only models
-            Self::MimoV2_5Pro
-            | Self::MimoV2_5
-            | Self::Qwen3_7Plus
-            | Self::Qwen3_7Max
-            | Self::KimiK2_7Code
-            | Self::Glm5_2
-            | Self::MiniMaxM3 => &[OpenCodeSubscription::Go],
+            Self::MimoV2_5Pro | Self::MimoV2_5 | Self::Qwen3_7Plus | Self::Qwen3_7Max => {
+                &[OpenCodeSubscription::Go]
+            }
 
             // Deprecated on Go (per models.dev); still offered on Zen
-            Self::Glm5 | Self::KimiK2_5 | Self::MiniMaxM2_5 => &[OpenCodeSubscription::Zen],
+            Self::Glm5 | Self::KimiK2_5 | Self::MiniMaxM2_5 | Self::Qwen3_5Plus => {
+                &[OpenCodeSubscription::Zen]
+            }
 
             // Free models
             Self::Nemotron3UltraFree | Self::BigPickle => &[OpenCodeSubscription::Free],
@@ -364,7 +365,7 @@ impl Model {
         match self {
             // Models offered by OpenCode have the same configuration across subscriptions
             //  with one outlier: non-free MiniMax models
-            Self::MiniMaxM2_7 | Self::MiniMaxM2_5 => {
+            Self::MiniMaxM3 | Self::MiniMaxM2_7 | Self::MiniMaxM2_5 => {
                 if subscription == OpenCodeSubscription::Zen {
                     ApiProtocol::OpenAiChat
                 } else {
@@ -404,9 +405,9 @@ impl Model {
 
             Self::Gemini3_1Pro | Self::Gemini3Flash | Self::Gemini3_5Flash => ApiProtocol::Google,
 
-            Self::Qwen3_7Max | Self::Qwen3_7Plus => ApiProtocol::Anthropic,
-
-            Self::MiniMaxM3 => ApiProtocol::Anthropic,
+            Self::Qwen3_7Max | Self::Qwen3_7Plus | Self::Qwen3_6Plus | Self::Qwen3_5Plus => {
+                ApiProtocol::Anthropic
+            }
 
             Self::Glm5
             | Self::Glm5_1
@@ -417,8 +418,6 @@ impl Model {
             | Self::KimiK2_7Code
             | Self::MimoV2_5Pro
             | Self::MimoV2_5
-            | Self::Qwen3_5Plus
-            | Self::Qwen3_6Plus
             | Self::DeepSeekV4Pro
             | Self::DeepSeekV4Flash
             | Self::BigPickle
@@ -442,6 +441,7 @@ impl Model {
             | Self::Glm5_2
             | Self::MiniMaxM2_5
             | Self::MiniMaxM2_7
+            | Self::MiniMaxM3
             | Self::Nemotron3UltraFree
             | Self::BigPickle => true,
 
@@ -485,7 +485,13 @@ impl Model {
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => 204_800,
-            Self::MiniMaxM3 => 512_000,
+            Self::MiniMaxM3 => {
+                if subscription == OpenCodeSubscription::Go {
+                    1_000_000
+                } else {
+                    512_000
+                }
+            }
             Self::MiniMaxM2_5 => 204_800,
             Self::Glm5 | Self::Glm5_1 => {
                 if subscription == OpenCodeSubscription::Go {
@@ -553,7 +559,13 @@ impl Model {
 
             // OpenAI-compatible models
             Self::MiniMaxM2_7 => Some(131_072),
-            Self::MiniMaxM3 => Some(131_072),
+            Self::MiniMaxM3 => {
+                if subscription == OpenCodeSubscription::Go {
+                    Some(131_072)
+                } else {
+                    Some(128_000)
+                }
+            }
             Self::MiniMaxM2_5 => {
                 if subscription == OpenCodeSubscription::Go {
                     Some(65_536)
