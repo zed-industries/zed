@@ -10,6 +10,7 @@ use std::{
 use ashpd::WindowIdentifier;
 use calloop::{
     EventLoop, LoopHandle,
+    ping::Ping,
     timer::{TimeoutAction, Timer},
 };
 use calloop_wayland_source::WaylandSource;
@@ -186,6 +187,10 @@ fn set_ime_cursor_rectangle_after_done(
     }
 }
 
+/// Pacing for retry ticks: a fixed 60Hz interval. Retries only occur for throttled or
+/// failed-present frames, so matching the output's actual refresh rate wouldn't be observable.
+const FRAME_RETRY_INTERVAL: Duration = Duration::from_micros(16_667);
+
 fn take_startup_activation_token_from_environment() -> Option<String> {
     let startup_activation_token = std::env::var(XDG_ACTIVATION_TOKEN_ENV_VAR)
         .ok()
@@ -221,6 +226,7 @@ pub struct Globals {
     pub dialog: Option<xdg_wm_dialog_v1::XdgWmDialogV1>,
     pub system_bell: Option<xdg_system_bell_v1::XdgSystemBellV1>,
     pub executor: ForegroundExecutor,
+    pub frame_ping: Ping,
 }
 
 impl Globals {
@@ -229,6 +235,7 @@ impl Globals {
         executor: ForegroundExecutor,
         qh: QueueHandle<WaylandClientStatePtr>,
         seat: wl_seat::WlSeat,
+        frame_ping: Ping,
     ) -> Self {
         let dialog_v = XdgWmDialogV1::interface().version;
         Globals {
@@ -264,6 +271,7 @@ impl Globals {
             system_bell: globals.bind(&qh, 1..=1, ()).ok(),
             executor,
             qh,
+            frame_ping,
         }
     }
 }
@@ -409,6 +417,45 @@ impl WaylandClientStatePtr {
         self.0
             .upgrade()
             .expect("The pointer should always be valid when dispatching in wayland")
+    }
+
+    pub fn dispatch_scheduled_frames(&self) {
+        let Some(client) = self.0.upgrade() else {
+            return;
+        };
+        // Release the client borrow before ticking: the tick re-enters GPUI, which can
+        // borrow the client again (e.g. IME updates).
+        let windows = client
+            .borrow()
+            .windows
+            .values()
+            .cloned()
+            .collect::<Vec<WaylandWindowStatePtr>>();
+        for window in windows {
+            window.scheduled_frame_fired();
+        }
+    }
+
+    /// Queue a retry tick for `surface_id` one refresh interval from now. An immediate
+    /// retry would spin against the frame-rate throttle that deferred the draw in the
+    /// first place.
+    pub fn schedule_frame_retry(&self, surface_id: &ObjectId) {
+        let client = self.get_client();
+        let state = client.borrow();
+        let surface_id = surface_id.clone();
+        if let Err(err) = state.loop_handle.insert_source(
+            Timer::from_duration(FRAME_RETRY_INTERVAL),
+            move |_, _, this| {
+                let client = this.get_client();
+                let window = get_window(&mut client.borrow_mut(), &surface_id);
+                if let Some(window) = window {
+                    window.retry_timer_fired();
+                }
+                TimeoutAction::Drop
+            },
+        ) {
+            log::error!("Failed to schedule frame retry: {err}");
+        }
     }
 
     pub fn get_serial(&self, kind: SerialKind) -> Serial {
@@ -708,12 +755,24 @@ impl WaylandClient {
         let compositor_gpu = detect_compositor_gpu();
         let gpu_context = Rc::new(RefCell::new(None));
 
+        let (frame_ping, frame_ping_source) =
+            calloop::ping::make_ping().expect("Failed to create the frame ping");
+        handle
+            .insert_source(
+                frame_ping_source,
+                |_, _, client: &mut WaylandClientStatePtr| {
+                    client.dispatch_scheduled_frames();
+                },
+            )
+            .unwrap();
+
         let seat = seat.unwrap();
         let globals = Globals::new(
             globals,
             common.foreground_executor.clone(),
             qh.clone(),
             seat.clone(),
+            frame_ping,
         );
 
         let data_device = globals
@@ -1329,7 +1388,7 @@ impl Dispatch<WlCallback, ObjectId> for WaylandClientStatePtr {
         drop(state);
 
         if let wl_callback::Event::Done { .. } = event {
-            window.frame();
+            window.frame_callback_fired();
         }
     }
 }

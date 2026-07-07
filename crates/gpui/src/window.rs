@@ -1609,23 +1609,24 @@ impl Window {
                     {
                         // Don't lose a pending forced render to throttling.
                         deferred_force_render |= force_render;
+                        // Deferred by throttling: ask demand-driven platforms to retry.
                         // Must still complete the frame on platforms that require it.
                         // On Wayland, `surface.frame()` was already called to request the
                         // next frame callback, so we must call `surface.commit()` (via
                         // `complete_frame`) or the compositor won't send another callback.
                         handle
-                            .update(&mut cx, |_, window, _| window.complete_frame())
+                            .update(&mut cx, |_, window, _| window.complete_frame(true))
                             .log_err();
                         return;
                     }
                 }
                 last_frame_time.set(Some(now));
 
-                let next_frame_callbacks = next_frame_callbacks.take();
-                if !next_frame_callbacks.is_empty() {
+                let current_frame_callbacks = next_frame_callbacks.take();
+                if !current_frame_callbacks.is_empty() {
                     handle
                         .update(&mut cx, |_, window, cx| {
-                            for callback in next_frame_callbacks {
+                            for callback in current_frame_callbacks {
                                 callback(window, cx);
                             }
                         })
@@ -1660,9 +1661,11 @@ impl Window {
                         .log_err();
                 }
 
+                let request_next_frame =
+                    invalidator.is_dirty() || !next_frame_callbacks.borrow().is_empty();
                 handle
                     .update(&mut cx, |_, window, _| {
-                        window.complete_frame();
+                        window.complete_frame(request_next_frame);
                     })
                     .log_err();
             }
@@ -2325,6 +2328,9 @@ impl Window {
     /// Schedule the given closure to be run directly after the current frame is rendered.
     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
         RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
+        if self.invalidator.not_drawing() {
+            self.platform_window.schedule_frame();
+        }
     }
 
     /// Schedule a frame to be drawn on the next animation frame.
@@ -2789,8 +2795,8 @@ impl Window {
         self.capslock
     }
 
-    fn complete_frame(&self) {
-        self.platform_window.completed_frame();
+    fn complete_frame(&self, request_next_frame: bool) {
+        self.platform_window.completed_frame(request_next_frame);
     }
 
     /// Produces a new frame and assigns it to `rendered_frame`. To actually show
