@@ -5902,17 +5902,18 @@ impl GitPanel {
 
         let log_order = LogOrder::DateOrder;
 
-        let (entries, is_loading) = active_repository.update(cx, |repository, cx| {
-            let response = repository.graph_data(log_source, log_order, 0..usize::MAX, cx);
-            (
-                response
-                    .commits
-                    .iter()
-                    .map(CommitHistoryEntry::from)
-                    .collect(),
-                response.is_loading,
-            )
-        });
+        let (entries, is_loading): (Rc<[CommitHistoryEntry]>, bool) =
+            active_repository.update(cx, |repository, cx| {
+                let response = repository.graph_data(log_source, log_order, 0..usize::MAX, cx);
+                (
+                    response
+                        .commits
+                        .iter()
+                        .map(CommitHistoryEntry::from)
+                        .collect(),
+                    response.is_loading,
+                )
+            });
         self.commit_history_entries = if is_loading && entries.is_empty() {
             None
         } else {
