@@ -806,7 +806,7 @@ pub struct GitPanel {
     stash_entries: GitStash,
     active_tab: GitPanelTab,
     commit_history_scroll_handle: UniformListScrollHandle,
-    commit_history_entries: Option<Vec<CommitHistoryEntry>>,
+    commit_history_entries: Option<Rc<[CommitHistoryEntry]>>,
     focused_history_entry: Option<usize>,
     history_keyboard_nav: bool,
     _commit_message_buffer_subscription: Option<Subscription>,
@@ -841,12 +841,6 @@ impl From<&Arc<InitialGraphCommitData>> for CommitHistoryEntry {
                 .collect(),
         }
     }
-}
-
-fn render_history_tag_chip(tag_name: SharedString) -> impl IntoElement {
-    Chip::new(tag_name.clone())
-        .truncate()
-        .tooltip(Tooltip::text(tag_name))
 }
 
 const MAX_PANEL_EDITOR_LINES: usize = 6;
@@ -5738,7 +5732,10 @@ impl GitPanel {
     }
 
     fn select_next_history_entry(&mut self, cx: &mut Context<Self>) {
-        let count = self.commit_history_entries.as_ref().map_or(0, Vec::len);
+        let count = self
+            .commit_history_entries
+            .as_ref()
+            .map_or(0, |entries| entries.len());
         if count == 0 {
             return;
         }
@@ -5754,7 +5751,10 @@ impl GitPanel {
     }
 
     fn select_previous_history_entry(&mut self, cx: &mut Context<Self>) {
-        let count = self.commit_history_entries.as_ref().map_or(0, Vec::len);
+        let count = self
+            .commit_history_entries
+            .as_ref()
+            .map_or(0, |entries| entries.len());
         if count == 0 {
             return;
         }
@@ -6068,12 +6068,25 @@ impl GitPanel {
                                                                 .iter()
                                                                 .take(MAX_HISTORY_TAG_CHIPS)
                                                                 .cloned()
-                                                                .map(render_history_tag_chip),
+                                                                .map(|tag_name| {
+                                                                    Chip::new(tag_name.clone())
+                                                                        .tooltip(Tooltip::text(
+                                                                            tag_name,
+                                                                        ))
+                                                                }),
                                                         )
                                                         .when(hidden_tag_count > 0, |this| {
-                                                            this.child(Chip::new(format!(
-                                                                "+{hidden_tag_count}"
-                                                            )))
+                                                            let hidden_tag_names = tag_names
+                                                                [MAX_HISTORY_TAG_CHIPS..]
+                                                                .join(", ");
+                                                            this.child(
+                                                                Chip::new(format!(
+                                                                    "+{hidden_tag_count}"
+                                                                ))
+                                                                .tooltip(Tooltip::text(
+                                                                    hidden_tag_names,
+                                                                )),
+                                                            )
                                                         })
                                                 }))
                                                 .when(is_unpushed, |this| {
