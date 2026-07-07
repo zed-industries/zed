@@ -1,8 +1,9 @@
-use std::num::NonZeroUsize;
+use std::{num::NonZeroUsize, time::Duration};
 
 use crate::DockPosition;
 use collections::HashMap;
 use serde::Deserialize;
+use settings::CommandAliasTarget;
 pub use settings::{
     AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
     PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
@@ -20,11 +21,13 @@ pub struct WorkspaceSettings {
     pub show_call_status_icon: bool,
     pub autosave: AutosaveSetting,
     pub restore_on_startup: settings::RestoreOnStartupBehavior,
+    pub cli_default_open_behavior: settings::CliDefaultOpenBehavior,
+    pub default_open_behavior: settings::DefaultOpenBehavior,
     pub restore_on_file_reopen: bool,
     pub drop_target_size: f32,
     pub use_system_path_prompts: bool,
     pub use_system_prompts: bool,
-    pub command_aliases: HashMap<String, String>,
+    pub command_aliases: HashMap<String, CommandAliasTarget>,
     pub max_tabs: Option<NonZeroUsize>,
     pub when_closing_with_no_tabs: settings::CloseWindowWhenNoItems,
     pub on_last_window_closed: settings::OnLastWindowClosed,
@@ -35,6 +38,13 @@ pub struct WorkspaceSettings {
     pub use_system_window_tabs: bool,
     pub zoomed_padding: bool,
     pub window_decorations: settings::WindowDecorations,
+    pub focus_follows_mouse: FocusFollowsMouse,
+}
+
+#[derive(Copy, Clone, Deserialize)]
+pub struct FocusFollowsMouse {
+    pub enabled: bool,
+    pub debounce: Duration,
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, Default)]
@@ -92,6 +102,8 @@ impl Settings for WorkspaceSettings {
             show_call_status_icon: workspace.show_call_status_icon.unwrap(),
             autosave: workspace.autosave.unwrap(),
             restore_on_startup: workspace.restore_on_startup.unwrap(),
+            cli_default_open_behavior: workspace.cli_default_open_behavior.unwrap(),
+            default_open_behavior: workspace.default_open_behavior.unwrap(),
             restore_on_file_reopen: workspace.restore_on_file_reopen.unwrap(),
             drop_target_size: workspace.drop_target_size.unwrap(),
             use_system_path_prompts: workspace.use_system_path_prompts.unwrap(),
@@ -113,6 +125,20 @@ impl Settings for WorkspaceSettings {
             use_system_window_tabs: workspace.use_system_window_tabs.unwrap(),
             zoomed_padding: workspace.zoomed_padding.unwrap(),
             window_decorations: workspace.window_decorations.unwrap(),
+            focus_follows_mouse: FocusFollowsMouse {
+                enabled: workspace
+                    .focus_follows_mouse
+                    .unwrap()
+                    .enabled
+                    .unwrap_or(false),
+                debounce: Duration::from_millis(
+                    workspace
+                        .focus_follows_mouse
+                        .unwrap()
+                        .debounce_ms
+                        .unwrap_or(250),
+                ),
+            },
         }
     }
 }

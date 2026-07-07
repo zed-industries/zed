@@ -4,7 +4,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use collections::HashMap;
-use gpui::SharedString;
+use gpui_shared_string::SharedString;
 use lsp::LanguageServerName;
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
@@ -41,7 +41,6 @@ pub struct Grammar {
     pub injection_config: Option<InjectionConfig>,
     pub override_config: Option<OverrideConfig>,
     pub debug_variables_config: Option<DebugVariablesConfig>,
-    pub imports_config: Option<ImportsConfig>,
     pub highlight_map: Mutex<HighlightMap>,
 }
 
@@ -138,14 +137,25 @@ pub struct RedactionConfig {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum RunnableCapture {
-    Named(SharedString),
+    /// `@run` — marks the node that identifies the runnable (e.g. the test
+    /// function name, the subtest string literal).
     Run,
+    /// `@run_item` — marks one candidate runnable inside a larger grammar
+    /// match. Used by the per-match dispatch pipeline so a single tree-sitter
+    /// match can produce multiple runnables (e.g. Go table-test rows).
+    RunItem,
+    /// Any other named capture, exposed by name to language resolvers and used
+    /// to populate `RunnableRange::extra_captures`.
+    Named(SharedString),
 }
 
 pub struct RunnableConfig {
     pub query: Query,
     /// A mapping from capture index to capture kind
     pub extra_captures: Vec<RunnableCapture>,
+    /// `true` if the query uses `@run_item`, the marker for matches that
+    /// emit multiple runnables.
+    pub supports_grouped_runnables: bool,
 }
 
 pub struct OverrideConfig {
@@ -183,17 +193,6 @@ pub struct BracketsPatternConfig {
 pub struct DebugVariablesConfig {
     pub query: Query,
     pub objects_by_capture_ix: Vec<(u32, DebuggerTextObject)>,
-}
-
-pub struct ImportsConfig {
-    pub query: Query,
-    pub import_ix: u32,
-    pub name_ix: Option<u32>,
-    pub namespace_ix: Option<u32>,
-    pub source_ix: Option<u32>,
-    pub list_ix: Option<u32>,
-    pub wildcard_ix: Option<u32>,
-    pub alias_ix: Option<u32>,
 }
 
 enum Capture<'a> {
@@ -273,7 +272,6 @@ impl Grammar {
             runnable_config: None,
             error_query: Query::new(&ts_language, "(ERROR) @error").ok(),
             debug_variables_config: None,
-            imports_config: None,
             ts_language,
             highlight_map: Default::default(),
         }
@@ -288,20 +286,15 @@ impl Grammar {
     }
 
     pub fn highlight_id_for_name(&self, name: &str) -> Option<HighlightId> {
-        let capture_id = self
-            .highlights_config
+        self.highlights_config
             .as_ref()?
             .query
-            .capture_index_for_name(name)?;
-        Some(self.highlight_map.lock().get(capture_id))
+            .capture_index_for_name(name)
+            .and_then(|capture_id| self.highlight_map.lock().get(capture_id))
     }
 
     pub fn debug_variables_config(&self) -> Option<&DebugVariablesConfig> {
         self.debug_variables_config.as_ref()
-    }
-
-    pub fn imports_config(&self) -> Option<&ImportsConfig> {
-        self.imports_config.as_ref()
     }
 
     /// Load all queries from `LanguageQueries` into this grammar, mutating the
@@ -369,11 +362,6 @@ impl Grammar {
                 .with_debug_variables_query(query.as_ref(), name)
                 .context("Error loading debug variables query")?;
         }
-        if let Some(query) = queries.imports {
-            self = self
-                .with_imports_query(query.as_ref(), name)
-                .context("Error loading imports query")?;
-        }
         Ok(self)
     }
 
@@ -411,13 +399,18 @@ impl Grammar {
             .iter()
             .map(|&name| match name {
                 "run" => RunnableCapture::Run,
+                "run_item" => RunnableCapture::RunItem,
                 name => RunnableCapture::Named(name.to_string().into()),
             })
             .collect();
+        let supports_grouped_runnables = extra_captures
+            .iter()
+            .any(|capture| matches!(capture, RunnableCapture::RunItem));
 
         self.runnable_config = Some(RunnableConfig {
             extra_captures,
             query,
+            supports_grouped_runnables,
         });
 
         Ok(self)
@@ -516,49 +509,6 @@ impl Grammar {
             query,
             objects_by_capture_ix,
         });
-        Ok(self)
-    }
-
-    pub fn with_imports_query(
-        mut self,
-        source: &str,
-        language_name: &LanguageName,
-    ) -> Result<Self> {
-        let query = Query::new(&self.ts_language, source)?;
-
-        let mut import_ix = 0;
-        let mut name_ix = None;
-        let mut namespace_ix = None;
-        let mut source_ix = None;
-        let mut list_ix = None;
-        let mut wildcard_ix = None;
-        let mut alias_ix = None;
-        if populate_capture_indices(
-            &query,
-            language_name,
-            "imports",
-            &[],
-            &mut [
-                Capture::Required("import", &mut import_ix),
-                Capture::Optional("name", &mut name_ix),
-                Capture::Optional("namespace", &mut namespace_ix),
-                Capture::Optional("source", &mut source_ix),
-                Capture::Optional("list", &mut list_ix),
-                Capture::Optional("wildcard", &mut wildcard_ix),
-                Capture::Optional("alias", &mut alias_ix),
-            ],
-        ) {
-            self.imports_config = Some(ImportsConfig {
-                query,
-                import_ix,
-                name_ix,
-                namespace_ix,
-                source_ix,
-                list_ix,
-                wildcard_ix,
-                alias_ix,
-            });
-        }
         Ok(self)
     }
 

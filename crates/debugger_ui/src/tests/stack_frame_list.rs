@@ -1,3 +1,4 @@
+#![expect(clippy::result_large_err)]
 use crate::{
     debugger_panel::DebugPanel,
     session::running::stack_frame_list::{
@@ -17,6 +18,7 @@ use serde_json::json;
 use std::sync::Arc;
 use unindent::Unindent as _;
 use util::{path, rel_path::rel_path};
+use workspace::Item;
 
 #[gpui::test]
 async fn test_fetch_initial_stack_frames_and_go_to_stack_frame(
@@ -333,7 +335,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
             assert_eq!(1, editors.len());
 
             let project_path = editors[0]
-                .update(cx, |editor, cx| editor.project_path(cx))
+                .update(cx, |editor, cx| editor.active_project_path(cx))
                 .unwrap();
             assert_eq!(rel_path("src/test.js"), project_path.path.as_ref());
             assert_eq!(test_file_content, editors[0].read(cx).text(cx));
@@ -343,7 +345,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
                     let snapshot = editor.snapshot(window, cx);
 
                     editor
-                        .highlighted_rows::<editor::ActiveDebugLine>()
+                        .highlighted_rows::<editor::ActiveDebugLine>(cx)
                         .map(|(range, _)| {
                             let start = range.start.to_point(&snapshot.buffer_snapshot());
                             let end = range.end.to_point(&snapshot.buffer_snapshot());
@@ -396,7 +398,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
         assert_eq!(1, editors.len());
 
         let project_path = editors[0]
-            .update(cx, |editor, cx| editor.project_path(cx))
+            .update(cx, |editor, cx| editor.active_project_path(cx))
             .unwrap();
         assert_eq!(rel_path("src/module.js"), project_path.path.as_ref());
         assert_eq!(module_file_content, editors[0].read(cx).text(cx));
@@ -406,7 +408,7 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
                 let snapshot = editor.snapshot(window, cx);
 
                 editor
-                    .highlighted_rows::<editor::ActiveDebugLine>()
+                    .highlighted_rows::<editor::ActiveDebugLine>(cx)
                     .map(|(range, _)| {
                         let start = range.start.to_point(&snapshot.buffer_snapshot());
                         let end = range.end.to_point(&snapshot.buffer_snapshot());
