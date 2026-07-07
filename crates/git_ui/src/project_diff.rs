@@ -970,14 +970,9 @@ pub(crate) fn render_send_review_to_agent_button(
 
 #[cfg(test)]
 mod tests {
-    use crate::diff_multibuffer::project_diff_path_key;
     use buffer_diff::DiffHunkSecondaryStatus;
     use db::indoc;
     use editor::test::editor_test_context::{EditorTestContext, assert_state_with_diff};
-    use git::{
-        repository::RepoPath,
-        status::{FileStatus, UnmergedStatus, UnmergedStatusCode},
-    };
     use gpui::TestAppContext;
     use multi_buffer::PathKey;
     use project::FakeFs;
@@ -1915,72 +1910,6 @@ mod tests {
         // `src/foo.rs`.
         let paths = diff.read_with(cx, |diff, cx| diff.excerpt_file_paths(cx));
         assert_eq!(paths, vec!["lib/foo.rs", "src/foo.rs", "m.rs"]);
-    }
-
-    #[gpui::test]
-    async fn test_staging_group_orders_conflicts_staged_then_unstaged(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        cx.update(|cx| {
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.git_panel.get_or_insert_default().group_by =
-                        Some(GitPanelGroupBy::Staging);
-                });
-            });
-        });
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/project"),
-            json!({
-                ".git": {},
-                "a_unstaged.rs": "unstaged\n",
-                "m_staged.rs": "staged\n",
-                "z_conflict.rs": "conflict\n",
-            }),
-        )
-        .await;
-        let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
-        cx.run_until_parked();
-
-        let repository = project.read_with(cx, |project, cx| {
-            project
-                .repositories(cx)
-                .values()
-                .next()
-                .cloned()
-                .expect("repository should exist")
-        });
-
-        let (conflict_key, staged_key, unstaged_key) = cx.update(|cx| {
-            let repository = repository.read(cx);
-            let conflict_key = project_diff_path_key(
-                repository,
-                &RepoPath::from_rel_path(rel_path("z_conflict.rs")),
-                FileStatus::Unmerged(UnmergedStatus {
-                    first_head: UnmergedStatusCode::Updated,
-                    second_head: UnmergedStatusCode::Updated,
-                }),
-                cx,
-            );
-            let staged_key = project_diff_path_key(
-                repository,
-                &RepoPath::from_rel_path(rel_path("m_staged.rs")),
-                FileStatus::index(git::status::StatusCode::Modified),
-                cx,
-            );
-            let unstaged_key = project_diff_path_key(
-                repository,
-                &RepoPath::from_rel_path(rel_path("a_unstaged.rs")),
-                git::status::StatusCode::Modified.worktree(),
-                cx,
-            );
-            (conflict_key, staged_key, unstaged_key)
-        });
-
-        assert!(conflict_key < staged_key);
-        assert!(staged_key < unstaged_key);
     }
 
     #[gpui::test]

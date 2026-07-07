@@ -929,8 +929,6 @@ impl Render for DiffMultibuffer {
 const CONFLICT_SORT_PREFIX: u64 = 1;
 const TRACKED_SORT_PREFIX: u64 = 2;
 const NEW_SORT_PREFIX: u64 = 3;
-const STAGED_SORT_PREFIX: u64 = 2;
-const UNSTAGED_SORT_PREFIX: u64 = 3;
 
 /// Computes a stable [`PathKey`] for a buffer in the project diff.
 ///
@@ -953,9 +951,6 @@ pub(crate) fn project_diff_path_key(
 ) -> PathKey {
     let settings = GitPanelSettings::get_global(cx);
     let sort_prefix = match settings.group_by {
-        GitPanelGroupBy::Staging if status.is_conflicted() => CONFLICT_SORT_PREFIX,
-        GitPanelGroupBy::Staging if status.staging().has_staged() => STAGED_SORT_PREFIX,
-        GitPanelGroupBy::Staging => UNSTAGED_SORT_PREFIX,
         GitPanelGroupBy::Status if repo.had_conflict_on_last_merge_head_change(repo_path) => {
             CONFLICT_SORT_PREFIX
         }
