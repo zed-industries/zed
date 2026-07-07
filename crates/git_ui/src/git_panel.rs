@@ -58,7 +58,8 @@ use project::git_store::GitAccess;
 use project::{
     Fs, Project, ProjectPath,
     git_store::{
-        CommitDataState, GitStoreEvent, Repository, RepositoryEvent, RepositoryId, pending_op,
+        CommitDataState, GitGraphEvent, GitStoreEvent, Repository, RepositoryEvent, RepositoryId,
+        pending_op,
     },
     project_settings::{GitPathStyle, ProjectSettings},
 };
@@ -805,6 +806,7 @@ pub struct GitPanel {
     active_tab: GitPanelTab,
     commit_history_scroll_handle: UniformListScrollHandle,
     commit_history_shas: Option<Vec<Oid>>,
+    commit_history_loading: bool,
     focused_history_entry: Option<usize>,
     history_keyboard_nav: bool,
     _commit_message_buffer_subscription: Option<Subscription>,
@@ -1088,6 +1090,7 @@ impl GitPanel {
                 active_tab: GitPanelTab::Changes,
                 commit_history_scroll_handle: UniformListScrollHandle::new(),
                 commit_history_shas: None,
+                commit_history_loading: false,
                 focused_history_entry: None,
                 history_keyboard_nav: false,
                 _commit_message_buffer_subscription: None,
@@ -5681,7 +5684,9 @@ impl GitPanel {
                 .commit_history_shas
                 .as_ref()
                 .map_or(false, |shas| !shas.is_empty());
-            let is_loading = self.commit_history_shas.is_none() && has_repo;
+            let is_loading = has_repo
+                && !has_commits
+                && (self.commit_history_shas.is_none() || self.commit_history_loading);
             if is_loading {
                 this.child(
                     h_flex()
@@ -5795,6 +5800,7 @@ impl GitPanel {
             GitPanelTab::Changes => {
                 self.focus_handle.focus(window, cx);
                 self.commit_history_shas.take();
+                self.commit_history_loading = false;
                 self.focused_history_entry = None;
                 self._repo_subscriptions.clear();
             }
@@ -5836,9 +5842,15 @@ impl GitPanel {
             self._repo_subscriptions.push(cx.subscribe(
                 active_repository,
                 |this, _repo, event, cx| {
-                    if let RepositoryEvent::GraphEvent(_, _) = event {
+                    if let RepositoryEvent::GraphEvent(_, event) = event {
                         if this.active_tab == GitPanelTab::History {
                             this.fetch_commit_history_shas(cx);
+                            if matches!(
+                                event,
+                                GitGraphEvent::FullyLoaded | GitGraphEvent::LoadingError
+                            ) {
+                                this.commit_history_loading = false;
+                            }
                         }
                     }
                 },
@@ -5866,15 +5878,21 @@ impl GitPanel {
         };
         let Some(log_source) = log_source else {
             self.commit_history_shas = Some(Vec::new());
+            self.commit_history_loading = false;
             return;
         };
 
         let log_order = LogOrder::DateOrder;
 
-        self.commit_history_shas = Some(active_repository.update(cx, |repository, cx| {
+        let (shas, is_loading) = active_repository.update(cx, |repository, cx| {
             let response = repository.graph_data(log_source, log_order, 0..usize::MAX, cx);
-            response.commits.iter().map(|commit| commit.sha).collect()
-        }));
+            (
+                response.commits.iter().map(|commit| commit.sha).collect(),
+                response.is_loading,
+            )
+        });
+        self.commit_history_shas = Some(shas);
+        self.commit_history_loading = is_loading;
     }
 
     fn commit_history_log_source(
