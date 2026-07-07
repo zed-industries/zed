@@ -823,8 +823,7 @@ fn preview_form_schema() -> acp::ElicitationSchema {
                         .description("Use the live account and production resources."),
                     acp::EnumOption::new("staging", "Staging")
                         .description("Validate changes against staging data first."),
-                    acp::EnumOption::new("development", "Development")
-                        .description("Use local or development-only resources."),
+                    acp::EnumOption::new("development", "Development"),
                 ])
                 .default_value("staging"),
             true,
@@ -836,8 +835,7 @@ fn preview_form_schema() -> acp::ElicitationSchema {
                     .description("Read account identity and basic profile details."),
                 acp::EnumOption::new("repository", "Repository Access")
                     .description("Read and update repositories connected to this account."),
-                acp::EnumOption::new("terminal", "Terminal Commands")
-                    .description("Run terminal commands that the agent requests."),
+                acp::EnumOption::new("terminal", "Terminal Commands"),
             ])
             .title("Access")
             .description("Choose what the agent can use for this authorization.")
