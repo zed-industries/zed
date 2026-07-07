@@ -302,6 +302,8 @@ pub enum ComponentScope {
     #[strum(serialize = "Data Display")]
     DataDisplay,
     Editor,
+    #[strum(serialize = "Edit Predictions")]
+    EditPredictions,
     #[strum(serialize = "Images & Icons")]
     Images,
     #[strum(serialize = "Forms & Input")]
