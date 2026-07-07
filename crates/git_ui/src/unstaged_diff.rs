@@ -8,7 +8,7 @@ use editor::{
     DiffHunkDelegate, Editor, EditorEvent, ResolvedDiffHunks, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk},
 };
-use git::{Commit, StageAll, StageAndNext};
+use git::{StageAll, StageAndNext};
 use gpui::{
     Action, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Render,
     SharedString, Subscription, Task, WeakEntity,
@@ -693,30 +693,16 @@ impl Render for UnstagedDiffToolbar {
             )
             .child(vertical_divider())
             .child(
-                h_group_sm()
-                    .child(
-                        Button::new("stage-all", "Stage All")
-                            .disabled(!button_states.stage_all)
-                            .tooltip(Tooltip::for_action_title_in(
-                                "Stage all changes",
-                                &StageAll,
-                                &focus_handle,
-                            ))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.stage_all(window, cx)),
-                            ),
-                    )
-                    .child(
-                        Button::new("commit", "Commit")
-                            .tooltip(Tooltip::for_action_title_in(
-                                "Commit",
-                                &Commit,
-                                &focus_handle,
-                            ))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&Commit, window, cx);
-                            })),
-                    ),
+                h_group_sm().child(
+                    Button::new("stage-all", "Stage All")
+                        .disabled(!button_states.stage_all)
+                        .tooltip(Tooltip::for_action_title_in(
+                            "Stage all changes",
+                            &StageAll,
+                            &focus_handle,
+                        ))
+                        .on_click(cx.listener(|this, _, window, cx| this.stage_all(window, cx))),
+                ),
             )
     }
 }
