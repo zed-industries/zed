@@ -3245,25 +3245,14 @@ impl Project {
             .update(cx, |git_store, cx| git_store.open_unstaged_diff(buffer, cx))
     }
 
-    #[ztracing::instrument(skip_all)]
-    pub fn index_text_buffer(
-        &mut self,
-        buffer: Entity<Buffer>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Buffer>>> {
-        if self.is_disconnected(cx) {
-            return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
-        }
-        self.git_store
-            .update(cx, |git_store, cx| git_store.index_text_buffer(buffer, cx))
-    }
-
+    /// Opens the staged (HEAD-vs-index) diff for the given buffer, along with
+    /// the index text buffer that is the diff's main buffer.
     #[ztracing::instrument(skip_all)]
     pub fn open_staged_diff(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<BufferDiff>>> {
+    ) -> Task<Result<(Entity<BufferDiff>, Entity<Buffer>)>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
         }
@@ -3326,7 +3315,6 @@ impl Project {
     /// staged-changes view.
     pub fn unstage_staged_hunks(
         &mut self,
-        buffer: Entity<Buffer>,
         staged_diff: Entity<BufferDiff>,
         index_ranges: Vec<Range<Anchor>>,
         cx: &mut Context<Self>,
@@ -3335,21 +3323,7 @@ impl Project {
             return Err(anyhow!(ErrorCode::Disconnected));
         }
         self.git_store.update(cx, |git_store, cx| {
-            git_store.unstage_staged_hunks(buffer, staged_diff, index_ranges, cx)
-        })
-    }
-
-    pub fn unstage_staged_hunks_for_staged_diff(
-        &mut self,
-        staged_diff: Entity<BufferDiff>,
-        index_ranges: Vec<Range<Anchor>>,
-        cx: &mut Context<Self>,
-    ) -> Result<()> {
-        if self.is_disconnected(cx) {
-            return Err(anyhow!(ErrorCode::Disconnected));
-        }
-        self.git_store.update(cx, |git_store, cx| {
-            git_store.unstage_staged_hunks_for_staged_diff(staged_diff, index_ranges, cx)
+            git_store.unstage_staged_hunks(staged_diff, index_ranges, cx)
         })
     }
 

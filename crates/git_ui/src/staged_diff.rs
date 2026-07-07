@@ -71,7 +71,7 @@ impl DiffHunkDelegate for StagedDiffDelegate {
             }
             project
                 .update(cx, |project, cx| {
-                    project.unstage_staged_hunks_for_staged_diff(hunks.diff, index_ranges, cx)
+                    project.unstage_staged_hunks(hunks.diff, index_ranges, cx)
                 })
                 .log_err();
         }

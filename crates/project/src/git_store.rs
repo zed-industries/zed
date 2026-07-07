@@ -106,6 +106,7 @@ pub struct GitStore {
     loading_diffs:
         HashMap<(BufferId, DiffKind), Shared<Task<Result<Entity<BufferDiff>, Arc<anyhow::Error>>>>>,
     diffs: HashMap<BufferId, Entity<BufferGitState>>,
+    buffer_ids_by_index_text_buffer_id: HashMap<BufferId, BufferId>,
     shared_diffs: HashMap<proto::PeerId, HashMap<BufferId, SharedDiffs>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -743,6 +744,7 @@ impl GitStore {
             loading_diffs: HashMap::default(),
             shared_diffs: HashMap::default(),
             diffs: HashMap::default(),
+            buffer_ids_by_index_text_buffer_id: HashMap::default(),
         }
     }
 
@@ -1049,62 +1051,17 @@ impl GitStore {
         cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
     }
 
-    pub fn index_text_buffer(
-        &mut self,
-        buffer: Entity<Buffer>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<Buffer>>> {
-        let buffer_id = buffer.read(cx).remote_id();
-
-        if let Some(diff_state) = self.diffs.get(&buffer_id)
-            && let Some(index_text_buffer) = diff_state.read(cx).index_text_buffer()
-        {
-            if let Some(task) =
-                diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
-            {
-                return cx.background_executor().spawn(async move {
-                    task.await;
-                    Ok(index_text_buffer)
-                });
-            }
-            return Task::ready(Ok(index_text_buffer));
-        }
-
-        let Some((repo, repo_path)) =
-            self.repository_and_path_for_buffer_id(buffer.read(cx).remote_id(), cx)
-        else {
-            return Task::ready(Err(anyhow!("failed to find git repository for buffer")));
-        };
-
-        let is_symlink = Self::buffer_is_symlink(&buffer, cx);
-        let staged_text = if is_symlink {
-            Task::ready(Ok(None))
-        } else {
-            repo.update(cx, |repo, cx| {
-                repo.load_staged_text(buffer_id, repo_path, cx)
-            })
-        };
-
-        cx.spawn(async move |this, cx| {
-            Self::open_index_text_buffer_internal(
-                this,
-                staged_text.await.map(DiffBasesChange::SetIndex),
-                buffer,
-                cx,
-            )
-            .await
-        })
-    }
-
+    /// Opens the staged (HEAD-vs-index) diff for the given buffer, along with
+    /// the index text buffer that is the diff's main buffer.
     pub fn open_staged_diff(
         &mut self,
         buffer: Entity<Buffer>,
         cx: &mut Context<Self>,
-    ) -> Task<Result<Entity<BufferDiff>>> {
+    ) -> Task<Result<(Entity<BufferDiff>, Entity<Buffer>)>> {
         let buffer_id = buffer.read(cx).remote_id();
 
         if let Some(diff_state) = self.diffs.get(&buffer_id)
-            && let Some(staged_diff) = diff_state.read(cx).staged_diff()
+            && let Some(staged_diff) = diff_state.read(cx).staged_diff_and_index_text_buffer()
         {
             if let Some(task) =
                 diff_state.update(cx, |diff_state, _| diff_state.wait_for_recalculation())
@@ -1140,7 +1097,20 @@ impl GitStore {
             })
             .clone();
 
-        cx.background_spawn(async move { task.await.map_err(|e| anyhow!("{e}")) })
+        cx.spawn(async move |this, cx| {
+            let diff = task.await.map_err(|e| anyhow!("{e}"))?;
+            this.update(cx, |this, cx| {
+                let index_text_buffer = this
+                    .diffs
+                    .get(&buffer_id)
+                    .and_then(|diff_state| {
+                        let (_, index_text_buffer) = diff_state.read(cx).staged_diff.as_ref()?;
+                        Some(index_text_buffer.clone())
+                    })
+                    .context("index text buffer missing after opening staged diff")?;
+                Ok((diff, index_text_buffer))
+            })?
+        })
     }
 
     /// Stages the worktree changes covered by `worktree_ranges`, acting on the
@@ -1324,47 +1294,13 @@ impl GitStore {
         Ok(())
     }
 
-    /// Unstages staged (HEAD-vs-index) hunks covered by `index_ranges`, acting on
-    /// the given staged diff, invoked from the staged-changes view. The acted-on
-    /// hunks already carry an index range, so no projection is needed;
-    /// optimistically suppresses them from the staged diff.
+    /// Unstages staged (HEAD-vs-index) hunks covered by `index_ranges` (in the
+    /// index text buffer's coordinates), acting on the given staged diff,
+    /// invoked from the staged-changes view. The acted-on hunks already carry
+    /// an index range, so no projection is needed; optimistically suppresses
+    /// them from the staged diff.
     pub fn unstage_staged_hunks(
         &mut self,
-        buffer: Entity<Buffer>,
-        staged_diff: Entity<BufferDiff>,
-        index_ranges: Vec<Range<Anchor>>,
-        cx: &mut Context<Self>,
-    ) -> Result<()> {
-        let buffer_id = buffer.read(cx).remote_id();
-        self.unstage_staged_hunks_for_buffer_id(buffer_id, staged_diff, index_ranges, cx)
-    }
-
-    pub fn unstage_staged_hunks_for_staged_diff(
-        &mut self,
-        staged_diff: Entity<BufferDiff>,
-        index_ranges: Vec<Range<Anchor>>,
-        cx: &mut Context<Self>,
-    ) -> Result<()> {
-        let staged_diff_entity_id = staged_diff.entity_id();
-        let buffer_id = self
-            .diffs
-            .iter()
-            .find_map(|(buffer_id, diff_state)| {
-                diff_state
-                    .read(cx)
-                    .staged_diff
-                    .as_ref()
-                    .and_then(|(diff, _)| diff.upgrade())
-                    .is_some_and(|diff| diff.entity_id() == staged_diff_entity_id)
-                    .then_some(*buffer_id)
-            })
-            .context("failed to find git state for staged diff")?;
-        self.unstage_staged_hunks_for_buffer_id(buffer_id, staged_diff, index_ranges, cx)
-    }
-
-    fn unstage_staged_hunks_for_buffer_id(
-        &mut self,
-        buffer_id: BufferId,
         staged_diff: Entity<BufferDiff>,
         index_ranges: Vec<Range<Anchor>>,
         cx: &mut Context<Self>,
@@ -1372,6 +1308,11 @@ impl GitStore {
         if index_ranges.is_empty() {
             return Ok(());
         }
+        let index_buffer_id = staged_diff.read(cx).buffer_id;
+        let buffer_id = *self
+            .buffer_ids_by_index_text_buffer_id
+            .get(&index_buffer_id)
+            .context("failed to find git state for index text buffer")?;
         let diff_state = self
             .diffs
             .get(&buffer_id)
@@ -1578,55 +1519,6 @@ impl GitStore {
     }
 
     #[ztracing::instrument(skip_all)]
-    async fn open_index_text_buffer_internal(
-        this: WeakEntity<Self>,
-        diff_bases_change: Result<DiffBasesChange>,
-        buffer_entity: Entity<Buffer>,
-        cx: &mut AsyncApp,
-    ) -> Result<Entity<Buffer>> {
-        let diff_bases_change = diff_bases_change?;
-        this.update(cx, |this, cx| {
-            let buffer = buffer_entity.read(cx);
-            let buffer_id = buffer.remote_id();
-            let language = buffer.language().cloned();
-            let language_registry = buffer.language_registry();
-            let text_snapshot = buffer.text_snapshot();
-            let index_text_file = buffer.file().map(|file| {
-                Arc::new(IndexTextFile::new(file.as_ref(), cx)) as Arc<dyn language::File>
-            });
-
-            let git_store = cx.weak_entity();
-            let diff_state = this
-                .diffs
-                .entry(buffer_id)
-                .or_insert_with(|| cx.new(|cx| BufferGitState::new(git_store, cx)));
-            let index_text_buffer = diff_state.update(cx, |diff_state, cx| {
-                diff_state.index_text_buffer_language_enabled = true;
-                diff_state.language = language.clone();
-                diff_state.language_registry = language_registry.clone();
-                let index_text_buffer =
-                    diff_state.get_or_create_index_text_buffer(index_text_file, cx);
-                index_text_buffer.update(cx, |index_text_buffer, cx| {
-                    if let Some(language_registry) = language_registry.clone() {
-                        index_text_buffer.set_language_registry(language_registry);
-                    }
-                    index_text_buffer.set_language_async(language, cx);
-                });
-                diff_state.diff_bases_changed(text_snapshot, Some(diff_bases_change), cx);
-                let rx = diff_state.wait_for_recalculation();
-                async move {
-                    if let Some(rx) = rx {
-                        rx.await;
-                    }
-                    Ok(index_text_buffer)
-                }
-            });
-            anyhow::Ok(index_text_buffer)
-        })??
-        .await
-    }
-
-    #[ztracing::instrument(skip_all)]
     async fn open_diff_internal(
         this: WeakEntity<Self>,
         kind: DiffKind,
@@ -1729,7 +1621,7 @@ impl GitStore {
                 };
                 diff
             };
-            diff_state.update(cx, |diff_state, cx| {
+            let rx = diff_state.update(cx, |diff_state, cx| {
                 diff_state.language = language;
                 diff_state.language_registry = language_registry;
 
@@ -1782,7 +1674,15 @@ impl GitStore {
                     }
                     Ok(diff)
                 })
-            })
+            });
+            let diff_state = this.diffs.get(&buffer_id).cloned();
+            if let Some(index_text_buffer) =
+                diff_state.and_then(|diff_state| diff_state.read(cx).index_text_buffer())
+            {
+                this.buffer_ids_by_index_text_buffer_id
+                    .insert(index_text_buffer.read(cx).remote_id(), buffer_id);
+            }
+            rx
         })??
         .await
     }
@@ -2484,6 +2384,8 @@ impl GitStore {
             }
             BufferStoreEvent::BufferDropped(buffer_id) => {
                 self.diffs.remove(buffer_id);
+                self.buffer_ids_by_index_text_buffer_id
+                    .retain(|_, main_buffer_id| main_buffer_id != buffer_id);
                 for diffs in self.shared_diffs.values_mut() {
                     diffs.remove(buffer_id);
                 }
@@ -4552,6 +4454,11 @@ impl BufferGitState {
 
     fn staged_diff(&self) -> Option<Entity<BufferDiff>> {
         self.staged_diff.as_ref().and_then(|(set, _)| set.upgrade())
+    }
+
+    fn staged_diff_and_index_text_buffer(&self) -> Option<(Entity<BufferDiff>, Entity<Buffer>)> {
+        let (diff, index_text_buffer) = self.staged_diff.as_ref()?;
+        Some((diff.upgrade()?, index_text_buffer.clone()))
     }
 
     fn uncommitted_diff(&self) -> Option<Entity<BufferDiff>> {

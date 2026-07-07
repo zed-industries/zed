@@ -449,14 +449,9 @@ impl DiffBufferList {
                     (buffer, diff)
                 }
                 DiffBase::Staged => {
-                    let diff = project
+                    let (diff, index_buffer) = project
                         .update(cx, |project, cx| {
                             project.open_staged_diff(buffer.clone(), cx)
-                        })?
-                        .await?;
-                    let index_buffer = project
-                        .update(cx, |project, cx| {
-                            project.index_text_buffer(buffer.clone(), cx)
                         })?
                         .await?;
                     (index_buffer, diff)

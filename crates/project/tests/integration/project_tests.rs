@@ -9676,15 +9676,9 @@ async fn test_staged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    let staged_diff = project
+    let (staged_diff, index_text_buffer) = project
         .update(cx, |project, cx| {
             project.open_staged_diff(buffer.clone(), cx)
-        })
-        .await
-        .unwrap();
-    let index_text_buffer = project
-        .update(cx, |project, cx| {
-            project.index_text_buffer(buffer.clone(), cx)
         })
         .await
         .unwrap();
@@ -9886,7 +9880,7 @@ async fn test_staged_diff_without_unstaged_diff(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let staged_diff = project
+    let (staged_diff, _) = project
         .update(cx, |project, cx| {
             project.open_staged_diff(buffer.clone(), cx)
         })
@@ -11209,7 +11203,7 @@ async fn test_staging_random_hunks_with_edits(
         })
         .await
         .unwrap();
-    let staged_diff = project
+    let (staged_diff, index_buffer) = project
         .update(cx, |project, cx| {
             project.open_staged_diff(buffer.clone(), cx)
         })
@@ -11218,12 +11212,6 @@ async fn test_staging_random_hunks_with_edits(
     let uncommitted_diff = project
         .update(cx, |project, cx| {
             project.open_uncommitted_diff(buffer.clone(), cx)
-        })
-        .await
-        .unwrap();
-    let index_buffer = project
-        .update(cx, |project, cx| {
-            project.index_text_buffer(buffer.clone(), cx)
         })
         .await
         .unwrap();
@@ -11264,12 +11252,7 @@ async fn test_staging_random_hunks_with_edits(
                 log::info!("unstaging index rows {rows:?} via the staged diff");
                 project
                     .update(cx, |project, cx| {
-                        project.unstage_staged_hunks(
-                            buffer.clone(),
-                            staged_diff.clone(),
-                            vec![range],
-                            cx,
-                        )
+                        project.unstage_staged_hunks(staged_diff.clone(), vec![range], cx)
                     })
                     .unwrap();
             }
@@ -11384,7 +11367,6 @@ async fn test_staging_random_hunks_with_edits(
                         project
                             .update(cx, |project, cx| {
                                 project.unstage_staged_hunks(
-                                    buffer.clone(),
                                     staged_diff.clone(),
                                     vec![index_full_range],
                                     cx,
@@ -11412,7 +11394,6 @@ async fn test_staging_random_hunks_with_edits(
                         project
                             .update(cx, |project, cx| {
                                 project.unstage_staged_hunks(
-                                    buffer.clone(),
                                     staged_diff.clone(),
                                     vec![index_full_range],
                                     cx,
@@ -11524,7 +11505,7 @@ async fn test_staging_random_hunks_with_edits(
         })
         .await
         .unwrap();
-    let staged_diff = project
+    let (staged_diff, _) = project
         .update(cx, |project, cx| {
             project.open_staged_diff(buffer.clone(), cx)
         })
