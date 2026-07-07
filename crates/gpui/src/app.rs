@@ -195,6 +195,17 @@ impl Application {
         self
     }
 
+    /// Returns a strong handle to the underlying app state.
+    ///
+    /// On platforms whose `Platform::run` blocks for the lifetime of the app, the app is kept
+    /// alive by the stack frame of [`Application::run`]. Embedded platforms (where the run loop
+    /// is driven externally, e.g. GPUI compiled into a Wasm guest) return from `Platform::run`
+    /// immediately, so they must hold this handle to keep the app alive.
+    #[doc(hidden)]
+    pub fn app_cell(&self) -> Rc<AppCell> {
+        self.0.clone()
+    }
+
     /// Start the application. The provided callback will be called once the
     /// app is fully launched.
     pub fn run<F>(self, on_finish_launching: F)
