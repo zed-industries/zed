@@ -218,6 +218,18 @@ pub struct OpenCodeSettingsContent {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
+pub enum OpenCodeApiProtocol {
+    #[serde(rename = "anthropic")]
+    Anthropic,
+    #[serde(rename = "openai_responses", alias = "open_ai_responses")]
+    OpenAiResponses,
+    #[serde(rename = "openai_chat", alias = "open_ai_chat")]
+    OpenAiChat,
+    #[serde(rename = "google")]
+    Google,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema, MergeFrom)]
 #[serde(rename_all = "snake_case")]
 pub enum OpenCodeModelSubscription {
     Zen,
@@ -232,8 +244,8 @@ pub struct OpenCodeAvailableModel {
     pub display_name: Option<String>,
     pub max_tokens: u64,
     pub max_output_tokens: Option<u64>,
-    /// The API protocol to use for this model: "anthropic", "openai_responses", "openai_chat", or "google".
-    pub protocol: String,
+    /// The API protocol to use for this model: "anthropic", "openai_responses", "openai_chat", or "google". Defaults to "openai_chat".
+    pub protocol: Option<OpenCodeApiProtocol>,
     /// The subscription for this model: "zen", "go", or "free". Defaults to Zen.
     pub subscription: Option<OpenCodeModelSubscription>,
     /// Custom Model API URL to use for this model.
