@@ -516,7 +516,9 @@ pub enum CopilotChatStatus {
     /// Still loading a previously-stored token from the keychain.
     Starting,
     SignedOut,
-    SigningIn { device_flow: DeviceFlow },
+    SigningIn {
+        device_flow: DeviceFlow,
+    },
     Authorized,
     Error(Arc<str>),
 }
@@ -532,11 +534,7 @@ pub struct CopilotChat {
     sign_in_task: Option<Task<()>>,
 }
 
-pub fn init(
-    client: Arc<dyn HttpClient>,
-    configuration: CopilotChatConfiguration,
-    cx: &mut App,
-) {
+pub fn init(client: Arc<dyn HttpClient>, configuration: CopilotChatConfiguration, cx: &mut App) {
     let credentials_provider = zed_credentials_provider::global(cx);
     let copilot_chat =
         cx.new(|cx| CopilotChat::new(client, credentials_provider, configuration, cx));
@@ -898,7 +896,6 @@ impl CopilotChat {
             .detach();
         }
     }
-
 }
 
 async fn get_models(

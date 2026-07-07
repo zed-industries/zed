@@ -80,8 +80,8 @@ pub async fn request_device_code(
 
     let mut body = Vec::new();
     response.body_mut().read_to_end(&mut body).await?;
-    let parsed: DeviceCodeResponse = serde_json::from_slice(&body)
-        .context("Failed to parse GitHub device-code response")?;
+    let parsed: DeviceCodeResponse =
+        serde_json::from_slice(&body).context("Failed to parse GitHub device-code response")?;
 
     Ok(DeviceFlow {
         user_code: parsed.user_code,

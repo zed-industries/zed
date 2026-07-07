@@ -136,7 +136,11 @@ impl Render for EditPredictionButton {
                                 }
                             }))
                             .tooltip(|_window, cx| {
-                                Tooltip::for_action("GitHub Copilot Edit Predictions", &ToggleMenu, cx)
+                                Tooltip::for_action(
+                                    "GitHub Copilot Edit Predictions",
+                                    &ToggleMenu,
+                                    cx,
+                                )
                             }),
                     );
                 }
@@ -657,20 +661,26 @@ impl EditPredictionButton {
         let project = self.project.clone();
         ContextMenu::build(window, cx, |menu, _, cx| {
             let menu = menu
-                .entry("Sign In to Copilot Edit Predictions", None, move |window, cx| {
-                    telemetry::event!(
-                        "Edit Prediction Menu Action",
-                        action = "sign_in",
-                        provider = "copilot",
-                    );
-                    if let Some(copilot) = EditPredictionStore::try_global(cx).and_then(|store| {
-                        store.update(cx, |this, cx| {
-                            this.start_copilot_for_project(&project.upgrade()?, cx)
-                        })
-                    }) {
-                        copilot_ui::initiate_sign_in(copilot, window, cx);
-                    }
-                })
+                .entry(
+                    "Sign In to Copilot Edit Predictions",
+                    None,
+                    move |window, cx| {
+                        telemetry::event!(
+                            "Edit Prediction Menu Action",
+                            action = "sign_in",
+                            provider = "copilot",
+                        );
+                        if let Some(copilot) =
+                            EditPredictionStore::try_global(cx).and_then(|store| {
+                                store.update(cx, |this, cx| {
+                                    this.start_copilot_for_project(&project.upgrade()?, cx)
+                                })
+                            })
+                        {
+                            copilot_ui::initiate_sign_in(copilot, window, cx);
+                        }
+                    },
+                )
                 .entry("Disable Copilot Edit Predictions", None, {
                     let fs = fs.clone();
                     move |_window, cx| {

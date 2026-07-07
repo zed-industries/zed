@@ -17,8 +17,7 @@ use util::ResultExt as _;
 use workspace::{AppState, Toast, Workspace, notifications::NotificationId};
 
 const COPILOT_SIGN_UP_URL: &str = "https://github.com/features/copilot";
-const ERROR_LABEL: &str =
-    "Copilot Edit Predictions had issues starting. You can try reinstalling it and signing in again.";
+const ERROR_LABEL: &str = "Copilot Edit Predictions had issues starting. You can try reinstalling it and signing in again.";
 
 struct CopilotStatusToast;
 
@@ -33,11 +32,9 @@ pub fn initiate_sign_out(copilot: Entity<Copilot>, window: &mut Window, cx: &mut
     let sign_out_task = copilot.update(cx, |copilot, cx| copilot.sign_out(cx));
     window
         .spawn(cx, async move |cx| match sign_out_task.await {
-            Ok(()) => {
-                cx.update(|window, cx| {
-                    copilot_toast(Some("Signed out of Copilot Edit Predictions"), window, cx)
-                })
-            }
+            Ok(()) => cx.update(|window, cx| {
+                copilot_toast(Some("Signed out of Copilot Edit Predictions"), window, cx)
+            }),
             Err(err) => cx.update(|window, cx| {
                 if let Some(workspace) = Workspace::for_window(window, cx) {
                     workspace.update(cx, |workspace, cx| {
@@ -290,8 +287,10 @@ impl CopilotCodeVerification {
                     .size(HeadlineSize::Large),
             )
             .child(
-                Label::new("Using Copilot edit predictions requires an active subscription on GitHub.")
-                    .color(Color::Muted),
+                Label::new(
+                    "Using Copilot edit predictions requires an active subscription on GitHub.",
+                )
+                .color(Color::Muted),
             )
             .child(Self::render_device_code(data, cx))
             .child(
@@ -373,7 +372,9 @@ impl CopilotCodeVerification {
             .text_center()
             .justify_center()
             .child(Headline::new("Copilot Edit Predictions Enabled!").size(HeadlineSize::Large))
-            .child(Label::new("You're all set to use Copilot edit predictions.").color(Color::Muted))
+            .child(
+                Label::new("You're all set to use Copilot edit predictions.").color(Color::Muted),
+            )
             .child(
                 Button::new("copilot-enabled-done-button", "Done")
                     .full_width()
@@ -423,18 +424,19 @@ impl CopilotCodeVerification {
             .child(Headline::new("An Error Happened").size(HeadlineSize::Large))
             .child(Label::new(ERROR_LABEL).color(Color::Muted))
             .child(
-                Button::new("copilot-subscribe-button", "Reinstall Copilot Edit Predictions and Sign In")
-                    .full_width()
-                    .style(ButtonStyle::Outlined)
-                    .size(ButtonSize::Medium)
-                    .start_icon(
-                        Icon::new(IconName::Download)
-                            .size(IconSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .on_click(move |_, window, cx| {
-                        reinstall_and_sign_in(copilot.clone(), window, cx)
-                    }),
+                Button::new(
+                    "copilot-subscribe-button",
+                    "Reinstall Copilot Edit Predictions and Sign In",
+                )
+                .full_width()
+                .style(ButtonStyle::Outlined)
+                .size(ButtonSize::Medium)
+                .start_icon(
+                    Icon::new(IconName::Download)
+                        .size(IconSize::Small)
+                        .color(Color::Muted),
+                )
+                .on_click(move |_, window, cx| reinstall_and_sign_in(copilot.clone(), window, cx)),
             )
     }
 
@@ -968,7 +970,6 @@ impl ConfigurationView {
 
         if let Some(msg) = self.loading_message() {
             container(
-
                 start_label,
                 self.render_loading_button(msg, true).into_any_element(),
             )

@@ -1286,9 +1286,7 @@ impl Copilot {
     }
 
     fn update_action_visibilities(&self, cx: &mut App) {
-        let signed_in_actions = [
-            TypeId::of::<Reinstall>(),
-        ];
+        let signed_in_actions = [TypeId::of::<Reinstall>()];
 
         let is_ai_disabled = DisableAiSettings::get_global(cx).disable_ai;
         let filter = CommandPaletteFilter::global_mut(cx);
@@ -1354,8 +1352,6 @@ fn notify_did_change_config_to_server(
         .ok();
     Ok(())
 }
-
-
 
 async fn clear_copilot_dir() {
     remove_matching(paths::copilot_dir(), |_| true).await

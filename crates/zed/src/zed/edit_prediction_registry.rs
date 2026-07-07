@@ -29,7 +29,6 @@ pub fn init(client: Arc<Client>, user_store: Entity<UserStore>, cx: &mut App) {
                 return;
             }
 
-
             let Some(window) = window else {
                 return;
             };
