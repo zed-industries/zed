@@ -673,6 +673,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                     protocol: mantle_protocol_from_settings(model.protocol),
                     supports_tools: model.supports_tools.unwrap_or(false),
                     supports_images: model.supports_images.unwrap_or(false),
+                    supports_thinking: model.supports_thinking.unwrap_or(false),
                 },
             );
         }
@@ -1018,61 +1019,34 @@ impl LanguageModel for BedrockModel {
     }
 }
 
-/// The default reasoning effort exposed for a Mantle-only model, if any.
-/// GPT-5.5/5.4 aren't documented, so mirror Zed's native OpenAI models of the
-/// same name, which both resolve to "medium" (see `openai::Model::reasoning_effort`).
+const MANTLE_SELECTABLE_REASONING_EFFORTS: &[ReasoningEffort] = &[
+    ReasoningEffort::Low,
+    ReasoningEffort::Medium,
+    ReasoningEffort::High,
+    ReasoningEffort::XHigh,
+];
+
 fn mantle_default_reasoning_effort(model: &MantleModel) -> Option<ReasoningEffort> {
-    match model {
-        MantleModel::Gpt5_5 | MantleModel::Gpt5_4 => Some(ReasoningEffort::Medium),
-        MantleModel::Grok4_3 => Some(ReasoningEffort::Low),
-        MantleModel::Custom { .. } => None,
+    model.supports_thinking().then_some(ReasoningEffort::Medium)
+}
+
+fn mantle_selected_reasoning_effort(
+    request: &LanguageModelRequest,
+    model: &MantleModel,
+) -> Option<ReasoningEffort> {
+    if !model.supports_thinking() {
+        return None;
     }
-}
 
-fn mantle_supported_reasoning_efforts(model: &MantleModel) -> &'static [ReasoningEffort] {
-    match model {
-        MantleModel::Gpt5_5 | MantleModel::Gpt5_4 => &[
-            ReasoningEffort::None,
-            ReasoningEffort::Low,
-            ReasoningEffort::Medium,
-            ReasoningEffort::High,
-            ReasoningEffort::XHigh,
-        ],
-        MantleModel::Grok4_3 => &[
-            ReasoningEffort::None,
-            ReasoningEffort::Low,
-            ReasoningEffort::Medium,
-            ReasoningEffort::High,
-        ],
-        MantleModel::Custom { .. } => &[],
-    }
-}
-
-/// Whether the model accepts an explicit "none" effort level, as opposed to
-/// reasoning being unconfigurable.
-fn mantle_supports_none_reasoning_effort(model: &MantleModel) -> bool {
-    mantle_supported_reasoning_efforts(model).contains(&ReasoningEffort::None)
-}
-
-fn mantle_reasoning_effort_is_selectable(effort: ReasoningEffort) -> bool {
-    effort != ReasoningEffort::None
-}
-
-/// Clears `thinking_effort` if it isn't one of the levels Mantle supports.
-/// It can be stale if carried over from a previously selected model with a wider
-/// range (e.g. `max`), and `into_open_ai_response` would otherwise forward it as-is.
-fn normalize_mantle_thinking_effort(request: &mut LanguageModelRequest, model: &MantleModel) {
-    let selected_effort_is_supported = request
-        .thinking_effort
-        .as_deref()
-        .and_then(|effort| effort.parse::<ReasoningEffort>().ok())
-        .is_some_and(|effort| {
-            mantle_reasoning_effort_is_selectable(effort)
-                && mantle_supported_reasoning_efforts(model).contains(&effort)
-        });
-
-    if !selected_effort_is_supported {
-        request.thinking_effort = None;
+    if request.thinking_allowed {
+        request
+            .thinking_effort
+            .as_deref()
+            .and_then(|effort| effort.parse::<ReasoningEffort>().ok())
+            .filter(|effort| *effort != ReasoningEffort::None)
+            .or_else(|| mantle_default_reasoning_effort(model))
+    } else {
+        Some(ReasoningEffort::None)
     }
 }
 
@@ -1081,10 +1055,9 @@ fn mantle_supported_effort_levels(model: &MantleModel) -> Vec<LanguageModelEffor
         return Vec::new();
     };
 
-    mantle_supported_reasoning_efforts(model)
+    MANTLE_SELECTABLE_REASONING_EFFORTS
         .iter()
         .copied()
-        .filter(|effort| mantle_reasoning_effort_is_selectable(*effort))
         .map(|effort| LanguageModelEffortLevel {
             name: effort.label().into(),
             value: effort.value().into(),
@@ -1435,7 +1408,7 @@ impl LanguageModel for BedrockMantleModel {
     }
 
     fn supports_thinking(&self) -> bool {
-        mantle_default_reasoning_effort(&self.model).is_some()
+        self.model.supports_thinking()
     }
 
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
@@ -1460,7 +1433,7 @@ impl LanguageModel for BedrockMantleModel {
 
     fn stream_completion(
         &self,
-        mut request: LanguageModelRequest,
+        request: LanguageModelRequest,
         cx: &AsyncApp,
     ) -> BoxFuture<
         'static,
@@ -1486,7 +1459,6 @@ impl LanguageModel for BedrockMantleModel {
 
         match self.model.protocol() {
             MantleProtocol::Responses => {
-                normalize_mantle_thinking_effort(&mut request, &self.model);
                 let request = into_open_ai_response(
                     request,
                     &model_id,
@@ -1494,7 +1466,7 @@ impl LanguageModel for BedrockMantleModel {
                     false,
                     max_output_tokens,
                     mantle_default_reasoning_effort(&self.model),
-                    mantle_supports_none_reasoning_effort(&self.model),
+                    self.model.supports_thinking(),
                 );
                 let completions = self.stream_response(request, cx);
                 async move {
@@ -1504,9 +1476,7 @@ impl LanguageModel for BedrockMantleModel {
                 .boxed()
             }
             MantleProtocol::ChatCompletions => {
-                // The Chat Completions API on Mantle doesn't return reasoning
-                // tokens (per AWS's Grok 4.3 model card).
-                request.thinking_allowed = false;
+                let reasoning_effort = mantle_selected_reasoning_effort(&request, &self.model);
                 let request = into_open_ai(
                     request,
                     &model_id,
@@ -1514,7 +1484,7 @@ impl LanguageModel for BedrockMantleModel {
                     false,
                     max_output_tokens,
                     ChatCompletionMaxTokensParameter::MaxCompletionTokens,
-                    None,
+                    reasoning_effort,
                     false,
                 );
                 let completions = self.stream_completion(request, cx);
@@ -2603,22 +2573,68 @@ mod tests {
     }
 
     #[test]
-    fn test_grok_mantle_reasoning_matches_docs() {
+    fn test_builtin_mantle_models_support_thinking() {
+        assert!(MantleModel::Gpt5_5.supports_thinking());
+        assert!(MantleModel::Gpt5_4.supports_thinking());
+        assert!(MantleModel::Grok4_3.supports_thinking());
+        assert_eq!(
+            mantle_default_reasoning_effort(&MantleModel::Gpt5_5),
+            Some(ReasoningEffort::Medium)
+        );
         assert_eq!(
             mantle_default_reasoning_effort(&MantleModel::Grok4_3),
-            Some(ReasoningEffort::Low)
+            Some(ReasoningEffort::Medium)
         );
-        assert!(mantle_supports_none_reasoning_effort(&MantleModel::Grok4_3));
-        assert_eq!(
-            mantle_supported_reasoning_efforts(&MantleModel::Grok4_3),
-            &[
-                ReasoningEffort::None,
-                ReasoningEffort::Low,
-                ReasoningEffort::Medium,
-                ReasoningEffort::High,
-            ]
-        );
+    }
 
+    #[test]
+    fn test_mantle_supported_effort_levels_hide_none() {
+        let effort_levels = mantle_supported_effort_levels(&MantleModel::Gpt5_5);
+        let values = effort_levels
+            .iter()
+            .map(|level| level.value.as_ref())
+            .collect::<Vec<_>>();
+
+        assert_eq!(values, ["low", "medium", "high", "xhigh"]);
+        assert_eq!(
+            effort_levels
+                .iter()
+                .find(|level| level.is_default)
+                .map(|level| level.value.as_ref()),
+            Some("medium")
+        );
+    }
+
+    #[test]
+    fn test_custom_mantle_model_can_disable_thinking() {
+        let model = MantleModel::Custom {
+            name: "custom-mantle-model".to_string(),
+            display_name: None,
+            max_tokens: 128_000,
+            max_output_tokens: None,
+            protocol: MantleProtocol::Responses,
+            supports_tools: true,
+            supports_images: false,
+            supports_thinking: false,
+        };
+
+        assert!(!model.supports_thinking());
+        assert_eq!(mantle_default_reasoning_effort(&model), None);
+        assert!(mantle_supported_effort_levels(&model).is_empty());
+        assert_eq!(
+            mantle_selected_reasoning_effort(
+                &LanguageModelRequest {
+                    thinking_effort: Some("high".to_string()),
+                    ..Default::default()
+                },
+                &model,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn test_disabled_mantle_thinking_serializes_none() {
         let request = into_open_ai_response(
             LanguageModelRequest {
                 thinking_allowed: false,
@@ -2629,7 +2645,7 @@ mod tests {
             false,
             Some(MantleModel::Grok4_3.max_output_tokens()),
             mantle_default_reasoning_effort(&MantleModel::Grok4_3),
-            mantle_supports_none_reasoning_effort(&MantleModel::Grok4_3),
+            MantleModel::Grok4_3.supports_thinking(),
         );
 
         assert_eq!(
@@ -2639,39 +2655,33 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_mantle_thinking_effort_clears_unsupported_selection() {
-        // `max` isn't one of the effort levels Mantle supports for GPT-5.5,
-        // so a stale selection carried over from another model gets cleared.
-        let mut request = LanguageModelRequest {
-            thinking_effort: Some("max".to_string()),
-            ..Default::default()
-        };
-        normalize_mantle_thinking_effort(&mut request, &MantleModel::Gpt5_5);
-        assert_eq!(request.thinking_effort, None);
+    fn test_mantle_reasoning_passes_known_efforts_through() {
+        for effort in ["low", "medium", "high", "xhigh", "minimal", "max"] {
+            assert_eq!(
+                mantle_selected_reasoning_effort(
+                    &LanguageModelRequest {
+                        thinking_allowed: true,
+                        thinking_effort: Some(effort.to_string()),
+                        ..Default::default()
+                    },
+                    &MantleModel::Gpt5_5,
+                )
+                .map(|effort| effort.value()),
+                Some(effort)
+            );
+        }
 
-        // A supported selection is left untouched.
-        let mut request = LanguageModelRequest {
-            thinking_effort: Some("high".to_string()),
-            ..Default::default()
-        };
-        normalize_mantle_thinking_effort(&mut request, &MantleModel::Gpt5_5);
-        assert_eq!(request.thinking_effort, Some("high".to_string()));
-
-        // `xhigh` is supported for GPT-5.5.
-        let mut request = LanguageModelRequest {
-            thinking_effort: Some("xhigh".to_string()),
-            ..Default::default()
-        };
-        normalize_mantle_thinking_effort(&mut request, &MantleModel::Gpt5_5);
-        assert_eq!(request.thinking_effort, Some("xhigh".to_string()));
-
-        // `none` is represented by disabling thinking, not by selecting an effort.
-        let mut request = LanguageModelRequest {
-            thinking_effort: Some("none".to_string()),
-            ..Default::default()
-        };
-        normalize_mantle_thinking_effort(&mut request, &MantleModel::Grok4_3);
-        assert_eq!(request.thinking_effort, None);
+        assert_eq!(
+            mantle_selected_reasoning_effort(
+                &LanguageModelRequest {
+                    thinking_allowed: true,
+                    thinking_effort: Some("none".to_string()),
+                    ..Default::default()
+                },
+                &MantleModel::Gpt5_5,
+            ),
+            Some(ReasoningEffort::Medium)
+        );
     }
 
     #[test]

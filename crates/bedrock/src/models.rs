@@ -849,6 +849,7 @@ pub enum MantleModel {
         protocol: MantleProtocol,
         supports_tools: bool,
         supports_images: bool,
+        supports_thinking: bool,
     },
 }
 
@@ -924,6 +925,15 @@ impl MantleModel {
             Self::Custom {
                 supports_images, ..
             } => *supports_images,
+        }
+    }
+
+    pub fn supports_thinking(&self) -> bool {
+        match self {
+            Self::Gpt5_5 | Self::Gpt5_4 | Self::Grok4_3 => true,
+            Self::Custom {
+                supports_thinking, ..
+            } => *supports_thinking,
         }
     }
 }

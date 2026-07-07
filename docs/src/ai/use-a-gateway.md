@@ -234,7 +234,8 @@ You can add custom models served through `bedrock-mantle` with `mantle_available
           "max_tokens": 128000,
           "protocol": "chat_completions",
           "supports_tools": true,
-          "supports_images": false
+          "supports_images": false,
+          "supports_thinking": true
         }
       ]
     }
@@ -242,7 +243,7 @@ You can add custom models served through `bedrock-mantle` with `mantle_available
 }
 ```
 
-`protocol` selects which OpenAI-compatible API the model is called through, and must be either `chat_completions` or `responses`.
+`protocol` selects which OpenAI-compatible API the model is called through, and must be either `chat_completions` or `responses`. Set `supports_thinking` to `true` for custom Mantle models that accept OpenAI reasoning effort parameters; Zed will then expose `low`, `medium`, `high`, and `xhigh` in the thinking effort picker, while disabling thinking sends `none`.
 
 ## OpenAI-Compatible Gateways {#openai-compatible}
 

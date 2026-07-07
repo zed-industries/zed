@@ -155,6 +155,8 @@ pub struct BedrockMantleAvailableModel {
     pub protocol: BedrockMantleProtocolContent,
     pub supports_tools: Option<bool>,
     pub supports_images: Option<bool>,
+    /// Whether this custom Mantle model supports OpenAI reasoning effort parameters.
+    pub supports_thinking: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema, MergeFrom)]
