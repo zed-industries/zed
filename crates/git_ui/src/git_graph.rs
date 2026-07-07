@@ -55,8 +55,8 @@ use ui::{
     Divider, HeaderResizeInfo, HighlightedLabel, IndentGuideColors, ListItem, ListItemSpacing,
     RedistributableColumnsState, ScrollableHandle, Table, TableInteractionState,
     TableRenderContext, TableResizeBehavior, Tooltip, WithScrollbar, bind_redistributable_columns,
-    prelude::*, render_redistributable_columns_resize_handles, render_table_header,
-    table_row::TableRow,
+    prelude::*, redistribute_hidden_fractions, redistribute_hidden_widths,
+    render_redistributable_columns_resize_handles, render_table_header, table_row::TableRow,
 };
 use util::{ResultExt, debug_panic};
 use workspace::{
@@ -73,12 +73,8 @@ const RESIZE_HANDLE_WIDTH: f32 = 8.0;
 const COPIED_STATE_DURATION: Duration = Duration::from_secs(2);
 const COMMIT_TAG_LIST_WIDTH_IN_REMS: Rems = rems(10.);
 const CUSTOM_GIT_COMMANDS_DOCS_SLUG: &str = "tasks#custom-git-commands";
-// Indentation step (in pixels) for each nesting level of the changed-files
-// tree. Matches the Project Panel's default `indent_size` so the trees indent
-// consistently.
 const TREE_INDENT: f32 = 20.0;
-// Extra vertical breathing room added to the UI line height when computing
-// the git graph's row height, so commit dots and lines have space around them.
+const TABLE_COLUMN_COUNT: usize = 4;
 const ROW_VERTICAL_PADDING: Pixels = px(4.0);
 
 struct CopiedState {
@@ -1304,7 +1300,7 @@ fn compute_diff_stats(diff: &CommitDiff) -> (usize, usize) {
 struct GitGraphContextMenu {
     menu: Entity<ContextMenu>,
     position: Point<Pixels>,
-    entry_idx: usize,
+    entry_idx: Option<usize>,
     _subscription: Subscription,
 }
 
@@ -1323,6 +1319,9 @@ pub struct GitGraph {
     context_menu: Option<GitGraphContextMenu>,
     table_interaction_state: Entity<TableInteractionState>,
     column_widths: Entity<RedistributableColumnsState>,
+    /// Per-column visibility mask owned by the view (not the resize state) so columns can be
+    /// hidden regardless of whether the table is resizable. `true` means the column is hidden.
+    column_visibility: TableRow<bool>,
     selected_entry_idx: Option<usize>,
     hovered_entry_idx: Option<usize>,
     graph_canvas_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
@@ -1386,22 +1385,32 @@ impl GitGraph {
     }
 
     fn preview_column_fractions(&self, window: &Window, cx: &App) -> [f32; 5] {
-        // todo(git_graph): We should make a column/table api that allows removing table columns
-        let fractions = self
+        let raw = self
             .column_widths
             .read(cx)
             .preview_fractions(window.rem_size());
+        let fractions = redistribute_hidden_fractions(&raw, Some(&self.column_visibility));
+
+        // Hidden columns occupy no space in the layout, so report them as zero here even though
+        // the shared redistribution helper preserves their stored width for when they return.
+        let value = |idx: usize| {
+            if self.column_visibility.get(idx).copied().unwrap_or(false) {
+                0.0
+            } else {
+                fractions[idx]
+            }
+        };
 
         let is_path_history = matches!(self.log_source, LogSource::Path(_));
-        let graph_fraction = if is_path_history { 0.0 } else { fractions[0] };
+        let graph_fraction = if is_path_history { 0.0 } else { value(0) };
         let offset = if is_path_history { 0 } else { 1 };
 
         [
             graph_fraction,
-            fractions[offset],
-            fractions[offset + 1],
-            fractions[offset + 2],
-            fractions[offset + 3],
+            value(offset),
+            value(offset + 1),
+            value(offset + 2),
+            value(offset + 3),
         ]
     }
 
@@ -1429,10 +1438,13 @@ impl GitGraph {
     }
 
     fn graph_viewport_width(&self, window: &Window, cx: &App) -> Pixels {
-        self.column_widths
-            .read(cx)
-            .preview_column_width(0, window)
-            .unwrap_or_else(|| self.graph_canvas_content_width())
+        let container = self.column_widths.read(cx).cached_container_width();
+        let graph_fraction = self.preview_column_fractions(window, cx)[0];
+        if container > px(0.) && graph_fraction > 0.0 {
+            container * graph_fraction
+        } else {
+            self.graph_canvas_content_width()
+        }
     }
 
     pub fn new(
@@ -1515,6 +1527,14 @@ impl GitGraph {
                 )
             })
         };
+        let column_visibility = TableRow::from_element(
+            false,
+            if matches!(log_source, LogSource::Path(_)) {
+                TABLE_COLUMN_COUNT
+            } else {
+                TABLE_COLUMN_COUNT + 1
+            },
+        );
         let mut row_height = Self::row_height(window, cx);
 
         cx.observe_global_in::<settings::SettingsStore>(window, move |this, window, cx| {
@@ -1548,6 +1568,7 @@ impl GitGraph {
             context_menu: None,
             table_interaction_state,
             column_widths,
+            column_visibility,
             selected_entry_idx: None,
             hovered_entry_idx: None,
             graph_canvas_bounds: Rc::new(Cell::new(None)),
@@ -2658,14 +2679,14 @@ impl GitGraph {
                     menu
                 })
         });
-        self.set_context_menu(context_menu, position, index, window, cx);
+        self.set_context_menu(context_menu, position, Some(index), window, cx);
     }
 
     fn set_context_menu(
         &mut self,
         context_menu: Entity<ContextMenu>,
         position: Point<Pixels>,
-        entry_idx: usize,
+        entry_idx: Option<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2694,6 +2715,63 @@ impl GitGraph {
             _subscription: subscription,
         });
         cx.notify();
+    }
+
+    fn toggle_column_visibility(&mut self, col_idx: usize, cx: &mut Context<Self>) {
+        if let Some(slot) = self.column_visibility.as_mut_slice().get_mut(col_idx) {
+            *slot = !*slot;
+            // Column visibility is persisted per item, so schedule a workspace serialization.
+            cx.emit(ItemEvent::Edit);
+        }
+    }
+
+    fn deploy_header_context_menu(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let is_path_history = matches!(self.log_source, LogSource::Path(_));
+        let columns: &[&str] = if is_path_history {
+            &["Description", "Date", "Author", "Commit"]
+        } else {
+            &["Graph", "Description", "Date", "Author", "Commit"]
+        };
+
+        let filter = self.column_visibility.clone();
+        let visible_count = filter
+            .as_slice()
+            .iter()
+            .filter(|filtered| !**filtered)
+            .count();
+
+        let focus_handle = self.focus_handle.clone();
+        let git_graph = cx.entity();
+        let context_menu = ContextMenu::build(window, cx, |mut context_menu, _window, _cx| {
+            context_menu = context_menu.context(focus_handle).header("Columns");
+            for (col_idx, label) in columns.iter().enumerate() {
+                let is_visible = !filter.get(col_idx).copied().unwrap_or(false);
+                // Disable hiding the last remaining visible column.
+                let can_toggle = !is_visible || visible_count > 1;
+                let git_graph = git_graph.clone();
+                context_menu = context_menu.toggleable_entry_disabled_when(
+                    label.to_string(),
+                    is_visible,
+                    !can_toggle,
+                    IconPosition::End,
+                    None,
+                    move |_window, cx| {
+                        git_graph.update(cx, |this, cx| {
+                            this.toggle_column_visibility(col_idx, cx);
+                            cx.notify();
+                        });
+                    },
+                );
+            }
+            context_menu
+        });
+
+        self.set_context_menu(context_menu, position, None, window, cx);
     }
 
     fn render_search_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3367,7 +3445,7 @@ impl GitGraph {
 
         let hovered_entry_idx = self.hovered_entry_idx;
         let selected_entry_idx = self.selected_entry_idx;
-        let context_menu_entry_idx = self.context_menu.as_ref().map(|menu| menu.entry_idx);
+        let context_menu_entry_idx = self.context_menu.as_ref().and_then(|menu| menu.entry_idx);
         let is_focused = self.focus_handle.is_focused(window);
         let graph_canvas_bounds = self.graph_canvas_bounds.clone();
 
@@ -3897,10 +3975,27 @@ impl Render for GitGraph {
             let is_path_history = matches!(self.log_source, LogSource::Path(_));
             let header_resize_info =
                 HeaderResizeInfo::from_redistributable(&self.column_widths, cx);
-            let header_context = TableRenderContext::for_column_widths(
-                Some(self.column_widths.read(cx).widths_to_render()),
-                true,
+
+            let column_filter = self.column_visibility.clone();
+
+            // The graph column (index 0) only exists in the non-path-history layout and is
+            // rendered as a separate canvas outside the table.
+            let graph_visible =
+                is_path_history || !column_filter.get(0usize).copied().unwrap_or(false);
+
+            let table_offset = if is_path_history { 0 } else { 1 };
+            let table_filter = column_filter
+                .as_slice()
+                .get(table_offset..table_offset + TABLE_COLUMN_COUNT)
+                .map(|slice| TableRow::from_vec(slice.to_vec(), TABLE_COLUMN_COUNT))
+                .unwrap_or_else(|| TableRow::from_element(false, TABLE_COLUMN_COUNT));
+            let header_widths = redistribute_hidden_widths(
+                &self.column_widths.read(cx).widths_to_render(),
+                Some(&column_filter),
             );
+            let header_context = TableRenderContext::for_column_widths(Some(header_widths), true)
+                .with_column_filter(Some(column_filter));
+
             let [
                 graph_fraction,
                 description_fraction,
@@ -3912,6 +4007,9 @@ impl Render for GitGraph {
                 description_fraction + date_fraction + author_fraction + commit_fraction;
             let table_width_config = self.table_column_width_config(window, cx);
 
+            let table_collapsed = table_fraction <= f32::EPSILON;
+            let graph_content_width = self.graph_canvas_content_width();
+
             h_flex()
                 .size_full()
                 .child(
@@ -3919,47 +4017,71 @@ impl Render for GitGraph {
                         .flex_1()
                         .min_w_0()
                         .size_full()
-                        .child(render_table_header(
-                            if !is_path_history {
-                                TableRow::from_vec(
-                                    vec![
-                                        Label::new("Graph")
-                                            .color(Color::Muted)
-                                            .truncate()
-                                            .into_any_element(),
-                                        Label::new("Description")
-                                            .color(Color::Muted)
-                                            .into_any_element(),
-                                        Label::new("Date").color(Color::Muted).into_any_element(),
-                                        Label::new("Author").color(Color::Muted).into_any_element(),
-                                        Label::new("Commit").color(Color::Muted).into_any_element(),
-                                    ],
-                                    5,
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .on_mouse_down(
+                                    MouseButton::Right,
+                                    cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                                        this.deploy_header_context_menu(event.position, window, cx);
+                                        cx.stop_propagation();
+                                    }),
                                 )
-                            } else {
-                                TableRow::from_vec(
-                                    vec![
-                                        Label::new("Description")
-                                            .color(Color::Muted)
-                                            .into_any_element(),
-                                        Label::new("Date").color(Color::Muted).into_any_element(),
-                                        Label::new("Author").color(Color::Muted).into_any_element(),
-                                        Label::new("Commit").color(Color::Muted).into_any_element(),
-                                    ],
-                                    4,
-                                )
-                            },
-                            header_context,
-                            Some(header_resize_info),
-                            Some(self.column_widths.entity_id()),
-                            cx,
-                        ))
+                                .child(render_table_header(
+                                    if !is_path_history {
+                                        TableRow::from_vec(
+                                            vec![
+                                                Label::new("Graph")
+                                                    .color(Color::Muted)
+                                                    .truncate()
+                                                    .into_any_element(),
+                                                Label::new("Description")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                                Label::new("Date")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                                Label::new("Author")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                                Label::new("Commit")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                            ],
+                                            5,
+                                        )
+                                    } else {
+                                        TableRow::from_vec(
+                                            vec![
+                                                Label::new("Description")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                                Label::new("Date")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                                Label::new("Author")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                                Label::new("Commit")
+                                                    .color(Color::Muted)
+                                                    .into_any_element(),
+                                            ],
+                                            4,
+                                        )
+                                    },
+                                    header_context,
+                                    Some(header_resize_info),
+                                    Some(self.column_widths.entity_id()),
+                                    cx,
+                                )),
+                        )
                         .child({
                             let row_height = Self::row_height(window, cx);
                             let selected_entry_idx = self.selected_entry_idx;
                             let hovered_entry_idx = self.hovered_entry_idx;
                             let context_menu_entry_idx =
-                                self.context_menu.as_ref().map(|menu| menu.entry_idx);
+                                self.context_menu.as_ref().and_then(|menu| menu.entry_idx);
                             let weak_self = cx.weak_entity();
                             let focus_handle = self.focus_handle.clone();
                             let table_focus_handle =
@@ -3994,6 +4116,7 @@ impl Render for GitGraph {
                                 .hide_row_borders()
                                 .hide_row_hover()
                                 .width_config(table_width_config)
+                                .column_filter(table_filter)
                                 .map_row(move |(index, row), window, cx| {
                                     let is_selected = selected_entry_idx == Some(index);
                                     let is_hovered = hovered_entry_idx == Some(index);
@@ -4080,10 +4203,18 @@ impl Render for GitGraph {
                                     .child(
                                         h_flex()
                                             .size_full()
-                                            .when(!is_path_history, |this| {
+                                            .when(!is_path_history && graph_visible, |this| {
                                                 this.child(
                                                     div()
-                                                        .w(DefiniteLength::Fraction(graph_fraction))
+                                                        .map(|this| {
+                                                            if table_collapsed {
+                                                                this.w(graph_content_width)
+                                                            } else {
+                                                                this.w(DefiniteLength::Fraction(
+                                                                    graph_fraction,
+                                                                ))
+                                                            }
+                                                        })
                                                         .h_full()
                                                         .min_w_0()
                                                         .overflow_hidden()
@@ -4095,7 +4226,15 @@ impl Render for GitGraph {
                                                     .tab_index(2)
                                                     .tab_group()
                                                     .tab_stop(false)
-                                                    .w(DefiniteLength::Fraction(table_fraction))
+                                                    .map(|this| {
+                                                        if table_collapsed {
+                                                            this.flex_1()
+                                                        } else {
+                                                            this.w(DefiniteLength::Fraction(
+                                                                table_fraction,
+                                                            ))
+                                                        }
+                                                    })
                                                     .h_full()
                                                     .min_w_0()
                                                     .child(commits_table),
@@ -4103,10 +4242,12 @@ impl Render for GitGraph {
                                     )
                                     .child(render_redistributable_columns_resize_handles(
                                         &self.column_widths,
+                                        Some(&self.column_visibility),
                                         window,
                                         cx,
                                     )),
                                 self.column_widths.clone(),
+                                Some(self.column_visibility.clone()),
                             )
                         }),
                 )
@@ -4298,6 +4439,7 @@ impl workspace::SerializableItem for GitGraph {
             selected_sha,
             search_query,
             search_case_sensitive,
+            hidden_columns,
         )) = db.get_git_graph(item_id, workspace_id).ok().flatten()
         else {
             return Task::ready(Err(anyhow::anyhow!("No git graph to deserialize")));
@@ -4310,6 +4452,7 @@ impl workspace::SerializableItem for GitGraph {
             selected_sha,
             search_query,
             search_case_sensitive,
+            hidden_columns,
         };
 
         let window_handle = window.window_handle();
@@ -4352,6 +4495,16 @@ impl workspace::SerializableItem for GitGraph {
                 });
 
                 git_graph.update(cx, |graph, cx| {
+                    if let Some(bits) = state.hidden_columns {
+                        let cols = graph.column_visibility.cols();
+                        let mask = persistence::deserialize_hidden_columns(bits, cols);
+                        // Never restore an all-hidden mask (e.g. from corrupt data); the UI
+                        // guarantees at least one column stays visible.
+                        if mask.iter().any(|is_hidden| !is_hidden) {
+                            graph.column_visibility = TableRow::from_vec(mask, cols);
+                        }
+                    }
+
                     graph.search_state.case_sensitive =
                         state.search_case_sensitive.unwrap_or(false);
 
@@ -4404,6 +4557,9 @@ impl workspace::SerializableItem for GitGraph {
         let log_source_value = persistence::serialize_log_source_value(&self.log_source);
         let log_order = Some(persistence::serialize_log_order(&self.log_order));
         let search_case_sensitive = Some(self.search_state.case_sensitive);
+        let hidden_columns = Some(persistence::serialize_hidden_columns(
+            self.column_visibility.as_slice(),
+        ));
 
         let db = persistence::GitGraphsDb::global(cx);
         Some(cx.background_spawn(async move {
@@ -4417,6 +4573,7 @@ impl workspace::SerializableItem for GitGraph {
                 selected_sha,
                 search_query,
                 search_case_sensitive,
+                hidden_columns,
             )
             .await
         }))
@@ -4471,6 +4628,9 @@ mod persistence {
                 ALTER TABLE git_graphs ADD COLUMN selected_sha TEXT;
                 ALTER TABLE git_graphs ADD COLUMN search_query TEXT;
                 ALTER TABLE git_graphs ADD COLUMN search_case_sensitive INTEGER;
+            ),
+            sql!(
+                ALTER TABLE git_graphs ADD COLUMN hidden_columns INTEGER;
             ),
         ];
     }
@@ -4548,6 +4708,23 @@ mod persistence {
         }
     }
 
+    /// Packs the per-column visibility mask into a bitmask (bit `i` set means column `i` is
+    /// hidden), so it fits in a single integer database column regardless of column count.
+    pub fn serialize_hidden_columns(hidden: &[bool]) -> i32 {
+        hidden.iter().enumerate().fold(
+            0,
+            |bits, (idx, &is_hidden)| {
+                if is_hidden { bits | (1 << idx) } else { bits }
+            },
+        )
+    }
+
+    /// Inverse of [`serialize_hidden_columns`]. Bits beyond `cols` are ignored, and missing
+    /// bits default to visible, so a mask saved with a different column count degrades safely.
+    pub fn deserialize_hidden_columns(bits: i32, cols: usize) -> Vec<bool> {
+        (0..cols).map(|idx| bits & (1 << idx) != 0).collect()
+    }
+
     #[derive(Debug, Default, Clone)]
     pub struct SerializedGitGraphState {
         pub log_source_type: Option<i32>,
@@ -4556,6 +4733,7 @@ mod persistence {
         pub selected_sha: Option<String>,
         pub search_query: Option<String>,
         pub search_case_sensitive: Option<bool>,
+        pub hidden_columns: Option<i32>,
     }
 
     impl GitGraphsDb {
@@ -4569,14 +4747,16 @@ mod persistence {
                 log_order: Option<i32>,
                 selected_sha: Option<String>,
                 search_query: Option<String>,
-                search_case_sensitive: Option<bool>
+                search_case_sensitive: Option<bool>,
+                hidden_columns: Option<i32>
             ) -> Result<()> {
                 INSERT OR REPLACE INTO git_graphs(
                     item_id, workspace_id, repo_working_path,
                     log_source_type, log_source_value, log_order,
-                    selected_sha, search_query, search_case_sensitive
+                    selected_sha, search_query, search_case_sensitive,
+                    hidden_columns
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             }
         }
 
@@ -4591,7 +4771,8 @@ mod persistence {
                 Option<i32>,
                 Option<String>,
                 Option<String>,
-                Option<bool>
+                Option<bool>,
+                Option<i32>
             )>> {
                 SELECT
                     repo_working_path,
@@ -4600,7 +4781,8 @@ mod persistence {
                     log_order,
                     selected_sha,
                     search_query,
-                    search_case_sensitive
+                    search_case_sensitive,
+                    hidden_columns
                 FROM git_graphs
                 WHERE item_id = ? AND workspace_id = ?
             }
@@ -5889,6 +6071,7 @@ mod tests {
             selected_sha: Some(sha.to_string()),
             search_query: Some("fix bug".to_string()),
             search_case_sensitive: Some(true),
+            hidden_columns: None,
         };
 
         assert_eq!(
@@ -5913,6 +6096,7 @@ mod tests {
             selected_sha: None,
             search_query: None,
             search_case_sensitive: None,
+            hidden_columns: None,
         };
         assert_eq!(
             persistence::deserialize_log_source(&all_state),
@@ -5952,6 +6136,34 @@ mod tests {
             persistence::deserialize_log_order(&empty_state),
             LogOrder::DateOrder
         ));
+    }
+
+    #[gpui::test]
+    fn test_hidden_columns_bitmask_roundtrip(_cx: &mut TestAppContext) {
+        let mask = [false, true, false, true, false];
+        let bits = persistence::serialize_hidden_columns(&mask);
+        assert_eq!(
+            persistence::deserialize_hidden_columns(bits, mask.len()),
+            mask.to_vec()
+        );
+
+        assert_eq!(persistence::serialize_hidden_columns(&[false; 5]), 0);
+        assert_eq!(
+            persistence::deserialize_hidden_columns(0, 4),
+            vec![false; 4]
+        );
+
+        // A mask saved with more columns than we restore with is truncated safely, and one
+        // saved with fewer columns defaults the extra columns to visible.
+        let bits = persistence::serialize_hidden_columns(&[true, false, true, false, true]);
+        assert_eq!(
+            persistence::deserialize_hidden_columns(bits, 4),
+            vec![true, false, true, false]
+        );
+        assert_eq!(
+            persistence::deserialize_hidden_columns(bits, 6),
+            vec![true, false, true, false, true, false]
+        );
     }
 
     #[gpui::test]
@@ -6029,6 +6241,9 @@ mod tests {
             .await
             .expect("should create workspace id");
         let db = cx.read(|cx| persistence::GitGraphsDb::global(cx));
+        // Hide the "Date" column (index 2 in the non-path-history layout).
+        let hidden_columns =
+            persistence::serialize_hidden_columns(&[false, false, true, false, false]);
         db.save_git_graph(
             item_id,
             workspace_id,
@@ -6039,6 +6254,7 @@ mod tests {
             selected_sha.clone(),
             Some("some query".to_string()),
             Some(true),
+            Some(hidden_columns),
         )
         .await
         .expect("save should succeed");
@@ -6091,6 +6307,12 @@ mod tests {
             assert_eq!(
                 graph.search_state.case_sensitive, true,
                 "search case sensitivity should be restored"
+            );
+
+            assert_eq!(
+                graph.column_visibility.as_slice(),
+                &[false, false, true, false, false],
+                "hidden columns should be restored"
             );
         });
 

@@ -3907,6 +3907,7 @@ dependencies = [
  "lsp",
  "menu",
  "project",
+ "release_channel",
  "serde_json",
  "settings",
  "ui",
@@ -9792,6 +9793,7 @@ dependencies = [
  "http_client",
  "log",
  "partial-json-fixer",
+ "pretty_assertions",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -19445,7 +19447,7 @@ checksum = "c4013970217383f67b18aef68f6fb2e8d409bc5755227092d32efb0422ba24b8"
 [[package]]
 name = "tree-sitter-md"
 version = "0.3.2"
-source = "git+https://github.com/tree-sitter-grammars/tree-sitter-markdown?rev=9a23c1a96c0513d8fc6520972beedd419a973539#9a23c1a96c0513d8fc6520972beedd419a973539"
+source = "git+https://github.com/zed-industries/tree-sitter-markdown?rev=b596e737286780d7bfa9fcddceaeeb754574b352#b596e737286780d7bfa9fcddceaeeb754574b352"
 dependencies = [
  "cc",
  "tree-sitter-language",

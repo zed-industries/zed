@@ -319,6 +319,130 @@ mod drag_handle {
     );
 }
 
+mod drag_with_hidden_columns {
+    use super::*;
+
+    // Dragging with hidden (filtered) columns: the resize dividers are laid out using the
+    // *redistributed* (visible-only) widths, so `compute_drag_preview` must do its geometry in
+    // that same space and skip hidden columns when propagating the resize to a neighbor.
+
+    /// Mirrors how the renderer turns raw widths into the on-screen layout: hidden columns
+    /// collapse to zero and their space is redistributed across the visible columns.
+    fn redistributed(widths: &[f32], hidden: &[bool]) -> Vec<f32> {
+        let visible_sum: f32 = widths
+            .iter()
+            .zip(hidden)
+            .filter(|(_, is_hidden)| !**is_hidden)
+            .map(|(width, _)| *width)
+            .sum();
+        widths
+            .iter()
+            .zip(hidden)
+            .map(|(width, is_hidden)| {
+                if *is_hidden {
+                    0.0
+                } else {
+                    *width / visible_sum
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn drag_without_hidden_columns_is_unchanged() {
+        // Guards the pre-existing behavior: with no hidden mask the drag operates on the raw
+        // widths directly (the visible space and the raw space are the same).
+        let resize_behavior = TableRow::from_vec(vec![TableResizeBehavior::Resizable; 3], 3);
+        let widths = TableRow::from_vec(vec![1.0 / 3.0; 3], 3);
+
+        let result = RedistributableColumnsState::compute_drag_preview(
+            widths,
+            &resize_behavior,
+            None,
+            1,
+            0.8,
+            0.0,
+        );
+
+        let result = result.as_slice();
+        let boundary = result[0] + result[1];
+        assert!(
+            (boundary - 0.8).abs() < 1e-6,
+            "expected the boundary after column 1 to follow the cursor to 0.8: {result:?}",
+        );
+        assert!(
+            (result[0] - 1.0 / 3.0).abs() < 1e-6,
+            "column 0 must not be affected: {result:?}",
+        );
+    }
+
+    #[test]
+    fn drag_boundary_follows_cursor_with_hidden_column() {
+        // Three equal columns; column 0 is hidden. The two visible columns each render at 0.5
+        // of the container. The user grabs the divider between the visible columns (original
+        // index 1) and drags the cursor to 70% of the container. The boundary between the
+        // visible columns should follow the cursor to 0.7.
+        let resize_behavior = TableRow::from_vec(vec![TableResizeBehavior::Resizable; 3], 3);
+        let widths = TableRow::from_vec(vec![1.0 / 3.0; 3], 3);
+        let hidden = [true, false, false];
+        let hidden_mask = TableRow::from_vec(hidden.to_vec(), 3);
+
+        let result = RedistributableColumnsState::compute_drag_preview(
+            widths,
+            &resize_behavior,
+            Some(&hidden_mask),
+            1,
+            0.7,
+            0.0,
+        );
+
+        let rendered = redistributed(result.as_slice(), &hidden);
+        assert!(
+            (rendered[1] - 0.7).abs() < 1e-3,
+            "expected the visible boundary to follow the cursor to 0.7, got {} (raw {:?})",
+            rendered[1],
+            result.as_slice(),
+        );
+    }
+
+    #[test]
+    fn drag_does_not_resize_hidden_neighbor() {
+        // Three equal columns; the middle column (1) is hidden. The only divider the user can
+        // grab sits between visible columns 0 and 2 (original index 0). Dragging it must resize
+        // the next *visible* column (2) and leave the hidden column's width untouched.
+        let resize_behavior = TableRow::from_vec(vec![TableResizeBehavior::Resizable; 3], 3);
+        let widths = TableRow::from_vec(vec![1.0 / 3.0; 3], 3);
+        let hidden = [false, true, false];
+        let hidden_mask = TableRow::from_vec(hidden.to_vec(), 3);
+
+        let result = RedistributableColumnsState::compute_drag_preview(
+            widths,
+            &resize_behavior,
+            Some(&hidden_mask),
+            0,
+            0.7,
+            0.0,
+        );
+
+        let result = result.as_slice();
+        assert!(
+            (result[1] - 1.0 / 3.0).abs() < 1e-6,
+            "hidden column width must be preserved, but it changed: {result:?}",
+        );
+        // The drag moved width from visible column 2 to visible column 0, so the total is
+        // unchanged and the next *visible* column absorbed the resize.
+        let total: f32 = result.iter().sum();
+        assert!(
+            (total - 1.0).abs() < 1e-6,
+            "total must be preserved: {result:?}"
+        );
+        assert!(
+            result[0] > 1.0 / 3.0 && result[2] < 1.0 / 3.0,
+            "expected the resize to be absorbed by the next visible column: {result:?}",
+        );
+    }
+}
+
 mod resizable_drag {
     use super::*;
 
@@ -417,5 +541,117 @@ mod pin_layout {
         assert!(is_pinned_layout(1, 5));
         assert!(is_pinned_layout(2, 5));
         assert!(is_pinned_layout(4, 5));
+    }
+}
+
+mod column_filter {
+    use super::super::column_is_visible;
+    use super::*;
+    use crate::{redistribute_hidden_fractions, redistribute_hidden_widths};
+    use gpui::{DefiniteLength, Length};
+
+    fn frac_row(values: &[f32]) -> TableRow<f32> {
+        TableRow::from_vec(values.to_vec(), values.len())
+    }
+
+    fn hidden_row(values: &[bool]) -> TableRow<bool> {
+        TableRow::from_vec(values.to_vec(), values.len())
+    }
+
+    fn width_row(values: &[f32]) -> TableRow<Length> {
+        TableRow::from_vec(
+            values
+                .iter()
+                .map(|fraction| Length::Definite(DefiniteLength::Fraction(*fraction)))
+                .collect(),
+            values.len(),
+        )
+    }
+
+    fn width_fractions(widths: &TableRow<Length>) -> Vec<f32> {
+        widths
+            .as_slice()
+            .iter()
+            .map(|length| match length {
+                Length::Definite(DefiniteLength::Fraction(fraction)) => *fraction,
+                other => panic!("expected fraction, got {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn column_is_visible_respects_mask() {
+        let filter = Some(hidden_row(&[false, true, false]));
+        assert!(column_is_visible(&filter, 0));
+        assert!(!column_is_visible(&filter, 1));
+        assert!(column_is_visible(&filter, 2));
+        // Indices outside the mask default to visible.
+        assert!(column_is_visible(&filter, 5));
+    }
+
+    #[test]
+    fn column_is_visible_without_filter_is_always_visible() {
+        let filter: Option<TableRow<bool>> = None;
+        assert!(column_is_visible(&filter, 0));
+        assert!(column_is_visible(&filter, 100));
+    }
+
+    #[test]
+    fn redistribute_widths_is_identity_without_hidden_columns() {
+        let widths = width_row(&[0.25, 0.25, 0.25, 0.25]);
+        assert_eq!(
+            width_fractions(&redistribute_hidden_widths(&widths, None)),
+            vec![0.25, 0.25, 0.25, 0.25]
+        );
+
+        let none_hidden = hidden_row(&[false, false, false, false]);
+        assert_eq!(
+            width_fractions(&redistribute_hidden_widths(&widths, Some(&none_hidden))),
+            vec![0.25, 0.25, 0.25, 0.25]
+        );
+    }
+
+    #[test]
+    fn redistribute_widths_scales_visible_columns_to_fill() {
+        let widths = width_row(&[0.25, 0.25, 0.25, 0.25]);
+        let hidden = hidden_row(&[false, true, false, false]);
+        let result = width_fractions(&redistribute_hidden_widths(&widths, Some(&hidden)));
+
+        // The hidden column keeps its stored width rather than being zeroed out (it is simply
+        // not rendered), so its width is restored intact when it is shown again.
+        assert_eq!(result[1], 0.25);
+        // The visible columns expand to fill the container.
+        let visible_sum: f32 = result[0] + result[2] + result[3];
+        assert!(
+            (visible_sum - 1.0).abs() < 1e-6,
+            "visible sum was {visible_sum}"
+        );
+        // Equal initial fractions stay equal after redistribution.
+        assert!((result[0] - result[2]).abs() < 1e-6);
+        assert!((result[0] - result[3]).abs() < 1e-6);
+    }
+
+    #[test]
+    fn redistribute_fractions_scales_visible_columns_to_fill() {
+        let fractions = frac_row(&[0.25, 0.25, 0.25, 0.25]);
+        let hidden = hidden_row(&[false, true, false, false]);
+        let result = redistribute_hidden_fractions(&fractions, Some(&hidden));
+        let result = result.as_slice();
+
+        assert_eq!(result[1], 0.25);
+        let visible_sum: f32 = result[0] + result[2] + result[3];
+        assert!(
+            (visible_sum - 1.0).abs() < 1e-6,
+            "visible sum was {visible_sum}"
+        );
+    }
+
+    #[test]
+    fn redistribute_fractions_is_identity_without_hidden_columns() {
+        let fractions = frac_row(&[0.2, 0.3, 0.5]);
+        assert_eq!(
+            redistribute_hidden_fractions(&fractions, None).as_slice(),
+            &[0.2, 0.3, 0.5]
+        );
     }
 }
