@@ -103,7 +103,7 @@ pub use editor_settings::{
 };
 pub use element::{
     CursorLayout, EditorElement, HighlightedRange, HighlightedRangeLine, PointForPosition,
-    render_breadcrumb_text,
+    file_status_label_color, render_breadcrumb_text,
 };
 pub use git::blame::BlameRenderer;
 pub(crate) use git::{DiffHunkKey, StoredReviewComment};
@@ -124,7 +124,7 @@ pub use multi_buffer::{
     MultiBufferOffset, MultiBufferOffsetUtf16, MultiBufferSnapshot, PathKey, RowInfo, ToOffset,
     ToPoint,
 };
-pub use split::{SplittableEditor, ToggleSplitDiff};
+pub use split::{DiffStyleControls, SplittableEditor, ToggleSplitDiff};
 pub use split_editor_view::SplitEditorView;
 pub use text::Bias;
 
@@ -1079,6 +1079,7 @@ pub struct Editor {
     show_selection_menu: Option<bool>,
     blame: Option<Entity<GitBlame>>,
     blame_subscription: Option<Subscription>,
+    pending_blame_hover_observation: Option<Subscription>,
     custom_context_menu: Option<
         Box<
             dyn 'static
@@ -2399,6 +2400,7 @@ impl Editor {
             }),
             blame: None,
             blame_subscription: None,
+            pending_blame_hover_observation: None,
 
             bookmark_store,
             breakpoint_store,

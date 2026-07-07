@@ -67,9 +67,9 @@ use crate::alacritty::{
     display_only_term_config, find_from_terminal_point, full_content_range, last_non_empty_lines,
     make_content, new_term, open_pty, pty_options, pty_term_config, resize, screen_lines,
     scroll_display, scroll_to_point, search_matches, selection_text, set_default_cursor_style,
-    set_selection as set_term_selection, spawn_event_loop, toggle_vi_mode as toggle_term_vi_mode,
-    total_lines, update_selection as update_term_selection, update_selection_to_vi_cursor,
-    update_vi_cursor_for_scroll, vi_goto_point, vi_motion,
+    set_selection as set_term_selection, shrink_to_used, spawn_event_loop,
+    toggle_vi_mode as toggle_term_vi_mode, total_lines, update_selection as update_term_selection,
+    update_selection_to_vi_cursor, update_vi_cursor_for_scroll, vi_goto_point, vi_motion,
 };
 use crate::mappings::colors::to_vte_rgb;
 use crate::mappings::keys::to_esc_str;
@@ -1886,6 +1886,10 @@ impl Terminal {
 
     pub fn clear(&mut self) {
         self.events.push_back(InternalEvent::Clear)
+    }
+
+    pub fn shrink_to_used(&mut self) {
+        shrink_to_used(&mut self.term.lock());
     }
 
     pub fn scroll_line_up(&mut self) {

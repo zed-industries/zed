@@ -40,7 +40,6 @@ use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     CommonAnimationExt as _, DiffStat, Divider, KeyBinding, PopoverMenu, Tooltip, prelude::*,
-    vertical_divider,
 };
 use util::{ResultExt as _, rel_path::RelPath};
 use workspace::{
@@ -1739,16 +1738,59 @@ impl Render for ProjectDiffToolbar {
         let button_states = project_diff.read(cx).button_states(cx);
         let review_count = project_diff.read(cx).total_review_comment_count();
 
-        h_group_xl()
+        let (additions, deletions) = project_diff.read(cx).calculate_changed_lines(cx);
+        let is_multibuffer_empty = project_diff.read(cx).multibuffer.read(cx).is_empty();
+
+        h_flex()
             .my_neg_1()
             .py_1()
-            .items_center()
+            .gap_1p5()
             .flex_wrap()
             .justify_between()
+            .when(!is_multibuffer_empty, |this| {
+                this.child(DiffStat::new(
+                    "project-diff-stat",
+                    additions as usize,
+                    deletions as usize,
+                ))
+                .child(Divider::vertical().ml_1())
+            })
+            // n.b. the only reason these arrows are here is because we don't
+            // support "undo" for staging so we need a way to go back.
             .child(
                 h_group_sm()
-                    .when(button_states.selection, |el| {
-                        el.child(
+                    .child(
+                        IconButton::new("up", IconName::ArrowUp)
+                            .icon_size(IconSize::Small)
+                            .disabled(!button_states.prev_next)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Go to Previous Hunk",
+                                &GoToPreviousHunk,
+                                &focus_handle,
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&GoToPreviousHunk, window, cx)
+                            })),
+                    )
+                    .child(
+                        IconButton::new("down", IconName::ArrowDown)
+                            .icon_size(IconSize::Small)
+                            .disabled(!button_states.prev_next)
+                            .tooltip(Tooltip::for_action_title_in(
+                                "Go to Next Hunk",
+                                &GoToHunk,
+                                &focus_handle,
+                            ))
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.dispatch_action(&GoToHunk, window, cx)
+                            })),
+                    ),
+            )
+            .child(Divider::vertical())
+            .child(
+                h_group_sm()
+                    .when(button_states.selection, |this| {
+                        this.child(
                             Button::new("stage", "Toggle Staged")
                                 .tooltip(Tooltip::for_action_title_in(
                                     "Toggle Staged",
@@ -1761,127 +1803,83 @@ impl Render for ProjectDiffToolbar {
                                 })),
                         )
                     })
-                    .when(!button_states.selection, |el| {
-                        el.child(
+                    .when(!button_states.selection, |this| {
+                        this.child(
                             Button::new("stage", "Stage")
+                                .disabled(!button_states.stage)
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Stage and go to next hunk",
+                                    "Stage and Go to Next Hunk",
                                     &StageAndNext,
                                     &focus_handle,
                                 ))
-                                .disabled(
-                                    !button_states.prev_next
-                                        && !button_states.stage_all
-                                        && !button_states.unstage_all,
-                                )
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&StageAndNext, window, cx)
                                 })),
                         )
                         .child(
                             Button::new("unstage", "Unstage")
+                                .disabled(!button_states.unstage)
                                 .tooltip(Tooltip::for_action_title_in(
-                                    "Unstage and go to next hunk",
+                                    "Unstage and Go to Next Hunk",
                                     &UnstageAndNext,
                                     &focus_handle,
                                 ))
-                                .disabled(
-                                    !button_states.prev_next
-                                        && !button_states.stage_all
-                                        && !button_states.unstage_all,
-                                )
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.dispatch_action(&UnstageAndNext, window, cx)
                                 })),
                         )
                     }),
             )
-            // n.b. the only reason these arrows are here is because we don't
-            // support "undo" for staging so we need a way to go back.
-            .child(
-                h_group_sm()
-                    .child(
-                        IconButton::new("up", IconName::ArrowUp)
-                            .shape(ui::IconButtonShape::Square)
+            .child(Divider::vertical())
+            .when(
+                button_states.unstage_all && !button_states.stage_all,
+                |this| {
+                    this.child(
+                        Button::new("unstage-all", "Unstage All")
+                            .width(rems_from_px(80.))
                             .tooltip(Tooltip::for_action_title_in(
-                                "Go to previous hunk",
-                                &GoToPreviousHunk,
+                                "Unstage All Changes",
+                                &UnstageAll,
                                 &focus_handle,
                             ))
-                            .disabled(!button_states.prev_next)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&GoToPreviousHunk, window, cx)
-                            })),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.unstage_all(window, cx)),
+                            ),
                     )
-                    .child(
-                        IconButton::new("down", IconName::ArrowDown)
-                            .shape(ui::IconButtonShape::Square)
-                            .tooltip(Tooltip::for_action_title_in(
-                                "Go to next hunk",
-                                &GoToHunk,
-                                &focus_handle,
-                            ))
-                            .disabled(!button_states.prev_next)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&GoToHunk, window, cx)
-                            })),
-                    ),
+                },
             )
-            .child(vertical_divider())
-            .child(
-                h_group_sm()
-                    .when(
-                        button_states.unstage_all && !button_states.stage_all,
-                        |el| {
-                            el.child(
-                                Button::new("unstage-all", "Unstage All")
-                                    .tooltip(Tooltip::for_action_title_in(
-                                        "Unstage all changes",
-                                        &UnstageAll,
-                                        &focus_handle,
-                                    ))
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.unstage_all(window, cx)
-                                    })),
-                            )
-                        },
-                    )
-                    .when(
-                        !button_states.unstage_all || button_states.stage_all,
-                        |el| {
-                            el.child(
-                                // todo make it so that changing to say "Unstaged"
-                                // doesn't change the position.
-                                div().child(
-                                    Button::new("stage-all", "Stage All")
-                                        .disabled(!button_states.stage_all)
-                                        .tooltip(Tooltip::for_action_title_in(
-                                            "Stage all changes",
-                                            &StageAll,
-                                            &focus_handle,
-                                        ))
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.stage_all(window, cx)
-                                        })),
-                                ),
-                            )
-                        },
-                    )
-                    .child(
-                        Button::new("commit", "Commit")
+            .when(
+                !button_states.unstage_all || button_states.stage_all,
+                |this| {
+                    this.child(
+                        Button::new("stage-all", "Stage All")
+                            .width(rems_from_px(80.))
+                            .disabled(!button_states.stage_all)
                             .tooltip(Tooltip::for_action_title_in(
-                                "Commit",
-                                &Commit,
+                                "Stage All Changes",
+                                &StageAll,
                                 &focus_handle,
                             ))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.dispatch_action(&Commit, window, cx);
-                            })),
-                    ),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.stage_all(window, cx)),
+                            ),
+                    )
+                },
             )
-            // "Send Review to Agent" button (only shown when there are review comments)
+            .child(Divider::vertical())
+            .child(
+                Button::new("commit", "Commit")
+                    .tooltip(Tooltip::for_action_title_in(
+                        "Commit",
+                        &Commit,
+                        &focus_handle,
+                    ))
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.dispatch_action(&Commit, window, cx);
+                    })),
+            )
             .when(review_count > 0, |el| {
-                el.child(vertical_divider()).child(
+                el.child(Divider::vertical()).child(
                     render_send_review_to_agent_button(review_count, &focus_handle).on_click(
                         cx.listener(|this, _, window, cx| {
                             this.dispatch_action(&SendReviewToAgent, window, cx)
@@ -1985,13 +1983,20 @@ impl Render for BranchDiffToolbar {
 
         let show_review_button = !is_multibuffer_empty && is_ai_enabled;
 
-        h_group_xl()
+        h_flex()
             .my_neg_1()
             .py_1()
-            .items_center()
+            .gap_1p5()
             .flex_wrap()
-            .justify_end()
-            .gap_2()
+            .justify_between()
+            .when(!is_multibuffer_empty, |this| {
+                this.child(DiffStat::new(
+                    "branch-diff-stat",
+                    additions as usize,
+                    deletions as usize,
+                ))
+            })
+            .child(Divider::vertical().ml_1())
             .child(
                 PopoverMenu::new("branch-diff-base-branch-picker")
                     .menu(move |window, cx| {
@@ -2013,6 +2018,7 @@ impl Render for BranchDiffToolbar {
                                     .ok();
                             },
                         );
+
                         Some(branch_picker::select_popover(
                             workspace.clone(),
                             repository.clone(),
@@ -2023,23 +2029,14 @@ impl Render for BranchDiffToolbar {
                         ))
                     })
                     .trigger_with_tooltip(
-                        Button::new("branch-diff-base-branch", base_ref_label)
-                            .color(Color::Muted)
-                            .end_icon(
-                                Icon::new(IconName::ChevronDown)
-                                    .size(IconSize::XSmall)
-                                    .color(Color::Muted),
-                            ),
-                        Tooltip::text("Select base branch"),
+                        Button::new("branch-diff-base-branch", base_ref_label).end_icon(
+                            Icon::new(IconName::ChevronDown)
+                                .size(IconSize::XSmall)
+                                .color(Color::Muted),
+                        ),
+                        Tooltip::text("Select Base Branch"),
                     ),
             )
-            .when(!is_multibuffer_empty, |this| {
-                this.child(DiffStat::new(
-                    "branch-diff-stat",
-                    additions as usize,
-                    deletions as usize,
-                ))
-            })
             .when(show_review_button, |this| {
                 let focus_handle = focus_handle.clone();
                 this.child(Divider::vertical()).child(
@@ -2049,7 +2046,6 @@ impl Render for BranchDiffToolbar {
                                 .size(IconSize::Small)
                                 .color(Color::Muted),
                         )
-                        .key_binding(KeyBinding::for_action_in(&ReviewDiff, &focus_handle, cx))
                         .tooltip(move |_, cx| {
                             Tooltip::with_meta_in(
                                 "Review Diff",
@@ -2065,7 +2061,7 @@ impl Render for BranchDiffToolbar {
                 )
             })
             .when(review_count > 0, |this| {
-                this.child(vertical_divider()).child(
+                this.child(Divider::vertical()).child(
                     render_send_review_to_agent_button(review_count, &focus_handle).on_click(
                         cx.listener(|this, _, window, cx| {
                             this.dispatch_action(&SendReviewToAgent, window, cx)
