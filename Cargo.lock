@@ -14096,6 +14096,7 @@ dependencies = [
  "language",
  "menu",
  "picker",
+ "picker_preview",
  "project",
  "serde_json",
  "settings",

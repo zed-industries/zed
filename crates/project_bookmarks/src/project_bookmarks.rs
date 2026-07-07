@@ -41,7 +41,8 @@ pub fn init(cx: &mut App) {
                 workspace.toggle_modal(window, cx, move |window, cx| {
                     let delegate =
                         ProjectBookmarksDelegate::new(workspace_handle, project.clone(), cx);
-                    Picker::list_with_preview(delegate, project, window, cx)
+                    let preview = picker_preview::editor_preview(project, window, cx);
+                    Picker::list_with_preview(delegate, preview, window, cx).reopenable(false, cx)
                 })
             });
         },

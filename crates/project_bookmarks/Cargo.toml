@@ -20,6 +20,7 @@ fuzzy_nucleo.workspace = true
 gpui.workspace = true
 language.workspace = true
 picker.workspace = true
+picker_preview.workspace = true
 project.workspace = true
 settings.workspace = true
 text.workspace = true
