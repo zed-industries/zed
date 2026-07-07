@@ -9599,8 +9599,8 @@ async fn test_compare_selected_files(cx: &mut gpui::TestAppContext) {
             .into_iter()
             .next()
             .unwrap()
-            .downcast::<FileDiffView>()
-            .expect("Open item should be an FileDiffView");
+            .downcast::<PairDiffView>()
+            .expect("Open item should be a PairDiffView");
         assert_eq!(diff_view.tab_content_text(0, cx), "file1.txt ↔ file2.txt");
         assert_eq!(
             diff_view.tab_tooltip_text(cx).unwrap(),

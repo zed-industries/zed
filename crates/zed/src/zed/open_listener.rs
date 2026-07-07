@@ -13,7 +13,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::future;
 
 use futures::{FutureExt, StreamExt};
-use git_ui::{file_diff_view::FileDiffView, multi_diff_view::MultiDiffView};
+use git_ui::{multi_diff_view::MultiDiffView, pair_diff_view::PairDiffView};
 use gpui::{App, AsyncApp, Global, TaskExt, WindowHandle};
 use onboarding::FIRST_OPEN;
 use onboarding::show_onboarding_view;
@@ -520,7 +520,7 @@ pub async fn open_paths_with_positions(
                     }
                 };
             if let Ok(diff_view) = multi_workspace.update(cx, |_multi_workspace, window, cx| {
-                FileDiffView::open(old_path, new_path, workspace_weak.clone(), window, cx)
+                PairDiffView::open(old_path, new_path, workspace_weak.clone(), window, cx)
             }) {
                 if let Some(diff_view) = diff_view.await.log_err() {
                     items.push(Some(Ok(Box::new(diff_view))))

@@ -1,4 +1,4 @@
-use crate::file_diff_view::build_buffer_diff;
+use crate::pair_diff_view::build_buffer_diff;
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use editor::{Editor, EditorEvent, MultiBuffer, multibuffer_context_lines};

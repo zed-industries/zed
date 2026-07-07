@@ -1,4 +1,4 @@
-//! FileDiffView provides a UI for displaying differences between two buffers.
+//! PairDiffView provides a UI for displaying differences between two buffers.
 
 use anyhow::Result;
 use buffer_diff::BufferDiff;
@@ -26,7 +26,7 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
-pub struct FileDiffView {
+pub struct PairDiffView {
     editor: Entity<SplittableEditor>,
     old_buffer: Entity<Buffer>,
     new_buffer: Entity<Buffer>,
@@ -36,7 +36,7 @@ pub struct FileDiffView {
 
 const RECALCULATE_DIFF_DEBOUNCE: Duration = Duration::from_millis(250);
 
-impl FileDiffView {
+impl PairDiffView {
     #[ztracing::instrument(skip_all)]
     pub fn open(
         old_path: PathBuf,
@@ -59,7 +59,7 @@ impl FileDiffView {
             workspace.update_in(cx, |workspace, window, cx| {
                 let workspace_entity = cx.entity();
                 let diff_view = cx.new(|cx| {
-                    FileDiffView::new(
+                    PairDiffView::new(
                         old_buffer,
                         new_buffer,
                         buffer_diff,
@@ -198,15 +198,15 @@ pub(crate) async fn build_buffer_diff(
     Ok(diff)
 }
 
-impl EventEmitter<EditorEvent> for FileDiffView {}
+impl EventEmitter<EditorEvent> for PairDiffView {}
 
-impl Focusable for FileDiffView {
+impl Focusable for PairDiffView {
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         self.editor.focus_handle(cx)
     }
 }
 
-impl Item for FileDiffView {
+impl Item for PairDiffView {
     type Event = EditorEvent;
 
     fn tab_icon(&self, _window: &Window, _cx: &App) -> Option<Icon> {
@@ -361,7 +361,7 @@ impl Item for FileDiffView {
     }
 }
 
-impl Render for FileDiffView {
+impl Render for PairDiffView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         self.editor.clone()
     }
@@ -394,7 +394,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_diff_view(cx: &mut TestAppContext) {
+    async fn test_pair_diff_view(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -415,7 +415,7 @@ mod tests {
 
         let diff_view = workspace
             .update_in(cx, |workspace, window, cx| {
-                FileDiffView::open(
+                PairDiffView::open(
                     path!("/test/old_file.txt").into(),
                     path!("/test/new_file.txt").into(),
                     workspace.weak_handle(),
@@ -535,7 +535,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_save_changes_in_diff_view(cx: &mut TestAppContext) {
+    async fn test_save_changes_in_pair_diff_view(cx: &mut TestAppContext) {
         init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
@@ -556,7 +556,7 @@ mod tests {
 
         let diff_view = workspace
             .update_in(cx, |workspace, window, cx| {
-                FileDiffView::open(
+                PairDiffView::open(
                     PathBuf::from(path!("/test/old_file.txt")),
                     PathBuf::from(path!("/test/new_file.txt")),
                     workspace.weak_handle(),
