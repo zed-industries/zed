@@ -357,6 +357,11 @@ impl WaylandWindowState {
             if let Some(title) = options.titlebar.and_then(|titlebar| titlebar.title) {
                 xdg_state.toplevel.set_title(title.to_string());
             }
+
+            if let Some(app_id) = options.app_id.as_ref() {
+                xdg_state.toplevel.set_app_id(app_id.clone());
+            }
+
             // Set max window size based on the GPU's maximum texture dimension.
             // This prevents the window from being resized larger than what the GPU can render.
             let max_texture_size = renderer.max_texture_size() as i32;
@@ -371,7 +376,7 @@ impl WaylandWindowState {
             parent,
             children: FxHashSet::default(),
             surface,
-            app_id: None,
+            app_id: options.app_id,
             blur: None,
             viewport,
             globals,
@@ -604,6 +609,9 @@ impl WaylandWindowStatePtr {
 
     fn update_ime_enabled(&self) {
         let mut state = self.state.borrow_mut();
+        if !state.active {
+            return;
+        }
         let client = state.client.clone();
         let ime_enabled = state
             .input_handler

@@ -1,7 +1,7 @@
 use gpui::{Action, actions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 // If the zed binary doesn't use anything in this crate, it will be optimized away
 // and the actions won't initialize. So we just provide an empty initialization function
@@ -17,7 +17,7 @@ pub fn init() {}
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
 pub struct OpenBrowser {
-    pub url: String,
+    pub url: Arc<str>,
 }
 
 /// Opens a zed:// URL within the application.
@@ -25,7 +25,7 @@ pub struct OpenBrowser {
 #[action(namespace = zed)]
 #[serde(deny_unknown_fields)]
 pub struct OpenZedUrl {
-    pub url: String,
+    pub url: Arc<str>,
 }
 
 /// Opens the keymap to either add a keybinding or change an existing one
@@ -69,6 +69,8 @@ actions!(
         OpenLicenses,
         /// Opens the Zed status page.
         OpenStatusPage,
+        /// Opens the Zed merch store.
+        GetMerch,
         /// Opens the telemetry log.
         OpenTelemetryLog,
         /// Opens the performance profiler.
@@ -148,6 +150,25 @@ pub struct OpenSettingsAt {
     #[serde(default)]
     pub target: Option<OpenSettingsAtTarget>,
 }
+
+#[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema, Action)]
+#[action(namespace = zed)]
+#[serde(deny_unknown_fields)]
+pub struct OpenSettingsPage {
+    /// A settings page title (e.g. `AI`).
+    pub page: String,
+    /// The settings file to select before opening `page`. When omitted, the
+    /// existing settings file selection is preserved.
+    #[serde(default)]
+    pub target: Option<OpenSettingsAtTarget>,
+}
+
+/// `OpenSettingsAt` path of the agent skills page in the settings UI.
+pub const AGENT_SKILLS_SETTINGS_PATH: &str = "agent.skills";
+
+/// `OpenSettingsAt` path of the agent sandbox permissions page in the settings
+/// UI.
+pub const AGENT_SANDBOX_SETTINGS_PATH: &str = "agent.sandbox_permissions";
 
 #[derive(PartialEq, Clone, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -365,6 +386,18 @@ pub mod command_palette {
     );
 }
 
+pub mod text_finder {
+    use gpui::actions;
+
+    actions!(
+        text_finder,
+        [
+            /// Opens the Project Search Picker.
+            Toggle,
+        ]
+    );
+}
+
 pub mod project_panel {
     use gpui::actions;
 
@@ -508,7 +541,7 @@ pub mod agent {
     actions!(
         agent,
         [
-            /// Opens the agent settings panel.
+            /// Opens the agent settings UI.
             #[action(deprecated_aliases = ["agent::OpenConfiguration"])]
             OpenSettings,
             /// Opens the agent onboarding modal.
@@ -533,6 +566,17 @@ pub mod agent {
             PasteRaw,
         ]
     );
+
+    /// Selects the agent used for new threads in the agent panel, without
+    /// opening the panel. The selected agent is launched the next time the
+    /// panel is opened.
+    #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
+    #[action(namespace = agent)]
+    #[serde(deny_unknown_fields)]
+    pub struct SelectAgent {
+        /// The id of the agent to select.
+        pub agent: String,
+    }
 
     /// Opens a new agent thread with the provided branch diff for review.
     #[derive(Clone, PartialEq, Deserialize, JsonSchema, Action)]
@@ -577,7 +621,6 @@ pub mod assistant {
     use gpui::{Action, actions};
     use schemars::JsonSchema;
     use serde::Deserialize;
-    use uuid::Uuid;
 
     actions!(
         agent,
@@ -597,17 +640,11 @@ pub mod assistant {
             /// Opens the project AGENTS.md rules file.
             #[action(name = "OpenProjectAGENTS.mdRules")]
             OpenProjectAgentsMdRules,
+            /// Opens the skills manager in the settings window.
+            #[action(deprecated_aliases = ["agent::OpenRulesLibrary", "assistant::OpenRulesLibrary", "assistant::DeployPromptLibrary"])]
+            ManageSkills,
         ]
     );
-
-    /// Opens the rules library for managing agent rules and prompts.
-    #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema, Action)]
-    #[action(namespace = agent, deprecated_aliases = ["assistant::OpenRulesLibrary", "assistant::DeployPromptLibrary"])]
-    #[serde(deny_unknown_fields)]
-    pub struct OpenRulesLibrary {
-        #[serde(skip)]
-        pub prompt_to_select: Option<Uuid>,
-    }
 
     /// Deploys the assistant interface with the specified configuration.
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema, Action)]
@@ -624,7 +661,7 @@ pub mod assistant {
 #[serde(deny_unknown_fields)]
 pub struct OpenRecent {
     #[serde(default)]
-    pub create_new_window: bool,
+    pub create_new_window: Option<bool>,
 }
 
 /// Creates a project from a selected template.
@@ -635,7 +672,7 @@ pub struct OpenRemote {
     #[serde(default)]
     pub from_existing_connection: bool,
     #[serde(default)]
-    pub create_new_window: bool,
+    pub create_new_window: Option<bool>,
 }
 
 /// Opens the dev container connection modal.
@@ -799,7 +836,7 @@ pub mod wsl_actions {
     #[serde(deny_unknown_fields)]
     pub struct OpenFolderInWsl {
         #[serde(default)]
-        pub create_new_window: bool,
+        pub create_new_window: Option<bool>,
     }
 
     /// Open a wsl distro.
@@ -808,7 +845,7 @@ pub mod wsl_actions {
     #[serde(deny_unknown_fields)]
     pub struct OpenWsl {
         #[serde(default)]
-        pub create_new_window: bool,
+        pub create_new_window: Option<bool>,
     }
 }
 

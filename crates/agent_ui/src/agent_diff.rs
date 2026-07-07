@@ -28,7 +28,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{CommonAnimationExt, IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
+use ui::{CommonAnimationExt, Divider, IconButtonShape, KeyBinding, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -102,6 +102,7 @@ impl AgentDiffPane {
             );
             diff_display_editor
                 .set_render_diff_hunk_controls(diff_hunk_controls(&thread, workspace.clone()), cx);
+            diff_display_editor.set_render_diff_hunks_as_unstaged(cx);
             diff_display_editor.update_editors(cx, |editor, _cx| {
                 editor.register_addon(AgentDiffAddon);
             });
@@ -683,7 +684,10 @@ impl Render for AgentDiffPane {
             .on_action(cx.listener(Self::reject))
             .on_action(cx.listener(Self::reject_all))
             .on_action(cx.listener(Self::keep_all))
-            .bg(cx.theme().colors().editor_background)
+            // Only paint the background for the empty state. When the diff editor
+            // is shown it already paints `editor_background`; painting it again
+            // here double-composites into a darker patch on transparent windows.
+            .when(is_empty, |el| el.bg(cx.theme().colors().editor_background))
             .flex()
             .items_center()
             .justify_center()
@@ -755,6 +759,9 @@ fn render_diff_hunk_controls(
     cx: &mut App,
 ) -> AnyElement {
     let editor = editor.clone();
+    // Drop shadows render as a dark halo on transparent windows.
+    let opaque_window =
+        cx.theme().window_background_appearance() == gpui::WindowBackgroundAppearance::Opaque;
 
     h_flex()
         .h(line_height)
@@ -769,7 +776,7 @@ fn render_diff_hunk_controls(
         .bg(cx.theme().colors().editor_background)
         .gap_1()
         .block_mouse_except_scroll()
-        .shadow_md()
+        .when(opaque_window, |this| this.shadow_md())
         .children(vec![
             Button::new(("reject", row as u64), "Reject")
                 .disabled(is_created_file)
@@ -1092,7 +1099,7 @@ impl Render for AgentDiffToolbar {
                                     }),
                             )
                             .into_any_element(),
-                        vertical_divider().into_any_element(),
+                        Divider::vertical().into_any_element(),
                         h_flex()
                             .gap_0p5()
                             .child(
@@ -1134,7 +1141,7 @@ impl Render for AgentDiffToolbar {
                     .mr_1()
                     .gap_1()
                     .children(content)
-                    .child(vertical_divider())
+                    .child(Divider::vertical())
                     .when_some(editor.read(cx).workspace(), |this, _workspace| {
                         this.child(
                             IconButton::new("review", IconName::ListTodo)
@@ -1151,7 +1158,7 @@ impl Render for AgentDiffToolbar {
                                 }),
                         )
                     })
-                    .child(vertical_divider())
+                    .child(Divider::vertical())
                     .on_action({
                         let editor = editor.clone();
                         move |_action: &OpenAgentDiff, window, cx| {
@@ -1424,11 +1431,14 @@ impl AgentDiff {
                 self.update_reviewing_editors(workspace, window, cx);
             }
             AcpThreadEvent::TitleUpdated
+            | AcpThreadEvent::StatusChanged
             | AcpThreadEvent::TokenUsageUpdated
             | AcpThreadEvent::SubagentSpawned(_)
             | AcpThreadEvent::EntriesRemoved(_)
             | AcpThreadEvent::ToolAuthorizationRequested(_)
             | AcpThreadEvent::ToolAuthorizationReceived(_)
+            | AcpThreadEvent::ElicitationRequested(_)
+            | AcpThreadEvent::ElicitationResponded(_)
             | AcpThreadEvent::PromptCapabilitiesUpdated
             | AcpThreadEvent::AvailableCommandsUpdated(_)
             | AcpThreadEvent::Retry(_)
@@ -1572,6 +1582,7 @@ impl AgentDiff {
                             diff_hunk_controls(&thread, workspace.clone()),
                             cx,
                         );
+                        editor.set_render_diff_hunks_as_unstaged(true, cx);
                         editor.set_expand_all_diff_hunks(cx);
                         editor.register_addon(EditorAgentDiffAddon);
                     });
