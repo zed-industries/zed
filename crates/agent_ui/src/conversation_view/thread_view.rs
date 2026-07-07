@@ -4320,23 +4320,11 @@ impl ThreadView {
         }
 
         let focus_handle = self.message_editor.focus_handle(cx);
-        let palette = AgentStylePalette::new(cx);
-        let editor_bg_color = palette.panel;
-        // pi-style bash-mode left-rail tint on the composer.
+        let editor_bg_color = cx.theme().colors().editor_background;
         let shell_mode = if self.editing_message.is_none() && self.as_native_thread(cx).is_some() {
             self.message_editor.read(cx).shell_mode()
         } else {
             None
-        };
-
-        let editor_focused = focus_handle.is_focused(window);
-        let input_border_color = match (editor_focused, shell_mode) {
-            (_, Some(crate::message_editor::InlineShellMode::Visible)) => palette.text_accent,
-            (_, Some(crate::message_editor::InlineShellMode::Hidden)) => {
-                palette.text_accent.opacity(0.45)
-            }
-            (true, None) => cx.theme().colors().border_focused,
-            (false, None) => palette.line,
         };
 
         let editor_expanded = self.editor_expanded;
@@ -4352,14 +4340,14 @@ impl ThreadView {
 
         h_flex()
             .py_2()
-            .bg(cx.theme().colors().panel_background)
+            .bg(editor_bg_color)
             .justify_center()
             .on_action(cx.listener(Self::handle_message_editor_move_up))
             .map(|this| {
                 if has_messages {
                     this.on_action(cx.listener(Self::expand_message_editor))
                         .border_t_1()
-                        .border_color(palette.line)
+                        .border_color(cx.theme().colors().border)
                         .when(editor_expanded, |this| this.h(vh(0.8, window)))
                 } else {
                     this.flex_1().size_full()
@@ -4381,11 +4369,18 @@ impl ThreadView {
                             .w_full()
                             .min_h_0()
                             .when(fills_container, |this| this.flex_1())
-                            .rounded_md()
-                            .border_1()
-                            .border_color(input_border_color)
-                            .bg(editor_bg_color)
-                            .p_1()
+                            .border_l_2()
+                            .border_color(match shell_mode {
+                                Some(crate::message_editor::InlineShellMode::Visible) => {
+                                    cx.theme().colors().text_accent
+                                }
+                                Some(crate::message_editor::InlineShellMode::Hidden) => {
+                                    cx.theme().colors().text_accent.opacity(0.45)
+                                }
+                                None => cx.theme().colors().border.opacity(0.),
+                            })
+                            .when(shell_mode.is_some(), |this| this.pl_1p5())
+                            .pt_1()
                             .pr_2p5()
                             .child(self.message_editor.clone())
                             .when(has_messages, |this| {
