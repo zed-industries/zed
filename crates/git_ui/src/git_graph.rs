@@ -1,4 +1,5 @@
 use crate::{
+    branch_picker::{delete_branch_command, force_delete_prompt_for_branch_delete_error},
     commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
     commit_view::CommitView,
     git_panel::show_error_toast,
@@ -21,7 +22,7 @@ use git::{
 use gpui::{
     Action, Anchor, AnyElement, App, Bounds, ClickEvent, ClipboardItem, DefiniteLength,
     DismissEvent, DragMoveEvent, ElementId, Empty, Entity, EventEmitter, FocusHandle, Focusable,
-    Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, ScrollStrategy,
+    Hsla, MouseButton, MouseDownEvent, PathBuilder, Pixels, Point, PromptLevel, ScrollStrategy,
     ScrollWheelEvent, SharedString, Subscription, Task, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity, Window, actions, anchored, deferred, point, prelude::*,
     px, uniform_list,
@@ -1532,6 +1533,108 @@ impl GitGraph {
         });
     }
 
+    fn delete_branch(
+        &mut self,
+        branch_name: SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let workspace = self.workspace.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let answer = cx.update(|window, cx| {
+                window.prompt(
+                    PromptLevel::Warning,
+                    &format!("Delete branch \"{branch_name}\"?"),
+                    None,
+                    &["Delete", "Cancel"],
+                    cx,
+                )
+            })?;
+            if answer.await != Ok(0) {
+                return anyhow::Ok(());
+            }
+
+            let scan = repository
+                .update(cx, |repository, _| repository.branches())
+                .await??;
+            // The branch may have been deleted or renamed since the graph was
+            // loaded, in which case there is nothing left to delete.
+            let Some(branch) = scan
+                .branches
+                .iter()
+                .find(|branch| branch.name() == branch_name.as_ref())
+                .cloned()
+            else {
+                return Ok(());
+            };
+            if branch.is_head {
+                return Ok(());
+            }
+
+            let is_remote = branch.is_remote();
+            let branch_name = branch.name().to_string();
+            let initial_result = repository
+                .update(cx, |repository, _| {
+                    repository.delete_branch(is_remote, branch_name.clone(), false)
+                })
+                .await?;
+
+            let (result, attempted_force) = match initial_result {
+                Ok(()) => (Ok(()), false),
+                Err(error) => {
+                    if let Some(prompt_message) =
+                        force_delete_prompt_for_branch_delete_error(&error, &branch_name)
+                    {
+                        let answer = cx.update(|window, cx| {
+                            window.prompt(
+                                PromptLevel::Warning,
+                                &prompt_message,
+                                None,
+                                &["Force Delete", "Cancel"],
+                                cx,
+                            )
+                        })?;
+                        if answer.await != Ok(0) {
+                            return Ok(());
+                        }
+                        let retry = repository
+                            .update(cx, |repository, _| {
+                                repository.delete_branch(is_remote, branch_name.clone(), true)
+                            })
+                            .await?;
+                        (retry, true)
+                    } else {
+                        (Err(error), false)
+                    }
+                }
+            };
+
+            match result {
+                Ok(()) => {
+                    this.update(cx, |this, cx| this.reload_graph(cx)).ok();
+                }
+                Err(error) => {
+                    if let Some(workspace) = workspace.upgrade() {
+                        cx.update(|_window, cx| {
+                            show_error_toast(
+                                workspace,
+                                delete_branch_command(is_remote, &branch_name, attempted_force),
+                                error,
+                                cx,
+                            )
+                        })?;
+                    }
+                }
+            }
+
+            anyhow::Ok(())
+        })
+        .detach();
+    }
+
     /// Computes the height of a single commit row in the git graph.
     ///
     /// The returned value is snapped to the nearest physical pixel. This is
@@ -2770,6 +2873,18 @@ impl GitGraph {
                                 window.handler_for(&git_graph, move |this, window, cx| {
                                     this.create_branch_from(create_base.clone(), window, cx);
                                 }),
+                            );
+
+                            let delete_branch = branch_name;
+                            menu = menu.item(
+                                ContextMenuEntry::new("Delete Branch…")
+                                    .disabled(is_checked_out)
+                                    .handler(window.handler_for(
+                                        &git_graph,
+                                        move |this, window, cx| {
+                                            this.delete_branch(delete_branch.clone(), window, cx);
+                                        },
+                                    )),
                             );
                         }
                         None => {

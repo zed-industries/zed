@@ -659,7 +659,7 @@ enum PickerState {
     NewBranch,
 }
 
-fn delete_branch_command(is_remote: bool, branch_name: &str, force: bool) -> String {
+pub(crate) fn delete_branch_command(is_remote: bool, branch_name: &str, force: bool) -> String {
     format!(
         "branch {} {branch_name}",
         delete_branch_flag(is_remote, force)
@@ -691,7 +691,7 @@ fn unmerged_branch_force_delete_prompt(branch_name: &str) -> String {
 
 // Git only reports these cases via localized stderr, so this best-effort check
 // may miss some locales and fall back to the raw error toast.
-fn force_delete_prompt_for_branch_delete_error(
+pub(crate) fn force_delete_prompt_for_branch_delete_error(
     error: &anyhow::Error,
     branch_name: &str,
 ) -> Option<String> {

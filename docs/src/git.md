@@ -110,10 +110,10 @@ To view File History:
 
 The Git Graph ({#action git_graph::Open}) visualizes your repository's commit history across branches. Right-clicking a branch label, tag label, or commit opens a context menu with common Git operations:
 
-- On a branch label: **Check Out Branch** or **Create Branch from Here…**.
+- On a branch label: **Check Out Branch**, **Create Branch from Here…**, or **Delete Branch…**.
 - On a commit or tag label: **Create Branch from Here…**.
 
-Creating a branch opens a small modal asking for the name.
+Creating a branch opens a small modal asking for the name. Deleting a branch asks for confirmation first, and offers a force delete if the branch is not fully merged. You cannot delete the branch you currently have checked out.
 
 ## Fetch, Push, and Pull
 
