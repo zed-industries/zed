@@ -765,11 +765,9 @@ impl Model {
 
             // EU region inference profiles
             (
-                Self::ClaudeFable5
-                | Self::ClaudeOpus4_8
+                Self::ClaudeOpus4_8
                 | Self::ClaudeOpus4_7
                 | Self::ClaudeOpus4_6
-                | Self::ClaudeSonnet5
                 | Self::ClaudeSonnet4_6
                 | Self::ClaudeSonnet4_5
                 | Self::ClaudeSonnet4
@@ -810,6 +808,8 @@ impl Model {
                 | Self::Nova2Lite,
                 "apac",
             ) => Ok(format!("{}.{}", region_group, model_id)),
+
+            (Self::ClaudeFable5 | Self::ClaudeSonnet5, _) => Ok(format!("global.{}", model_id)),
 
             // Default: use model ID directly
             _ => Ok(model_id.into()),
@@ -876,13 +876,26 @@ mod tests {
             Model::ClaudeOpus4_8.cross_region_inference_id("eu-west-1", false)?,
             "eu.anthropic.claude-opus-4-8"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_inference_profile_only_models_fall_back_to_global() -> anyhow::Result<()> {
         assert_eq!(
             Model::ClaudeFable5.cross_region_inference_id("eu-west-1", false)?,
-            "eu.anthropic.claude-fable-5"
+            "global.anthropic.claude-fable-5"
         );
         assert_eq!(
             Model::ClaudeSonnet5.cross_region_inference_id("eu-west-1", false)?,
-            "eu.anthropic.claude-sonnet-5"
+            "global.anthropic.claude-sonnet-5"
+        );
+        assert_eq!(
+            Model::ClaudeFable5.cross_region_inference_id("ap-southeast-2", false)?,
+            "global.anthropic.claude-fable-5"
+        );
+        assert_eq!(
+            Model::ClaudeSonnet5.cross_region_inference_id("ap-northeast-1", false)?,
+            "global.anthropic.claude-sonnet-5"
         );
         Ok(())
     }
