@@ -147,22 +147,6 @@ impl<D: PickerDelegate> Picker<D> {
             .when(preview_visible, |this| {
                 this.child(Divider::vertical().mx_1())
                     .child(
-                        IconButton::new("picker-preview-right", IconName::DiffSplit)
-                            .icon_size(IconSize::Small)
-                            .toggle_state(current == preview::Layout::Right)
-                            .tooltip(move |_window, cx| {
-                                Tooltip::for_action_in(
-                                    "Preview to the Right",
-                                    &SetPreviewRight,
-                                    &right_focus_handle,
-                                    cx,
-                                )
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.set_preview_layout(preview::Layout::Right, window, cx)
-                            })),
-                    )
-                    .child(
                         IconButton::new("picker-preview-below", IconName::DiffUnified)
                             .icon_size(IconSize::Small)
                             .toggle_state(current == preview::Layout::Below)
@@ -176,6 +160,22 @@ impl<D: PickerDelegate> Picker<D> {
                             })
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.set_preview_layout(preview::Layout::Below, window, cx)
+                            })),
+                    )
+                    .child(
+                        IconButton::new("picker-preview-right", IconName::DiffSplit)
+                            .icon_size(IconSize::Small)
+                            .toggle_state(current == preview::Layout::Right)
+                            .tooltip(move |_window, cx| {
+                                Tooltip::for_action_in(
+                                    "Preview to the Right",
+                                    &SetPreviewRight,
+                                    &right_focus_handle,
+                                    cx,
+                                )
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.set_preview_layout(preview::Layout::Right, window, cx)
                             })),
                     )
             })
