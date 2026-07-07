@@ -1008,14 +1008,14 @@ impl GitPanel {
                 &git_store,
                 window,
                 move |this, _git_store, event, window, cx| match event {
-                    GitStoreEvent::RepositoryUpdated(
-                        _,
-                        RepositoryEvent::StatusesChanged | RepositoryEvent::HeadChanged,
-                        true,
-                    )
-                    | GitStoreEvent::RepositoryAdded
-                    | GitStoreEvent::RepositoryRemoved(_)
+                    GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::HeadChanged, true)
                     | GitStoreEvent::ActiveRepositoryChanged(_) => {
+                        this.pending_pull_request_url = None;
+                        this.schedule_update(window, cx);
+                    }
+                    GitStoreEvent::RepositoryUpdated(_, RepositoryEvent::StatusesChanged, true)
+                    | GitStoreEvent::RepositoryAdded
+                    | GitStoreEvent::RepositoryRemoved(_) => {
                         this.schedule_update(window, cx);
                     }
                     GitStoreEvent::RepositoryUpdated(
@@ -3702,6 +3702,7 @@ impl GitPanel {
             return false;
         }
 
+        self.pending_pull_request_url = None;
         self.pending_remote_operation = Some(kind);
         cx.notify();
         true
@@ -4056,6 +4057,9 @@ impl GitPanel {
         let new_active_repository = self.project.read(cx).active_repository(cx);
         let active_repository_changed = self.active_repository.as_ref().map(Entity::entity_id)
             != new_active_repository.as_ref().map(Entity::entity_id);
+        if active_repository_changed {
+            self.pending_pull_request_url = None;
+        }
         if active_repository_changed && self.amend_pending {
             // Leaving a repository with a pending amend: undo it so the amend
             // state doesn't carry over to the newly active repository. The
@@ -4186,6 +4190,7 @@ impl GitPanel {
 
         let active_repository = self.project.read(cx).active_repository(cx);
         if active_repository != self.active_repository {
+            self.pending_pull_request_url = None;
             self.active_repository = active_repository;
             self.git_access = None;
         }
@@ -4665,9 +4670,9 @@ impl GitPanel {
         };
 
         let is_push = matches!(action, RemoteAction::Push(_, _));
-        if is_push {
-            self.pending_pull_request_url = remote_output::extract_pull_request_url(&info);
-        }
+        self.pending_pull_request_url = is_push
+            .then(|| remote_output::extract_pull_request_url(&info))
+            .flatten();
 
         workspace.update(cx, |workspace, cx| {
             let SuccessMessage { message, style } = remote_output::format_output(&action, info);
@@ -9671,11 +9676,13 @@ mod tests {
         panel.update(cx, |panel, cx| {
             // The first remote operation starts and records its kind, which the
             // button uses to render an "in progress" tooltip.
+            panel.pending_pull_request_url = Some("https://example.com/pull".to_string());
             assert!(panel.start_remote_operation(RemoteOperationKind::Fetch, cx));
             assert!(matches!(
                 panel.pending_remote_operation,
                 Some(RemoteOperationKind::Fetch)
             ));
+            assert!(panel.pending_pull_request_url.is_none());
 
             // A second remote operation is refused while one is pending, even a
             // different kind: we serialize all remote ops.
