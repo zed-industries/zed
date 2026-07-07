@@ -5,9 +5,13 @@ use ui::SharedString;
 use util::ResultExt as _;
 
 const PULL_REQUEST_HINTS: &[(&str, &str)] = &[
+    // GitHub: "Create a pull request for 'branch' on GitHub by visiting:"
     ("Create a pull request", "Create Pull Request"),
+    // Bitbucket: "Create pull request for branch:"
     ("Create pull request", "Create Pull Request"),
+    // GitLab: "To create a merge request for branch, visit:"
     ("create a merge request", "Create Merge Request"),
+    // GitLab: "View merge request for branch:"
     ("View merge request", "View Merge Request"),
 ];
 
