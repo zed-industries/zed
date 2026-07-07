@@ -192,6 +192,11 @@ pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
 
 /// `#[gpui::bench]` annotates a Criterion benchmark that runs with GPUI support.
 ///
+/// Use `#[gpui::bench(inputs = some_iterable())]` on benchmarks that take an
+/// additional input argument; the generated benchmark uses Criterion's
+/// `bench_with_input`. `group`, `input_name`, and `sample_size` can customize
+/// the generated input benchmark group.
+///
 /// The benchmark crate must add `criterion` and `gpui_platform` (with its
 /// `test-support` feature) to its dev-dependencies and enable gpui's `bench`
 /// feature, since the generated code references all three.

@@ -2567,6 +2567,7 @@ impl OutlinePanel {
                 depth,
                 annotation_range: None,
                 range: search_data.context_range.clone(),
+                selection_range: search_data.context_range.clone(),
                 text: search_data.context_text.clone().into(),
                 source_range_for_text: search_data.context_range.clone(),
                 highlight_ranges: search_data
@@ -4751,7 +4752,7 @@ impl OutlinePanel {
                                 }
                             })
                             .with_render_fn(cx.entity(), move |outline_panel, params, _, _| {
-                                const LEFT_OFFSET: Pixels = px(14.);
+                                const LEFT_OFFSET: Pixels = ui::LIST_ITEM_INDENT_GUIDE_LEFT_OFFSET;
 
                                 let indent_size = params.indent_size;
                                 let item_height = params.item_height;

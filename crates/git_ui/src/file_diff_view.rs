@@ -2,7 +2,10 @@
 
 use anyhow::Result;
 use buffer_diff::BufferDiff;
-use editor::{Editor, EditorEvent, EditorSettings, MultiBuffer, SplittableEditor};
+use editor::{
+    Editor, EditorEvent, EditorSettings, MultiBuffer, RestoreOnlyUnstagedDiffHunkDelegate,
+    SplittableEditor,
+};
 use futures::{FutureExt, select_biased};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
@@ -103,11 +106,8 @@ impl FileDiffView {
                 window,
                 cx,
             );
-            splittable.rhs_editor().update(cx, |editor, _| {
-                editor.start_temporary_diff_override();
-            });
-            splittable.disable_diff_hunk_controls(cx);
-            splittable.set_render_diff_hunks_as_unstaged(cx);
+            splittable
+                .set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
             splittable
         });
 
