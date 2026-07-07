@@ -101,7 +101,6 @@ impl EventEmitter<workspace::ToolbarItemEvent> for BufferSearchBar {}
 impl Render for BufferSearchBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
-
         let has_splittable_editor = self.splittable_editor.is_some();
         let split_buttons = self
             .splittable_editor
@@ -539,7 +538,9 @@ impl ToolbarItemView for BufferSearchBar {
             .and_then(|entity| entity.downcast::<SplittableEditor>().ok())
         {
             self._splittable_editor_subscription =
-                Some(cx.observe(&splittable_editor, |_, _, cx| cx.notify()));
+                Some(cx.observe(&splittable_editor, |_, _, cx| {
+                    cx.notify();
+                }));
             self.splittable_editor = Some(splittable_editor.downgrade());
         }
 
