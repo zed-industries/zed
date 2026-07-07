@@ -3339,6 +3339,20 @@ impl Project {
         })
     }
 
+    pub fn unstage_staged_hunks_for_staged_diff(
+        &mut self,
+        staged_diff: Entity<BufferDiff>,
+        index_ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        if self.is_disconnected(cx) {
+            return Err(anyhow!(ErrorCode::Disconnected));
+        }
+        self.git_store.update(cx, |git_store, cx| {
+            git_store.unstage_staged_hunks_for_staged_diff(staged_diff, index_ranges, cx)
+        })
+    }
+
     pub fn open_buffer_by_id(
         &mut self,
         id: BufferId,

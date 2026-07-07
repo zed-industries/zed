@@ -2,13 +2,17 @@ use crate::{
     conflict_view,
     git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
     git_panel_settings::GitPanelSettings,
+    staged_diff::StagedDiffDelegate,
+    unstaged_diff::UnstagedDiffDelegate,
 };
 use anyhow::Result;
-use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus};
+use buffer_diff::{BufferDiff, DiffHunkSecondaryStatus};
 use collections::{HashMap, HashSet};
+#[cfg(test)]
+use editor::Editor;
 use editor::{
-    Addon, Editor, EditorEvent, EditorSettings, RenderDiffHunkControlsFn, SelectionEffects,
-    SplittableEditor, actions::GoToHunk, multibuffer_context_lines, render_diff_hunk_controls,
+    Addon, EditorEvent, EditorSettings, RestoreOnlyDiffHunkDelegate, SelectionEffects,
+    SplittableEditor, UncommittedDiffHunkDelegate, actions::GoToHunk, multibuffer_context_lines,
     scroll::Autoscroll,
 };
 use futures_lite::future::yield_now;
@@ -27,8 +31,7 @@ use project::{
     },
 };
 use settings::{GitPanelGroupBy, GitPanelSortBy, Settings, SettingsStore};
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::{collections::BTreeMap, sync::Arc};
 use theme::ActiveTheme;
 use ui::{CommonAnimationExt as _, KeyBinding, prelude::*};
 use util::{ResultExt as _, rel_path::RelPath};
@@ -41,7 +44,6 @@ use ztracing::instrument;
 struct BufferSubscriptions {
     _diff: Entity<BufferDiff>,
     display_buffer: Entity<Buffer>,
-    main_buffer: Entity<Buffer>,
     _diff_subscription: Subscription,
     _conflict_set: Option<Entity<ConflictSet>>,
     _conflict_set_subscription: Option<Subscription>,
@@ -203,18 +205,31 @@ impl DiffMultibuffer {
         branch_diff: Entity<diff_buffer_list::DiffBufferList>,
         cx: &mut Context<SplittableEditor>,
     ) {
-        editor.set_render_diff_hunks_as_unstaged(*diff_base == DiffBase::Index, cx);
         match diff_base {
-            DiffBase::Head | DiffBase::Index | DiffBase::Staged => {
-                let render_diff_hunk_controls = match diff_base {
-                    DiffBase::Head => render_default_project_diff_hunk_controls(),
-                    DiffBase::Index | DiffBase::Staged => Arc::new(render_empty_diff_hunk_controls),
-                    DiffBase::Merge { .. } => unreachable!(),
-                };
-                editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx);
-                editor.set_rhs_delegate_stage_and_restore(*diff_base == DiffBase::Staged, cx);
+            DiffBase::Head => {
+                editor.set_diff_hunk_delegate(Some(Arc::new(UncommittedDiffHunkDelegate)), cx);
                 editor.rhs_editor().update(cx, |rhs_editor, _cx| {
-                    rhs_editor.set_read_only(*diff_base == DiffBase::Staged);
+                    rhs_editor.set_read_only(false);
+                    rhs_editor.unregister_addon::<BranchDiffAddon>();
+                    if rhs_editor.addon::<GitPanelAddon>().is_none() {
+                        rhs_editor.register_addon(GitPanelAddon { workspace });
+                    }
+                });
+            }
+            DiffBase::Index => {
+                editor.set_diff_hunk_delegate(Some(Arc::new(UnstagedDiffDelegate)), cx);
+                editor.rhs_editor().update(cx, |rhs_editor, _cx| {
+                    rhs_editor.set_read_only(false);
+                    rhs_editor.unregister_addon::<BranchDiffAddon>();
+                    if rhs_editor.addon::<GitPanelAddon>().is_none() {
+                        rhs_editor.register_addon(GitPanelAddon { workspace });
+                    }
+                });
+            }
+            DiffBase::Staged => {
+                editor.set_diff_hunk_delegate(Some(Arc::new(StagedDiffDelegate)), cx);
+                editor.rhs_editor().update(cx, |rhs_editor, _cx| {
+                    rhs_editor.set_read_only(true);
                     rhs_editor.unregister_addon::<BranchDiffAddon>();
                     if rhs_editor.addon::<GitPanelAddon>().is_none() {
                         rhs_editor.register_addon(GitPanelAddon { workspace });
@@ -222,11 +237,7 @@ impl DiffMultibuffer {
                 });
             }
             DiffBase::Merge { .. } => {
-                editor.set_render_diff_hunk_controls(
-                    Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                    cx,
-                );
-                editor.set_rhs_delegate_stage_and_restore(false, cx);
+                editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
                 editor.rhs_editor().update(cx, |rhs_editor, _cx| {
                     rhs_editor.set_read_only(false);
                     rhs_editor.unregister_addon::<GitPanelAddon>();
@@ -235,7 +246,6 @@ impl DiffMultibuffer {
                             branch_diff: branch_diff.clone(),
                         });
                     }
-                    rhs_editor.start_temporary_diff_override();
                 });
             }
         }
@@ -378,16 +388,6 @@ impl DiffMultibuffer {
         &self.editor
     }
 
-    pub(crate) fn set_render_diff_hunk_controls(
-        &mut self,
-        render_diff_hunk_controls: RenderDiffHunkControlsFn,
-        cx: &mut Context<Self>,
-    ) {
-        self.editor.update(cx, |editor, cx| {
-            editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx)
-        });
-    }
-
     fn selected_ranges(&self, cx: &App) -> (bool, Vec<std::ops::Range<multi_buffer::Anchor>>) {
         let editor = self.editor.read(cx).rhs_editor().read(cx);
         let snapshot = self.multibuffer.read(cx).snapshot(cx);
@@ -496,7 +496,7 @@ impl DiffMultibuffer {
         // saved first, exactly as they are when staging from the uncommitted
         // diff or a normal editor.
         editor.update(cx, |editor, cx| {
-            editor.stage_or_unstage_diff_hunks(true, ranges, cx);
+            editor.stage_or_unstage_diff_hunks(true, ranges, window, cx);
         });
         if move_to_next {
             editor
@@ -520,56 +520,13 @@ impl DiffMultibuffer {
         // Route through the editor's delegated stage path, the same path taken
         // by the hunk buttons (on either side of a split) and the keyboard.
         editor.update(cx, |editor, cx| {
-            editor.stage_or_unstage_diff_hunks(false, ranges, cx);
+            editor.stage_or_unstage_diff_hunks(false, ranges, window, cx);
         });
         if move_to_next {
             editor
                 .focus_handle(cx)
                 .dispatch_action(&GoToHunk, window, cx);
         }
-    }
-
-    /// Unstages the given ranges, keyed by display (index text) buffer id. In
-    /// staged mode the display buffer is the index text buffer, so the ranges
-    /// are index-coordinate anchors.
-    fn unstage_index_ranges(
-        &mut self,
-        mut ranges_by_buffer_id: HashMap<BufferId, Vec<std::ops::Range<Anchor>>>,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(project) = self
-            .editor
-            .read(cx)
-            .rhs_editor()
-            .read(cx)
-            .project()
-            .cloned()
-        else {
-            return;
-        };
-
-        let ranges_to_unstage = self
-            .buffer_subscriptions
-            .values()
-            .filter_map(|sub| {
-                let display_buffer_id = sub.display_buffer.read(cx).remote_id();
-                let index_ranges = ranges_by_buffer_id.remove(&display_buffer_id)?;
-                let staged_diff = self.multibuffer.read(cx).diff_for(display_buffer_id)?;
-                Some((sub.main_buffer.clone(), staged_diff, index_ranges))
-            })
-            .collect::<Vec<_>>();
-
-        if ranges_to_unstage.is_empty() {
-            return;
-        }
-
-        project.update(cx, |project, cx| {
-            for (main_buffer, staged_diff, index_ranges) in ranges_to_unstage {
-                project
-                    .unstage_staged_hunks(main_buffer, staged_diff, index_ranges, cx)
-                    .log_err();
-            }
-        });
     }
 
     fn handle_editor_event(
@@ -604,22 +561,7 @@ impl DiffMultibuffer {
                 self._task =
                     cx.spawn_in(window, async move |this, cx| Self::refresh(this, cx).await);
             }
-            EditorEvent::StageOrUnstageRequested { stage, hunks } => {
-                // The staged view's editors delegate stage/restore. Unstage is
-                // the only meaningful operation here: this view shows nothing
-                // that could be staged, and restore must not touch the index
-                // text buffer.
-                if !*stage && self.is_staged_mode(cx) {
-                    let mut ranges_by_buffer_id: HashMap<BufferId, Vec<_>> = HashMap::default();
-                    for hunk in hunks {
-                        ranges_by_buffer_id
-                            .entry(hunk.buffer_id)
-                            .or_default()
-                            .push(hunk.buffer_range.clone());
-                    }
-                    self.unstage_index_ranges(ranges_by_buffer_id, cx);
-                }
-            }
+
             _ => {}
         }
         if editor.focus_handle(cx).contains_focused(window, cx)
@@ -694,7 +636,6 @@ impl DiffMultibuffer {
             BufferSubscriptions {
                 _diff: diff.clone(),
                 display_buffer: display_buffer.clone(),
-                main_buffer,
                 _diff_subscription: diff_subscription,
                 _conflict_set: conflict_set.clone(),
                 _conflict_set_subscription: conflict_set_subscription,
@@ -1174,23 +1115,6 @@ impl Render for DiffMultibuffer {
             })
             .when(!is_empty, |el| el.child(self.editor.clone()))
     }
-}
-
-fn render_default_project_diff_hunk_controls() -> RenderDiffHunkControlsFn {
-    Arc::new(render_diff_hunk_controls)
-}
-
-fn render_empty_diff_hunk_controls(
-    _: u32,
-    _: &DiffHunkStatus,
-    _: std::ops::Range<editor::Anchor>,
-    _: bool,
-    _: gpui::Pixels,
-    _: &Entity<Editor>,
-    _: &mut Window,
-    _: &mut App,
-) -> AnyElement {
-    gpui::Empty.into_any_element()
 }
 
 const CONFLICT_SORT_PREFIX: u64 = 1;

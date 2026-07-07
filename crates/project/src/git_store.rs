@@ -1335,10 +1335,43 @@ impl GitStore {
         index_ranges: Vec<Range<Anchor>>,
         cx: &mut Context<Self>,
     ) -> Result<()> {
+        let buffer_id = buffer.read(cx).remote_id();
+        self.unstage_staged_hunks_for_buffer_id(buffer_id, staged_diff, index_ranges, cx)
+    }
+
+    pub fn unstage_staged_hunks_for_staged_diff(
+        &mut self,
+        staged_diff: Entity<BufferDiff>,
+        index_ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
+        let staged_diff_entity_id = staged_diff.entity_id();
+        let buffer_id = self
+            .diffs
+            .iter()
+            .find_map(|(buffer_id, diff_state)| {
+                diff_state
+                    .read(cx)
+                    .staged_diff
+                    .as_ref()
+                    .and_then(|(diff, _)| diff.upgrade())
+                    .is_some_and(|diff| diff.entity_id() == staged_diff_entity_id)
+                    .then_some(*buffer_id)
+            })
+            .context("failed to find git state for staged diff")?;
+        self.unstage_staged_hunks_for_buffer_id(buffer_id, staged_diff, index_ranges, cx)
+    }
+
+    fn unstage_staged_hunks_for_buffer_id(
+        &mut self,
+        buffer_id: BufferId,
+        staged_diff: Entity<BufferDiff>,
+        index_ranges: Vec<Range<Anchor>>,
+        cx: &mut Context<Self>,
+    ) -> Result<()> {
         if index_ranges.is_empty() {
             return Ok(());
         }
-        let buffer_id = buffer.read(cx).remote_id();
         let diff_state = self
             .diffs
             .get(&buffer_id)

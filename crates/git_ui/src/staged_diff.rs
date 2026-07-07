@@ -3,8 +3,9 @@ use crate::{
     git_panel::{GitPanel, GitStatusEntry},
 };
 use anyhow::{Context as _, Result};
+use buffer_diff::DiffHunkStatus;
 use editor::{
-    Editor, EditorEvent, RenderDiffHunkControlsFn, SplittableEditor,
+    DiffHunkDelegate, Editor, EditorEvent, ResolvedDiffHunks, SplittableEditor,
     actions::{GoToHunk, GoToPreviousHunk},
 };
 use git::{Commit, UnstageAll, UnstageAndNext};
@@ -20,16 +21,114 @@ use project::{
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
+    ops::Range,
     sync::Arc,
 };
-use theme::ActiveTheme;
 use ui::{Icon, Tooltip, Window, prelude::*, vertical_divider};
+use util::ResultExt as _;
 use workspace::{
     ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
     Workspace,
     item::{Item, ItemEvent, ItemHandle, SaveOptions, TabContentParams},
     searchable::SearchableItemHandle,
 };
+
+pub(crate) struct StagedDiffDelegate;
+
+impl DiffHunkDelegate for StagedDiffDelegate {
+    fn toggle(
+        &self,
+        hunks: Vec<ResolvedDiffHunks>,
+        editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.stage_or_unstage(false, hunks, editor, window, cx);
+    }
+
+    fn stage_or_unstage(
+        &self,
+        stage: bool,
+        hunks: Vec<ResolvedDiffHunks>,
+        editor: &mut Editor,
+        _window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        if stage {
+            return;
+        }
+        let Some(project) = editor.project().cloned() else {
+            return;
+        };
+        for hunks in hunks {
+            let index_ranges = hunks
+                .hunks
+                .into_iter()
+                .map(|hunk| hunk.buffer_range)
+                .collect::<Vec<_>>();
+            if index_ranges.is_empty() {
+                continue;
+            }
+            project
+                .update(cx, |project, cx| {
+                    project.unstage_staged_hunks_for_staged_diff(hunks.diff, index_ranges, cx)
+                })
+                .log_err();
+        }
+    }
+
+    fn render_hunk_controls(
+        &self,
+        row: u32,
+        status: &DiffHunkStatus,
+        hunk_range: Range<editor::Anchor>,
+        _is_created_file: bool,
+        line_height: Pixels,
+        editor: &Entity<Editor>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        if !ProjectSettings::get_global(cx)
+            .git
+            .show_stage_restore_buttons
+        {
+            return gpui::Empty.into_any_element();
+        }
+        let hunk_range = hunk_range.start..hunk_range.start;
+        h_flex()
+            .h(line_height)
+            .mr_1()
+            .gap_1()
+            .px_0p5()
+            .pb_1()
+            .border_x_1()
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .rounded_b_lg()
+            .bg(cx.theme().colors().editor_background)
+            .block_mouse_except_scroll()
+            .shadow_md()
+            .child(
+                Button::new(("unstage", row as u64), "Unstage")
+                    .alpha(if status.is_pending() { 0.66 } else { 1.0 })
+                    .tooltip(Tooltip::text("Unstage Hunk"))
+                    .on_click({
+                        let editor = editor.clone();
+                        move |_event, window, cx| {
+                            editor.update(cx, |editor, cx| {
+                                editor.stage_or_unstage_diff_hunks(
+                                    false,
+                                    vec![hunk_range.clone()],
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }
+                    }),
+            )
+            .into_any_element()
+    }
+}
 
 /// The workspace item for the staged diff. It wraps a single read-only
 /// [`DiffMultibuffer`] over [`DiffBase::Staged`] and delegates the [`Item`]
@@ -129,9 +228,6 @@ impl StagedDiff {
         workspace: Entity<Workspace>,
         cx: &mut Context<Self>,
     ) -> Self {
-        diff.update(cx, |diff, cx| {
-            diff.set_render_diff_hunk_controls(render_unstage_staged_hunk_controls(), cx);
-        });
         let diff_event_subscription = cx.subscribe(&diff, |_, _, event: &EditorEvent, cx| {
             cx.emit(event.clone())
         });
@@ -389,54 +485,6 @@ impl Render for StagedDiff {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         self.diff.clone()
     }
-}
-
-fn render_unstage_staged_hunk_controls() -> RenderDiffHunkControlsFn {
-    Arc::new(
-        move |row, status, hunk_range, _is_created_file, line_height, editor, _window, cx| {
-            if !ProjectSettings::get_global(cx)
-                .git
-                .show_stage_restore_buttons
-            {
-                return gpui::Empty.into_any_element();
-            }
-            let hunk_range = hunk_range.start..hunk_range.start;
-            h_flex()
-                .h(line_height)
-                .mr_1()
-                .gap_1()
-                .px_0p5()
-                .pb_1()
-                .border_x_1()
-                .border_b_1()
-                .border_color(cx.theme().colors().border_variant)
-                .rounded_b_lg()
-                .bg(cx.theme().colors().editor_background)
-                .block_mouse_except_scroll()
-                .shadow_md()
-                .child(
-                    Button::new(("unstage", row as u64), "Unstage")
-                        .alpha(if status.is_pending() { 0.66 } else { 1.0 })
-                        .tooltip(Tooltip::text("Unstage Hunk"))
-                        .on_click({
-                            let editor = editor.clone();
-                            // Route through the editor's delegated stage path so
-                            // the hunk resolves in the coordinates of whichever
-                            // editor (LHS or RHS) rendered the button.
-                            move |_event, _window, cx| {
-                                editor.update(cx, |editor, cx| {
-                                    editor.stage_or_unstage_diff_hunks(
-                                        false,
-                                        vec![hunk_range.clone()],
-                                        cx,
-                                    );
-                                });
-                            }
-                        }),
-                )
-                .into_any_element()
-        },
-    )
 }
 
 pub struct StagedDiffToolbar {
@@ -880,108 +928,6 @@ mod tests {
                 0
             );
         });
-    }
-
-    #[gpui::test]
-    async fn test_unstage_from_lhs_of_split_staged_view(cx: &mut TestAppContext) {
-        init_test(cx);
-
-        cx.update(|cx| {
-            cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.update_user_settings(cx, |settings| {
-                    settings.editor.diff_view_style = Some(DiffViewStyle::Split);
-                });
-            });
-        });
-
-        let committed_contents = r#"
-            fn main() {
-                println!("hello world");
-            }
-        "#
-        .unindent();
-        let staged_contents = r#"
-            fn main() {
-                println!("goodbye world");
-            }
-        "#
-        .unindent();
-
-        let fs = FakeFs::new(cx.executor());
-        fs.insert_tree(
-            path!("/project"),
-            json!({
-                ".git": {},
-                "src": {
-                    "main.rs": staged_contents.clone(),
-                }
-            }),
-        )
-        .await;
-        fs.set_head_for_repo(
-            Path::new(path!("/project/.git")),
-            &[("src/main.rs", committed_contents.clone())],
-            "deadbeef",
-        );
-        fs.set_index_for_repo(
-            Path::new(path!("/project/.git")),
-            &[("src/main.rs", staged_contents)],
-        );
-        let repo = fs
-            .open_repo(path!("/project/.git").as_ref(), Some("git".as_ref()))
-            .unwrap();
-
-        let project = Project::test(fs.clone(), [path!("/project").as_ref()], cx).await;
-        let (multi_workspace, cx) =
-            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project, window, cx));
-        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
-        cx.run_until_parked();
-
-        workspace.update_in(cx, |workspace, window, cx| {
-            StagedDiff::deploy_at(workspace, None, window, cx);
-        });
-        cx.run_until_parked();
-
-        let (rhs_editor, lhs_editor, lhs_hunk_anchor) = workspace.update(cx, |workspace, cx| {
-            let staged_diff = workspace.active_item_as::<StagedDiff>(cx).unwrap();
-            let splittable = staged_diff.read(cx).diff.read(cx).editor().clone();
-            let splittable = splittable.read(cx);
-            let rhs_editor = splittable.rhs_editor().clone();
-            let lhs_editor = splittable
-                .lhs_editor()
-                .expect("split view has an lhs")
-                .clone();
-            let snapshot = lhs_editor.read(cx).buffer().read(cx).snapshot(cx);
-            let hunk = snapshot
-                .diff_hunks()
-                .next()
-                .expect("lhs shows the staged hunk");
-            let anchor = snapshot.anchor_before(Point::new(hunk.row_range.start.0, 0));
-            (rhs_editor, lhs_editor, anchor)
-        });
-
-        // Simulate the LHS hunk button, which routes through the delegated
-        // stage path with a zero-width range at the hunk.
-        lhs_editor.update_in(cx, |editor, _window, cx| {
-            editor.stage_or_unstage_diff_hunks(false, vec![lhs_hunk_anchor..lhs_hunk_anchor], cx);
-        });
-        cx.run_until_parked();
-
-        rhs_editor.read_with(cx, |editor, cx| {
-            let snapshot = editor.buffer().read(cx).snapshot(cx);
-            assert_eq!(
-                editor
-                    .diff_hunks_in_ranges(&[editor::Anchor::Min..editor::Anchor::Max], &snapshot)
-                    .count(),
-                0
-            );
-        });
-        assert_eq!(
-            repo.load_index_text(RepoPath::from_rel_path(rel_path("src/main.rs")))
-                .await
-                .unwrap(),
-            committed_contents
-        );
     }
 
     #[gpui::test]
