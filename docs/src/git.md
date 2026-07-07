@@ -110,13 +110,15 @@ To view File History:
 
 The Git Graph ({#action git_graph::Open}) visualizes your repository's commit history across branches. Right-clicking a branch label, tag label, or commit opens a context menu with common Git operations:
 
-- On a branch label: **Check Out Branch**, **Merge into `<current branch>`**, **Squash Merge into `<current branch>`**, **Create Branch from Here…**, or **Delete Branch…**.
-- On a commit: **Check Out Commit** (detached), **Create Branch from Here…**, **Cherry-Pick Commit**, or **Revert Commit**.
-- On a tag label: **Create Branch from Here…**.
+- On a branch label: **Check Out Branch**, **Merge into `<current branch>`**, **Squash Merge into `<current branch>`**, **Create Branch from Here…**, **Create Tag…**, or **Delete Branch…**.
+- On a commit: **Check Out Commit** (detached), **Create Branch from Here…**, **Create Tag…**, **Cherry-Pick Commit**, or **Revert Commit**.
+- On a tag label: **Check Out Tag** (detached), **Create Branch from Here…**, or **Delete Tag…**.
 
-Creating a branch opens a small modal asking for the name. Deleting a branch asks for confirmation first, and offers a force delete if the branch is not fully merged. You cannot delete the branch you currently have checked out.
+Creating a branch or tag opens a small modal asking for the name. Deleting a branch asks for confirmation first, and offers a force delete if the branch is not fully merged. You cannot delete the branch you currently have checked out.
 
-A squash merge stages the branch's changes without committing, so you can review and commit them from the Git Panel. If a merge fails because of conflicts, Zed shows the error and the conflicts can be resolved from the Git Panel as usual.
+When creating a tag, the message field is optional: providing one creates an annotated tag, leaving it empty creates a lightweight tag.
+
+A squash merge stages the branch's changes without committing, so you can review and commit them from the Git Panel. If an operation fails — for example, a merge or cherry-pick with conflicts — Zed shows the error and the conflicts can be resolved from the Git Panel as usual.
 
 ## Fetch, Push, and Pull
 

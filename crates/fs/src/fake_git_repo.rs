@@ -949,6 +949,19 @@ impl GitRepository for FakeGitRepository {
         })
     }
 
+    fn create_tag(
+        &self,
+        _name: String,
+        _target: String,
+        _message: Option<String>,
+    ) -> BoxFuture<'_, Result<()>> {
+        async { Ok(()) }.boxed()
+    }
+
+    fn delete_tag(&self, _name: String) -> BoxFuture<'_, Result<()>> {
+        async { Ok(()) }.boxed()
+    }
+
     fn delete_branch(
         &self,
         _is_remote: bool,

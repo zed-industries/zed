@@ -880,6 +880,18 @@ pub trait GitRepository: Send + Sync {
     /// Checks out the given commit-ish with a detached HEAD.
     fn checkout_commit(&self, commit: String) -> BoxFuture<'_, Result<()>>;
 
+    /// Creates a tag pointing at the given commit-ish: annotated when a
+    /// message is provided, lightweight otherwise.
+    fn create_tag(
+        &self,
+        name: String,
+        target: String,
+        message: Option<String>,
+    ) -> BoxFuture<'_, Result<()>>;
+
+    /// Deletes the given local tag.
+    fn delete_tag(&self, name: String) -> BoxFuture<'_, Result<()>>;
+
     fn worktrees(&self) -> BoxFuture<'_, Result<Vec<Worktree>>>;
 
     /// Returns the creation time of a linked worktree's git metadata
@@ -2258,6 +2270,44 @@ impl GitRepository for RealGitRepository {
             .spawn(async move {
                 let git_binary = git_binary?;
                 git_binary.run(&["checkout", "--detach", &commit]).await?;
+                anyhow::Ok(())
+            })
+            .boxed()
+    }
+
+    fn create_tag(
+        &self,
+        name: String,
+        target: String,
+        message: Option<String>,
+    ) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary_in_worktree();
+
+        self.executor
+            .spawn(async move {
+                let git_binary = git_binary?;
+                match &message {
+                    Some(message) => {
+                        git_binary
+                            .run(&["tag", "-a", &name, "-m", message, &target])
+                            .await?;
+                    }
+                    None => {
+                        git_binary.run(&["tag", &name, &target]).await?;
+                    }
+                }
+                anyhow::Ok(())
+            })
+            .boxed()
+    }
+
+    fn delete_tag(&self, name: String) -> BoxFuture<'_, Result<()>> {
+        let git_binary = self.git_binary_in_worktree();
+
+        self.executor
+            .spawn(async move {
+                let git_binary = git_binary?;
+                git_binary.run(&["tag", "-d", &name]).await?;
                 anyhow::Ok(())
             })
             .boxed()
@@ -4507,6 +4557,65 @@ mod tests {
             "HEAD should be detached after checking out a commit"
         );
         assert_eq!(git.run(&["rev-parse", "HEAD"]).await.unwrap(), first_sha);
+    }
+
+    #[gpui::test]
+    async fn test_create_and_delete_tag(cx: &mut TestAppContext) {
+        disable_git_global_config();
+        cx.executor().allow_parking();
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        git_init_repo(repo_dir.path());
+        git_command(repo_dir.path(), ["config", "user.name", "test"]);
+        git_command(repo_dir.path(), ["config", "user.email", "test@zed.dev"]);
+        fs::write(repo_dir.path().join("file.txt"), "one\n").unwrap();
+        git_command(repo_dir.path(), ["add", "file.txt"]);
+        git_command(repo_dir.path(), ["commit", "-m", "one"]);
+
+        let repository = RealGitRepository::new(
+            &repo_dir.path().join(".git"),
+            None,
+            Some("git".into()),
+            cx.executor(),
+        )
+        .unwrap();
+        let git = repository.git_binary_in_worktree().unwrap();
+
+        repository
+            .create_tag("v1.0".to_string(), "HEAD".to_string(), None)
+            .await
+            .unwrap();
+        assert_eq!(git.run(&["tag", "-l", "v1.0"]).await.unwrap(), "v1.0");
+        assert_eq!(
+            git.run(&["cat-file", "-t", "v1.0"]).await.unwrap(),
+            "commit",
+            "a tag without a message should be lightweight"
+        );
+
+        repository
+            .create_tag(
+                "v2.0".to_string(),
+                "HEAD".to_string(),
+                Some("release v2.0".to_string()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            git.run(&["cat-file", "-t", "v2.0"]).await.unwrap(),
+            "tag",
+            "a tag with a message should be annotated"
+        );
+        assert_eq!(
+            git.run(&["tag", "-l", "--format=%(contents:subject)", "v2.0"])
+                .await
+                .unwrap(),
+            "release v2.0"
+        );
+
+        repository.delete_tag("v1.0".to_string()).await.unwrap();
+        repository.delete_tag("v2.0".to_string()).await.unwrap();
+        assert_eq!(git.run(&["tag", "-l", "v1.0"]).await.unwrap(), "");
+        assert_eq!(git.run(&["tag", "-l", "v2.0"]).await.unwrap(), "");
     }
 
     #[test]

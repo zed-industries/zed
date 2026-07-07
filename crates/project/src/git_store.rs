@@ -660,6 +660,8 @@ impl GitStore {
         client.add_entity_request_handler(Self::handle_cherry_pick);
         client.add_entity_request_handler(Self::handle_revert);
         client.add_entity_request_handler(Self::handle_checkout_commit);
+        client.add_entity_request_handler(Self::handle_create_tag);
+        client.add_entity_request_handler(Self::handle_delete_tag);
         client.add_entity_request_handler(Self::handle_create_branch);
         client.add_entity_request_handler(Self::handle_rename_branch);
         client.add_entity_request_handler(Self::handle_create_remote);
@@ -3268,6 +3270,44 @@ impl GitStore {
         repository_handle
             .update(&mut cx, |repository_handle, _| {
                 repository_handle.checkout_commit(commit)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_create_tag(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitCreateTag>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let tag_name = envelope.payload.tag_name;
+        let target = envelope.payload.target;
+        let message = envelope.payload.message;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.create_tag(tag_name, target, message)
+            })
+            .await??;
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_delete_tag(
+        this: Entity<Self>,
+        envelope: TypedEnvelope<proto::GitDeleteTag>,
+        mut cx: AsyncApp,
+    ) -> Result<proto::Ack> {
+        let repository_id = RepositoryId::from_proto(envelope.payload.repository_id);
+        let repository_handle = Self::repository_for_request(&this, repository_id, &mut cx)?;
+        let tag_name = envelope.payload.tag_name;
+
+        repository_handle
+            .update(&mut cx, |repository_handle, _| {
+                repository_handle.delete_tag(tag_name)
             })
             .await??;
 
@@ -8203,6 +8243,66 @@ impl Repository {
                                 project_id: project_id.0,
                                 repository_id: id.to_proto(),
                                 commit,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn create_tag(
+        &mut self,
+        tag_name: String,
+        target: String,
+        message: Option<String>,
+    ) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        let flag = if message.is_some() { "-a " } else { "" };
+        self.send_job(
+            "create_tag",
+            Some(format!("git tag {flag}{tag_name} {target}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.create_tag(tag_name, target, message).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitCreateTag {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                tag_name,
+                                target,
+                                message,
+                            })
+                            .await?;
+
+                        Ok(())
+                    }
+                }
+            },
+        )
+    }
+
+    pub fn delete_tag(&mut self, tag_name: String) -> oneshot::Receiver<Result<()>> {
+        let id = self.id;
+        self.send_job(
+            "delete_tag",
+            Some(format!("git tag -d {tag_name}").into()),
+            move |repo, _cx| async move {
+                match repo {
+                    RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
+                        backend.delete_tag(tag_name).await
+                    }
+                    RepositoryState::Remote(RemoteRepositoryState { project_id, client }) => {
+                        client
+                            .request(proto::GitDeleteTag {
+                                project_id: project_id.0,
+                                repository_id: id.to_proto(),
+                                tag_name,
                             })
                             .await?;
 
