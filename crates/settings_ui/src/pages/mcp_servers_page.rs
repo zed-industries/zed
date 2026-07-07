@@ -163,6 +163,10 @@ fn render_context_server(
     let server_configuration = store.read(cx).configuration_for_server(context_server_id);
 
     let is_running = matches!(server_status, ContextServerStatus::Running);
+    let is_enabled = store
+        .read(cx)
+        .settings_for_server(context_server_id)
+        .is_some_and(|s| s.enabled());
     let item_id = SharedString::from(context_server_id.0.to_string());
 
     // Determine the source from the configured settings rather than the runtime
@@ -218,7 +222,7 @@ fn render_context_server(
     let uninstall_button = render_uninstall_button(context_server_id, provided_by_extension);
 
     // Build toggle switch
-    let toggle_switch = render_toggle_switch(context_server_id, store, is_running);
+    let toggle_switch = render_toggle_switch(context_server_id, store, is_enabled);
 
     // Surface invalid settings (which prevent the server from starting at all)
     // ahead of runtime status feedback, so the misconfiguration is visible.
@@ -317,14 +321,14 @@ fn render_uninstall_button(
 fn render_toggle_switch(
     context_server_id: &ContextServerId,
     store: &Entity<ContextServerStore>,
-    is_running: bool,
+    is_enabled: bool,
 ) -> impl IntoElement {
     let context_server_id = context_server_id.clone();
     let store = store.clone();
 
     Switch::new(
         SharedString::from(format!("mcp-toggle-{}", context_server_id.0)),
-        if is_running {
+        if is_enabled {
             ToggleState::Selected
         } else {
             ToggleState::Unselected
