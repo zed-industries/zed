@@ -11468,14 +11468,15 @@ mod tests {
             panel.activate_draft(false, AgentThreadSource::AgentPanel, window, cx);
         });
 
+        let expected_agent = Agent::Custom {
+            id: "my-configured-agent".into(),
+        };
+        make_agent_available(&panel, expected_agent.clone(), cx);
+
         cx.dispatch_action(SelectAgent {
             agent: "my-configured-agent".to_string(),
         });
         cx.run_until_parked();
-
-        let expected_agent = Agent::Custom {
-            id: "my-configured-agent".into(),
-        };
 
         panel.read_with(cx, |panel, cx| {
             let draft = panel.draft_thread.as_ref().expect("draft should exist");
