@@ -1080,8 +1080,7 @@ impl MessageEditor {
         // Insert creases for pasted clipboard selections that:
         // 1. Contain exactly one selection
         // 2. Have an associated file path
-        // 3. Span multiple lines (not single-line selections)
-        // 4. Belong to a file that exists in the current project
+        // 3. Belong to a file that exists in the current project
         let should_insert_creases = util::maybe!({
             let selections = editor_clipboard_selections.as_ref()?;
             if selections.len() > 1 {
@@ -1089,11 +1088,6 @@ impl MessageEditor {
             }
             let selection = selections.first()?;
             let file_path = selection.file_path.as_ref()?;
-            let line_range = selection.line_range.as_ref()?;
-
-            if line_range.start() == line_range.end() {
-                return Some(false);
-            }
 
             Some(
                 workspace
