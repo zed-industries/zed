@@ -27,10 +27,15 @@ const CRASH_HANDLER_PING_TIMEOUT: Duration = Duration::from_secs(60);
 const CRASH_HANDLER_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Force a backtrace to be printed on panic.
+///
+/// This only installs the panic hook. It intentionally does not touch
+/// `RUST_BACKTRACE`: a panic hook runs on a live, multithreaded process
+/// (including for caught panics), and mutating the environment there races other
+/// threads' `getenv`, which is a use-after-free in glibc. Callers that want a
+/// backtrace must set `RUST_BACKTRACE` themselves at single-threaded startup.
 pub fn force_backtrace() {
     let old_hook = panic::take_hook();
     panic::set_hook(Box::new(move |info| {
-        unsafe { env::set_var("RUST_BACKTRACE", "1") };
         old_hook(info);
         // prevent the macOS crash dialog from popping up
         if cfg!(target_os = "macos") {
@@ -120,8 +125,14 @@ where
                 // minidump request.
                 client.ping().ok();
                 let r = client.request_dump(crash_context);
-                if let Err(e) = &r {
-                    eprintln!("failed to request dump: {:?}", e);
+                if r.is_err() {
+                    // On Linux this closure runs in an async-signal context on the
+                    // faulting thread. A heap-corruption crash may have faulted inside
+                    // malloc, so `eprintln!` (which allocates and takes the stderr lock)
+                    // could reenter the allocator or deadlock. Emit a fixed message with
+                    // a single `write` syscall, which is async-signal-safe.
+                    const MESSAGE: &[u8] = b"failed to request dump\n";
+                    libc::write(2, MESSAGE.as_ptr() as *const _, MESSAGE.len() as _);
                 }
                 #[cfg(target_os = "macos")]
                 macos::resume_all_other_threads();

@@ -339,6 +339,15 @@ fn main() {
         gpui::set_startup_activation_token(startup_activation_token);
     }
 
+    // Enable Rust backtraces so the panic hook installed by `crashes::force_backtrace`
+    // (used when the crash handler is not installed) prints a backtrace. This has to
+    // happen here while we are still single-threaded, before the rayon pool below and
+    // any other threads exist: mutating the environment after other threads exist races
+    // with concurrent `getenv` calls. The `crashes` crate deliberately never touches the
+    // environment itself for this reason.
+    // SAFETY: `main` is still single-threaded here.
+    unsafe { env::set_var("RUST_BACKTRACE", "1") };
+
     rayon::ThreadPoolBuilder::new()
         .num_threads(std::thread::available_parallelism().map_or(1, |n| n.get().div_ceil(2)))
         .stack_size(10 * 1024 * 1024)

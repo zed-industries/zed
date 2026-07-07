@@ -8,6 +8,7 @@ license = "GPL-3.0-or-later"
 [dependencies]
 async-process.workspace = true
 crash-handler.workspace = true
+libc.workspace = true
 log.workspace = true
 minidumper.workspace = true
 parking_lot.workspace = true
