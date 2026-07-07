@@ -199,7 +199,22 @@ impl PromptCompletionProviderDelegate for MessageEditorCompletionDelegate {
     }
 }
 
+/// Which inline-shell mode the composer is in, based on a leading `!`/`!!`
+/// (pi-style bash mode). Drives the composer's shell badge.
+#[derive(Clone, Copy, PartialEq)]
+pub enum InlineShellMode {
+    /// `!` — run and send output to the agent.
+    Visible,
+    /// `!!` — run locally, hidden from the agent.
+    Hidden,
+}
+
 pub struct MessageEditor {
+    shell_mode: Option<InlineShellMode>,
+    /// Whether this editor participates in pi-style `!`/`!!` shell mode. Only
+    /// the live composer sets this; edit-message editors leave it false so a
+    /// past message that happens to start with `!` doesn't light the rail.
+    shell_mode_enabled: bool,
     mention_set: Entity<MentionSet>,
     editor: Entity<Editor>,
     workspace: WeakEntity<Workspace>,
@@ -558,6 +573,23 @@ impl MessageEditor {
                 if let EditorEvent::Edited { .. } = event
                     && !editor.read(cx).read_only(cx)
                 {
+                    // pi-style bash mode (live composer only): a leading `!`/`!!`
+                    // flips the composer into shell mode (drives the rail).
+                    if this.shell_mode_enabled {
+                        let trimmed_start =
+                            editor.read(cx).text(cx).trim_start().to_string();
+                        let new_mode = if trimmed_start.starts_with("!!") {
+                            Some(InlineShellMode::Hidden)
+                        } else if trimmed_start.starts_with('!') {
+                            Some(InlineShellMode::Visible)
+                        } else {
+                            None
+                        };
+                        if this.shell_mode != new_mode {
+                            this.shell_mode = new_mode;
+                            cx.notify();
+                        }
+                    }
                     cx.emit(MessageEditorEvent::Edited);
                     editor.update(cx, |editor, cx| {
                         let snapshot = editor.snapshot(window, cx);
@@ -611,11 +643,24 @@ impl MessageEditor {
             thread_store,
             _subscriptions: subscriptions,
             _parse_slash_command_task: Task::ready(()),
+            shell_mode: None,
+            shell_mode_enabled: false,
         }
     }
 
     pub fn set_local_commands(&self, commands: Vec<PromptLocalCommand>) {
         *self.local_commands.write() = commands;
+    }
+
+    /// The composer's current pi-style shell mode (leading `!`/`!!`), or `None`.
+    pub fn shell_mode(&self) -> Option<InlineShellMode> {
+        self.shell_mode
+    }
+
+    /// Enable pi-style `!`/`!!` shell-mode detection for this editor. Called
+    /// only for the live composer.
+    pub fn set_shell_mode_enabled(&mut self, enabled: bool) {
+        self.shell_mode_enabled = enabled;
     }
 
     pub fn set_session_capabilities(

@@ -168,6 +168,10 @@ impl MarkdownStyle {
     ) -> Self {
         let theme_settings = ThemeSettings::get_global(cx);
         let is_preview = matches!(font, MarkdownFont::Preview);
+        // pi gives assistant code blocks rounded corners and more-defined inline
+        // code; scope these to the agent transcript so other markdown surfaces
+        // keep their current look.
+        let is_agent = matches!(font, MarkdownFont::Agent);
 
         let buffer_font_weight = theme_settings.buffer_font.weight;
         let (buffer_font_size, ui_font_size) = match font {
@@ -197,7 +201,11 @@ impl MarkdownStyle {
         };
 
         let mut text_style = window.text_style();
-        let line_height = buffer_font_size * 1.75;
+        let line_height = if is_agent {
+            ui_font_size * 1.5
+        } else {
+            buffer_font_size * 1.75
+        };
 
         text_style.refine(&TextStyleRefinement {
             font_family: Some(body_font_family),
@@ -238,10 +246,10 @@ impl MarkdownStyle {
                     bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(px(8.)))),
                 },
                 margin: EdgesRefinement {
-                    top: Some(Length::Definite(px(8.).into())),
+                    top: Some(Length::Definite(px(if is_agent { 6. } else { 8. }).into())),
                     left: Some(Length::Definite(px(0.).into())),
                     right: Some(Length::Definite(px(0.).into())),
-                    bottom: Some(Length::Definite(px(12.).into())),
+                    bottom: Some(Length::Definite(px(if is_agent { 6. } else { 12. }).into())),
                 },
                 border_style: Some(BorderStyle::Solid),
                 border_widths: EdgesRefinement {
@@ -249,6 +257,12 @@ impl MarkdownStyle {
                     left: Some(AbsoluteLength::Pixels(px(1.))),
                     right: Some(AbsoluteLength::Pixels(px(1.))),
                     bottom: Some(AbsoluteLength::Pixels(px(1.))),
+                },
+                corner_radii: gpui::CornersRefinement {
+                    top_left: is_agent.then(|| AbsoluteLength::Pixels(px(6.))),
+                    top_right: is_agent.then(|| AbsoluteLength::Pixels(px(6.))),
+                    bottom_right: is_agent.then(|| AbsoluteLength::Pixels(px(6.))),
+                    bottom_left: is_agent.then(|| AbsoluteLength::Pixels(px(6.))),
                 },
                 border_color: Some(colors.border_variant),
                 background: Some(colors.editor_background.into()),
@@ -268,7 +282,11 @@ impl MarkdownStyle {
                 font_features: Some(theme_settings.buffer_font.features.clone()),
                 font_size: Some(buffer_font_size.into()),
                 font_weight: Some(buffer_font_weight),
-                background_color: Some(colors.editor_foreground.opacity(0.08)),
+                background_color: Some(colors.editor_foreground.opacity(if is_agent {
+                    0.12
+                } else {
+                    0.08
+                })),
                 ..Default::default()
             },
             link: TextStyleRefinement {
@@ -284,28 +302,36 @@ impl MarkdownStyle {
             soft_break_as_hard_break: matches!(font, MarkdownFont::Agent),
             heading_level_styles: matches!(font, MarkdownFont::Agent).then_some(
                 HeadingLevelStyles {
+                    // pi colors transcript headings (its `--md-heading`); use the
+                    // theme accent so they stand out from body text.
                     h1: Some(TextStyleRefinement {
                         font_size: Some(rems(1.15).into()),
+                        color: Some(colors.text_accent),
                         ..Default::default()
                     }),
                     h2: Some(TextStyleRefinement {
                         font_size: Some(rems(1.1).into()),
+                        color: Some(colors.text_accent),
                         ..Default::default()
                     }),
                     h3: Some(TextStyleRefinement {
                         font_size: Some(rems(1.05).into()),
+                        color: Some(colors.text_accent),
                         ..Default::default()
                     }),
                     h4: Some(TextStyleRefinement {
                         font_size: Some(rems(1.).into()),
+                        color: Some(colors.text_accent),
                         ..Default::default()
                     }),
                     h5: Some(TextStyleRefinement {
                         font_size: Some(rems(0.95).into()),
+                        color: Some(colors.text_accent),
                         ..Default::default()
                     }),
                     h6: Some(TextStyleRefinement {
                         font_size: Some(rems(0.875).into()),
+                        color: Some(colors.text_accent),
                         ..Default::default()
                     }),
                 },

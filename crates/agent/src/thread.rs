@@ -2083,6 +2083,19 @@ impl Thread {
         self.messages.last().map(std::ops::Deref::deref)
     }
 
+    /// Append a user message to the thread's history WITHOUT starting a turn, so
+    /// its text becomes context the model sees on the next prompt. Used for
+    /// pi-style `!` inline shell: the command output is added to context
+    /// silently (no immediate response), while the run itself is shown as a
+    /// UI-only terminal card.
+    pub fn inject_user_context(&mut self, text: String, cx: &mut Context<Self>) {
+        self.messages.push(Arc::new(Message::User(UserMessage {
+            id: ClientUserMessageId::new(),
+            content: Arc::from([UserMessageContent::Text(text)]),
+        })));
+        cx.notify();
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     pub fn last_received_or_pending_message(&self) -> Option<Arc<Message>> {
         if let Some(message) = self.pending_message.clone() {

@@ -242,19 +242,140 @@ pub enum AcpThreadViewEvent {
 
 impl EventEmitter<AcpThreadViewEvent> for ThreadView {}
 
-/// `cat -n`-style numbered code block, already stripped of its line-number
-/// prefixes and ready to render. Line numbers are guaranteed to be contiguous
-/// starting at `first_number`, so we only store the first number and the line
-/// count rather than allocating a per-line `Vec`.
-struct ParsedCatNumberedCode {
-    code: String,
-    first_number: u32,
-    line_count: usize,
+struct PiStyleToolTitle {
+    name: String,
+    args: String,
+    dim: String,
 }
 
-fn parse_cat_numbered_markdown_code_block(markdown: &str) -> Option<ParsedCatNumberedCode> {
-    let (_tag, code) = parse_single_fenced_code_block(markdown)?;
-    parse_cat_numbered_code(code)
+fn json_string(input: &serde_json::Map<String, serde_json::Value>, key: &str) -> Option<String> {
+    input
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+}
+
+fn compact_json_summary(value: &serde_json::Value) -> String {
+    match serde_json::to_string(value) {
+        Ok(mut json) => {
+            const MAX_LEN: usize = 140;
+            if json.len() > MAX_LEN {
+                json.truncate(MAX_LEN - 1);
+                json.push('…');
+            }
+            json
+        }
+        Err(_) => String::new(),
+    }
+}
+
+fn read_file_tool_line_range(raw_input: Option<&serde_json::Value>) -> String {
+    let Some(input) = raw_input.and_then(|input| input.as_object()) else {
+        return String::new();
+    };
+
+    let offset = input.get("offset").and_then(|offset| offset.as_u64());
+    let limit = input.get("limit").and_then(|limit| limit.as_u64());
+    if offset.is_none() && limit.is_none() {
+        return String::new();
+    }
+
+    let start = offset.unwrap_or(1);
+    if let Some(limit) = limit
+        && limit > 0
+    {
+        return format!(":{start}-{}", start + limit - 1);
+    }
+
+    format!(":{start}")
+}
+
+fn build_simple_unified_diff(path: &str, old_text: &str, new_text: &str) -> String {
+    if old_text == new_text {
+        return String::new();
+    }
+
+    const CONTEXT_LINES: usize = 3;
+    const MAX_DIFF_LINES: usize = 400;
+
+    let old_lines = old_text.lines().collect::<Vec<_>>();
+    let new_lines = new_text.lines().collect::<Vec<_>>();
+
+    let mut prefix_len = 0;
+    while prefix_len < old_lines.len()
+        && prefix_len < new_lines.len()
+        && old_lines[prefix_len] == new_lines[prefix_len]
+    {
+        prefix_len += 1;
+    }
+
+    let mut suffix_len = 0;
+    while suffix_len < old_lines.len().saturating_sub(prefix_len)
+        && suffix_len < new_lines.len().saturating_sub(prefix_len)
+        && old_lines[old_lines.len() - 1 - suffix_len]
+            == new_lines[new_lines.len() - 1 - suffix_len]
+    {
+        suffix_len += 1;
+    }
+
+    let old_changed_end = old_lines.len() - suffix_len;
+    let new_changed_end = new_lines.len() - suffix_len;
+    let old_hunk_start = prefix_len.saturating_sub(CONTEXT_LINES);
+    let new_hunk_start = prefix_len.saturating_sub(CONTEXT_LINES);
+    let old_hunk_end = (old_changed_end + CONTEXT_LINES).min(old_lines.len());
+    let new_hunk_end = (new_changed_end + CONTEXT_LINES).min(new_lines.len());
+
+    let old_count = old_hunk_end.saturating_sub(old_hunk_start).max(1);
+    let new_count = new_hunk_end.saturating_sub(new_hunk_start).max(1);
+
+    let mut output = String::new();
+    output.push_str(&format!("--- {path}\n+++ {path}\n"));
+    output.push_str(&format!(
+        "@@ -{},{} +{},{} @@\n",
+        old_hunk_start + 1,
+        old_count,
+        new_hunk_start + 1,
+        new_count
+    ));
+
+    let mut emitted = 0;
+    let mut push_line = |output: &mut String, prefix: char, line: &str| -> bool {
+        if emitted >= MAX_DIFF_LINES {
+            return false;
+        }
+        output.push(prefix);
+        output.push_str(line);
+        output.push('\n');
+        emitted += 1;
+        true
+    };
+
+    for line in &old_lines[old_hunk_start..prefix_len] {
+        if !push_line(&mut output, ' ', line) {
+            break;
+        }
+    }
+    for line in &old_lines[prefix_len..old_changed_end] {
+        if !push_line(&mut output, '-', line) {
+            break;
+        }
+    }
+    for line in &new_lines[prefix_len..new_changed_end] {
+        if !push_line(&mut output, '+', line) {
+            break;
+        }
+    }
+    for line in &old_lines[old_changed_end..old_hunk_end] {
+        if !push_line(&mut output, ' ', line) {
+            break;
+        }
+    }
+
+    if emitted >= MAX_DIFF_LINES {
+        output.push_str("… diff truncated …\n");
+    }
+
+    output
 }
 
 fn parse_single_fenced_code_block(markdown: &str) -> Option<(&str, &str)> {
@@ -271,242 +392,6 @@ fn parse_single_fenced_code_block(markdown: &str) -> Option<(&str, &str)> {
     let closing_fence = format!("\n{fence}\n");
     let code = after_tag.strip_suffix(&closing_fence)?;
     Some((tag, code))
-}
-
-/// Walks `code` exactly once: for each line it validates and strips the
-/// `NNN\t` prefix, then pushes the line's content into the accumulating
-/// code buffer (with `\n` between lines, no trailing newline). Verifies that
-/// the line numbers form a contiguous, increasing sequence.
-fn parse_cat_numbered_code(code: &str) -> Option<ParsedCatNumberedCode> {
-    if code.is_empty() {
-        return None;
-    }
-
-    let mut output = String::with_capacity(code.len());
-    let mut first_number = None;
-    let mut expected_number = None;
-    let mut line_count: usize = 0;
-    for raw_line in code.split_inclusive('\n') {
-        let line = strip_line_ending(raw_line);
-        let (number, text) = parse_cat_numbered_line(line)?;
-        if let Some(expected) = expected_number {
-            if number != expected {
-                return None;
-            }
-        } else {
-            first_number = Some(number);
-        }
-        expected_number = number.checked_add(1);
-        if line_count > 0 {
-            output.push('\n');
-        }
-        output.push_str(text);
-        line_count += 1;
-    }
-
-    Some(ParsedCatNumberedCode {
-        code: output,
-        first_number: first_number?,
-        line_count,
-    })
-}
-
-fn strip_line_ending(line: &str) -> &str {
-    let without_lf = line.strip_suffix('\n').unwrap_or(line);
-    without_lf.strip_suffix('\r').unwrap_or(without_lf)
-}
-
-fn parse_cat_numbered_line(line: &str) -> Option<(u32, &str)> {
-    let (prefix, text) = line.split_once('\t')?;
-    let number = prefix.trim();
-    if number.is_empty()
-        || !prefix
-            .chars()
-            .all(|character| character == ' ' || character.is_ascii_digit())
-    {
-        return None;
-    }
-
-    Some((number.parse().ok()?, text))
-}
-
-fn render_cat_numbered_code_block(
-    parsed: ParsedCatNumberedCode,
-    language: Option<Arc<Language>>,
-    markdown_style: MarkdownStyle,
-    copy_button_id: String,
-    cx: &App,
-) -> AnyElement {
-    use std::fmt::Write as _;
-
-    let ParsedCatNumberedCode {
-        code,
-        first_number,
-        line_count,
-    } = parsed;
-
-    // Line numbers are contiguous (verified during parsing), so the largest
-    // line number is `first_number + line_count - 1`. Sizing the gutter to
-    // that number's digit count means every rendered line contributes exactly
-    // `gutter_width` bytes to the gutter, plus a newline between adjacent
-    // lines.
-    let last_number = first_number
-        .saturating_add(u32::try_from(line_count.saturating_sub(1)).unwrap_or(u32::MAX));
-    let gutter_width = last_number.to_string().len().max(1);
-    let gutter_capacity = line_count * gutter_width + line_count.saturating_sub(1);
-
-    let mut gutter = String::with_capacity(gutter_capacity);
-    for i in 0..line_count {
-        if i > 0 {
-            gutter.push('\n');
-        }
-        let line_number = first_number.saturating_add(u32::try_from(i).unwrap_or(u32::MAX));
-        // Writes to a `String` are infallible, so the `Result` can be ignored.
-        let _ = write!(&mut gutter, "{line_number:>gutter_width$}");
-    }
-
-    let mut code_text_style = markdown_style.base_text_style.clone();
-    code_text_style.refine(&markdown_style.code_block.text);
-
-    let mut gutter_text_style = code_text_style.clone();
-    gutter_text_style.color = cx.theme().colors().text_muted;
-
-    let gutter_len = gutter.len();
-    let gutter = StyledText::new(gutter).with_runs(vec![gutter_text_style.to_run(gutter_len)]);
-
-    // Share `code` between syntax highlighting, the rendered `StyledText`, and
-    // the copy button via a single `SharedString` (cheap `Arc` clones) instead
-    // of cloning the underlying `String`.
-    let code: SharedString = code.into();
-    let code_runs = highlight_code_runs(&code, language.as_ref(), code_text_style, &markdown_style);
-    let code_text = StyledText::new(code.clone()).with_runs(code_runs);
-
-    let code_block_id = format!("read-file-code-block-{copy_button_id}");
-    let code_scroll_id = format!("read-file-code-scroll-{copy_button_id}");
-    let mut container = div()
-        .id(code_block_id)
-        .group("read-file-code-block")
-        .relative()
-        .w_full()
-        .whitespace_nowrap();
-    container.style().refine(&markdown_style.code_block);
-
-    // `overflow_x_scroll` only actually scrolls when the container is laid out
-    // as a flex container: in GPUI the default `Display` is `Block`, and a
-    // block-level child fills its parent's content width instead of overflowing
-    // it, so there is nothing for the scroll viewport to scroll. Using `flex()`
-    // on the scroll wrapper plus `flex_none()` on the inner item lets the inner
-    // item take its natural width (the unwrapped code), which is what overflows.
-    // `restrict_scroll_to_axis` then keeps vertical wheel events flowing through
-    // to the outer thread scroller. This mirrors the standard markdown
-    // code-block path in `crates/markdown/src/markdown.rs`.
-    let mut code_scroll = div()
-        .id(code_scroll_id)
-        .flex()
-        .flex_1()
-        .min_w_0()
-        .overflow_x_scroll()
-        .child(div().flex_none().child(code_text));
-    code_scroll.style().restrict_scroll_to_axis = Some(true);
-
-    container
-        .child(
-            h_flex()
-                .items_start()
-                .min_w_0()
-                .w_full()
-                .child(div().flex_none().pr_3().child(gutter))
-                .child(code_scroll),
-        )
-        .child(
-            h_flex()
-                .w_4()
-                .absolute()
-                .top_0()
-                .right_0()
-                .justify_end()
-                .visible_on_hover("read-file-code-block")
-                .child(CopyButton::new(copy_button_id, code).tooltip_label("Copy Code")),
-        )
-        .into_any_element()
-}
-
-fn highlight_code_runs(
-    code: &str,
-    language: Option<&Arc<Language>>,
-    code_text_style: TextStyle,
-    markdown_style: &MarkdownStyle,
-) -> Vec<TextRun> {
-    if code.is_empty() {
-        return Vec::new();
-    }
-
-    let Some(language) = language else {
-        return vec![code_text_style.to_run(code.len())];
-    };
-
-    let mut runs = Vec::new();
-    let mut offset = 0;
-    for (range, highlight_id) in language.highlight_text(&Rope::from(code), 0..code.len()) {
-        if range.start > offset {
-            runs.push(code_text_style.to_run(range.start - offset));
-        }
-
-        let mut run_style = code_text_style.clone();
-        if let Some(highlight) = markdown_style.syntax.get(highlight_id).cloned() {
-            run_style = run_style.highlight(highlight);
-        }
-        runs.push(run_style.to_run(range.len()));
-        offset = range.end;
-    }
-
-    if offset < code.len() {
-        runs.push(code_text_style.to_run(code.len() - offset));
-    }
-
-    runs
-}
-
-#[cfg(test)]
-mod numbered_code_block_tests {
-    use super::*;
-
-    #[test]
-    fn parses_cat_numbered_markdown_code_block() {
-        let parsed = parse_cat_numbered_markdown_code_block(
-            "```rs zed/crates/example.rs\n     2\tfn main() {\n     3\t    println!(\"hi\");\n     4\t}\n```\n",
-        )
-        .expect("cat-numbered block should parse");
-
-        assert_eq!(parsed.line_count, 3);
-        assert_eq!(parsed.first_number, 2);
-        assert_eq!(parsed.code, "fn main() {\n    println!(\"hi\");\n}");
-    }
-
-    #[test]
-    fn parses_cat_numbered_code_with_crlf_line_endings() {
-        let parsed = parse_cat_numbered_code("     1\tline one\r\n     2\tline two\r\n")
-            .expect("crlf-terminated cat-numbered code should parse");
-
-        assert_eq!(parsed.line_count, 2);
-        assert_eq!(parsed.first_number, 1);
-        assert_eq!(parsed.code, "line one\nline two");
-    }
-
-    #[test]
-    fn rejects_non_cat_numbered_code_block() {
-        assert!(parse_cat_numbered_markdown_code_block("```rs\nfn main() {}\n```\n").is_none());
-    }
-
-    #[test]
-    fn rejects_non_contiguous_cat_numbers() {
-        assert!(
-            parse_cat_numbered_markdown_code_block(
-                "```rs\n     2\tlet a = 1;\n     4\tlet b = 2;\n```\n"
-            )
-            .is_none()
-        );
-    }
 }
 
 /// Tracks the user's permission dropdown selection state for a specific tool call.
@@ -788,7 +673,17 @@ impl ThreadView {
         let parent_session_id = thread.read(cx).parent_session_id().cloned();
 
         let has_slash_completions = session_capabilities.read().has_slash_completions();
-        let placeholder = placeholder_text(agent_display_name.as_ref(), has_slash_completions);
+        let supports_inline_shell = thread
+            .read(cx)
+            .connection()
+            .clone()
+            .downcast::<agent::NativeAgentConnection>()
+            .is_some();
+        let placeholder = placeholder_text(
+            agent_display_name.as_ref(),
+            has_slash_completions,
+            supports_inline_shell,
+        );
 
         let mut should_auto_submit = false;
         let mut show_external_source_prompt_warning = false;
@@ -808,6 +703,8 @@ impl ThreadView {
                 window,
                 cx,
             );
+            // Only the live composer participates in `!`/`!!` shell mode.
+            editor.set_shell_mode_enabled(supports_inline_shell);
             if let Some(content) = initial_content {
                 match content {
                     AgentInitialContent::ThreadSummary { session_id, title } => {
@@ -1487,6 +1384,33 @@ impl ThreadView {
 
         let text = message_editor.read(cx).text(cx);
         let text = text.trim();
+
+        // pi-style inline shell execution from the composer:
+        //   `!cmd`  runs in the project shell and sends its output to the model.
+        //   `!!cmd` runs in a live terminal card in the transcript, not sent to
+        //           the model (matches pi's "excluded from context").
+        if self.as_native_thread(cx).is_some() {
+            if let Some(after_bang) = text.strip_prefix('!') {
+                if let Some(rest) = after_bang.strip_prefix('!') {
+                    let command = rest.trim().to_string();
+                    if !command.is_empty() {
+                        message_editor.update(cx, |editor, cx| editor.clear(window, cx));
+                        self.run_inline_shell_card(command, false, window, cx);
+                        cx.notify();
+                        return;
+                    }
+                } else {
+                    let command = after_bang.trim().to_string();
+                    if !command.is_empty() {
+                        message_editor.update(cx, |editor, cx| editor.clear(window, cx));
+                        self.run_inline_shell_card(command, true, window, cx);
+                        cx.notify();
+                        return;
+                    }
+                }
+            }
+        }
+
         if text == "/login" || text == "/logout" {
             let connection = thread.read(cx).connection().clone();
             let can_login = !connection.auth_methods().is_empty();
@@ -1594,6 +1518,107 @@ impl ThreadView {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx);
+    }
+
+    /// Run a command in a live terminal rendered as a pi-style `$ cmd` tool-call
+    /// card in the transcript (streaming output, Stop/Esc). The card itself is
+    /// UI-only; when `include_in_context` is true (`!cmd`) the finished output is
+    /// also injected into the native agent's history as silent context (no model
+    /// turn), and when false (`!!cmd`) it stays display-only — pi's "excluded
+    /// from context" semantics.
+    fn run_inline_shell_card(
+        &mut self,
+        command: String,
+        include_in_context: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(project) = self.project.upgrade() else {
+            return;
+        };
+        let cwd = project.read(cx).first_project_directory(cx);
+        let thread = self.thread.clone();
+
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // `!!` (excluded-from-context) cards get a distinct id prefix so the
+        // terminal renderer can show them dimmed.
+        let id_prefix = if include_in_context {
+            "user-bash"
+        } else {
+            "user-bash-hidden"
+        };
+        let tool_call_id = acp::ToolCallId::new(format!("{id_prefix}-{seq}"));
+
+        cx.spawn_in(window, async move |this, cx| {
+            let terminal = thread
+                .update(cx, |thread, cx| {
+                    thread.create_terminal(
+                        command.clone(),
+                        Vec::new(),
+                        Vec::new(),
+                        cwd,
+                        Some(1_000_000),
+                        None,
+                        cx,
+                    )
+                })
+                .await?;
+            let terminal_id = terminal.read_with(cx, |terminal, _| terminal.id().clone());
+
+            let build = |status: acp::ToolCallStatus| {
+                acp::ToolCall::new(tool_call_id.clone(), command.clone())
+                    .kind(acp::ToolKind::Execute)
+                    .status(status)
+                    .content(vec![acp::ToolCallContent::Terminal(acp::Terminal::new(
+                        terminal_id.clone(),
+                    ))])
+            };
+
+            thread.update(cx, |thread, cx| {
+                thread.upsert_tool_call(build(acp::ToolCallStatus::InProgress), cx)
+            })?;
+
+            let wait = terminal.read_with(cx, |terminal, _| terminal.wait_for_exit());
+            let exit = wait.await;
+            let status = if exit.exit_code == Some(0) {
+                acp::ToolCallStatus::Completed
+            } else {
+                acp::ToolCallStatus::Failed
+            };
+
+            thread.update(cx, |thread, cx| thread.upsert_tool_call(build(status), cx))?;
+
+            if include_in_context {
+                let output = terminal.read_with(cx, |terminal, cx| terminal.current_output(cx));
+                let mut body = output.output.trim_end().to_string();
+                const MAX_CHARS: usize = 16_000;
+                if body.chars().count() > MAX_CHARS {
+                    let kept: String = body.chars().take(MAX_CHARS).collect();
+                    body = format!("{kept}\n[output truncated]");
+                }
+                let mut block = if body.is_empty() {
+                    format!("$ {command}")
+                } else {
+                    format!("$ {command}\n{body}")
+                };
+                if exit.exit_code != Some(0) {
+                    if let Some(code) = exit.exit_code {
+                        block.push_str(&format!("\n[exited with code {code}]"));
+                    } else if let Some(signal) = &exit.signal {
+                        block.push_str(&format!("\n[terminated by signal {signal}]"));
+                    }
+                }
+                this.update(cx, |this, cx| {
+                    if let Some(native) = this.as_native_thread(cx) {
+                        native.update(cx, |native, cx| native.inject_user_context(block, cx));
+                    }
+                })
+                .ok();
+            }
+            anyhow::Ok(())
+        })
+        .detach();
     }
 
     pub fn send_impl(
@@ -3045,6 +3070,12 @@ impl ThreadView {
         let changed_buffers = action_log.read(cx).changed_buffers(cx).collect::<Vec<_>>();
         let plan = thread.plan();
         let queue_is_empty = !self.has_queued_messages();
+        let is_generating =
+            matches!(thread.status(), ThreadStatus::Generating) && !thread.is_compacting();
+        let confirmation = thread
+            .entries()
+            .last()
+            .is_some_and(|entry| self.is_waiting_for_confirmation(entry, cx));
 
         let awaiting_permission = self
             .render_main_agent_awaiting_permission(window, cx)
@@ -3054,6 +3085,7 @@ impl ThreadView {
         if changed_buffers.is_empty()
             && plan.is_empty()
             && queue_is_empty
+            && !is_generating
             && !has_awaiting_permission
         {
             return None;
@@ -3141,6 +3173,13 @@ impl ThreadView {
                         .when(queue_expanded, |parent| {
                             parent.child(self.render_message_queue_entries(window, cx))
                         })
+                    })
+                    .when(is_generating, |this| {
+                        this.when(
+                            !queue_is_empty || !plan.is_empty() || !changed_buffers.is_empty(),
+                            |this| this.child(Divider::horizontal().color(DividerColor::Border)),
+                        )
+                        .child(self.render_generating(confirmation, cx))
                     }),
             )
             .into_any()
@@ -3591,6 +3630,7 @@ impl ThreadView {
         _window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
+        let palette = AgentStylePalette::new(cx);
         let queue_count = self.message_queue.len();
         let title: SharedString = if queue_count == 1 {
             "1 Queued Message".into()
@@ -3600,9 +3640,13 @@ impl ThreadView {
 
         h_flex()
             .p_1()
+            .pl_2()
             .w_full()
             .gap_1()
             .justify_between()
+            .border_l_2()
+            .border_color(palette.text_accent)
+            .bg(palette.tool_pending_bg)
             .when(self.queue_expanded, |this| {
                 this.border_b_1().border_color(cx.theme().colors().border)
             })
@@ -4276,7 +4320,24 @@ impl ThreadView {
         }
 
         let focus_handle = self.message_editor.focus_handle(cx);
-        let editor_bg_color = cx.theme().colors().editor_background;
+        let palette = AgentStylePalette::new(cx);
+        let editor_bg_color = palette.panel;
+        // pi-style bash-mode left-rail tint on the composer.
+        let shell_mode = if self.editing_message.is_none() && self.as_native_thread(cx).is_some() {
+            self.message_editor.read(cx).shell_mode()
+        } else {
+            None
+        };
+
+        let editor_focused = focus_handle.is_focused(window);
+        let input_border_color = match (editor_focused, shell_mode) {
+            (_, Some(crate::message_editor::InlineShellMode::Visible)) => palette.text_accent,
+            (_, Some(crate::message_editor::InlineShellMode::Hidden)) => {
+                palette.text_accent.opacity(0.45)
+            }
+            (true, None) => cx.theme().colors().border_focused,
+            (false, None) => palette.line,
+        };
 
         let editor_expanded = self.editor_expanded;
         let (expand_icon, expand_tooltip) = if editor_expanded {
@@ -4291,14 +4352,14 @@ impl ThreadView {
 
         h_flex()
             .py_2()
-            .bg(editor_bg_color)
+            .bg(cx.theme().colors().panel_background)
             .justify_center()
             .on_action(cx.listener(Self::handle_message_editor_move_up))
             .map(|this| {
                 if has_messages {
                     this.on_action(cx.listener(Self::expand_message_editor))
                         .border_t_1()
-                        .border_color(cx.theme().colors().border)
+                        .border_color(palette.line)
                         .when(editor_expanded, |this| this.h(vh(0.8, window)))
                 } else {
                     this.flex_1().size_full()
@@ -4320,7 +4381,11 @@ impl ThreadView {
                             .w_full()
                             .min_h_0()
                             .when(fills_container, |this| this.flex_1())
-                            .pt_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(input_border_color)
+                            .bg(editor_bg_color)
+                            .p_1()
                             .pr_2p5()
                             .child(self.message_editor.clone())
                             .when(has_messages, |this| {
@@ -4428,10 +4493,10 @@ impl ThreadView {
         _window: &mut Window,
         cx: &Context<Self>,
     ) -> impl IntoElement {
+        let palette = AgentStylePalette::new(cx);
         let message_editor = self.message_editor.read(cx);
         let focus_handle = message_editor.focus_handle(cx);
 
-        let queue_len = self.message_queue.len();
         let can_fast_track = self.message_queue.can_fast_track();
         let is_native = self.as_native_thread(cx).is_some();
 
@@ -4439,6 +4504,8 @@ impl ThreadView {
             .id("message_queue_list")
             .max_h_40()
             .overflow_y_scroll()
+            .gap_1()
+            .p_1()
             .children(self.message_queue.iter().enumerate().map(|(index, entry)| {
                 let entry_id = entry.id;
                 let editor = &entry.editor;
@@ -4460,11 +4527,13 @@ impl ThreadView {
                     .w_full()
                     .p_1p5()
                     .gap_1()
-                    .bg(cx.theme().colors().editor_background)
-                    .when(index < queue_len - 1, |this| {
-                        this.border_b_1()
-                            .border_color(cx.theme().colors().border_variant)
+                    .border_l_2()
+                    .border_color(if is_next {
+                        palette.text_accent
+                    } else {
+                        palette.line.opacity(0.8)
                     })
+                    .bg(palette.tool_pending_bg)
                     .child(
                         div()
                             .id("next_in_queue")
@@ -6010,6 +6079,56 @@ fn sandbox_network_rows(network: &SandboxNetPolicy) -> Vec<SandboxRow> {
     }
 }
 
+#[derive(Clone, Copy)]
+struct AgentStylePalette {
+    panel: Hsla,
+    line: Hsla,
+    text_accent: Hsla,
+    user_message_bg: Hsla,
+    tool_pending_bg: Hsla,
+    tool_success_bg: Hsla,
+    tool_error_bg: Hsla,
+    tool_pending_border: Hsla,
+    tool_success_border: Hsla,
+    tool_error_border: Hsla,
+    tool_output: Hsla,
+    diff_added: Hsla,
+    diff_removed: Hsla,
+    diff_context: Hsla,
+    thinking_border: Hsla,
+    thinking_text: Hsla,
+}
+
+impl AgentStylePalette {
+    fn new(cx: &App) -> Self {
+        let colors = cx.theme().colors();
+        let status = cx.theme().status();
+        let panel = colors.editor_background;
+        let text_accent = colors.text_accent;
+        let success = status.success;
+        let error = status.error;
+
+        Self {
+            panel,
+            line: colors.border,
+            text_accent,
+            user_message_bg: panel,
+            tool_pending_bg: panel.blend(text_accent.opacity(0.06)),
+            tool_success_bg: panel.blend(success.opacity(0.05)),
+            tool_error_bg: panel.blend(error.opacity(0.08)),
+            tool_pending_border: text_accent.opacity(0.7),
+            tool_success_border: success.opacity(0.6),
+            tool_error_border: error.opacity(0.7),
+            tool_output: colors.text_muted,
+            diff_added: success,
+            diff_removed: error,
+            diff_context: colors.text_muted,
+            thinking_border: text_accent.opacity(0.6),
+            thinking_text: colors.text_muted,
+        }
+    }
+}
+
 impl ThreadView {
     fn render_entries(&mut self, cx: &mut Context<Self>) -> List {
         let max_content_width = AgentSettings::get_global(cx).max_content_width;
@@ -6076,6 +6195,9 @@ impl ThreadView {
                 let editing = self.editing_message == Some(entry_ix);
                 let editor_focus = editor.focus_handle(cx).is_focused(window);
                 let focus_border = cx.theme().colors().border_focused;
+                let palette = AgentStylePalette::new(cx);
+                let user_message_bg = palette.user_message_bg;
+                let use_bubble_style = !editing && !editor_focus;
                 // Drop shadows render as a dark halo on transparent windows.
                 let opaque_window = cx.theme().window_background_appearance()
                     == gpui::WindowBackgroundAppearance::Opaque;
@@ -6131,18 +6253,25 @@ impl ThreadView {
                             .relative()
                             .child(
                                 div()
-                                    .py_3()
-                                    .px_2()
                                     .rounded_md()
-                                    .bg(cx.theme().colors().editor_background)
-                                    .border_1()
-                                    .when(is_indented, |this| {
-                                        this.py_2().px_2().when(opaque_window, |this| {
-                                            this.shadow_sm()
-                                        })
-                                    })
-                                    .border_color(cx.theme().colors().border)
+                                    .bg(user_message_bg)
                                     .map(|this| {
+                                        if use_bubble_style {
+                                            return this.py_1p5().px_2p5();
+                                        }
+
+                                        let this = this
+                                            .py_3()
+                                            .px_2()
+                                            .bg(cx.theme().colors().editor_background)
+                                            .border_1()
+                                            .when(is_indented, |this| {
+                                                this.py_2().px_2().when(opaque_window, |this| {
+                                                    this.shadow_sm()
+                                                })
+                                            })
+                                            .border_color(cx.theme().colors().border);
+
                                         if !is_editable {
                                             if is_subagent {
                                                 return this.border_dashed();
@@ -7125,18 +7254,10 @@ impl ThreadView {
         });
     }
 
-    /// Ensures the list item count includes (or excludes) an extra item for the generating indicator
+    /// Ensures the list does not include an extra item for the generating indicator.
+    /// The working indicator is rendered above the composer, after queued messages.
     pub(crate) fn sync_generating_indicator(&mut self, cx: &App) {
-        let thread = self.thread.read(cx);
-
-        let is_generating =
-            matches!(thread.status(), ThreadStatus::Generating) && !thread.is_compacting();
-
-        if is_generating && !self.generating_indicator_in_list {
-            let entries_count = self.thread.read(cx).entries().len();
-            self.list_state.splice(entries_count..entries_count, 1);
-            self.generating_indicator_in_list = true;
-        } else if !is_generating && self.generating_indicator_in_list {
+        if self.generating_indicator_in_list {
             let entries_count = self.thread.read(cx).entries().len();
             self.list_state.splice(entries_count..entries_count + 1, 0);
             self.generating_indicator_in_list = false;
@@ -7176,8 +7297,8 @@ impl ThreadView {
 
         h_flex()
             .id("generating-spinner")
-            .py_2()
-            .px(rems_from_px(22.))
+            .py_1()
+            .px_3()
             .gap_2()
             .map(|this| {
                 if confirmation {
@@ -7197,11 +7318,18 @@ impl ThreadView {
                 } else if is_blocked_on_terminal_command {
                     this
                 } else {
+                    // Spinner + a plain, non-animated "Working…" label (pi shows
+                    // the message static rather than pulsing it).
                     this.child(
                         h_flex()
                             .w_2()
                             .justify_center()
                             .child(GeneratingSpinnerElement::new(SpinnerVariant::Dots)),
+                    )
+                    .child(
+                        Label::new("Working…")
+                            .size(LabelSize::Small)
+                            .color(Color::Muted),
                     )
                 }
             })
@@ -7290,59 +7418,62 @@ impl ThreadView {
             }
         }
 
-        let panel_bg = cx.theme().colors().panel_background;
+        let palette = AgentStylePalette::new(cx);
+        let panel_bg = palette.panel;
 
         v_flex()
             .gap_1()
-            .child(
-                h_flex()
-                    .id(header_id)
-                    .group(&card_header_id)
-                    .relative()
-                    .w_full()
-                    .pr_1()
-                    .justify_between()
-                    .child(
-                        h_flex()
-                            .h(window.line_height() - px(2.))
-                            .gap_1p5()
-                            .overflow_hidden()
-                            .child(
-                                Icon::new(IconName::ToolThink)
-                                    .size(IconSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .child(
-                                div()
-                                    .text_size(self.tool_name_font_size())
-                                    .text_color(cx.theme().colors().text_muted)
-                                    .child("Thinking"),
-                            ),
-                    )
-                    .child(
-                        Disclosure::new(("expand", entry_ix), is_open)
-                            .opened_icon(IconName::ChevronUp)
-                            .closed_icon(IconName::ChevronDown)
-                            .visible_on_hover(&card_header_id)
-                            .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
-                                this.toggle_thinking_block_expansion(key, window, cx);
-                            })),
-                    )
-                    .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
-                        this.toggle_thinking_block_expansion(key, window, cx);
-                    })),
-            )
+            .when(!is_open, |this| {
+                this.child(
+                    h_flex()
+                        .id(header_id)
+                        .group(&card_header_id)
+                        .relative()
+                        .w_full()
+                        .pr_1()
+                        .justify_between()
+                        .child(
+                            h_flex()
+                                .h(window.line_height() - px(2.))
+                                .gap_1p5()
+                                .overflow_hidden()
+                                .child(
+                                    Label::new("Thinking...")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .italic(),
+                                ),
+                        )
+                        .child(
+                            Disclosure::new(("expand", entry_ix), is_open)
+                                .opened_icon(IconName::ChevronUp)
+                                .closed_icon(IconName::ChevronDown)
+                                .visible_on_hover(&card_header_id)
+                                .on_click(cx.listener(
+                                    move |this, _event: &ClickEvent, window, cx| {
+                                        this.toggle_thinking_block_expansion(key, window, cx);
+                                    },
+                                )),
+                        )
+                        .on_click(cx.listener(move |this, _event: &ClickEvent, window, cx| {
+                            this.toggle_thinking_block_expansion(key, window, cx);
+                        })),
+                )
+            })
             .when(is_open, |this| {
                 this.child(
                     div()
+                        .relative()
+                        .group(SharedString::from(format!(
+                            "thinking-body-{entry_ix}-{chunk_ix}"
+                        )))
                         .when(is_constrained, |this| this.relative())
                         .child(
                             div()
                                 .id(("thinking-content", chunk_ix))
-                                .ml_1p5()
                                 .pl_3p5()
-                                .border_l_1()
-                                .border_color(self.tool_card_border_color(cx))
+                                .border_l_2()
+                                .border_color(palette.thinking_border)
                                 .when(is_constrained, |this| this.max_h_64())
                                 .when_some(scroll_handle, |this, scroll_handle| {
                                     this.track_scroll(&scroll_handle)
@@ -7350,9 +7481,41 @@ impl ThreadView {
                                 .overflow_hidden()
                                 .child(self.render_markdown(
                                     chunk,
-                                    MarkdownStyle::themed(MarkdownFont::Agent, window, cx),
+                                    {
+                                        let mut style =
+                                            MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+                                        style.base_text_style.color = palette.thinking_text;
+                                        style.base_text_style.font_style = gpui::FontStyle::Italic;
+                                        style
+                                    },
                                     cx,
                                 )),
+                        )
+                        // pi-style: hover reveals a collapse chevron so the
+                        // expanded trace stays chrome-free by default.
+                        .child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .right_1()
+                                .visible_on_hover(SharedString::from(format!(
+                                    "thinking-body-{entry_ix}-{chunk_ix}"
+                                )))
+                                .child(
+                                    Disclosure::new(
+                                        SharedString::from(format!(
+                                            "collapse-thinking-{entry_ix}-{chunk_ix}"
+                                        )),
+                                        true,
+                                    )
+                                    .opened_icon(IconName::ChevronUp)
+                                    .closed_icon(IconName::ChevronDown)
+                                    .on_click(cx.listener(
+                                        move |this, _event: &ClickEvent, window, cx| {
+                                            this.toggle_thinking_block_expansion(key, window, cx);
+                                        },
+                                    )),
+                                ),
                         )
                         .when(is_constrained, |this| {
                             this.child(
@@ -7588,7 +7751,7 @@ impl ThreadView {
     fn render_collapsible_command(
         &self,
         group: SharedString,
-        is_preview: bool,
+        _is_preview: bool,
         command: Entity<Markdown>,
         window: &Window,
         cx: &Context<Self>,
@@ -7606,6 +7769,8 @@ impl ThreadView {
         style.container_style.text.font_size = Some(rems_from_px(12.).into());
         style.container_style.text.line_height = Some(rems_from_px(17.).into());
         style.height_is_multiple_of_line_height = true;
+        // pi renders the bash command string in the accent color.
+        style.base_text_style.color = AgentStylePalette::new(cx).text_accent;
         // Soft-wrap the command instead of horizontally scrolling it: the card is
         // narrow, and in scroll mode a long command wraps anyway but its wrapped
         // lines don't pick up the code block's left padding. Wrap mode lays the
@@ -7613,19 +7778,6 @@ impl ThreadView {
         // line (wrapped or not) is padded consistently.
         style.code_block_overflow_x_scroll = false;
 
-        let header_bg = self.tool_card_header_bg(cx);
-        let run_command_label = if is_preview {
-            Some(
-                h_flex().h_6().child(
-                    Label::new("Run Command")
-                        .buffer_font(cx)
-                        .size(LabelSize::XSmall)
-                        .color(Color::Muted),
-                ),
-            )
-        } else {
-            None
-        };
         // Suppress the code block's built-in copy button so we don't stack two
         // copy buttons on top of each other; the outer button below is the one
         // we want, because it copies the unfenced command text.
@@ -7645,9 +7797,19 @@ impl ThreadView {
             .group(group)
             .relative()
             .p_1p5()
-            .bg(header_bg)
-            .when(is_preview, |this| this.pt_1().children(run_command_label))
-            .child(markdown_element)
+            .child(
+                h_flex()
+                    .w_full()
+                    .items_start()
+                    .gap_1p5()
+                    .child(
+                        Label::new("$")
+                            .buffer_font(cx)
+                            .size(LabelSize::Small)
+                            .color(Color::Accent),
+                    )
+                    .child(div().flex_1().min_w_0().child(markdown_element)),
+            )
             .child(div().absolute().top_1().right_1().child(copy_button))
     }
 
@@ -7663,13 +7825,15 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> AnyElement {
         let terminal_data = terminal.read(cx);
-        let working_dir = terminal_data.working_dir();
         let started_at = terminal_data.started_at();
 
         let tool_failed = matches!(
             &tool_call.status,
             ToolCallStatus::Rejected | ToolCallStatus::Canceled | ToolCallStatus::Failed
         );
+        // `!!` inline-shell runs carry this id prefix and are rendered dim to
+        // signal they are excluded from the model's context (pi's `!!`).
+        let excluded_from_context = tool_call.id.0.starts_with("user-bash-hidden-");
 
         let confirmation_options = match &tool_call.status {
             ToolCallStatus::WaitingForConfirmation { options, .. } => Some(options),
@@ -7709,11 +7873,6 @@ impl ThreadView {
             .blend(cx.theme().colors().editor_foreground.opacity(0.025));
         let border_color = cx.theme().colors().border.opacity(0.6);
 
-        let working_dir = working_dir
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "current directory".to_string());
-
         let command_element = self.render_collapsible_command(
             header_group.clone(),
             false,
@@ -7727,6 +7886,12 @@ impl ThreadView {
             .read(cx)
             .is_tool_call_expanded(&tool_call.id);
 
+        let show_header = time_elapsed > Duration::from_secs(10)
+            || (!command_finished && !needs_confirmation)
+            || truncated_output
+            || tool_failed
+            || command_failed;
+
         let header = h_flex()
             .id(header_id)
             .pt_1()
@@ -7734,21 +7899,7 @@ impl ThreadView {
             .pr_1()
             .flex_none()
             .gap_1()
-            .justify_between()
-            .rounded_t_md()
-            .child(
-                div()
-                    .id(("command-target-path", terminal.entity_id()))
-                    .w_full()
-                    .max_w_full()
-                    .overflow_x_scroll()
-                    .child(
-                        Label::new(working_dir)
-                            .buffer_font(cx)
-                            .size(LabelSize::XSmall)
-                            .color(Color::Muted),
-                    ),
-            )
+            .justify_end()
             .child(
                 Disclosure::new(
                     SharedString::from(format!(
@@ -7867,8 +8018,11 @@ impl ThreadView {
                             )))
                         }),
                 )
-            })
-;
+            });
+
+        let terminal_output = output
+            .map(|output| output.content.trim_end_matches('\n').to_string())
+            .filter(|output| !output.is_empty());
 
         let terminal_view = self
             .entry_view_state
@@ -7878,24 +8032,35 @@ impl ThreadView {
 
         v_flex()
             .when(layout == ToolCallLayout::Standalone, |this| {
-                this.my_1p5()
+                this.my_1()
                     .mx_5()
-                    .border_1()
+                    .border_l_2()
                     .when(tool_failed || command_failed, |card| card.border_dashed())
-                    .border_color(border_color)
-                    .rounded_md()
+                    .border_color(self.tool_status_border(&tool_call.status, cx))
+                    .bg(self.tool_status_bg(&tool_call.status, cx))
             })
             .overflow_hidden()
+            // pi renders `!!` (excluded-from-context) shell runs dimmed.
+            .when(excluded_from_context, |this| this.opacity(0.55))
             .child(
                 v_flex()
                     .group(&header_group)
                     .bg(header_bg)
                     .text_xs()
-                    .child(header)
+                    .when(show_header, |this| this.child(header))
                     .child(command_element),
             )
             .when_some(tool_call.sandbox_not_applied.as_ref(), |this, reason| {
                 this.child(self.render_sandbox_not_applied_warning(reason, cx))
+            })
+            .when_some(terminal_output.filter(|_| !is_expanded), |this, output| {
+                this.child(self.render_terminal_output_text(
+                    terminal.entity_id(),
+                    output,
+                    border_color,
+                    window,
+                    cx,
+                ))
             })
             .when(is_expanded && terminal_view.is_some(), |this| {
                 this.child(
@@ -7905,7 +8070,6 @@ impl ThreadView {
                         .when(tool_failed || command_failed, |card| card.border_dashed())
                         .border_color(border_color)
                         .bg(cx.theme().colors().editor_background)
-                        .rounded_b_md()
                         .text_ui_sm(cx)
                         .h_full()
                         .children(terminal_view.map(|terminal_view| {
@@ -7942,6 +8106,34 @@ impl ThreadView {
                 ))
             })
             .into_any()
+    }
+
+    fn render_terminal_output_text(
+        &self,
+        terminal_id: EntityId,
+        output: String,
+        border_color: Hsla,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let text: SharedString = output.into();
+        let mut text_style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
+            .with_buffer_font(cx)
+            .base_text_style;
+        text_style.color = AgentStylePalette::new(cx).tool_output;
+        let text_len = text.len();
+        let text = StyledText::new(text).with_runs(vec![text_style.to_run(text_len)]);
+
+        div()
+            .id(("terminal-tool-output", terminal_id))
+            .pt_2()
+            .p_1p5()
+            .border_t_1()
+            .border_color(border_color)
+            .bg(cx.theme().colors().editor_background)
+            .overflow_x_scroll()
+            .child(div().flex_none().whitespace_nowrap().child(text))
+            .into_any_element()
     }
 
     /// Render the "ran without sandbox" warning shown on a terminal tool card,
@@ -8389,15 +8581,20 @@ impl ThreadView {
                 ) {
                     this
                 } else if use_card_layout {
-                    this.my_1p5()
-                        .rounded_md()
-                        .border_1()
+                    // pi keeps tools flat: a status wash + 2px status-colored
+                    // left rail with square corners, not a rounded boxed card.
+                    this.my_1()
+                        .border_l_2()
                         .when(failed_or_canceled, |this| this.border_dashed())
-                        .border_color(self.tool_card_border_color(cx))
-                        .bg(cx.theme().colors().editor_background)
+                        .border_color(self.tool_status_border(&tool_call.status, cx))
+                        .bg(self.tool_status_bg(&tool_call.status, cx))
                         .overflow_hidden()
                 } else {
-                    this.my_1()
+                    this.my_0p5()
+                        .border_l_2()
+                        .border_color(self.tool_status_border(&tool_call.status, cx))
+                        .bg(self.tool_status_bg(&tool_call.status, cx))
+                        .pl_1p5()
                 }
             })
             .when(layout == ToolCallLayout::Standalone, |this| {
@@ -8428,8 +8625,6 @@ impl ThreadView {
                             .justify_between()
                             .when(use_card_layout, |this| {
                                 this.p_0p5()
-                                    .rounded_t(rems_from_px(5.))
-                                    .bg(self.tool_card_header_bg(cx))
                             })
                             .child(self.render_tool_call_label(
                                 entry_ix,
@@ -9520,6 +9715,12 @@ impl ThreadView {
         cx: &Context<Self>,
     ) -> Div {
         let has_location = tool_call.locations.len() == 1;
+        if let Some(label) =
+            self.render_pi_style_tool_call_label(tool_call, use_card_layout, window, cx)
+        {
+            return label;
+        }
+
         let is_file = tool_call.kind == acp::ToolKind::Edit && has_location;
         let is_subagent_tool_call = tool_call.is_subagent();
 
@@ -9628,17 +9829,20 @@ impl ThreadView {
                             this.text_color(cx.theme().colors().text_muted)
                         }
                     })
-                    .child(
-                        self.render_markdown(
-                            tool_call.label.clone(),
-                            MarkdownStyle {
-                                prevent_mouse_interaction: true,
-                                ..MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
-                                    .with_muted_text(cx)
-                            },
-                            cx,
-                        ),
-                    )
+                    .child(self.render_markdown(
+                        tool_call.label.clone(),
+                        {
+                            let mut style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+                            style.prevent_mouse_interaction = true;
+                            // pi accents the primary argument (tool paths /
+                            // patterns are inline code in the title) as bright
+                            // accent text rather than a boxed code chip.
+                            style.inline_code.color = Some(AgentStylePalette::new(cx).text_accent);
+                            style.inline_code.background_color = None;
+                            style
+                        },
+                        cx,
+                    ))
                     .tooltip(Tooltip::text("Go to File"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.open_tool_call_location(entry_ix, 0, window, cx);
@@ -9649,12 +9853,220 @@ impl ThreadView {
                     .w_full()
                     .child(self.render_markdown(
                         tool_call.label.clone(),
-                        MarkdownStyle::themed(MarkdownFont::Agent, window, cx).with_muted_text(cx),
+                        {
+                            let mut style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
+                            // pi accents the primary argument (inline code in the
+                            // title) as bright accent text, not a boxed chip.
+                            style.inline_code.color = Some(AgentStylePalette::new(cx).text_accent);
+                            style.inline_code.background_color = None;
+                            style
+                        },
                         cx,
                     ))
                     .into_any()
             })
             .when(!is_edit, |this| this.child(gradient_overlay))
+    }
+
+    fn render_pi_style_tool_call_label(
+        &self,
+        tool_call: &ToolCall,
+        use_card_layout: bool,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<Div> {
+        let title = self.pi_style_tool_title(tool_call, cx)?;
+        let label = h_flex()
+            .relative()
+            .w_full()
+            .h(window.line_height() - px(2.))
+            .text_size(self.tool_name_font_size())
+            .gap_1p5()
+            .when(use_card_layout, |this| this.px_1())
+            .overflow_hidden()
+            .child(
+                Label::new(title.name)
+                    .buffer_font(cx)
+                    .size(LabelSize::Small)
+                    .weight(gpui::FontWeight::BOLD)
+                    .color(Color::Accent),
+            )
+            .when(!title.args.is_empty(), |this| {
+                this.child(
+                    div().min_w_0().overflow_hidden().text_ellipsis().child(
+                        Label::new(title.args)
+                            .buffer_font(cx)
+                            .size(LabelSize::Small)
+                            .color(Color::Accent),
+                    ),
+                )
+            })
+            .when(!title.dim.is_empty(), |this| {
+                this.child(
+                    Label::new(title.dim)
+                        .buffer_font(cx)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+            });
+
+        Some(label)
+    }
+
+    fn pi_style_tool_title(
+        &self,
+        tool_call: &ToolCall,
+        cx: &Context<Self>,
+    ) -> Option<PiStyleToolTitle> {
+        let tool_name = tool_call.tool_name.as_ref()?.as_ref();
+        let input = tool_call
+            .raw_input
+            .as_ref()
+            .and_then(|input| input.as_object());
+        let path = self.tool_call_path_display(tool_call, input, cx);
+
+        let title = match tool_name {
+            "read" | "read_file" => PiStyleToolTitle {
+                name: "read".into(),
+                args: path?,
+                dim: read_file_tool_line_range(tool_call.raw_input.as_ref()),
+            },
+            "grep" => {
+                let pattern = input
+                    .and_then(|input| {
+                        json_string(input, "pattern").or_else(|| json_string(input, "regex"))
+                    })
+                    .unwrap_or_default();
+                let mut dim = String::new();
+                if let Some(include_pattern) =
+                    input.and_then(|input| json_string(input, "include_pattern"))
+                {
+                    dim.push_str(" in ");
+                    dim.push_str(&include_pattern);
+                }
+                if input
+                    .and_then(|input| input.get("case_sensitive"))
+                    .and_then(|value| value.as_bool())
+                    == Some(true)
+                {
+                    dim.push_str(" (case-sensitive)");
+                }
+                PiStyleToolTitle {
+                    name: "grep".into(),
+                    args: format!("/{pattern}/"),
+                    dim,
+                }
+            }
+            "find" | "find_path" => PiStyleToolTitle {
+                name: "find".into(),
+                args: input
+                    .and_then(|input| {
+                        json_string(input, "pattern").or_else(|| json_string(input, "glob"))
+                    })
+                    .unwrap_or_default(),
+                dim: String::new(),
+            },
+            "terminal" | "sandboxed_terminal" => PiStyleToolTitle {
+                name: "$".into(),
+                args: input
+                    .and_then(|input| {
+                        json_string(input, "command").or_else(|| json_string(input, "cmd"))
+                    })
+                    .unwrap_or_default(),
+                dim: String::new(),
+            },
+            "fetch" => PiStyleToolTitle {
+                name: "fetch".into(),
+                args: input
+                    .and_then(|input| json_string(input, "url"))
+                    .unwrap_or_default(),
+                dim: String::new(),
+            },
+            "search_web" | "web_search" => PiStyleToolTitle {
+                name: "search".into(),
+                args: input
+                    .and_then(|input| json_string(input, "query"))
+                    .unwrap_or_default(),
+                dim: String::new(),
+            },
+            "list_directory" => PiStyleToolTitle {
+                name: "ls".into(),
+                args: path.unwrap_or_default(),
+                dim: String::new(),
+            },
+            "edit_file" => PiStyleToolTitle {
+                name: "edit".into(),
+                args: path.unwrap_or_default(),
+                dim: String::new(),
+            },
+            "write_file" => PiStyleToolTitle {
+                name: "write".into(),
+                args: path.unwrap_or_default(),
+                dim: String::new(),
+            },
+            "delete_path" => PiStyleToolTitle {
+                name: "delete".into(),
+                args: path.unwrap_or_default(),
+                dim: String::new(),
+            },
+            "move_path" => PiStyleToolTitle {
+                name: "move".into(),
+                args: input
+                    .and_then(|input| json_string(input, "source_path"))
+                    .or(path)
+                    .unwrap_or_default(),
+                dim: input
+                    .and_then(|input| json_string(input, "destination_path"))
+                    .map(|destination| format!(" to {destination}"))
+                    .unwrap_or_default(),
+            },
+            _ => PiStyleToolTitle {
+                name: tool_name.to_string(),
+                args: path
+                    .or_else(|| tool_call.raw_input.as_ref().map(compact_json_summary))
+                    .unwrap_or_default(),
+                dim: String::new(),
+            },
+        };
+
+        if title.args.is_empty() && title.dim.is_empty() {
+            return None;
+        }
+        Some(title)
+    }
+
+    fn tool_call_path_display(
+        &self,
+        tool_call: &ToolCall,
+        input: Option<&serde_json::Map<String, serde_json::Value>>,
+        cx: &Context<Self>,
+    ) -> Option<String> {
+        if let Some(location) = tool_call.locations.first() {
+            if let Some(project) = self.project.upgrade() {
+                if let Some(project_path) = project.read(cx).find_project_path(&location.path, cx)
+                    && let Some(worktree) = project
+                        .read(cx)
+                        .worktree_for_id(project_path.worktree_id, cx)
+                {
+                    return Some(
+                        worktree
+                            .read(cx)
+                            .full_path(&project_path.path)
+                            .to_string_lossy()
+                            .to_string(),
+                    );
+                }
+            }
+
+            return Some(location.path.display().to_string());
+        }
+
+        input.and_then(|input| {
+            json_string(input, "path")
+                .or_else(|| json_string(input, "file_path"))
+                .or_else(|| json_string(input, "filePath"))
+                .or_else(|| json_string(input, "source_path"))
+        })
     }
 
     fn open_tool_call_location(
@@ -9926,17 +10338,14 @@ impl ThreadView {
             ToolCallStatus::InProgress | ToolCallStatus::Pending
         );
 
-        let revealed_diff_editor = if let Some(entry) =
-            self.entry_view_state.read(cx).entry(entry_ix)
-            && let Some(editor) = entry.editor_for_diff(diff)
-            && diff.read(cx).has_revealed_range(cx)
-        {
-            Some(editor)
-        } else {
-            None
-        };
+        let diff_editor = self
+            .entry_view_state
+            .read(cx)
+            .entry(entry_ix)
+            .and_then(|entry| entry.editor_for_diff(diff));
+        let diff_has_revealed_range = diff.read(cx).has_revealed_range(cx);
 
-        let show_top_border = !has_failed || revealed_diff_editor.is_some();
+        let show_top_border = !has_failed || diff_editor.is_some();
 
         v_flex()
             .h_full()
@@ -9945,20 +10354,74 @@ impl ThreadView {
                     .when(has_failed, |this| this.border_dashed())
                     .border_color(self.tool_card_border_color(cx))
             })
-            .child(if let Some(editor) = revealed_diff_editor {
+            .child(if let Some(editor) = diff_editor {
                 editor.into_any_element()
             } else if tool_progress && self.as_native_connection(cx).is_some() {
                 self.render_diff_loading(cx)
+            } else if diff_has_revealed_range {
+                self.render_text_diff_output(entry_ix, diff, cx)
             } else {
-                Empty.into_any()
+                Empty.into_any_element()
             })
             .into_any()
+    }
+
+    fn render_text_diff_output(
+        &self,
+        entry_ix: usize,
+        diff: &Entity<acp_thread::Diff>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let diff = diff.read(cx);
+        let path = diff.file_path(cx).unwrap_or_else(|| "untitled".to_string());
+        let old_text = diff.base_text().as_ref();
+        let new_text = diff.buffer().read(cx).text();
+        let diff_text = build_simple_unified_diff(&path, old_text, &new_text);
+        if diff_text.is_empty() {
+            return Empty.into_any_element();
+        }
+
+        let palette = AgentStylePalette::new(cx);
+        let mut base_style = TextStyle::default();
+        base_style.font_family = ThemeSettings::get_global(cx).buffer_font.family.clone();
+        base_style.font_fallbacks = ThemeSettings::get_global(cx).buffer_font.fallbacks.clone();
+        base_style.font_features = ThemeSettings::get_global(cx).buffer_font.features.clone();
+        base_style.font_size = ThemeSettings::get_global(cx)
+            .agent_buffer_font_size(cx)
+            .into();
+        base_style.font_weight = ThemeSettings::get_global(cx).buffer_font.weight;
+        base_style.color = palette.diff_context;
+
+        let mut runs = Vec::new();
+        for line in diff_text.split_inclusive('\n') {
+            let mut line_style = base_style.clone();
+            if line.starts_with('+') && !line.starts_with("+++") {
+                line_style.color = palette.diff_added;
+            } else if line.starts_with('-') && !line.starts_with("---") {
+                line_style.color = palette.diff_removed;
+            } else if line.starts_with("@@") {
+                line_style.color = palette.text_accent;
+            }
+            runs.push(line_style.to_run(line.len()));
+        }
+
+        let diff_text: SharedString = diff_text.into();
+        let styled_diff = StyledText::new(diff_text).with_runs(runs);
+
+        div()
+            .id(("edit-tool-diff-output", entry_ix))
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .overflow_x_scroll()
+            .child(div().flex_none().whitespace_nowrap().child(styled_diff))
+            .into_any_element()
     }
 
     fn render_markdown_output(
         &self,
         markdown: Entity<Markdown>,
-        entry_ix: usize,
+        _entry_ix: usize,
         context_ix: usize,
         tool_call: &ToolCall,
         card_layout: bool,
@@ -9967,14 +10430,7 @@ impl ThreadView {
     ) -> AnyElement {
         let markdown_style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx);
         let output = self
-            .render_numbered_read_file_output(
-                markdown.clone(),
-                entry_ix,
-                context_ix,
-                tool_call,
-                markdown_style.clone(),
-                cx,
-            )
+            .render_plain_read_file_output(markdown.clone(), tool_call, window, cx)
             .unwrap_or_else(|| {
                 self.render_markdown(markdown, markdown_style, cx)
                     .into_any()
@@ -9996,18 +10452,16 @@ impl ThreadView {
                 }
             })
             .text_xs()
-            .text_color(cx.theme().colors().text_muted)
+            .text_color(AgentStylePalette::new(cx).tool_output)
             .child(output)
             .into_any_element()
     }
 
-    fn render_numbered_read_file_output(
+    fn render_plain_read_file_output(
         &self,
         markdown: Entity<Markdown>,
-        entry_ix: usize,
-        context_ix: usize,
         tool_call: &ToolCall,
-        markdown_style: MarkdownStyle,
+        window: &Window,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
         let is_read_file = tool_call
@@ -10019,15 +10473,28 @@ impl ThreadView {
         }
 
         let markdown = markdown.read(cx);
-        let parsed = parse_cat_numbered_markdown_code_block(markdown.source())?;
-        let language = markdown.first_code_block_language();
-        Some(render_cat_numbered_code_block(
-            parsed,
-            language,
-            markdown_style,
-            format!("copy-read-file-output-{entry_ix}-{context_ix}"),
-            cx,
-        ))
+        let source = markdown.source();
+        let text = parse_single_fenced_code_block(source)
+            .map(|(_, code)| code)
+            .unwrap_or(source);
+        let text: SharedString = text.into();
+        let mut text_style = MarkdownStyle::themed(MarkdownFont::Agent, window, cx)
+            .with_buffer_font(cx)
+            .base_text_style;
+        text_style.color = AgentStylePalette::new(cx).tool_output;
+        let text_len = text.len();
+        let text = StyledText::new(text).with_runs(vec![text_style.to_run(text_len)]);
+
+        Some(
+            div()
+                .id("read-file-tool-output")
+                .flex()
+                .flex_1()
+                .min_w_0()
+                .overflow_x_scroll()
+                .child(div().flex_none().whitespace_nowrap().child(text))
+                .into_any_element(),
+        )
     }
 
     fn render_image_output(
@@ -10097,7 +10564,7 @@ impl ThreadView {
             cx,
         );
 
-        v_flex().mx_5().my_1p5().gap_3().child(content)
+        v_flex().mx_5().my_1().gap_3().child(content)
     }
 
     fn render_subagent_card(
@@ -10179,39 +10646,19 @@ impl ThreadView {
         };
 
         let card_header_id = format!("subagent-header-{}", entry_ix);
-        let status_icon = format!("status-icon-{}", entry_ix);
         let diff_stat_id = format!("subagent-diff-{}", entry_ix);
 
+        // pi conveys status by tinting the whole card (below), not with a ✓/✗
+        // glyph: keep the spinner while the subagent runs, otherwise show a
+        // neutral agent marker regardless of success/failure/cancel.
         let icon = h_flex().w_4().justify_center().child(if is_running {
             SpinnerLabel::new()
                 .size(LabelSize::Small)
                 .into_any_element()
-        } else if is_cancelled {
-            div()
-                .id(status_icon)
-                .child(
-                    Icon::new(IconName::Circle)
-                        .size(IconSize::Small)
-                        .color(Color::Custom(
-                            cx.theme().colors().icon_disabled.opacity(0.5),
-                        )),
-                )
-                .tooltip(Tooltip::text("Subagent Cancelled"))
-                .into_any_element()
-        } else if is_failed {
-            div()
-                .id(status_icon)
-                .child(
-                    Icon::new(IconName::Close)
-                        .size(IconSize::Small)
-                        .color(Color::Error),
-                )
-                .tooltip(Tooltip::text("Subagent Failed"))
-                .into_any_element()
         } else {
-            Icon::new(IconName::Check)
+            Icon::new(self.agent_icon)
                 .size(IconSize::Small)
-                .color(Color::Success)
+                .color(Color::Muted)
                 .into_any_element()
         });
 
@@ -10229,10 +10676,12 @@ impl ThreadView {
 
         v_flex()
             .w_full()
-            .rounded_md()
-            .border_1()
+            // pi-style: a flat block with a status-colored left rail + wash
+            // instead of a neutral rounded border box.
+            .border_l_2()
             .when(has_no_title_or_canceled, |this| this.border_dashed())
-            .border_color(self.tool_card_border_color(cx))
+            .border_color(self.tool_status_border(&tool_call.status, cx))
+            .bg(self.tool_status_bg(&tool_call.status, cx))
             .overflow_hidden()
             .child(
                 h_flex()
@@ -10241,9 +10690,6 @@ impl ThreadView {
                     .p_1()
                     .w_full()
                     .justify_between()
-                    .when(!has_no_title_or_canceled, |this| {
-                        this.bg(self.tool_card_header_bg(cx))
-                    })
                     .child(
                         h_flex()
                             .id(format!("subagent-title-{}", entry_ix))
@@ -10545,14 +10991,38 @@ impl ThreadView {
     }
 
     fn tool_card_header_bg(&self, cx: &Context<Self>) -> Hsla {
-        cx.theme()
-            .colors()
-            .element_background
-            .blend(cx.theme().colors().editor_foreground.opacity(0.025))
+        let palette = AgentStylePalette::new(cx);
+        palette.panel.blend(palette.line.opacity(0.25))
     }
 
     fn tool_card_border_color(&self, cx: &Context<Self>) -> Hsla {
-        cx.theme().colors().border.opacity(0.8)
+        AgentStylePalette::new(cx).line.opacity(0.8)
+    }
+
+    fn tool_status_bg(&self, status: &ToolCallStatus, cx: &Context<Self>) -> Hsla {
+        let palette = AgentStylePalette::new(cx);
+        match status {
+            ToolCallStatus::Failed | ToolCallStatus::Rejected | ToolCallStatus::Canceled => {
+                palette.tool_error_bg
+            }
+            ToolCallStatus::WaitingForConfirmation { .. }
+            | ToolCallStatus::Pending
+            | ToolCallStatus::InProgress => palette.tool_pending_bg,
+            ToolCallStatus::Completed => palette.tool_success_bg,
+        }
+    }
+
+    fn tool_status_border(&self, status: &ToolCallStatus, cx: &Context<Self>) -> Hsla {
+        let palette = AgentStylePalette::new(cx);
+        match status {
+            ToolCallStatus::Failed | ToolCallStatus::Rejected | ToolCallStatus::Canceled => {
+                palette.tool_error_border
+            }
+            ToolCallStatus::WaitingForConfirmation { .. }
+            | ToolCallStatus::Pending
+            | ToolCallStatus::InProgress => palette.tool_pending_border,
+            ToolCallStatus::Completed => palette.tool_success_border,
+        }
     }
 
     fn tool_name_font_size(&self) -> Rems {
