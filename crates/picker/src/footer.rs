@@ -145,7 +145,7 @@ impl<D: PickerDelegate> Picker<D> {
                     ),
             )
             .when(preview_visible, |this| {
-                this.child(Divider::vertical().h_4().mx_1())
+                this.child(Divider::vertical().mx_1())
                     .child(
                         IconButton::new("picker-preview-right", IconName::DiffSplit)
                             .icon_size(IconSize::Small)
