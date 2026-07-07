@@ -435,10 +435,6 @@ message Envelope {
     TrustWorktrees trust_worktrees = 404;
     RestrictWorktrees restrict_worktrees = 405;
 
-    ShareAgentThread share_agent_thread = 406;
-    GetSharedAgentThread get_shared_agent_thread = 407;
-    GetSharedAgentThreadResponse get_shared_agent_thread_response = 408;
-
     FindSearchCandidatesChunk find_search_candidates_chunk = 409;
     FindSearchCandidatesCancelled find_search_candidates_cancelled = 410;
     GetContextServerCommand get_context_server_command = 411;
@@ -492,10 +488,12 @@ message Envelope {
     GitWorktreeCreatedAt git_worktree_created_at = 457;
     GitWorktreeCreatedAtResponse git_worktree_created_at_response = 458;
     TelemetryEvent telemetry_event = 459;
-    TrashProjectEntry trash_project_entry = 460;
-    TrashProjectEntryResponse trash_project_entry_response = 461;
-    RestoreProjectEntry restore_project_entry = 462;
-    RestoreProjectEntryResponse restore_project_entry_response = 463; // current max
+    ResolveCodeAction resolve_code_action = 460;
+    ResolveCodeActionResponse resolve_code_action_response = 461;
+    TrashProjectEntry trash_project_entry = 462;
+    TrashProjectEntryResponse trash_project_entry_response = 463;
+    RestoreProjectEntry restore_project_entry = 464;
+    RestoreProjectEntryResponse restore_project_entry_response = 465; // current max
   }
 
   reserved 87 to 88;
@@ -523,6 +521,7 @@ message Envelope {
   reserved 429 to 430;
   reserved 211 to 216, 232 to 233;
   reserved 397 to 398;
+  reserved 406 to 408;
 }
 
 message Hello {
