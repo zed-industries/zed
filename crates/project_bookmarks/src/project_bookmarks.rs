@@ -428,19 +428,19 @@ impl PickerDelegate for ProjectBookmarksDelegate {
                 let (bookmark_label, full_path_label) = self.labels_for_match(mat, window, cx);
 
                 if self.group_result_by_path {
-                    item_base
-                        .child(
-                            h_flex()
-                                .text_sm()
-                                .w(rems(
-                                    (self.max_match_line_number.max(1).ilog10() + 1) as f32 * 0.5,
-                                ))
-                                .justify_end()
-                                .child(Label::new(mat.line_number.to_string()).color(
-                                    Color::Custom(cx.theme().colors().text_muted.opacity(0.5)),
-                                )),
-                        )
-                        .child(bookmark_label.truncate().into_any_element())
+                    item_base.child(
+                        h_flex()
+                            .w_full()
+                            .gap_1p5()
+                            .justify_between()
+                            .overflow_x_hidden()
+                            .child(bookmark_label.truncate().into_any_element())
+                            .child(
+                                Label::new(mat.line_number.to_string())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            ),
+                    )
                 } else {
                     item_base.start_slot::<Icon>(Some(icon)).child(
                         h_flex()
