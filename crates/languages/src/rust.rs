@@ -27,7 +27,7 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
-use util::command::Stdio;
+use util::command::{Stdio, new_command};
 use util::fs::{make_file_executable, remove_matching};
 use util::merge_json_value_into;
 use util::rel_path::RelPath;
@@ -200,6 +200,58 @@ impl RustLspAdapter {
         format!("{}-{}", Self::ARCH_SERVER_NAME, libc)
     }
 
+    async fn rustup_rust_analyzer_for_worktree(
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<PathBuf> {
+        if !Self::workspace_has_rust_toolchain_override(delegate).await {
+            return None;
+        }
+
+        let rustup = delegate.which("rustup".as_ref()).await?;
+        let env = delegate.shell_env().await;
+        let worktree_root = delegate.worktree_root_path();
+        let output = new_command(rustup)
+            .args(["which", "rust-analyzer"])
+            .envs(env.iter())
+            .current_dir(worktree_root)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await;
+        let output = match output {
+            Ok(output) if output.status.success() => output,
+            Ok(output) => {
+                log::debug!(
+                    "failed to locate rust-analyzer through rustup in {worktree_root:?}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                return None;
+            }
+            Err(err) => {
+                log::debug!(
+                    "failed to run `rustup which rust-analyzer` in {worktree_root:?}: {err:#}"
+                );
+                return None;
+            }
+        };
+
+        let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+        Some(path).filter(|p| !p.as_os_str().is_empty())
+    }
+
+    async fn workspace_has_rust_toolchain_override(delegate: &dyn LspAdapterDelegate) -> bool {
+        for file_name in ["rust-toolchain.toml", "rust-toolchain"] {
+            if fs::metadata(delegate.resolve_relative_path(PathBuf::from(file_name)))
+                .await
+                .is_ok()
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
     async fn build_asset_name() -> String {
         let extension = match Self::GITHUB_ASSET_KIND {
             AssetKind::TarGz => "tar.gz",
@@ -370,7 +422,7 @@ impl LspAdapter for RustLspAdapter {
                 };
 
                 static FULL_SIGNATURE_REGEX: LazyLock<Regex> =
-                    LazyLock::new(|| Regex::new(r"fn (.?+)\(").expect("Failed to create REGEX"));
+                    LazyLock::new(|| Regex::new(r"fn (.+?)\(").expect("Failed to create REGEX"));
                 if let Some((function_signature, match_)) = function_signature
                     .filter(|it| it.contains(&label))
                     .and_then(|it| Some((it, FULL_SIGNATURE_REGEX.find(it)?)))
@@ -379,7 +431,7 @@ impl LspAdapter for RustLspAdapter {
                     let runs = language.highlight_text(&source, 0..function_signature.len());
                     mk_label(
                         function_signature.to_owned(),
-                        &|| match_.range().start - 3..match_.range().end - 1,
+                        &|| match_.range().start + 3..match_.range().end - 1,
                         runs,
                     )
                 } else if let Some((prefix, suffix)) = fn_prefixed {
@@ -671,42 +723,64 @@ impl LspInstaller for RustLspAdapter {
     type BinaryVersion = GitHubLspBinaryVersion;
     async fn check_if_user_installed(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         _: Option<Toolchain>,
-        _: &AsyncApp,
+        cx: &AsyncApp,
     ) -> Option<LanguageServerBinary> {
-        let path = delegate.which("rust-analyzer".as_ref()).await?;
-        let env = delegate.shell_env().await;
+        let delegate = delegate.clone();
+        cx.background_spawn(async move {
+            let env = delegate.shell_env().await;
+            if let Some(path) = Self::rustup_rust_analyzer_for_worktree(delegate.as_ref()).await {
+                let result = delegate
+                    .try_exec(LanguageServerBinary {
+                        path: path.clone(),
+                        arguments: vec!["--help".into()],
+                        env: Some(env.clone()),
+                    })
+                    .await;
+                if result.is_ok() {
+                    log::debug!("found rust-analyzer in rustup toolchain override");
+                    return Some(LanguageServerBinary {
+                        path,
+                        env: Some(env),
+                        arguments: vec![],
+                    });
+                }
+            }
 
-        // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
-        // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
-        log::debug!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
-        let result = delegate
-            .try_exec(LanguageServerBinary {
-                path: path.clone(),
-                arguments: vec!["--help".into()],
-                env: Some(env.clone()),
-            })
-            .await;
-        if let Err(err) = result {
-            log::debug!(
-                "failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {}",
+            let path = delegate.which("rust-analyzer".as_ref()).await?;
+
+            // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
+            // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
+            log::debug!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
+            let result = delegate
+                .try_exec(LanguageServerBinary {
+                    path: path.clone(),
+                    arguments: vec!["--help".into()],
+                    env: Some(env.clone()),
+                })
+                .await;
+            if let Err(err) = result {
+                log::debug!(
+                    "failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {}",
+                    path,
+                    err
+                );
+                return None;
+            }
+
+            Some(LanguageServerBinary {
                 path,
-                err
-            );
-            return None;
-        }
-
-        Some(LanguageServerBinary {
-            path,
-            env: Some(env),
-            arguments: vec![],
+                env: Some(env),
+                arguments: vec![],
+            })
         })
+        .await
     }
 
     async fn fetch_latest_server_version(
         &self,
-        delegate: &dyn LspAdapterDelegate,
+        delegate: &Arc<dyn LspAdapterDelegate>,
         pre_release: bool,
         _: &mut AsyncApp,
     ) -> Result<GitHubLspBinaryVersion> {
@@ -1633,6 +1707,36 @@ mod tests {
                     (21..24, HighlightId::new(1)),
                     (34..41, HighlightId::new(0)),
                     (46..47, HighlightId::new(0))
+                ],
+            ))
+        );
+
+        assert_eq!(
+            adapter
+                .label_for_completion(
+                    &lsp::CompletionItem {
+                        kind: Some(lsp::CompletionItemKind::METHOD),
+                        label: "sync_all(…)".to_string(),
+                        filter_text: Some("sync_allfsync".to_string()),
+                        label_details: Some(CompletionItemLabelDetails {
+                            detail: None,
+                            description: Some(
+                                "pub fn sync_all(&self) -> io::Result<()>".to_string()
+                            ),
+                        }),
+                        ..Default::default()
+                    },
+                    &language
+                )
+                .await,
+            Some(CodeLabel::new(
+                "pub fn sync_all(&self) -> io::Result<()>".to_string(),
+                7..15,
+                vec![
+                    (0..3, HighlightId::new(1)),
+                    (4..6, HighlightId::new(1)),
+                    (7..15, HighlightId::new(2)),
+                    (30..36, HighlightId::new(0))
                 ],
             ))
         );

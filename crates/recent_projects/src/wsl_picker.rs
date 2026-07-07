@@ -75,6 +75,10 @@ impl EventEmitter<WslPickerDismissed> for Picker<WslPickerDelegate> {}
 impl picker::PickerDelegate for WslPickerDelegate {
     type ListItem = ListItem;
 
+    fn name() -> &'static str {
+        "WSL-distor-picker"
+    }
+
     fn match_count(&self) -> usize {
         self.matches.len()
     }
@@ -172,7 +176,7 @@ impl picker::PickerDelegate for WslPickerDelegate {
                 .spacing(ui::ListItemSpacing::Sparse)
                 .child(
                     h_flex()
-                        .flex_grow()
+                        .flex_grow_1()
                         .gap_3()
                         .child(Icon::new(IconName::Linux))
                         .child(v_flex().child(HighlightedLabel::new(
@@ -199,7 +203,7 @@ impl WslOpenModal {
         cx: &mut Context<Self>,
     ) -> Self {
         let delegate = WslPickerDelegate::new();
-        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
+        let picker = cx.new(|cx| Picker::uniform_list(delegate, window, cx).embedded());
 
         let selected = cx.subscribe_in(
             &picker,

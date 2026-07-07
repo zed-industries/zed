@@ -11,9 +11,10 @@ use project::{DisableAiSettings, Project};
 use remote::RemoteConnectionOptions;
 use settings::Settings;
 pub use settings::SidebarSide;
+use std::cell::Cell;
 use std::future::Future;
-
 use std::path::PathBuf;
+use std::rc::Rc;
 use ui::prelude::*;
 use util::ResultExt;
 use util::path_list::PathList;
@@ -288,6 +289,13 @@ pub struct MultiWorkspace {
     retained_workspaces: Vec<Entity<Workspace>>,
     project_groups: Vec<ProjectGroupState>,
     active_workspace: Entity<Workspace>,
+    /// Source of truth for which workspace is presented in this window, shared
+    /// with each member `Workspace` so they can tell whether they own the
+    /// platform window's title and edited indicator. This only exists to prevent
+    /// Workspaces from having to read their parent MultiWorkspace to check
+    /// chrome ownership, as that might cause a double lease. Kept in sync with
+    /// `active_workspace`.
+    active_workspace_id: Rc<Cell<EntityId>>,
     sidebar: Option<Box<dyn SidebarHandle>>,
     sidebar_open: bool,
     sidebar_overlay: Option<AnyView>,
@@ -337,14 +345,16 @@ impl MultiWorkspace {
         });
         Self::subscribe_to_workspace(&workspace, window, cx);
         let weak_self = cx.weak_entity();
+        let active_workspace_id = Rc::new(Cell::new(workspace.entity_id()));
         workspace.update(cx, |workspace, cx| {
-            workspace.set_multi_workspace(weak_self, cx);
+            workspace.set_multi_workspace(weak_self, active_workspace_id.clone(), cx);
         });
         Self {
             window_id: window.window_handle().window_id(),
             retained_workspaces: Vec::new(),
             project_groups: Vec::new(),
             active_workspace: workspace,
+            active_workspace_id,
             sidebar: None,
             sidebar_open: false,
             sidebar_overlay: None,
@@ -745,8 +755,9 @@ impl MultiWorkspace {
     ) {
         Self::subscribe_to_workspace(workspace, window, cx);
         let weak_self = cx.weak_entity();
+        let active_workspace_id = self.active_workspace_id.clone();
         workspace.update(cx, |workspace, cx| {
-            workspace.set_multi_workspace(weak_self, cx);
+            workspace.set_multi_workspace(weak_self, active_workspace_id, cx);
         });
 
         let entity = cx.entity();
@@ -852,6 +863,46 @@ impl MultiWorkspace {
         }
     }
 
+    pub fn move_project_group_up(&mut self, key: &ProjectGroupKey, cx: &mut Context<Self>) -> bool {
+        let Some(index) = self
+            .project_groups
+            .iter()
+            .position(|group| group.key == *key)
+        else {
+            return false;
+        };
+        if index == 0 {
+            return false;
+        }
+        self.project_groups.swap(index - 1, index);
+        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+        self.serialize(cx);
+        cx.notify();
+        true
+    }
+
+    pub fn move_project_group_down(
+        &mut self,
+        key: &ProjectGroupKey,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(index) = self
+            .project_groups
+            .iter()
+            .position(|group| group.key == *key)
+        else {
+            return false;
+        };
+        if index + 1 >= self.project_groups.len() {
+            return false;
+        }
+        self.project_groups.swap(index, index + 1);
+        cx.emit(MultiWorkspaceEvent::ProjectGroupsChanged);
+        self.serialize(cx);
+        cx.notify();
+        true
+    }
+
     pub fn workspaces_for_project_group(
         &self,
         key: &ProjectGroupKey,
@@ -939,7 +990,9 @@ impl MultiWorkspace {
                         .map(|group| group.key.clone())
                 });
 
-                if let Some(neighboring_group_key) = neighboring_group_key {
+                if let Some(neighboring_group_key) = neighboring_group_key
+                    && neighboring_group_key.host().is_none()
+                {
                     return this.find_or_create_local_workspace(
                         neighboring_group_key.path_list().clone(),
                         Some(neighboring_group_key),
@@ -1001,7 +1054,9 @@ impl MultiWorkspace {
         self.remove(
             workspaces,
             move |this, window, cx| {
-                if let Some(neighbor_key) = neighbor_key {
+                if let Some(neighbor_key) = neighbor_key
+                    && neighbor_key.host().is_none()
+                {
                     return this.find_or_create_local_workspace(
                         neighbor_key.path_list().clone(),
                         Some(neighbor_key.clone()),
@@ -1173,7 +1228,9 @@ impl MultiWorkspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<Result<Entity<Workspace>>> {
-        if let Some(workspace) = self.workspace_for_paths(&paths, host.as_ref(), cx) {
+        if let Some(workspace) =
+            self.workspace_for_paths_excluding(&paths, host.as_ref(), excluding, cx)
+        {
             self.activate(workspace.clone(), source_workspace, window, cx);
             return Task::ready(Ok(workspace));
         }
@@ -1448,6 +1505,10 @@ impl MultiWorkspace {
         }
 
         self.active_workspace = workspace;
+        // Publish the new active workspace before anyone reads the shared cell
+        // to decide who owns the window chrome.
+        self.active_workspace_id
+            .set(self.active_workspace.entity_id());
 
         let active_key = self.active_workspace.read(cx).project_group_key(cx);
         if let Some(group) = self.project_groups.iter_mut().find(|g| g.key == active_key) {
@@ -1458,9 +1519,40 @@ impl MultiWorkspace {
             self.detach_workspace(&old_active_workspace, cx);
         }
 
+        // The platform window is shared across all workspaces in this window.
+        // The previously-active workspace left the title and edited indicator
+        // reflecting its own state, so re-apply them from the newly-active
+        // workspace (which is now the chrome owner per `owns_window_chrome`).
+        self.active_workspace.update(cx, |workspace, cx| {
+            workspace.refresh_window_state(window, cx);
+        });
+
         cx.emit(MultiWorkspaceEvent::ActiveWorkspaceChanged { source_workspace });
         self.serialize(cx);
         self.focus_active_workspace(window, cx);
+        cx.notify();
+    }
+
+    /// Adds `workspace` as a retained background tab without switching the
+    /// active workspace to it or moving focus. Mirrors the registration and
+    /// retention bookkeeping `activate` performs for the incoming workspace,
+    /// but leaves the currently-active workspace focused.
+    ///
+    /// Used when something opens a workspace the user should not be yanked
+    /// into — e.g. the agent's `create_thread` tool spawning a sibling
+    /// worktree in the background.
+    pub fn add_background_workspace(
+        &mut self,
+        workspace: Entity<Workspace>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace() == &workspace || self.is_workspace_retained(&workspace) {
+            return;
+        }
+        self.register_workspace(&workspace, window, cx);
+        let key = workspace.read(cx).project_group_key(cx);
+        self.retain_workspace(workspace, key, cx);
         cx.notify();
     }
 
