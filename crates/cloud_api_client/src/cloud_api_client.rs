@@ -187,7 +187,7 @@ impl CloudApiClient {
             .await
     }
 
-    async fn send_authenticated_json_request<T: DeserializeOwned>(
+    pub async fn send_authenticated_json_request<T: DeserializeOwned>(
         &self,
         request_builder: request::Builder,
         body: impl Into<AsyncBody>,
