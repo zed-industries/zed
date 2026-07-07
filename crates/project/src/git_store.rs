@@ -5670,26 +5670,36 @@ impl Repository {
 
                 let buffer_diff_base_changes = cx
                     .background_spawn(async move {
-                        let mut changes = Vec::new();
-                        for (
-                            buffer,
-                            repo_path,
-                            is_symlink,
-                            current_index_text,
-                            current_head_text,
-                        ) in &repo_diff_state_updates
+                        let mut revisions = Vec::new();
+                        for (_, repo_path, is_symlink, current_index_text, current_head_text) in
+                            &repo_diff_state_updates
                         {
-                            let index_text = if current_index_text.is_some() && !*is_symlink {
-                                backend.load_index_text(repo_path.clone())
-                            } else {
-                                future::ready(None).boxed()
-                            };
-                            let head_text = if current_head_text.is_some() && !*is_symlink {
-                                backend.load_committed_text(repo_path.clone())
-                            } else {
-                                future::ready(None).boxed()
-                            };
-                            let (index_text, head_text) = future::join(index_text, head_text).await;
+                            if current_index_text.is_some() && !*is_symlink {
+                                revisions.push(format!(":{}", repo_path.as_unix_str()));
+                            }
+                            if current_head_text.is_some() && !*is_symlink {
+                                revisions.push(format!("HEAD:{}", repo_path.as_unix_str()));
+                            }
+                        }
+
+                        let mut loaded_revisions = backend
+                            .load_revisions(revisions)
+                            .await
+                            .log_err()
+                            .into_iter()
+                            .flatten();
+
+                        let mut changes = Vec::new();
+                        for (buffer, _, is_symlink, current_index_text, current_head_text) in
+                            &repo_diff_state_updates
+                        {
+                            let index_text = (current_index_text.is_some() && !*is_symlink)
+                                .then(|| loaded_revisions.next().flatten())
+                                .flatten();
+
+                            let head_text = (current_head_text.is_some() && !*is_symlink)
+                                .then(|| loaded_revisions.next().flatten())
+                                .flatten();
 
                             let change =
                                 match (current_index_text.as_ref(), current_head_text.as_ref()) {
@@ -8996,8 +9006,13 @@ impl Repository {
         let rx = self.send_job("load_committed_text", None, move |state, _| async move {
             match state {
                 RepositoryState::Local(LocalRepositoryState { backend, .. }) => {
-                    let committed_text = backend.load_committed_text(repo_path.clone()).await;
-                    let staged_text = backend.load_index_text(repo_path).await;
+                    let revisions = vec![
+                        format!("HEAD:{}", repo_path.as_unix_str()),
+                        format!(":{}", repo_path.as_unix_str()),
+                    ];
+                    let mut loaded_revisions = backend.load_revisions(revisions).await?.into_iter();
+                    let committed_text = loaded_revisions.next().flatten();
+                    let staged_text = loaded_revisions.next().flatten();
                     let diff_bases_change = if committed_text == staged_text {
                         DiffBasesChange::SetBoth(committed_text)
                     } else {
