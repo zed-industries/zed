@@ -180,6 +180,7 @@ pub struct AutoUpdater {
     pending_poll: Option<Task<Option<()>>>,
     quit_subscription: Option<gpui::Subscription>,
     update_check_type: UpdateCheckType,
+    dismissed_status: Option<AutoUpdateStatus>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -426,6 +427,7 @@ impl AutoUpdater {
             pending_poll: None,
             quit_subscription,
             update_check_type: UpdateCheckType::Automatic,
+            dismissed_status: None,
         }
     }
 
@@ -458,6 +460,9 @@ impl AutoUpdater {
     }
 
     pub fn poll(&mut self, check_type: UpdateCheckType, cx: &mut Context<Self>) {
+        if check_type.is_manual() {
+            self.dismissed_status = None;
+        }
         if self.pending_poll.is_some() {
             if self.update_check_type == UpdateCheckType::Automatic {
                 self.update_check_type = check_type;
@@ -509,6 +514,15 @@ impl AutoUpdater {
 
     pub fn status(&self) -> AutoUpdateStatus {
         self.status.clone()
+    }
+
+    pub fn dismissed_status(&self) -> Option<AutoUpdateStatus> {
+        self.dismissed_status.clone()
+    }
+
+    pub fn dismiss_status(&mut self, status: AutoUpdateStatus, cx: &mut Context<Self>) {
+        self.dismissed_status = Some(status);
+        cx.notify();
     }
 
     pub fn dismiss(&mut self, cx: &mut Context<Self>) -> bool {

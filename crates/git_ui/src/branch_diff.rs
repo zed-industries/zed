@@ -29,7 +29,7 @@ use std::{
     any::{Any, TypeId},
     sync::Arc,
 };
-use ui::{DiffStat, Divider, KeyBinding, PopoverMenu, Tooltip, prelude::*, vertical_divider};
+use ui::{DiffStat, Divider, KeyBinding, PopoverMenu, Tooltip, prelude::*};
 use workspace::{
     ItemHandle, ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
@@ -830,7 +830,7 @@ impl Render for BranchDiffToolbar {
                 )
             })
             .when(review_count > 0, |this| {
-                this.child(vertical_divider()).child(
+                this.child(Divider::vertical()).child(
                     render_send_review_to_agent_button(review_count, &focus_handle).on_click(
                         cx.listener(|this, _, window, cx| {
                             this.dispatch_action(&SendReviewToAgent, window, cx)

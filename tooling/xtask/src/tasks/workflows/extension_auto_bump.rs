@@ -8,7 +8,7 @@ use crate::tasks::workflows::{
     extensions::WithAppSecrets,
     run_tests::DETECT_CHANGED_EXTENSIONS_SCRIPT,
     runners,
-    steps::{self, CommonJobConditions, NamedJob, named},
+    steps::{self, CommonJobConditions, CommonPermissionSets, NamedJob, named},
     vars::{StepOutput, one_workflow_per_non_main_branch},
 };
 
@@ -20,6 +20,7 @@ pub(crate) fn extension_auto_bump() -> Workflow {
     let bump = bump_extension_versions(&detect);
 
     named::workflow()
+        .with_minimal_permissions()
         .add_event(
             Event::default().push(
                 Push::default()

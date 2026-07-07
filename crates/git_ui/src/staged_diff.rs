@@ -25,7 +25,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{Icon, Tooltip, Window, prelude::*, vertical_divider};
+use ui::{Divider, Icon, Tooltip, Window, prelude::*};
 use util::ResultExt as _;
 use workspace::{
     ItemNavHistory, SerializableItem, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -688,7 +688,7 @@ impl Render for StagedDiffToolbar {
                             })),
                     ),
             )
-            .child(vertical_divider())
+            .child(Divider::vertical())
             .child(
                 h_group_sm()
                     .child(
