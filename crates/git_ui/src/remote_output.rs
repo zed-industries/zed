@@ -62,6 +62,7 @@ pub fn extract_pull_request_url(output: &RemoteCommandOutput) -> Option<String> 
 fn is_create_pull_request_prompt(line: &str) -> bool {
     let line = line.to_ascii_lowercase();
     (line.contains("create a pull request") && line.contains("by visiting"))
+        || line.contains("create pull request")
         || (line.contains("create a merge request") && line.contains("visit"))
 }
 
@@ -256,6 +257,24 @@ mod tests {
         } else {
             panic!("Expected ToastWithLog variant");
         }
+    }
+
+    #[test]
+    fn test_push_new_branch_bitbucket_pull_request() {
+        let output = RemoteCommandOutput {
+            stdout: String::new(),
+            stderr: indoc! {"
+                remote:
+                remote: Create pull request for test:
+                remote:   https://bitbucket.example.com/projects/TEST/repos/test/pull-requests?create&sourceBranch=refs/heads/test
+                "}
+            .to_string(),
+        };
+
+        assert_eq!(
+            extract_pull_request_url(&output),
+            Some("https://bitbucket.example.com/projects/TEST/repos/test/pull-requests?create&sourceBranch=refs/heads/test".to_string())
+        );
     }
 
     #[test]
