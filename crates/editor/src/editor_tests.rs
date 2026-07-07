@@ -22321,8 +22321,8 @@ async fn test_completions_with_zero_width_additional_edit_at_primary_edit_start(
     cx: &mut TestAppContext,
 ) {
     check_completion_additional_edits(
-        // The completion must not start at (0, 0): edits there take the
-        // is_file_start_auto_import path instead of the insertion check.
+        // The completion must not start at (0, 0), so that this case is
+        // distinct from the file-start auto-import test below.
         "bar(fˇ)",
         "o",
         lsp::CompletionItem {
@@ -22384,8 +22384,10 @@ async fn test_completions_skip_additional_edits_overlapping_primary_edit(cx: &mu
     .await;
 }
 
-// When both the primary completion edit and an additional edit start at the
-// very beginning of the file, the additional edit must not be treated as overlapping.
+// When both the primary completion edit and an additional edit (auto-import)
+// start at the very beginning of the file, the additional edit must not be
+// treated as overlapping. This payload shape matches what
+// typescript-language-server actually sends for auto-imports at file start.
 // Ref: https://github.com/zed-industries/zed/issues/26136
 #[gpui::test]
 async fn test_completions_with_file_start_auto_import_additional_edit(cx: &mut TestAppContext) {
