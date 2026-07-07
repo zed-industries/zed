@@ -7257,8 +7257,15 @@ impl LspStore {
                                 result
                             };
 
+                            let is_insertion = range.start.cmp(&range.end, buffer).is_eq();
                             let has_overlap = if is_file_start_auto_import {
                                 false
+                            } else if is_insertion {
+                                let insert_offset = range.start.to_offset(buffer);
+                                all_commit_ranges.iter().any(|commit_range| {
+                                    commit_range.start.to_offset(buffer) < insert_offset
+                                        && insert_offset < commit_range.end.to_offset(buffer)
+                                })
                             } else {
                                 all_commit_ranges.iter().any(|commit_range| {
                                     let start_within =
