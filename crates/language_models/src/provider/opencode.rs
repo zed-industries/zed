@@ -693,7 +693,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 let openai_request = into_open_ai(
                     request,
                     self.model.id(),
-                    false,
+                    true,
                     false,
                     self.model.max_output_tokens(self.subscription),
                     ChatCompletionMaxTokensParameter::MaxCompletionTokens,
@@ -716,7 +716,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 let response_request = into_open_ai_response(
                     request,
                     self.model.id(),
-                    false,
+                    true,
                     false,
                     self.model.max_output_tokens(self.subscription),
                     None,
