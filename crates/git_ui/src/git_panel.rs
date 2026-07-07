@@ -845,8 +845,6 @@ impl From<&Arc<InitialGraphCommitData>> for CommitHistoryEntry {
 
 fn render_history_tag_chip(tag_name: SharedString) -> impl IntoElement {
     Chip::new(tag_name.clone())
-        .label_size(LabelSize::XSmall)
-        .label_color(Color::Muted)
         .truncate()
         .tooltip(Tooltip::text(tag_name))
 }
@@ -6057,18 +6055,13 @@ impl GitPanel {
                                                 .gap_1()
                                                 .w_full()
                                                 .min_w_0()
-                                                .child(
-                                                    div()
-                                                        .min_w_0()
-                                                        .flex_1()
-                                                        .child(Label::new(subject).truncate()),
-                                                )
+                                                .child(Label::new(subject).truncate())
                                                 .children((!tag_names.is_empty()).then(|| {
                                                     let hidden_tag_count = tag_names
                                                         .len()
                                                         .saturating_sub(MAX_HISTORY_TAG_CHIPS);
                                                     h_flex()
-                                                        .gap_0p5()
+                                                        .gap_1()
                                                         .flex_none()
                                                         .children(
                                                             tag_names
@@ -6078,13 +6071,9 @@ impl GitPanel {
                                                                 .map(render_history_tag_chip),
                                                         )
                                                         .when(hidden_tag_count > 0, |this| {
-                                                            this.child(
-                                                                Chip::new(format!(
-                                                                    "+{hidden_tag_count}"
-                                                                ))
-                                                                .label_size(LabelSize::XSmall)
-                                                                .label_color(Color::Muted),
-                                                            )
+                                                            this.child(Chip::new(format!(
+                                                                "+{hidden_tag_count}"
+                                                            )))
                                                         })
                                                 }))
                                                 .when(is_unpushed, |this| {
