@@ -5364,6 +5364,7 @@ mod tests {
                 "console",
                 "context_server",
                 "copilot",
+                "copilot_edit_predictions",
                 "csv",
                 "debug_panel",
                 "debugger",
