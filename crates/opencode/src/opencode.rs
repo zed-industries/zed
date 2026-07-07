@@ -765,7 +765,7 @@ impl Model {
 
             // DeepSeek models
             Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(vec![
-                // OpenCode also supports Low&Medium but as per deepSeek those are mapped to High
+                // OpenCode also supports Low&Medium but as per DeepSeek those are mapped to High
                 ReasoningEffort::High,
                 ReasoningEffort::Max,
             ]),
