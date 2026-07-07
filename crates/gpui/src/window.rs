@@ -1022,6 +1022,8 @@ pub struct Window {
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
     mouse_position: Point<Pixels>,
+    pressed_mouse_buttons: FxHashSet<MouseButton>,
+    frozen_cursor_style: Option<CursorStyle>,
     mouse_hit_test: HitTest,
     modifiers: Modifiers,
     capslock: Capslock,
@@ -1730,6 +1732,8 @@ impl Window {
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
             mouse_position,
+            pressed_mouse_buttons: FxHashSet::default(),
+            frozen_cursor_style: None,
             mouse_hit_test: HitTest::default(),
             modifiers,
             capslock,
@@ -2589,6 +2593,11 @@ impl Window {
     /// The position of the mouse relative to the window.
     pub fn mouse_position(&self) -> Point<Pixels> {
         self.mouse_position
+    }
+
+    /// Returns true if any mouse button is currently pressed.
+    pub fn any_mouse_button_pressed(&self) -> bool {
+        !self.pressed_mouse_buttons.is_empty()
     }
 
     /// Captures the pointer for the given hitbox. While captured, all mouse move and mouse up
@@ -4477,9 +4486,14 @@ impl Window {
     fn reset_cursor_style(&self, cx: &mut App) {
         // Set the cursor only if we're the active window.
         if self.is_window_hovered() {
+            // While a mouse button is pressed, keep the cursor frozen to its
+            // style at press time so drags don't flicker across elements they
+            // cross. `frozen_cursor_style` can be `None` when the drag started
+            // in another window and this one only became hovered mid-drag, so
+            // fall back to the rendered frame's cursor.
             let style = self
-                .rendered_frame
-                .cursor_style(self)
+                .frozen_cursor_style
+                .or_else(|| self.rendered_frame.cursor_style(self))
                 .unwrap_or(CursorStyle::Arrow);
             cx.platform.set_cursor_style(style);
         }
@@ -4562,11 +4576,23 @@ impl Window {
             PlatformInput::MouseDown(mouse_down) => {
                 self.mouse_position = mouse_down.position;
                 self.modifiers = mouse_down.modifiers;
+                let was_empty = self.pressed_mouse_buttons.is_empty();
+                self.pressed_mouse_buttons.insert(mouse_down.button);
+                if was_empty {
+                    self.frozen_cursor_style = self
+                        .rendered_frame
+                        .cursor_style(self)
+                        .or(Some(CursorStyle::Arrow));
+                }
                 PlatformInput::MouseDown(mouse_down)
             }
             PlatformInput::MouseUp(mouse_up) => {
                 self.mouse_position = mouse_up.position;
                 self.modifiers = mouse_up.modifiers;
+                self.pressed_mouse_buttons.remove(&mouse_up.button);
+                if self.pressed_mouse_buttons.is_empty() {
+                    self.frozen_cursor_style = None;
+                }
                 PlatformInput::MouseUp(mouse_up)
             }
             PlatformInput::MousePressure(mouse_pressure) => {
@@ -5804,10 +5830,13 @@ impl Window {
     /// which will trigger hover states and tooltips.
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_mouse_move(&mut self, position: Point<Pixels>, cx: &mut App) {
+        // `pressed_mouse_buttons` is a `HashSet`; when multiple buttons are held, which
+        // one lands in `pressed_button` is not defined. Use `any_mouse_button_pressed()`
+        // if all you need is "is any button down".
         let event = PlatformInput::MouseMove(MouseMoveEvent {
             position,
             modifiers: self.modifiers,
-            pressed_button: None,
+            pressed_button: self.pressed_mouse_buttons.iter().next().copied(),
         });
         let _ = self.dispatch_event(event, cx);
     }
@@ -6309,5 +6338,33 @@ pub fn outline(
         border_widths: (1.).into(),
         border_color: border_color.into(),
         border_style,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{self as gpui, Modifiers, MouseButton, TestAppContext, px};
+
+    #[gpui::test]
+    fn test_any_mouse_button_pressed_tracks_multiple_buttons(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let pos = crate::point(px(10.), px(10.));
+
+        cx.update(|window, _| assert!(!window.any_mouse_button_pressed()));
+
+        cx.simulate_mouse_down(pos, MouseButton::Left, Modifiers::default());
+        cx.update(|window, _| assert!(window.any_mouse_button_pressed()));
+
+        cx.simulate_mouse_down(pos, MouseButton::Right, Modifiers::default());
+        cx.update(|window, _| assert!(window.any_mouse_button_pressed()));
+
+        // Releasing one button while another is still held must keep the
+        // window reporting a pressed button — previously tracked as a single
+        // Option which would incorrectly clear on the first release.
+        cx.simulate_mouse_up(pos, MouseButton::Left, Modifiers::default());
+        cx.update(|window, _| assert!(window.any_mouse_button_pressed()));
+
+        cx.simulate_mouse_up(pos, MouseButton::Right, Modifiers::default());
+        cx.update(|window, _| assert!(!window.any_mouse_button_pressed()));
     }
 }
