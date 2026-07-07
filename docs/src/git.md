@@ -106,6 +106,10 @@ To view File History:
 - Right-click on an editor tab and select "View File History"
 - Use the Command Palette and search for "file history"
 
+## Git Graph
+
+The Git Graph ({#action git_graph::Open}) visualizes your repository's commit history across branches. Right-clicking a branch label opens a context menu with common Git operations, starting with **Check Out Branch**.
+
 ## Fetch, Push, and Pull
 
 Fetch, push, or pull from your Git repository in Zed via the buttons available on the Git Panel or via the Command Palette by looking at the respective actions: {#action git::Fetch}, {#action git::Push}, and {#action git::Pull}.

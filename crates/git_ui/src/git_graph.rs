@@ -1,11 +1,13 @@
 use crate::{
     commit_tooltip::{CommitAvatar, CommitDetails, CommitTooltip},
     commit_view::CommitView,
+    git_panel::show_error_toast,
     git_status_icon,
 };
 use collections::{BTreeMap, HashMap, IndexSet};
 use editor::Editor;
 use file_icons::FileIcons;
+use futures::channel::oneshot;
 use git::{
     BuildCommitPermalinkParams, GitHostingProviderRegistry, GitRemote, Oid, ParsedGitRemote,
     commit::ParsedCommitMessage,
@@ -1358,6 +1360,51 @@ impl GitGraph {
         cx.notify();
     }
 
+    /// Drops the repository's cached graph data and rebuilds the view. Unlike
+    /// `invalidate_state` alone, this forces `git log` to re-run, which is
+    /// required after operations (such as tag edits) that change refs without
+    /// emitting a repository event.
+    fn reload_graph(&mut self, cx: &mut Context<Self>) {
+        if let Some(repository) = self.get_repository(cx) {
+            repository.update(cx, |repository, _| repository.invalidate_graph_data());
+        }
+        self.invalidate_state(cx);
+    }
+
+    /// Detaches a repository operation, refreshing the graph on success and
+    /// surfacing any error as a toast labeled with the git subcommand that
+    /// failed.
+    fn detach_op_with_error_toast(
+        &self,
+        command_label: String,
+        receiver: oneshot::Receiver<Result<(), anyhow::Error>>,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = self.workspace.clone();
+        cx.spawn(async move |this, cx| match receiver.await {
+            Ok(Ok(())) => {
+                this.update(cx, |this, cx| this.reload_graph(cx)).ok();
+            }
+            Ok(Err(error)) => {
+                if let Some(workspace) = workspace.upgrade() {
+                    cx.update(|cx| show_error_toast(workspace, command_label, error, cx));
+                }
+            }
+            Err(_) => {}
+        })
+        .detach();
+    }
+
+    fn checkout_ref(&mut self, ref_name: SharedString, cx: &mut Context<Self>) {
+        let Some(repository) = self.get_repository(cx) else {
+            return;
+        };
+        let receiver = repository.update(cx, |repository, _| {
+            repository.change_branch(ref_name.to_string())
+        });
+        self.detach_op_with_error_toast(format!("switch {ref_name}"), receiver, cx);
+    }
+
     /// Computes the height of a single commit row in the git graph.
     ///
     /// The returned value is snapped to the nearest physical pixel. This is
@@ -2479,6 +2526,23 @@ impl GitGraph {
             .map(|task_context| self.git_context_menu_tasks(&task_context, cx))
             .unwrap_or_default();
 
+        let head_branch_name = self.get_repository(cx).and_then(|repository| {
+            repository
+                .read(cx)
+                .snapshot()
+                .branch
+                .as_ref()
+                .map(|branch| SharedString::from(branch.name().to_string()))
+        });
+        let is_tag = ref_name.as_ref().is_some_and(|ref_name| {
+            commit
+                .data
+                .tag_names()
+                .iter()
+                .any(|tag_name| *tag_name == ref_name.as_ref())
+        });
+        let is_checked_out = ref_name.is_some() && ref_name == head_branch_name;
+
         let header = match &ref_name {
             Some(ref_name) => format!("Ref {ref_name}"),
             None => format!("Commit {sha_short}"),
@@ -2555,6 +2619,23 @@ impl GitGraph {
                             }),
                         }
                     })
+                })
+                .separator()
+                .map(|mut menu| {
+                    if let Some(branch_name) = ref_name.clone().filter(|_| !is_tag) {
+                        let checkout_branch = branch_name.clone();
+                        menu = menu.item(
+                            ContextMenuEntry::new("Check Out Branch")
+                                .disabled(is_checked_out)
+                                .handler(window.handler_for(
+                                    &git_graph,
+                                    move |this, _window, cx| {
+                                        this.checkout_ref(checkout_branch.clone(), cx);
+                                    },
+                                )),
+                        );
+                    }
+                    menu
                 })
                 .map(|mut menu| {
                     menu = menu.separator().header("Custom Commands");

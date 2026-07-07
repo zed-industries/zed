@@ -5749,6 +5749,13 @@ impl Repository {
         .detach();
     }
 
+    /// Drops the cached graph data so the next `graph_data` call re-runs
+    /// `git log`. Used to reflect ref changes (such as tag edits) that produce
+    /// no repository event of their own.
+    pub fn invalidate_graph_data(&mut self) {
+        self.initial_graph_data.clear();
+    }
+
     pub fn graph_data(
         &mut self,
         log_source: LogSource,
