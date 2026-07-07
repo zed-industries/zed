@@ -29,6 +29,9 @@ When you have multiple projects open:
 - Agent threads are tied to their project context
 - Your workspace layout (splits, tabs) is preserved per project
 
+For how projects, Zed worktrees, Git worktrees, and branches fit together, see
+[Git Worktrees](./git/worktrees.md#projects-zed-worktrees-git-worktrees).
+
 Think of projects in the threads sidebar like browser tabs, but for repositories.
 
 ## Opening in a New Window

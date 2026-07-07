@@ -15,7 +15,11 @@ Zed owns the thread surface:
 
 - the terminal-backed thread in the Threads Sidebar
 - thread grouping by project
+- the project/worktree context where the terminal opens
 - switching and organizing the terminal session alongside other threads
+
+For how projects, Zed worktrees, Git worktrees, and branches fit together, see
+[Git Worktrees](../git/worktrees.md#projects-zed-worktrees-git-worktrees).
 
 ## What the CLI Owns {#what-the-cli-owns}
 
@@ -65,6 +69,11 @@ The same `agent.notify_when_agent_waiting` and `agent.play_sound_when_agent_done
 ## Closing Terminal Threads {#closing-terminal-threads}
 
 Unlike agent threads, Terminal Threads are closed rather than archived. They do not go to Thread History. To close one, hover over it in the Threads Sidebar and click the **×** button, or select it and press {#kb agent::ArchiveSelectedThread}.
+
+If a Terminal Thread is the last reference to a Zed-managed linked Git worktree,
+closing the Terminal Thread may remove that worktree from Zed and delete the
+worktree folder from disk. Zed only does this for worktrees it can identify as
+safe to manage.
 
 ## CLI/TUI Setup Notes {#cli-setup}
 

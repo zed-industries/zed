@@ -26,7 +26,17 @@
   - [Tasks](./tasks.md)
   - [Debugger](./debugger.md)
   - [REPL](./repl.md)
-- [Git](./git.md)
+- [Git and Review](./git.md)
+  - [Status and Changes](./git/status-and-changes.md)
+  - [Diffs and Review](./git/diffs-and-review.md)
+  - [Staging and Committing](./git/staging-and-committing.md)
+  - [Branches and Sync](./git/branches-and-sync.md)
+  - [Worktrees](./git/worktrees.md)
+  - [History and Blame](./git/history-and-blame.md)
+  - [Conflicts and Recovery](./git/conflicts-and-recovery.md)
+  - [Git Hosting and Pull Requests](./git/github-and-pull-requests.md)
+  - [Agents and Git](./git/agents-and-git.md)
+  - [Settings and Actions](./git/settings-and-actions.md)
 - [Modelines](./modelines.md)
 
 # Collaboration

@@ -15,6 +15,8 @@ Use **Panel Layout > Agentic** from the user menu in the title bar (or the {#act
 
 The sidebar shows your threads grouped by project. Each project gets its own section with a header. Threads appear below with their title, status indicator, and which agent is running them. Threads running in linked Git worktrees appear under the same project as their main worktree. See [Worktree Isolation](#worktree-isolation).
 
+See [Git Worktrees](../git/worktrees.md#projects-zed-worktrees-git-worktrees) for how project, Zed worktree, Git worktree, and branch context affect agent work.
+
 Terminal Threads also appear as entries in the sidebar alongside agent threads, identified by a terminal icon. Click one to switch to it.
 
 To focus the sidebar without toggling it, use {#kb multi_workspace::FocusWorkspaceSidebar}. To search your threads, press {#kb agents_sidebar::FocusSidebarFilter} while the sidebar is focused.
@@ -31,7 +33,7 @@ To remove a thread from the sidebar, you can archive it by hovering over it and 
 
 The Thread History view holds all your threads, including ones that you have archived. Toggle it with {#kb agents_sidebar::ToggleThreadHistory} or by clicking the clock icon in the sidebar bottom bar, next to the sidebar toggle.
 
-To restore a thread, open Thread History and click the thread you want to bring back. Zed moves it back to the thread list and opens it in the Agent Panel. If the thread was running in a Git worktree that was removed, Zed restores the worktree automatically.
+To restore a thread, open Thread History and click the thread you want to bring back. Zed moves it back to the thread list and opens it in the Agent Panel. If the thread was running in a Git worktree that was removed, Zed restores the saved worktree state when possible.
 
 To permanently delete a thread, open Thread History, hover over the thread, and click the trash icon. This removes the thread's conversation history and cleans up any associated worktree data. Deleted threads cannot be recovered.
 
@@ -75,15 +77,13 @@ A single project can contain multiple folders (a multi-root folder project). Age
 
 ## Worktree Isolation {#worktree-isolation}
 
-If two threads might edit the same files, start one in a new [Git worktree](../git.md#git-worktrees) to give it an isolated checkout.
+If two threads might edit the same files, start one in a new [Git worktree](../git/worktrees.md) to give it an isolated checkout.
 
-Worktrees are managed from the title bar. Click the worktree picker (to the right of the project picker) to switch between existing worktrees or create a new one. New worktrees are created in a detached HEAD state, so you won't accidentally share a branch between worktrees.
+Use the [worktree picker](../git/worktrees.md#open-worktree-picker) to create or switch linked Git worktrees, then use the [branch picker](../git/worktrees.md#choose-branch) in that checkout to choose a branch.
 
-Once you're in a new worktree, use the branch picker next to the worktree picker to create a new branch or check out an existing one. If the branch you pick is already checked out in another worktree, the current worktree stays in detached HEAD until you choose a different branch.
+After the agent finishes, review the diff and merge the changes through your normal Git workflow. See [Agents and Git](../git/agents-and-git.md) for the Git-specific review handoff.
 
-To automate setup steps whenever a new worktree is created use a [Task hook](../tasks.md#hooks). The `create_worktree` hook runs automatically after Zed creates a linked worktree, with `ZED_WORKTREE_ROOT` pointing at the new worktree and `ZED_MAIN_GIT_WORKTREE` pointing at the original repository.
-
-After the agent finishes, review the diff and merge the changes through your normal Git workflow. If the thread was running in a linked worktree and no other active threads use it, moving the thread to Thread History saves the worktree's Git state and removes it from disk. Restoring the thread from history restores the worktree.
+If the thread was running in a linked worktree and no other unarchived agent thread or Terminal Thread references it, moving the thread to Thread History may save the worktree's Git state and remove it from disk. Zed only does this for worktrees it can identify as safe to manage. If Zed saved the worktree state, restoring the thread recreates it when possible. For the project/worktree/branch model and setup hooks, see [Git Worktrees](../git/worktrees.md).
 
 ## See Also {#see-also}
 

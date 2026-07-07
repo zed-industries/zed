@@ -9,6 +9,9 @@ External Agents are agents that integrate with Zed through the [Agent Client Pro
 
 Use [Terminal Threads](./terminal-threads.md) instead when you want to run a CLI or TUI directly in a terminal-backed thread.
 
+For the Zed-side project, worktree, and branch context where a thread runs, see
+[Git Worktrees](../git/worktrees.md#projects-zed-worktrees-git-worktrees).
+
 External Agents run through their own process and provider relationship. Billing, legal terms, retention, and data handling are between you and the agent provider. Zed does not charge for External Agents.
 
 For Zed-hosted models and Zed-managed AI features, see [AI Privacy](./privacy-and-security.md) and [Feedback and Training Data](./ai-improvement.md).
@@ -56,7 +59,7 @@ Codex may support ChatGPT login, Codex API keys, OpenAI API keys, or Codex-nativ
 
 Use Gemini CLI when you want Gemini running as an ACP-integrated External Agent in Zed.
 
-Install Gemini CLI from the [ACP Registry](#registry), then start a Gemini CLI thread from the Agent Panel or Threads Sidebar. Gemini CLI owns its own authentication and may prompt you to log in with Google, Vertex AI, or another Gemini-supported flow.
+Install Gemini CLI from the [ACP Registry](#registry), then start a Gemini CLI thread from the Agent Panel or Threads Sidebar. Gemini CLI normally owns its own authentication and may prompt you to log in with Google, Vertex AI, or another Gemini-supported flow.
 
 If `GEMINI_API_KEY` or `GOOGLE_AI_API_KEY` is available to the agent process, Gemini CLI uses that key. Otherwise, if you have configured an API key for Zed's Google AI provider, Zed passes that key to Gemini CLI as `GEMINI_API_KEY`.
 

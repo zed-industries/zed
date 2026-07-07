@@ -62,13 +62,16 @@ For general settings mechanics, see [Configuring Zed](../configuring-zed.md).
 
 ## Use a Specific AI Feature {#features}
 
-| If you want to...                              | Use                                                  |
-| ---------------------------------------------- | ---------------------------------------------------- |
-| Prompt agents, add context, and review changes | [Agent Panel](./agent-panel.md)                      |
-| Accept AI completions while typing             | [Edit Prediction](./edit-prediction.md)              |
-| Rewrite selected code or terminal text         | [Inline Assistant](./inline-assistant.md)            |
-| Run multiple AI tasks at once                  | [Parallel Agents](./parallel-agents.md)              |
-| Generate commit messages                       | [Git commit generation](../git.md#ai-support-in-git) |
+| Goal                                           | Use                                                                         |
+| ---------------------------------------------- | --------------------------------------------------------------------------- |
+| Prompt agents, add context, and review changes | [Agent Panel](./agent-panel.md)                                             |
+| Accept AI completions while typing             | [Edit Prediction](./edit-prediction.md)                                     |
+| Rewrite selected code or terminal text         | [Inline Assistant](./inline-assistant.md)                                   |
+| Run multiple AI tasks at once                  | [Parallel Agents](./parallel-agents.md)                                     |
+| Generate commit messages                       | [Git commit generation](../git/staging-and-committing.md#ai-commit-message) |
+
+For how projects, Zed worktrees, Git worktrees, and branches set the context
+where agent work runs, see [Git Worktrees](../git/worktrees.md#projects-zed-worktrees-git-worktrees).
 
 ## Learn More {#learn-more}
 
