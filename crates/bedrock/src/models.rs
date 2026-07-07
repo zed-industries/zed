@@ -893,11 +893,6 @@ impl MantleModel {
         }
     }
 
-    /// The path segment between the Mantle host and `/chat/completions` or `/responses`.
-    pub fn path_prefix(&self) -> &str {
-        "openai/v1"
-    }
-
     pub fn max_token_count(&self) -> u64 {
         match self {
             Self::Gpt5_5 | Self::Gpt5_4 => 272_000,

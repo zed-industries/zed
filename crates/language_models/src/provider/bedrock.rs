@@ -246,11 +246,8 @@ const MANTLE_SUPPORTED_REGIONS: &[&str] = &[
     "us-gov-west-1",
 ];
 
-fn mantle_endpoint_url(region: &str, model: &MantleModel) -> String {
-    format!(
-        "https://bedrock-mantle.{region}.api.aws/{}",
-        model.path_prefix()
-    )
+fn mantle_endpoint_url(region: &str) -> String {
+    format!("https://bedrock-mantle.{region}.api.aws/openai/v1")
 }
 
 enum MantleAuth {
@@ -622,6 +619,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
     }
 
     fn provided_models(&self, cx: &App) -> Vec<Arc<dyn LanguageModel>> {
+        let bedrock_settings = &AllLanguageModelSettings::get_global(cx).bedrock;
         let mut models = BTreeMap::default();
 
         for model in bedrock::ConverseModel::iter() {
@@ -631,11 +629,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         }
 
         // Override with available models from settings
-        for model in AllLanguageModelSettings::get_global(cx)
-            .bedrock
-            .available_models
-            .iter()
-        {
+        for model in bedrock_settings.available_models.iter() {
             models.insert(
                 model.name.clone(),
                 bedrock::ConverseModel::Custom {
@@ -668,11 +662,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
         }
 
         // Override with available Mantle models from settings
-        for model in AllLanguageModelSettings::get_global(cx)
-            .bedrock
-            .mantle_available_models
-            .iter()
-        {
+        for model in bedrock_settings.mantle_available_models.iter() {
             mantle_models.insert(
                 model.name.clone(),
                 bedrock::MantleModel::Custom {
@@ -1029,28 +1019,20 @@ impl LanguageModel for BedrockModel {
 }
 
 /// The default reasoning effort exposed for a Mantle-only model, if any.
-/// AWS documents Grok 4.3's default as "low"; GPT-5.5/5.4 aren't documented,
-/// so mirror Zed's native OpenAI models of the same name, which both
-/// resolve to "medium" (see `openai::Model::reasoning_effort`).
+/// GPT-5.5/5.4 aren't documented, so mirror Zed's native OpenAI models of the
+/// same name, which both resolve to "medium" (see `openai::Model::reasoning_effort`).
 fn mantle_default_reasoning_effort(model: &MantleModel) -> Option<ReasoningEffort> {
     match model {
         MantleModel::Gpt5_5 | MantleModel::Gpt5_4 => Some(ReasoningEffort::Medium),
-        MantleModel::Custom { .. } => None,
-        MantleModel::Grok4_3 => Some(ReasoningEffort::Low),
+        MantleModel::Grok4_3 | MantleModel::Custom { .. } => None,
     }
 }
 
-/// Whether the model accepts an explicit "none" effort level, as opposed to
-/// reasoning being unconfigurable.
-fn mantle_supports_none_reasoning_effort(model: &MantleModel) -> bool {
-    matches!(model, MantleModel::Grok4_3)
-}
-
 /// Clears `thinking_effort` if it isn't one of the levels Mantle supports
-/// (`low`/`medium`/`high`, plus `none` where allowed). It can be stale if
-/// carried over from a previously selected model with a wider range (e.g.
-/// `xhigh`), and `into_open_ai_response` would otherwise forward it as-is.
-fn normalize_mantle_thinking_effort(request: &mut LanguageModelRequest, model: &MantleModel) {
+/// (`low`/`medium`/`high`). It can be stale if carried over from a previously
+/// selected model with a wider range (e.g. `xhigh`), and `into_open_ai_response`
+/// would otherwise forward it as-is.
+fn normalize_mantle_thinking_effort(request: &mut LanguageModelRequest) {
     let selected_effort_is_supported = request
         .thinking_effort
         .as_deref()
@@ -1059,7 +1041,7 @@ fn normalize_mantle_thinking_effort(request: &mut LanguageModelRequest, model: &
             matches!(
                 effort,
                 ReasoningEffort::Low | ReasoningEffort::Medium | ReasoningEffort::High
-            ) || (effort == ReasoningEffort::None && mantle_supports_none_reasoning_effort(model))
+            )
         });
 
     if !selected_effort_is_supported {
@@ -1072,8 +1054,6 @@ fn mantle_supported_effort_levels(model: &MantleModel) -> Vec<LanguageModelEffor
         return Vec::new();
     };
 
-    // AWS only documents low/medium/high for these models; "none" for Grok
-    // is handled separately via `mantle_supports_none_reasoning_effort`.
     ReasoningEffort::OPENAI_COMPATIBLE_SELECTABLE
         .into_iter()
         .filter(|effort| {
@@ -1322,7 +1302,7 @@ impl BedrockMantleModel {
         let (auth, region) = cx.read_entity(&self.state, |state, _cx| {
             (state.auth.clone(), state.get_region())
         });
-        let url = format!("{}/{}", mantle_endpoint_url(&region, &model), endpoint);
+        let url = format!("{}/{}", mantle_endpoint_url(&region), endpoint);
         let extra_headers = cx.read_entity(&self.state, |_, cx| {
             AllLanguageModelSettings::get_global(cx)
                 .bedrock
@@ -1483,7 +1463,7 @@ impl LanguageModel for BedrockMantleModel {
 
         match self.model.protocol() {
             MantleProtocol::Responses => {
-                normalize_mantle_thinking_effort(&mut request, &self.model);
+                normalize_mantle_thinking_effort(&mut request);
                 let request = into_open_ai_response(
                     request,
                     &model_id,
@@ -1491,7 +1471,7 @@ impl LanguageModel for BedrockMantleModel {
                     false,
                     max_output_tokens,
                     mantle_default_reasoning_effort(&self.model),
-                    mantle_supports_none_reasoning_effort(&self.model),
+                    false,
                 );
                 let completions = self.stream_response(request, cx);
                 async move {
@@ -2571,27 +2551,12 @@ mod tests {
     #[test]
     fn test_mantle_endpoint_url_uses_openai_path_prefix() {
         assert_eq!(
-            mantle_endpoint_url("us-east-1", &MantleModel::Gpt5_5),
+            mantle_endpoint_url("us-east-1"),
             "https://bedrock-mantle.us-east-1.api.aws/openai/v1"
         );
         assert_eq!(
-            mantle_endpoint_url("us-west-2", &MantleModel::Grok4_3),
+            mantle_endpoint_url("us-west-2"),
             "https://bedrock-mantle.us-west-2.api.aws/openai/v1"
-        );
-        assert_eq!(
-            mantle_endpoint_url(
-                "us-east-1",
-                &MantleModel::Custom {
-                    name: "vendor.custom-model".to_string(),
-                    display_name: None,
-                    max_tokens: 128_000,
-                    max_output_tokens: None,
-                    protocol: MantleProtocol::ChatCompletions,
-                    supports_tools: false,
-                    supports_images: false,
-                }
-            ),
-            "https://bedrock-mantle.us-east-1.api.aws/openai/v1"
         );
     }
 
@@ -2622,7 +2587,7 @@ mod tests {
             thinking_effort: Some("xhigh".to_string()),
             ..Default::default()
         };
-        normalize_mantle_thinking_effort(&mut request, &MantleModel::Gpt5_5);
+        normalize_mantle_thinking_effort(&mut request);
         assert_eq!(request.thinking_effort, None);
 
         // A supported selection is left untouched.
@@ -2630,24 +2595,16 @@ mod tests {
             thinking_effort: Some("high".to_string()),
             ..Default::default()
         };
-        normalize_mantle_thinking_effort(&mut request, &MantleModel::Gpt5_5);
+        normalize_mantle_thinking_effort(&mut request);
         assert_eq!(request.thinking_effort, Some("high".to_string()));
 
-        // `none` is only supported where `mantle_supports_none_reasoning_effort`
-        // is true (Grok 4.3).
+        // `none` is not one of the documented Mantle effort levels.
         let mut request = LanguageModelRequest {
             thinking_effort: Some("none".to_string()),
             ..Default::default()
         };
-        normalize_mantle_thinking_effort(&mut request, &MantleModel::Gpt5_5);
+        normalize_mantle_thinking_effort(&mut request);
         assert_eq!(request.thinking_effort, None);
-
-        let mut request = LanguageModelRequest {
-            thinking_effort: Some("none".to_string()),
-            ..Default::default()
-        };
-        normalize_mantle_thinking_effort(&mut request, &MantleModel::Grok4_3);
-        assert_eq!(request.thinking_effort, Some("none".to_string()));
     }
 
     #[test]
