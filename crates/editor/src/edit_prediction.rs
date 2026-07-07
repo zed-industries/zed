@@ -106,7 +106,7 @@ pub(super) struct EditPredictionExcerptExpansion {
 
 #[derive(Clone)]
 struct EditPredictionPreviewDelegate {
-    prediction: edit_prediction_types::EditPrediction,
+    prediction: Option<edit_prediction_types::EditPrediction>,
 }
 
 impl EditPredictionDelegate for EditPredictionPreviewDelegate {
@@ -144,7 +144,9 @@ impl EditPredictionDelegate for EditPredictionPreviewDelegate {
     ) {
     }
 
-    fn accept(&mut self, _cx: &mut Context<Self>) {}
+    fn accept(&mut self, _cx: &mut Context<Self>) {
+        self.prediction = None;
+    }
 
     fn discard(&mut self, _reason: EditPredictionDiscardReason, _cx: &mut Context<Self>) {}
 
@@ -154,12 +156,321 @@ impl EditPredictionDelegate for EditPredictionPreviewDelegate {
         _: language::Anchor,
         _: &mut Context<Self>,
     ) -> Option<edit_prediction_types::EditPrediction> {
-        Some(self.prediction.clone())
+        self.prediction.clone()
     }
 }
 
 #[derive(RegisterComponent)]
 struct EditPredictionMultiBufferPreview;
+
+#[derive(Clone, Copy)]
+pub struct EditPredictionMultiBufferPreviewCase {
+    pub title: &'static str,
+    #[allow(dead_code)]
+    pub test_name: &'static str,
+    kind: EditPredictionMultiBufferPreviewCaseKind,
+}
+
+#[derive(Clone, Copy)]
+enum EditPredictionMultiBufferPreviewCaseKind {
+    FullyVisibleHunk,
+    CrossExcerptJump,
+    TopExcerptExpandsUpward,
+    TopExcerptBoundaryExpandsUpward,
+    BottomExcerptExpandsDownward,
+    MiddleExcerptExpandsUpward,
+    MiddleExcerptExpandsDownward,
+    PartiallyVisibleFarFromExcerpt,
+    AdjacentMultiEditCluster,
+    DifferentFileJump,
+}
+
+pub fn edit_prediction_multibuffer_preview_cases() -> &'static [EditPredictionMultiBufferPreviewCase]
+{
+    use EditPredictionMultiBufferPreviewCaseKind::*;
+
+    &[
+        EditPredictionMultiBufferPreviewCase {
+            title: "Fully visible hunk",
+            test_name: "edit_prediction_multibuffer_fully_visible_hunk",
+            kind: FullyVisibleHunk,
+        },
+        EditPredictionMultiBufferPreviewCase {
+            title: "Cross-excerpt jump",
+            test_name: "edit_prediction_multibuffer_cross_excerpt_jump",
+            kind: CrossExcerptJump,
+        },
+        EditPredictionMultiBufferPreviewCase {
+            title: "Top excerpt expands upward",
+            test_name: "edit_prediction_multibuffer_top_excerpt_expands_upward",
+            kind: TopExcerptExpandsUpward,
+        },
+        EditPredictionMultiBufferPreviewCase {
+            title: "Top excerpt boundary expands upward",
+            test_name: "edit_prediction_multibuffer_top_excerpt_boundary_expands_upward",
+            kind: TopExcerptBoundaryExpandsUpward,
+        },
+        EditPredictionMultiBufferPreviewCase {
+            title: "Bottom excerpt expands downward",
+            test_name: "edit_prediction_multibuffer_bottom_excerpt_expands_downward",
+            kind: BottomExcerptExpandsDownward,
+        },
+        EditPredictionMultiBufferPreviewCase {
+            title: "Middle excerpt expands upward",
+            test_name: "edit_prediction_multibuffer_middle_excerpt_expands_upward",
+            kind: MiddleExcerptExpandsUpward,
+        },
+        EditPredictionMultiBufferPreviewCase {
+            title: "Middle excerpt expands downward",
+            test_name: "edit_prediction_multibuffer_middle_excerpt_expands_downward",
+            kind: MiddleExcerptExpandsDownward,
+        },
+        EditPredictionMultiBufferPreviewCase {
+            title: "Partially visible, far from excerpt",
+            test_name: "edit_prediction_multibuffer_partially_visible_far_from_excerpt",
+            kind: PartiallyVisibleFarFromExcerpt,
+        },
+        EditPredictionMultiBufferPreviewCase {
+            title: "Adjacent multi-edit cluster",
+            test_name: "edit_prediction_multibuffer_adjacent_multi_edit_cluster",
+            kind: AdjacentMultiEditCluster,
+        },
+        EditPredictionMultiBufferPreviewCase {
+            title: "Different file jump",
+            test_name: "edit_prediction_multibuffer_different_file_jump",
+            kind: DifferentFileJump,
+        },
+    ]
+}
+
+pub fn edit_prediction_multibuffer_preview_editor(
+    case: &EditPredictionMultiBufferPreviewCase,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<Editor> {
+    use EditPredictionMultiBufferPreviewCaseKind::*;
+
+    let text = "fn main() {\n    let value = compute();\n    println!(\"{}\", value);\n}\n\nfn helper() {\n    let enabled = true;\n    dbg!(enabled);\n}\n\nfn far_away() {\n    let name = \"zed\";\n    println!(\"{name}\");\n}\n\nfn distant() {\n    let first = 1;\n    let second = 2;\n    let third = 3;\n    let fourth = 4;\n    let fifth = 5;\n    let sixth = 6;\n}\n";
+
+    match case.kind {
+        FullyVisibleHunk => editor_preview(
+            text,
+            vec![Point::row_range(0..4), Point::row_range(10..12)],
+            Point::new(1, 14),
+            vec![(
+                Point::new(2, 4)..Point::new(2, 4),
+                "let doubled = value * 2;\n    ",
+            )],
+            window,
+            cx,
+        ),
+        CrossExcerptJump => editor_preview(
+            text,
+            vec![Point::row_range(0..2), Point::row_range(10..12)],
+            Point::new(1, 14),
+            vec![(
+                Point::new(11, 4)..Point::new(11, 4),
+                "let greeting = format!(\"hello {name}\");\n    ",
+            )],
+            window,
+            cx,
+        ),
+        TopExcerptExpandsUpward => editor_preview(
+            text,
+            vec![Point::row_range(5..7), Point::row_range(10..12)],
+            Point::new(6, 18),
+            vec![(Point::new(4, 0)..Point::new(4, 0), "fn nearby() {}\n\n")],
+            window,
+            cx,
+        ),
+        TopExcerptBoundaryExpandsUpward => editor_preview(
+            text,
+            vec![Point::row_range(5..7), Point::row_range(10..12)],
+            Point::new(5, 0),
+            vec![(Point::new(4, 0)..Point::new(4, 0), "fn boundary() {}\n\n")],
+            window,
+            cx,
+        ),
+        BottomExcerptExpandsDownward => editor_preview(
+            text,
+            vec![Point::row_range(0..2), Point::row_range(5..8)],
+            Point::new(6, 18),
+            vec![(Point::new(10, 0)..Point::new(10, 0), "fn inserted() {}\n\n")],
+            window,
+            cx,
+        ),
+        MiddleExcerptExpandsUpward => editor_preview(
+            text,
+            vec![
+                Point::row_range(0..2),
+                Point::row_range(5..7),
+                Point::row_range(10..12),
+            ],
+            Point::new(6, 18),
+            vec![(
+                Point::new(4, 0)..Point::new(4, 0),
+                "fn above_middle() {}\n\n",
+            )],
+            window,
+            cx,
+        ),
+        MiddleExcerptExpandsDownward => editor_preview(
+            text,
+            vec![
+                Point::row_range(0..2),
+                Point::row_range(5..7),
+                Point::row_range(10..12),
+            ],
+            Point::new(6, 18),
+            vec![(
+                Point::new(8, 0)..Point::new(8, 0),
+                "fn below_middle() {}\n\n",
+            )],
+            window,
+            cx,
+        ),
+        PartiallyVisibleFarFromExcerpt => editor_preview(
+            text,
+            vec![Point::row_range(0..2), Point::row_range(5..7)],
+            Point::new(1, 14),
+            vec![(
+                Point::new(20, 4)..Point::new(20, 4),
+                "let target = sixth + 1;\n    ",
+            )],
+            window,
+            cx,
+        ),
+        AdjacentMultiEditCluster => editor_preview(
+            text,
+            vec![
+                Point::row_range(0..2),
+                Point::row_range(4..8),
+                Point::row_range(10..12),
+            ],
+            Point::new(6, 18),
+            vec![
+                (Point::new(6, 4)..Point::new(6, 4), "let count = 1;\n    "),
+                (Point::new(7, 4)..Point::new(7, 4), "dbg!(count);\n    "),
+            ],
+            window,
+            cx,
+        ),
+        DifferentFileJump => jump_preview(
+            "fn main() {\n    work();\n}\n",
+            "fn other() {\n    target();\n}\n",
+            window,
+            cx,
+        ),
+    }
+}
+
+fn editor_preview(
+    text: &'static str,
+    excerpt_ranges: Vec<Range<Point>>,
+    cursor: Point,
+    edits: Vec<(Range<Point>, &'static str)>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<Editor> {
+    cx.new(|cx| {
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        let other_buffer = cx.new(|cx| {
+            Buffer::local(
+                "pub fn shared_helper() {\n    trace!(\"other file\");\n}\n",
+                cx,
+            )
+        });
+        let snapshot = buffer.read(cx).snapshot();
+        let prediction = edit_prediction_types::EditPrediction::Local {
+            id: Some("preview".into()),
+            edits: edits
+                .into_iter()
+                .map(|(range, text)| {
+                    (
+                        snapshot.anchor_before(range.start)..snapshot.anchor_before(range.end),
+                        Arc::<str>::from(text),
+                    )
+                })
+                .collect(),
+            cursor_position: None,
+            edit_preview: None,
+        };
+        let multi_buffer = cx.new(|cx| {
+            let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(0),
+                other_buffer,
+                [Point::row_range(0..2)],
+                0,
+                cx,
+            );
+            multi_buffer.set_excerpts_for_path(
+                PathKey::sorted(1),
+                buffer.clone(),
+                excerpt_ranges,
+                0,
+                cx,
+            );
+            multi_buffer
+        });
+        let provider = cx.new(|_| EditPredictionPreviewDelegate {
+            prediction: Some(prediction),
+        });
+        let mut editor = Editor::for_multibuffer(multi_buffer.clone(), None, window, cx);
+        if let Some(cursor) = multi_buffer
+            .read(cx)
+            .buffer_point_to_anchor(&buffer, cursor, cx)
+        {
+            editor.change_selections(
+                SelectionEffects::scroll(Autoscroll::fit()),
+                window,
+                cx,
+                |selections| {
+                    selections.select_anchor_ranges([cursor..cursor]);
+                },
+            );
+        }
+        editor.set_edit_prediction_provider(Some(provider), window, cx);
+        editor.update_visible_edit_prediction(window, cx);
+        editor
+    })
+}
+
+fn jump_preview(
+    text: &'static str,
+    target_text: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<Editor> {
+    cx.new(|cx| {
+        let buffer = cx.new(|cx| Buffer::local(text, cx));
+        let target_buffer = cx.new(|cx| Buffer::local(target_text, cx));
+        let target_snapshot = target_buffer.read(cx).snapshot();
+        let prediction = edit_prediction_types::EditPrediction::Jump {
+            id: Some("preview".into()),
+            snapshot: target_snapshot.clone(),
+            target: target_snapshot.anchor_before(Point::new(1, 4)),
+        };
+        let multi_buffer = cx.new(|cx| {
+            let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
+            multi_buffer.set_excerpts_for_path(
+                PathKey::for_buffer(&buffer, cx),
+                buffer.clone(),
+                [Point::row_range(0..2)],
+                0,
+                cx,
+            );
+            multi_buffer
+        });
+        let provider = cx.new(|_| EditPredictionPreviewDelegate {
+            prediction: Some(prediction),
+        });
+        let mut editor = Editor::for_multibuffer(multi_buffer, None, window, cx);
+        editor.set_edit_prediction_provider(Some(provider), window, cx);
+        editor.update_visible_edit_prediction(window, cx);
+        editor
+    })
+}
 
 impl Component for EditPredictionMultiBufferPreview {
     fn scope() -> ComponentScope {
@@ -193,236 +504,15 @@ impl Component for EditPredictionMultiBufferPreview {
                 .into_any_element()
         }
 
-        fn editor_preview(
-            text: &'static str,
-            excerpt_ranges: Vec<Range<Point>>,
-            cursor: Point,
-            edits: Vec<(Range<Point>, &'static str)>,
-            window: &mut Window,
-            cx: &mut App,
-        ) -> Entity<Editor> {
-            cx.new(|cx| {
-                let buffer = cx.new(|cx| Buffer::local(text, cx));
-                let other_buffer = cx.new(|cx| {
-                    Buffer::local(
-                        "pub fn shared_helper() {\n    trace!(\"other file\");\n}\n",
-                        cx,
-                    )
-                });
-                let snapshot = buffer.read(cx).snapshot();
-                let prediction = edit_prediction_types::EditPrediction::Local {
-                    id: Some("preview".into()),
-                    edits: edits
-                        .into_iter()
-                        .map(|(range, text)| {
-                            (
-                                snapshot.anchor_before(range.start)
-                                    ..snapshot.anchor_before(range.end),
-                                Arc::<str>::from(text),
-                            )
-                        })
-                        .collect(),
-                    cursor_position: None,
-                    edit_preview: None,
-                };
-                let multi_buffer = cx.new(|cx| {
-                    let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
-                    multi_buffer.set_excerpts_for_path(
-                        PathKey::sorted(0),
-                        other_buffer,
-                        [Point::row_range(0..2)],
-                        0,
-                        cx,
-                    );
-                    multi_buffer.set_excerpts_for_path(
-                        PathKey::sorted(1),
-                        buffer.clone(),
-                        excerpt_ranges,
-                        0,
-                        cx,
-                    );
-                    multi_buffer
-                });
-                let provider = cx.new(|_| EditPredictionPreviewDelegate { prediction });
-                let mut editor = Editor::for_multibuffer(multi_buffer.clone(), None, window, cx);
-                if let Some(cursor) = multi_buffer
-                    .read(cx)
-                    .buffer_point_to_anchor(&buffer, cursor, cx)
-                {
-                    editor.change_selections(
-                        SelectionEffects::scroll(Autoscroll::fit()),
-                        window,
-                        cx,
-                        |selections| {
-                            selections.select_anchor_ranges([cursor..cursor]);
-                        },
-                    );
-                }
-                editor.set_edit_prediction_provider(Some(provider), window, cx);
-                editor.update_visible_edit_prediction(window, cx);
-                editor
+        edit_prediction_multibuffer_preview_cases()
+            .iter()
+            .fold(v_flex().gap_4(), |parent, preview_case| {
+                parent.child(case(
+                    preview_case.title,
+                    edit_prediction_multibuffer_preview_editor(preview_case, window, cx),
+                    cx,
+                ))
             })
-        }
-
-        fn jump_preview(
-            text: &'static str,
-            target_text: &'static str,
-            window: &mut Window,
-            cx: &mut App,
-        ) -> Entity<Editor> {
-            cx.new(|cx| {
-                let buffer = cx.new(|cx| Buffer::local(text, cx));
-                let target_buffer = cx.new(|cx| Buffer::local(target_text, cx));
-                let target_snapshot = target_buffer.read(cx).snapshot();
-                let prediction = edit_prediction_types::EditPrediction::Jump {
-                    id: Some("preview".into()),
-                    snapshot: target_snapshot.clone(),
-                    target: target_snapshot.anchor_before(Point::new(1, 4)),
-                };
-                let multi_buffer = cx.new(|cx| {
-                    let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
-                    multi_buffer.set_excerpts_for_path(
-                        PathKey::for_buffer(&buffer, cx),
-                        buffer.clone(),
-                        [Point::row_range(0..2)],
-                        0,
-                        cx,
-                    );
-                    multi_buffer
-                });
-                let provider = cx.new(|_| EditPredictionPreviewDelegate { prediction });
-                let mut editor = Editor::for_multibuffer(multi_buffer, None, window, cx);
-                editor.set_edit_prediction_provider(Some(provider), window, cx);
-                editor.update_visible_edit_prediction(window, cx);
-                editor
-            })
-        }
-
-        let text = "fn main() {\n    let value = compute();\n    println!(\"{}\", value);\n}\n\nfn helper() {\n    let enabled = true;\n    dbg!(enabled);\n}\n\nfn far_away() {\n    let name = \"zed\";\n    println!(\"{name}\");\n}\n\nfn distant() {\n    let first = 1;\n    let second = 2;\n    let third = 3;\n    let fourth = 4;\n    let fifth = 5;\n    let sixth = 6;\n}\n";
-
-        v_flex()
-            .gap_4()
-            .child(case(
-                "Fully visible hunk",
-                editor_preview(
-                    text,
-                    vec![Point::row_range(0..4), Point::row_range(10..12)],
-                    Point::new(1, 14),
-                    vec![(
-                        Point::new(2, 4)..Point::new(2, 4),
-                        "let doubled = value * 2;\n    ",
-                    )],
-                    window,
-                    cx,
-                ),
-                cx,
-            ))
-            .child(case(
-                "Top excerpt expands upward",
-                editor_preview(
-                    text,
-                    vec![Point::row_range(5..7), Point::row_range(10..12)],
-                    Point::new(6, 18),
-                    vec![(Point::new(4, 0)..Point::new(4, 0), "fn nearby() {}\n\n")],
-                    window,
-                    cx,
-                ),
-                cx,
-            ))
-            .child(case(
-                "Bottom excerpt expands downward",
-                editor_preview(
-                    text,
-                    vec![Point::row_range(0..2), Point::row_range(5..8)],
-                    Point::new(6, 18),
-                    vec![(Point::new(10, 0)..Point::new(10, 0), "fn inserted() {}\n\n")],
-                    window,
-                    cx,
-                ),
-                cx,
-            ))
-            .child(case(
-                "Middle excerpt expands upward",
-                editor_preview(
-                    text,
-                    vec![
-                        Point::row_range(0..2),
-                        Point::row_range(5..7),
-                        Point::row_range(10..12),
-                    ],
-                    Point::new(6, 18),
-                    vec![(
-                        Point::new(4, 0)..Point::new(4, 0),
-                        "fn above_middle() {}\n\n",
-                    )],
-                    window,
-                    cx,
-                ),
-                cx,
-            ))
-            .child(case(
-                "Middle excerpt expands downward",
-                editor_preview(
-                    text,
-                    vec![
-                        Point::row_range(0..2),
-                        Point::row_range(5..7),
-                        Point::row_range(10..12),
-                    ],
-                    Point::new(6, 18),
-                    vec![(
-                        Point::new(8, 0)..Point::new(8, 0),
-                        "fn below_middle() {}\n\n",
-                    )],
-                    window,
-                    cx,
-                ),
-                cx,
-            ))
-            .child(case(
-                "Partially visible, far from excerpt",
-                editor_preview(
-                    text,
-                    vec![Point::row_range(0..2), Point::row_range(5..7)],
-                    Point::new(1, 14),
-                    vec![(
-                        Point::new(20, 4)..Point::new(20, 4),
-                        "let target = sixth + 1;\n    ",
-                    )],
-                    window,
-                    cx,
-                ),
-                cx,
-            ))
-            .child(case(
-                "Adjacent multi-edit cluster",
-                editor_preview(
-                    text,
-                    vec![
-                        Point::row_range(0..2),
-                        Point::row_range(4..8),
-                        Point::row_range(10..12),
-                    ],
-                    Point::new(6, 18),
-                    vec![
-                        (Point::new(6, 4)..Point::new(6, 4), "let count = 1;\n    "),
-                        (Point::new(7, 4)..Point::new(7, 4), "dbg!(count);\n    "),
-                    ],
-                    window,
-                    cx,
-                ),
-                cx,
-            ))
-            .child(case(
-                "Different file jump",
-                jump_preview(
-                    "fn main() {\n    work();\n}\n",
-                    "fn other() {\n    target();\n}\n",
-                    window,
-                    cx,
-                ),
-                cx,
-            ))
             .into_any_element()
     }
 }
