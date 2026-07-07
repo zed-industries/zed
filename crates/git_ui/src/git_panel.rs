@@ -5807,12 +5807,17 @@ impl GitPanel {
             return;
         };
 
-        let Some(branch) = active_repository.read(cx).branch.as_ref() else {
+        let log_source = {
+            let repository = active_repository.read(cx);
+            Self::commit_history_log_source(
+                repository.branch.as_ref(),
+                repository.head_commit.as_ref(),
+            )
+        };
+        let Some(log_source) = log_source else {
             return;
         };
 
-        let branch_name = branch.name().to_string();
-        let log_source = LogSource::Branch(branch_name.into());
         let log_order = LogOrder::DateOrder;
 
         // Kick off the git log fetch so data is ready when the user switches to History.
@@ -5852,18 +5857,43 @@ impl GitPanel {
             return;
         };
 
-        let Some(branch) = active_repository.read(cx).branch.as_ref() else {
+        let log_source = {
+            let repository = active_repository.read(cx);
+            Self::commit_history_log_source(
+                repository.branch.as_ref(),
+                repository.head_commit.as_ref(),
+            )
+        };
+        let Some(log_source) = log_source else {
+            self.commit_history_shas = Some(Vec::new());
             return;
         };
 
-        let branch_name = branch.name().to_string();
-        let log_source = LogSource::Branch(branch_name.into());
         let log_order = LogOrder::DateOrder;
 
         self.commit_history_shas = Some(active_repository.update(cx, |repository, cx| {
             let response = repository.graph_data(log_source, log_order, 0..usize::MAX, cx);
             response.commits.iter().map(|commit| commit.sha).collect()
         }));
+    }
+
+    fn commit_history_log_source(
+        branch: Option<&Branch>,
+        head_commit: Option<&CommitDetails>,
+    ) -> Option<LogSource> {
+        if let Some(branch) = branch {
+            return Some(LogSource::Branch(branch.name().to_string().into()));
+        }
+
+        let sha = match head_commit?.sha.as_ref().parse::<Oid>() {
+            Ok(sha) => sha,
+            Err(error) => {
+                log::warn!("failed to parse HEAD commit sha for commit history: {error}");
+                return None;
+            }
+        };
+
+        Some(LogSource::Sha(sha))
     }
 
     fn git_remote(&self, cx: &mut App) -> Option<GitRemote> {
@@ -8084,7 +8114,7 @@ pub(crate) fn commit_title_exceeds_limit(title: &str, max_length: usize) -> bool
 #[cfg(test)]
 mod tests {
     use git::{
-        repository::repo_path,
+        repository::{CommitDetails, repo_path},
         status::{StatusCode, UnmergedStatus, UnmergedStatusCode},
     };
     use gpui::{TestAppContext, UpdateGlobal, VisualTestContext, px};
@@ -8194,6 +8224,25 @@ mod tests {
         });
         cx.executor().advance_clock(2 * UPDATE_DEBOUNCE);
         handle.await;
+    }
+
+    #[test]
+    fn test_commit_history_log_source_uses_head_commit_when_detached() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let source = GitPanel::commit_history_log_source(
+            None,
+            Some(&CommitDetails {
+                sha: sha.into(),
+                ..Default::default()
+            }),
+        );
+
+        assert_eq!(source, Some(LogSource::Sha(sha.parse().unwrap())));
+    }
+
+    #[test]
+    fn test_commit_history_log_source_is_empty_without_branch_or_head() {
+        assert_eq!(GitPanel::commit_history_log_source(None, None), None);
     }
 
     fn assert_editor_opened_with_path(
