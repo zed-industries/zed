@@ -677,26 +677,118 @@ impl Model {
 
     pub fn supported_reasoning_effort_levels(&self) -> Option<Vec<ReasoningEffort>> {
         match self {
-            Self::ClaudeOpus4_8 => Some(vec![
-                ReasoningEffort::Low,
-                ReasoningEffort::Medium,
-                ReasoningEffort::High,
-                ReasoningEffort::XHigh,
-            ]),
-
-            Self::Nemotron3UltraFree | Self::MimoV2_5Pro | Self::MimoV2_5 => Some(vec![
-                ReasoningEffort::Low,
-                ReasoningEffort::Medium,
-                ReasoningEffort::High,
-            ]),
-
-            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(vec![
+            // Anthropic models
+            Self::ClaudeFable5
+            | Self::ClaudeOpus4_8
+            | Self::ClaudeOpus4_7
+            | Self::ClaudeSonnet5 => Some(vec![
                 ReasoningEffort::Low,
                 ReasoningEffort::Medium,
                 ReasoningEffort::High,
                 ReasoningEffort::XHigh,
                 ReasoningEffort::Max,
             ]),
+
+            Self::ClaudeOpus4_6 | Self::ClaudeSonnet4_6 => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::Max,
+            ]),
+
+            Self::ClaudeOpus4_5 => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ]),
+
+            // OpenAI models
+            Self::Gpt5_5
+            | Self::Gpt5_4
+            | Self::Gpt5_4Mini
+            | Self::Gpt5_4Nano
+            | Self::Gpt5_3Codex
+            | Self::Gpt5_2 => Some(vec![
+                ReasoningEffort::None,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ]),
+
+            Self::Gpt5_5Pro | Self::Gpt5_4Pro => Some(vec![
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ]),
+
+            Self::Gpt5_2Codex | Self::Gpt5_3Spark | Self::Gpt5_1CodexMax => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+                ReasoningEffort::XHigh,
+            ]),
+
+            Self::Gpt5_1 => Some(vec![
+                ReasoningEffort::None,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ]),
+
+            Self::Gpt5Codex | Self::Gpt5_1Codex | Self::Gpt5_1CodexMini => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ]),
+
+            Self::Gpt5 | Self::Gpt5Nano => Some(vec![
+                ReasoningEffort::Minimal,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ]),
+
+            // Google models
+            Self::Gemini3Flash | Self::Gemini3_5Flash => Some(vec![
+                ReasoningEffort::Minimal,
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ]),
+
+            Self::Gemini3_1Pro => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ]),
+
+            // DeepSeek models
+            Self::DeepSeekV4Pro | Self::DeepSeekV4Flash => Some(vec![
+                // OpenCode also supports Low&Medium but as per deepSeek those are mapped to High
+                ReasoningEffort::High,
+                ReasoningEffort::Max,
+            ]),
+
+            // MiniMax models
+            Self::MiniMaxM3 => Some(vec![ReasoningEffort::None]),
+
+            // NVIDIA models
+            Self::Nemotron3UltraFree => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ]),
+
+            // Xiaomi MiMo models
+            Self::MimoV2_5Pro | Self::MimoV2_5 => Some(vec![
+                ReasoningEffort::Low,
+                ReasoningEffort::Medium,
+                ReasoningEffort::High,
+            ]),
+
+            // Z AI models
+            Self::Glm5_2 => Some(vec![ReasoningEffort::High, ReasoningEffort::Max]),
 
             Self::Custom {
                 reasoning_effort_levels,
