@@ -1,6 +1,6 @@
 use crate::{
-    diff_multibuffer::{ButtonStates, DiffMultibuffer},
-    git_panel::{GitPanel, GitStatusEntry},
+    diff_multibuffer::DiffMultibuffer,
+    git_panel::{GitPanel, GitPanelAddon, GitStatusEntry},
 };
 use anyhow::{Context as _, Result};
 use buffer_diff::DiffHunkStatus;
@@ -13,6 +13,7 @@ use gpui::{
     Action, AnyElement, App, Context, Entity, EventEmitter, FocusHandle, Focusable, Render,
     SharedString, Subscription, Task, WeakEntity,
 };
+use language::Capability;
 use project::{
     Project, ProjectPath,
     git_store::diff_buffer_list::{DiffBase, DiffBufferList},
@@ -210,9 +211,23 @@ impl StagedDiff {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let branch_diff =
+            cx.new(|cx| DiffBufferList::new(DiffBase::Staged, project.clone(), window, cx));
+        let workspace_handle = workspace.downgrade();
         let diff = cx.new(|cx| {
-            DiffMultibuffer::new_with_diff_base(
-                DiffBase::Staged,
+            DiffMultibuffer::new(
+                branch_diff,
+                Capability::ReadOnly,
+                "No staged changes",
+                move |editor, cx| {
+                    editor.set_diff_hunk_delegate(Some(Arc::new(StagedDiffDelegate)), cx);
+                    editor.rhs_editor().update(cx, |rhs_editor, _cx| {
+                        rhs_editor.set_read_only(true);
+                        rhs_editor.register_addon(GitPanelAddon {
+                            workspace: workspace_handle,
+                        });
+                    });
+                },
                 project.clone(),
                 workspace.clone(),
                 window,
@@ -241,7 +256,31 @@ impl StagedDiff {
     }
 
     fn button_states(&self, cx: &App) -> ButtonStates {
-        self.diff.read(cx).button_states(cx)
+        let diff = self.diff.read(cx);
+        let editor = diff.editor().read(cx).rhs_editor().clone();
+        let editor = editor.read(cx);
+        let snapshot = diff.multibuffer().read(cx).snapshot(cx);
+        let prev_next = snapshot.diff_hunks().nth(1).is_some();
+        let (selection, ranges) = diff.selected_ranges(cx);
+        let unstage = editor
+            .diff_hunks_in_ranges(&ranges, &snapshot)
+            .next()
+            .is_some();
+        let mut unstage_all = false;
+        self.workspace
+            .read_with(cx, |workspace, cx| {
+                if let Some(git_panel) = workspace.panel::<GitPanel>(cx) {
+                    unstage_all = git_panel.read(cx).can_unstage_all();
+                }
+            })
+            .ok();
+
+        ButtonStates {
+            unstage,
+            prev_next,
+            selection,
+            unstage_all,
+        }
     }
 
     fn unstage_selected_staged_hunks(
@@ -251,9 +290,16 @@ impl StagedDiff {
         cx: &mut Context<Self>,
     ) {
         self.diff.update(cx, |diff, cx| {
-            diff.unstage_selected_staged_hunks(move_to_next, window, cx)
+            diff.stage_or_unstage_selected_hunks(false, move_to_next, window, cx)
         });
     }
+}
+
+struct ButtonStates {
+    unstage: bool,
+    prev_next: bool,
+    selection: bool,
+    unstage_all: bool,
 }
 
 impl EventEmitter<EditorEvent> for StagedDiff {}

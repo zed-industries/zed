@@ -7,12 +7,16 @@ use crate::{
 };
 use agent_settings::AgentSettings;
 use anyhow::{Context as _, Result, anyhow};
-use editor::{Editor, EditorEvent, SplittableEditor, actions::SendReviewToAgent};
-use git::repository::DiffType;
+use editor::{
+    Addon, Editor, EditorEvent, RestoreOnlyDiffHunkDelegate, SplittableEditor,
+    actions::SendReviewToAgent,
+};
+use git::{repository::DiffType, status::FileStatus};
 use gpui::{
     Action, AnyElement, App, AppContext as _, Entity, EventEmitter, FocusHandle, Focusable, Render,
     SharedString, Subscription, Task, WeakEntity,
 };
+use language::{BufferId, Capability};
 use project::{
     Project, ProjectPath,
     git_store::{
@@ -45,6 +49,22 @@ pub struct BranchDiff {
     project: Entity<Project>,
     workspace: WeakEntity<Workspace>,
     _diff_event_subscription: Subscription,
+}
+
+struct BranchDiffAddon {
+    branch_diff: Entity<diff_buffer_list::DiffBufferList>,
+}
+
+impl Addon for BranchDiffAddon {
+    fn to_any(&self) -> &dyn std::any::Any {
+        self
+    }
+
+    fn override_status_for_buffer_id(&self, buffer_id: BufferId, cx: &App) -> Option<FileStatus> {
+        self.branch_diff
+            .read(cx)
+            .status_for_buffer_id(buffer_id, cx)
+    }
 }
 
 impl BranchDiff {
@@ -271,8 +291,26 @@ impl BranchDiff {
             }
             branch_diff
         });
+        let branch_diff_for_addon = branch_diff.clone();
         let diff = cx.new(|cx| {
-            DiffMultibuffer::new_impl(branch_diff, project.clone(), workspace.clone(), window, cx)
+            DiffMultibuffer::new(
+                branch_diff,
+                Capability::ReadWrite,
+                "No changes",
+                move |editor, cx| {
+                    editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
+                    editor.rhs_editor().update(cx, move |rhs_editor, _cx| {
+                        rhs_editor.set_read_only(false);
+                        rhs_editor.register_addon(BranchDiffAddon {
+                            branch_diff: branch_diff_for_addon,
+                        });
+                    });
+                },
+                project.clone(),
+                workspace.clone(),
+                window,
+                cx,
+            )
         });
         Self::from_diff(diff, project, workspace, cx)
     }
@@ -412,7 +450,10 @@ impl Item for BranchDiff {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        self.diff.read(cx).tab_content_text(cx)
+        match self.diff_base(cx) {
+            DiffBase::Merge { base_ref } => format!("Changes since {}", base_ref).into(),
+            DiffBase::Head | DiffBase::Index | DiffBase::Staged => "Changes".into(),
+        }
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -479,8 +520,8 @@ impl Item for BranchDiff {
         self.diff.read(cx).has_conflict(cx)
     }
 
-    fn can_save(&self, cx: &App) -> bool {
-        self.diff.read(cx).can_save(cx)
+    fn can_save(&self, _cx: &App) -> bool {
+        true
     }
 
     fn save(
