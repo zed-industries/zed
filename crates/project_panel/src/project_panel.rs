@@ -4714,10 +4714,10 @@ impl ProjectPanel {
 
     fn clear_drag_state(&mut self, cx: &mut Context<Self>) {
         let had_drag_state = self.drag_target_entry.take().is_some()
-            || self.folded_directory_drag_target.take().is_some()
-            || self.hover_scroll_task.take().is_some()
-            || self.hover_expand_task.take().is_some()
-            || self.previous_drag_position.take().is_some();
+            | self.folded_directory_drag_target.take().is_some()
+            | self.hover_scroll_task.take().is_some()
+            | self.hover_expand_task.take().is_some()
+            | self.previous_drag_position.take().is_some();
         if had_drag_state {
             cx.notify();
         }
