@@ -41,7 +41,7 @@ The free plan includes 2,000 Zeta predictions per month. The [Pro plan](../accou
 
 Edit Prediction has two display modes:
 
-1. `eager` (default): predictions are displayed inline as long as it doesn't conflict with language server completions
+1. `eager` (default): predictions are displayed inline as long as they don't conflict with language server completions
 2. `subtle`: predictions only appear inline when holding a modifier key (`alt` by default)
 
 Toggle between them via the `mode` key:
