@@ -6015,6 +6015,16 @@ impl ProjectPanel {
                     }
                 }),
             )
+            .on_aux_click(
+                cx.listener(move |project_panel, event: &gpui::ClickEvent, _, cx| {
+                    if !event.is_middle_click() || show_editor || !kind.is_file() {
+                        return;
+                    }
+
+                    project_panel.open_entry(entry_id, true, false, cx);
+                    cx.stop_propagation();
+                }),
+            )
             .child(
                 ListItem::new(id)
                     .indent_level(depth)
