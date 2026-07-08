@@ -4,9 +4,10 @@
 
 use crate::wit;
 use anyhow::{Context as _, Result, anyhow};
-use gpui::{App, AppContext as _, AsyncApp, Entity};
+use gpui::{AnyEntity, App, AppContext as _, AsyncApp, Entity};
 use gpui_embedded_shared::{
-    AckSender, MethodHandler, ResponseSender, SharedMessage, SharedSpec, decode, encode,
+    AckSender, MethodHandler, RELEASE_METHOD, ResponseSender, SUBSCRIBE_METHOD, SharedMessage,
+    SharedSpec, decode, encode,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -14,6 +15,7 @@ use std::rc::Rc;
 
 pub use gpui_embedded_shared::{
     CallReceipt, HandleShared, Methods, SendReceipt, SharedEntitySource, SharedProjection,
+    SharedRef,
 };
 
 /// Guest-homed entity ids have the high bit set so they can never collide with host-minted
@@ -34,6 +36,7 @@ struct ProjectionEntry {
     type_name: &'static str,
     entity_id: Option<u64>,
     apply_snapshot: ApplySnapshot,
+    replica: AnyEntity,
     next_sequence: u64,
     /// Messages sent before the home side's announcement arrived; flushed in order, which is
     /// what makes sends to a not-yet-resolved entity pipeline correctly.
@@ -46,6 +49,10 @@ struct HomeEntry {
     snapshot_fn: SnapshotFn,
     applied_sequence: u64,
     published_ack: u64,
+    /// Whether the other side holds a live projection; snapshots only flow when true.
+    subscribed: bool,
+    /// Anonymous shares keep their entity alive until released; named shares borrow.
+    strong: Option<AnyEntity>,
 }
 
 #[derive(Default)]
@@ -99,12 +106,68 @@ pub fn remote<S: SharedSpec>(name: impl Into<String>, cx: &mut App) -> Remote<S>
                 type_name: S::TYPE_NAME,
                 entity_id: None,
                 apply_snapshot,
+                replica: replica.clone().into_any(),
                 next_sequence: 0,
                 pending_sends: Vec::new(),
                 pending_acks: Vec::new(),
             },
         );
     });
+    Remote { name, replica }
+}
+
+/// Attach to a shared entity through a capability reference received in a payload. No name
+/// is involved: the ref's id addresses the entity directly, and a `$subscribe` control
+/// message starts the snapshot flow (its ack is the initial snapshot). Materializing the
+/// same ref twice returns the same replica.
+pub fn remote_from_ref<S: SharedSpec>(reference: SharedRef<S>, cx: &mut App) -> Remote<S> {
+    let entity_id = reference.entity_id();
+    let name = format!("#{entity_id}");
+
+    let existing = REGISTRY.with(|registry| {
+        let registry = registry.borrow();
+        registry
+            .projections_by_name
+            .get(&name)
+            .map(|entry| entry.replica.clone())
+    });
+    if let Some(replica) = existing {
+        match replica.downcast::<SharedProjection<S::Snapshot>>() {
+            Ok(replica) => return Remote { name, replica },
+            Err(_) => log::error!(
+                "gpui_plugin: ref {entity_id} materialized twice with different specs"
+            ),
+        }
+    }
+
+    let replica = cx.new(|_| SharedProjection::<S::Snapshot> { state: None });
+    let apply_snapshot: ApplySnapshot = {
+        let replica = replica.downgrade();
+        Rc::new(move |bytes: &[u8], cx: &mut AsyncApp| {
+            let snapshot: S::Snapshot = decode(bytes).context("decoding shared snapshot")?;
+            replica.update(cx, |projection, cx| {
+                projection.state = Some(snapshot);
+                cx.notify();
+            })
+        })
+    };
+    REGISTRY.with(|registry| {
+        let mut registry = registry.borrow_mut();
+        registry.projections_by_name.insert(
+            name.clone(),
+            ProjectionEntry {
+                type_name: S::TYPE_NAME,
+                entity_id: Some(entity_id),
+                apply_snapshot,
+                replica: replica.clone().into_any(),
+                next_sequence: 0,
+                pending_sends: Vec::new(),
+                pending_acks: Vec::new(),
+            },
+        );
+        registry.names_by_entity_id.insert(entity_id, name.clone());
+    });
+    dispatch_outgoing(&name, SUBSCRIBE_METHOD, Vec::new(), None, None);
     Remote { name, replica }
 }
 
@@ -128,6 +191,20 @@ impl<S: SharedSpec> Remote<S> {
                 SendReceipt::dropped()
             }
         }
+    }
+
+    /// Relinquish this projection. Anonymous homes drop their strong handle to the entity;
+    /// snapshots stop flowing.
+    pub fn release(self) {
+        let _receipt = send_raw(&self.name, RELEASE_METHOD, Vec::new());
+        REGISTRY.with(|registry| {
+            let mut registry = registry.borrow_mut();
+            if let Some(entry) = registry.projections_by_name.remove(&self.name)
+                && let Some(entity_id) = entry.entity_id
+            {
+                registry.names_by_entity_id.remove(&entity_id);
+            }
+        });
     }
 
     /// Call a typed method on the entity's home side, resolving with its return value. The
@@ -251,21 +328,7 @@ pub fn share<S, T>(
         })
     };
 
-    let entity_id = REGISTRY.with(|registry| {
-        let mut registry = registry.borrow_mut();
-        registry.next_home_id += 1;
-        let entity_id = GUEST_HOME_BIT | registry.next_home_id;
-        registry.homes.insert(
-            entity_id,
-            HomeEntry {
-                methods: methods.into_map(),
-                snapshot_fn,
-                applied_sequence: 0,
-                published_ack: 0,
-            },
-        );
-        entity_id
-    });
+    let entity_id = insert_home(methods.into_map(), snapshot_fn, true, None);
 
     cx.observe(entity, move |_, cx| publish_home(entity_id, cx))
         .detach();
@@ -278,10 +341,72 @@ pub fn share<S, T>(
     publish_home(entity_id, cx);
 }
 
+/// Share a guest entity anonymously, returning a capability reference to embed in snapshot
+/// or message payloads. The home holds a strong handle to the entity until the reference is
+/// released; snapshots start flowing when a projection subscribes.
+pub fn share_anonymous<S, T>(
+    entity: &Entity<T>,
+    register: impl FnOnce(&mut Methods<S, T>),
+    cx: &mut App,
+) -> SharedRef<S>
+where
+    S: SharedSpec,
+    T: SharedEntitySource<S>,
+{
+    let mut methods = Methods::new(entity.downgrade());
+    register(&mut methods);
+
+    let snapshot_fn: SnapshotFn = {
+        let entity = entity.downgrade();
+        Rc::new(move |cx: &App| {
+            let entity = entity.upgrade().context("shared entity dropped")?;
+            encode(&entity.read(cx).snapshot(cx))
+        })
+    };
+
+    let entity_id = insert_home(
+        methods.into_map(),
+        snapshot_fn,
+        false,
+        Some(entity.clone().into_any()),
+    );
+    cx.observe(entity, move |_, cx| publish_home(entity_id, cx))
+        .detach();
+    SharedRef::from_raw(entity_id)
+}
+
+fn insert_home(
+    methods: HashMap<String, MethodHandler>,
+    snapshot_fn: SnapshotFn,
+    subscribed: bool,
+    strong: Option<AnyEntity>,
+) -> u64 {
+    REGISTRY.with(|registry| {
+        let mut registry = registry.borrow_mut();
+        registry.next_home_id += 1;
+        let entity_id = GUEST_HOME_BIT | registry.next_home_id;
+        registry.homes.insert(
+            entity_id,
+            HomeEntry {
+                methods,
+                snapshot_fn,
+                applied_sequence: 0,
+                published_ack: 0,
+                subscribed,
+                strong,
+            },
+        );
+        entity_id
+    })
+}
+
 fn publish_home(entity_id: u64, cx: &mut App) {
     let publish = REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
         let home = registry.homes.get_mut(&entity_id)?;
+        if !home.subscribed {
+            return None;
+        }
         home.published_ack = home.applied_sequence;
         Some((home.snapshot_fn.clone(), home.applied_sequence))
     });
@@ -386,17 +511,42 @@ pub(crate) fn snapshot_delivered(snapshot: wit::SharedSnapshot, cx: &mut AsyncAp
 }
 
 pub(crate) fn message_delivered(message: wit::SharedMessage, cx: &mut AsyncApp) {
-    let handler = REGISTRY.with(|registry| {
+    enum Dispatch {
+        Handler(MethodHandler),
+        Control,
+        Unknown,
+    }
+    let dispatch = REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
-        let home = registry.homes.get_mut(&message.entity_id)?;
+        let Some(home) = registry.homes.get_mut(&message.entity_id) else {
+            return Dispatch::Unknown;
+        };
         home.applied_sequence = home.applied_sequence.max(message.sequence);
-        home.methods.get(&message.method).cloned()
+        match message.method.as_str() {
+            SUBSCRIBE_METHOD => {
+                home.subscribed = true;
+                Dispatch::Control
+            }
+            RELEASE_METHOD => {
+                home.subscribed = false;
+                home.strong = None;
+                Dispatch::Control
+            }
+            _ => home
+                .methods
+                .get(&message.method)
+                .or_else(|| home.methods.get(gpui_embedded_shared::WILDCARD_METHOD))
+                .cloned()
+                .map(Dispatch::Handler)
+                .unwrap_or(Dispatch::Unknown),
+        }
     });
-    let outcome = match handler {
-        Some(handler) => cx
-            .update(|cx| handler(&message.payload, cx))
+    let outcome = match dispatch {
+        Dispatch::Handler(handler) => cx
+            .update(|cx| handler(&message.method, &message.payload, cx))
             .map_err(|error| format!("{error:#}")),
-        None => Err(format!(
+        Dispatch::Control => encode(&()).map_err(|error| format!("{error:#}")),
+        Dispatch::Unknown => Err(format!(
             "no handler for shared method {:?} on entity {}",
             message.method, message.entity_id
         )),

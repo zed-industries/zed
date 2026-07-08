@@ -29,3 +29,7 @@ log.workspace = true
 smallvec.workspace = true
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+rand.workspace = true

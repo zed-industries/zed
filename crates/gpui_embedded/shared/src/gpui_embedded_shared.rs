@@ -53,8 +53,14 @@ pub trait HandleShared<M: SharedMessage>: 'static + Sized {
 }
 
 /// A type-erased method handler on an entity's home side: decode, dispatch, encode the
-/// response. Used identically by the native host and the wasm guest.
-pub type MethodHandler = std::rc::Rc<dyn Fn(&[u8], &mut gpui::App) -> anyhow::Result<Vec<u8>>>;
+/// response. Receives the method name so wildcard handlers can interpret it. Used
+/// identically by the native host and the wasm guest.
+pub type MethodHandler =
+    std::rc::Rc<dyn Fn(&str, &[u8], &mut gpui::App) -> anyhow::Result<Vec<u8>>>;
+
+/// Registering a handler under this name makes it the fallback for any method that has no
+/// explicit entry: fully dynamic dispatch, decided by the entity at runtime.
+pub const WILDCARD_METHOD: &str = "*";
 
 /// Typed registration of dynamically dispatched methods for a shared entity's home.
 pub struct Methods<S: SharedSpec, T> {
@@ -83,7 +89,7 @@ impl<S: SharedSpec, T: 'static> Methods<S, T> {
         let entity = self.entity.clone();
         self.map.insert(
             M::METHOD.to_string(),
-            std::rc::Rc::new(move |payload, cx| {
+            std::rc::Rc::new(move |_method, payload, cx| {
                 let message: M = decode(payload)?;
                 let response = entity.update(cx, |entity, cx| entity.handle(message, cx))?;
                 encode(&response)
@@ -92,20 +98,22 @@ impl<S: SharedSpec, T: 'static> Methods<S, T> {
         self
     }
 
-    /// The dynamic escape hatch: register a raw handler for an arbitrary method name.
+    /// The dynamic escape hatch: register a raw handler for an arbitrary method name, or
+    /// for [`WILDCARD_METHOD`] to receive every method without an explicit entry.
     pub fn on_raw(
         &mut self,
         method: impl Into<String>,
-        handler: impl Fn(&gpui::Entity<T>, &[u8], &mut gpui::App) -> anyhow::Result<Vec<u8>> + 'static,
+        handler: impl Fn(&gpui::Entity<T>, &str, &[u8], &mut gpui::App) -> anyhow::Result<Vec<u8>>
+        + 'static,
     ) -> &mut Self {
         let entity = self.entity.clone();
         self.map.insert(
             method.into(),
-            std::rc::Rc::new(move |payload, cx| {
+            std::rc::Rc::new(move |method, payload, cx| {
                 let entity = entity
                     .upgrade()
                     .ok_or_else(|| anyhow::anyhow!("shared entity dropped"))?;
-                handler(&entity, payload, cx)
+                handler(&entity, method, payload, cx)
             }),
         );
         self
@@ -216,6 +224,74 @@ pub struct SharedProjection<S> {
     pub state: Option<S>,
 }
 
+/// Reserved control method: a projection announcing interest in an entity. The home starts
+/// publishing snapshots to it (and the subscribe's ack doubles as the initial snapshot).
+pub const SUBSCRIBE_METHOD: &str = "$subscribe";
+
+/// Reserved control method: a projection relinquishing an entity. Anonymous homes drop
+/// their strong handle, letting the entity die when nothing else owns it.
+pub const RELEASE_METHOD: &str = "$release";
+
+/// A serializable capability reference to a shared entity of kind `S`.
+///
+/// On the wire this is nothing but the entity id — refs travel *inside* snapshot and
+/// message payloads (including call responses), so object graphs never need the name
+/// namespace: names are mounts, refs are pointers. Possession of a ref is the authority to
+/// send to it; sharing the same entity twice with different method tables mints attenuated
+/// capabilities.
+pub struct SharedRef<S: SharedSpec> {
+    entity_id: u64,
+    _spec: std::marker::PhantomData<fn() -> S>,
+}
+
+impl<S: SharedSpec> SharedRef<S> {
+    #[doc(hidden)]
+    pub fn from_raw(entity_id: u64) -> Self {
+        Self {
+            entity_id,
+            _spec: std::marker::PhantomData,
+        }
+    }
+
+    pub fn entity_id(&self) -> u64 {
+        self.entity_id
+    }
+}
+
+impl<S: SharedSpec> Clone for SharedRef<S> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<S: SharedSpec> Copy for SharedRef<S> {}
+
+impl<S: SharedSpec> std::fmt::Debug for SharedRef<S> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "SharedRef<{}>({})", S::TYPE_NAME, self.entity_id)
+    }
+}
+
+impl<S: SharedSpec> PartialEq for SharedRef<S> {
+    fn eq(&self, other: &Self) -> bool {
+        self.entity_id == other.entity_id
+    }
+}
+
+impl<S: SharedSpec> Eq for SharedRef<S> {}
+
+impl<S: SharedSpec> Serialize for SharedRef<S> {
+    fn serialize<Ser: serde::Serializer>(&self, serializer: Ser) -> Result<Ser::Ok, Ser::Error> {
+        serializer.serialize_u64(self.entity_id)
+    }
+}
+
+impl<'de, S: SharedSpec> serde::Deserialize<'de> for SharedRef<S> {
+    fn deserialize<De: serde::Deserializer<'de>>(deserializer: De) -> Result<Self, De::Error> {
+        Ok(Self::from_raw(u64::deserialize(deserializer)?))
+    }
+}
+
 /// Generates the schema for one shared entity kind: the spec, its snapshot record, and its
 /// message records, with all the trait wiring. Example:
 ///
@@ -279,6 +355,40 @@ pub mod demo {
     crate::shared_schema! {
         entity TextSpec as "gpui-embedded.demo.text" {
             snapshot TextSnapshot { text: String }
+        }
+    }
+}
+
+/// Schemas for the integration tests in `crates/gpui_embedded/tests`.
+#[doc(hidden)]
+pub mod test_schema {
+    use super::SharedRef;
+
+    crate::shared_schema! {
+        entity TestCounterSpec as "test.counter" {
+            snapshot TestCounterSnapshot { count: u32 }
+            message "increment" TestIncrement { by: u32 } -> u32
+        }
+    }
+
+    crate::shared_schema! {
+        entity ItemSpec as "test.item" {
+            snapshot ItemSnapshot { label: String, bumps: u32 }
+            message "bump" Bump {} -> u32
+        }
+    }
+
+    crate::shared_schema! {
+        entity FactorySpec as "test.factory" {
+            snapshot FactorySnapshot { created: u32 }
+            message "create" CreateItem { label: String } -> SharedRef<ItemSpec>
+            message "create-readonly" CreateReadonlyItem { label: String } -> SharedRef<ItemSpec>
+        }
+    }
+
+    crate::shared_schema! {
+        entity ChameleonSpec as "test.chameleon" {
+            snapshot ChameleonSnapshot { mode: String, pokes: u32 }
         }
     }
 }

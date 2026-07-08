@@ -6,8 +6,11 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use anyhow::{Context as _, Result, anyhow};
-use gpui::{App, Subscription};
-use gpui_embedded_shared::{AckSender, MethodHandler, Methods, ResponseSender, SharedSpec};
+use gpui::{AnyEntity, App, Subscription};
+use gpui_embedded_shared::{
+    AckSender, MethodHandler, Methods, RELEASE_METHOD, ResponseSender, SUBSCRIBE_METHOD,
+    SharedSpec, encode,
+};
 
 use crate::bindings;
 
@@ -21,6 +24,10 @@ pub(crate) struct HostSharedEntity {
     pub snapshot_fn: SnapshotFn,
     pub applied_sequence: u64,
     pub published_ack: u64,
+    /// Whether the guest holds a live projection; snapshots only flow when true.
+    pub subscribed: bool,
+    /// Anonymous shares keep their entity alive until released; named shares borrow.
+    strong: Option<AnyEntity>,
     _observation: Subscription,
 }
 
@@ -30,6 +37,8 @@ impl HostSharedEntity {
         type_name: &'static str,
         methods: Methods<S, T>,
         snapshot_fn: SnapshotFn,
+        subscribed: bool,
+        strong: Option<AnyEntity>,
         observation: Subscription,
     ) -> Self {
         Self {
@@ -39,6 +48,8 @@ impl HostSharedEntity {
             snapshot_fn,
             applied_sequence: 0,
             published_ack: 0,
+            subscribed,
+            strong,
             _observation: observation,
         }
     }
@@ -89,11 +100,31 @@ impl HostShared {
     }
 
     pub fn insert_projection<S: SharedSpec>(&mut self, name: String, apply: ApplySnapshot) {
+        self.insert_projection_inner::<S>(name, apply, None);
+    }
+
+    /// Insert a projection already bound to an entity id (materialized from a ref).
+    pub fn insert_projection_bound<S: SharedSpec>(
+        &mut self,
+        name: String,
+        apply: ApplySnapshot,
+        entity_id: u64,
+    ) {
+        self.insert_projection_inner::<S>(name.clone(), apply, Some(entity_id));
+        self.projection_names_by_id.insert(entity_id, name);
+    }
+
+    fn insert_projection_inner<S: SharedSpec>(
+        &mut self,
+        name: String,
+        apply: ApplySnapshot,
+        entity_id: Option<u64>,
+    ) {
         self.projections_by_name.insert(
             name,
             HostProjection {
                 type_name: S::TYPE_NAME,
-                entity_id: None,
+                entity_id,
                 apply_snapshot: apply,
                 next_sequence: 0,
                 pending_sends: Vec::new(),
@@ -146,15 +177,32 @@ impl HostShared {
             .get_mut(&entity_id)
             .ok_or_else(|| anyhow!("message for unknown shared entity {entity_id}"))?;
         home.applied_sequence = home.applied_sequence.max(sequence);
-        let handler = home.methods.get(method).cloned().ok_or_else(|| {
-            anyhow!(
-                "shared entity {:?} ({}) has no method {method:?}",
-                home.name,
-                home.type_name
-            )
-        })?;
+        match method {
+            SUBSCRIBE_METHOD => {
+                home.subscribed = true;
+                return encode(&());
+            }
+            RELEASE_METHOD => {
+                home.subscribed = false;
+                home.strong = None;
+                return encode(&());
+            }
+            _ => {}
+        }
+        let handler = home
+            .methods
+            .get(method)
+            .or_else(|| home.methods.get(gpui_embedded_shared::WILDCARD_METHOD))
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!(
+                    "shared entity {:?} ({}) has no method {method:?}",
+                    home.name,
+                    home.type_name
+                )
+            })?;
         let name = home.name.clone();
-        handler(payload, cx)
+        handler(method, payload, cx)
             .with_context(|| format!("dispatching {method:?} to shared entity {name:?}"))
     }
 }

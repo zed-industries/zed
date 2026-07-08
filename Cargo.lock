@@ -7844,6 +7844,7 @@ dependencies = [
  "gpui_platform",
  "image",
  "log",
+ "rand 0.9.4",
  "serde",
  "smallvec",
  "wasmtime",

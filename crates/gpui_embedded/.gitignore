@@ -3,3 +3,5 @@ plugin/Cargo.lock
 example_plugin/target
 example_plugin/Cargo.lock
 .agent/
+test_plugin/target
+test_plugin/Cargo.lock
