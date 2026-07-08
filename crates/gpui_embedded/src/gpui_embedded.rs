@@ -86,6 +86,20 @@ impl<S: SharedSpec> HostRemote<S> {
         receipt
     }
 
+    /// Derive a weaker capability to the same entity, keeping only the listed methods
+    /// (intersected with this ref's own table — attenuation is monotonic).
+    pub fn attenuate(&self, keep: &[&str], cx: &mut gpui::App) -> CallReceipt<SharedRef<S>> {
+        match gpui_embedded_shared::encode(&keep) {
+            Ok(payload) => {
+                self.call_raw(gpui_embedded_shared::ATTENUATE_METHOD, payload, cx)
+            }
+            Err(error) => {
+                log::error!("gpui_embedded: failed to encode attenuation: {error:#}");
+                CallReceipt::dropped()
+            }
+        }
+    }
+
     /// The dynamic escape hatch: send an arbitrary method and payload.
     pub fn send_raw(&self, method: &str, payload: Vec<u8>, cx: &mut gpui::App) -> SendReceipt {
         let (ack_sender, receipt) = SendReceipt::channel();
@@ -799,32 +813,35 @@ impl PluginHost {
         let Some(home) = self.shared.home_mut(entity_id) else {
             return;
         };
-        if !home.subscribed {
-            return;
+        let facets = home.facets.clone();
+        if home.subscribed {
+            home.published_ack = home.applied_sequence;
+            let acked_sequence = home.applied_sequence;
+            let snapshot_fn = home.snapshot_fn.clone();
+            match snapshot_fn(cx) {
+                Ok(payload) => {
+                    let result = self.instance.borrow_mut().deliver_shared_snapshot(
+                        &bindings::SharedSnapshot {
+                            entity_id,
+                            acked_sequence,
+                            payload,
+                        },
+                    );
+                    match result {
+                        Ok(effects) => self.apply_effects(effects, cx),
+                        Err(error) => log::error!(
+                            "gpui_embedded: delivering shared snapshot failed: {error:#}"
+                        ),
+                    }
+                }
+                Err(error) => {
+                    log::error!("gpui_embedded: failed to encode shared snapshot: {error:#}")
+                }
+            }
         }
-        home.published_ack = home.applied_sequence;
-        let acked_sequence = home.applied_sequence;
-        let snapshot_fn = home.snapshot_fn.clone();
-        let payload = match snapshot_fn(cx) {
-            Ok(payload) => payload,
-            Err(error) => {
-                log::error!("gpui_embedded: failed to encode shared snapshot: {error:#}");
-                return;
-            }
-        };
-        let result = self
-            .instance
-            .borrow_mut()
-            .deliver_shared_snapshot(&bindings::SharedSnapshot {
-                entity_id,
-                acked_sequence,
-                payload,
-            });
-        match result {
-            Ok(effects) => self.apply_effects(effects, cx),
-            Err(error) => {
-                log::error!("gpui_embedded: delivering shared snapshot failed: {error:#}")
-            }
+        // Attenuated facets alias the same entity state, so a change fans out to all.
+        for facet in facets {
+            self.publish_home(facet, cx);
         }
     }
 

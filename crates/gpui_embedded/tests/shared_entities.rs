@@ -179,6 +179,56 @@ async fn test_attenuated_refs_read_but_do_not_write(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_attenuation_composes_from_held_refs(cx: &mut TestAppContext) {
+    let host = setup(cx);
+    let factory = host.update(cx, |host, cx| host.remote::<FactorySpec>("factory", cx));
+
+    // Start from a FULL capability...
+    let created = cx.update(|cx| {
+        factory.call(
+            CreateItem {
+                label: "gamma".to_string(),
+            },
+            cx,
+        )
+    });
+    settle(cx);
+    let full_ref = created.await.expect("create");
+    let full = host.update(cx, |host, cx| host.remote_from_ref(full_ref, cx));
+    settle(cx);
+
+    // ...and derive a weaker one from it, OCAP-style: no factory method involved, just the
+    // generic $attenuate control on a ref the holder already possesses.
+    let attenuated = cx.update(|cx| full.attenuate(&[], cx));
+    settle(cx);
+    let readonly_ref = attenuated.await.expect("attenuate");
+    assert_ne!(readonly_ref.entity_id(), full_ref.entity_id());
+
+    let readonly = host.update(cx, |host, cx| host.remote_from_ref(readonly_ref, cx));
+    settle(cx);
+
+    // The facet reads the same state...
+    let label = readonly
+        .replica()
+        .read_with(cx, |replica, _| replica.state.as_ref().map(|s| s.label.clone()));
+    assert_eq!(label.as_deref(), Some("gamma"));
+
+    // ...but rejects writes...
+    let bump = cx.update(|cx| readonly.call(Bump {}, cx));
+    settle(cx);
+    bump.await.expect_err("attenuated ref must reject writes");
+
+    // ...while the original still writes, and the change fans out to the facet's replica.
+    let bump = cx.update(|cx| full.call(Bump {}, cx));
+    settle(cx);
+    assert_eq!(bump.await.expect("bump via full ref"), 1);
+    let facet_view = readonly
+        .replica()
+        .read_with(cx, |replica, _| replica.state.as_ref().map(|s| s.bumps));
+    assert_eq!(facet_view, Some(1), "facet replicas follow the shared state");
+}
+
+#[gpui::test]
 async fn test_chameleon_handles_methods_dynamically(cx: &mut TestAppContext) {
     let host = setup(cx);
     let chameleon = host.update(cx, |host, cx| host.remote::<ChameleonSpec>("chameleon", cx));

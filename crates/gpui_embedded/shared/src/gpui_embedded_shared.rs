@@ -232,6 +232,12 @@ pub const SUBSCRIBE_METHOD: &str = "$subscribe";
 /// their strong handle, letting the entity die when nothing else owns it.
 pub const RELEASE_METHOD: &str = "$release";
 
+/// Reserved control method: derive a weaker capability to the same entity. The payload is
+/// the list of method names to keep (intersected with the caller's own table, so
+/// attenuation is monotonic); the response is the new ref. Callable on any ref you hold —
+/// no cooperation from the entity's author required.
+pub const ATTENUATE_METHOD: &str = "$attenuate";
+
 /// A serializable capability reference to a shared entity of kind `S`.
 ///
 /// On the wire this is nothing but the entity id — refs travel *inside* snapshot and
