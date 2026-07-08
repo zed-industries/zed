@@ -59,6 +59,7 @@ impl WorktreeRoots {
                         let path = TriePath::from(entry.path.as_ref());
                         this.roots.remove(&path);
                     }
+                    WorktreeEvent::Deleted | WorktreeEvent::UpdatedRootRepoCommonDir { .. } => {}
                 }
             }),
         })
@@ -185,7 +186,7 @@ impl ManifestTree {
             .and_then(|manifest_name| self.root_for_path(project_path, manifest_name, delegate, cx))
             .unwrap_or_else(|| ProjectPath {
                 worktree_id,
-                path: RelPath::empty().into(),
+                path: RelPath::empty_arc(),
             })
     }
 

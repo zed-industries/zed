@@ -10,13 +10,17 @@ use wasmtime::component::{Linker, Resource};
 pub const MIN_VERSION: Version = Version::new(0, 0, 4);
 
 wasmtime::component::bindgen!({
-    async: true,
-    trappable_imports: true,
+    imports: {
+        default: async | trappable,
+    },
+    exports: {
+        default: async,
+    },
     path: "../extension_api/wit/since_v0.0.4",
     with: {
-         "worktree": ExtensionWorktree,
-         "zed:extension/github": since_v0_6_0::zed::extension::github,
-         "zed:extension/platform": latest::zed::extension::platform,
+        "worktree": ExtensionWorktree,
+        "zed:extension/github": since_v0_6_0::zed::extension::github,
+        "zed:extension/platform": since_v0_6_0::zed::extension::platform,
     },
 });
 
@@ -24,7 +28,11 @@ pub type ExtensionWorktree = Arc<dyn WorktreeDelegate>;
 
 pub fn linker(executor: &BackgroundExecutor) -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
-    LINKER.get_or_init(|| super::new_linker(executor, Extension::add_to_linker))
+    LINKER.get_or_init(|| {
+        super::new_linker(executor, |linker| {
+            Extension::add_to_linker::<_, WasmState>(linker, |s| s)
+        })
+    })
 }
 
 impl From<DownloadedFileType> for latest::DownloadedFileType {
@@ -133,7 +141,7 @@ impl ExtensionImports for WasmState {
     }
 
     async fn current_platform(&mut self) -> Result<(Os, Architecture)> {
-        latest::zed::extension::platform::Host::current_platform(self).await
+        since_v0_6_0::zed::extension::platform::Host::current_platform(self).await
     }
 
     async fn set_language_server_installation_status(

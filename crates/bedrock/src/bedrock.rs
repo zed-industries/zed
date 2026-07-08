@@ -3,13 +3,13 @@ mod models;
 use anyhow::{Result, anyhow};
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
-use aws_sdk_bedrockruntime::types::InferenceConfiguration;
 pub use aws_sdk_bedrockruntime::types::{
     AnyToolChoice as BedrockAnyToolChoice, AutoToolChoice as BedrockAutoToolChoice,
     ContentBlock as BedrockInnerContent, Tool as BedrockTool, ToolChoice as BedrockToolChoice,
     ToolConfiguration as BedrockToolConfig, ToolInputSchema as BedrockToolInputSchema,
     ToolSpecification as BedrockToolSpec,
 };
+use aws_sdk_bedrockruntime::types::{GuardrailStreamConfiguration, InferenceConfiguration};
 pub use aws_smithy_types::Blob as BedrockBlob;
 use aws_smithy_types::{Document, Number as AwsNumber};
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
@@ -32,11 +32,10 @@ use thiserror::Error;
 
 pub use crate::models::*;
 
-pub const CONTEXT_1M_BETA_HEADER: &str = "context-1m-2025-08-07";
-
 pub async fn stream_completion(
     client: bedrock::Client,
     request: Request,
+    extra_headers: http_client::CustomHeaders,
 ) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, anyhow::Error>>, BedrockError> {
     let mut response = bedrock::Client::converse_stream(&client)
         .model_id(request.model.clone())
@@ -58,18 +57,16 @@ pub async fn stream_completion(
             additional_fields.insert("thinking".to_string(), Document::from(thinking_config));
         }
         Some(Thinking::Adaptive { effort: _ }) => {
-            let thinking_config =
-                HashMap::from([("type".to_string(), Document::String("adaptive".to_string()))]);
+            let thinking_config = HashMap::from([
+                ("type".to_string(), Document::String("adaptive".to_string())),
+                (
+                    "display".to_string(),
+                    Document::String("summarized".to_string()),
+                ),
+            ]);
             additional_fields.insert("thinking".to_string(), Document::from(thinking_config));
         }
         _ => {}
-    }
-
-    if request.allow_extended_context {
-        additional_fields.insert(
-            "anthropic_beta".to_string(),
-            Document::Array(vec![Document::String(CONTEXT_1M_BETA_HEADER.to_string())]),
-        );
     }
 
     if !additional_fields.is_empty() {
@@ -88,36 +85,60 @@ pub async fn stream_completion(
 
     response = response.inference_config(inference_config);
 
-    if let Some(system) = request.system {
-        if !system.is_empty() {
-            response = response.system(BedrockSystemContentBlock::Text(system));
-        }
+    for system_block in request.system {
+        response = response.system(system_block);
     }
 
-    let output = response.send().await.map_err(|err| match err {
-        bedrock::error::SdkError::ServiceError(ctx) => {
-            use bedrock::operation::converse_stream::ConverseStreamError;
-            let err = ctx.into_err();
-            match &err {
-                ConverseStreamError::ValidationException(e) => {
-                    BedrockError::Validation(e.message().unwrap_or("validation error").to_string())
-                }
-                ConverseStreamError::ThrottlingException(_) => BedrockError::RateLimited,
-                ConverseStreamError::ServiceUnavailableException(_)
-                | ConverseStreamError::ModelNotReadyException(_) => {
-                    BedrockError::ServiceUnavailable
-                }
-                ConverseStreamError::AccessDeniedException(e) => {
-                    BedrockError::AccessDenied(e.message().unwrap_or("access denied").to_string())
-                }
-                ConverseStreamError::InternalServerException(e) => BedrockError::InternalServer(
-                    e.message().unwrap_or("internal server error").to_string(),
-                ),
-                _ => BedrockError::Other(err.into()),
+    if let Some(guardrail_id) = &request.guardrail_identifier {
+        let version = request.guardrail_version.as_deref().unwrap_or("DRAFT");
+
+        response = response.guardrail_config(
+            GuardrailStreamConfiguration::builder()
+                .guardrail_identifier(guardrail_id)
+                .guardrail_version(version)
+                .build(),
+        );
+    }
+
+    let output = response
+        .customize()
+        .mutate_request(move |http_request| {
+            let headers = http_request.headers_mut();
+            for (name, value) in extra_headers.iter() {
+                headers.insert(
+                    name.as_str().to_owned(),
+                    value.to_str().unwrap_or("").to_owned(),
+                );
             }
-        }
-        other => BedrockError::Other(other.into()),
-    });
+        })
+        .send()
+        .await
+        .map_err(|err| match err {
+            bedrock::error::SdkError::ServiceError(ctx) => {
+                use bedrock::operation::converse_stream::ConverseStreamError;
+                let err = ctx.into_err();
+                match &err {
+                    ConverseStreamError::ValidationException(e) => BedrockError::Validation(
+                        e.message().unwrap_or("validation error").to_string(),
+                    ),
+                    ConverseStreamError::ThrottlingException(_) => BedrockError::RateLimited,
+                    ConverseStreamError::ServiceUnavailableException(_)
+                    | ConverseStreamError::ModelNotReadyException(_) => {
+                        BedrockError::ServiceUnavailable
+                    }
+                    ConverseStreamError::AccessDeniedException(e) => BedrockError::AccessDenied(
+                        e.message().unwrap_or("access denied").to_string(),
+                    ),
+                    ConverseStreamError::InternalServerException(e) => {
+                        BedrockError::InternalServer(
+                            e.message().unwrap_or("internal server error").to_string(),
+                        )
+                    }
+                    _ => BedrockError::Other(err.into()),
+                }
+            }
+            other => BedrockError::Other(other.into()),
+        });
 
     let stream = Box::pin(stream::unfold(
         output?.stream,
@@ -200,13 +221,18 @@ pub struct Request {
     pub messages: Vec<BedrockMessage>,
     pub tools: Option<BedrockToolConfig>,
     pub thinking: Option<Thinking>,
-    pub system: Option<String>,
+    /// System content blocks in prefix order. Typically `[Text(...)]` or, when
+    /// the model supports prompt caching, `[Text(...), CachePoint(...)]` so the
+    /// system prompt anchors its own cache prefix independent of tools and
+    /// messages.
+    pub system: Vec<BedrockSystemContentBlock>,
     pub metadata: Option<Metadata>,
     pub stop_sequences: Vec<String>,
     pub temperature: Option<f32>,
     pub top_k: Option<u32>,
     pub top_p: Option<f32>,
-    pub allow_extended_context: bool,
+    pub guardrail_identifier: Option<String>,
+    pub guardrail_version: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

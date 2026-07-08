@@ -1,3 +1,4 @@
+mod bench;
 mod derive_action;
 mod derive_app_context;
 mod derive_into_element;
@@ -187,6 +188,21 @@ pub fn box_shadow_style_methods(input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn test(args: TokenStream, function: TokenStream) -> TokenStream {
     test::test(args, function)
+}
+
+/// `#[gpui::bench]` annotates a Criterion benchmark that runs with GPUI support.
+///
+/// Use `#[gpui::bench(inputs = some_iterable())]` on benchmarks that take an
+/// additional input argument; the generated benchmark uses Criterion's
+/// `bench_with_input`. `group`, `input_name`, and `sample_size` can customize
+/// the generated input benchmark group.
+///
+/// The benchmark crate must add `criterion` and `gpui_platform` (with its
+/// `test-support` feature) to its dev-dependencies and enable gpui's `bench`
+/// feature, since the generated code references all three.
+#[proc_macro_attribute]
+pub fn bench(args: TokenStream, function: TokenStream) -> TokenStream {
+    bench::bench(args, function)
 }
 
 /// A variant of `#[gpui::test]` that supports property-based testing.

@@ -144,8 +144,8 @@ Use inline `code` for:
 
 Use Zed's special syntax for dynamic rendering:
 
-- `{#action git::Commit}` — Renders the action name
-- `{#kb git::Commit}` — Renders the keybinding for that action
+- {#action git::Commit} — Renders the action name
+- {#kb git::Commit} — Renders the keybinding for that action
 
 This ensures keybindings stay accurate if defaults change.
 
@@ -229,7 +229,7 @@ Include the version number and what changed. This helps users on older versions 
 Link to other docs using relative paths:
 
 - `[Vim mode](./vim.md)`
-- `[AI configuration](./ai/configuration.md)`
+- `[AI Quick Start](./ai/quick-start.md)`
 
 ### External Links
 

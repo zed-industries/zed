@@ -12,7 +12,7 @@ use gpui::{
 use project::agent_server_store::{AllAgentServersSettings, CustomAgentServerSettings};
 use project::{AgentRegistryStore, RegistryAgent};
 use settings::{Settings, SettingsStore, update_settings_file};
-use theme::ThemeSettings;
+use theme_settings::ThemeSettings;
 use ui::{
     ButtonStyle, ScrollableHandle, ToggleButtonGroup, ToggleButtonGroupSize,
     ToggleButtonGroupStyle, ToggleButtonSimple, Tooltip, WithScrollbar, prelude::*,
@@ -34,7 +34,6 @@ enum RegistryInstallStatus {
     NotInstalled,
     InstalledRegistry,
     InstalledCustom,
-    InstalledExtension,
 }
 
 #[derive(IntoElement)]
@@ -155,9 +154,6 @@ impl AgentRegistryPage {
                     RegistryInstallStatus::InstalledRegistry
                 }
                 CustomAgentServerSettings::Custom { .. } => RegistryInstallStatus::InstalledCustom,
-                CustomAgentServerSettings::Extension { .. } => {
-                    RegistryInstallStatus::InstalledExtension
-                }
             };
             self.installed_statuses.insert(id.clone(), status);
         }
@@ -292,10 +288,12 @@ impl AgentRegistryPage {
     fn render_empty_state(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let has_search = self.search_query(cx).is_some();
         let registry_store = self.registry_store.read(cx);
+        let is_fetching = registry_store.is_fetching();
+        let fetch_error = registry_store.fetch_error();
 
-        let message = if registry_store.is_fetching() {
+        let message = if is_fetching {
             "Loading registry..."
-        } else if registry_store.fetch_error().is_some() {
+        } else if fetch_error.is_some() {
             "Failed to load the agent registry. Please check your connection and try again."
         } else {
             match self.filter {
@@ -325,15 +323,42 @@ impl AgentRegistryPage {
 
         h_flex()
             .py_4()
+            .min_w_0()
+            .w_full()
             .gap_1p5()
-            .when(registry_store.fetch_error().is_some(), |this| {
+            .items_start()
+            .when(fetch_error.is_some(), |this| {
                 this.child(
                     Icon::new(IconName::Warning)
                         .size(IconSize::Small)
                         .color(Color::Warning),
                 )
             })
-            .child(Label::new(message))
+            .child(
+                v_flex()
+                    .min_w_0()
+                    .flex_1()
+                    .gap_1()
+                    .child(Label::new(message))
+                    .when_some(fetch_error.clone(), |this, fetch_error| {
+                        this.child(
+                            Label::new(fetch_error)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                    }),
+            )
+            .when_some(fetch_error, |this, _| {
+                let registry_store = self.registry_store.clone();
+                this.child(
+                    Button::new("retry-agent-registry", "Retry")
+                        .style(ButtonStyle::Outlined)
+                        .size(ButtonSize::Compact)
+                        .on_click(move |_, _, cx| {
+                            registry_store.update(cx, |store, cx| store.refresh(cx));
+                        }),
+                )
+            })
     }
 
     fn render_agents(
@@ -382,7 +407,7 @@ impl AgentRegistryPage {
             self.install_button(agent, install_status, supports_current_platform, cx);
 
         let repository_button = agent.repository().map(|repository| {
-            let repository_for_tooltip: SharedString = repository.to_string().into();
+            let repository_for_tooltip = repository.clone();
             let repository_for_click = repository.to_string();
 
             IconButton::new(
@@ -489,21 +514,27 @@ impl AgentRegistryPage {
                             .size(IconSize::Small)
                             .color(Color::Muted),
                     )
-                    .on_click(move |_, _, cx| {
-                        let agent_id = agent_id.clone();
-                        update_settings_file(fs.clone(), cx, move |settings, _| {
-                            let agent_servers = settings.agent_servers.get_or_insert_default();
-                            agent_servers.entry(agent_id).or_insert_with(|| {
-                                settings::CustomAgentServerSettings::Registry {
-                                    default_mode: None,
-                                    default_model: None,
-                                    env: Default::default(),
-                                    favorite_models: Vec::new(),
-                                    default_config_options: HashMap::default(),
-                                    favorite_config_option_values: HashMap::default(),
-                                }
-                            });
+                    .on_click(move |_, window, cx| {
+                        update_settings_file(fs.clone(), cx, {
+                            let agent_id = agent_id.clone();
+                            move |settings, _| {
+                                let agent_servers = settings.agent_servers.get_or_insert_default();
+                                agent_servers.entry(agent_id).or_insert_with(|| {
+                                    settings::CustomAgentServerSettings::Registry {
+                                        default_mode: None,
+                                        env: Default::default(),
+                                        default_config_options: HashMap::default(),
+                                        favorite_config_option_values: HashMap::default(),
+                                    }
+                                });
+                            }
                         });
+                        window.dispatch_action(
+                            Box::new(zed_actions::agent::SelectAgent {
+                                agent: agent_id.clone(),
+                            }),
+                            cx,
+                        );
                     })
             }
             RegistryInstallStatus::InstalledRegistry => {
@@ -529,9 +560,6 @@ impl AgentRegistryPage {
                     })
             }
             RegistryInstallStatus::InstalledCustom => Button::new(button_id, "Installed")
-                .style(ButtonStyle::OutlinedGhost)
-                .disabled(true),
-            RegistryInstallStatus::InstalledExtension => Button::new(button_id, "Installed")
                 .style(ButtonStyle::OutlinedGhost)
                 .disabled(true),
         }
@@ -628,7 +656,7 @@ impl Render for AgentRegistryPage {
                     let scroll_handle = &self.list;
                     this.child(
                         uniform_list("registry-entries", count, cx.processor(Self::render_agents))
-                            .flex_grow()
+                            .flex_grow_1()
                             .pb_4()
                             .track_scroll(scroll_handle),
                     )

@@ -5,7 +5,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
-  ZED_EXTENSION_CLI_SHA: 03d8e9aee95ea6117d75a48bcac2e19241f6e667
+  ZED_EXTENSION_CLI_SHA: 9ee3c503a4bbbc6b4a0f8a789acca4871d773223
   RUSTUP_TOOLCHAIN: stable
   CARGO_BUILD_TARGET: wasm32-wasip2
 on:
@@ -15,13 +15,15 @@ on:
         description: working-directory
         type: string
         default: .
+permissions:
+  contents: read
 jobs:
   orchestrate:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: ${{ github.ref == 'refs/heads/main' && 2 || 350 }}
@@ -73,11 +75,11 @@ jobs:
     runs-on: namespace-profile-8x32-ubuntu-2404
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -97,7 +99,7 @@ jobs:
       env:
         PACKAGE_NAME: ${{ steps.get-package-name.outputs.package_name }}
     - name: steps::cargo_install_nextest
-      uses: taiki-e/install-action@nextest
+      uses: taiki-e/install-action@921e2c9f7148d7ba14cd819f417db338f63e733c
     - name: extension_tests::run_nextest
       run: 'cargo nextest run -p "$PACKAGE_NAME" --no-fail-fast --no-tests=warn --target "$(rustc -vV | sed -n ''s|host: ||p'')"'
       env:
@@ -115,7 +117,7 @@ jobs:
     runs-on: namespace-profile-8x32-ubuntu-2404
     steps:
     - name: steps::checkout_repo
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       with:
         clean: false
         fetch-depth: 0
@@ -131,7 +133,7 @@ jobs:
         wget --quiet "https://zed-extension-cli.nyc3.digitaloceanspaces.com/$ZED_EXTENSION_CLI_SHA/x86_64-unknown-linux-gnu/zed-extension" -O "$GITHUB_WORKSPACE/zed-extension"
         chmod +x "$GITHUB_WORKSPACE/zed-extension"
     - name: steps::cache_rust_dependencies_namespace
-      uses: namespacelabs/nscloud-cache-action@v1
+      uses: namespacelabs/nscloud-cache-action@a90bb5d4b27522ce881c6e98eebd7d7e6d1653f9
       with:
         cache: rust
         path: ~/.rustup
@@ -149,7 +151,7 @@ jobs:
     - name: run_tests::run_ts_query_ls
       run: |-
         tar -xf "$GITHUB_WORKSPACE/ts_query_ls-x86_64-unknown-linux-gnu.tar.gz" -C "$GITHUB_WORKSPACE"
-        "$GITHUB_WORKSPACE/ts_query_ls" format --check . || {
+        "$GITHUB_WORKSPACE/ts_query_ls" format --check languages || {
             echo "Found unformatted queries, please format them with ts_query_ls."
             echo "For easy use, install the Tree-sitter query extension:"
             echo "zed://extension/tree-sitter-query"

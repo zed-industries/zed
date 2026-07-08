@@ -1,27 +1,45 @@
-## Context
+# Objective
 
-<!-- What does this PR do, and why? How is it expected to impact users?
-     Not just what changed, but what motivated it and why this approach.
+- Describe the objective or issue this PR addresses.
+- If you're fixing a specific issue, use "Fixes #X" for each issue as [described in the GitHub docs](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/linking-a-pull-request-to-an-issue#linking-a-pull-request-to-an-issue-using-a-keyword).
 
-     Link to Linear issue (e.g., ENG-123) or GitHub issue (e.g., Closes #456)
-     if one exists — helps with traceability. -->
+## Solution
 
-## How to Review
+- Describe the solution used to achieve the objective above.
 
-<!-- Help reviewers focus their attention:
-     - For small PRs: note what to focus on (e.g., "error handling in foo.rs")
-     - For large PRs (>400 LOC): provide a guided tour — numbered list of
-       files/commits to read in order. (The `large-pr` label is applied automatically.)
-     - See the review process guidelines for comment conventions -->
+## Testing
 
-## Self-Review Checklist
+- Did you test these changes? If so, how?
+- Are there any parts that need more testing?
+- How can other people (reviewers) test your changes? Is there anything specific they need to know?
+- If relevant, what platforms did you test these changes on, and are there any important ones you can't test?
 
-<!-- Check before requesting review: -->
+## Self-Review Checklist:
+
 - [ ] I've reviewed my own diff for quality, security, and reliability
 - [ ] Unsafe blocks (if any) have justifying comments
-- [ ] The content is consistent with the [UI/UX checklist](https://github.com/zed-industries/zed/blob/main/CONTRIBUTING.md#uiux-checklist)
+- [ ] The content adheres to Zed's UI standards ([UX/UI](https://github.com/zed-industries/zed/blob/main/CONTRIBUTING.md#uiux-checklist) and [icon](https://github.com/zed-industries/zed/blob/main/crates/icons/README.md) guidelines)
 - [ ] Tests cover the new/changed behavior
 - [ ] Performance impact has been considered and is acceptable
+
+## Showcase
+
+> This section is optional. If this PR does not include a visual change or does not add a new user-facing feature, you can delete this section.
+
+- Help others understand the result of this PR by showcasing your awesome work!
+- If this PR includes a visual change, consider adding a screenshot, GIF, or video
+  - A before/after comparison is very useful for changes to existing features!
+
+While a showcase should aim to be brief and digestible, you can use a toggleable section to save space on longer showcases:
+
+<details>
+  <summary>Click to view showcase</summary>
+
+My super cool demos here
+
+</details>
+
+---
 
 Release Notes:
 

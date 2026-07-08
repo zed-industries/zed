@@ -13,10 +13,10 @@ use command_palette_hooks::{
     GlobalCommandPaletteInterceptor,
 };
 
-use fuzzy::{StringMatch, StringMatchCandidate};
+use fuzzy_nucleo::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, App, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
-    ParentElement, Render, Styled, Task, WeakEntity, Window,
+    ParentElement, Render, Styled, Task, TaskExt, WeakEntity, Window,
 };
 use persistence::CommandPaletteDB;
 use picker::Direction;
@@ -33,34 +33,34 @@ pub fn init(cx: &mut App) {
     cx.observe_new(CommandPalette::register).detach();
 }
 
-impl ModalView for CommandPalette {
-    fn is_command_palette(&self) -> bool {
-        true
-    }
-}
+impl ModalView for CommandPalette {}
 
 pub struct CommandPalette {
     picker: Entity<Picker<CommandPaletteDelegate>>,
 }
 
-/// Removes subsequent whitespace characters and double colons from the query.
+/// Removes subsequent whitespace characters and double colons from the query, and converts
+/// underscores to spaces.
 ///
 /// This improves the likelihood of a match by either humanized name or keymap-style name.
+/// Underscores are converted to spaces because `humanize_action_name` converts them to spaces
+/// when building the search candidates (e.g. `terminal_panel::Toggle` -> `terminal panel: toggle`).
 pub fn normalize_action_query(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut last_char = None;
 
     for char in input.trim().chars() {
-        match (last_char, char) {
+        let normalized_char = if char == '_' { ' ' } else { char };
+        match (last_char, normalized_char) {
             (Some(':'), ':') => continue,
-            (Some(last_char), char) if last_char.is_whitespace() && char.is_whitespace() => {
+            (Some(last_char), c) if last_char.is_whitespace() && c.is_whitespace() => {
                 continue;
             }
             _ => {
-                last_char = Some(char);
+                last_char = Some(normalized_char);
             }
         }
-        result.push(char);
+        result.push(normalized_char);
     }
 
     result
@@ -125,7 +125,10 @@ impl CommandPalette {
         );
 
         let picker = cx.new(|cx| {
-            let picker = Picker::uniform_list(delegate, window, cx);
+            // One-shot action; there's nothing to reopen.
+            let picker = Picker::uniform_list(delegate, window, cx)
+                .reopenable(false, cx)
+                .show_scrollbar(true);
             picker.set_query(query, window, cx);
             picker
         });
@@ -150,7 +153,6 @@ impl Render for CommandPalette {
     fn render(&mut self, _window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .key_context("CommandPalette")
-            .w(rems(34.))
             .child(self.picker.clone())
     }
 }
@@ -322,7 +324,7 @@ impl CommandPaletteDelegate {
             });
             new_matches.push(StringMatch {
                 candidate_id: commands.len() - 1,
-                string,
+                string: string.into(),
                 positions,
                 score: 0.0,
             })
@@ -354,6 +356,9 @@ impl CommandPaletteDelegate {
     }
 
     fn selected_command(&self) -> Option<&Command> {
+        if self.matches.is_empty() {
+            return None;
+        }
         let action_ix = self
             .matches
             .get(self.selected_ix)
@@ -372,6 +377,10 @@ impl CommandPaletteDelegate {
 
 impl PickerDelegate for CommandPaletteDelegate {
     type ListItem = ListItem;
+
+    fn name() -> &'static str {
+        "command palette"
+    }
 
     fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
         "Execute a command...".into()
@@ -438,7 +447,7 @@ impl PickerDelegate for CommandPaletteDelegate {
     ) -> gpui::Task<()> {
         let settings = WorkspaceSettings::get_global(cx);
         if let Some(alias) = settings.command_aliases.get(&query) {
-            query = alias.to_string();
+            query = alias.as_ref().to_owned();
         }
 
         let workspace = self.workspace.clone();
@@ -470,11 +479,11 @@ impl PickerDelegate for CommandPaletteDelegate {
                     .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
                     .collect::<Vec<_>>();
 
-                let matches = fuzzy::match_strings(
+                let matches = fuzzy_nucleo::match_strings_async(
                     &candidates,
                     &query,
-                    true,
-                    true,
+                    fuzzy_nucleo::Case::Smart,
+                    fuzzy_nucleo::LengthPenalty::On,
                     10000,
                     &Default::default(),
                     executor,
@@ -485,7 +494,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                     CommandInterceptResult {
                         results: vec![CommandInterceptItem {
                             action: OpenZedUrl {
-                                url: query_for_link.clone(),
+                                url: query_for_link.clone().into(),
                             }
                             .boxed_clone(),
                             string: query_for_link,
@@ -556,6 +565,9 @@ impl PickerDelegate for CommandPaletteDelegate {
 
     fn confirm(&mut self, secondary: bool, window: &mut Window, cx: &mut Context<Picker<Self>>) {
         if secondary {
+            if self.matches.is_empty() {
+                return;
+            }
             let Some(selected_command) = self.selected_command() else {
                 return;
             };
@@ -689,26 +701,69 @@ impl PickerDelegate for CommandPaletteDelegate {
 }
 
 pub fn humanize_action_name(name: &str) -> String {
-    let capacity = name.len() + name.chars().filter(|c| c.is_uppercase()).count();
+    let chars = name.chars().collect::<Vec<_>>();
+    let capacity = name.len() + chars.iter().filter(|c| c.is_uppercase()).count();
     let mut result = String::with_capacity(capacity);
-    for char in name.chars() {
+    let mut index = 0;
+
+    while index < chars.len() {
+        let char = chars[index];
         if char == ':' {
             if result.ends_with(':') {
                 result.push(' ');
             } else {
                 result.push(':');
             }
+            index += 1;
         } else if char == '_' {
             result.push(' ');
+            index += 1;
         } else if char.is_uppercase() {
-            if !result.ends_with(' ') {
-                result.push(' ');
+            let start = index;
+            index += 1;
+            while chars
+                .get(index)
+                .is_some_and(|next_char| next_char.is_uppercase())
+            {
+                index += 1;
             }
-            result.extend(char.to_lowercase());
+
+            let uppercase_run = &chars[start..index];
+            if uppercase_run.len() > 1 {
+                let split_before_last = chars
+                    .get(index)
+                    .is_some_and(|next_char| next_char.is_lowercase());
+                let acronym_end = if split_before_last {
+                    uppercase_run.len() - 1
+                } else {
+                    uppercase_run.len()
+                };
+
+                if acronym_end > 0 {
+                    if !result.ends_with(' ') {
+                        result.push(' ');
+                    }
+                    result.extend(&uppercase_run[..acronym_end]);
+                }
+
+                if split_before_last {
+                    if !result.ends_with(' ') {
+                        result.push(' ');
+                    }
+                    result.extend(uppercase_run[acronym_end].to_lowercase());
+                }
+            } else {
+                if !result.ends_with(' ') {
+                    result.push(' ');
+                }
+                result.extend(char.to_lowercase());
+            }
         } else {
             result.push(char);
+            index += 1;
         }
     }
+
     result
 }
 
@@ -747,6 +802,19 @@ mod tests {
             humanize_action_name("go_to_line::Deploy"),
             "go to line: deploy"
         );
+        assert_eq!(
+            humanize_action_name("agent::OpenGlobalAGENTS.mdRules"),
+            "agent: open global AGENTS.md rules"
+        );
+        assert_eq!(
+            humanize_action_name("agent::OpenProjectAGENTS.mdRules"),
+            "agent: open project AGENTS.md rules"
+        );
+        assert_eq!(humanize_action_name("editor::OpenURL"), "editor: open URL");
+        assert_eq!(
+            humanize_action_name("editor::OpenURLParser"),
+            "editor: open URL parser"
+        );
     }
 
     #[test]
@@ -774,6 +842,14 @@ mod tests {
         assert_eq!(
             normalize_action_query("editor: :GoToDefinition"),
             "editor: :GoToDefinition"
+        );
+        assert_eq!(
+            normalize_action_query("terminal_panel::Toggle"),
+            "terminal panel:Toggle"
+        );
+        assert_eq!(
+            normalize_action_query("project_panel::ToggleFocus"),
+            "project panel:ToggleFocus"
         );
     }
 
@@ -849,6 +925,33 @@ mod tests {
         });
         palette.read_with(cx, |palette, _| {
             assert!(palette.delegate.matches.is_empty())
+        });
+    }
+
+    #[gpui::test]
+    async fn test_selected_command_none_when_no_matches(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        let project = Project::test(app_state.fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+
+        cx.simulate_keystrokes("cmd-shift-p");
+        let picker = workspace.update(cx, |workspace, cx| {
+            workspace
+                .active_modal::<CommandPalette>(cx)
+                .unwrap()
+                .read(cx)
+                .picker
+                .clone()
+        });
+
+        cx.simulate_input("definitely-no-command-should-match-this");
+        cx.background_executor.run_until_parked();
+
+        picker.read_with(cx, |picker, _cx| {
+            assert!(picker.delegate.matches.is_empty());
+            assert!(picker.delegate.selected_command().is_none());
         });
     }
     #[gpui::test]
@@ -931,7 +1034,7 @@ mod tests {
     fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
         cx.update(|cx| {
             let app_state = AppState::test(cx);
-            theme::init(theme::LoadThemes::JustBase, cx);
+            theme_settings::init(theme::LoadThemes::JustBase, cx);
             editor::init(cx);
             menu::init();
             go_to_line::init(cx);
