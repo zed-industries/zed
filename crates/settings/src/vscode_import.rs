@@ -899,6 +899,7 @@ impl VsCodeSettings {
                 .map(FontSize::from),
             font_weight: None,
             keep_selection_on_copy: None,
+            open_links_in_mouse_mode: None,
             line_height: self
                 .read_f32("terminal.integrated.lineHeight")
                 .map(|lh| TerminalLineHeight::Custom(lh)),

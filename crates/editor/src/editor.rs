@@ -10896,7 +10896,7 @@ impl Editor {
                         if multibuffer.is_singleton() {
                             multibuffer.title(cx).to_string()
                         } else {
-                            "untitled".to_string()
+                            MultiBuffer::DEFAULT_TITLE.to_string()
                         }
                     })
             });
