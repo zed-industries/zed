@@ -2823,10 +2823,11 @@ impl Workspace {
                     } else {
                         // If the item is no longer present in this pane, then retrieve its
                         // path info in order to reopen it.
-                        break pane
-                            .nav_history()
-                            .path_for_item(entry.item.id())
-                            .map(|(project_path, abs_path)| (project_path, abs_path, entry));
+                        if let Some((project_path, abs_path)) =
+                            pane.nav_history().path_for_item(entry.item.id())
+                        {
+                            break Some((project_path, abs_path, entry));
+                        }
                     }
                 }
             })
@@ -6293,7 +6294,7 @@ impl Workspace {
                     .children(
                         self.notifications
                             .iter()
-                            .map(|(_, notification)| notification.clone().into_any()),
+                            .map(|(_, notification)| notification.clone().into_any_element()),
                     ),
             )
         }
@@ -9794,11 +9795,18 @@ pub async fn find_existing_workspace(
                 if let Ok(multi_workspace) = window.read(cx) {
                     for workspace in multi_workspace.workspaces() {
                         let project = workspace.read(cx).project.read(cx);
-                        let m = project.visibility_for_paths(
-                            abs_paths,
-                            open_options.workspace_matching != WorkspaceMatching::MatchSubdirectory,
-                            cx,
-                        );
+                        let m = match open_options.workspace_matching {
+                            WorkspaceMatching::None => None,
+                            WorkspaceMatching::MatchExact => {
+                                project.visibility_for_paths(abs_paths, true, cx)
+                            }
+                            WorkspaceMatching::MatchSubpaths => {
+                                project.visibility_for_subpaths(abs_paths, cx)
+                            }
+                            WorkspaceMatching::MatchSubdirectory => {
+                                project.visibility_for_paths(abs_paths, false, cx)
+                            }
+                        };
                         if m > best_match {
                             existing = Some((window, workspace.clone()));
                             best_match = m;
@@ -9865,6 +9873,9 @@ pub enum WorkspaceMatching {
     /// Match paths against existing worktree roots and files within them.
     #[default]
     MatchExact,
+    /// Match files and directories inside existing worktrees, excluding the
+    /// worktree roots themselves.
+    MatchSubpaths,
     /// Match paths against existing worktrees including subdirectories, and
     /// fall back to any existing window if no worktree matched.
     ///
@@ -9907,7 +9918,10 @@ impl Default for OpenOptions {
 
 impl OpenOptions {
     fn should_reuse_existing_window(&self) -> bool {
-        self.workspace_matching != WorkspaceMatching::None && self.open_mode != OpenMode::NewWindow
+        !matches!(
+            self.workspace_matching,
+            WorkspaceMatching::None | WorkspaceMatching::MatchSubpaths
+        ) && self.open_mode != OpenMode::NewWindow
     }
 }
 
@@ -15053,6 +15067,84 @@ mod tests {
             !has_item,
             "Navigation history should not contain closed item entries"
         );
+    }
+
+    #[gpui::test]
+    async fn test_reopen_closed_item_skips_items_without_paths(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+
+        let project = Project::test(fs, [], cx).await;
+
+        let (workspace, cx) =
+            cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
+
+        let pane = workspace.read_with(cx, |workspace, _| workspace.active_pane().clone());
+        let reopenable_item = cx.new(TestItem::new);
+
+        let active_item = cx.new(TestItem::new);
+        let unreopenable_item = cx.new(TestItem::new);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(
+                Box::new(reopenable_item.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+            workspace.add_item_to_active_pane(
+                Box::new(active_item.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+        });
+
+        pane.update(cx, |pane, _| {
+            pane.nav_history_mut().set_mode(NavigationMode::ClosingItem);
+        });
+
+        reopenable_item.update_in(cx, |item, window, cx| {
+            item.deactivated(window, cx);
+        });
+
+        pane.update(cx, |pane, _| {
+            pane.nav_history_mut().set_mode(NavigationMode::Normal);
+        });
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            workspace.add_item_to_active_pane(
+                Box::new(unreopenable_item.clone()),
+                None,
+                true,
+                window,
+                cx,
+            );
+        });
+
+        pane.update_in(cx, |pane, window, cx| {
+            pane.close_item_by_id(unreopenable_item.item_id(), SaveIntent::Skip, window, cx)
+                .detach_and_log_err(cx);
+        });
+
+        cx.run_until_parked();
+
+        workspace
+            .update_in(cx, |workspace, window, cx| {
+                workspace.reopen_closed_item(window, cx)
+            })
+            .await
+            .unwrap();
+
+        pane.read_with(cx, |pane, _| {
+            assert_eq!(
+                pane.active_item().unwrap().item_id(),
+                reopenable_item.item_id()
+            );
+        });
     }
 
     #[gpui::test]
