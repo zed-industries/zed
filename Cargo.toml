@@ -618,7 +618,7 @@ httparse = "1.10"
 idna = "1.0"
 ignore = "0.4.22"
 image = "0.25.1"
-imara-diff = "0.1.8"
+imara-diff = "0.2.0"
 indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 inventory = "0.3.19"

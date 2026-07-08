@@ -1,5 +1,5 @@
 use gpui::{App, AppContext as _, Context, Entity, EventEmitter, Task};
-use imara_diff::{Algorithm, Sink, intern::InternedInput, sources::lines_with_terminator};
+use imara_diff::{Algorithm, Diff, InternedInput, sources::lines};
 use language::{
     Capability, DiffOptions, Language, LanguageName, LanguageRegistry,
     language_settings::LanguageSettings, word_diff_ranges,
@@ -941,6 +941,37 @@ impl BufferDiffSnapshot {
                 )
             };
 
+            // A hunk whose secondary status is stale (e.g. because this diff
+            // and the unstaged diff anchored an ambiguous hunk differently)
+            // can produce an edit that inserts content the index already
+            // contains, duplicating it on every application. If the index
+            // already matches the replacement at this position, the hunk is
+            // already in the desired state; drop the edit.
+            if index_byte_range.is_empty() && !replacement_text.is_empty() {
+                let lookahead_end = index_byte_range.start + replacement_text.len();
+                if lookahead_end <= index_text.len() {
+                    let mut remaining: &str = &replacement_text;
+                    let already_present = index_text
+                        .chunks_in_range(index_byte_range.start..lookahead_end)
+                        .all(|chunk| match remaining.strip_prefix(chunk) {
+                            Some(rest) => {
+                                remaining = rest;
+                                true
+                            }
+                            None => false,
+                        })
+                        && remaining.is_empty();
+                    if already_present {
+                        log::warn!(
+                            "skipping index edit that would duplicate existing index content \
+                             at {:?}",
+                            index_byte_range,
+                        );
+                        continue;
+                    }
+                }
+            }
+
             // Distinct worktree hunks can project to touching index ranges
             // (e.g. a staged deletion ending exactly where the next hunk's
             // index position starts). Merge them so the edit list stays
@@ -1193,12 +1224,22 @@ fn compute_hunks(
         }
 
         let input = InternedInput::new(
-            lines_with_terminator(diff_base.as_ref()),
-            lines_with_terminator(buffer_text.as_str()),
+            lines(diff_base.as_ref()),
+            lines(buffer_text.as_str()),
         );
-        let sink = HunkSink::new(&diff_base, &diff_base_rope, buffer, diff_options.as_ref());
-        let hunks = imara_diff::diff(Algorithm::Histogram, &input, sink);
-        for hunk in hunks {
+        let mut diff = Diff::compute(Algorithm::Histogram, &input);
+        // Canonicalize the placement of ambiguous hunks (git's slider/indent
+        // heuristic). Without this, diffs of the same buffer against different
+        // base texts (e.g. HEAD vs index) can anchor the same logical change at
+        // different rows, and code that correlates hunks across those diffs
+        // misbehaves: hunks render as staged when they aren't, and staging or
+        // unstaging them corrupts the index.
+        diff.postprocess_lines(&input);
+        let mut sink = HunkSink::new(&diff_base, &diff_base_rope, buffer, diff_options.as_ref());
+        for hunk in diff.hunks() {
+            sink.process_change(hunk.before, hunk.after);
+        }
+        for hunk in sink.finish() {
             tree.push(hunk, buffer);
         }
     } else {
@@ -1244,7 +1285,7 @@ impl<'a> HunkSink<'a> {
     fn compute_line_offsets(text: &str) -> Vec<usize> {
         let mut offsets = vec![0];
         let mut offset = 0;
-        for line in lines_with_terminator(text) {
+        for line in lines(text) {
             offset += line.len();
             offsets.push(offset);
         }
@@ -1252,9 +1293,7 @@ impl<'a> HunkSink<'a> {
     }
 }
 
-impl Sink for HunkSink<'_> {
-    type Out = Vec<InternalDiffHunk>;
-
+impl HunkSink<'_> {
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
         let old_start = before.start as usize;
         let old_end = before.end as usize;
@@ -1321,7 +1360,7 @@ impl Sink for HunkSink<'_> {
         });
     }
 
-    fn finish(self) -> Self::Out {
+    fn finish(self) -> Vec<InternalDiffHunk> {
         self.hunks
     }
 }

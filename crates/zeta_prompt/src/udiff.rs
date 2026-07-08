@@ -6,10 +6,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
-use imara_diff::{
-    Algorithm, Sink, diff,
-    intern::{InternedInput, Interner, Token},
-};
+use imara_diff::{Algorithm, Diff, InternedInput, Interner, Token};
 
 pub fn strip_diff_path_prefix<'a>(diff: &'a str, prefix: &str) -> Cow<'a, str> {
     if prefix.is_empty() {
@@ -216,12 +213,17 @@ pub fn unified_diff_with_context(
     new_start_line: u32,
     context_lines: u32,
 ) -> String {
-    let input = InternedInput::new(old_text, new_text);
-    diff(
-        Algorithm::Histogram,
-        &input,
-        OffsetUnifiedDiffBuilder::new(&input, old_start_line, new_start_line, context_lines),
-    )
+    // The builder appends its own line terminators, so tokenize without them.
+    let mut input = InternedInput::default();
+    input.update_before(old_text.lines());
+    input.update_after(new_text.lines());
+    let diff = Diff::compute(Algorithm::Histogram, &input);
+    let mut builder =
+        OffsetUnifiedDiffBuilder::new(&input, old_start_line, new_start_line, context_lines);
+    for hunk in diff.hunks() {
+        builder.process_change(hunk.before, hunk.after);
+    }
+    builder.finish()
 }
 
 struct OffsetUnifiedDiffBuilder<'a> {
@@ -302,9 +304,7 @@ impl<'a> OffsetUnifiedDiffBuilder<'a> {
     }
 }
 
-impl Sink for OffsetUnifiedDiffBuilder<'_> {
-    type Out = String;
-
+impl OffsetUnifiedDiffBuilder<'_> {
     fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
         if before.start - self.pos > self.context_lines * 2 {
             self.flush();
@@ -325,7 +325,7 @@ impl Sink for OffsetUnifiedDiffBuilder<'_> {
         self.print_tokens(&self.after[after.start as usize..after.end as usize], '+');
     }
 
-    fn finish(mut self) -> Self::Out {
+    fn finish(mut self) -> String {
         self.flush();
         self.dst
     }
