@@ -1158,6 +1158,7 @@
           "delete_path": true,
           "diagnostics": true,
           "apply_code_action": true,
+          "browser": true,
           "edit_file": true,
           "write_file": true,
           "fetch": true,

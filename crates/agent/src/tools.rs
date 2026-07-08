@@ -1,4 +1,5 @@
 mod apply_code_action_tool;
+mod browser_tool;
 mod context_server_registry;
 mod copy_path_tool;
 mod create_directory_tool;
@@ -63,6 +64,7 @@ where
 }
 
 pub use apply_code_action_tool::*;
+pub use browser_tool::*;
 pub use context_server_registry::*;
 pub use copy_path_tool::*;
 pub use create_directory_tool::*;
@@ -187,6 +189,7 @@ macro_rules! tools {
 //    it never offers a tool the agent can't actually use.
 tools! {
     ApplyCodeActionTool,
+    BrowserTool,
     CopyPathTool,
     CreateDirectoryTool,
     CreateThreadTool,
@@ -237,13 +240,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fetch_and_terminal_are_forbidden_in_restricted_mode() {
+    fn fetch_terminal_and_browser_are_forbidden_in_restricted_mode() {
         assert!(!tool_allowed_in_restricted_mode(FetchTool::NAME));
         assert!(!tool_allowed_in_restricted_mode(TerminalTool::NAME));
+        assert!(!tool_allowed_in_restricted_mode(BrowserTool::NAME));
 
         // Every other built-in tool, and unknown (e.g. MCP) tools, are allowed.
         for name in ALL_TOOL_NAMES {
-            let expected = *name != FetchTool::NAME && *name != TerminalTool::NAME;
+            let expected = *name != FetchTool::NAME
+                && *name != TerminalTool::NAME
+                && *name != BrowserTool::NAME;
             assert_eq!(
                 tool_allowed_in_restricted_mode(name),
                 expected,

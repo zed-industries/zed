@@ -69,6 +69,12 @@ const TOOLS: &[ToolInfo] = &[
         regex_explanation: "Patterns are matched against the URL being fetched.",
     },
     ToolInfo {
+        id: "browser",
+        name: "Browser",
+        description: "Scripts that control the web browser",
+        regex_explanation: "Patterns are matched against the browser script being run.",
+    },
+    ToolInfo {
         id: "search_web",
         name: "Web Search",
         description: "Web search queries",
@@ -310,6 +316,7 @@ fn get_tool_render_fn(
         "move_path" => render_move_path_tool_config,
         "create_directory" => render_create_directory_tool_config,
         "fetch" => render_fetch_tool_config,
+        "browser" => render_browser_tool_config,
         "search_web" => render_web_search_tool_config,
         "skill" => render_skill_tool_config,
         _ => render_terminal_tool_config, // fallback
@@ -1388,6 +1395,7 @@ tool_config_page_fn!(render_copy_path_tool_config, "copy_path");
 tool_config_page_fn!(render_move_path_tool_config, "move_path");
 tool_config_page_fn!(render_create_directory_tool_config, "create_directory");
 tool_config_page_fn!(render_fetch_tool_config, "fetch");
+tool_config_page_fn!(render_browser_tool_config, "browser");
 tool_config_page_fn!(render_web_search_tool_config, "search_web");
 tool_config_page_fn!(render_skill_tool_config, "skill");
 
