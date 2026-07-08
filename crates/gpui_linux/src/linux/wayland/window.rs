@@ -1489,6 +1489,38 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
+    fn set_input_region(&self, region: Option<&[Bounds<Pixels>]>) {
+        let state = self.borrow();
+        match region {
+            // No region means the whole surface receives input.
+            None => state.surface.set_input_region(None),
+            // A region restricts input to its rectangles. An empty region
+            // receives no input at all.
+            Some(rects) => {
+                let wl_region = state
+                    .globals
+                    .compositor
+                    .create_region(&state.globals.qh, ());
+                for rect in rects {
+                    let rect = rect.map(|pixels| f32::from(pixels) as i32);
+                    wl_region.add(
+                        rect.origin.x,
+                        rect.origin.y,
+                        rect.size.width,
+                        rect.size.height,
+                    );
+                }
+                state.surface.set_input_region(Some(&wl_region));
+                wl_region.destroy();
+            }
+        }
+
+        // Commit so the new input region applies immediately. Otherwise it
+        // waits for the next frame, which could be the very click we want to
+        // allow passing through.
+        state.surface.commit();
+    }
+
     fn window_decorations(&self) -> Decorations {
         let state = self.borrow();
         match state.decorations {

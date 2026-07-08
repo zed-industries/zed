@@ -325,6 +325,39 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_undo_redo_with_empty_history_selections_does_not_panic(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let now = Instant::now();
+    let buffer = cx.new(|cx| language::Buffer::local("123456", cx));
+    let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
+    let editor = cx.add_window(|window, cx| build_editor(buffer, window, cx));
+
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_ranges([MultiBufferOffset(0)..MultiBufferOffset(0)])
+        });
+        editor.start_transaction_at(now, window, cx);
+        editor.insert("a", window, cx);
+        let transaction_id = editor
+            .end_transaction_at(now, cx)
+            .expect("transaction should be created");
+        assert_eq!(editor.text(cx), "a123456");
+
+        editor.modify_transaction_selection_history(transaction_id, |selections| {
+            selections.undo = Vec::new().into();
+            selections.redo = Some(Vec::new().into());
+        });
+
+        editor.undo(&Undo, window, cx);
+        assert_eq!(editor.text(cx), "123456");
+
+        editor.redo(&Redo, window, cx);
+        assert_eq!(editor.text(cx), "a123456");
+    });
+}
+
+#[gpui::test]
 fn test_accessibility_keyboard_word_completion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -8991,6 +9024,110 @@ async fn test_cut_line_ends(cx: &mut TestAppContext) {
             Some("brown fox".to_string())
         );
     }
+}
+
+#[gpui::test]
+async fn test_kill_ring_cut_accumulates_multi_line_kills(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇone\ntwo");
+
+    cx.update_editor(|e, window, cx| {
+        e.kill_ring_cut(&KillRingCut, window, cx);
+        e.kill_ring_cut(&KillRingCut, window, cx);
+    });
+
+    cx.update_editor(|e, window, cx| e.kill_ring_yank(&KillRingYank, window, cx));
+    cx.assert_editor_state("one\nˇtwo");
+}
+
+#[gpui::test]
+async fn test_kill_ring_cut_matches_emacs_kill_line_sequence_at_end_of_buffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇa\nb\nc");
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+
+    cx.update_editor(|editor, _, cx| {
+        assert_eq!(editor.text(cx), "\nc");
+    });
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    cx.update_editor(|editor, _, cx| {
+        assert_eq!(editor.text(cx), "a\nb\nc");
+    });
+}
+
+#[gpui::test]
+async fn test_kill_ring_cut_accumulates_final_line_without_trailing_newline(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇa\nb\nc");
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+
+    cx.update_editor(|editor, _, cx| {
+        assert_eq!(editor.text(cx), "");
+    });
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    cx.update_editor(|editor, _, cx| {
+        assert_eq!(editor.text(cx), "a\nb\nc");
+    });
+}
+
+#[gpui::test]
+async fn test_kill_ring_yank_breaks_kill_ring_cut_accumulation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇa\nb\nc");
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    cx.update_editor(|editor, window, cx| editor.move_to_beginning(&MoveToBeginning, window, cx));
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+
+    cx.update_editor(|editor, _, cx| {
+        assert_eq!(editor.text(cx), "a\nb\nc");
+    });
+}
+
+#[gpui::test]
+async fn test_kill_ring_yank_pastes_accumulated_kill_at_each_cursor(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    cx.set_state("ˇone\ntwo");
+
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+    cx.update_editor(|editor, window, cx| editor.kill_ring_cut(&KillRingCut, window, cx));
+
+    cx.set_state("aˇ bˇ");
+    cx.update_editor(|editor, window, cx| editor.kill_ring_yank(&KillRingYank, window, cx));
+    cx.assert_editor_state("aone\nˇ bone\nˇ");
 }
 
 #[gpui::test]
@@ -18694,6 +18831,202 @@ async fn test_completion_in_multibuffer_with_replace_range(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+async fn test_completion_in_multibuffer_with_newest_selection_in_other_buffer(
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let main_text = indoc! {"
+        fn main() {
+            10.satu
+        }
+    "};
+    let other_text = indoc! {"
+        const VALUE: u32 = 0;
+    "};
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/a"),
+        json!({
+            "main.rs": main_text,
+            "other.rs": other_text,
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, [path!("/a").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    resolve_provider: None,
+                    ..lsp::CompletionOptions::default()
+                }),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(*window, cx);
+    let main_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/a/main.rs"), cx)
+        })
+        .await
+        .unwrap();
+    let other_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/a/other.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let multi_buffer = cx.new(|cx| {
+        let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(0),
+            main_buffer.clone(),
+            [Point::zero()..main_buffer.read(cx).max_point()],
+            0,
+            cx,
+        );
+        multi_buffer.set_excerpts_for_path(
+            PathKey::sorted(1),
+            other_buffer.clone(),
+            [Point::zero()..other_buffer.read(cx).max_point()],
+            0,
+            cx,
+        );
+        multi_buffer
+    });
+
+    let editor = workspace.update_in(cx, |_, window, cx| {
+        cx.new(|cx| {
+            Editor::new(
+                EditorMode::Full {
+                    scale_ui_elements_with_buffer_font_size: false,
+                    show_active_line_background: false,
+                    sizing_behavior: SizingBehavior::Default,
+                },
+                multi_buffer.clone(),
+                Some(project.clone()),
+                window,
+                cx,
+            )
+        })
+    });
+
+    let pane = workspace.update_in(cx, |workspace, _, _| workspace.active_pane().clone());
+    pane.update_in(cx, |pane, window, cx| {
+        pane.add_item(Box::new(editor.clone()), true, true, None, window, cx);
+    });
+
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.run_until_parked();
+
+    // Place the (only, and therefore newest) selection in `main.rs`, right after `satu`.
+    let main_cursor = editor.update(cx, |editor, cx| {
+        let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+        let main_snapshot = main_buffer.read(cx).snapshot();
+        let anchor = main_snapshot.anchor_before(Point::new(1, 11));
+        multibuffer_snapshot
+            .buffer_anchor_range_to_anchor_range(anchor..anchor)
+            .expect("main.rs cursor position should map into the multibuffer")
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_anchor_ranges([main_cursor.clone()]);
+        });
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.show_completions(&ShowCompletions, window, cx);
+    });
+
+    fake_server
+        .set_request_handler::<lsp::request::Completion, _, _>(move |_, _| async move {
+            let completion_item = lsp::CompletionItem {
+                label: "saturating_sub()".into(),
+                text_edit: Some(lsp::CompletionTextEdit::InsertAndReplace(
+                    lsp::InsertReplaceEdit {
+                        new_text: "saturating_sub()".to_owned(),
+                        insert: lsp::Range::new(
+                            lsp::Position::new(1, 7),
+                            lsp::Position::new(1, 11),
+                        ),
+                        replace: lsp::Range::new(
+                            lsp::Position::new(1, 7),
+                            lsp::Position::new(1, 11),
+                        ),
+                    },
+                )),
+                ..lsp::CompletionItem::default()
+            };
+
+            Ok(Some(lsp::CompletionResponse::Array(vec![completion_item])))
+        })
+        .next()
+        .await
+        .unwrap();
+
+    cx.condition(&editor, |editor, _| editor.context_menu_visible())
+        .await;
+
+    // Move the newest selection into `other.rs` while keeping the completions menu
+    // open.
+    let other_cursor = editor.update(cx, |editor, cx| {
+        let multibuffer_snapshot = editor.buffer().read(cx).snapshot(cx);
+        let other_snapshot = other_buffer.read(cx).snapshot();
+        let anchor = other_snapshot.anchor_before(Point::new(0, 6));
+        multibuffer_snapshot
+            .buffer_anchor_range_to_anchor_range(anchor..anchor)
+            .expect("other.rs cursor position should map into the multibuffer")
+    });
+    editor.update_in(cx, |editor, window, cx| {
+        editor.change_selections(
+            SelectionEffects::no_scroll().completions(false),
+            window,
+            cx,
+            |s| s.select_anchor_ranges([other_cursor.clone()]),
+        );
+        assert!(
+            editor.context_menu_visible(),
+            "the completions menu should still be open after moving the cursor"
+        );
+    });
+
+    // This used to panic with `invalid anchor - buffer id does not match`.
+    editor
+        .update_in(cx, |editor, window, cx| {
+            editor
+                .confirm_completion_replace(&ConfirmCompletionReplace, window, cx)
+                .unwrap()
+        })
+        .await
+        .unwrap();
+
+    // The completion targets `main.rs`, so it should still be applied there.
+    main_buffer.read_with(cx, |buffer, _| {
+        assert_eq!(
+            buffer.text(),
+            indoc! {"
+                fn main() {
+                    10.saturating_sub()
+                }
+            "}
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_completion(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -22938,6 +23271,166 @@ async fn test_completions_with_additional_edits(cx: &mut TestAppContext) {
     .unwrap();
     apply_additional_edits.await.unwrap();
     cx.assert_editor_state("fn main() { let a = Some(2)ˇ; }");
+}
+
+async fn check_completion_additional_edits(
+    initial_state: &str,
+    keystroke: &str,
+    completion_item: lsp::CompletionItem,
+    state_after_primary_edit: &str,
+    state_after_additional_edits: &str,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(initial_state);
+
+    let closure_completion_item = completion_item.clone();
+    let mut request = cx.set_request_handler::<lsp::request::Completion, _, _>(move |_, _, _| {
+        let task_completion_item = closure_completion_item.clone();
+        async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                task_completion_item,
+            ])))
+        }
+    });
+
+    cx.simulate_keystroke(keystroke);
+    request.next().await;
+
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    let apply_additional_edits = cx.update_editor(|editor, window, cx| {
+        editor
+            .confirm_completion(&ConfirmCompletion::default(), window, cx)
+            .unwrap()
+    });
+    cx.assert_editor_state(state_after_primary_edit);
+
+    cx.set_request_handler::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| {
+        let task_completion_item = completion_item.clone();
+        async move { Ok(task_completion_item) }
+    })
+    .next()
+    .await
+    .unwrap();
+    apply_additional_edits.await.unwrap();
+    cx.assert_editor_state(state_after_additional_edits);
+}
+
+// rust-analyzer's ref-match completions (`&some_str`) deliver the `&` as a
+// zero-width additionalTextEdit at the primary edit's start.
+// Ref: https://github.com/zed-industries/zed/issues/56973
+#[gpui::test]
+async fn test_completions_with_zero_width_additional_edit_at_primary_edit_start(
+    cx: &mut TestAppContext,
+) {
+    check_completion_additional_edits(
+        // The completion must not start at (0, 0), so that this case is
+        // distinct from the file-start auto-import test below.
+        "bar(fˇ)",
+        "o",
+        lsp::CompletionItem {
+            label: "&foo".to_string(),
+            filter_text: Some("foo".to_string()),
+            // Replaces the typed `fo` with `foo`; the committed range is 4..7.
+            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 6)),
+                new_text: "foo".to_string(),
+            })),
+            // Zero-width insertion exactly at the committed range's start.
+            additional_text_edits: Some(vec![lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 4)),
+                new_text: "&".to_string(),
+            }]),
+            ..Default::default()
+        },
+        "bar(fooˇ)",
+        "bar(&fooˇ)",
+        cx,
+    )
+    .await;
+}
+
+// Additional edits which overlap the primary completion edit must be skipped
+// while non-overlapping edits from the same completion are still applied.
+// Ref: https://github.com/zed-industries/zed/pull/1871
+#[gpui::test]
+async fn test_completions_skip_additional_edits_overlapping_primary_edit(cx: &mut TestAppContext) {
+    check_completion_additional_edits(
+        "fˇ\nbar",
+        "o",
+        lsp::CompletionItem {
+            label: "foo".to_string(),
+            filter_text: Some("foo".to_string()),
+            // Replaces the typed `fo` with `foo`; the committed range is 0..3.
+            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 2)),
+                new_text: "foo".to_string(),
+            })),
+            additional_text_edits: Some(vec![
+                // Skip text strictly inside the committed range.
+                lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(0, 1), lsp::Position::new(0, 2)),
+                    new_text: "XXX".to_string(),
+                },
+                // Apply text which does not touch the committed range.
+                lsp::TextEdit {
+                    range: lsp::Range::new(lsp::Position::new(1, 0), lsp::Position::new(1, 3)),
+                    new_text: "baz".to_string(),
+                },
+            ]),
+            ..Default::default()
+        },
+        "fooˇ\nbar",
+        "fooˇ\nbaz",
+        cx,
+    )
+    .await;
+}
+
+// When both the primary completion edit and an additional edit (auto-import)
+// start at the very beginning of the file, the additional edit must not be
+// treated as overlapping. This payload shape matches what
+// typescript-language-server actually sends for auto-imports at file start.
+// Ref: https://github.com/zed-industries/zed/issues/26136
+#[gpui::test]
+async fn test_completions_with_file_start_auto_import_additional_edit(cx: &mut TestAppContext) {
+    check_completion_additional_edits(
+        "ˇ",
+        "f",
+        lsp::CompletionItem {
+            label: "foo".to_string(),
+            // Replaces the typed `f` at file start; the committed range is 0..3.
+            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 1)),
+                new_text: "foo".to_string(),
+            })),
+            // Auto-import inserted at the very start of the file.
+            additional_text_edits: Some(vec![lsp::TextEdit {
+                range: lsp::Range::new(lsp::Position::new(0, 0), lsp::Position::new(0, 0)),
+                new_text: "bar\n".to_string(),
+            }]),
+            ..Default::default()
+        },
+        "fooˇ",
+        "bar\nfooˇ",
+        cx,
+    )
+    .await;
 }
 
 #[gpui::test]
@@ -29361,6 +29854,45 @@ fn add_log_breakpoint_at_cursor(
         BreakpointEditAction::EditLogMessage(log_message.into()),
         cx,
     );
+}
+
+#[gpui::test]
+fn test_gutter_button_tooltip_updates_intent_with_secondary_modifier(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let focus_handle = cx.update(|cx| cx.focus_handle());
+    let tooltip = GutterButtonTooltip {
+        primary: GutterButtonIntent::SetBreakpoint,
+        secondary: GutterButtonIntent::SetBookmark,
+        focus_handle,
+    };
+
+    let primary_intent = tooltip.active_intent(Modifiers::none());
+    assert_eq!(primary_intent, GutterButtonIntent::SetBreakpoint);
+    assert!(primary_intent.action().as_any().is::<ToggleBreakpoint>());
+
+    let secondary_intent = tooltip.active_intent(Modifiers::secondary_key());
+    assert_eq!(secondary_intent, GutterButtonIntent::SetBookmark);
+    assert!(secondary_intent.action().as_any().is::<ToggleBookmark>());
+
+    // When both features are enabled, the meta text advertises the
+    // modifier-click alternative.
+    let meta = tooltip.meta_text(primary_intent);
+    assert!(meta.contains("-click to add a bookmark"), "got: {meta}");
+    assert!(meta.contains("right-click for more options"));
+    let meta = tooltip.meta_text(secondary_intent);
+    assert!(meta.contains("-click to add a breakpoint"), "got: {meta}");
+
+    // When only one feature is enabled (primary == secondary), a
+    // modifier-click repeats the primary action, so the tooltip must not
+    // advertise it.
+    let single_feature_tooltip = GutterButtonTooltip {
+        primary: GutterButtonIntent::SetBreakpoint,
+        secondary: GutterButtonIntent::SetBreakpoint,
+        focus_handle: tooltip.focus_handle,
+    };
+    let meta = single_feature_tooltip.meta_text(GutterButtonIntent::SetBreakpoint);
+    assert_eq!(meta, "right-click for more options");
 }
 
 #[gpui::test]

@@ -3,7 +3,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
-use gpui::{AnyView, App, AsyncApp, Context, Entity, SharedString, Task, Window};
+use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, Window};
 use http_client::{
     AsyncBody, CustomHeaders, HttpClient, Method, Request as HttpRequest,
     http::{HeaderName, HeaderValue},
@@ -13,7 +13,7 @@ use language_model::{
     LanguageModelCompletionError, LanguageModelCompletionEvent, LanguageModelEffortLevel,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest,
-    LanguageModelToolChoice, ProviderConfigurationView, RateLimiter,
+    LanguageModelToolChoice, ProviderSettingsView, RateLimiter,
 };
 use open_ai::{ReasoningEffort, responses::stream_response};
 use rand::RngCore as _;
@@ -157,10 +157,6 @@ impl OpenAiSubscribedProvider {
         });
     }
 
-    fn sign_out(&self, cx: &mut App) -> Task<Result<()>> {
-        do_sign_out(&self.state.downgrade(), cx)
-    }
-
     fn create_language_model(&self, model: ChatGptModel) -> Arc<dyn LanguageModel> {
         Arc::new(OpenAiSubscribedLanguageModel {
             id: LanguageModelId::from(model.id().to_string()),
@@ -243,71 +239,48 @@ impl LanguageModelProvider for OpenAiSubscribedProvider {
         }
     }
 
-    fn configuration_view(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> AnyView {
-        let state = self.state.clone();
-        let http_client = self.http_client.clone();
-        cx.new(|_cx| ConfigurationView {
-            state,
-            http_client,
-            compact: false,
-        })
-        .into()
-    }
-
-    fn configuration_view_v2(
-        &self,
-        _target_agent: language_model::ConfigurationViewTargetAgent,
-        _window: &mut Window,
-        cx: &mut App,
-    ) -> ProviderConfigurationView {
-        let state = self.state.clone();
-        let http_client = self.http_client.clone();
-
-        ProviderConfigurationView::Inline {
-            view: cx
-                .new(|_cx| ConfigurationView {
-                    state,
-                    http_client,
-                    compact: true,
-                })
-                .into(),
-        }
-    }
-
-    fn inline_title(&self, cx: &App) -> Option<SharedString> {
-        if self.state.read(cx).is_authenticated() {
+    fn settings_view(&self, cx: &mut App) -> Option<ProviderSettingsView> {
+        let is_authenticated = self.state.read(cx).is_authenticated();
+        let title = if is_authenticated {
             None
         } else {
             Some("Configure ChatGPT".into())
-        }
-    }
-
-    fn inline_description(&self, cx: &App) -> Option<InlineDescription> {
-        if self.state.read(cx).is_authenticated() {
+        };
+        let description = if is_authenticated {
             None
         } else {
             Some(InlineDescription::Text(SUBSCRIPTION_DESCRIPTION.into()))
-        }
-    }
+        };
 
-    fn reset_credentials(&self, cx: &mut App) -> Task<Result<()>> {
-        self.sign_out(cx)
+        Some(ProviderSettingsView::Inline(
+            language_model::InlineProviderSettings {
+                title,
+                description,
+                create_view: Arc::new({
+                    let state = self.state.clone();
+                    let http_client = self.http_client.clone();
+                    move |_window, cx| {
+                        cx.new(|_cx| ConfigurationView {
+                            state: state.clone(),
+                            http_client: http_client.clone(),
+                            compact: true,
+                        })
+                        .into()
+                    }
+                }),
+            },
+        ))
     }
 
     fn authentication_error_message(&self) -> SharedString {
         "Your ChatGPT subscription session is invalid or has expired. \
-        Sign in again via the Agent Panel settings to continue."
+        Sign in again via Settings > AI > LLM Providers to continue."
             .into()
     }
 
     fn missing_credentials_error_message(&self) -> SharedString {
         "You are not signed in to your ChatGPT account. \
-        Sign in via the Agent Panel settings to continue."
+        Sign in via Settings > AI > LLM Providers to continue."
             .into()
     }
 
@@ -787,10 +760,12 @@ async fn do_oauth_flow(
         .query_pairs_mut()
         .append_pair("client_id", CLIENT_ID)
         .append_pair("redirect_uri", &redirect_uri)
-        .append_pair(
-            "scope",
-            "openid profile email offline_access api.connectors.read api.connectors.invoke",
-        )
+        // Deliberately excludes `api.connectors.read api.connectors.invoke`
+        // (which Codex CLI requests): extra scopes inflate the
+        // access-token JWT, and the serialized credentials must fit within
+        // Windows Credential Manager's 2560-byte blob limit
+        // (CRED_MAX_CREDENTIAL_BLOB_SIZE). See #58541.
+        .append_pair("scope", "openid profile email offline_access")
         .append_pair("response_type", "code")
         .append_pair("code_challenge", &challenge)
         .append_pair("code_challenge_method", "S256")
