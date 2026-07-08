@@ -237,12 +237,10 @@ where
     // procedure can re-enter (for instance through the modal loop that `show_error` runs), and
     // re-`Box::from_raw`-ing the same pointer would create a second owner aliasing a live
     // allocation. The pointer is null before `WM_NCCREATE` stores it and after `WM_NCDESTROY`
-    // clears it, so guard against dereferencing null.
+    // clears it; `as_ref` turns that null case into `None` instead of dereferencing it.
     let raw = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const RefCell<DialogInfo> };
-    if raw.is_null() {
-        return None;
-    }
-    Some(f(unsafe { &*raw }))
+    let data = unsafe { raw.as_ref() };
+    data.map(f)
 }
 
 fn get_system_ui_font_name() -> String {
