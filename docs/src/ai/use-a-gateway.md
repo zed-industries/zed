@@ -213,6 +213,38 @@ Some AWS environments require a guardrail on every Bedrock API call. Add `guardr
 }
 ```
 
+### Bedrock Mantle Models {#bedrock-mantle-models}
+
+Some models, such as GPT-5.5, GPT-5.4, and Grok 4.3, aren't available through Bedrock's Converse API and are only reachable through `bedrock-mantle`, AWS's OpenAI-compatible inference endpoint. Zed routes these models through `bedrock-mantle` automatically; they appear alongside the rest of the Bedrock models in the model picker once you're authenticated, with no extra configuration required.
+
+Mantle models require IAM permissions for the `bedrock-mantle` endpoint (for example via the `AmazonBedrockMantleInferenceAccess` managed policy) in addition to whatever permissions your existing Bedrock credentials already have, and `bedrock-mantle` is only available in [some AWS Regions](https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-mantle.html#regions). Zed surfaces an error naming the current Region and the supported ones if you try to use a Mantle model outside of them.
+
+#### Custom Bedrock Mantle Models {#bedrock-mantle-custom-models}
+
+You can add custom models served through `bedrock-mantle` with `mantle_available_models`:
+
+```json [settings]
+{
+  "language_models": {
+    "bedrock": {
+      "mantle_available_models": [
+        {
+          "name": "openai.gpt-oss-120b",
+          "display_name": "GPT-OSS 120B",
+          "max_tokens": 128000,
+          "protocol": "chat_completions",
+          "supports_tools": true,
+          "supports_images": false,
+          "supports_thinking": true
+        }
+      ]
+    }
+  }
+}
+```
+
+`protocol` selects which OpenAI-compatible API the model is called through, and must be either `chat_completions` or `responses`. Set `supports_thinking` to `true` for custom Mantle models that accept OpenAI reasoning effort parameters; Zed will then expose `low`, `medium`, `high`, and `xhigh` in the thinking effort picker, while disabling thinking sends `none`.
+
 ## OpenAI-Compatible Gateways {#openai-compatible}
 
 If your gateway exposes an OpenAI-compatible API, configure it with [Use API Access](./use-api-access.md#openai-compatible).

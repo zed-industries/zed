@@ -1,9 +1,9 @@
 use crate::scroll::ScrollAmount;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AnyElement, Entity, Focusable, FontWeight, ListSizingBehavior, ScrollHandle, ScrollStrategy,
-    SharedString, Size, StrikethroughStyle, StyledText, Task, TaskExt, UniformListScrollHandle,
-    div, px, uniform_list,
+    AnyElement, Entity, Focusable, FontWeight, HighlightStyle, ListSizingBehavior, ScrollHandle,
+    ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText, Task, TaskExt,
+    UniformListScrollHandle, div, px, uniform_list,
 };
 use itertools::Itertools;
 use language::CodeLabel;
@@ -1006,43 +1006,18 @@ impl CompletionsMenu {
 
                         let highlights: Vec<_> = highlights.collect();
 
-                        let filter_range = &completion.label.filter_range;
-                        let full_text = &completion.label.text;
-
-                        let main_text: String = full_text[filter_range.clone()].to_string();
-                        let main_highlights: Vec<_> = highlights
-                            .iter()
-                            .filter_map(|(range, highlight)| {
-                                if range.end <= filter_range.start
-                                    || range.start >= filter_range.end
-                                {
-                                    return None;
-                                }
-                                let clamped_start =
-                                    range.start.max(filter_range.start) - filter_range.start;
-                                let clamped_end =
-                                    range.end.min(filter_range.end) - filter_range.start;
-                                Some((clamped_start..clamped_end, (*highlight)))
-                            })
-                            .collect();
-                        let main_label = StyledText::new(main_text)
+                        let ((main_text, main_highlights), (suffix_text, suffix_highlights)) =
+                            split_completion_label(
+                                &completion.label.text,
+                                &completion.label.filter_range,
+                                &highlights,
+                            );
+                        let main_label = StyledText::new(main_text.to_string())
                             .with_default_highlights(&style.text, main_highlights);
 
-                        let suffix_text: String = full_text[filter_range.end..].to_string();
-                        let suffix_highlights: Vec<_> = highlights
-                            .iter()
-                            .filter_map(|(range, highlight)| {
-                                if range.end <= filter_range.end {
-                                    return None;
-                                }
-                                let shifted_start = range.start.saturating_sub(filter_range.end);
-                                let shifted_end = range.end - filter_range.end;
-                                Some((shifted_start..shifted_end, (*highlight)))
-                            })
-                            .collect();
                         let suffix_label = if !suffix_text.is_empty() {
                             Some(
-                                StyledText::new(suffix_text)
+                                StyledText::new(suffix_text.to_string())
                                     .with_default_highlights(&style.text, suffix_highlights),
                             )
                         } else {
@@ -1691,6 +1666,42 @@ fn completion_kind_highlight_name(kind: CompletionItemKind) -> Option<&'static s
     })
 }
 
+fn split_completion_label<'a>(
+    text: &'a str,
+    filter_range: &Range<usize>,
+    highlights: &[(Range<usize>, HighlightStyle)],
+) -> (
+    (&'a str, Vec<(Range<usize>, HighlightStyle)>),
+    (&'a str, Vec<(Range<usize>, HighlightStyle)>),
+) {
+    let (main_text, suffix_text) = text.split_at(filter_range.end);
+    let main_highlights = highlights
+        .iter()
+        .filter_map(|(range, highlight)| {
+            if range.start >= filter_range.end {
+                return None;
+            }
+            let clamped_end = range.end.min(filter_range.end);
+            Some((range.start..clamped_end, *highlight))
+        })
+        .collect();
+    let suffix_highlights = highlights
+        .iter()
+        .filter_map(|(range, highlight)| {
+            if range.end <= filter_range.end {
+                return None;
+            }
+            let shifted_start = range.start.saturating_sub(filter_range.end);
+            let shifted_end = range.end - filter_range.end;
+            Some((shifted_start..shifted_end, *highlight))
+        })
+        .collect();
+    (
+        (main_text, main_highlights),
+        (suffix_text, suffix_highlights),
+    )
+}
+
 fn exact_case_match_count(query: &str, string_match: &StringMatch) -> usize {
     let mut exact_matches = 0;
     let mut query_chars = query.chars();
@@ -2036,5 +2047,47 @@ impl CodeActionsMenu {
                 )
                 .into_any_element(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bold() -> HighlightStyle {
+        FontWeight::BOLD.into()
+    }
+
+    fn colored() -> HighlightStyle {
+        HighlightStyle {
+            fade_out: Some(0.5),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_split_completion_label_keeps_prefix_before_filter_range() {
+        let ((main_text, main_highlights), (suffix_text, suffix_highlights)) =
+            split_completion_label("&some_str: String", &(1..9), &[(11..17, colored())]);
+
+        assert_eq!(main_text, "&some_str");
+        assert_eq!(suffix_text, ": String");
+        assert_eq!(main_highlights, vec![]);
+        assert_eq!(suffix_highlights, vec![(2..8, colored())]);
+    }
+
+    #[test]
+    fn test_split_completion_label_splits_boundary_spanning_highlight() {
+        let ((main_text, main_highlights), (suffix_text, suffix_highlights)) =
+            split_completion_label(
+                "await.as_deref_mut(&mut self)",
+                &(6..18),
+                &[(0..29, bold())],
+            );
+
+        assert_eq!(main_text, "await.as_deref_mut");
+        assert_eq!(suffix_text, "(&mut self)");
+        assert_eq!(main_highlights, vec![(0..18, bold())]);
+        assert_eq!(suffix_highlights, vec![(0..11, bold())]);
     }
 }
