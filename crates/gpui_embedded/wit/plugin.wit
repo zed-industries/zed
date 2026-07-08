@@ -342,12 +342,21 @@ world plugin {
 
     /// A dynamically dispatched message for a shared entity's home side. `sequence` is a
     /// per-entity monotonic counter assigned by the sender; because all delivery is FIFO
-    /// over a single thread, the home applies messages in sequence order.
+    /// over a single thread, the home applies messages in sequence order. A message with a
+    /// `request-id` is a call: the home answers with a `shared-response`, delivered after
+    /// the snapshot that acks the call's sequence (so calls are read-your-writes too).
     record shared-message {
         entity-id: u64,
         sequence: u64,
+        request-id: option<u64>,
         method: string,
         payload: list<u8>,
+    }
+
+    /// The answer to a `shared-message` that carried a `request-id`.
+    record shared-response {
+        request-id: u64,
+        outcome: result<list<u8>, string>,
     }
 
     /// A serialized state snapshot flowing from an entity's home to its projections.
@@ -369,6 +378,9 @@ world plugin {
     /// Publish a snapshot of a guest-homed entity.
     import publish-shared-snapshot: func(snapshot: shared-snapshot);
 
+    /// Answer a call that the host made to a guest-homed entity.
+    import send-shared-response: func(response: shared-response);
+
     /// Notify the guest of a host-homed entity.
     export shared-entity-announced: func(announcement: shared-entity-announcement);
 
@@ -377,6 +389,9 @@ world plugin {
 
     /// Deliver a snapshot of a host-homed entity to the guest's projections.
     export deliver-shared-snapshot: func(snapshot: shared-snapshot);
+
+    /// Answer a call that the guest made to a host-homed entity.
+    export deliver-shared-response: func(response: shared-response);
 
     /// Ask the host to call the `tick` export after at least `delay-ms` milliseconds.
     /// A delay of zero means "as soon as possible, but not re-entrantly".

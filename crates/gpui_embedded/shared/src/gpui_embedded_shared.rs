@@ -34,8 +34,172 @@ pub trait SharedMessage: Serialize + DeserializeOwned + 'static {
     /// The entity kind this message addresses.
     type Spec: SharedSpec;
 
+    /// The value the home's handler returns. `()` for fire-and-forget casts.
+    type Response: Serialize + DeserializeOwned + 'static;
+
     /// Stable method name used for dynamic dispatch on the home side.
     const METHOD: &'static str;
+}
+
+/// An entity type that can serve as the home of a shared entity of kind `S`.
+pub trait SharedEntitySource<S: SharedSpec>: 'static {
+    fn snapshot(&self, cx: &gpui::App) -> S::Snapshot;
+}
+
+/// A handler for one typed message, implemented by the home entity. The returned value is
+/// serialized back to the caller when the message was a call.
+pub trait HandleShared<M: SharedMessage>: 'static + Sized {
+    fn handle(&mut self, message: M, cx: &mut gpui::Context<Self>) -> M::Response;
+}
+
+/// A type-erased method handler on an entity's home side: decode, dispatch, encode the
+/// response. Used identically by the native host and the wasm guest.
+pub type MethodHandler = std::rc::Rc<dyn Fn(&[u8], &mut gpui::App) -> anyhow::Result<Vec<u8>>>;
+
+/// Typed registration of dynamically dispatched methods for a shared entity's home.
+pub struct Methods<S: SharedSpec, T> {
+    entity: gpui::WeakEntity<T>,
+    map: std::collections::HashMap<String, MethodHandler>,
+    _spec: std::marker::PhantomData<S>,
+}
+
+impl<S: SharedSpec, T: 'static> Methods<S, T> {
+    #[doc(hidden)]
+    pub fn new(entity: gpui::WeakEntity<T>) -> Self {
+        Self {
+            entity,
+            map: std::collections::HashMap::new(),
+            _spec: std::marker::PhantomData,
+        }
+    }
+
+    /// Register the handler for message type `M`. The wire stays dynamic — this inserts a
+    /// decode-dispatch-encode closure under `M::METHOD`.
+    pub fn on<M>(&mut self) -> &mut Self
+    where
+        M: SharedMessage<Spec = S>,
+        T: HandleShared<M>,
+    {
+        let entity = self.entity.clone();
+        self.map.insert(
+            M::METHOD.to_string(),
+            std::rc::Rc::new(move |payload, cx| {
+                let message: M = decode(payload)?;
+                let response = entity.update(cx, |entity, cx| entity.handle(message, cx))?;
+                encode(&response)
+            }),
+        );
+        self
+    }
+
+    /// The dynamic escape hatch: register a raw handler for an arbitrary method name.
+    pub fn on_raw(
+        &mut self,
+        method: impl Into<String>,
+        handler: impl Fn(&gpui::Entity<T>, &[u8], &mut gpui::App) -> anyhow::Result<Vec<u8>> + 'static,
+    ) -> &mut Self {
+        let entity = self.entity.clone();
+        self.map.insert(
+            method.into(),
+            std::rc::Rc::new(move |payload, cx| {
+                let entity = entity
+                    .upgrade()
+                    .ok_or_else(|| anyhow::anyhow!("shared entity dropped"))?;
+                handler(&entity, payload, cx)
+            }),
+        );
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn into_map(self) -> std::collections::HashMap<String, MethodHandler> {
+        self.map
+    }
+}
+
+/// Resolves once the home has applied a send and the local replica reflects it (awaiting it
+/// gives read-your-writes). Dropping it means "don't wait"; the message is unaffected.
+pub struct SendReceipt(futures::channel::oneshot::Receiver<()>);
+
+/// The sending half backing a [`SendReceipt`].
+pub type AckSender = futures::channel::oneshot::Sender<()>;
+
+impl SendReceipt {
+    #[doc(hidden)]
+    pub fn channel() -> (AckSender, Self) {
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        (sender, Self(receiver))
+    }
+
+    #[doc(hidden)]
+    pub fn dropped() -> Self {
+        let (_sender, receiver) = futures::channel::oneshot::channel();
+        Self(receiver)
+    }
+}
+
+impl std::future::Future for SendReceipt {
+    type Output = anyhow::Result<()>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        std::pin::Pin::new(&mut self.0)
+            .poll(cx)
+            .map(|result| result.map_err(|_| anyhow::anyhow!("shared entity went away before ack")))
+    }
+}
+
+/// The sending half backing a [`CallReceipt`]: the serialized response or an error string.
+pub type ResponseSender = futures::channel::oneshot::Sender<Result<Vec<u8>, String>>;
+
+/// Resolves with the home handler's return value. Responses are delivered after the
+/// snapshot acking the call, so by the time a call resolves the local replica already
+/// reflects it.
+pub struct CallReceipt<R> {
+    receiver: futures::channel::oneshot::Receiver<Result<Vec<u8>, String>>,
+    _response: std::marker::PhantomData<fn() -> R>,
+}
+
+impl<R> CallReceipt<R> {
+    #[doc(hidden)]
+    pub fn channel() -> (ResponseSender, Self) {
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        (
+            sender,
+            Self {
+                receiver,
+                _response: std::marker::PhantomData,
+            },
+        )
+    }
+
+    #[doc(hidden)]
+    pub fn dropped() -> Self {
+        let (_sender, receiver) = futures::channel::oneshot::channel();
+        Self {
+            receiver,
+            _response: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<R: DeserializeOwned> std::future::Future for CallReceipt<R> {
+    type Output = anyhow::Result<R>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let this = self.get_mut();
+        std::pin::Pin::new(&mut this.receiver).poll(cx).map(|result| {
+            let outcome =
+                result.map_err(|_| anyhow::anyhow!("shared entity went away before response"))?;
+            let bytes = outcome.map_err(|error| anyhow::anyhow!("shared call failed: {error}"))?;
+            decode(&bytes)
+        })
+    }
 }
 
 pub fn encode<T: Serialize>(value: &T) -> anyhow::Result<Vec<u8>> {
@@ -68,7 +232,7 @@ macro_rules! shared_schema {
     (
         entity $spec:ident as $type_name:literal {
             snapshot $snapshot:ident { $($snapshot_field:ident : $snapshot_ty:ty),* $(,)? }
-            $(message $method:literal $message:ident { $($message_field:ident : $message_ty:ty),* $(,)? })*
+            $(message $method:literal $message:ident { $($message_field:ident : $message_ty:ty),* $(,)? } $(-> $response:ty)?)*
         }
     ) => {
         pub struct $spec;
@@ -91,8 +255,11 @@ macro_rules! shared_schema {
                 $(pub $message_field: $message_ty),*
             }
 
+            #[allow(unused_parens)]
             impl $crate::SharedMessage for $message {
                 type Spec = $spec;
+                // `(T)` is just T; an absent response type leaves the unit type.
+                type Response = ($($response)?);
                 const METHOD: &'static str = $method;
             }
         )*
@@ -105,7 +272,7 @@ pub mod demo {
     crate::shared_schema! {
         entity CounterSpec as "gpui-embedded.demo.counter" {
             snapshot CounterSnapshot { clicks: u32 }
-            message "increment" Increment { by: u32 }
+            message "increment" Increment { by: u32 } -> u32
         }
     }
 

@@ -12,7 +12,9 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use gpui::{AppContext as _, Context, Entity, Pixels, PlatformTextSystem, Size, Task, WeakEntity, px};
-use gpui_embedded_shared::{SharedMessage, SharedProjection, SharedSpec};
+use gpui_embedded_shared::{
+    AckSender, ResponseSender, SharedMessage, SharedProjection, SharedSpec,
+};
 use wasmtime::component::{Component, Linker};
 use wasmtime::{Config, Engine, Store};
 use wasmtime_wasi::{ResourceTable, WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
@@ -29,25 +31,10 @@ use bindings::{Plugin, PluginImports};
 mod plugin_element;
 mod shared_entities;
 
+pub use gpui_embedded_shared::{
+    CallReceipt, HandleShared, Methods, SendReceipt, SharedEntitySource,
+};
 pub use plugin_element::PluginViewState;
-pub use shared_entities::{HandleShared, Methods, SharedEntitySource};
-
-/// Resolves once the guest home has applied the send and the local replica reflects it.
-/// Dropping it just means "don't wait"; the message is unaffected.
-pub struct SendReceipt(futures::channel::oneshot::Receiver<()>);
-
-impl std::future::Future for SendReceipt {
-    type Output = Result<()>;
-
-    fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        std::pin::Pin::new(&mut self.0)
-            .poll(cx)
-            .map(|result| result.map_err(|_| anyhow::anyhow!("shared entity went away before ack")))
-    }
-}
 
 /// A typed host-side handle to a guest-homed shared entity.
 pub struct HostRemote<S: SharedSpec> {
@@ -74,12 +61,19 @@ impl<S: SharedSpec> HostRemote<S> {
 
     /// Send a typed message to the guest home. Await the receipt for read-your-writes.
     pub fn send<M: SharedMessage<Spec = S>>(&self, message: M, cx: &mut gpui::App) -> SendReceipt {
-        let (ack_tx, ack_rx) = futures::channel::oneshot::channel();
+        let (ack_sender, receipt) = SendReceipt::channel();
         match gpui_embedded_shared::encode(&message) {
             Ok(payload) => {
                 self.host
                     .update(cx, |host, cx| {
-                        host.send_to_guest(&self.name, M::METHOD, payload, ack_tx, cx);
+                        host.send_to_guest(
+                            &self.name,
+                            M::METHOD,
+                            payload,
+                            Some(ack_sender),
+                            None,
+                            cx,
+                        );
                     })
                     .ok();
             }
@@ -89,7 +83,39 @@ impl<S: SharedSpec> HostRemote<S> {
                 M::METHOD
             ),
         }
-        SendReceipt(ack_rx)
+        receipt
+    }
+
+    /// Call a typed method on the guest home, resolving with its return value after the
+    /// replica reflects the mutation.
+    pub fn call<M: SharedMessage<Spec = S>>(
+        &self,
+        message: M,
+        cx: &mut gpui::App,
+    ) -> CallReceipt<M::Response> {
+        let (response_sender, receipt) = CallReceipt::channel();
+        match gpui_embedded_shared::encode(&message) {
+            Ok(payload) => {
+                self.host
+                    .update(cx, |host, cx| {
+                        host.send_to_guest(
+                            &self.name,
+                            M::METHOD,
+                            payload,
+                            None,
+                            Some(response_sender),
+                            cx,
+                        );
+                    })
+                    .ok();
+            }
+            Err(error) => log::error!(
+                "gpui_embedded: failed to encode {}::{}: {error:#}",
+                S::TYPE_NAME,
+                M::METHOD
+            ),
+        }
+        receipt
     }
 }
 
@@ -104,6 +130,7 @@ pub struct PendingEffects {
     pub shared_messages: Vec<bindings::SharedMessage>,
     pub shared_announcements: Vec<bindings::SharedEntityAnnouncement>,
     pub shared_snapshots: Vec<bindings::SharedSnapshot>,
+    pub shared_responses: Vec<bindings::SharedResponse>,
 }
 
 /// Alias used for the value returned from the `PluginInstance` methods after they drain the
@@ -306,6 +333,10 @@ impl PluginImports for HostState {
         self.pending.shared_snapshots.push(snapshot);
     }
 
+    fn send_shared_response(&mut self, response: bindings::SharedResponse) {
+        self.pending.shared_responses.push(response);
+    }
+
     fn set_cursor_style(&mut self, style: bindings::CursorStyle) {
         self.pending.cursor_style = Some(cursor_style_from_wire(style));
     }
@@ -467,6 +498,15 @@ impl PluginInstance {
     pub fn deliver_shared_message(&mut self, message: &bindings::SharedMessage) -> Result<Effects> {
         self.bindings
             .call_deliver_shared_message(&mut self.store, message)?;
+        Ok(self.take_effects())
+    }
+
+    pub fn deliver_shared_response(
+        &mut self,
+        response: &bindings::SharedResponse,
+    ) -> Result<Effects> {
+        self.bindings
+            .call_deliver_shared_response(&mut self.store, response)?;
         Ok(self.take_effects())
     }
 }
@@ -648,6 +688,7 @@ impl PluginHost {
             .deliver_shared_message(&bindings::SharedMessage {
                 entity_id,
                 sequence: send.sequence,
+                request_id: send.request_id,
                 method: send.method,
                 payload: send.payload,
             });
@@ -662,19 +703,29 @@ impl PluginHost {
         name: &str,
         method: &str,
         payload: Vec<u8>,
-        ack: futures::channel::oneshot::Sender<()>,
+        ack: Option<AckSender>,
+        response: Option<ResponseSender>,
         cx: &mut Context<Self>,
     ) {
+        let request_id = response.map(|sender| {
+            self.shared.next_request_id += 1;
+            let request_id = self.shared.next_request_id;
+            self.shared.pending_responses.insert(request_id, sender);
+            request_id
+        });
         let Some(projection) = self.shared.projections_by_name.get_mut(name) else {
             log::warn!("gpui_embedded: send to unknown shared entity {name:?}");
             return;
         };
         projection.next_sequence += 1;
         let sequence = projection.next_sequence;
-        projection.pending_acks.push((sequence, ack));
+        if let Some(ack) = ack {
+            projection.pending_acks.push((sequence, ack));
+        }
         let entity_id = projection.entity_id;
         let send = shared_entities::PendingSend {
             sequence,
+            request_id,
             method: method.to_string(),
             payload,
         };
@@ -760,19 +811,40 @@ impl PluginHost {
             self.bind_projection(announcement, cx);
         }
 
+        // Snapshots strictly before responses: a call's receipt must only resolve once the
+        // local replica already reflects it.
+        for snapshot in effects.shared_snapshots {
+            self.apply_guest_snapshot(snapshot, cx);
+        }
+
+        for response in effects.shared_responses {
+            let Some(sender) = self.shared.pending_responses.remove(&response.request_id) else {
+                log::warn!(
+                    "gpui_embedded: response for unknown request {}",
+                    response.request_id
+                );
+                continue;
+            };
+            sender.send(response.outcome).ok();
+        }
+
         for message in effects.shared_messages {
-            if let Err(error) = self.shared.dispatch(
-                message.entity_id,
-                message.sequence,
-                &message.method,
-                &message.payload,
-                cx,
-            ) {
-                log::error!("gpui_embedded: shared message failed: {error:#}");
-            }
-            // Handlers usually notify, which publishes an acking snapshot through the
-            // observation; this deferred check covers handlers that don't, so the sender's
-            // receipt still resolves. Deduped via published_ack.
+            let outcome = self
+                .shared
+                .dispatch(
+                    message.entity_id,
+                    message.sequence,
+                    &message.method,
+                    &message.payload,
+                    cx,
+                )
+                .map_err(|error| {
+                    log::error!("gpui_embedded: shared message failed: {error:#}");
+                    format!("{error:#}")
+                });
+            // Both follow-ups are deferred so they run after the handler's notify effects
+            // flush: first the acking snapshot (deduped via published_ack), then the
+            // response, preserving snapshot-before-response ordering on the guest.
             let entity_id = message.entity_id;
             let host = cx.weak_entity();
             cx.defer(move |cx| {
@@ -787,10 +859,21 @@ impl PluginHost {
                 })
                 .ok();
             });
-        }
-
-        for snapshot in effects.shared_snapshots {
-            self.apply_guest_snapshot(snapshot, cx);
+            if let Some(request_id) = message.request_id {
+                let host = cx.weak_entity();
+                cx.defer(move |cx| {
+                    host.update(cx, |host, cx| {
+                        host.deliver_response_to_guest(
+                            bindings::SharedResponse {
+                                request_id,
+                                outcome,
+                            },
+                            cx,
+                        );
+                    })
+                    .ok();
+                });
+            }
         }
 
         for (view_id, list) in effects.scene_updates {
@@ -821,6 +904,23 @@ impl PluginHost {
                     .await;
                 this.update(cx, |this, cx| this.tick(cx)).ok();
             }));
+        }
+    }
+
+    fn deliver_response_to_guest(
+        &mut self,
+        response: bindings::SharedResponse,
+        cx: &mut Context<Self>,
+    ) {
+        let result = self
+            .instance
+            .borrow_mut()
+            .deliver_shared_response(&response);
+        match result {
+            Ok(effects) => self.apply_effects(effects, cx),
+            Err(error) => {
+                log::error!("gpui_embedded: delivering shared response failed: {error:#}")
+            }
         }
     }
 

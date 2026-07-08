@@ -7855,6 +7855,8 @@ name = "gpui_embedded_shared"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures 0.3.32",
+ "gpui",
  "serde",
  "serde_json",
 ]

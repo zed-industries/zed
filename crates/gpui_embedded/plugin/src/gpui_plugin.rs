@@ -267,6 +267,14 @@ impl wit::Guest for Component {
         shared::snapshot_delivered(snapshot, &mut async_app);
         pump(&platform);
     }
+
+    fn deliver_shared_response(response: wit::SharedResponse) {
+        let Some((_, platform, _)) = runtime_handles() else {
+            return;
+        };
+        shared::response_delivered(response);
+        pump(&platform);
+    }
 }
 
 wit::export!(Component with_types_in wit);

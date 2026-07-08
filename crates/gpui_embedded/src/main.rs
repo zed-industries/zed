@@ -27,9 +27,10 @@ impl SharedEntitySource<CounterSpec> for Counter {
 }
 
 impl HandleShared<Increment> for Counter {
-    fn handle(&mut self, message: Increment, cx: &mut Context<Self>) {
+    fn handle(&mut self, message: Increment, cx: &mut Context<Self>) -> u32 {
         self.clicks += message.by;
         cx.notify();
+        self.clicks
     }
 }
 

@@ -3,34 +3,21 @@
 //! `wit/plugin.wit`.
 
 use std::collections::HashMap;
-use std::marker::PhantomData;
 use std::rc::Rc;
 
 use anyhow::{Context as _, Result, anyhow};
-use futures::channel::oneshot;
-use gpui::{App, Context, Entity, Subscription, WeakEntity};
-use gpui_embedded_shared::{SharedMessage, SharedSpec, decode};
+use gpui::{App, Subscription};
+use gpui_embedded_shared::{AckSender, MethodHandler, Methods, ResponseSender, SharedSpec};
 
 use crate::bindings;
 
-/// A host entity type that can serve as the home of a shared entity of kind `S`.
-pub trait SharedEntitySource<S: SharedSpec>: 'static {
-    fn snapshot(&self, cx: &App) -> S::Snapshot;
-}
-
-/// A handler for one typed message, implemented by the home entity.
-pub trait HandleShared<M: SharedMessage>: 'static + Sized {
-    fn handle(&mut self, message: M, cx: &mut Context<Self>);
-}
-
-type MethodHandler = Rc<dyn Fn(&[u8], &mut App) -> Result<()>>;
 type SnapshotFn = Rc<dyn Fn(&App) -> Result<Vec<u8>>>;
 type ApplySnapshot = Rc<dyn Fn(&[u8], &mut App) -> Result<()>>;
 
 pub(crate) struct HostSharedEntity {
     name: String,
     type_name: &'static str,
-    methods: HashMap<&'static str, MethodHandler>,
+    methods: HashMap<String, MethodHandler>,
     pub snapshot_fn: SnapshotFn,
     pub applied_sequence: u64,
     pub published_ack: u64,
@@ -59,6 +46,7 @@ impl HostSharedEntity {
 
 pub(crate) struct PendingSend {
     pub sequence: u64,
+    pub request_id: Option<u64>,
     pub method: String,
     pub payload: Vec<u8>,
 }
@@ -69,7 +57,7 @@ pub(crate) struct HostProjection {
     pub apply_snapshot: ApplySnapshot,
     pub next_sequence: u64,
     pub pending_sends: Vec<PendingSend>,
-    pub pending_acks: Vec<(u64, oneshot::Sender<()>)>,
+    pub pending_acks: Vec<(u64, AckSender)>,
 }
 
 #[derive(Default)]
@@ -80,6 +68,8 @@ pub(crate) struct HostShared {
     pub projection_names_by_id: HashMap<u64, String>,
     /// Guest announcements that arrived before the host attached a projection.
     pub unclaimed_announcements: HashMap<String, bindings::SharedEntityAnnouncement>,
+    pub next_request_id: u64,
+    pub pending_responses: HashMap<u64, ResponseSender>,
 }
 
 impl HostShared {
@@ -142,6 +132,7 @@ impl HostShared {
         Some(std::mem::take(&mut projection.pending_sends))
     }
 
+    /// Run the handler and return the encoded response.
     pub fn dispatch(
         &mut self,
         entity_id: u64,
@@ -149,7 +140,7 @@ impl HostShared {
         method: &str,
         payload: &[u8],
         cx: &mut App,
-    ) -> Result<()> {
+    ) -> Result<Vec<u8>> {
         let home = self
             .homes
             .get_mut(&entity_id)
@@ -165,62 +156,5 @@ impl HostShared {
         let name = home.name.clone();
         handler(payload, cx)
             .with_context(|| format!("dispatching {method:?} to shared entity {name:?}"))
-    }
-}
-
-/// Typed registration of dynamically dispatched methods, built during
-/// [`crate::PluginHost::share`].
-pub struct Methods<S: SharedSpec, T> {
-    entity: WeakEntity<T>,
-    map: HashMap<&'static str, MethodHandler>,
-    _spec: PhantomData<S>,
-}
-
-impl<S: SharedSpec, T: 'static> Methods<S, T> {
-    pub(crate) fn new(entity: WeakEntity<T>) -> Self {
-        Self {
-            entity,
-            map: HashMap::new(),
-            _spec: PhantomData,
-        }
-    }
-
-    /// Register the handler for message type `M`. The wire stays dynamic — this inserts a
-    /// decode-and-call closure under `M::METHOD`.
-    pub fn on<M>(&mut self) -> &mut Self
-    where
-        M: SharedMessage<Spec = S>,
-        T: HandleShared<M>,
-    {
-        let entity = self.entity.clone();
-        self.map.insert(
-            M::METHOD,
-            Rc::new(move |payload, cx| {
-                let message: M = decode(payload).context("decoding shared message")?;
-                entity.update(cx, |entity, cx| entity.handle(message, cx))
-            }),
-        );
-        self
-    }
-
-    /// The dynamic escape hatch: register a raw handler for an arbitrary method name.
-    pub fn on_raw(
-        &mut self,
-        method: &'static str,
-        handler: impl Fn(&Entity<T>, &[u8], &mut App) -> Result<()> + 'static,
-    ) -> &mut Self {
-        let entity = self.entity.clone();
-        self.map.insert(
-            method,
-            Rc::new(move |payload, cx| {
-                let entity = entity.upgrade().context("shared entity dropped")?;
-                handler(&entity, payload, cx)
-            }),
-        );
-        self
-    }
-
-    pub(crate) fn into_map(self) -> HashMap<&'static str, MethodHandler> {
-        self.map
     }
 }

@@ -4,39 +4,28 @@
 
 use crate::wit;
 use anyhow::{Context as _, Result, anyhow};
-use futures::channel::oneshot;
-use gpui::{App, AppContext as _, AsyncApp, Context, Entity, WeakEntity};
-use gpui_embedded_shared::{SharedMessage, SharedSpec, decode, encode};
+use gpui::{App, AppContext as _, AsyncApp, Entity};
+use gpui_embedded_shared::{
+    AckSender, MethodHandler, ResponseSender, SharedMessage, SharedSpec, decode, encode,
+};
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::future::Future;
-use std::marker::PhantomData;
-use std::pin::Pin;
 use std::rc::Rc;
-use std::task::Poll;
 
-pub use gpui_embedded_shared::SharedProjection;
+pub use gpui_embedded_shared::{
+    CallReceipt, HandleShared, Methods, SendReceipt, SharedEntitySource, SharedProjection,
+};
 
 /// Guest-homed entity ids have the high bit set so they can never collide with host-minted
 /// ids.
 const GUEST_HOME_BIT: u64 = 1 << 63;
 
-/// A guest entity type that can serve as the home of a shared entity of kind `S`.
-pub trait SharedEntitySource<S: SharedSpec>: 'static {
-    fn snapshot(&self, cx: &App) -> S::Snapshot;
-}
-
-/// A handler for one typed message, implemented by the home entity.
-pub trait HandleShared<M: SharedMessage>: 'static + Sized {
-    fn handle(&mut self, message: M, cx: &mut Context<Self>);
-}
-
 type ApplySnapshot = Rc<dyn Fn(&[u8], &mut AsyncApp) -> Result<()>>;
-type MethodHandler = Rc<dyn Fn(&[u8], &mut AsyncApp) -> Result<()>>;
 type SnapshotFn = Rc<dyn Fn(&App) -> Result<Vec<u8>>>;
 
 struct PendingSend {
     sequence: u64,
+    request_id: Option<u64>,
     method: String,
     payload: Vec<u8>,
 }
@@ -49,7 +38,7 @@ struct ProjectionEntry {
     /// Messages sent before the home side's announcement arrived; flushed in order, which is
     /// what makes sends to a not-yet-resolved entity pipeline correctly.
     pending_sends: Vec<PendingSend>,
-    pending_acks: Vec<(u64, oneshot::Sender<()>)>,
+    pending_acks: Vec<(u64, AckSender)>,
 }
 
 struct HomeEntry {
@@ -65,25 +54,12 @@ struct Registry {
     names_by_entity_id: HashMap<u64, String>,
     homes: HashMap<u64, HomeEntry>,
     next_home_id: u64,
+    next_request_id: u64,
+    pending_responses: HashMap<u64, ResponseSender>,
 }
 
 thread_local! {
     static REGISTRY: RefCell<Registry> = RefCell::new(Registry::default());
-}
-
-/// Resolves once the home side has applied the send and the local replica reflects it, so
-/// awaiting it gives read-your-writes. Dropping it just means "don't wait"; the message is
-/// unaffected.
-pub struct SendReceipt(oneshot::Receiver<()>);
-
-impl Future for SendReceipt {
-    type Output = Result<()>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut self.0)
-            .poll(cx)
-            .map(|result| result.map_err(|_| anyhow!("shared entity went away before ack")))
-    }
 }
 
 /// A typed handle to an entity homed on the other side of the boundary.
@@ -149,8 +125,24 @@ impl<S: SharedSpec> Remote<S> {
                     S::TYPE_NAME,
                     M::METHOD
                 );
-                let (_tx, rx) = oneshot::channel();
-                SendReceipt(rx)
+                SendReceipt::dropped()
+            }
+        }
+    }
+
+    /// Call a typed method on the entity's home side, resolving with its return value. The
+    /// response is delivered after the snapshot acking this call, so the replica already
+    /// reflects the mutation when the receipt resolves.
+    pub fn call<M: SharedMessage<Spec = S>>(&self, message: M) -> CallReceipt<M::Response> {
+        match encode(&message) {
+            Ok(payload) => call_raw(&self.name, M::METHOD, payload),
+            Err(error) => {
+                log::error!(
+                    "gpui_plugin: failed to encode {}::{}: {error:#}",
+                    S::TYPE_NAME,
+                    M::METHOD
+                );
+                CallReceipt::dropped()
             }
         }
     }
@@ -159,32 +151,80 @@ impl<S: SharedSpec> Remote<S> {
 /// The dynamic escape hatch: send an arbitrary method and payload to a shared entity by
 /// name. The typed [`Remote::send`] is sugar over exactly this.
 pub fn send_raw(name: &str, method: &str, payload: Vec<u8>) -> SendReceipt {
-    let (ack_tx, ack_rx) = oneshot::channel();
+    let (ack_sender, receipt) = SendReceipt::channel();
+    dispatch_outgoing(name, method, payload, Some(ack_sender), None);
+    receipt
+}
+
+/// The dynamic call escape hatch; the typed [`Remote::call`] is sugar over this.
+pub fn call_raw<R: gpui_embedded_shared::serde::de::DeserializeOwned>(
+    name: &str,
+    method: &str,
+    payload: Vec<u8>,
+) -> CallReceipt<R> {
+    let (response_sender, receipt) = CallReceipt::channel();
+    dispatch_outgoing(name, method, payload, None, Some(response_sender));
+    receipt
+}
+
+fn dispatch_outgoing(
+    name: &str,
+    method: &str,
+    payload: Vec<u8>,
+    ack: Option<AckSender>,
+    response: Option<ResponseSender>,
+) {
     REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
+        let request_id = response.map(|sender| {
+            registry.next_request_id += 1;
+            let request_id = registry.next_request_id;
+            registry.pending_responses.insert(request_id, sender);
+            request_id
+        });
         let Some(entry) = registry.projections_by_name.get_mut(name) else {
             log::warn!("gpui_plugin: send to unknown shared entity {name:?}");
             return;
         };
         entry.next_sequence += 1;
         let sequence = entry.next_sequence;
-        entry.pending_acks.push((sequence, ack_tx));
+        if let Some(ack) = ack {
+            entry.pending_acks.push((sequence, ack));
+        }
         if let Some(entity_id) = entry.entity_id {
             wit::send_shared_message(&wit::SharedMessage {
                 entity_id,
                 sequence,
+                request_id,
                 method: method.to_string(),
                 payload,
             });
         } else {
             entry.pending_sends.push(PendingSend {
                 sequence,
+                request_id,
                 method: method.to_string(),
                 payload,
             });
         }
     });
-    SendReceipt(ack_rx)
+}
+
+pub(crate) fn response_delivered(response: wit::SharedResponse) {
+    let sender = REGISTRY.with(|registry| {
+        registry
+            .borrow_mut()
+            .pending_responses
+            .remove(&response.request_id)
+    });
+    let Some(sender) = sender else {
+        log::warn!(
+            "gpui_plugin: response for unknown request {}",
+            response.request_id
+        );
+        return;
+    };
+    sender.send(response.outcome).ok();
 }
 
 /// Share a guest entity with the host under a well-known name. The guest becomes the home:
@@ -218,7 +258,7 @@ pub fn share<S, T>(
         registry.homes.insert(
             entity_id,
             HomeEntry {
-                methods: methods.map,
+                methods: methods.into_map(),
                 snapshot_fn,
                 applied_sequence: 0,
                 published_ack: 0,
@@ -236,40 +276,6 @@ pub fn share<S, T>(
         name,
     });
     publish_home(entity_id, cx);
-}
-
-/// Typed registration of dynamically dispatched methods for a guest-homed entity.
-pub struct Methods<S: SharedSpec, T> {
-    entity: WeakEntity<T>,
-    map: HashMap<String, MethodHandler>,
-    _spec: PhantomData<S>,
-}
-
-impl<S: SharedSpec, T: 'static> Methods<S, T> {
-    fn new(entity: WeakEntity<T>) -> Self {
-        Self {
-            entity,
-            map: HashMap::new(),
-            _spec: PhantomData,
-        }
-    }
-
-    /// Register the handler for message type `M`.
-    pub fn on<M>(&mut self) -> &mut Self
-    where
-        M: SharedMessage<Spec = S>,
-        T: HandleShared<M>,
-    {
-        let entity = self.entity.clone();
-        self.map.insert(
-            M::METHOD.to_string(),
-            Rc::new(move |payload, cx: &mut AsyncApp| {
-                let message: M = decode(payload).context("decoding shared message")?;
-                entity.update(cx, |entity, cx| entity.handle(message, cx))
-            }),
-        );
-        self
-    }
 }
 
 fn publish_home(entity_id: u64, cx: &mut App) {
@@ -329,6 +335,7 @@ pub(crate) fn entity_announced(announcement: wit::SharedEntityAnnouncement) {
         wit::send_shared_message(&wit::SharedMessage {
             entity_id,
             sequence: send.sequence,
+            request_id: send.request_id,
             method: send.method,
             payload: send.payload,
         });
@@ -364,8 +371,8 @@ pub(crate) fn snapshot_delivered(snapshot: wit::SharedSnapshot, cx: &mut AsyncAp
         let mut acked = Vec::new();
         entry.pending_acks.retain_mut(|(sequence, sender)| {
             if *sequence <= snapshot.acked_sequence {
-                let (drained_tx, _drained_rx) = oneshot::channel();
-                acked.push(std::mem::replace(sender, drained_tx));
+                let (drained_sender, _drained_receiver) = futures::channel::oneshot::channel();
+                acked.push(std::mem::replace(sender, drained_sender));
                 false
             } else {
                 true
@@ -385,20 +392,23 @@ pub(crate) fn message_delivered(message: wit::SharedMessage, cx: &mut AsyncApp) 
         home.applied_sequence = home.applied_sequence.max(message.sequence);
         home.methods.get(&message.method).cloned()
     });
-    let Some(handler) = handler else {
-        log::error!(
-            "gpui_plugin: no handler for shared method {:?} on entity {}",
-            message.method,
-            message.entity_id
-        );
-        return;
+    let outcome = match handler {
+        Some(handler) => cx
+            .update(|cx| handler(&message.payload, cx))
+            .map_err(|error| format!("{error:#}")),
+        None => Err(format!(
+            "no handler for shared method {:?} on entity {}",
+            message.method, message.entity_id
+        )),
     };
-    if let Err(error) = handler(&message.payload, cx) {
-        log::error!("gpui_plugin: shared message failed: {error:#}");
+    if let Err(error) = &outcome {
+        log::error!("gpui_plugin: shared message failed: {error}");
     }
 
     // The handler's notify usually published already (observers run in its update cycle);
-    // this covers handlers that don't notify, so the sender's receipt still resolves.
+    // this covers handlers that don't notify, so the sender's receipt still resolves. It
+    // must happen BEFORE the response goes back: responses may only arrive after the
+    // snapshot acking their call, which is what makes calls read-your-writes.
     let needs_ack = REGISTRY.with(|registry| {
         registry
             .borrow()
@@ -409,5 +419,12 @@ pub(crate) fn message_delivered(message: wit::SharedMessage, cx: &mut AsyncApp) 
     if needs_ack {
         let entity_id = message.entity_id;
         cx.update(|cx| publish_home(entity_id, cx));
+    }
+
+    if let Some(request_id) = message.request_id {
+        wit::send_shared_response(&wit::SharedResponse {
+            request_id,
+            outcome,
+        });
     }
 }

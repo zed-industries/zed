@@ -14,5 +14,7 @@ path = "src/gpui_embedded_shared.rs"
 
 [dependencies]
 anyhow.workspace = true
+futures.workspace = true
+gpui = { workspace = true, default-features = false }
 serde.workspace = true
 serde_json.workspace = true

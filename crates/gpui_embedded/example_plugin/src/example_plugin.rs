@@ -103,17 +103,18 @@ impl Render for ButtonView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |_, _, _, cx| {
-                    let receipt = counter.send(Increment { by: 1 });
-                    // Read-your-writes proof: once the receipt resolves, the local replica
-                    // is guaranteed to already contain this increment.
+                    // A call: resolves with the host handler's return value, which is
+                    // delivered after the snapshot that acks it, so the replica agrees.
+                    let call = counter.call(Increment { by: 1 });
                     let counter = counter.clone();
-                    cx.spawn(async move |_, cx| {
-                        if receipt.await.is_ok() {
+                    cx.spawn(async move |_, cx| match call.await {
+                        Ok(new_count) => {
                             let observed = cx.update(|cx| clicks(counter.replica(), cx));
                             eprintln!(
-                                "[example_plugin] increment acked; replica already shows {observed} clicks"
+                                "[example_plugin] call returned {new_count}; replica shows {observed}"
                             );
                         }
+                        Err(error) => eprintln!("[example_plugin] call failed: {error:#}"),
                     })
                     .detach();
                 }),
