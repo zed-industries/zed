@@ -924,6 +924,20 @@ impl ThreadView {
                     cx.notify();
                 },
             ));
+
+            // A "no model selected" error is stale as soon as the thread has a
+            // usable model
+            if let Some(native_thread) = native_connection.thread(thread.read(cx).session_id(), cx)
+            {
+                subscriptions.push(cx.subscribe(
+                    &native_thread,
+                    |this: &mut Self, _thread, _event: &agent::ModelChanged, cx| {
+                        if matches!(this.thread_error, Some(ThreadError::NoModelSelected)) {
+                            this.clear_thread_error(cx);
+                        }
+                    },
+                ));
+            }
         }
 
         subscriptions.push(cx.observe(&message_editor, |this, editor, cx| {
@@ -1022,7 +1036,7 @@ impl ThreadView {
         };
 
         this.sync_generating_indicator(cx);
-        this.sync_editor_mode_for_empty_state(cx);
+        this.sync_editor_mode(cx);
         this.sync_existing_elicitation_states(window, cx);
         let list_state_for_scroll = this.list_state.clone();
         let thread_view = cx.entity().downgrade();
@@ -2359,27 +2373,7 @@ impl ThreadView {
 
     pub fn set_editor_is_expanded(&mut self, is_expanded: bool, cx: &mut Context<Self>) {
         self.editor_expanded = is_expanded;
-        self.message_editor.update(cx, |editor, cx| {
-            if is_expanded {
-                editor.set_mode(
-                    EditorMode::Full {
-                        scale_ui_elements_with_buffer_font_size: false,
-                        show_active_line_background: false,
-                        sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
-                    },
-                    cx,
-                )
-            } else {
-                let agent_settings = AgentSettings::get_global(cx);
-                editor.set_mode(
-                    EditorMode::AutoHeight {
-                        min_lines: agent_settings.message_editor_min_lines,
-                        max_lines: Some(agent_settings.set_message_editor_max_lines()),
-                    },
-                    cx,
-                )
-            }
-        });
+        self.sync_editor_mode(cx);
         cx.notify();
     }
 
@@ -4899,7 +4893,7 @@ impl ThreadView {
                             );
                         }),
                 )
-                .child(Divider::vertical().h_4())
+                .child(Divider::vertical())
                 .into_any_element(),
         )
     }
@@ -7090,11 +7084,21 @@ impl ThreadView {
         open_markdown_in_workspace(thread_title, markdown, workspace, window, cx)
     }
 
-    pub(crate) fn sync_editor_mode_for_empty_state(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn sync_editor_mode(&mut self, cx: &mut Context<Self>) {
         let has_messages = self.list_state.item_count() > 0;
         let v2_empty_state = !has_messages;
 
-        let mode = if v2_empty_state {
+        if !has_messages {
+            self.editor_expanded = false;
+        }
+
+        let mode = if self.editor_expanded {
+            EditorMode::Full {
+                scale_ui_elements_with_buffer_font_size: false,
+                show_active_line_background: false,
+                sizing_behavior: SizingBehavior::ExcludeOverscrollMargin,
+            }
+        } else if v2_empty_state {
             EditorMode::Full {
                 scale_ui_elements_with_buffer_font_size: false,
                 show_active_line_background: false,
@@ -10643,13 +10647,17 @@ impl ThreadView {
                 false,
                 cx,
             ),
-            ThreadError::NoModelSelected => self.render_error_callout(
-                "No Model Selected",
-                "Select a model from the model picker below to get started.".into(),
-                false,
-                false,
-                cx,
-            ),
+            ThreadError::NoModelSelected => self
+                .render_model_not_available_error(cx)
+                .unwrap_or_else(|| {
+                    self.render_error_callout(
+                        "No Model Selected",
+                        "Select a model from the model picker below to get started.".into(),
+                        false,
+                        false,
+                        cx,
+                    )
+                }),
             ThreadError::ApiError { provider } => self.render_error_callout(
                 "API Error",
                 format!(
@@ -10748,6 +10756,101 @@ impl ThreadView {
                 )
             })
             .dismiss_action(self.dismiss_error_button(cx))
+    }
+
+    fn render_model_not_available_error(&self, cx: &mut Context<Self>) -> Option<Callout> {
+        let thread = self.as_native_thread(cx)?;
+
+        let has_authenticated_provider =
+            LanguageModelRegistry::read_global(cx).has_authenticated_provider(cx);
+
+        let (title, description): (SharedString, SharedString) =
+            match thread.read(cx).thread_model() {
+                agent::ThreadModel::Ready(_) => return None,
+                agent::ThreadModel::Unresolved(selected_model) => {
+                    if let Some(provider) = LanguageModelRegistry::global(cx)
+                        .read(cx)
+                        .provider(&&selected_model.provider)
+                    {
+                        if !provider.is_authenticated(cx) {
+                            (
+                                format!("Failed to authenticate with {} provider", provider.name())
+                                    .into(),
+                                "Open the settings to configure the selected provider".into(),
+                            )
+                        } else {
+                            (
+                                format!("Model {} was not found", selected_model.model.0).into(),
+                                "You may need to reconfigure authentication for this provider"
+                                    .into(),
+                            )
+                        }
+                    } else {
+                        (
+                            format!("Provider {} was not found", selected_model.provider).into(),
+                            "Open the settings to configure providers".into(),
+                        )
+                    }
+                }
+                agent::ThreadModel::Unset => {
+                    if has_authenticated_provider {
+                        (
+                            "No model selected".into(),
+                            "Choose a different model or configure other providers to get started"
+                                .into(),
+                        )
+                    } else {
+                        (
+                            "No model selected".into(),
+                            "Configure a provider to get started".into(),
+                        )
+                    }
+                }
+            };
+
+        let callout = Callout::new()
+            .severity(Severity::Error)
+            .icon(IconName::XCircle)
+            .title(title)
+            .description(description)
+            .actions_slot(
+                h_flex()
+                    .gap_1()
+                    .child(self.open_llm_providers_settings_button(cx))
+                    .when(has_authenticated_provider, |this| {
+                        this.child(self.open_model_selector_button(cx))
+                    }),
+            )
+            .dismiss_action(self.dismiss_error_button(cx));
+
+        Some(callout)
+    }
+
+    fn open_llm_providers_settings_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("configure-llm-provider", "Configure Provider")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Filled)
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.clear_thread_error(cx);
+                window.dispatch_action(
+                    Box::new(zed_actions::OpenSettingsAt {
+                        path: "llm_providers".to_string(),
+                        target: None,
+                    }),
+                    cx,
+                );
+            }))
+    }
+
+    fn open_model_selector_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        Button::new("open-model-selector", "Select Model")
+            .label_size(LabelSize::Small)
+            .style(ButtonStyle::Filled)
+            .key_binding(KeyBinding::for_action(&ToggleModelSelector, cx))
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.clear_thread_error(cx);
+                window.dispatch_action(ToggleModelSelector.boxed_clone(), cx);
+            }))
     }
 
     fn render_prompt_too_large_error(&self, cx: &mut Context<Self>) -> Callout {

@@ -3440,6 +3440,25 @@ impl LocalLspStore {
                         .to_file_path()
                         .map_err(|()| anyhow!("can't convert URI to path"))?;
 
+                    // An LSP "rename symbol" can also rename the file, with the text edit
+                    // applied only to the in-memory buffer. Persist it before renaming, or
+                    // fs.rename moves the stale on-disk content and the files' contents swap.
+                    let dirty_buffer = this.update(cx, |this, cx| {
+                        let project_path = this
+                            .worktree_store()
+                            .read(cx)
+                            .project_path_for_absolute_path(&source_abs_path, cx)?;
+                        let buffer = this.buffer_store().read(cx).get_by_path(&project_path)?;
+                        buffer.read(cx).is_dirty().then_some(buffer)
+                    });
+                    if let Some(buffer) = dirty_buffer {
+                        this.update(cx, |this, cx| {
+                            this.buffer_store()
+                                .update(cx, |buffer_store, cx| buffer_store.save_buffer(buffer, cx))
+                        })
+                        .await?;
+                    }
+
                     let options = fs::RenameOptions {
                         overwrite: op
                             .options
@@ -4225,9 +4244,10 @@ impl SymbolLocation {
 }
 
 fn should_log_lsp_request_failure(message: &str) -> bool {
-    // content modified is a weird failure mode of rust-analyzer
-    // where requests are denied before its loaded a project
-    message.ends_with("content modified") || message.ends_with("server cancelled the request")
+    // "content modified" and "server cancelled the request" are noisy failure
+    // modes of rust-analyzer where requests are denied before it has loaded a
+    // project.
+    !(message.ends_with("content modified") || message.ends_with("server cancelled the request"))
 }
 
 impl LspStore {
@@ -7238,27 +7258,19 @@ impl LspStore {
                         buffer.start_transaction();
 
                         for (range, text) in edits {
-                            let primary = &completion.replace_range;
-
-                            // Special case: if both ranges start at the very beginning of the file (line 0, column 0),
-                            // and the primary completion is just an insertion (empty range), then this is likely
-                            // an auto-import scenario and should not be considered overlapping
-                            // https://github.com/zed-industries/zed/issues/26136
-                            let is_file_start_auto_import = {
-                                let snapshot = buffer.snapshot();
-                                let primary_start_point = primary.start.to_point(&snapshot);
-                                let range_start_point = range.start.to_point(&snapshot);
-
-                                let result = primary_start_point.row == 0
-                                    && primary_start_point.column == 0
-                                    && range_start_point.row == 0
-                                    && range_start_point.column == 0;
-
-                                result
-                            };
-
-                            let has_overlap = if is_file_start_auto_import {
-                                false
+                            // Zero-width additional edits (e.g. auto-imports at file start, or
+                            // rust-analyzer's ref-match `&` insertions) only overlap the primary
+                            // edit when they fall strictly inside it. Touching its boundary is fine.
+                            //
+                            // Ref: https://github.com/zed-industries/zed/issues/26136
+                            // Ref: https://github.com/zed-industries/zed/issues/56973
+                            let is_insertion = range.start.cmp(&range.end, buffer).is_eq();
+                            let has_overlap = if is_insertion {
+                                let insert_offset = range.start.to_offset(buffer);
+                                all_commit_ranges.iter().any(|commit_range| {
+                                    commit_range.start.to_offset(buffer) < insert_offset
+                                        && insert_offset < commit_range.end.to_offset(buffer)
+                                })
                             } else {
                                 all_commit_ranges.iter().any(|commit_range| {
                                     let start_within =
@@ -7271,8 +7283,8 @@ impl LspStore {
                                 })
                             };
 
-                            //Skip additional edits which overlap with the primary completion edit
-                            //https://github.com/zed-industries/zed/pull/1871
+                            // Skip additional edits which overlap with the primary completion edit
+                            // https://github.com/zed-industries/zed/pull/1871
                             if !has_overlap {
                                 buffer.edit([(range, text)], None, cx);
                             }
@@ -14417,7 +14429,12 @@ impl LanguageServerWatchedPaths {
         cx.spawn({
             async move |_, cx| {
                 maybe!(async move {
-                    let mut push_updates = fs.watch(&abs_path, LSP_ABS_PATH_OBSERVE).await;
+                    let mut push_updates = cx
+                        .background_spawn({
+                            let abs_path = abs_path.clone();
+                            async move { fs.watch(&abs_path, LSP_ABS_PATH_OBSERVE).await }
+                        })
+                        .await;
                     while let Some(update) = push_updates.0.next().await {
                         let action = lsp_store
                             .update(cx, |this, _| {
@@ -15314,4 +15331,29 @@ fn extend_formatting_transaction(
         }
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_log_lsp_request_failure_suppresses_known_noise() {
+        // Suppressed: rust-analyzer's superseded/denied request signals.
+        assert!(!should_log_lsp_request_failure(
+            "Get diagnostics via rust-analyzer failed: content modified"
+        ));
+        assert!(!should_log_lsp_request_failure(
+            "Get diagnostics via rust-analyzer failed: server cancelled the request"
+        ));
+
+        // Logged: anything else is a real failure.
+        assert!(should_log_lsp_request_failure(
+            "Get diagnostics via rust-analyzer failed: server shut down"
+        ));
+        assert!(should_log_lsp_request_failure(
+            "Get diagnostics via rust-analyzer failed: Server reset the connection"
+        ));
+        assert!(should_log_lsp_request_failure("something else entirely"));
+    }
 }
