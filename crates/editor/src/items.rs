@@ -18,8 +18,8 @@ use gpui::{
     IntoElement, ParentElement, Pixels, SharedString, Styled, Task, WeakEntity, Window, point,
 };
 use language::{
-    Bias, Buffer, BufferRow, CharKind, CharScopeContext, HighlightedText, LocalFile, Point,
-    SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
+    Bias, Buffer, BufferRow, CharKind, CharScopeContext, HighlightedText, LocalFile, PLAIN_TEXT,
+    Point, SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{BufferOffset, MultiBufferOffset, PathKey};
@@ -717,7 +717,22 @@ impl Item for Editor {
     }
 
     fn suggested_filename(&self, cx: &App) -> SharedString {
-        self.buffer.read(cx).title(cx).to_string().into()
+        let multi_buffer = self.buffer.read(cx);
+        let title = multi_buffer.title(cx);
+        if let Some(buffer) = multi_buffer.as_singleton() {
+            let buffer = buffer.read(cx);
+            if buffer.file().is_none()
+                && let Some(language) = buffer.language()
+                && *language != *PLAIN_TEXT
+                && let Some(suffix) = language.path_suffixes().first()
+                && !suffix.is_empty()
+                && !title.ends_with(&format!(".{suffix}"))
+            {
+                return format!("{title}.{suffix}").into();
+            }
+        }
+
+        title.to_string().into()
     }
 
     fn tab_icon(&self, _: &Window, cx: &App) -> Option<Icon> {
@@ -2384,6 +2399,95 @@ mod tests {
                 window[0], window[1],
             );
         }
+    }
+
+    #[gpui::test]
+    async fn test_suggested_filename_uses_language_extension_for_untitled_buffer(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.update(|cx| {
+            cx.new(|cx| Buffer::local("", cx).with_language(languages::rust_lang(), cx))
+        });
+        let (editor, cx) =
+            cx.add_window_view(|window, cx| Editor::for_buffer(buffer, None, window, cx));
+
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.suggested_filename(cx).as_ref(), "untitled.rs");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_suggested_filename_appends_extension_to_content_title(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.update(|cx| {
+            cx.new(|cx| {
+                Buffer::local("sadsdsads\nmore text", cx).with_language(languages::rust_lang(), cx)
+            })
+        });
+        let (editor, cx) =
+            cx.add_window_view(|window, cx| Editor::for_buffer(buffer, None, window, cx));
+
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.tab_content_text(0, cx).as_ref(), "sadsdsads");
+            assert_eq!(editor.suggested_filename(cx).as_ref(), "sadsdsads.rs");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_suggested_filename_does_not_duplicate_extension(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.update(|cx| {
+            cx.new(|cx| {
+                Buffer::local("main.rs\nfn main() {}", cx).with_language(languages::rust_lang(), cx)
+            })
+        });
+        let (editor, cx) =
+            cx.add_window_view(|window, cx| Editor::for_buffer(buffer, None, window, cx));
+
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.suggested_filename(cx).as_ref(), "main.rs");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_suggested_filename_keeps_content_title_for_plain_text(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.update(|cx| {
+            cx.new(|cx| {
+                Buffer::local("shopping list\nmilk", cx)
+                    .with_language(language::PLAIN_TEXT.clone(), cx)
+            })
+        });
+        let (editor, cx) =
+            cx.add_window_view(|window, cx| Editor::for_buffer(buffer, None, window, cx));
+
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.suggested_filename(cx).as_ref(), "shopping list");
+        });
+    }
+
+    #[gpui::test]
+    async fn test_suggested_filename_keeps_content_title_without_language(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_test(cx, |_| {});
+
+        let buffer = cx.update(|cx| cx.new(|cx| Buffer::local("shopping list\nmilk", cx)));
+        let (editor, cx) =
+            cx.add_window_view(|window, cx| Editor::for_buffer(buffer, None, window, cx));
+
+        editor.read_with(cx, |editor, cx| {
+            assert_eq!(editor.suggested_filename(cx).as_ref(), "shopping list");
+        });
     }
 
     async fn deserialize_editor(
