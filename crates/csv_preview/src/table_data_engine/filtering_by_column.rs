@@ -94,8 +94,7 @@ impl TableDataEngine {
             // An entry is unavailable when none of its rows survive the parent filter
             for entry in all_column_entries {
                 if !entry.rows.iter().any(|row| retained_rows.contains(row)) {
-                    unavailable_entries
-                        .insert(entry.content.clone(), column_applied_previously);
+                    unavailable_entries.insert(entry.content.clone(), column_applied_previously);
                 }
             }
         }
@@ -111,14 +110,13 @@ impl TableDataEngine {
             all_column_entries
                 .iter()
                 .map(|entry| {
-                    let state =
-                        if let Some(&blocked_by) = unavailable_entries.get(&entry.content) {
-                            FilterEntryState::Unavailable { blocked_by }
-                        } else {
-                            FilterEntryState::Available {
-                                is_applied: active_column_filters.contains(&entry.content),
-                            }
-                        };
+                    let state = if let Some(&blocked_by) = unavailable_entries.get(&entry.content) {
+                        FilterEntryState::Unavailable { blocked_by }
+                    } else {
+                        FilterEntryState::Available {
+                            is_applied: active_column_filters.contains(&entry.content),
+                        }
+                    };
                     (entry.clone(), state)
                 })
                 .collect(),
@@ -126,7 +124,9 @@ impl TableDataEngine {
     }
 
     pub(crate) fn clear_filters_for_col(&mut self, col: AnyColumn) {
-        self.filter_stack.activation_order.retain(|&entry| entry != col);
+        self.filter_stack
+            .activation_order
+            .retain(|&entry| entry != col);
         self.filter_stack.retention_config.remove(&col);
     }
 

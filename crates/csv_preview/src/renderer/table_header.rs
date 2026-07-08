@@ -104,48 +104,51 @@ impl CsvPreviewView {
     ) -> PopoverMenu<ContextMenu> {
         let has_active_filters = self.engine.has_active_filters(col);
 
-        PopoverMenu::new(ElementId::NamedInteger("filter-menu".into(), col.get() as u64))
-            .trigger_with_tooltip(
-                Button::new(
-                    ElementId::NamedInteger("filter-button".into(), col.get() as u64),
-                    if has_active_filters { "⛊" } else { "⛉" },
-                )
-                .size(ButtonSize::Compact)
-                .style(if has_active_filters {
-                    ButtonStyle::Filled
-                } else {
-                    ButtonStyle::Subtle
-                }),
-                Tooltip::text(if has_active_filters {
-                    "Column has active filters. Click to manage"
-                } else {
-                    "No filters applied. Click to add filters"
-                }),
+        PopoverMenu::new(ElementId::NamedInteger(
+            "filter-menu".into(),
+            col.get() as u64,
+        ))
+        .trigger_with_tooltip(
+            Button::new(
+                ElementId::NamedInteger("filter-button".into(), col.get() as u64),
+                if has_active_filters { "⛊" } else { "⛉" },
             )
-            .menu({
-                let view_entity = cx.entity();
-                move |window, cx| {
-                    let view = view_entity.read(cx);
-                    let column_filters = match view.engine.get_filters_for_column(col) {
-                        Ok(filters) => filters,
-                        Err(err) => {
-                            log::error!("Failed to get filters for column: {err}");
-                            return None;
-                        }
-                    };
-                    let filter_sort_order = view.settings.filter_sort_order;
-                    let filter_menu = Self::create_filter_menu(
-                        window,
-                        cx,
-                        view_entity.clone(),
-                        col,
-                        &column_filters,
-                        has_active_filters,
-                        filter_sort_order,
-                    );
-                    Some(filter_menu)
-                }
-            })
+            .size(ButtonSize::Compact)
+            .style(if has_active_filters {
+                ButtonStyle::Filled
+            } else {
+                ButtonStyle::Subtle
+            }),
+            Tooltip::text(if has_active_filters {
+                "Column has active filters. Click to manage"
+            } else {
+                "No filters applied. Click to add filters"
+            }),
+        )
+        .menu({
+            let view_entity = cx.entity();
+            move |window, cx| {
+                let view = view_entity.read(cx);
+                let column_filters = match view.engine.get_filters_for_column(col) {
+                    Ok(filters) => filters,
+                    Err(err) => {
+                        log::error!("Failed to get filters for column: {err}");
+                        return None;
+                    }
+                };
+                let filter_sort_order = view.settings.filter_sort_order;
+                let filter_menu = Self::create_filter_menu(
+                    window,
+                    cx,
+                    view_entity.clone(),
+                    col,
+                    &column_filters,
+                    has_active_filters,
+                    filter_sort_order,
+                );
+                Some(filter_menu)
+            }
+        })
     }
 
     fn create_filter_menu(
@@ -159,7 +162,9 @@ impl CsvPreviewView {
     ) -> gpui::Entity<ContextMenu> {
         let mut available: Vec<&FilterEntry> = column_filters
             .iter()
-            .filter_map(|(entry, state)| matches!(state, FilterEntryState::Available { .. }).then_some(entry))
+            .filter_map(|(entry, state)| {
+                matches!(state, FilterEntryState::Available { .. }).then_some(entry)
+            })
             .collect();
 
         match sort_order {
@@ -246,8 +251,7 @@ impl CsvPreviewView {
                 menu = menu.separator().header("Hidden by other filters");
                 for (entry, _blocked_by) in &unavailable_cloned {
                     let label: SharedString =
-                        format_filter_label(entry.content.as_ref(), entry.occurred_times())
-                            .into();
+                        format_filter_label(entry.content.as_ref(), entry.occurred_times()).into();
                     menu = menu.custom_entry(
                         {
                             let label = label.clone();

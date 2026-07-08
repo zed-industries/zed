@@ -48,27 +48,26 @@ impl CsvPreviewView {
             })
         });
 
-        let filter_sort_dropdown_menu =
-            ContextMenu::build(window, cx, |menu, _window, _cx| {
-                menu.entry("A-Z, then Count", None, {
-                    let view = view.clone();
-                    move |_window, cx| {
-                        view.update(cx, |this, cx| {
-                            this.settings.filter_sort_order = FilterSortOrder::AlphaThenCount;
-                            cx.notify();
-                        });
-                    }
-                })
-                .entry("Count, then A-Z", None, {
-                    let view = view.clone();
-                    move |_window, cx| {
-                        view.update(cx, |this, cx| {
-                            this.settings.filter_sort_order = FilterSortOrder::CountThenAlpha;
-                            cx.notify();
-                        });
-                    }
-                })
-            });
+        let filter_sort_dropdown_menu = ContextMenu::build(window, cx, |menu, _window, _cx| {
+            menu.entry("A-Z, then Count", None, {
+                let view = view.clone();
+                move |_window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.settings.filter_sort_order = FilterSortOrder::AlphaThenCount;
+                        cx.notify();
+                    });
+                }
+            })
+            .entry("Count, then A-Z", None, {
+                let view = view.clone();
+                move |_window, cx| {
+                    view.update(cx, |this, cx| {
+                        this.settings.filter_sort_order = FilterSortOrder::CountThenAlpha;
+                        cx.notify();
+                    });
+                }
+            })
+        });
 
         let panel = h_flex()
             .gap_4()

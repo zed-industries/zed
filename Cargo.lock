@@ -4574,7 +4574,6 @@ dependencies = [
  "editor",
  "feature_flags",
  "gpui",
- "itertools 0.14.0",
  "log",
  "text",
  "ui",
