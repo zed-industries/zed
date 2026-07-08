@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 mod ai_discovery;
 
 use ai_discovery::{
-    add_markdown_alternate_link, docs_pages, write_ai_discovery_artifacts,
+    add_markdown_alternate_link, docs_pages, rewrite_docs_links, write_ai_discovery_artifacts,
     write_markdown_redirect_aliases, write_pages_redirects,
 };
 use mdbook::BookItem;
@@ -718,6 +718,17 @@ fn handle_postprocessing() -> Result<()> {
     let amplitude_key = std::env::var("DOCS_AMPLITUDE_API_KEY").unwrap_or_default();
     let consent_io_instance = std::env::var("DOCS_CONSENT_IO_INSTANCE").unwrap_or_default();
     let docs_channel = std::env::var("DOCS_CHANNEL").unwrap_or_else(|_| "stable".to_string());
+    let site_url = std::env::var("MDBOOK_BOOK__SITE_URL")
+        .ok()
+        .filter(|site_url| !site_url.trim().is_empty())
+        .unwrap_or_else(|| {
+            match docs_channel.as_str() {
+                "nightly" => "/docs/nightly/",
+                "preview" => "/docs/preview/",
+                _ => "/docs/",
+            }
+            .to_string()
+        });
     let noindex = if docs_channel == "nightly" || docs_channel == "preview" {
         "<meta name=\"robots\" content=\"noindex, nofollow\">"
     } else {
@@ -757,12 +768,6 @@ fn handle_postprocessing() -> Result<()> {
     }
 
     zlog::info!(logger => "Processing {} `.html` files", files.len());
-    let site_url = ctx
-        .config
-        .get("book.site-url")
-        .and_then(|site_url| site_url.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| "/docs/".to_string());
     let pages = docs_pages(&ctx.book)?;
     write_ai_discovery_artifacts(&pages, &root_dir, &site_url)?;
     let meta_regex = Regex::new(&FRONT_MATTER_COMMENT.replace("{}", "(.*)")).unwrap();
@@ -802,6 +807,7 @@ fn handle_postprocessing() -> Result<()> {
         let contents = contents.replace("#amplitude_key#", &amplitude_key);
         let contents = contents.replace("#consent_io_instance#", &consent_io_instance);
         let contents = contents.replace("#noindex#", noindex);
+        let contents = rewrite_docs_links(&contents, &site_url);
         let contents = add_markdown_alternate_link(&contents, file, &root_dir, &site_url);
         let contents = title_regex()
             .replace(&contents, |_: &regex::Captures| {

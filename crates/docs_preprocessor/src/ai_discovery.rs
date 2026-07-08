@@ -63,9 +63,10 @@ fn copy_markdown_sources(destination: &Path, site_url: &str, pages: &[DocsPage])
                 format!("failed to create markdown destination {}", parent.display())
             })?;
         }
+        let contents = rewrite_docs_links(&markdown_source_contents(&page.content), site_url);
         std::fs::write(
             &destination,
-            add_llms_markdown_directive(&markdown_source_contents(&page.content), site_url),
+            add_llms_markdown_directive(&contents, site_url),
         )
         .with_context(|| {
             format!(
@@ -189,13 +190,13 @@ pub(crate) fn write_pages_redirects(
     for (source, destination) in redirects {
         write_redirect_line(
             &mut contents,
-            &docs_path(site_url, source),
+            &docs_path("/docs/", source),
             &redirect_destination(site_url, destination),
         );
         if let Some(extensionless_source) = strip_html_suffix(source) {
             write_redirect_line(
                 &mut contents,
-                &docs_path(site_url, &extensionless_source),
+                &docs_path("/docs/", &extensionless_source),
                 &redirect_destination(
                     site_url,
                     &strip_html_suffix(destination).unwrap_or_else(|| destination.to_string()),
@@ -206,7 +207,7 @@ pub(crate) fn write_pages_redirects(
             if let Some(markdown_destination) = html_path_to_markdown(destination) {
                 write_redirect_line(
                     &mut contents,
-                    &docs_path(site_url, &markdown_source),
+                    &docs_path("/docs/", &markdown_source),
                     &redirect_destination(site_url, &markdown_destination),
                 );
             }
@@ -302,6 +303,29 @@ fn split_fragment(path: &str) -> (&str, &str) {
         Some(index) => (&path[..index], &path[index..]),
         None => (path, ""),
     }
+}
+
+pub(crate) fn rewrite_docs_links(contents: &str, site_url: &str) -> String {
+    const STABLE_DOCS_PREFIX: &str = "https://zed.dev/docs/";
+    let channel_docs_prefix = absolute_docs_url(site_url, Path::new(""));
+    if channel_docs_prefix == STABLE_DOCS_PREFIX {
+        return contents.to_string();
+    }
+
+    let mut output = String::with_capacity(contents.len());
+    let mut remaining = contents;
+    while let Some(index) = remaining.find(STABLE_DOCS_PREFIX) {
+        output.push_str(&remaining[..index]);
+        let after_prefix = &remaining[index + STABLE_DOCS_PREFIX.len()..];
+        if after_prefix.starts_with("preview/") || after_prefix.starts_with("nightly/") {
+            output.push_str(STABLE_DOCS_PREFIX);
+        } else {
+            output.push_str(&channel_docs_prefix);
+        }
+        remaining = after_prefix;
+    }
+    output.push_str(remaining);
+    output
 }
 
 pub(crate) fn add_markdown_alternate_link(
@@ -403,11 +427,58 @@ mod tests {
     }
 
     #[test]
+    fn test_rewrite_docs_links_uses_channel_site_url() {
+        assert_eq!(
+            rewrite_docs_links(
+                "See [Code Actions](https://zed.dev/docs/configuring-languages#code-actions) and [Preview](https://zed.dev/docs/preview/ai/overview.html).",
+                "/docs/preview/"
+            ),
+            "See [Code Actions](https://zed.dev/docs/preview/configuring-languages#code-actions) and [Preview](https://zed.dev/docs/preview/ai/overview.html)."
+        );
+    }
+
+    #[test]
     fn test_docs_path_uses_channel_site_url() {
         assert_eq!(
             docs_path("/docs/preview/", "/assistant.md"),
             "/docs/preview/assistant.md"
         );
+    }
+
+    #[test]
+    fn test_write_pages_redirects_keeps_sources_on_internal_pages_path() -> Result<()> {
+        let deploy_root = std::env::temp_dir().join(format!(
+            "docs_preprocessor_pages_redirects_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let destination = deploy_root.join("docs");
+        std::fs::create_dir_all(&destination)?;
+        let redirects = vec![
+            (
+                "/assistant.html".to_string(),
+                "/docs/ai/overview.html".to_string(),
+            ),
+            (
+                "/community/feedback.html".to_string(),
+                "/community-links".to_string(),
+            ),
+        ];
+
+        write_pages_redirects(&destination, &redirects, "/docs/preview/")?;
+
+        assert_eq!(
+            std::fs::read_to_string(deploy_root.join("_redirects"))?,
+            "/docs/assistant.html /docs/preview/ai/overview.html 301\n\
+/docs/assistant /docs/preview/ai/overview 301\n\
+/docs/assistant.md /docs/preview/ai/overview.md 301\n\
+/docs/community/feedback.html /community-links 301\n\
+/docs/community/feedback /community-links 301\n"
+        );
+        std::fs::remove_dir_all(&deploy_root)?;
+        Ok(())
     }
 
     #[test]
