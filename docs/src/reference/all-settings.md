@@ -104,6 +104,8 @@ Non-negative `float` values
 - Setting: `allow_rewrap`
 - Default: `"in_comments"`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 1. Allow rewrap in comments only:
@@ -138,6 +140,8 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 - Setting: `auto_indent`
 - Default: `true`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 `boolean` values
@@ -147,6 +151,8 @@ Note: This setting has no effect in Vim mode, as rewrap is already allowed every
 - Description: Whether indentation of pasted content should be adjusted based on the context
 - Setting: `auto_indent_on_paste`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -666,6 +672,8 @@ List of `string` values.
 - Description: A list of language scopes in which edit predictions should be disabled.
 - Setting: `edit_predictions_disabled_in`
 - Default: `[]`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -1649,6 +1657,8 @@ This setting enables integration with macOS’s native window tabbing feature. W
 - Setting: `enable_language_server`
 - Default: `true`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 `boolean` values
@@ -1659,6 +1669,8 @@ This setting enables integration with macOS’s native window tabbing feature. W
 - Setting: `ensure_final_newline_on_save`
 - Default: `true`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 `boolean` values
@@ -1668,6 +1680,8 @@ This setting enables integration with macOS’s native window tabbing feature. W
 - Description: How line endings should be handled for new files and during format and save. This can be specified on a per-language basis.
 - Setting: `line_ending`
 - Default: `detect`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -1738,6 +1752,8 @@ Positive `integer` value between 1 and 32. Values outside of this range will be 
 - Description: Whether to start a new line with a comment when a previous line is a comment as well.
 - Setting: `extend_comment_on_newline`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -1911,6 +1927,8 @@ While other options may be changed at a runtime and should be placed under `sett
 - Setting: `format_on_save`
 - Default: `on`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 1. `on`, enables format on save obeying `formatter` setting:
@@ -1934,6 +1952,8 @@ While other options may be changed at a runtime and should be placed under `sett
 - Description: How to perform a buffer format.
 - Setting: `formatter`
 - Default: `auto`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -2017,6 +2037,8 @@ If any of the formatters fails, the subsequent ones will still be executed.
 - Setting: `use_autoclose`
 - Default: `true`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 `boolean` values
@@ -2026,6 +2048,8 @@ If any of the formatters fails, the subsequent ones will still be executed.
 - Description: Controls how the editor handles the autoclosed characters.
 - Setting: `always_treat_brackets_as_autoclosed`
 - Default: `false`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -2543,6 +2567,8 @@ Example:
 - Setting: `hard_tabs`
 - Default: `false`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 `boolean` values
@@ -2562,6 +2588,8 @@ Example:
 - Description: Configuration related to indent guides. Indent guides can be configured separately for each language.
 - Setting: `indent_guides`
 - Default:
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 ```json [settings]
 {
@@ -2801,6 +2829,8 @@ Run the {#action icon_theme_selector::Toggle} action in the command palette to s
 - Description: Configuration for displaying extra text with hints in the editor.
 - Setting: `inlay_hints`
 - Default:
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 ```json [settings]
 {
@@ -3054,6 +3084,8 @@ Configuration for various AI model providers including API URLs and authenticati
 - Setting: `linked_edits`
 - Default: `true`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 `boolean` values
@@ -3280,7 +3312,6 @@ Examples:
 - Description:
   Preview tabs allow you to open files in preview mode, where they close automatically when you switch to another file unless you explicitly pin them. This is useful for quickly viewing files without cluttering your workspace. Preview tabs display their file names in italics. \
    There are several ways to convert a preview tab into a regular tab:
-
   - Double-clicking on the file
   - Double-clicking on the tab header
   - Using the {#action project_panel::OpenPermanent} action
@@ -3438,6 +3469,8 @@ Examples:
 - Setting: `preferred_line_length`
 - Default: `80`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 `integer` values
@@ -3519,6 +3552,8 @@ List of `string` glob patterns
 - Description: Whether or not to remove any trailing whitespace from lines of a buffer before saving it.
 - Setting: `remove_trailing_whitespace_on_save`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -3755,6 +3790,8 @@ Non-negative `integer` values
 - Setting: `semantic_tokens`
 - Default: `off`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 1. `off`: Do not request semantic tokens from language servers.
@@ -3789,6 +3826,8 @@ May require language server restart to properly apply.
 - Setting: `document_folding_ranges`
 - Default: `off`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 1. `off`: Use tree-sitter and indent-based folding.
@@ -3819,6 +3858,8 @@ To enable LSP folding ranges for a specific language:
 - Description: Controls the source of document symbols used for outlines and breadcrumbs. This is an LSP feature — when enabled, tree-sitter is not used for document symbols, and the language server's `textDocument/documentSymbol` response is used instead.
 - Setting: `document_symbols`
 - Default: `off`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -3876,6 +3917,8 @@ Examples:
 - Description: Controls how completions are processed for this language.
 - Setting: `completions`
 - Default:
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 ```json [settings]
 {
@@ -3951,6 +3994,8 @@ Positive integer values
 - Setting: `show_completions_on_input`
 - Default: `true`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 `boolean` values
@@ -3971,6 +4016,8 @@ Positive integer values
 - Setting: `show_edit_predictions`
 - Default: `true`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 `boolean` values
@@ -3980,6 +4027,8 @@ Positive integer values
 - Description: Whether or not to render whitespace characters in the editor.
 - Setting: `show_whitespaces`
 - Default: `selection`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -3993,6 +4042,8 @@ Positive integer values
 - Description: Specify the characters used to render whitespace when show_whitespaces is enabled.
 - Setting: `whitespace_map`
 - Default:
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 ```json [settings]
 {
@@ -4009,6 +4060,8 @@ Positive integer values
 - Setting: `soft_wrap`
 - Default: `none`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 1. `none` to avoid wrapping generally, unless the line is too long
@@ -4022,6 +4075,8 @@ Positive integer values
 - Setting: `show_wrap_guides`
 - Default: `true`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 `boolean` values
@@ -4032,6 +4087,8 @@ Positive integer values
 - Setting: `use_on_type_format`
 - Default: `true`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 `boolean` values
@@ -4041,6 +4098,8 @@ Positive integer values
 - Description: Whether to automatically surround selected text when typing opening parenthesis, bracket, brace, single or double quote characters. For example, when you select text and type '(', Zed will surround the text with ().
 - Setting: `use_auto_surround`
 - Default: `true`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
@@ -4082,6 +4141,8 @@ List of `integer` column numbers
 - Setting: `tab_size`
 - Default: `4`
 
+> **Note:** this setting can be [overridden per language](#languages).
+
 **Options**
 
 `integer` values
@@ -4091,6 +4152,8 @@ List of `integer` column numbers
 - Description: Configuration for tasks that can be run within Zed
 - Setting: `tasks`
 - Default:
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 ```json [settings]
 {
@@ -5527,6 +5590,8 @@ You can define these in user or project settings; project settings are merged on
 - Description: Whether to use tree-sitter bracket queries to detect and colorize the brackets in the editor (also known as "rainbow brackets").
 - Setting: `colorize_brackets`
 - Default: `false`
+
+> **Note:** this setting can be [overridden per language](#languages).
 
 **Options**
 
