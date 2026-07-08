@@ -293,16 +293,16 @@ impl EditorElement {
             editor.scroll_screen_with_cursor_margin(&ScrollAmount::Line(-1.), window, cx)
         });
         register_action(editor, window, |editor, _: &HalfPageDown, window, cx| {
-            editor.scroll_screen(&ScrollAmount::Page(0.5), window, cx)
+            editor.scroll_screen_with_cursor_margin(&ScrollAmount::Page(0.5), window, cx)
         });
         register_action(editor, window, |editor, _: &HalfPageUp, window, cx| {
-            editor.scroll_screen(&ScrollAmount::Page(-0.5), window, cx)
+            editor.scroll_screen_with_cursor_margin(&ScrollAmount::Page(-0.5), window, cx)
         });
         register_action(editor, window, |editor, _: &PageDown, window, cx| {
-            editor.scroll_screen(&ScrollAmount::Page(1.), window, cx)
+            editor.scroll_screen_with_cursor_margin(&ScrollAmount::Page(1.), window, cx)
         });
         register_action(editor, window, |editor, _: &PageUp, window, cx| {
-            editor.scroll_screen(&ScrollAmount::Page(-1.), window, cx)
+            editor.scroll_screen_with_cursor_margin(&ScrollAmount::Page(-1.), window, cx)
         });
         register_action(editor, window, Editor::move_to_previous_word_start);
         register_action(editor, window, Editor::move_to_previous_subword_start);

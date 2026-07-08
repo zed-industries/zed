@@ -3014,6 +3014,32 @@ async fn test_scroll_line_up_down_cursor_margin(cx: &mut TestAppContext) {
             "cursor clamped to max_row after scrolling up"
         );
     });
+
+    cx.update_editor(|editor, window, cx| {
+        // Half page down (2 lines): top=2, visible rows 2-6, margin=2 → min_row=4, max_row=4.
+        // Cursor at row 2 < min_row=4 → clamped to row 4.
+        editor.scroll_screen_with_cursor_margin(&ScrollAmount::Page(0.5), window, cx);
+        assert_eq!(editor.snapshot(window, cx).scroll_position().y, 2.);
+        let snapshot = editor.display_snapshot(cx);
+        assert_eq!(
+            editor.selections.newest_display(&snapshot).head().row().0,
+            4,
+            "cursor clamped to min_row after scrolling half page down"
+        );
+    });
+
+    cx.update_editor(|editor, window, cx| {
+        // Half page up (2 lines): top=0, visible rows 0-4, margin=2 (top==0 special case) → min_row=0, max_row=2.
+        // Cursor at row 4 > max_row=2 → clamped to row 2.
+        editor.scroll_screen_with_cursor_margin(&ScrollAmount::Page(-0.5), window, cx);
+        assert_eq!(editor.snapshot(window, cx).scroll_position().y, 0.);
+        let snapshot = editor.display_snapshot(cx);
+        assert_eq!(
+            editor.selections.newest_display(&snapshot).head().row().0,
+            2,
+            "cursor clamped to max_row after scrolling half page up"
+        );
+    });
 }
 
 #[gpui::test]

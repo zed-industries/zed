@@ -993,8 +993,8 @@ impl Editor {
                         head.row()
                     };
                     if new_row != head.row() {
-                        let new_head = map
-                            .clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left);
+                        let new_head =
+                            map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left);
                         selection.collapse_to(new_head, selection.goal);
                     }
                 })
