@@ -21,6 +21,8 @@ project_panel::CollapseAllEntries} collapses every directory at once. {#kb
 project_panel::ExpandAllEntries} expands every directory at once. Press {#kb
 project_panel::Open} or click to preview a selected file, without giving it a
 permanent tab. Editing the file or double-clicking it promotes it to a permanent tab.
+Middle-clicking a file skips the preview and opens it in a permanent, focused tab
+right away.
 
 ### Auto-reveal
 
