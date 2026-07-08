@@ -6,7 +6,7 @@ use crate::{
     element::{StickyHeader, header_jump_data},
     linked_editing_ranges::LinkedEditingRanges,
     runnables::RunnableTasks,
-    scroll::scroll_amount::ScrollAmount,
+    scroll::{ScrollBehavior, scroll_amount::ScrollAmount},
     test::{
         assert_text_with_selections, build_editor, editor_content_with_blocks,
         editor_lsp_test_context::{EditorLspTestContext, git_commit_lang},
@@ -19,7 +19,7 @@ use collections::HashMap;
 use futures::{StreamExt, channel::oneshot};
 use gpui::{
     BackgroundExecutor, DismissEvent, Task, TaskExt, TestAppContext, UpdateGlobal,
-    VisualTestContext, WindowBounds, WindowOptions, div,
+    VisualTestContext, WindowBounds, WindowOptions, div, point,
 };
 use indoc::indoc;
 use language::{
@@ -2898,6 +2898,142 @@ async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut TestAppContext) 
 }
 
 #[gpui::test]
+async fn test_instant_scroll_request_during_scroll_animation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.smooth_scroll = Some(settings::SmoothScrollContent {
+            enabled: Some(true),
+        });
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor.set_vertical_scroll_margin(0, cx);
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(1000.), 4. * line_height));
+    cx.set_state(indoc! {"
+        ˇone
+        two
+        three
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+        eleven
+        twelve
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        editor.scroll(
+            point(0., 8.),
+            None,
+            Some(ScrollBehavior::RequestAnimation),
+            window,
+            cx,
+        );
+        assert!(
+            editor
+                .scroll_manager
+                .scroll_animation()
+                .is_some_and(|animation| animation.is_animating())
+        );
+
+        editor.scroll(
+            point(0., 2.),
+            None,
+            Some(ScrollBehavior::Instant),
+            window,
+            cx,
+        );
+        assert!(
+            editor
+                .scroll_manager
+                .scroll_animation()
+                .is_some_and(|animation| animation.is_finished())
+        );
+
+        editor.flush_scroll_animation(window, cx);
+        assert_eq!(editor.snapshot(window, cx).scroll_position(), point(0., 2.));
+        assert!(editor.scroll_manager.scroll_animation().is_none());
+    });
+}
+
+#[gpui::test]
+async fn test_smooth_scroll_setting_update_during_animation(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+    update_test_editor_settings(cx, &|settings| {
+        settings.smooth_scroll = Some(settings::SmoothScrollContent {
+            enabled: Some(true),
+        });
+    });
+    let mut cx = EditorTestContext::new(cx).await;
+    let line_height = cx.update_editor(|editor, window, cx| {
+        editor.set_vertical_scroll_margin(0, cx);
+        editor
+            .style(cx)
+            .text
+            .line_height_in_pixels(window.rem_size())
+    });
+    let window = cx.window;
+    cx.simulate_window_resize(window, size(px(1000.), 4. * line_height));
+    cx.set_state(indoc! {"
+        ˇone
+        two
+        three
+        four
+        five
+        six
+        seven
+        eight
+        nine
+        ten
+        eleven
+        twelve
+    "});
+
+    cx.update_editor(|editor, window, cx| {
+        assert!(editor.scroll_manager.smooth_scroll);
+        editor.scroll(point(0., 8.), None, None, window, cx);
+        assert!(
+            editor
+                .scroll_manager
+                .scroll_animation()
+                .is_some_and(|animation| animation.is_animating())
+        );
+    });
+
+    cx.update(|_, cx| {
+        SettingsStore::update_global(cx, |store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings.editor.smooth_scroll = Some(settings::SmoothScrollContent {
+                    enabled: Some(false),
+                });
+            });
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, window, cx| {
+        assert!(!editor.scroll_manager.smooth_scroll);
+
+        editor.set_scroll_top_row(DisplayRow(3), window, cx);
+        assert_eq!(editor.snapshot(window, cx).scroll_position(), point(0., 3.));
+        assert!(editor.scroll_manager.scroll_animation().is_none());
+
+        editor.set_scroll_top_row(DisplayRow(6), window, cx);
+        assert_eq!(editor.snapshot(window, cx).scroll_position(), point(0., 6.));
+        assert!(editor.scroll_manager.scroll_animation().is_none());
+    });
+}
+
+#[gpui::test]
 async fn test_scroll_page_up_page_down(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
@@ -2929,28 +3065,37 @@ async fn test_scroll_page_up_page_down(cx: &mut TestAppContext) {
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 0.)
         );
+
         editor.scroll_screen(&ScrollAmount::Page(1.), window, cx);
+        editor.flush_scroll_animation(window, cx);
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 3.)
         );
+
         editor.scroll_screen(&ScrollAmount::Page(1.), window, cx);
+        editor.flush_scroll_animation(window, cx);
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 6.)
         );
+
         editor.scroll_screen(&ScrollAmount::Page(-1.), window, cx);
+        editor.flush_scroll_animation(window, cx);
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 3.)
         );
 
         editor.scroll_screen(&ScrollAmount::Page(-0.5), window, cx);
+        editor.flush_scroll_animation(window, cx);
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 1.)
         );
+
         editor.scroll_screen(&ScrollAmount::Page(0.5), window, cx);
+        editor.flush_scroll_animation(window, cx);
         assert_eq!(
             editor.snapshot(window, cx).scroll_position(),
             gpui::Point::new(0., 3.)
@@ -26675,7 +26820,13 @@ async fn test_expand_first_line_diff_hunk_keeps_deleted_lines_visible(
     cx.set_state("ˇnew\nsecond\nthird\n");
     cx.set_head_text("old\nsecond\nthird\n");
     cx.update_editor(|editor, window, cx| {
-        editor.scroll(gpui::Point { x: 0., y: 0. }, None, window, cx);
+        editor.scroll(
+            gpui::Point { x: 0., y: 0. },
+            None,
+            Some(ScrollBehavior::Instant),
+            window,
+            cx,
+        );
     });
     executor.run_until_parked();
     assert_eq!(cx.update_editor(|e, _, cx| e.scroll_position(cx)).y, 0.0);
@@ -34601,7 +34752,13 @@ async fn test_sticky_scroll(cx: &mut TestAppContext) {
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
-            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            e.scroll(
+                gpui::Point { x: 0., y: offset },
+                None,
+                Some(ScrollBehavior::Instant),
+                window,
+                cx,
+            );
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
@@ -34690,7 +34847,13 @@ async fn test_sticky_scroll_with_decoration_prefix_in_item(cx: &mut TestAppConte
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
-            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            e.scroll(
+                gpui::Point { x: 0., y: offset },
+                None,
+                Some(ScrollBehavior::Instant),
+                window,
+                cx,
+            );
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
@@ -34753,7 +34916,7 @@ async fn test_sticky_scroll_anchors_multiline_c_signature_on_name_row(cx: &mut T
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|editor, window, cx| {
-            editor.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            editor.scroll(gpui::Point { x: 0., y: offset }, None, None, window, cx);
         });
         cx.run_until_parked();
         cx.update_editor(|editor, window, cx| {
@@ -34836,7 +34999,13 @@ async fn test_sticky_scroll_with_expanded_deleted_diff_hunks(
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
-            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            e.scroll(
+                gpui::Point { x: 0., y: offset },
+                None,
+                Some(ScrollBehavior::Instant),
+                window,
+                cx,
+            );
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
@@ -34892,7 +35061,13 @@ async fn test_no_duplicated_sticky_headers(cx: &mut TestAppContext) {
 
     let mut sticky_headers = |offset: ScrollOffset| {
         cx.update_editor(|e, window, cx| {
-            e.scroll(gpui::Point { x: 0., y: offset }, None, window, cx);
+            e.scroll(
+                gpui::Point { x: 0., y: offset },
+                None,
+                Some(ScrollBehavior::Instant),
+                window,
+                cx,
+            );
         });
         cx.run_until_parked();
         cx.update_editor(|e, window, cx| {
@@ -35189,9 +35364,11 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
                     y: scroll_offset,
                 },
                 None,
+                Some(ScrollBehavior::Instant),
                 window,
                 cx,
             );
+            e.flush_scroll_animation(window, cx);
         });
         cx.run_until_parked();
         cx.simulate_click(
@@ -35280,7 +35457,13 @@ async fn test_scroll_by_clicking_sticky_header(cx: &mut TestAppContext) {
     // The text "impl Bar {" starts at column 0, so column 5 = 'B'.
     let click_x = text_origin_x + em_width * 5.5;
     cx.update_editor(|e, window, cx| {
-        e.scroll(gpui::Point { x: 0., y: 4.5 }, None, window, cx);
+        e.scroll(
+            gpui::Point { x: 0., y: 4.5 },
+            None,
+            Some(ScrollBehavior::Instant),
+            window,
+            cx,
+        );
     });
     cx.run_until_parked();
     cx.simulate_click(
@@ -35354,7 +35537,13 @@ async fn test_clicking_sticky_header_sets_character_select_mode(cx: &mut TestApp
         editor.end_selection(window, cx);
 
         // Scroll down one row to make `fn foo() {` a sticky header
-        editor.scroll(gpui::Point { x: 0., y: 1. }, None, window, cx);
+        editor.scroll(
+            gpui::Point { x: 0., y: 1. },
+            None,
+            Some(ScrollBehavior::Instant),
+            window,
+            cx,
+        );
     });
     cx.run_until_parked();
 

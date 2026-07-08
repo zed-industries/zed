@@ -489,7 +489,6 @@ impl EditorElement {
             let position_map = layout.position_map.clone();
             let editor = self.editor.clone();
             let hitbox = layout.hitbox.clone();
-            let mut delta = ScrollDelta::default();
 
             // Set a minimum scroll_sensitivity of 0.01 to make sure the user doesn't
             // accidentally turn off their scrolling.
@@ -503,8 +502,6 @@ impl EditorElement {
 
             move |event: &ScrollWheelEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox.should_handle_scroll(window) {
-                    delta = delta.coalesce(event.delta);
-
                     if event.modifiers.secondary()
                         && editor.read(cx).enable_mouse_wheel_zoom
                         && EditorSettings::get_global(cx).mouse_wheel_zoom
@@ -533,7 +530,7 @@ impl EditorElement {
                         editor.update(cx, |editor, cx| {
                             let line_height = position_map.line_height;
                             let glyph_width = position_map.em_layout_width;
-                            let (delta, axis) = match delta {
+                            let (delta, axis) = match event.delta {
                                 gpui::ScrollDelta::Pixels(mut pixels) => {
                                     //Trackpad
                                     let axis =
@@ -549,7 +546,15 @@ impl EditorElement {
                                 }
                             };
 
-                            let current_scroll_position = position_map.snapshot.scroll_position();
+                            let current_scroll_position = match editor
+                                .scroll_manager
+                                .scroll_animation()
+                                .map(|animation| animation.target_position())
+                            {
+                                Some(target) => target,
+                                None => editor.scroll_position(cx),
+                            };
+
                             let x = (current_scroll_position.x
                                 * ScrollPixelOffset::from(glyph_width)
                                 - ScrollPixelOffset::from(delta.x * scroll_sensitivity))
@@ -567,7 +572,7 @@ impl EditorElement {
                             }
 
                             if scroll_position != current_scroll_position {
-                                editor.scroll(scroll_position, axis, window, cx);
+                                editor.scroll(scroll_position, axis, None, window, cx);
                                 cx.stop_propagation();
                             } else if y < 0. && !forbid_vertical_scroll {
                                 // Due to clamping, we may fail to detect cases of overscroll to the top;
