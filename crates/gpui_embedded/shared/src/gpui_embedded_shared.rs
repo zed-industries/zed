@@ -52,11 +52,28 @@ pub trait HandleShared<M: SharedMessage>: 'static + Sized {
     fn handle(&mut self, message: M, cx: &mut gpui::Context<Self>) -> M::Response;
 }
 
+/// What a method handler produced: an immediate response, or asynchronous work whose
+/// result becomes the response when it resolves. Async handlers are what make caretakers
+/// possible: a handler can await calls on other refs and pipe their responses through.
+pub enum HandlerResponse {
+    Ready(anyhow::Result<Vec<u8>>),
+    Pending(gpui::Task<anyhow::Result<Vec<u8>>>),
+}
+
 /// A type-erased method handler on an entity's home side: decode, dispatch, encode the
 /// response. Receives the method name so wildcard handlers can interpret it. Used
 /// identically by the native host and the wasm guest.
-pub type MethodHandler =
-    std::rc::Rc<dyn Fn(&str, &[u8], &mut gpui::App) -> anyhow::Result<Vec<u8>>>;
+pub type MethodHandler = std::rc::Rc<dyn Fn(&str, &[u8], &mut gpui::App) -> HandlerResponse>;
+
+/// An asynchronous handler for one typed message: returns a task whose value becomes the
+/// response. Sequence acks still fire at delivery; the response fires at completion.
+pub trait HandleSharedAsync<M: SharedMessage>: 'static + Sized {
+    fn handle(
+        &mut self,
+        message: M,
+        cx: &mut gpui::Context<Self>,
+    ) -> gpui::Task<anyhow::Result<M::Response>>;
+}
 
 /// Registering a handler under this name makes it the fallback for any method that has no
 /// explicit entry: fully dynamic dispatch, decided by the entity at runtime.
@@ -90,9 +107,39 @@ impl<S: SharedSpec, T: 'static> Methods<S, T> {
         self.map.insert(
             M::METHOD.to_string(),
             std::rc::Rc::new(move |_method, payload, cx| {
-                let message: M = decode(payload)?;
-                let response = entity.update(cx, |entity, cx| entity.handle(message, cx))?;
-                encode(&response)
+                HandlerResponse::Ready((|| {
+                    let message: M = decode(payload)?;
+                    let response = entity.update(cx, |entity, cx| entity.handle(message, cx))?;
+                    encode(&response)
+                })())
+            }),
+        );
+        self
+    }
+
+    /// Register an asynchronous handler for message type `M`. The handler returns a task;
+    /// its value becomes the response when the task resolves, so the entity can await calls
+    /// on other refs in between (forwarding, aggregation, caretakers).
+    pub fn on_async<M>(&mut self) -> &mut Self
+    where
+        M: SharedMessage<Spec = S>,
+        T: HandleSharedAsync<M>,
+    {
+        let entity = self.entity.clone();
+        self.map.insert(
+            M::METHOD.to_string(),
+            std::rc::Rc::new(move |_method, payload, cx| {
+                let task = (|| {
+                    let message: M = decode(payload)?;
+                    entity.update(cx, |entity, cx| entity.handle(message, cx))
+                })();
+                match task {
+                    Ok(task) => HandlerResponse::Pending(cx.spawn(async move |_| {
+                        let response = task.await?;
+                        encode(&response)
+                    })),
+                    Err(error) => HandlerResponse::Ready(Err(error)),
+                }
             }),
         );
         self
@@ -110,10 +157,31 @@ impl<S: SharedSpec, T: 'static> Methods<S, T> {
         self.map.insert(
             method.into(),
             std::rc::Rc::new(move |method, payload, cx| {
-                let entity = entity
-                    .upgrade()
-                    .ok_or_else(|| anyhow::anyhow!("shared entity dropped"))?;
-                handler(&entity, method, payload, cx)
+                HandlerResponse::Ready((|| {
+                    let entity = entity
+                        .upgrade()
+                        .ok_or_else(|| anyhow::anyhow!("shared entity dropped"))?;
+                    handler(&entity, method, payload, cx)
+                })())
+            }),
+        );
+        self
+    }
+
+    /// The asynchronous dynamic escape hatch: a raw handler returning a task. Combined with
+    /// [`WILDCARD_METHOD`] this is everything a caretaker needs.
+    pub fn on_raw_async(
+        &mut self,
+        method: impl Into<String>,
+        handler: impl Fn(&gpui::Entity<T>, &str, &[u8], &mut gpui::App) -> gpui::Task<anyhow::Result<Vec<u8>>>
+        + 'static,
+    ) -> &mut Self {
+        let entity = self.entity.clone();
+        self.map.insert(
+            method.into(),
+            std::rc::Rc::new(move |method, payload, cx| match entity.upgrade() {
+                Some(entity) => HandlerResponse::Pending(handler(&entity, method, payload, cx)),
+                None => HandlerResponse::Ready(Err(anyhow::anyhow!("shared entity dropped"))),
             }),
         );
         self
@@ -161,6 +229,39 @@ impl std::future::Future for SendReceipt {
 
 /// The sending half backing a [`CallReceipt`]: the serialized response or an error string.
 pub type ResponseSender = futures::channel::oneshot::Sender<Result<Vec<u8>, String>>;
+
+/// A call receipt that resolves with the raw response bytes, undecoded — the forwarding
+/// primitive: a caretaker pipes these straight through to its own caller.
+pub struct RawCallReceipt(futures::channel::oneshot::Receiver<Result<Vec<u8>, String>>);
+
+impl RawCallReceipt {
+    #[doc(hidden)]
+    pub fn channel() -> (ResponseSender, Self) {
+        let (sender, receiver) = futures::channel::oneshot::channel();
+        (sender, Self(receiver))
+    }
+
+    #[doc(hidden)]
+    pub fn dropped() -> Self {
+        let (_sender, receiver) = futures::channel::oneshot::channel();
+        Self(receiver)
+    }
+}
+
+impl std::future::Future for RawCallReceipt {
+    type Output = anyhow::Result<Vec<u8>>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        std::pin::Pin::new(&mut self.0).poll(cx).map(|result| {
+            let outcome =
+                result.map_err(|_| anyhow::anyhow!("shared entity went away before response"))?;
+            outcome.map_err(|error| anyhow::anyhow!("shared call failed: {error}"))
+        })
+    }
+}
 
 /// Resolves with the home handler's return value. Responses are delivered after the
 /// snapshot acking the call, so by the time a call resolves the local replica already
@@ -388,7 +489,20 @@ pub mod test_schema {
         entity FactorySpec as "test.factory" {
             snapshot FactorySnapshot { created: u32 }
             message "create" CreateItem { label: String } -> SharedRef<ItemSpec>
-            message "create-readonly" CreateReadonlyItem { label: String } -> SharedRef<ItemSpec>
+        }
+    }
+
+    crate::shared_schema! {
+        entity VaultSpec as "test.vault" {
+            snapshot VaultSnapshot { label: String }
+            message "read" ReadSecret {} -> String
+        }
+    }
+
+    crate::shared_schema! {
+        entity GatekeeperSpec as "test.gatekeeper" {
+            snapshot GatekeeperSnapshot { guarded: u32 }
+            message "guard" Guard { vault: SharedRef<VaultSpec> } -> SharedRef<VaultSpec>
         }
     }
 

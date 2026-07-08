@@ -5,11 +5,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use gpui::{AppContext as _, Entity, TestAppContext};
-use gpui_embedded::{PluginHost, PluginInstance};
+use gpui::{App, AppContext as _, Context, Entity, Task, TestAppContext};
+use gpui_embedded::{
+    HandleSharedAsync, PluginHost, PluginInstance, SharedEntitySource,
+};
 use gpui_embedded_shared::test_schema::{
-    Bump, ChameleonSpec, CreateItem, CreateReadonlyItem, FactorySpec, TestCounterSpec,
-    TestIncrement,
+    Bump, ChameleonSpec, CreateItem, FactorySpec, GatekeeperSpec, Guard, ReadSecret,
+    TestCounterSpec, TestIncrement, VaultSnapshot, VaultSpec,
 };
 use gpui_embedded_shared::encode;
 use rand::prelude::*;
@@ -143,37 +145,153 @@ async fn test_shared_refs_build_object_graphs(cx: &mut TestAppContext) {
     assert_ne!(second_ref.entity_id(), item_ref.entity_id());
 }
 
+/// The host half of the membrane test: an entity whose secret is only reachable via a
+/// capability, with a deliberately asynchronous read handler.
+struct Vault {
+    label: String,
+    secret: String,
+}
+
+impl SharedEntitySource<VaultSpec> for Vault {
+    fn snapshot(&self, _cx: &App) -> VaultSnapshot {
+        VaultSnapshot {
+            label: self.label.clone(),
+        }
+    }
+}
+
+impl HandleSharedAsync<ReadSecret> for Vault {
+    fn handle(
+        &mut self,
+        _message: ReadSecret,
+        cx: &mut Context<Self>,
+    ) -> Task<anyhow::Result<String>> {
+        let secret = self.secret.clone();
+        cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(10))
+                .await;
+            Ok(secret)
+        })
+    }
+}
+
 #[gpui::test]
-async fn test_attenuated_refs_read_but_do_not_write(cx: &mut TestAppContext) {
+async fn test_caretaker_membrane_forwards_and_revokes(cx: &mut TestAppContext) {
+    let host = setup(cx);
+
+    // A host-homed vault, shared anonymously: the ref is the only way in, and reads go
+    // through an async handler.
+    let vault = cx.new(|_| Vault {
+        label: "prod".to_string(),
+        secret: "swordfish".to_string(),
+    });
+    let vault_ref = host.update(cx, |host, cx| {
+        host.share_anonymous::<VaultSpec, _>(
+            &vault,
+            |methods| {
+                methods.on_async::<ReadSecret>();
+            },
+            cx,
+        )
+    });
+
+    // Hand the vault capability to the guest's gatekeeper; it wraps it in a caretaker
+    // and returns a ref to *that*. The caller can't tell the difference.
+    let gatekeeper = host.update(cx, |host, cx| host.remote::<GatekeeperSpec>("gatekeeper", cx));
+    let guarded = cx.update(|cx| gatekeeper.call(Guard { vault: vault_ref }, cx));
+    settle(cx);
+    let guarded_ref = guarded.await.expect("guard should respond with a ref");
+    assert_ne!(guarded_ref.entity_id(), vault_ref.entity_id());
+
+    let guarded = host.update(cx, |host, cx| host.remote_from_ref(guarded_ref, cx));
+    settle(cx);
+    let label = guarded
+        .replica()
+        .read_with(cx, |replica, _| replica.state.as_ref().map(|s| s.label.clone()));
+    assert_eq!(label.as_deref(), Some("prod"), "snapshots pass through the membrane");
+
+    // A read crosses the boundary four times: host -> caretaker (guest) -> vault (host),
+    // resolves in the vault's async handler, and unwinds back through the caretaker.
+    let read = cx.update(|cx| guarded.call(ReadSecret {}, cx));
+    settle(cx);
+    assert_eq!(read.await.expect("read through membrane"), "swordfish");
+
+    // Revocation: the caretaker drops the wrapped capability. Its auto-release cascades
+    // to the vault's home, which drops its strong handle.
+    let revoked = cx.update(|cx| {
+        guarded.call_raw::<()>("revoke", encode(&()).expect("encode unit"), cx)
+    });
+    settle(cx);
+    revoked.await.expect("revoke");
+
+    let read = cx.update(|cx| guarded.call(ReadSecret {}, cx));
+    settle(cx);
+    let error = read.await.expect_err("reads after revocation must fail");
+    assert!(
+        error.to_string().contains("capability revoked"),
+        "unexpected error: {error:#}"
+    );
+    let label = guarded
+        .replica()
+        .read_with(cx, |replica, _| replica.state.as_ref().map(|s| s.label.clone()));
+    assert_eq!(label.as_deref(), Some("revoked"));
+
+    // With the caretaker's handle released and ours dropped, nothing keeps the vault
+    // alive: revocation reclaims the entity itself.
+    let weak_vault = vault.downgrade();
+    drop(vault);
+    settle(cx);
+    assert!(
+        weak_vault.upgrade().is_none(),
+        "vault should be reclaimed after revocation"
+    );
+}
+
+#[gpui::test]
+async fn test_dropping_last_remote_releases_the_capability(cx: &mut TestAppContext) {
     let host = setup(cx);
     let factory = host.update(cx, |host, cx| host.remote::<FactorySpec>("factory", cx));
 
     let created = cx.update(|cx| {
         factory.call(
-            CreateReadonlyItem {
-                label: "sealed".to_string(),
+            CreateItem {
+                label: "ephemeral".to_string(),
             },
             cx,
         )
     });
     settle(cx);
-    let readonly_ref = created.await.expect("create-readonly");
+    let item_ref = created.await.expect("create");
 
-    let item = host.update(cx, |host, cx| host.remote_from_ref(readonly_ref, cx));
+    let item = host.update(cx, |host, cx| host.remote_from_ref(item_ref, cx));
+    settle(cx);
+    let bumped = cx.update(|cx| item.call(Bump {}, cx));
+    settle(cx);
+    assert_eq!(bumped.await.expect("bump while held"), 1);
+
+    // Clones share the guard, refcount-style: dropping one of two releases nothing.
+    let sibling = item.clone();
+    drop(sibling);
+    host.update(cx, |host, cx| host.pump(cx));
+    settle(cx);
+    let bumped = cx.update(|cx| item.call(Bump {}, cx));
+    settle(cx);
+    assert_eq!(bumped.await.expect("bump after dropping a clone"), 2);
+
+    // Dropping the last handle queues the release; pump flushes it to the guest, whose
+    // home drops the only strong handle to the item.
+    drop(item);
+    host.update(cx, |host, cx| host.pump(cx));
     settle(cx);
 
-    // Reading works: subscription snapshots flow.
-    let label = item
-        .replica()
-        .read_with(cx, |replica, _| replica.state.as_ref().map(|s| s.label.clone()));
-    assert_eq!(label.as_deref(), Some("sealed"));
-
-    // Writing fails: this capability was shared with an empty method table.
-    let bump = cx.update(|cx| item.call(Bump {}, cx));
+    // Re-materializing the same ref finds nobody home.
+    let item = host.update(cx, |host, cx| host.remote_from_ref(item_ref, cx));
+    let bumped = cx.update(|cx| item.call(Bump {}, cx));
     settle(cx);
-    let error = bump.await.expect_err("bump must be rejected");
+    let error = bumped.await.expect_err("bump after release must fail");
     assert!(
-        error.to_string().contains("no handler for shared method"),
+        error.to_string().contains("entity released"),
         "unexpected error: {error:#}"
     );
 }

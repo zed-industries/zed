@@ -2,13 +2,14 @@
 //! entities exercising calls, capability refs, attenuation, and fully dynamic dispatch.
 
 use anyhow::anyhow;
-use gpui::{AnyView, App, Context, Entity, Window, div, prelude::*};
+use gpui::{AnyView, App, Context, Entity, Task, Window, div, prelude::*};
 use gpui_embedded_shared::test_schema::{
-    Bump, ChameleonSnapshot, ChameleonSpec, CreateItem, CreateReadonlyItem, FactorySnapshot,
-    FactorySpec, ItemSnapshot, ItemSpec, TestCounterSnapshot, TestCounterSpec, TestIncrement,
+    Bump, ChameleonSnapshot, ChameleonSpec, CreateItem, FactorySnapshot, FactorySpec,
+    GatekeeperSnapshot, GatekeeperSpec, Guard, ItemSnapshot, ItemSpec, TestCounterSnapshot,
+    TestCounterSpec, TestIncrement, VaultSnapshot, VaultSpec,
 };
 use gpui_embedded_shared::{decode, encode};
-use gpui_plugin::shared::{HandleShared, SharedEntitySource, SharedRef};
+use gpui_plugin::shared::{HandleShared, Remote, SharedEntitySource, SharedRef};
 use gpui_plugin::{Plugin, register_plugin};
 
 /// Named shares borrow their entities (the sharer owns the lifetime), so the plugin must
@@ -17,6 +18,7 @@ struct TestGuest {
     _counter: Entity<Counter>,
     _factory: Entity<Factory>,
     _chameleon: Entity<Chameleon>,
+    _gatekeeper: Entity<Gatekeeper>,
 }
 
 impl Plugin for TestGuest {
@@ -36,7 +38,17 @@ impl Plugin for TestGuest {
             &factory,
             "factory",
             |methods| {
-                methods.on::<CreateItem>().on::<CreateReadonlyItem>();
+                methods.on::<CreateItem>();
+            },
+            cx,
+        );
+
+        let gatekeeper = cx.new(|_| Gatekeeper { guarded: 0 });
+        gpui_plugin::shared::share::<GatekeeperSpec, _>(
+            &gatekeeper,
+            "gatekeeper",
+            |methods| {
+                methods.on::<Guard>();
             },
             cx,
         );
@@ -80,6 +92,7 @@ impl Plugin for TestGuest {
             _counter: counter,
             _factory: factory,
             _chameleon: chameleon,
+            _gatekeeper: gatekeeper,
         }
     }
 
@@ -168,21 +181,81 @@ impl HandleShared<CreateItem> for Factory {
     }
 }
 
-impl HandleShared<CreateReadonlyItem> for Factory {
-    fn handle(
-        &mut self,
-        message: CreateReadonlyItem,
-        cx: &mut Context<Self>,
-    ) -> SharedRef<ItemSpec> {
-        self.created += 1;
+struct Gatekeeper {
+    guarded: u32,
+}
+
+impl SharedEntitySource<GatekeeperSpec> for Gatekeeper {
+    fn snapshot(&self, _cx: &App) -> GatekeeperSnapshot {
+        GatekeeperSnapshot {
+            guarded: self.guarded,
+        }
+    }
+}
+
+/// A membrane: wraps a vault capability (itself a projection of a *host*-homed entity)
+/// in a caretaker the guest controls. Callers get a ref that behaves exactly like the
+/// vault — every method is forwarded asynchronously — until the guest revokes it by
+/// dropping the wrapped capability.
+struct Caretaker {
+    vault: Option<Remote<VaultSpec>>,
+}
+
+impl SharedEntitySource<VaultSpec> for Caretaker {
+    fn snapshot(&self, cx: &App) -> VaultSnapshot {
+        match &self.vault {
+            Some(vault) => vault
+                .replica()
+                .read(cx)
+                .state
+                .clone()
+                .unwrap_or(VaultSnapshot {
+                    label: "pending".to_string(),
+                }),
+            None => VaultSnapshot {
+                label: "revoked".to_string(),
+            },
+        }
+    }
+}
+
+impl HandleShared<Guard> for Gatekeeper {
+    fn handle(&mut self, message: Guard, cx: &mut Context<Self>) -> SharedRef<VaultSpec> {
+        self.guarded += 1;
         cx.notify();
-        let item: Entity<Item> = cx.new(|_| Item {
-            label: message.label,
-            bumps: 0,
+        let vault = gpui_plugin::shared::remote_from_ref::<VaultSpec>(message.vault, cx);
+        let caretaker = cx.new(|cx| {
+            cx.observe(vault.replica(), |_: &mut Caretaker, _, cx| cx.notify())
+                .detach();
+            Caretaker { vault: Some(vault) }
         });
-        // Attenuation: the same entity kind, shared with an empty method table. Holders can
-        // subscribe and read, but every write is rejected by dispatch.
-        gpui_plugin::shared::share_anonymous::<ItemSpec, _>(&item, |_methods| {}, cx)
+        gpui_plugin::shared::share_anonymous::<VaultSpec, _>(
+            &caretaker,
+            |methods| {
+                methods
+                    .on_raw("revoke", |entity, _method, _payload, cx| {
+                        entity.update(cx, |caretaker, cx| {
+                            // Dropping the Remote is the revocation: its guard sends
+                            // `$release`, and the vault's home drops its strong handle.
+                            caretaker.vault = None;
+                            cx.notify();
+                            encode(&())
+                        })
+                    })
+                    .on_raw_async("*", |entity, method, payload, cx| {
+                        let receipt = entity
+                            .read(cx)
+                            .vault
+                            .as_ref()
+                            .map(|vault| vault.forward(method, payload.to_vec()));
+                        match receipt {
+                            Some(receipt) => cx.spawn(async move |_| receipt.await),
+                            None => Task::ready(Err(anyhow!("capability revoked"))),
+                        }
+                    });
+            },
+            cx,
+        )
     }
 }
 

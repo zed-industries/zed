@@ -6,16 +6,16 @@ use crate::wit;
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{AnyEntity, App, AppContext as _, AsyncApp, Entity};
 use gpui_embedded_shared::{
-    ATTENUATE_METHOD, AckSender, MethodHandler, RELEASE_METHOD, ResponseSender, SUBSCRIBE_METHOD,
-    SharedMessage, SharedSpec, decode, encode,
+    ATTENUATE_METHOD, AckSender, HandlerResponse, MethodHandler, RELEASE_METHOD, ResponseSender,
+    SUBSCRIBE_METHOD, SharedMessage, SharedSpec, decode, encode,
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 pub use gpui_embedded_shared::{
-    CallReceipt, HandleShared, Methods, SendReceipt, SharedEntitySource, SharedProjection,
-    SharedRef,
+    CallReceipt, HandleShared, HandleSharedAsync, Methods, RawCallReceipt, SendReceipt,
+    SharedEntitySource, SharedProjection, SharedRef,
 };
 
 /// Guest-homed entity ids have the high bit set so they can never collide with host-minted
@@ -42,6 +42,29 @@ struct ProjectionEntry {
     /// what makes sends to a not-yet-resolved entity pipeline correctly.
     pending_sends: Vec<PendingSend>,
     pending_acks: Vec<(u64, AckSender)>,
+    /// Live only while some `Remote` from `remote_from_ref` still holds the projection;
+    /// used to hand the same guard back when the same ref is materialized twice.
+    guard: Weak<ReleaseGuard>,
+}
+
+/// Dropping the last `Remote` for a ref-derived projection releases the capability:
+/// the home side drops its strong handle and snapshots stop flowing.
+struct ReleaseGuard {
+    name: String,
+}
+
+impl Drop for ReleaseGuard {
+    fn drop(&mut self) {
+        dispatch_outgoing(&self.name, RELEASE_METHOD, Vec::new(), None, None);
+        REGISTRY.with(|registry| {
+            let mut registry = registry.borrow_mut();
+            if let Some(entry) = registry.projections_by_name.remove(&self.name)
+                && let Some(entity_id) = entry.entity_id
+            {
+                registry.names_by_entity_id.remove(&entity_id);
+            }
+        });
+    }
 }
 
 struct HomeEntry {
@@ -75,6 +98,9 @@ thread_local! {
 pub struct Remote<S: SharedSpec> {
     name: String,
     replica: Entity<SharedProjection<S::Snapshot>>,
+    /// Present only for remotes materialized from a [`SharedRef`]; named remotes are
+    /// bootstrap mounts and are never auto-released.
+    _guard: Option<Rc<ReleaseGuard>>,
 }
 
 impl<S: SharedSpec> Clone for Remote<S> {
@@ -82,6 +108,7 @@ impl<S: SharedSpec> Clone for Remote<S> {
         Self {
             name: self.name.clone(),
             replica: self.replica.clone(),
+            _guard: self._guard.clone(),
         }
     }
 }
@@ -112,10 +139,15 @@ pub fn remote<S: SharedSpec>(name: impl Into<String>, cx: &mut App) -> Remote<S>
                 next_sequence: 0,
                 pending_sends: Vec::new(),
                 pending_acks: Vec::new(),
+                guard: Weak::new(),
             },
         );
     });
-    Remote { name, replica }
+    Remote {
+        name,
+        replica,
+        _guard: None,
+    }
 }
 
 /// Attach to a shared entity through a capability reference received in a payload. No name
@@ -131,11 +163,17 @@ pub fn remote_from_ref<S: SharedSpec>(reference: SharedRef<S>, cx: &mut App) -> 
         registry
             .projections_by_name
             .get(&name)
-            .map(|entry| entry.replica.clone())
+            .map(|entry| (entry.replica.clone(), entry.guard.upgrade()))
     });
-    if let Some(replica) = existing {
+    if let Some((replica, Some(guard))) = existing {
         match replica.downcast::<SharedProjection<S::Snapshot>>() {
-            Ok(replica) => return Remote { name, replica },
+            Ok(replica) => {
+                return Remote {
+                    name,
+                    replica,
+                    _guard: Some(guard),
+                };
+            }
             Err(_) => log::error!(
                 "gpui_plugin: ref {entity_id} materialized twice with different specs"
             ),
@@ -153,6 +191,7 @@ pub fn remote_from_ref<S: SharedSpec>(reference: SharedRef<S>, cx: &mut App) -> 
             })
         })
     };
+    let guard = Rc::new(ReleaseGuard { name: name.clone() });
     REGISTRY.with(|registry| {
         let mut registry = registry.borrow_mut();
         registry.projections_by_name.insert(
@@ -165,12 +204,17 @@ pub fn remote_from_ref<S: SharedSpec>(reference: SharedRef<S>, cx: &mut App) -> 
                 next_sequence: 0,
                 pending_sends: Vec::new(),
                 pending_acks: Vec::new(),
+                guard: Rc::downgrade(&guard),
             },
         );
         registry.names_by_entity_id.insert(entity_id, name.clone());
     });
     dispatch_outgoing(&name, SUBSCRIBE_METHOD, Vec::new(), None, None);
-    Remote { name, replica }
+    Remote {
+        name,
+        replica,
+        _guard: Some(guard),
+    }
 }
 
 impl<S: SharedSpec> Remote<S> {
@@ -208,18 +252,11 @@ impl<S: SharedSpec> Remote<S> {
         }
     }
 
-    /// Relinquish this projection. Anonymous homes drop their strong handle to the entity;
-    /// snapshots stop flowing.
-    pub fn release(self) {
-        let _receipt = send_raw(&self.name, RELEASE_METHOD, Vec::new());
-        REGISTRY.with(|registry| {
-            let mut registry = registry.borrow_mut();
-            if let Some(entry) = registry.projections_by_name.remove(&self.name)
-                && let Some(entity_id) = entry.entity_id
-            {
-                registry.names_by_entity_id.remove(&entity_id);
-            }
-        });
+    /// Call a method by name with pre-encoded payload, resolving with the raw response
+    /// bytes. This is the forwarding primitive: a caretaker pipes a caller's request
+    /// through to the entity it guards without knowing the method's types.
+    pub fn forward(&self, method: &str, payload: Vec<u8>) -> RawCallReceipt {
+        call_forward(&self.name, method, payload)
     }
 
     /// Call a typed method on the entity's home side, resolving with its return value. The
@@ -255,6 +292,13 @@ pub fn call_raw<R: gpui_embedded_shared::serde::de::DeserializeOwned>(
     payload: Vec<u8>,
 ) -> CallReceipt<R> {
     let (response_sender, receipt) = CallReceipt::channel();
+    dispatch_outgoing(name, method, payload, None, Some(response_sender));
+    receipt
+}
+
+/// Like [`call_raw`] but resolves with the raw response bytes, undecoded.
+pub fn call_forward(name: &str, method: &str, payload: Vec<u8>) -> RawCallReceipt {
+    let (response_sender, receipt) = RawCallReceipt::channel();
     dispatch_outgoing(name, method, payload, None, Some(response_sender));
     receipt
 }
@@ -606,9 +650,27 @@ pub(crate) fn message_delivered(message: wit::SharedMessage, cx: &mut AsyncApp) 
         }
     });
     let outcome = match dispatch {
-        Dispatch::Handler(handler) => cx
-            .update(|cx| handler(&message.method, &message.payload, cx))
-            .map_err(|error| format!("{error:#}")),
+        Dispatch::Handler(handler) => {
+            match cx.update(|cx| handler(&message.method, &message.payload, cx)) {
+                HandlerResponse::Ready(result) => result.map_err(|error| format!("{error:#}")),
+                HandlerResponse::Pending(task) => {
+                    // The handler's work continues after this delivery returns; ack and
+                    // response happen when its task resolves, preserving the same
+                    // publish-before-respond order as the synchronous path below.
+                    let entity_id = message.entity_id;
+                    let request_id = message.request_id;
+                    cx.spawn(async move |cx| {
+                        let outcome = task.await.map_err(|error| format!("{error:#}"));
+                        if let Err(error) = &outcome {
+                            log::error!("gpui_plugin: shared message failed: {error}");
+                        }
+                        finish_delivery(entity_id, request_id, outcome, cx);
+                    })
+                    .detach();
+                    return;
+                }
+            }
+        }
         Dispatch::Control => encode(&()).map_err(|error| format!("{error:#}")),
         Dispatch::ControlResponse(bytes) => Ok(bytes),
         Dispatch::Failed(error) => Err(error),
@@ -620,24 +682,30 @@ pub(crate) fn message_delivered(message: wit::SharedMessage, cx: &mut AsyncApp) 
     if let Err(error) = &outcome {
         log::error!("gpui_plugin: shared message failed: {error}");
     }
+    finish_delivery(message.entity_id, message.request_id, outcome, cx);
+}
 
-    // The handler's notify usually published already (observers run in its update cycle);
-    // this covers handlers that don't notify, so the sender's receipt still resolves. It
-    // must happen BEFORE the response goes back: responses may only arrive after the
-    // snapshot acking their call, which is what makes calls read-your-writes.
+/// Publish any unacked state change, then send the response if the message was a call.
+/// The order matters: responses may only arrive after the snapshot acking their call,
+/// which is what makes calls read-your-writes.
+fn finish_delivery(
+    entity_id: u64,
+    request_id: Option<u64>,
+    outcome: Result<Vec<u8>, String>,
+    cx: &mut AsyncApp,
+) {
     let needs_ack = REGISTRY.with(|registry| {
         registry
             .borrow()
             .homes
-            .get(&message.entity_id)
+            .get(&entity_id)
             .is_some_and(|home| home.published_ack < home.applied_sequence)
     });
     if needs_ack {
-        let entity_id = message.entity_id;
         cx.update(|cx| publish_home(entity_id, cx));
     }
 
-    if let Some(request_id) = message.request_id {
+    if let Some(request_id) = request_id {
         wit::send_shared_response(&wit::SharedResponse {
             request_id,
             outcome,

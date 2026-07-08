@@ -8,8 +8,8 @@ use std::rc::Rc;
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{AnyEntity, App, Subscription};
 use gpui_embedded_shared::{
-    ATTENUATE_METHOD, AckSender, MethodHandler, Methods, RELEASE_METHOD, ResponseSender,
-    SUBSCRIBE_METHOD, SharedSpec, decode, encode,
+    ATTENUATE_METHOD, AckSender, HandlerResponse, MethodHandler, Methods, RELEASE_METHOD,
+    ResponseSender, SUBSCRIBE_METHOD, SharedSpec, decode, encode,
 };
 
 use crate::bindings;
@@ -166,7 +166,8 @@ impl HostShared {
         Some(std::mem::take(&mut projection.pending_sends))
     }
 
-    /// Run the handler and return the encoded response.
+    /// Run the handler and return its response: encoded bytes for synchronous handlers,
+    /// or a task the caller must drive for asynchronous ones.
     pub fn dispatch(
         &mut self,
         entity_id: u64,
@@ -174,7 +175,7 @@ impl HostShared {
         method: &str,
         payload: &[u8],
         cx: &mut App,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<HandlerResponse> {
         let home = self
             .homes
             .get_mut(&entity_id)
@@ -183,12 +184,12 @@ impl HostShared {
         match method {
             SUBSCRIBE_METHOD => {
                 home.subscribed = true;
-                return encode(&());
+                return Ok(HandlerResponse::Ready(encode(&())));
             }
             RELEASE_METHOD => {
                 home.subscribed = false;
                 home.strong = None;
-                return encode(&());
+                return Ok(HandlerResponse::Ready(encode(&())));
             }
             ATTENUATE_METHOD => {
                 let keep: Vec<String> = decode(payload)?;
@@ -215,7 +216,7 @@ impl HostShared {
                 if let Some(home) = self.homes.get_mut(&entity_id) {
                     home.facets.push(facet_id);
                 }
-                return encode(&facet_id);
+                return Ok(HandlerResponse::Ready(encode(&facet_id)));
             }
             _ => {}
         }
@@ -232,7 +233,11 @@ impl HostShared {
                 )
             })?;
         let name = home.name.clone();
-        handler(method, payload, cx)
-            .with_context(|| format!("dispatching {method:?} to shared entity {name:?}"))
+        Ok(match handler(method, payload, cx) {
+            HandlerResponse::Ready(result) => HandlerResponse::Ready(
+                result.with_context(|| format!("dispatching {method:?} to shared entity {name:?}")),
+            ),
+            pending => pending,
+        })
     }
 }
