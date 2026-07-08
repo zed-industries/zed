@@ -84,9 +84,6 @@ async fn capture_unix(
     let shell_kind = ShellKind::new(shell_path, false);
     let quoted_zed_path = super::get_shell_safe_zed_path(shell_kind)?;
 
-    let mut command_string = String::new();
-    let mut command = new_std_command(shell_path);
-    command.args(args);
     // In some shells, file descriptors greater than 2 cannot be used in interactive mode,
     // so file descriptor 0 (stdin) is used instead. This impacts zsh, old bash; perhaps others.
     // See: https://github.com/zed-industries/zed/pull/32136#issuecomment-2999645482
@@ -104,29 +101,6 @@ async fn capture_unix(
         _ => (FD_STDIN, format!(">&{}", FD_STDIN)), // `>&0`
     };
 
-    match shell_kind {
-        ShellKind::Csh | ShellKind::Tcsh => {
-            // For csh/tcsh, login shell requires passing `-` as 0th argument (instead of `-l`)
-            command.arg0("-");
-        }
-        ShellKind::Fish => {
-            // in fish, asdf, direnv attach to the `fish_prompt` event
-            command_string.push_str("emit fish_prompt;");
-            command.arg("-l");
-        }
-        _ => {
-            command.arg("-l");
-        }
-    }
-
-    match shell_kind {
-        // Nushell does not allow non-interactive login shells.
-        // Instead of doing "-l -i -c '<command>'"
-        // use "-l -e '<command>; exit'" instead
-        ShellKind::Nushell => command.arg("-e"),
-        _ => command.args(["-i", "-c"]),
-    };
-
     // Prefix with "./" if the path starts with "-" to prevent cd from interpreting it as a flag
     let dir_str = directory.to_string_lossy();
     let dir_str = if dir_str.starts_with('-') {
@@ -138,6 +112,11 @@ async fn capture_unix(
         .try_quote(&dir_str)
         .context("unexpected null in directory name")?;
 
+    let mut command_string = String::new();
+    // in fish, asdf, direnv attach to the `fish_prompt` event
+    if let ShellKind::Fish = shell_kind {
+        command_string.push_str("emit fish_prompt;");
+    }
     // cd into the directory, triggering directory specific side-effects (asdf, direnv, etc)
     command_string.push_str(&format!("cd {};", quoted_dir));
     if let Some(prefix) = shell_kind.command_prefix() {
@@ -149,32 +128,103 @@ async fn capture_unix(
         command_string.push_str("; exit");
     }
 
-    command.arg(&command_string);
+    let build_command = |login_shell: bool| {
+        let mut command = new_std_command(shell_path);
+        command.args(args);
+        match shell_kind {
+            ShellKind::Csh | ShellKind::Tcsh => {
+                // For csh/tcsh, login shell requires passing `-` as 0th argument (instead of `-l`)
+                if login_shell {
+                    command.arg0("-");
+                }
+            }
+            _ => {
+                command.arg("-l");
+            }
+        }
+        match shell_kind {
+            // Nushell does not allow non-interactive login shells.
+            // Instead of doing "-l -i -c '<command>'"
+            // use "-l -e '<command>; exit'" instead
+            ShellKind::Nushell => {
+                command.arg("-e");
+            }
+            _ => {
+                command.args(["-i", "-c"]);
+            }
+        }
+        command.arg(&command_string);
+        super::set_pre_exec_to_start_new_session(&mut command);
+        command
+    };
 
-    super::set_pre_exec_to_start_new_session(&mut command);
+    capture_unix_attempts(shell_kind, |login_shell| {
+        let command = build_command(login_shell);
+        async move { spawn_and_read_fd(command, fd_num).await }
+    })
+    .await
+}
 
-    let (env_output, process_output) = spawn_and_read_fd(command, fd_num).await?;
-    let env_output = String::from_utf8_lossy(&env_output);
+/// Extra non-login attempts to try after the login shell fails to produce an
+/// environment, in order.
+///
+/// csh/tcsh enter login mode via `arg0("-")`, which sources `~/.login`. A common
+/// pattern there is `exec zsh`, which replaces the shell and discards our `-c`
+/// command, so the login attempt produces no output. Retrying without login mode
+/// still sources `~/.tcshrc`/`~/.cshrc`, which normally carries the environment.
+/// See https://github.com/zed-industries/zed/issues/60441.
+#[cfg(unix)]
+fn fallback_login_shells(shell_kind: ShellKind) -> &'static [bool] {
+    match shell_kind {
+        ShellKind::Csh | ShellKind::Tcsh => &[false],
+        _ => &[],
+    }
+}
 
-    parse_env_output(
-        &env_output,
-        &process_output.status,
-        || {
-            format!(
-                "login shell exited with {} but environment was captured successfully. stderr: {:?}",
-                process_output.status,
-                String::from_utf8_lossy(&process_output.stderr),
-            )
-        },
-        || {
-            format!(
-                "login shell exited with {}. stdout: {:?}, stderr: {:?}",
-                process_output.status,
-                String::from_utf8_lossy(&process_output.stdout),
-                String::from_utf8_lossy(&process_output.stderr),
-            )
-        },
-    )
+/// Runs the login shell capture, falling back to any non-login attempts whenever
+/// the previous attempt produces no parseable environment.
+#[cfg(unix)]
+async fn capture_unix_attempts<F, Fut>(
+    shell_kind: ShellKind,
+    mut run_attempt: F,
+) -> Result<collections::HashMap<String, String>>
+where
+    F: FnMut(bool) -> Fut,
+    Fut: std::future::Future<Output = Result<(Vec<u8>, std::process::Output)>>,
+{
+    let mut login_shell = true;
+    let mut fallbacks = fallback_login_shells(shell_kind).iter();
+    loop {
+        let (env_output, process_output) = run_attempt(login_shell).await?;
+        let env_output = String::from_utf8_lossy(&env_output);
+
+        match fallbacks.next() {
+            Some(&next) if parse_env_map_from_noisy_output(&env_output).is_err() => {
+                login_shell = next;
+            }
+            _ => {
+                return parse_env_output(
+                    &env_output,
+                    &process_output.status,
+                    || {
+                        format!(
+                            "login shell exited with {} but environment was captured successfully. stderr: {:?}",
+                            process_output.status,
+                            String::from_utf8_lossy(&process_output.stderr),
+                        )
+                    },
+                    || {
+                        format!(
+                            "login shell exited with {}. stdout: {:?}, stderr: {:?}",
+                            process_output.status,
+                            String::from_utf8_lossy(&process_output.stdout),
+                            String::from_utf8_lossy(&process_output.stderr),
+                        )
+                    },
+                );
+            }
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -347,5 +397,67 @@ mod tests {
             env_map.get("SHELL").map(String::as_str),
             Some(path!("/bin/zsh"))
         );
+    }
+
+    #[cfg(unix)]
+    fn process_output(code: i32) -> std::process::Output {
+        std::process::Output {
+            status: exit_status(code),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tcsh_falls_back_to_non_login_when_login_shell_yields_no_environment() {
+        let attempts = std::cell::RefCell::new(Vec::new());
+        let env_json = serde_json::json!({ "PATH": path!("/usr/bin") }).to_string();
+
+        let env_map = smol::block_on(capture_unix_attempts(ShellKind::Tcsh, |login_shell| {
+            attempts.borrow_mut().push(login_shell);
+            // The login attempt reproduces the bug: an exec'd `~/.login` drops `-c`, so no output.
+            let env_output = if login_shell {
+                String::new()
+            } else {
+                env_json.clone()
+            };
+            async move { Ok((env_output.into_bytes(), process_output(0))) }
+        }))
+        .expect("non-login fallback should recover the environment");
+
+        assert_eq!(*attempts.borrow(), vec![true, false]);
+        assert_eq!(
+            env_map.get("PATH").map(String::as_str),
+            Some(path!("/usr/bin"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn capture_uses_single_attempt_when_login_shell_returns_environment() {
+        let attempts = std::cell::RefCell::new(Vec::new());
+        let env_json = serde_json::json!({ "PATH": path!("/usr/bin") }).to_string();
+
+        let env_map = smol::block_on(capture_unix_attempts(ShellKind::Tcsh, |login_shell| {
+            attempts.borrow_mut().push(login_shell);
+            let env_output = env_json.clone();
+            async move { Ok((env_output.into_bytes(), process_output(0))) }
+        }))
+        .expect("valid login shell environment should be used without falling back");
+
+        assert_eq!(*attempts.borrow(), vec![true]);
+        assert_eq!(
+            env_map.get("PATH").map(String::as_str),
+            Some(path!("/usr/bin"))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fallback_login_shells_only_retries_for_csh_family() {
+        assert_eq!(fallback_login_shells(ShellKind::Tcsh), [false].as_slice());
+        assert_eq!(fallback_login_shells(ShellKind::Csh), [false].as_slice());
+        assert!(fallback_login_shells(ShellKind::Posix).is_empty());
     }
 }
