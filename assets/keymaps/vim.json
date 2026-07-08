@@ -338,7 +338,7 @@
       "ctrl-x": "vim::Decrement",
       "shift-j": "vim::JoinLines",
       "i": "vim::InsertBefore",
-      "a": "vim::InsertAfter",
+      "a": "vim::HelixAppend",
       "o": "vim::InsertLineBelow",
       "shift-o": "vim::InsertLineAbove",
       "p": "vim::Paste",
@@ -454,6 +454,8 @@
       "shift-t": ["vim::PushFindBackward", { "after": true, "multiline": true }],
       "shift-f": ["vim::PushFindBackward", { "after": false, "multiline": true }],
       "alt-.": "vim::RepeatFind",
+      "alt-b": "editor::MoveToStartOfLargerSyntaxNode",
+      "alt-e": "editor::MoveToEndOfLargerSyntaxNode",
 
       // Changes
       "shift-r": "editor::Paste",
@@ -483,6 +485,7 @@
       "alt-shift-c": "vim::HelixDuplicateAbove",
       "%": "editor::SelectAll",
       "x": "vim::HelixSelectLine",
+      "*": "buffer_search::UseSelectionForFind",
       "shift-x": "editor::SelectLine",
       "ctrl-c": "editor::ToggleComments",
       "alt-o": "editor::SelectLargerSyntaxNode",
@@ -494,6 +497,10 @@
       "n": "vim::HelixSelectNext",
       "shift-n": "vim::HelixSelectPrevious",
 
+      // Macros — Helix swaps Vim's q/Q: Q records, q replays
+      "q": "vim::ReplayLastRecording",
+      "shift-q": "vim::ToggleRecord",
+
       // Goto mode
       "g e": "vim::EndOfDocument",
       "g h": "vim::StartOfLine",
@@ -503,6 +510,8 @@
       "g c": "vim::WindowMiddle",
       "g b": "vim::WindowBottom",
       "g r": "editor::FindAllReferences",
+      "g i": "editor::GoToImplementation",
+      "g a": "pane::AlternateFile",
       "g n": "pane::ActivateNextItem",
       "shift-l": "pane::ActivateNextItem", // not a helix default
       "g p": "pane::ActivatePreviousItem",
@@ -527,6 +536,7 @@
       "space w d": "pane::SplitDown", // not a helix default
 
       // Space mode
+      "space b": "tab_switcher::ToggleAll",
       "space f": "file_finder::Toggle",
       "space k": "editor::Hover",
       "space s": "outline::Toggle",
@@ -539,6 +549,21 @@
       "space p": "editor::Paste",
       "space y": "editor::Copy",
       "space /": "pane::DeploySearch",
+
+      // View mode
+      "z c": "editor::ScrollCursorCenter",
+
+      // Debug mode (Helix space G)
+      "space shift-g l": "debugger::Start",
+      "space shift-g r": "debugger::Restart",
+      "space shift-g b": "editor::ToggleBreakpoint",
+      "space shift-g c": "debugger::Continue",
+      "space shift-g h": "debugger::Pause",
+      "space shift-g i": "debugger::StepInto",
+      "space shift-g o": "debugger::StepOut",
+      "space shift-g n": "debugger::StepOver",
+      "space shift-g t": "debugger::Stop",
+      "space shift-g ctrl-l": "editor::EditLogBreakpoint",
 
       // Other
       ":": "command_palette::Toggle",
@@ -669,7 +694,8 @@
       "shift-b": "pane::ActivateLastItem",
       "x": "editor::SelectSmallerSyntaxNode",
       "d": "editor::GoToDiagnostic",
-      "c": "editor::GoToHunk",
+      "c": "vim::NextComment",
+      "g": "editor::GoToHunk",
       "space": "vim::InsertEmptyLineBelow",
     },
   },
@@ -687,7 +713,8 @@
       "shift-b": ["pane::ActivateItem", 0],
       "x": "editor::SelectLargerSyntaxNode",
       "d": "editor::GoToPreviousDiagnostic",
-      "c": "editor::GoToPreviousHunk",
+      "c": "vim::PreviousComment",
+      "g": "editor::GoToPreviousHunk",
       "space": "vim::InsertEmptyLineAbove",
     },
   },
@@ -942,7 +969,7 @@
       "space w j": "workspace::ActivatePaneDown",
       "space w k": "workspace::ActivatePaneUp",
       "space w l": "workspace::ActivatePaneRight",
-	  "space w q": "pane::CloseActiveItem",
+      "space w q": "pane::CloseActiveItem",
     },
   },
   {
@@ -983,6 +1010,7 @@
       "ctrl-d": "project_panel::ScrollDown",
       "z t": "project_panel::ScrollCursorTop",
       "z z": "project_panel::ScrollCursorCenter",
+      "z c": "project_panel::ScrollCursorCenter",
       "z b": "project_panel::ScrollCursorBottom",
       "0": ["vim::Number", 0],
       "1": ["vim::Number", 1],
@@ -1014,6 +1042,7 @@
       "ctrl-d": "outline_panel::ScrollDown",
       "z t": "outline_panel::ScrollCursorTop",
       "z z": "outline_panel::ScrollCursorCenter",
+      "z c": "outline_panel::ScrollCursorCenter",
       "z b": "outline_panel::ScrollCursorBottom",
       "0": ["vim::Number", 0],
       "1": ["vim::Number", 1],
@@ -1036,11 +1065,27 @@
   {
     "context": "GitGraph",
     "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
+    },
+  },
+  {
+    "context": "GitGraphSearchBar > Editor",
+    "bindings": {
+      "tab": "git_graph::FocusNextTabStop",
+      "shift-tab": "git_graph::FocusPreviousTabStop",
+    },
+  },
+  {
+    "context": "GitGraph && !GitGraphSearchBar",
+    "bindings": {
       "j": "vim::MenuSelectNext",
       "k": "vim::MenuSelectPrevious",
+      "ctrl-d": "git_graph::ScrollDown",
+      "ctrl-u": "git_graph::ScrollUp",
       "shift-g": "menu::SelectLast",
-      "g g": "menu::SelectFirst"
-    }
+      "g g": "menu::SelectFirst",
+    },
   },
   {
     "context": "GitPanel && ChangesList && !GitBranchSelector",
@@ -1186,6 +1231,20 @@
       "/": "vim::SwitchToInsertMode",
       "escape": "menu::Cancel",
       "enter": "editor::Newline",
+    },
+  },
+  {
+    "context": "SkillCreator",
+    "bindings": {
+      "tab": "skill_creator::FocusNextField",
+      "shift-tab": "skill_creator::FocusPreviousField",
+    },
+  },
+  {
+    "context": "SkillCreator > Editor",
+    "bindings": {
+      "tab": "skill_creator::FocusNextField",
+      "shift-tab": "skill_creator::FocusPreviousField",
     },
   },
 ]

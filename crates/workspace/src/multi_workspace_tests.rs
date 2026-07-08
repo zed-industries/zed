@@ -2,12 +2,13 @@ use std::path::PathBuf;
 
 use super::*;
 use crate::item::test::TestItem;
+use agent_settings::AgentSettings;
 use client::proto;
 use fs::{FakeFs, Fs};
 use gpui::{TestAppContext, VisualTestContext};
 use project::DisableAiSettings;
 use serde_json::json;
-use settings::SettingsStore;
+use settings::{Settings, SettingsStore};
 use util::path;
 
 fn init_test(cx: &mut TestAppContext) {
@@ -87,6 +88,43 @@ async fn test_sidebar_disabled_when_disable_ai_is_enabled(cx: &mut TestAppContex
             mw.sidebar_open(),
             "Sidebar should open when toggled after re-enabling AI"
         );
+    });
+}
+
+#[gpui::test]
+async fn test_multi_workspace_collapses_when_agent_is_disabled(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    fs.insert_tree("/root_b", json!({ "file.txt": "" })).await;
+    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+    let project_b = Project::test(fs, ["/root_b".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        multi_workspace.test_add_workspace(project_b, window, cx);
+    });
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        assert!(multi_workspace.multi_workspace_enabled(cx));
+        assert_eq!(multi_workspace.workspaces().count(), 2);
+    });
+
+    cx.update(|_window, cx| {
+        let mut settings = AgentSettings::get_global(cx).clone();
+        settings.enabled = false;
+        AgentSettings::override_global(settings, cx);
+    });
+    cx.run_until_parked();
+
+    multi_workspace.read_with(cx, |multi_workspace, cx| {
+        assert!(!multi_workspace.multi_workspace_enabled(cx));
+        assert!(!multi_workspace.sidebar_open());
+        assert_eq!(multi_workspace.workspaces().count(), 1);
+        assert!(multi_workspace.project_group_keys().is_empty());
     });
 }
 
@@ -469,6 +507,67 @@ async fn test_find_or_create_workspace_uses_project_group_key_when_paths_are_mis
 }
 
 #[gpui::test]
+async fn test_remove_fallback_via_find_or_create_skips_removed_workspaces(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    let project_a = Project::test(fs.clone(), ["/root_a".as_ref()], cx).await;
+    let project_b = Project::test(fs, ["/root_a".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+
+    let workspace_a = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+    let workspace_b = multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.test_add_workspace(project_b, window, cx)
+    });
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |mw, window, cx| {
+        mw.activate(workspace_a.clone(), None, window, cx);
+    });
+
+    let removed = multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            let excluded = vec![workspace_a.clone()];
+            mw.remove(
+                excluded.clone(),
+                move |this, window, cx| {
+                    this.find_or_create_workspace(
+                        PathList::new(&[PathBuf::from("/root_a")]),
+                        None,
+                        None,
+                        |_options, _window, _cx| Task::ready(Ok(None)),
+                        &excluded,
+                        None,
+                        OpenMode::Activate,
+                        window,
+                        cx,
+                    )
+                },
+                window,
+                cx,
+            )
+        })
+        .await
+        .expect("removing the active workspace should succeed");
+    assert!(removed, "the workspace should have been removed");
+
+    multi_workspace.read_with(cx, |mw, _cx| {
+        assert_eq!(
+            mw.workspace().entity_id(),
+            workspace_b.entity_id(),
+            "the non-excluded workspace should become active"
+        );
+        assert!(
+            mw.workspaces()
+                .all(|workspace| workspace.entity_id() != workspace_a.entity_id()),
+            "the removed workspace should be gone"
+        );
+    });
+}
+
+#[gpui::test]
 async fn test_find_or_create_local_workspace_reuses_active_workspace_after_sidebar_open(
     cx: &mut TestAppContext,
 ) {
@@ -618,7 +717,7 @@ async fn test_close_workspace_prefers_already_loaded_neighboring_workspace(
 }
 
 #[gpui::test]
-async fn test_switching_projects_with_sidebar_closed_detaches_old_active_workspace(
+async fn test_switching_projects_with_sidebar_closed_retains_old_active_workspace(
     cx: &mut TestAppContext,
 ) {
     init_test(cx);
@@ -648,7 +747,7 @@ async fn test_switching_projects_with_sidebar_closed_detaches_old_active_workspa
     });
     cx.run_until_parked();
 
-    multi_workspace.read_with(cx, |mw, _cx| {
+    multi_workspace.read_with(cx, |mw, cx| {
         assert_eq!(
             mw.workspace().entity_id(),
             workspace_b.entity_id(),
@@ -656,14 +755,15 @@ async fn test_switching_projects_with_sidebar_closed_detaches_old_active_workspa
         );
         assert_eq!(
             mw.workspaces().count(),
-                        1,
-                        "only the new active workspace should remain open after switching with the sidebar closed"
+            2,
+            "the previous active workspace should remain open after switching with the sidebar closed"
         );
+        assert_eq!(mw.project_groups(cx).len(), 2);
     });
 
     assert!(
-        workspace_a.read_with(cx, |workspace, _cx| workspace.session_id().is_none()),
-        "the previous active workspace should be detached when switching away with the sidebar closed"
+        workspace_a.read_with(cx, |workspace, _cx| workspace.session_id().is_some()),
+        "the previous active workspace should remain attached when switching away with the sidebar closed"
     );
 }
 
@@ -746,6 +846,7 @@ async fn test_remote_project_root_dir_changes_update_groups(cx: &mut TestAppCont
                 updated_repositories: vec![],
                 removed_repositories: vec![],
                 root_repo_common_dir: None,
+                root_repo_is_linked_worktree: false,
             });
     });
     cx.run_until_parked();
@@ -902,4 +1003,129 @@ async fn test_open_project_closes_empty_workspace_but_not_non_empty_ones(cx: &mu
         })
         .unwrap();
     assert!(workspace_a.read_with(cx, |workspace, _cx| workspace.session_id().is_some()),);
+}
+
+#[gpui::test]
+async fn test_close_workspace_with_remote_neighbor_does_not_create_local_workspace(
+    cx: &mut TestAppContext,
+) {
+    // Regression test: closing a workspace whose neighboring group is
+    // remote with no existing workspace should not create a local
+    // workspace with the remote paths.
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    let project_a = Project::test(fs, ["/root_a".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a, window, cx));
+
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
+    cx.run_until_parked();
+
+    // Add a mock-remote group with no workspace as the second group.
+    let remote_key = ProjectGroupKey::new(
+        Some(RemoteConnectionOptions::Mock(
+            remote::MockConnectionOptions { id: 1 },
+        )),
+        PathList::new(&[PathBuf::from("/remote/project")]),
+    );
+    multi_workspace.update(cx, |mw, _cx| {
+        mw.test_add_project_group(ProjectGroup {
+            key: remote_key.clone(),
+            workspaces: Vec::new(),
+            expanded: true,
+        });
+    });
+
+    let workspace_a = multi_workspace.read_with(cx, |mw, _cx| mw.workspace().clone());
+
+    // Close workspace A. The neighbor is the remote group with no workspace.
+    // The fix should skip find_or_create_local_workspace and fall through
+    // to creating an empty workspace instead.
+    multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            mw.close_workspace(&workspace_a, window, cx)
+        })
+        .await
+        .expect("close_workspace should succeed");
+
+    cx.run_until_parked();
+
+    multi_workspace.update(cx, |mw, cx| {
+        // The active workspace should NOT be a local workspace with the
+        // remote paths. It should be an empty workspace (no worktrees).
+        let workspaces: Vec<_> = mw.workspaces().cloned().collect();
+        for ws in &workspaces {
+            let key = ws.read(cx).project_group_key(cx);
+            assert!(
+                key.host().is_some()
+                    || key.path_list().paths() != [PathBuf::from("/remote/project")],
+                "remote neighbor should not have created a local workspace"
+            );
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_remove_project_group_with_remote_neighbor_does_not_create_local_workspace(
+    cx: &mut TestAppContext,
+) {
+    // Regression test: removing a project group whose neighboring group is
+    // remote with no workspace should not create a local workspace with
+    // the remote paths.
+    init_test(cx);
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree("/root_a", json!({ "file.txt": "" })).await;
+    let project_a = Project::test(fs, ["/root_a".as_ref()], cx).await;
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project_a.clone(), window, cx));
+
+    multi_workspace.update(cx, |mw, cx| {
+        mw.open_sidebar(cx);
+    });
+    cx.run_until_parked();
+
+    let key_a = project_a.read_with(cx, |p, cx| p.project_group_key(cx));
+
+    // Add a mock-remote group with no workspace.
+    let remote_key = ProjectGroupKey::new(
+        Some(RemoteConnectionOptions::Mock(
+            remote::MockConnectionOptions { id: 1 },
+        )),
+        PathList::new(&[PathBuf::from("/remote/project")]),
+    );
+    multi_workspace.update(cx, |mw, _cx| {
+        mw.test_add_project_group(ProjectGroup {
+            key: remote_key.clone(),
+            workspaces: Vec::new(),
+            expanded: true,
+        });
+    });
+
+    // Remove the local group A. The neighbor is the remote group with no
+    // workspace. The fix should skip find_or_create_local_workspace and
+    // fall through to creating an empty workspace.
+    multi_workspace
+        .update_in(cx, |mw, window, cx| {
+            mw.remove_project_group(&key_a, window, cx)
+        })
+        .await
+        .expect("remove_project_group should succeed");
+
+    cx.run_until_parked();
+
+    multi_workspace.update(cx, |mw, cx| {
+        let workspaces: Vec<_> = mw.workspaces().cloned().collect();
+        for ws in &workspaces {
+            let key = ws.read(cx).project_group_key(cx);
+            assert!(
+                key.host().is_some() || key.path_list().paths() != [PathBuf::from("/remote/project")],
+                "remote neighbor should not have created a local workspace after remove_project_group"
+            );
+        }
+    });
 }

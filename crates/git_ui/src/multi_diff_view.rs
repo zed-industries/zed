@@ -1,13 +1,17 @@
+use crate::file_diff_view::build_buffer_diff;
 use anyhow::Result;
 use buffer_diff::BufferDiff;
-use editor::{Editor, EditorEvent, MultiBuffer, multibuffer_context_lines};
+use editor::{
+    Editor, EditorEvent, MultiBuffer, RestoreOnlyUnstagedDiffHunkDelegate,
+    multibuffer_context_lines,
+};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, Font, IntoElement, Render, SharedString, Task, Window,
 };
 use language::{Buffer, Capability, HighlightedText, OffsetRangeExt};
 use multi_buffer::PathKey;
-use project::Project;
+use project::{Project, ProjectPath};
 use std::{
     any::{Any, TypeId},
     path::{Path, PathBuf},
@@ -90,7 +94,7 @@ fn register_entry(
             RelPath::new(rel, PathStyle::local())
                 .map(|r| r.into_owned().into())
                 .unwrap_or_else(|_| {
-                    RelPath::new(Path::new("untitled"), PathStyle::Posix)
+                    RelPath::new(Path::new(MultiBuffer::DEFAULT_TITLE), PathStyle::Posix)
                         .unwrap()
                         .into_owned()
                         .into()
@@ -104,7 +108,7 @@ fn register_entry(
                 .and_then(|s| RelPath::new(Path::new(s), PathStyle::Posix).ok())
                 .map(|r| r.into_owned().into())
                 .unwrap_or_else(|| {
-                    RelPath::new(Path::new("untitled"), PathStyle::Posix)
+                    RelPath::new(Path::new(MultiBuffer::DEFAULT_TITLE), PathStyle::Posix)
                         .unwrap()
                         .into_owned()
                         .into()
@@ -138,36 +142,6 @@ fn common_prefix(paths: &[PathBuf]) -> Option<PathBuf> {
     }
 
     Some(prefix)
-}
-
-async fn build_buffer_diff(
-    old_buffer: &Entity<Buffer>,
-    new_buffer: &Entity<Buffer>,
-    cx: &mut AsyncApp,
-) -> Result<Entity<BufferDiff>> {
-    let old_buffer_snapshot = old_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-    let new_buffer_snapshot = new_buffer.read_with(cx, |buffer, _| buffer.snapshot());
-
-    let diff = cx.new(|cx| BufferDiff::new(&new_buffer_snapshot.text, cx));
-
-    let update = diff
-        .update(cx, |diff, cx| {
-            diff.update_diff(
-                new_buffer_snapshot.text.clone(),
-                Some(old_buffer_snapshot.text().into()),
-                Some(true),
-                new_buffer_snapshot.language().cloned(),
-                cx,
-            )
-        })
-        .await;
-
-    diff.update(cx, |diff, cx| {
-        diff.set_snapshot(update, &new_buffer_snapshot.text, cx)
-    })
-    .await;
-
-    Ok(diff)
 }
 
 impl MultiDiffView {
@@ -225,13 +199,9 @@ impl MultiDiffView {
         let editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
-            editor.start_temporary_diff_override();
+            editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
             editor.disable_diagnostics(cx);
             editor.set_expand_all_diff_hunks(cx);
-            editor.set_render_diff_hunk_controls(
-                Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                cx,
-            );
             editor
         });
 
@@ -311,6 +281,10 @@ impl Item for MultiDiffView {
 
     fn as_searchable(&self, _: &Entity<Self>, _: &App) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(self.editor.clone()))
+    }
+
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.editor.read(cx).active_project_path(cx)
     }
 
     fn set_nav_history(

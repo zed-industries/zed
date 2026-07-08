@@ -3,6 +3,7 @@ use clap::Parser;
 use gh_workflow::Workflow;
 use std::fs;
 use std::path::{Path, PathBuf};
+use strum::IntoEnumIterator;
 
 use crate::tasks::workflow_checks::{self};
 
@@ -11,10 +12,10 @@ mod autofix_pr;
 mod bump_patch_version;
 mod bump_zed_version;
 mod cherry_pick;
-mod compare_perf;
 mod compliance_check;
 mod danger;
 mod deploy_collab;
+mod deploy_docs;
 mod extension_auto_bump;
 mod extension_bump;
 mod extension_tests;
@@ -26,7 +27,6 @@ mod release_nightly;
 mod run_bundling;
 
 mod release;
-mod run_agent_evals;
 mod run_tests;
 mod runners;
 mod steps;
@@ -136,8 +136,8 @@ impl WorkflowFile {
             .as_ref()
             .expect("Workflow must have a name at this point");
         let filename = format!(
-            "{}.yml",
-            workflow_name.rsplit("::").next().unwrap_or(workflow_name)
+            "{workflow_name}.yml",
+            workflow_name = workflow_name.rsplit("::").next().unwrap_or(workflow_name)
         );
 
         let workflow_path = workflow_folder.join(filename);
@@ -166,14 +166,17 @@ pub enum WorkflowType {
 }
 
 impl WorkflowType {
+    const PREAMBLE: &str = "# Generated from xtask::workflows::";
+
     fn disclaimer(&self, workflow_name: &str) -> String {
         format!(
             concat!(
-                "# Generated from xtask::workflows::{}{}\n",
+                "{preamble}{workflow_name}{external_disclaimer}\n",
                 "# Rebuild with `cargo xtask workflows`.",
             ),
-            workflow_name,
-            (*self != WorkflowType::Zed)
+            preamble = Self::PREAMBLE,
+            workflow_name = workflow_name,
+            external_disclaimer = (*self != WorkflowType::Zed)
                 .then_some(" within the Zed repository.")
                 .unwrap_or_default(),
         )
@@ -186,6 +189,26 @@ impl WorkflowType {
             WorkflowType::ExtensionsShared => PathBuf::from("extensions/workflows/shared"),
         }
     }
+
+    fn remove_generated_workflows() -> Result<()> {
+        for workflow_type in Self::iter() {
+            for path in fs::read_dir(workflow_type.folder_path())? {
+                let entry = path?;
+                if !entry.file_type().is_ok_and(|file_type| file_type.is_file()) {
+                    continue;
+                }
+
+                let path = entry.path();
+                if fs::read_to_string(&path)
+                    .is_ok_and(|content| content.starts_with(Self::PREAMBLE))
+                {
+                    fs::remove_file(path)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 pub fn run_workflows(args: GenerateWorkflowArgs) -> Result<()> {
@@ -193,25 +216,28 @@ pub fn run_workflows(args: GenerateWorkflowArgs) -> Result<()> {
         anyhow::bail!("xtask workflows must be ran from the project root");
     }
 
+    // Remove all previously generated workflows to ensure these do not become stale.
+    WorkflowType::remove_generated_workflows()?;
+
     let workflows = [
         WorkflowFile::zed(after_release::after_release),
         WorkflowFile::zed(autofix_pr::autofix_pr),
         WorkflowFile::zed(bump_patch_version::bump_patch_version),
         WorkflowFile::zed(bump_zed_version::bump_zed_version),
         WorkflowFile::zed(cherry_pick::cherry_pick),
-        WorkflowFile::zed(compare_perf::compare_perf),
         WorkflowFile::zed(compliance_check::compliance_check),
         WorkflowFile::zed(danger::danger),
         WorkflowFile::zed(deploy_collab::deploy_collab),
+        WorkflowFile::zed(deploy_docs::deploy_docs),
+        WorkflowFile::zed(deploy_docs::deploy_nightly_docs),
         WorkflowFile::zed(extension_bump::extension_bump),
         WorkflowFile::zed(extension_auto_bump::extension_auto_bump),
         WorkflowFile::zed(extension_tests::extension_tests),
         WorkflowFile::zed(extension_workflow_rollout::extension_workflow_rollout),
+        WorkflowFile::zed(nix_build::nix_build),
         WorkflowFile::zed(publish_extension_cli::publish_extension_cli),
         WorkflowFile::zed(release::release),
         WorkflowFile::zed(release_nightly::release_nightly),
-        WorkflowFile::zed(run_agent_evals::run_cron_unit_evals),
-        WorkflowFile::zed(run_agent_evals::run_unit_evals),
         WorkflowFile::zed(run_bundling::run_bundling),
         WorkflowFile::zed(run_tests::run_tests),
         /* workflows used for CI/CD in extension repositories */
