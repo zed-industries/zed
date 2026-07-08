@@ -404,28 +404,12 @@ impl MentionUri {
                 abs_path,
                 line_range,
                 ..
-            } => Some(
-                format!(
-                    "{}:{}-{}",
-                    abs_path.display(),
-                    line_range.start(),
-                    line_range.end()
-                )
-                .into(),
-            ),
-            MentionUri::Selection {
-                abs_path: Some(path),
+            }
+            | MentionUri::Selection {
+                abs_path: Some(abs_path),
                 line_range,
                 ..
-            } => Some(
-                format!(
-                    "{}:{}-{}",
-                    path.display(),
-                    line_range.start(),
-                    line_range.end()
-                )
-                .into(),
-            ),
+            } => Some(format!("{}{}", abs_path.display(), line_range_suffix(line_range)).into()),
             MentionUri::Skill {
                 skill_file_path, ..
             } => Some(skill_file_path.to_string_lossy().into_owned().into()),
