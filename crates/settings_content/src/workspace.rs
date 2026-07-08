@@ -134,6 +134,12 @@ pub struct WorkspaceSettingsContent {
     /// Whether the focused panel follows the mouse location
     /// Default: false
     pub focus_follows_mouse: Option<FocusFollowsMouse>,
+    /// Whether to open files in their preview instead of a text editor, when a
+    /// preview is available for the file type (e.g. Markdown or SVG files).
+    /// The text editor can be opened from the preview with the `preview::OpenSource` action.
+    ///
+    /// Default: false
+    pub auto_preview: Option<bool>,
 }
 
 #[with_fallible_options]

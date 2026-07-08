@@ -1,8 +1,11 @@
+use ::settings::Settings as _;
 use editor::{Editor, EditorEvent};
 use feature_flags::{FeatureFlag, FeatureFlagAppExt as _, PresenceFlag, register_feature_flag};
 use gpui::{
     AppContext, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment, Task, actions,
 };
+use language::Buffer;
+use project::{Project, ProjectPath};
 use std::{
     collections::HashMap,
     time::{Duration, Instant},
@@ -13,7 +16,9 @@ use ui::{
     AbsoluteLength, ResizableColumnsState, SharedString, TableInteractionState,
     TableResizeBehavior, prelude::*,
 };
-use workspace::{Item, SplitDirection, Workspace};
+use workspace::item::{ItemBufferKind, ProjectItem};
+use workspace::{Item, Pane, SplitDirection, Workspace, WorkspaceSettings};
+use zed_actions::preview::OpenSource;
 
 use crate::{parser::EditorState, settings::CsvPreviewSettings, types::TableLikeContent};
 
@@ -54,6 +59,7 @@ pub struct CsvPreviewView {
 }
 
 pub fn init(cx: &mut App) {
+    workspace::register_project_item::<CsvPreviewView>(cx);
     cx.observe_new(|workspace: &mut Workspace, _, _| {
         CsvPreviewView::register(workspace);
     })
@@ -108,8 +114,8 @@ impl CsvPreviewView {
                         cx.notify();
                     }
                 }))
-                .on_action(cx.listener(
-                    |workspace, _: &OpenPreviewToTheSide, window, cx| {
+                .on_action(
+                    cx.listener(|workspace, _: &OpenPreviewToTheSide, window, cx| {
                         if let Some(editor) = workspace
                             .active_item(cx)
                             .and_then(|item| item.act_as::<Editor>(cx))
@@ -146,6 +152,30 @@ impl CsvPreviewView {
                             });
                             cx.notify();
                         }
+                    }),
+                )
+                .on_action(cx.listener(
+                    |workspace, _: &OpenSource, window, cx| {
+                        let Some(preview) = workspace
+                            .active_item(cx)
+                            .and_then(|item| item.downcast::<CsvPreviewView>())
+                        else {
+                            cx.propagate();
+                            return;
+                        };
+                        let editor = preview.read(cx).active_editor_state.editor.clone();
+                        if !workspace.activate_item(&editor, true, true, window, cx) {
+                            workspace.active_pane().update(cx, |pane, cx| {
+                                pane.add_item(
+                                    Box::new(editor.clone()),
+                                    true,
+                                    true,
+                                    None,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }
                     },
                 ))
             })
@@ -153,6 +183,10 @@ impl CsvPreviewView {
     }
 
     fn new(editor: &Entity<Editor>, cx: &mut Context<Workspace>) -> Entity<Self> {
+        cx.new(|cx| Self::build(editor.clone(), cx))
+    }
+
+    fn build(editor: Entity<Editor>, cx: &mut Context<Self>) -> Self {
         let contents = TableLikeContent::default();
         let table_interaction_state = cx.new(|cx| {
             TableInteractionState::new(cx).with_custom_scrollbar(ui::Scrollbars::for_settings::<
@@ -160,41 +194,39 @@ impl CsvPreviewView {
             >())
         });
 
-        cx.new(|cx| {
-            let subscription = cx.subscribe(
+        let subscription = cx.subscribe(
+            &editor,
+            |this: &mut CsvPreviewView, _editor, event: &EditorEvent, cx| {
+                match event {
+                    EditorEvent::Edited { .. } | EditorEvent::DirtyChanged => {
+                        this.parse_csv_from_active_editor(true, cx);
+                    }
+                    _ => {}
+                };
+            },
+        );
+
+        let mut view = CsvPreviewView {
+            focus_handle: cx.focus_handle(),
+            active_editor_state: EditorState {
                 editor,
-                |this: &mut CsvPreviewView, _editor, event: &EditorEvent, cx| {
-                    match event {
-                        EditorEvent::Edited { .. } | EditorEvent::DirtyChanged => {
-                            this.parse_csv_from_active_editor(true, cx);
-                        }
-                        _ => {}
-                    };
-                },
-            );
+                _subscription: subscription,
+            },
+            table_interaction_state,
+            column_widths: ColumnWidths::new(cx, 1),
+            parsing_task: None,
+            is_parsing: false,
+            filter_sort_task: None,
+            performance_metrics: PerformanceMetrics::default(),
+            list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
+                .with_uniform_item_height(px(24.)),
+            settings: CsvPreviewSettings::default(),
+            last_parse_end_time: None,
+            engine: TableDataEngine::default(),
+        };
 
-            let mut view = CsvPreviewView {
-                focus_handle: cx.focus_handle(),
-                active_editor_state: EditorState {
-                    editor: editor.clone(),
-                    _subscription: subscription,
-                },
-                table_interaction_state,
-                column_widths: ColumnWidths::new(cx, 1),
-                parsing_task: None,
-                is_parsing: false,
-                filter_sort_task: None,
-                performance_metrics: PerformanceMetrics::default(),
-                list_state: gpui::ListState::new(contents.rows.len(), ListAlignment::Top, px(1.))
-                    .with_uniform_item_height(px(24.)),
-                settings: CsvPreviewSettings::default(),
-                last_parse_end_time: None,
-                engine: TableDataEngine::default(),
-            };
-
-            view.parse_csv_from_active_editor(false, cx);
-            view
-        })
+        view.parse_csv_from_active_editor(false, cx);
+        view
     }
 
     pub(crate) fn editor_state(&self) -> &EditorState {
@@ -260,6 +292,21 @@ impl CsvPreviewView {
         Self::is_csv_file(&editor, cx).then_some(editor)
     }
 
+    fn is_csv_path(path: &ProjectPath) -> bool {
+        path.path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"))
+    }
+
+    fn source_buffer(&self, cx: &App) -> Option<Entity<Buffer>> {
+        self.active_editor_state
+            .editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()
+    }
+
     fn is_csv_file(editor: &Entity<Editor>, cx: &App) -> bool {
         editor
             .read(cx)
@@ -308,6 +355,81 @@ impl Item for CsvPreviewView {
                     .map(|name| format!("Preview {}", name.to_string_lossy()).into())
             })
             .unwrap_or_else(|| SharedString::from("CSV Preview"))
+    }
+
+    fn buffer_kind(&self, _cx: &App) -> ItemBufferKind {
+        ItemBufferKind::Singleton
+    }
+
+    fn is_dirty(&self, cx: &App) -> bool {
+        self.source_buffer(cx)
+            .is_some_and(|buffer| buffer.read(cx).is_dirty())
+    }
+
+    fn for_each_project_item(
+        &self,
+        cx: &App,
+        f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
+    ) {
+        if let Some(buffer) = self.source_buffer(cx) {
+            f(buffer.entity_id(), buffer.read(cx))
+        }
+    }
+}
+
+/// A [`project::ProjectItem`] that claims CSV files when the `auto_preview` setting
+/// is enabled, so that opening such files shows their rendered preview instead of an editor.
+pub struct CsvPreviewItem {
+    buffer: Entity<Buffer>,
+}
+
+impl project::ProjectItem for CsvPreviewItem {
+    fn try_open(
+        project: &Entity<Project>,
+        path: &ProjectPath,
+        cx: &mut App,
+    ) -> Option<Task<anyhow::Result<Entity<Self>>>> {
+        if !cx.has_flag::<TabularDataPreviewFeatureFlag>()
+            || !WorkspaceSettings::get_global(cx).auto_preview
+            || !CsvPreviewView::is_csv_path(path)
+        {
+            return None;
+        }
+        let buffer = project.update(cx, |project, cx| project.open_buffer(path.clone(), cx));
+        Some(cx.spawn(async move |cx| {
+            let buffer = buffer.await?;
+            Ok(cx.new(|_| CsvPreviewItem { buffer }))
+        }))
+    }
+
+    fn entry_id(&self, cx: &App) -> Option<project::ProjectEntryId> {
+        project::ProjectItem::entry_id(self.buffer.read(cx), cx)
+    }
+
+    fn project_path(&self, cx: &App) -> Option<ProjectPath> {
+        project::ProjectItem::project_path(self.buffer.read(cx), cx)
+    }
+
+    fn is_dirty(&self) -> bool {
+        // This item is only a carrier between `try_open` and `for_project_item`: the
+        // preview reports its dirty state through the buffer it renders.
+        false
+    }
+}
+
+impl ProjectItem for CsvPreviewView {
+    type Item = CsvPreviewItem;
+
+    fn for_project_item(
+        project: Entity<Project>,
+        _pane: Option<&Pane>,
+        item: Entity<Self::Item>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let buffer = item.read(cx).buffer.clone();
+        let editor = cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+        Self::build(editor, cx)
     }
 }
 

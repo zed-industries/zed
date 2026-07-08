@@ -1,6 +1,8 @@
 use std::mem;
 use std::sync::Arc;
 
+use anyhow::Result;
+use editor::Editor;
 use file_icons::FileIcons;
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement, Render,
@@ -8,9 +10,12 @@ use gpui::{
 };
 use language::{Buffer, BufferEvent};
 use multi_buffer::MultiBuffer;
+use project::{Project, ProjectEntryId, ProjectPath};
+use settings::Settings as _;
 use ui::prelude::*;
-use workspace::item::Item;
-use workspace::{Pane, Workspace};
+use workspace::item::{Item, ItemBufferKind, ProjectItem};
+use workspace::{Pane, Workspace, WorkspaceSettings};
+use zed_actions::preview::OpenSource;
 
 use crate::{OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide};
 
@@ -202,6 +207,12 @@ impl SvgPreviewView {
             })
     }
 
+    pub fn is_svg_path(path: &ProjectPath) -> bool {
+        path.path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
+    }
+
     pub fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>) {
         workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
             if let Some(buffer) = Self::resolve_active_item_as_svg_buffer(workspace, cx)
@@ -274,6 +285,93 @@ impl SvgPreviewView {
                 cx.notify();
             }
         });
+
+        workspace.register_action(move |workspace, _: &OpenSource, window, cx| {
+            let Some(preview) = workspace
+                .active_item(cx)
+                .and_then(|item| item.downcast::<SvgPreviewView>())
+            else {
+                cx.propagate();
+                return;
+            };
+            let Some(buffer) = preview.read(cx).buffer.clone() else {
+                return;
+            };
+            let existing_editor = workspace.items_of_type::<Editor>(cx).find(|editor| {
+                editor.read(cx).buffer().read(cx).as_singleton().as_ref() == Some(&buffer)
+            });
+            if let Some(editor) = existing_editor {
+                workspace.activate_item(&editor, true, true, window, cx);
+            } else {
+                let project = workspace.project().clone();
+                let editor = cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+                workspace.active_pane().update(cx, |pane, cx| {
+                    pane.add_item(Box::new(editor), true, true, None, window, cx);
+                });
+            }
+        });
+    }
+}
+
+/// A [`project::ProjectItem`] that claims SVG files when the `auto_preview` setting
+/// is enabled, so that opening such files shows their rendered preview instead of an editor.
+pub struct SvgPreviewItem {
+    buffer: Entity<Buffer>,
+}
+
+impl project::ProjectItem for SvgPreviewItem {
+    fn try_open(
+        project: &Entity<Project>,
+        path: &ProjectPath,
+        cx: &mut App,
+    ) -> Option<Task<Result<Entity<Self>>>> {
+        if !WorkspaceSettings::get_global(cx).auto_preview || !SvgPreviewView::is_svg_path(path) {
+            return None;
+        }
+        let buffer = project.update(cx, |project, cx| project.open_buffer(path.clone(), cx));
+        Some(cx.spawn(async move |cx| {
+            let buffer = buffer.await?;
+            Ok(cx.new(|_| SvgPreviewItem { buffer }))
+        }))
+    }
+
+    fn entry_id(&self, cx: &App) -> Option<ProjectEntryId> {
+        project::ProjectItem::entry_id(self.buffer.read(cx), cx)
+    }
+
+    fn project_path(&self, cx: &App) -> Option<ProjectPath> {
+        project::ProjectItem::project_path(self.buffer.read(cx), cx)
+    }
+
+    fn is_dirty(&self) -> bool {
+        // This item is only a carrier between `try_open` and `for_project_item`: the
+        // preview reports its dirty state through the buffer it renders.
+        false
+    }
+}
+
+impl ProjectItem for SvgPreviewView {
+    type Item = SvgPreviewItem;
+
+    fn for_project_item(
+        _project: Entity<Project>,
+        _pane: Option<&Pane>,
+        item: Entity<Self::Item>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let buffer = item.read(cx).buffer.clone();
+        let subscription = Self::create_buffer_subscription(&buffer, window, cx);
+        let mut this = Self {
+            focus_handle: cx.focus_handle(),
+            buffer: Some(buffer),
+            current_svg: None,
+            _buffer_subscription: Some(subscription),
+            _workspace_subscription: None,
+            _refresh: Task::ready(()),
+        };
+        this.render_image(window, cx);
+        this
     }
 }
 
@@ -335,6 +433,30 @@ impl Item for SvgPreviewView {
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
         Some("svg preview: open")
+    }
+
+    fn buffer_kind(&self, _cx: &App) -> ItemBufferKind {
+        ItemBufferKind::Singleton
+    }
+
+    fn is_dirty(&self, cx: &App) -> bool {
+        self.buffer
+            .as_ref()
+            .is_some_and(|buffer| buffer.read(cx).is_dirty())
+    }
+
+    fn for_each_project_item(
+        &self,
+        cx: &App,
+        f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
+    ) {
+        // Previews that follow the active editor are not bound to a single file.
+        if self._workspace_subscription.is_some() {
+            return;
+        }
+        if let Some(buffer) = &self.buffer {
+            f(buffer.entity_id(), buffer.read(cx))
+        }
     }
 
     fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}

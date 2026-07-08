@@ -3,7 +3,7 @@ use csv_preview::{
     TabularDataPreviewFeatureFlag,
 };
 use feature_flags::FeatureFlagAppExt as _;
-use gpui::{AnyElement, Modifiers, WeakEntity};
+use gpui::{Action as _, AnyElement, Modifiers, WeakEntity};
 use markdown_preview::{
     OpenPreview as MarkdownOpenPreview, OpenPreviewToTheSide as MarkdownOpenPreviewToTheSide,
     markdown_preview_view::MarkdownPreviewView,
@@ -25,6 +25,31 @@ enum PreviewType {
 }
 
 impl QuickActionBar {
+    pub fn render_open_source_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let item = self.active_item.as_ref()?;
+        let (button_id, tooltip_text) = if item.downcast::<MarkdownPreviewView>().is_some() {
+            ("edit-markdown-source", "Edit Markdown")
+        } else if item.downcast::<SvgPreviewView>().is_some() {
+            ("edit-svg-source", "Edit SVG")
+        } else if item.downcast::<CsvPreviewView>().is_some() {
+            ("edit-csv-source", "Edit CSV")
+        } else {
+            return None;
+        };
+
+        let button = IconButton::new(button_id, IconName::Pencil)
+            .icon_size(IconSize::Small)
+            .style(ButtonStyle::Subtle)
+            .tooltip(move |_window, cx| {
+                Tooltip::for_action(tooltip_text, &zed_actions::preview::OpenSource, cx)
+            })
+            .on_click(move |_, window, cx| {
+                window.dispatch_action(zed_actions::preview::OpenSource.boxed_clone(), cx);
+            });
+
+        Some(button.into_any_element())
+    }
+
     pub fn render_preview_button(
         &self,
         workspace_handle: WeakEntity<Workspace>,

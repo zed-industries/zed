@@ -214,6 +214,16 @@ Add an extension here with `false` to pin it to its currently installed version.
 Selecting **Install Another Version…** from an extension's `⋯` menu on the Extensions
 page ({#action zed::Extensions}) does this automatically.
 
+## Auto Preview
+
+- Description: Whether to open files in their preview instead of a text editor, when a preview is available for the file type (e.g. Markdown or SVG files). The text editor can be opened from the preview with the {#action preview::OpenSource} action.
+- Setting: `auto_preview`
+- Default: `false`
+
+**Options**
+
+`boolean` values
+
 ## Autosave
 
 - Description: When to automatically save edited buffers.

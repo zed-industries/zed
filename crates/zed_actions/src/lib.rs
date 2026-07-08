@@ -856,6 +856,16 @@ pub mod wsl_actions {
 }
 
 pub mod preview {
+    use gpui::actions;
+
+    actions!(
+        preview,
+        [
+            /// Opens a text editor for the file shown in the current preview.
+            OpenSource,
+        ]
+    );
+
     pub mod markdown {
         use gpui::actions;
 

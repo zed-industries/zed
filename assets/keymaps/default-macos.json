@@ -1413,6 +1413,7 @@
   {
     "context": "MarkdownPreview",
     "bindings": {
+      "cmd-shift-v": "preview::OpenSource",
       "pageup": "markdown::ScrollPageUp",
       "pagedown": "markdown::ScrollPageDown",
       "up": "markdown::ScrollUp",
@@ -1422,6 +1423,12 @@
       "cmd-up": "markdown::ScrollToTop",
       "cmd-down": "markdown::ScrollToBottom",
       "cmd-f": "buffer_search::Deploy",
+    },
+  },
+  {
+    "context": "SvgPreview",
+    "bindings": {
+      "cmd-shift-v": "preview::OpenSource",
     },
   },
   {
