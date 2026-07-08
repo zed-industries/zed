@@ -11,9 +11,10 @@ use gpui::{App, Task};
 use gpui_tokio::Tokio;
 use http_client::http::request;
 use http_client::{
-    AsyncBody, HttpClientWithUrl, HttpRequestExt, Json, Method, Request, StatusCode,
+    AsyncBody, HttpClientWithUrl, HttpRequestExt, Json, Method, Request, Response, StatusCode,
 };
 use parking_lot::RwLock;
+use serde::de::DeserializeOwned;
 use thiserror::Error;
 use yawc::WebSocket;
 
@@ -94,21 +95,10 @@ impl CloudApiClient {
             .unwrap_or_else(|| "cloud.zed.dev".into())
     }
 
-    fn build_request(
-        &self,
-        req: request::Builder,
-        body: impl Into<AsyncBody>,
-    ) -> Result<Request<AsyncBody>, ClientApiError> {
-        let credentials = self.credentials.read();
-        let credentials = credentials.as_ref().ok_or(ClientApiError::NotSignedIn)?;
-        build_request(req, body, credentials).map_err(ClientApiError::RequestBuildFailed)
-    }
-
     pub async fn get_authenticated_user(
         &self,
         system_id: Option<String>,
     ) -> Result<GetAuthenticatedUserResponse, ClientApiError> {
-        let host = self.cloud_host();
         let request_builder = Request::builder()
             .method(Method::GET)
             .uri(
@@ -121,38 +111,8 @@ impl CloudApiClient {
                 builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
             });
 
-        let request = self.build_request(request_builder, AsyncBody::default())?;
-
-        let mut response = self.http_client.send(request).await.map_err(|source| {
-            ClientApiError::ConnectionFailed {
-                host: host.clone(),
-                source,
-            }
-        })?;
-
-        if !response.status().is_success() {
-            if response.status() == StatusCode::UNAUTHORIZED {
-                return Err(ClientApiError::Unauthorized);
-            }
-
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await.ok();
-
-            return Err(ClientApiError::ServerError {
-                host,
-                status: response.status(),
-                body,
-            });
-        }
-
-        let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
+        self.send_authenticated_json_request(request_builder, AsyncBody::default())
             .await
-            .map_err(|e| ClientApiError::InvalidResponse(e.into()))?;
-
-        serde_json::from_str(&body).map_err(|e| ClientApiError::InvalidResponse(e.into()))
     }
 
     pub fn connect(&self, cx: &App) -> Result<Task<Result<Connection>>> {
@@ -184,12 +144,11 @@ impl CloudApiClient {
         }))
     }
 
-    pub async fn create_llm_token(
+    async fn create_llm_token(
         &self,
         system_id: Option<String>,
-        organization_id: Option<OrganizationId>,
+        organization_id: OrganizationId,
     ) -> Result<CreateLlmTokenResponse, ClientApiError> {
-        let host = self.cloud_host();
         let request_builder = Request::builder()
             .method(Method::POST)
             .uri(
@@ -202,41 +161,11 @@ impl CloudApiClient {
                 builder.header(ZED_SYSTEM_ID_HEADER_NAME, system_id)
             });
 
-        let request = self.build_request(
+        self.send_authenticated_json_request(
             request_builder,
             Json(CreateLlmTokenBody { organization_id }),
-        )?;
-
-        let mut response = self.http_client.send(request).await.map_err(|source| {
-            ClientApiError::ConnectionFailed {
-                host: host.clone(),
-                source,
-            }
-        })?;
-
-        if !response.status().is_success() {
-            if response.status() == StatusCode::UNAUTHORIZED {
-                return Err(ClientApiError::Unauthorized);
-            }
-
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await.ok();
-
-            return Err(ClientApiError::ServerError {
-                host,
-                status: response.status(),
-                body,
-            });
-        }
-
-        let mut body = String::new();
-        response
-            .body_mut()
-            .read_to_string(&mut body)
-            .await
-            .map_err(|e| ClientApiError::InvalidResponse(e.into()))?;
-
-        serde_json::from_str(&body).map_err(|e| ClientApiError::InvalidResponse(e.into()))
+        )
+        .await
     }
 
     pub async fn update_system_settings(
@@ -244,7 +173,6 @@ impl CloudApiClient {
         system_id: String,
         body: UpdateSystemSettingsBody,
     ) -> Result<SystemSettings, ClientApiError> {
-        let host = self.cloud_host();
         let request_builder = Request::builder()
             .method(Method::PATCH)
             .uri(
@@ -255,8 +183,34 @@ impl CloudApiClient {
             )
             .header(ZED_SYSTEM_ID_HEADER_NAME, system_id);
 
-        let request = self.build_request(request_builder, Json(body))?;
+        self.send_authenticated_json_request(request_builder, Json(body))
+            .await
+    }
 
+    pub async fn send_authenticated_json_request<T: DeserializeOwned>(
+        &self,
+        request_builder: request::Builder,
+        body: impl Into<AsyncBody>,
+    ) -> Result<T, ClientApiError> {
+        let mut response = self
+            .send_authenticated_request(request_builder, body)
+            .await?;
+        Self::read_response_json(&mut response).await
+    }
+
+    async fn send_authenticated_request(
+        &self,
+        request_builder: request::Builder,
+        body: impl Into<AsyncBody>,
+    ) -> Result<Response<AsyncBody>, ClientApiError> {
+        let request = {
+            let credentials = self.credentials.read();
+            let credentials = credentials.as_ref().ok_or(ClientApiError::NotSignedIn)?;
+            build_request(request_builder, body, credentials)
+                .map_err(ClientApiError::RequestBuildFailed)?
+        };
+
+        let host = self.cloud_host();
         let mut response = self.http_client.send(request).await.map_err(|source| {
             ClientApiError::ConnectionFailed {
                 host: host.clone(),
@@ -264,29 +218,39 @@ impl CloudApiClient {
             }
         })?;
 
-        if !response.status().is_success() {
-            if response.status() == StatusCode::UNAUTHORIZED {
-                return Err(ClientApiError::Unauthorized);
-            }
-
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await.ok();
-
-            return Err(ClientApiError::ServerError {
-                host,
-                status: response.status(),
-                body,
-            });
+        let status = response.status();
+        if status.is_success() {
+            return Ok(response);
         }
 
+        if status == StatusCode::UNAUTHORIZED {
+            return Err(ClientApiError::Unauthorized);
+        }
+
+        let body = match Self::read_response_body(&mut response).await {
+            Ok(body) => body,
+            Err(error) => format!("failed to read response body: {error}"),
+        };
+        Err(ClientApiError::ServerError { host, status, body })
+    }
+
+    async fn read_response_json<T: DeserializeOwned>(
+        response: &mut Response<AsyncBody>,
+    ) -> Result<T, ClientApiError> {
+        let body = Self::read_response_body(response).await?;
+        serde_json::from_str(&body).map_err(|error| ClientApiError::InvalidResponse(error.into()))
+    }
+
+    async fn read_response_body(
+        response: &mut Response<AsyncBody>,
+    ) -> Result<String, ClientApiError> {
         let mut body = String::new();
         response
             .body_mut()
             .read_to_string(&mut body)
             .await
-            .map_err(|e| ClientApiError::InvalidResponse(e.into()))?;
-
-        serde_json::from_str(&body).map_err(|e| ClientApiError::InvalidResponse(e.into()))
+            .map_err(|error| ClientApiError::InvalidResponse(error.into()))?;
+        Ok(body)
     }
 
     pub async fn validate_credentials(&self, user_id: u32, access_token: &str) -> Result<bool> {
@@ -322,27 +286,14 @@ impl CloudApiClient {
     }
 
     pub async fn submit_agent_feedback(&self, body: SubmitAgentThreadFeedbackBody) -> Result<()> {
-        let request = self.build_request(
-            Request::builder().method(Method::POST).uri(
-                self.http_client
-                    .build_zed_cloud_url("/client/feedback/agent_thread")?
-                    .as_ref(),
-            ),
-            AsyncBody::from(serde_json::to_string(&body)?),
-        )?;
+        let request = Request::builder().method(Method::POST).uri(
+            self.http_client
+                .build_zed_cloud_url("/client/feedback/agent_thread")?
+                .as_ref(),
+        );
 
-        let mut response = self.http_client.send(request).await?;
-
-        if !response.status().is_success() {
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-
-            anyhow::bail!(
-                "Failed to submit agent feedback.\nStatus: {:?}\nBody: {body}",
-                response.status()
-            )
-        }
-
+        self.send_authenticated_request(request, AsyncBody::from(serde_json::to_string(&body)?))
+            .await?;
         Ok(())
     }
 
@@ -350,27 +301,14 @@ impl CloudApiClient {
         &self,
         body: SubmitAgentThreadFeedbackCommentsBody,
     ) -> Result<()> {
-        let request = self.build_request(
-            Request::builder().method(Method::POST).uri(
-                self.http_client
-                    .build_zed_cloud_url("/client/feedback/agent_thread_comments")?
-                    .as_ref(),
-            ),
-            AsyncBody::from(serde_json::to_string(&body)?),
-        )?;
+        let request = Request::builder().method(Method::POST).uri(
+            self.http_client
+                .build_zed_cloud_url("/client/feedback/agent_thread_comments")?
+                .as_ref(),
+        );
 
-        let mut response = self.http_client.send(request).await?;
-
-        if !response.status().is_success() {
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-
-            anyhow::bail!(
-                "Failed to submit agent feedback comments.\nStatus: {:?}\nBody: {body}",
-                response.status()
-            )
-        }
-
+        self.send_authenticated_request(request, AsyncBody::from(serde_json::to_string(&body)?))
+            .await?;
         Ok(())
     }
 
@@ -378,27 +316,14 @@ impl CloudApiClient {
         &self,
         body: SubmitEditPredictionFeedbackBody,
     ) -> Result<()> {
-        let request = self.build_request(
-            Request::builder().method(Method::POST).uri(
-                self.http_client
-                    .build_zed_cloud_url("/client/feedback/edit_prediction")?
-                    .as_ref(),
-            ),
-            AsyncBody::from(serde_json::to_string(&body)?),
-        )?;
+        let request = Request::builder().method(Method::POST).uri(
+            self.http_client
+                .build_zed_cloud_url("/client/feedback/edit_prediction")?
+                .as_ref(),
+        );
 
-        let mut response = self.http_client.send(request).await?;
-
-        if !response.status().is_success() {
-            let mut body = String::new();
-            response.body_mut().read_to_string(&mut body).await?;
-
-            anyhow::bail!(
-                "Failed to submit edit prediction feedback.\nStatus: {:?}\nBody: {body}",
-                response.status()
-            )
-        }
-
+        self.send_authenticated_request(request, AsyncBody::from(serde_json::to_string(&body)?))
+            .await?;
         Ok(())
     }
 }

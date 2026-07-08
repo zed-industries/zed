@@ -36,11 +36,12 @@ pub struct ExtensionApiManifest {
 #[serde(rename_all = "kebab-case")]
 #[strum(serialize_all = "kebab-case")]
 pub enum ExtensionProvides {
+    Languages,
     Themes,
     IconThemes,
-    Languages,
     Grammars,
     LanguageServers,
+    DebugAdapters,
     ContextServers,
     /// Deprecated
     AgentServers,
@@ -49,7 +50,6 @@ pub enum ExtensionProvides {
     /// Deprecated
     IndexedDocsProviders,
     Snippets,
-    DebugAdapters,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]

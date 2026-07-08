@@ -1,13 +1,18 @@
 use super::*;
 // use crate::undo::tests::{build_create_operation, build_rename_operation};
 use collections::HashSet;
-use editor::MultiBufferOffset;
+use editor::{Editor, MultiBufferOffset};
+use git::{
+    Oid,
+    repository::{InitialGraphCommitData, LogSource, RepoPath},
+};
 use gpui::{Empty, Entity, TestAppContext, VisualTestContext};
 use menu::Cancel;
 use pretty_assertions::assert_eq;
 use project::{FakeFs, ProjectPath};
 use serde_json::json;
 use settings::{ProjectPanelAutoOpenSettings, SettingsStore};
+use smallvec::smallvec;
 use std::path::{Path, PathBuf};
 use util::{path, paths::PathStyle, rel_path::rel_path};
 use workspace::{
@@ -165,6 +170,254 @@ async fn test_opening_file(cx: &mut gpui::TestAppContext) {
         ]
     );
     ensure_single_file_is_opened(&workspace, "test/second.rs", cx);
+}
+
+#[gpui::test]
+async fn test_file_history_action_uses_focused_project_panel_selection(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test_with_git_ui(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        Path::new("/project"),
+        json!({
+            ".git": {},
+            "tracked1.txt": "tracked 1",
+            "tracked2.txt": "tracked 2",
+        }),
+    )
+    .await;
+
+    let commits = vec![Arc::new(InitialGraphCommitData {
+        sha: Oid::from_bytes(&[1; 20]).unwrap(),
+        parents: smallvec![],
+        ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+    })];
+    fs.set_graph_commits(Path::new("/project/.git"), commits);
+
+    let project = Project::test(fs.clone(), [Path::new("/project")], cx).await;
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .expect("should have active repository")
+    });
+    let project_panel_repo_path = RepoPath::new(&"tracked1.txt").unwrap();
+    let editor_repo_path = RepoPath::new(&"tracked2.txt").unwrap();
+    let project_panel_path = repository
+        .read_with(cx, |repository, cx| {
+            repository.repo_path_to_project_path(&project_panel_repo_path, cx)
+        })
+        .expect("project panel path should resolve");
+    let editor_path = repository
+        .read_with(cx, |repository, cx| {
+            repository.repo_path_to_project_path(&editor_repo_path, cx)
+        })
+        .expect("editor path should resolve");
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(&*cx, |multi_workspace, _| {
+        multi_workspace.workspace().clone()
+    });
+    let project_panel = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        let workspace = multi_workspace.workspace();
+        workspace.update(cx, |workspace, cx| {
+            let project_panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(project_panel.clone(), window, cx);
+            project_panel
+        })
+    });
+    cx.run_until_parked();
+
+    let editor_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(editor_path.clone(), cx)
+        })
+        .await
+        .expect("editor buffer should open");
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        let workspace = multi_workspace.workspace();
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = editor::MultiBuffer::new(language::Capability::ReadWrite);
+            multibuffer.set_excerpts_for_buffer(
+                editor_buffer.clone(),
+                [Default::default()..editor_buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+            multibuffer
+        });
+        let editor =
+            cx.new(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx));
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+        });
+        editor.update(cx, |editor, cx| {
+            window.focus(&editor.focus_handle(cx), cx);
+        });
+    });
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |_multi_workspace, window, cx| {
+        project_panel.update(cx, |panel, cx| {
+            panel.select_path_for_test(project_panel_path.clone(), cx);
+        });
+        project_panel.update(cx, |panel, cx| {
+            panel.focus_handle(cx).focus(window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update(|window, cx| {
+        window.dispatch_action(Box::new(git::FileHistory), cx);
+    });
+    cx.run_until_parked();
+
+    workspace.read_with(&*cx, |workspace, cx| {
+        let graphs = workspace
+            .items_of_type::<git_ui::git_graph::GitGraph>(cx)
+            .collect::<Vec<_>>();
+        assert_eq!(graphs.len(), 1);
+        assert_eq!(
+            graphs[0].read(cx).log_source_for_test(),
+            &LogSource::Path(project_panel_repo_path)
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_file_history_action_does_not_fall_back_to_editor_when_focused_project_panel_selection_has_no_git_repo(
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test_with_git_ui(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        Path::new("/git-project"),
+        json!({
+            ".git": {},
+            "tracked.txt": "tracked",
+        }),
+    )
+    .await;
+    fs.insert_tree(
+        Path::new("/plain-project"),
+        json!({
+            "plain.txt": "plain",
+        }),
+    )
+    .await;
+
+    fs.set_graph_commits(
+        Path::new("/git-project/.git"),
+        vec![Arc::new(InitialGraphCommitData {
+            sha: Oid::from_bytes(&[1; 20]).unwrap(),
+            parents: smallvec![],
+            ref_names: vec!["HEAD".into(), "refs/heads/main".into()],
+        })],
+    );
+
+    let project = Project::test(
+        fs.clone(),
+        [Path::new("/git-project"), Path::new("/plain-project")],
+        cx,
+    )
+    .await;
+    cx.run_until_parked();
+
+    let repository = project.read_with(cx, |project, cx| {
+        project
+            .active_repository(cx)
+            .expect("should have active repository")
+    });
+    let editor_repo_path = RepoPath::new(&"tracked.txt").unwrap();
+    let editor_path = repository
+        .read_with(cx, |repository, cx| {
+            repository.repo_path_to_project_path(&editor_repo_path, cx)
+        })
+        .expect("editor path should resolve");
+    let plain_worktree_id = project.read_with(cx, |project, cx| {
+        project
+            .worktree_for_root_name("plain-project", cx)
+            .expect("plain worktree should exist")
+            .read(cx)
+            .id()
+    });
+    let plain_project_path = ProjectPath {
+        worktree_id: plain_worktree_id,
+        path: rel_path("plain.txt").into(),
+    };
+
+    let (multi_workspace, cx) =
+        cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = multi_workspace.read_with(&*cx, |multi_workspace, _| {
+        multi_workspace.workspace().clone()
+    });
+    let project_panel = multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        let workspace = multi_workspace.workspace();
+        workspace.update(cx, |workspace, cx| {
+            let project_panel = ProjectPanel::new(workspace, window, cx);
+            workspace.add_panel(project_panel.clone(), window, cx);
+            project_panel
+        })
+    });
+    cx.run_until_parked();
+
+    let editor_buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer(editor_path.clone(), cx)
+        })
+        .await
+        .expect("editor buffer should open");
+    multi_workspace.update_in(cx, |multi_workspace, window, cx| {
+        let workspace = multi_workspace.workspace();
+        let multibuffer = cx.new(|cx| {
+            let mut multibuffer = editor::MultiBuffer::new(language::Capability::ReadWrite);
+            multibuffer.set_excerpts_for_buffer(
+                editor_buffer.clone(),
+                [Default::default()..editor_buffer.read(cx).max_point()],
+                0,
+                cx,
+            );
+            multibuffer
+        });
+        let editor =
+            cx.new(|cx| Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx));
+        workspace.update(cx, |workspace, cx| {
+            workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
+        });
+        editor.update(cx, |editor, cx| {
+            window.focus(&editor.focus_handle(cx), cx);
+        });
+    });
+    cx.run_until_parked();
+
+    multi_workspace.update_in(cx, |_multi_workspace, window, cx| {
+        project_panel.update(cx, |panel, cx| {
+            panel.select_path_for_test(plain_project_path.clone(), cx);
+        });
+        project_panel.update(cx, |panel, cx| {
+            panel.focus_handle(cx).focus(window, cx);
+        });
+    });
+    cx.run_until_parked();
+
+    cx.update(|window, cx| {
+        window.dispatch_action(Box::new(git::FileHistory), cx);
+    });
+    cx.run_until_parked();
+
+    workspace.read_with(&*cx, |workspace, cx| {
+        assert_eq!(
+            workspace
+                .items_of_type::<git_ui::git_graph::GitGraph>(cx)
+                .count(),
+            0
+        );
+    });
 }
 
 #[gpui::test]
@@ -910,6 +1163,71 @@ async fn test_editing_files(cx: &mut gpui::TestAppContext) {
             "    > C",
         ]
     );
+}
+
+#[gpui::test]
+async fn test_rename_folder_with_dot_selects_whole_name(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/root1",
+        json!({
+            "my.folder": {},
+            "archive.tar.gz": "",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    // Renaming a folder whose name contains a dot should pre-select the whole
+    // name. The dot belongs to the directory name; it is not a file extension.
+    select_path(&panel, "root1/my.folder", cx);
+    panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    panel.update_in(cx, |panel, window, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            let selections = editor
+                .selections
+                .all::<MultiBufferOffset>(&editor.display_snapshot(cx));
+            assert_eq!(selections.len(), 1);
+            assert_eq!(selections[0].start, MultiBufferOffset(0));
+            assert_eq!(
+                selections[0].end,
+                MultiBufferOffset("my.folder".len()),
+                "Renaming a folder should select the whole name, including dots"
+            );
+        });
+        panel.cancel(&Cancel, window, cx);
+    });
+    cx.run_until_parked();
+
+    // Files keep the existing behavior: the last extension stays unselected.
+    select_path(&panel, "root1/archive.tar.gz", cx);
+    panel.update_in(cx, |panel, window, cx| panel.rename(&Rename, window, cx));
+    panel.update_in(cx, |panel, _, cx| {
+        panel.filename_editor.update(cx, |editor, cx| {
+            let selections = editor
+                .selections
+                .all::<MultiBufferOffset>(&editor.display_snapshot(cx));
+            assert_eq!(
+                selections[0].end,
+                MultiBufferOffset("archive.tar".len()),
+                "Renaming a file should keep the last extension unselected"
+            );
+        });
+    });
 }
 
 #[gpui::test(iterations = 10)]
@@ -7845,115 +8163,99 @@ async fn test_collapse_non_root_multi_worktree(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_collapse_all_for_root_single_worktree(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
+async fn test_expand_all_entries(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        path!("/root"),
+        "/project_root",
         json!({
-            "dir1": {
-                "subdir1": {
-                    "file1.txt": ""
+            "dir_1": {
+                "nested_dir": {
+                    "file_a.py": "# File contents",
+                    "file_b.py": "# File contents",
+                    "file_c.py": "# File contents",
                 },
-                "file2.txt": ""
+                "file_1.py": "# File contents",
+                "file_2.py": "# File contents",
+                "file_3.py": "# File contents",
             },
-            "dir2": {
-                "file3.txt": ""
+            "dir_2": {
+                "file_1.py": "# File contents",
+                "file_2.py": "# File contents",
+                "file_3.py": "# File contents",
             }
         }),
     )
     .await;
 
-    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let project = Project::test(fs.clone(), ["/project_root".as_ref()], cx).await;
     let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
     let workspace = window
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
-
     let panel = workspace.update_in(cx, ProjectPanel::new);
     cx.run_until_parked();
 
-    toggle_expand_dir(&panel, "root/dir1", cx);
-    toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
-    toggle_expand_dir(&panel, "root/dir2", cx);
-
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
     assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &[
-            "v root",
-            "    v dir1",
-            "        v subdir1",
-            "              file1.txt",
-            "          file2.txt",
-            "    v dir2  <== selected",
-            "          file3.txt",
-        ],
-        "Initial state with directories expanded"
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["v project_root", "    > dir_1", "    > dir_2",]
     );
-
-    select_path(&panel, "root", cx);
-    cx.run_until_parked();
 
     panel.update_in(cx, |panel, window, cx| {
-        panel.collapse_all_for_root(window, cx);
+        panel.expand_all_entries(&ExpandAllEntries, window, cx)
     });
-    cx.run_until_parked();
+    cx.executor().run_until_parked();
 
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &["v root  <== selected", "    > dir1", "    > dir2"],
-        "Root should remain expanded but all children should be collapsed"
+    let entries = visible_entries_as_strings(&panel, 0..20, cx);
+    assert_eq!(entries.len(), 13, "should show all 13 entries");
+    assert!(entries[0].starts_with("v project_root"), "root expanded");
+    assert!(entries[1].contains("v dir_1"), "dir_1 expanded");
+    assert!(entries[2].contains("v nested_dir"), "nested_dir expanded");
+    assert!(
+        entries.iter().any(|e| e.contains("file_a.py")),
+        "file_a visible"
     );
-
-    toggle_expand_dir(&panel, "root/dir1", cx);
-    cx.run_until_parked();
-
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &[
-            "v root",
-            "    v dir1  <== selected",
-            "        > subdir1",
-            "          file2.txt",
-            "    > dir2",
-        ],
-        "After re-expanding dir1, subdir1 should still be collapsed"
+    assert!(
+        entries.iter().any(|e| e.contains("file_c.py")),
+        "file_c visible"
+    );
+    assert!(
+        entries.iter().any(|e| e.contains("v dir_2")),
+        "dir_2 expanded"
+    );
+    assert!(
+        !entries.iter().any(|e| e.contains("> ")),
+        "no collapsed dirs"
     );
 }
 
 #[gpui::test]
-async fn test_collapse_all_for_root_multi_worktree(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
+async fn test_expand_all_entries_multiple_worktrees(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree(
-        path!("/root1"),
-        json!({
-            "dir1": {
-                "subdir1": {
-                    "file1.txt": ""
-                },
-                "file2.txt": ""
-            }
-        }),
-    )
-    .await;
-    fs.insert_tree(
-        path!("/root2"),
-        json!({
-            "dir2": {
-                "file3.txt": ""
-            },
-            "file4.txt": ""
-        }),
-    )
-    .await;
+    let worktree_content = json!({
+        "dir_1": {
+            "file_1.py": "# File contents",
+        },
+        "dir_2": {
+            "file_1.py": "# File contents",
+        }
+    });
+
+    fs.insert_tree("/project_root_1", worktree_content.clone())
+        .await;
+    fs.insert_tree("/project_root_2", worktree_content).await;
 
     let project = Project::test(
         fs.clone(),
-        [path!("/root1").as_ref(), path!("/root2").as_ref()],
+        ["/project_root_1".as_ref(), "/project_root_2".as_ref()],
         cx,
     )
     .await;
@@ -7962,66 +8264,197 @@ async fn test_collapse_all_for_root_multi_worktree(cx: &mut gpui::TestAppContext
         .read_with(cx, |mw, _| mw.workspace().clone())
         .unwrap();
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
-
     let panel = workspace.update_in(cx, ProjectPanel::new);
     cx.run_until_parked();
 
-    toggle_expand_dir(&panel, "root1/dir1", cx);
-    toggle_expand_dir(&panel, "root1/dir1/subdir1", cx);
-    toggle_expand_dir(&panel, "root2/dir2", cx);
-
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
     assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &[
-            "v root1",
-            "    v dir1",
-            "        v subdir1",
-            "              file1.txt",
-            "          file2.txt",
-            "v root2",
-            "    v dir2  <== selected",
-            "          file3.txt",
-            "      file4.txt",
-        ],
-        "Initial state with directories expanded across worktrees"
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["> project_root_1", "> project_root_2",]
     );
 
-    select_path(&panel, "root1", cx);
-    cx.run_until_parked();
-
     panel.update_in(cx, |panel, window, cx| {
-        panel.collapse_all_for_root(window, cx);
+        panel.expand_all_entries(&ExpandAllEntries, window, cx)
     });
-    cx.run_until_parked();
-
+    cx.executor().run_until_parked();
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
-            "> root1  <== selected",
-            "v root2",
-            "    v dir2",
-            "          file3.txt",
-            "      file4.txt",
-        ],
-        "With multiple worktrees, root1 should collapse completely (including itself)"
+            "v project_root_1",
+            "    v dir_1",
+            "          file_1.py",
+            "    v dir_2",
+            "          file_1.py",
+            "v project_root_2",
+            "    v dir_1",
+            "          file_1.py",
+            "    v dir_2",
+            "          file_1.py",
+        ]
     );
 }
 
 #[gpui::test]
-async fn test_collapse_all_for_root_noop_on_non_root(cx: &mut gpui::TestAppContext) {
-    init_test(cx);
+async fn test_expand_all_entries_via_window_dispatch(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let worktree_content = json!({
+        "dir_1": {
+            "file_1.py": "# File contents",
+        },
+        "dir_2": {
+            "file_1.py": "# File contents",
+        }
+    });
+
+    fs.insert_tree("/project_root_1", worktree_content.clone())
+        .await;
+    fs.insert_tree("/project_root_2", worktree_content).await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/project_root_1".as_ref(), "/project_root_2".as_ref()],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_reveal_entries: false,
+                ..settings
+            },
+            cx,
+        );
+    });
+    let panel = workspace.update_in(cx, |workspace, window, cx| {
+        let panel = ProjectPanel::new(workspace, window, cx);
+        workspace.add_panel(panel.clone(), window, cx);
+        panel
+    });
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["> project_root_1", "> project_root_2",]
+    );
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.focus_handle(cx).focus(window, cx);
+    });
+    cx.dispatch_action(ExpandAllEntries);
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "v project_root_1",
+            "    v dir_1",
+            "          file_1.py",
+            "    v dir_2",
+            "          file_1.py",
+            "v project_root_2",
+            "    v dir_1",
+            "          file_1.py",
+            "    v dir_2",
+            "          file_1.py",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_expand_all_for_entry_single_worktree(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    let worktree_content = json!({
+        "dir_1": {
+            "file_1.py": "# File contents",
+        },
+        "dir_2": {
+            "file_1.py": "# File contents",
+        }
+    });
+
+    fs.insert_tree("/project_root_1", worktree_content.clone())
+        .await;
+    fs.insert_tree("/project_root_2", worktree_content).await;
+
+    let project = Project::test(
+        fs.clone(),
+        ["/project_root_1".as_ref(), "/project_root_2".as_ref()],
+        cx,
+    )
+    .await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..10, cx),
+        &["> project_root_1", "> project_root_2",]
+    );
+
+    let root2_entry = find_project_entry(&panel, "project_root_2", cx).unwrap();
+    panel.update_in(cx, |panel, window, cx| {
+        let worktree_id = panel
+            .project
+            .read(cx)
+            .worktree_id_for_entry(root2_entry, cx)
+            .unwrap();
+        panel.expand_all_for_entry(worktree_id, root2_entry, cx);
+        panel.update_visible_entries(None, false, false, window, cx);
+    });
+    cx.executor().run_until_parked();
+    assert_eq!(
+        visible_entries_as_strings(&panel, 0..20, cx),
+        &[
+            "> project_root_1",
+            "v project_root_2",
+            "    v dir_1",
+            "          file_1.py",
+            "    v dir_2",
+            "          file_1.py",
+        ]
+    );
+}
+
+#[gpui::test]
+async fn test_expand_all_entries_with_auto_fold(cx: &mut gpui::TestAppContext) {
+    init_test_with_editor(cx);
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
         path!("/root"),
         json!({
             "dir1": {
-                "subdir1": {
-                    "file1.txt": ""
+                "empty1": {
+                    "empty2": {
+                        "empty3": {
+                            "file.txt": ""
+                        }
+                    }
                 },
-            },
-            "dir2": {
-                "file2.txt": ""
             }
         }),
     )
@@ -8034,45 +8467,41 @@ async fn test_collapse_all_for_root_noop_on_non_root(cx: &mut gpui::TestAppConte
         .unwrap();
     let cx = &mut VisualTestContext::from_window(window.into(), cx);
 
+    cx.update(|_, cx| {
+        let settings = *ProjectPanelSettings::get_global(cx);
+        ProjectPanelSettings::override_global(
+            ProjectPanelSettings {
+                auto_fold_dirs: true,
+                ..settings
+            },
+            cx,
+        );
+    });
+
     let panel = workspace.update_in(cx, ProjectPanel::new);
     cx.run_until_parked();
 
-    toggle_expand_dir(&panel, "root/dir1", cx);
-    toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
-    toggle_expand_dir(&panel, "root/dir2", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.collapse_all_entries(&CollapseAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
+
+    panel.update_in(cx, |panel, window, cx| {
+        panel.expand_all_entries(&ExpandAllEntries, window, cx)
+    });
+    cx.executor().run_until_parked();
 
     assert_eq!(
         visible_entries_as_strings(&panel, 0..20, cx),
         &[
             "v root",
             "    v dir1",
-            "        v subdir1",
-            "              file1.txt",
-            "    v dir2  <== selected",
-            "          file2.txt",
+            "        v empty1",
+            "            v empty2",
+            "                v empty3",
+            "                      file.txt",
         ],
-        "Initial state with directories expanded"
-    );
-
-    select_path(&panel, "root/dir1", cx);
-    cx.run_until_parked();
-
-    panel.update_in(cx, |panel, window, cx| {
-        panel.collapse_all_for_root(window, cx);
-    });
-    cx.run_until_parked();
-
-    assert_eq!(
-        visible_entries_as_strings(&panel, 0..20, cx),
-        &[
-            "v root",
-            "    v dir1  <== selected",
-            "        v subdir1",
-            "              file1.txt",
-            "    v dir2",
-            "          file2.txt",
-        ],
-        "collapse_all_for_root should be a no-op when called on a non-root directory"
+        "expand all should unfold auto-folded directories"
     );
 }
 
@@ -10412,6 +10841,27 @@ fn init_test_with_editor(cx: &mut TestAppContext) {
     });
 }
 
+fn init_test_with_git_ui(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        let app_state = AppState::test(cx);
+        theme_settings::init(theme::LoadThemes::JustBase, cx);
+        editor::init(cx);
+        git_ui::init(cx);
+        crate::init(cx);
+        workspace::init(app_state, cx);
+
+        cx.update_global::<SettingsStore, _>(|store, cx| {
+            store.update_user_settings(cx, |settings| {
+                settings
+                    .project_panel
+                    .get_or_insert_default()
+                    .auto_fold_dirs = Some(false);
+                settings.project.worktree.file_scan_exclusions = Some(Vec::new())
+            });
+        });
+    });
+}
+
 fn set_auto_open_settings(
     cx: &mut TestAppContext,
     auto_open_settings: ProjectPanelAutoOpenSettings,
@@ -10609,4 +11059,42 @@ async fn test_delete_prompt_escapes_markdown_in_file_name(cx: &mut gpui::TestApp
         message,
         "Are you sure you want to permanently delete `__somefile__`?"
     );
+}
+
+#[gpui::test]
+async fn test_restore_file_prompt_escapes_markdown_in_file_name(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/root"),
+        json!({
+            ".git": {},
+            "__init__.py": "modified contents",
+        }),
+    )
+    .await;
+    fs.set_head_and_index_for_repo(
+        path!("/root/.git").as_ref(),
+        &[("__init__.py", "original contents".into())],
+    );
+
+    let project = Project::test(fs.clone(), [path!("/root").as_ref()], cx).await;
+    let window = cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+    let workspace = window
+        .read_with(cx, |mw, _| mw.workspace().clone())
+        .unwrap();
+    let cx = &mut VisualTestContext::from_window(window.into(), cx);
+    let panel = workspace.update_in(cx, ProjectPanel::new);
+    cx.run_until_parked();
+
+    select_path(&panel, "root/__init__.py", cx);
+    panel.update_in(cx, |panel, window, cx| {
+        panel.restore_file(&git::RestoreFile { skip_prompt: false }, window, cx)
+    });
+    let (message, _detail) = cx
+        .pending_prompt()
+        .expect("restore should show a confirmation prompt");
+
+    assert_eq!(message, "Discard changes to `__init__.py`?");
 }

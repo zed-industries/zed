@@ -15,7 +15,7 @@ use gpui::{AsyncApp, Entity};
 use language::{Anchor, Buffer, LanguageNotFound, ToOffset};
 use project::{Project, ProjectPath, buffer_store::BufferStoreEvent};
 use std::{fs, path::PathBuf, sync::Arc};
-use zeta_prompt::ZetaPromptInput;
+use zeta_prompt::Zeta2PromptInput;
 
 pub async fn run_load_project(
     example: &mut Example,
@@ -96,7 +96,7 @@ pub async fn run_load_project(
         );
 
         (
-            ZetaPromptInput {
+            Zeta2PromptInput {
                 cursor_path: example.spec.cursor_path.clone(),
                 cursor_excerpt,
                 cursor_offset_in_excerpt,
