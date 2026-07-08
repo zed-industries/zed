@@ -138,6 +138,17 @@ where
     info!("crash signal handlers installed");
     send_crash_server_message(&client, CrashServerMessage::Init(crash_init));
 
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    if let Some(address) = abort_message_address() {
+        send_crash_server_message(
+            &client,
+            CrashServerMessage::AbortMessageLocation(AbortMessageLocation {
+                pid: process::id(),
+                address,
+            }),
+        );
+    }
+
     #[cfg(target_os = "linux")]
     handler.set_ptracer(Some(_crash_handler.id()));
 
@@ -170,6 +181,7 @@ pub struct CrashServer {
     panic_info: Mutex<Option<CrashPanic>>,
     active_gpu: Mutex<Option<system_specs::GpuSpecs>>,
     user_info: Mutex<Option<UserInfo>>,
+    abort_message_location: Mutex<Option<AbortMessageLocation>>,
     has_connection: Arc<AtomicBool>,
     logs_dir: PathBuf,
 }
@@ -179,9 +191,25 @@ pub struct CrashInfo {
     pub init: InitCrashHandler,
     pub panic: Option<CrashPanic>,
     pub minidump_error: Option<String>,
+    /// The diagnostic the C runtime recorded before aborting the process, e.g.
+    /// glibc's "free(): invalid pointer". Only present when the crash was a
+    /// runtime-initiated abort rather than a signal like SIGSEGV or a panic.
+    #[serde(default)]
+    pub abort_message: Option<String>,
     pub gpus: Vec<system_specs::GpuInfo>,
     pub active_gpu: Option<system_specs::GpuSpecs>,
     pub user_info: Option<UserInfo>,
+}
+
+/// Where to find the C runtime's abort diagnostic in the crashed process's
+/// memory. Sent by the client at startup so that after a crash the server can
+/// recover the message with `process_vm_readv`; the crashed process itself
+/// can't safely do this work, since its heap may be corrupt and its allocator
+/// locks may be held by the crashed thread.
+#[derive(Debug, Deserialize, Serialize, Clone, Copy)]
+pub struct AbortMessageLocation {
+    pub pid: u32,
+    pub address: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -233,6 +261,68 @@ enum CrashServerMessage {
     Panic(CrashPanic),
     GPUInfo(GpuSpecs),
     UserInfo(UserInfo),
+    AbortMessageLocation(AbortMessageLocation),
+}
+
+/// glibc records the diagnostic it prints just before aborting (malloc integrity
+/// failures like "free(): invalid pointer", assertion failures, stack-smashing
+/// reports) in the private global `__abort_msg`, specifically so it can be
+/// recovered post-mortem. Resolve its address here, in a safe context at startup.
+/// The symbol is only exported at the GLIBC_PRIVATE version, which plain `dlsym`
+/// won't resolve, and it has no stability guarantee, so a null result (e.g. musl,
+/// or a future glibc removing it) just disables this diagnostic.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn abort_message_address() -> Option<u64> {
+    let ptr = unsafe {
+        libc::dlvsym(
+            libc::RTLD_DEFAULT,
+            c"__abort_msg".as_ptr(),
+            c"GLIBC_PRIVATE".as_ptr(),
+        )
+    };
+    std::ptr::NonNull::new(ptr).map(|ptr| ptr.as_ptr() as u64)
+}
+
+/// Read the crashed process's abort diagnostic. `__abort_msg` points to a
+/// `struct abort_msg_s { unsigned int size; char msg[]; }` that glibc allocates
+/// with mmap so that it stays intact even when the heap is corrupt.
+#[cfg(target_os = "linux")]
+fn read_abort_message(location: AbortMessageLocation) -> Option<String> {
+    const MAX_MESSAGE_LEN: u32 = 4096;
+
+    let pointer_bytes = read_process_memory(location.pid, location.address, size_of::<u64>())?;
+    let message_address = u64::from_ne_bytes(pointer_bytes.try_into().ok()?);
+    if message_address == 0 {
+        return None;
+    }
+    let size_bytes = read_process_memory(location.pid, message_address, size_of::<u32>())?;
+    let size = u32::from_ne_bytes(size_bytes.try_into().ok()?).min(MAX_MESSAGE_LEN);
+    if size == 0 {
+        return None;
+    }
+    let message_bytes = read_process_memory(
+        location.pid,
+        message_address + size_of::<u32>() as u64,
+        size as usize,
+    )?;
+    let message = String::from_utf8_lossy(&message_bytes).trim().to_string();
+    (!message.is_empty()).then_some(message)
+}
+
+#[cfg(target_os = "linux")]
+fn read_process_memory(pid: u32, address: u64, len: usize) -> Option<Vec<u8>> {
+    let mut buffer = vec![0u8; len];
+    let local = libc::iovec {
+        iov_base: buffer.as_mut_ptr().cast(),
+        iov_len: len,
+    };
+    let remote = libc::iovec {
+        iov_base: address as *mut libc::c_void,
+        iov_len: len,
+    };
+    let bytes_read =
+        unsafe { libc::process_vm_readv(pid as libc::pid_t, &local, 1, &remote, 1, 0) };
+    (bytes_read == len as isize).then_some(buffer)
 }
 
 impl minidumper::ServerHandler for CrashServer {
@@ -281,6 +371,14 @@ impl minidumper::ServerHandler for CrashServer {
             }
         };
 
+        // The crashed process is still alive at this point: it stays parked in
+        // its signal handler until the server acknowledges the dump request,
+        // which happens after this callback returns.
+        #[cfg(target_os = "linux")]
+        let abort_message = (*self.abort_message_location.lock()).and_then(read_abort_message);
+        #[cfg(not(target_os = "linux"))]
+        let abort_message = None;
+
         let crash_info = CrashInfo {
             init: self
                 .initialization_params
@@ -289,6 +387,7 @@ impl minidumper::ServerHandler for CrashServer {
                 .expect("not initialized"),
             panic: self.panic_info.lock().clone(),
             minidump_error,
+            abort_message,
             active_gpu: self.active_gpu.lock().clone(),
             gpus,
             user_info: self.user_info.lock().clone(),
@@ -319,6 +418,9 @@ impl minidumper::ServerHandler for CrashServer {
             }
             CrashServerMessage::UserInfo(user_info) => {
                 self.user_info.lock().replace(user_info);
+            }
+            CrashServerMessage::AbortMessageLocation(location) => {
+                self.abort_message_location.lock().replace(location);
             }
         }
     }
@@ -523,6 +625,7 @@ pub fn crash_server(socket: &Path, logs_dir: PathBuf) {
                 initialization_params: Mutex::default(),
                 panic_info: Mutex::default(),
                 user_info: Mutex::default(),
+                abort_message_location: Mutex::default(),
                 has_connection,
                 active_gpu: Mutex::default(),
                 logs_dir,
