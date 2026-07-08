@@ -19,12 +19,14 @@ use gpui::{
 };
 use language::{
     Bias, Buffer, BufferRow, CharKind, CharScopeContext, HighlightedText, LocalFile, PLAIN_TEXT,
-    Point, SelectionGoal, proto::serialize_anchor as serialize_text_anchor,
+    Point, SelectionGoal,
+    language_settings::{FormatOnSave, LanguageSettings},
+    proto::serialize_anchor as serialize_text_anchor,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{BufferOffset, MultiBufferOffset, PathKey};
 use project::{
-    File, Project, ProjectItem as _, ProjectPath, lsp_store::FormatTrigger,
+    File, Project, ProjectItem as _, ProjectPath, git_store::GitStore, lsp_store::FormatTrigger,
     project_settings::ProjectSettings, search::SearchQuery,
 };
 use rope::TextSummary;
@@ -39,7 +41,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use text::{BufferId, BufferSnapshot, OffsetRangeExt, Selection};
+use text::{BufferId, BufferSnapshot, OffsetRangeExt, Selection, ToPoint as _};
 use ui::{IconDecorationKind, prelude::*};
 use util::{ResultExt, TryFutureExt, paths::PathExt, rel_path::RelPath};
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
@@ -974,16 +976,21 @@ impl Item for Editor {
 
         cx.spawn_in(window, async move |this, cx| {
             if options.format {
-                this.update_in(cx, |editor, window, cx| {
-                    editor.perform_format(
-                        project.clone(),
+                let format_task = this.update_in(cx, |editor, window, cx| {
+                    let format_target = compute_format_target(
+                        &buffers_to_save,
                         format_trigger,
-                        FormatTarget::Buffers(buffers_to_save.clone()),
-                        window,
+                        editor.buffer(),
+                        project.read(cx).git_store(),
                         cx,
-                    )
-                })?
-                .await?;
+                    );
+                    format_target.map(|target| {
+                        editor.perform_format(project.clone(), format_trigger, target, window, cx)
+                    })
+                })?;
+                if let Some(format_task) = format_task {
+                    format_task.await?;
+                }
             }
 
             if !buffers_to_save.is_empty() {
@@ -2267,6 +2274,115 @@ fn chunk_search_range(
     }))
 }
 
+/// Decides what to format based on the `format_on_save` settings of the saved buffers.
+///
+/// In the modifications modes, only lines with unstaged changes are formatted.
+/// When no git diff is available for a buffer, `modifications` skips formatting while `modifications_if_available`
+/// falls back to formatting entire buffers.
+/// When a diff is available but empty, nothing is formatted in either mode.
+fn compute_format_target(
+    buffers: &HashSet<Entity<Buffer>>,
+    trigger: FormatTrigger,
+    multi_buffer: &Entity<MultiBuffer>,
+    git_store: &Entity<GitStore>,
+    cx: &App,
+) -> Option<FormatTarget> {
+    if trigger == FormatTrigger::Manual {
+        return Some(FormatTarget::Buffers(buffers.clone()));
+    }
+
+    let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
+    let git_store = git_store.read(cx);
+
+    let mut fall_back_to_full_format = false;
+    let mut modified_ranges: Vec<Range<Point>> = Vec::new();
+
+    for buffer_entity in buffers.iter() {
+        let buffer = buffer_entity.read(cx);
+        let settings = LanguageSettings::for_buffer(buffer, cx);
+        match settings.format_on_save {
+            FormatOnSave::On | FormatOnSave::Off => {
+                return Some(FormatTarget::Buffers(buffers.clone()));
+            }
+            FormatOnSave::Modifications | FormatOnSave::ModificationsIfAvailable => {}
+        }
+
+        let Some(diff_snapshot) = git_store
+            .get_unstaged_diff(buffer.remote_id(), cx)
+            .map(|diff| diff.read(cx).snapshot(cx))
+        else {
+            if settings.format_on_save == FormatOnSave::ModificationsIfAvailable {
+                fall_back_to_full_format = true;
+            }
+            continue;
+        };
+
+        let anchor_ranges = compute_modified_ranges(&buffer.snapshot(), &diff_snapshot);
+        let flat_anchors = anchor_ranges
+            .iter()
+            .flat_map(|range| [range.start, range.end])
+            .collect::<Vec<_>>();
+        let multi_buffer_anchors =
+            multi_buffer_snapshot.text_anchors_to_visible_anchors(flat_anchors);
+        for pair in multi_buffer_anchors.chunks_exact(2) {
+            let (Some(start), Some(end)) = (&pair[0], &pair[1]) else {
+                continue;
+            };
+            modified_ranges
+                .push(start.to_point(&multi_buffer_snapshot)..end.to_point(&multi_buffer_snapshot));
+        }
+    }
+
+    if fall_back_to_full_format {
+        Some(FormatTarget::Buffers(buffers.clone()))
+    } else if modified_ranges.is_empty() {
+        None
+    } else {
+        Some(FormatTarget::Ranges(modified_ranges))
+    }
+}
+
+/// Computes the buffer ranges that have unstaged changes, expanded to full lines and
+/// with adjacent hunks merged, for use with format-on-save. An empty result means the
+/// buffer has no formatable modifications.
+fn compute_modified_ranges(
+    buffer_snapshot: &language::BufferSnapshot,
+    diff_snapshot: &buffer_diff::BufferDiffSnapshot,
+) -> Vec<Range<text::Anchor>> {
+    let mut merged: Vec<Range<text::Anchor>> = Vec::new();
+    for hunk in diff_snapshot.hunks(buffer_snapshot) {
+        let range = hunk.buffer_range;
+        if range.start.cmp(&range.end, buffer_snapshot).is_eq() {
+            // Deletion-only hunks produce no buffer content to format.
+            continue;
+        }
+        let start_point = range.start.to_point(buffer_snapshot);
+        let end_point = range.end.to_point(buffer_snapshot);
+        let start_row = start_point.row;
+        let end_row = if end_point.column == 0 && end_point.row > start_point.row {
+            end_point.row - 1
+        } else {
+            end_point.row
+        };
+        let line_start = text::Point::new(start_row, 0);
+        let line_end = text::Point::new(end_row, buffer_snapshot.line_len(end_row));
+        let expanded =
+            buffer_snapshot.anchor_before(line_start)..buffer_snapshot.anchor_after(line_end);
+
+        if let Some(last) = merged.last_mut() {
+            let last_end_point = last.end.to_point(buffer_snapshot);
+            if start_row <= last_end_point.row + 1 {
+                if expanded.end.to_point(buffer_snapshot) > last_end_point {
+                    last.end = expanded.end;
+                }
+                continue;
+            }
+        }
+        merged.push(expanded);
+    }
+    merged
+}
+
 #[cfg(test)]
 mod tests {
     use crate::editor_tests::init_test;
@@ -2920,5 +3036,125 @@ mod tests {
             pane_items_before, pane_items_after,
             "Editor::deserialize should not add items to panes as a side effect"
         );
+    }
+
+    #[gpui::test]
+    fn test_compute_modified_ranges_git_diff(cx: &mut gpui::TestAppContext) {
+        let base_text = "line0\nline1\nline2\nline3\nline4\nline5\nline6\n";
+        // Modify line1 and line5 to create two non-adjacent hunks.
+        let buffer_text = "line0\nMOD1\nline2\nline3\nline4\nMOD5\nline6\n";
+
+        let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
+        let diff_snapshot = buffer.update(cx, |buffer, cx| {
+            let diff = cx.new(|cx| {
+                buffer_diff::BufferDiff::new_with_base_text(base_text, &buffer.text_snapshot(), cx)
+            });
+            diff.read(cx).snapshot(cx)
+        });
+
+        let ranges = buffer.update(cx, |buffer, _cx| {
+            compute_modified_ranges(&buffer.snapshot(), &diff_snapshot)
+        });
+
+        assert_eq!(ranges.len(), 2, "expected 2 non-adjacent ranges");
+
+        buffer.update(cx, |buffer, _cx| {
+            let text_snapshot: &text::BufferSnapshot = buffer;
+            let r0 = ranges[0].start.to_point(text_snapshot)..ranges[0].end.to_point(text_snapshot);
+            let r1 = ranges[1].start.to_point(text_snapshot)..ranges[1].end.to_point(text_snapshot);
+            assert_eq!(r0.start.row, 1, "first hunk should start at row 1");
+            assert_eq!(r0.end.row, 1, "first hunk should end at row 1");
+            assert_eq!(r1.start.row, 5, "second hunk should start at row 5");
+            assert_eq!(r1.end.row, 5, "second hunk should end at row 5");
+        });
+    }
+
+    #[gpui::test]
+    fn test_compute_modified_ranges_unchanged_buffer(cx: &mut gpui::TestAppContext) {
+        let buffer_text = "line0\nline1\nline2\n";
+        let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
+        let diff_snapshot = buffer.update(cx, |buffer, cx| {
+            let diff = cx.new(|cx| {
+                buffer_diff::BufferDiff::new_with_base_text(
+                    buffer_text,
+                    &buffer.text_snapshot(),
+                    cx,
+                )
+            });
+            diff.read(cx).snapshot(cx)
+        });
+
+        let ranges = buffer.update(cx, |buffer, _cx| {
+            compute_modified_ranges(&buffer.snapshot(), &diff_snapshot)
+        });
+
+        assert_eq!(
+            ranges,
+            Vec::new(),
+            "buffer that matches its diff base should produce no modified ranges"
+        );
+    }
+
+    #[gpui::test]
+    fn test_compute_modified_ranges_deletion_only(cx: &mut gpui::TestAppContext) {
+        let base_text = "line0\nline1\nline2\n";
+        // Buffer has line1 deleted (pure deletion).
+        let buffer_text = "line0\nline2\n";
+
+        let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
+        let diff_snapshot = buffer.update(cx, |buffer, cx| {
+            let diff = cx.new(|cx| {
+                buffer_diff::BufferDiff::new_with_base_text(base_text, &buffer.text_snapshot(), cx)
+            });
+            diff.read(cx).snapshot(cx)
+        });
+
+        // Verify the diff has a deletion hunk.
+        let hunk_count = buffer.update(cx, |buffer, _cx| {
+            let text_snapshot: &text::BufferSnapshot = buffer;
+            diff_snapshot.hunks(text_snapshot).count()
+        });
+        assert!(hunk_count > 0, "diff should have hunks");
+
+        let ranges = buffer.update(cx, |buffer, _cx| {
+            compute_modified_ranges(&buffer.snapshot(), &diff_snapshot)
+        });
+
+        assert_eq!(
+            ranges,
+            Vec::new(),
+            "deletion-only hunks should be skipped, leaving no ranges"
+        );
+    }
+
+    #[gpui::test]
+    fn test_compute_modified_ranges_adjacent_hunks(cx: &mut gpui::TestAppContext) {
+        let base_text = "line0\nline1\nline2\nline3\nline4\n";
+        // Modify lines 2 and 3 which are adjacent; they should merge into one range.
+        let buffer_text = "line0\nline1\nMOD2\nMOD3\nline4\n";
+
+        let buffer = cx.new(|cx| language::Buffer::local(buffer_text, cx));
+        let diff_snapshot = buffer.update(cx, |buffer, cx| {
+            let diff = cx.new(|cx| {
+                buffer_diff::BufferDiff::new_with_base_text(base_text, &buffer.text_snapshot(), cx)
+            });
+            diff.read(cx).snapshot(cx)
+        });
+
+        let ranges = buffer.update(cx, |buffer, _cx| {
+            compute_modified_ranges(&buffer.snapshot(), &diff_snapshot)
+        });
+
+        assert_eq!(
+            ranges.len(),
+            1,
+            "adjacent hunks (rows 2 and 3) should be merged into one range"
+        );
+        buffer.update(cx, |buffer, _cx| {
+            let text_snapshot: &text::BufferSnapshot = buffer;
+            let r = ranges[0].start.to_point(text_snapshot)..ranges[0].end.to_point(text_snapshot);
+            assert_eq!(r.start.row, 2, "merged range should start at row 2");
+            assert_eq!(r.end.row, 3, "merged range should end at row 3");
+        });
     }
 }
