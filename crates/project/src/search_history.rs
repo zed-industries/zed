@@ -121,6 +121,10 @@ impl SearchHistory {
         self.history.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.history.is_empty()
+    }
+
     /// Iterate over history entries from newest to oldest.
     pub fn iter(&self) -> impl Iterator<Item = &str> {
         self.history.iter().rev().map(|s| s.as_str())
