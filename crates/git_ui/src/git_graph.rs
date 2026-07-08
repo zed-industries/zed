@@ -892,7 +892,10 @@ struct GraphData {
     commits: Vec<Rc<CommitEntry>>,
     max_commit_count: AllCommitCount,
     max_lanes: usize,
-    widest_ref_label: Option<SharedString>,
+    /// Tracks the longest ref label we've seen (by character count) so we don't
+    /// have to re-scan on every commit. The actual pixel width is computed
+    /// lazily in `ref_label_gutter_width`.
+    widest_ref_label: Option<(SharedString, usize)>,
     lines: Vec<Rc<CommitLine>>,
     active_commit_lines: HashMap<CommitLineKey, usize>,
     active_commit_lines_by_parent: HashMap<Oid, SmallVec<[usize; 1]>>,
@@ -1052,12 +1055,13 @@ impl GraphData {
             self.max_lanes = self.max_lanes.max(self.lane_states.len());
 
             for ref_name in commit.ref_names.iter() {
+                let char_count = ref_name.chars().count();
                 let is_wider = self
                     .widest_ref_label
                     .as_ref()
-                    .is_none_or(|widest| ref_name.chars().count() > widest.chars().count());
+                    .is_none_or(|(_, widest_count)| char_count > *widest_count);
                 if is_wider {
-                    self.widest_ref_label = Some(ref_name.clone());
+                    self.widest_ref_label = Some((ref_name.clone(), char_count));
                 }
             }
 
@@ -1527,7 +1531,7 @@ impl GitGraph {
     }
 
     fn ref_label_gutter_width(&self, window: &Window, cx: &App) -> Pixels {
-        let Some(widest_label) = self.graph_data.widest_ref_label.as_ref() else {
+        let Some((widest_label, _)) = self.graph_data.widest_ref_label.as_ref() else {
             return REF_LABEL_GUTTER_MIN_WIDTH;
         };
 
@@ -4051,16 +4055,17 @@ impl GitGraph {
             // (preferring the checked-out branch, falling back to the first ref)
             // plus a "+N" counter, so the gutter stays legible instead of
             // cramming several truncated chips together.
-            let primary_name = ref_names
+            let (primary_name, is_head) = match ref_names
                 .iter()
                 .find(|name| Self::is_head_ref(name.as_ref(), &head_branch_name))
-                .or_else(|| ref_names.first())
-                .cloned();
-            let Some(primary_name) = primary_name else {
-                continue;
+            {
+                Some(head_ref) => (head_ref.clone(), true),
+                None => match ref_names.first() {
+                    Some(first) => (first.clone(), false),
+                    None => continue,
+                },
             };
 
-            let is_head = Self::is_head_ref(primary_name.as_ref(), &head_branch_name);
             let primary_chip = self.render_ref_chip(
                 primary_name.clone(),
                 accent_color,
