@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use anyhow::{Context as _, Result};
 use editor::scroll::Autoscroll;
-use editor::{Editor, EditorEvent, EditorSettingsScrollbarProxy, MultiBufferOffset, SelectionEffects};
+use editor::{
+    Editor, EditorEvent, EditorSettingsScrollbarProxy, MultiBufferOffset, SelectionEffects,
+};
 use gpui::{
     App, ClipboardItem, Context, Entity, EventEmitter, FocusHandle, Focusable, ImageSource,
     InteractiveElement, IntoElement, IsZero, Pixels, Render, Resource, RetainAllImageCache,
