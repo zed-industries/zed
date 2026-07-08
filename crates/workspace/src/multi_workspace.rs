@@ -1054,6 +1054,18 @@ impl MultiWorkspace {
         self.remove(
             workspaces,
             move |this, window, cx| {
+                if let Some(neighbor_key) = neighbor_key.as_ref()
+                    && let Some(workspace) = this
+                        .last_active_workspace_for_group(neighbor_key, cx)
+                        .or_else(|| {
+                            this.workspaces_for_project_group(neighbor_key, cx)
+                                .unwrap_or_default()
+                                .into_iter()
+                                .find(|candidate| !excluded_workspaces.contains(candidate))
+                        })
+                {
+                    return Task::ready(Ok(workspace));
+                }
                 if let Some(neighbor_key) = neighbor_key
                     && neighbor_key.host().is_none()
                 {
