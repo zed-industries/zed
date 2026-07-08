@@ -885,6 +885,10 @@ impl Pane {
         cx.notify();
     }
 
+    pub fn workspace(&self) -> &WeakEntity<Workspace> {
+        &self.workspace
+    }
+
     pub fn nav_history_for_item<T: Item>(&self, item: &Entity<T>) -> ItemNavHistory {
         ItemNavHistory {
             history: self.nav_history.clone(),
@@ -1279,10 +1283,15 @@ impl Pane {
             None
         };
 
+        let item_type = item.to_any_view().entity_type();
         let existing_item_index = self.items.iter().position(|existing_item| {
             if existing_item.item_id() == item.item_id() {
                 true
-            } else if existing_item.buffer_kind(cx) == ItemBufferKind::Singleton {
+            } else if existing_item.buffer_kind(cx) == ItemBufferKind::Singleton
+                // Different view types may represent the same project entry (e.g. an editor
+                // and a preview of the same file) and should get separate tabs.
+                && existing_item.to_any_view().entity_type() == item_type
+            {
                 existing_item
                     .project_entry_ids(cx)
                     .first()

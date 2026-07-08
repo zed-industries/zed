@@ -601,7 +601,11 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-k v": "markdown::OpenPreviewToTheSide",
-      "ctrl-shift-v": "markdown::OpenPreview",
+      // The preview replaces the file's tab by default.
+      // Use the "placement" parameter to keep the text editor active and
+      // toggle the preview in a pane to the side instead:
+      // "ctrl-shift-v": ["preview::Toggle", { "placement": "to_the_side" }],
+      "ctrl-shift-v": ["preview::Toggle", { "placement": "in_place" }],
     },
   },
   {
@@ -609,7 +613,15 @@
     "use_key_equivalents": true,
     "bindings": {
       "ctrl-k v": "svg::OpenPreviewToTheSide",
-      "ctrl-shift-v": "svg::OpenPreview",
+      "ctrl-shift-v": ["preview::Toggle", { "placement": "in_place" }],
+    },
+  },
+  {
+    "context": "Editor && extension == csv",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-k v": "csv::OpenPreviewToTheSide",
+      "ctrl-shift-v": ["preview::Toggle", { "placement": "in_place" }],
     },
   },
   {
@@ -1359,6 +1371,7 @@
     "context": "MarkdownPreview",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-shift-v": ["preview::Toggle", { "placement": "in_place" }],
       "pageup": "markdown::ScrollPageUp",
       "pagedown": "markdown::ScrollPageDown",
       "up": "markdown::ScrollUp",
@@ -1370,6 +1383,20 @@
       "ctrl-shift-v": "markdown::CloseAndReturnToEditor",
       "find": "buffer_search::Deploy",
       "ctrl-f": "buffer_search::Deploy",
+    },
+  },
+  {
+    "context": "SvgPreview",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-shift-v": ["preview::Toggle", { "placement": "in_place" }],
+    },
+  },
+  {
+    "context": "CsvPreview",
+    "use_key_equivalents": true,
+    "bindings": {
+      "ctrl-shift-v": ["preview::Toggle", { "placement": "in_place" }],
     },
   },
   {
