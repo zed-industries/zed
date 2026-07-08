@@ -338,6 +338,17 @@ impl ListState {
         self
     }
 
+    /// Pre-populate every unmeasured item with a uniform height hint so the scrollbar thumb
+    /// is correctly sized from the first frame, without measuring all items up front.
+    ///
+    /// As items are actually rendered their real heights replace the hint, so the scrollbar
+    /// converges to the exact size over time. This is a cheaper alternative to [`Self::measure_all`]
+    /// for lists where items have roughly uniform heights (e.g. table rows).
+    pub fn with_uniform_item_height(self, height: Pixels) -> Self {
+        self.apply_uniform_item_height(height);
+        self
+    }
+
     /// Reset this instantiation of the list state.
     ///
     /// Note that this will cause scroll events to be dropped until the next paint.
@@ -353,6 +364,33 @@ impl ListState {
         };
 
         self.splice(0..old_count, element_count);
+    }
+
+    /// Reset the list to `element_count` items, pre-populating every item with a
+    /// uniform height hint so the scrollbar thumb is correctly sized from the first
+    /// frame even for off-screen items.
+    pub fn reset_with_uniform_height(&self, element_count: usize, height: Pixels) {
+        self.reset(element_count);
+        self.apply_uniform_item_height(height);
+    }
+
+    fn apply_uniform_item_height(&self, height: Pixels) {
+        let size_hint = Size {
+            width: px(0.),
+            height,
+        };
+        let mut state = self.0.borrow_mut();
+        let new_items = state
+            .items
+            .iter()
+            .map(|item| ListItem::Unmeasured {
+                size_hint: Some(item.size_hint().unwrap_or(size_hint)),
+                focus_handle: item.focus_handle(),
+            })
+            .collect::<Vec<_>>();
+        let mut tree = SumTree::default();
+        tree.extend(new_items, ());
+        state.items = tree;
     }
 
     /// Remeasure all items while preserving proportional scroll position.
