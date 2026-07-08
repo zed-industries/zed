@@ -757,20 +757,22 @@ pub enum LogSource {
 }
 
 impl LogSource {
-    fn get_args(&self) -> Result<Vec<&str>> {
+    fn get_args(&self) -> Vec<OsString> {
         match self {
-            LogSource::All => Ok(vec![
-                "--ignore-missing", // needed in case of unborn HEAD
-                "--branches",
-                "--remotes",
-                "--tags",
-                "HEAD",
-            ]),
-            LogSource::Branch(branch) => Ok(vec![branch.as_str()]),
-            LogSource::Sha(oid) => Ok(vec![
-                str::from_utf8(oid.as_bytes()).context("Failed to build str from sha")?,
-            ]),
-            LogSource::Path(path) => Ok(vec!["--follow", "--", path.as_unix_str()]),
+            LogSource::All => vec![
+                OsString::from("--ignore-missing"), // needed in case of unborn HEAD
+                OsString::from("--branches"),
+                OsString::from("--remotes"),
+                OsString::from("--tags"),
+                OsString::from("HEAD"),
+            ],
+            LogSource::Branch(branch) => vec![OsString::from(branch.as_ref())],
+            LogSource::Sha(oid) => vec![OsString::from(oid.to_string())],
+            LogSource::Path(path) => vec![
+                OsString::from("--follow"),
+                OsString::from("--"),
+                OsString::from(path.as_unix_str()),
+            ],
         }
     }
 }
@@ -3111,8 +3113,12 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
 
         async move {
-            let mut git_log_command = vec!["log", GRAPH_COMMIT_FORMAT, log_order.as_arg()];
-            git_log_command.extend(log_source.get_args()?);
+            let mut git_log_command = vec![
+                OsString::from("log"),
+                OsString::from(GRAPH_COMMIT_FORMAT),
+                OsString::from(log_order.as_arg()),
+            ];
+            git_log_command.extend(log_source.get_args());
             let mut command = git.build_command(&git_log_command);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::piped());
@@ -3182,22 +3188,22 @@ impl GitRepository for RealGitRepository {
         let git = self.git_binary();
 
         async move {
-            let mut args = vec!["log", SEARCH_COMMIT_FORMAT];
+            let mut args = vec![OsString::from("log"), OsString::from(SEARCH_COMMIT_FORMAT)];
             let hash_query = commit_hash_search_query(search_args.query.as_str())
                 .map(|query| query.to_ascii_lowercase());
 
             if hash_query.is_none() {
-                args.push("--fixed-strings");
+                args.push(OsString::from("--fixed-strings"));
 
                 if !search_args.case_sensitive {
-                    args.push("--regexp-ignore-case");
+                    args.push(OsString::from("--regexp-ignore-case"));
                 }
 
-                args.push("--grep");
-                args.push(search_args.query.as_str());
+                args.push(OsString::from("--grep"));
+                args.push(OsString::from(search_args.query.as_ref()));
             }
 
-            args.extend(log_source.get_args()?);
+            args.extend(log_source.get_args());
             let mut command = git.build_command(&args);
             command.stdout(Stdio::piped());
             command.stderr(Stdio::null());
@@ -3968,6 +3974,18 @@ mod tests {
     fn git_init_repo(path: &Path) {
         fs::create_dir_all(path).expect("failed to create repo directory");
         git_command(path, ["init", "-b", "main"]);
+    }
+
+    #[test]
+    fn test_log_source_sha_uses_hex_arg() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        let args = LogSource::Sha(sha.parse().unwrap())
+            .get_args()
+            .into_iter()
+            .map(|arg| arg.into_string().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(args, vec![sha]);
     }
 
     fn clone_remote_repository_with_main_and_feature(temp_dir: &Path) -> (PathBuf, PathBuf) {
