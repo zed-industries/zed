@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use collections::{FxHashSet, HashMap};
+use collections::{FxHashMap, HashMap};
 use futures::channel::oneshot::Receiver;
 
 use raw_window_handle as rwh;
@@ -95,7 +95,9 @@ pub struct WaylandWindowState {
     surface_state: WaylandSurfaceState,
     acknowledged_first_configure: bool,
     parent: Option<WaylandWindowStatePtr>,
-    children: FxHashSet<ObjectId>,
+    /// Child surfaces mapped to whether they block this window's input (dialogs
+    /// block, popups don't). Children are closed before this window closes.
+    children: FxHashMap<ObjectId, bool>,
     pub surface: wl_surface::WlSurface,
     app_id: Option<String>,
     appearance: WindowAppearance,
@@ -140,6 +142,7 @@ impl WaylandSurfaceState {
         globals: &Globals,
         params: &WindowParams,
         parent: Option<WaylandWindowStatePtr>,
+        popup_grab: Option<(u32, wl_seat::WlSeat)>,
         target_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<Self> {
         // For layer_shell windows, create a layer surface instead of an xdg surface
@@ -221,14 +224,14 @@ impl WaylandSurfaceState {
             };
             positioner.destroy();
 
-            if options.grab
-                && let Some((serial, seat)) = parent.popup_grab()
-            {
+            if let Some((serial, seat)) = popup_grab {
                 xdg_popup.grab(&seat, serial);
             }
 
-            // Deliberately not `add_child`: that would mark the parent `is_blocked()` and drop its
-            // input, but the parent needs input to dismiss the popup on clicks in its own window.
+            // Non-blocking: the parent keeps its input so it can dismiss the popup on
+            // clicks in its own window.
+            parent.add_child(surface.id(), false);
+
             return Ok(WaylandSurfaceState::Popup(WaylandPopupSurfaceState {
                 xdg_surface,
                 xdg_popup,
@@ -257,7 +260,7 @@ impl WaylandSurfaceState {
             });
 
             if let Some(parent) = parent.as_ref() {
-                parent.add_child(surface.id());
+                parent.add_child(surface.id(), true);
             }
 
             dialog
@@ -546,7 +549,7 @@ impl WaylandWindowState {
             surface_state,
             acknowledged_first_configure: false,
             parent,
-            children: FxHashSet::default(),
+            children: FxHashMap::default(),
             surface,
             app_id: options.app_id,
             blur: None,
@@ -695,11 +698,18 @@ impl WaylandWindow {
         params: WindowParams,
         appearance: WindowAppearance,
         parent: Option<WaylandWindowStatePtr>,
+        popup_grab: Option<(u32, wl_seat::WlSeat)>,
         target_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
-        let surface_state =
-            WaylandSurfaceState::new(&surface, &globals, &params, parent.clone(), target_output)?;
+        let surface_state = WaylandSurfaceState::new(
+            &surface,
+            &globals,
+            &params,
+            parent.clone(),
+            popup_grab,
+            target_output,
+        )?;
 
         if let Some(fractional_scale_manager) = globals.fractional_scale_manager.as_ref() {
             fractional_scale_manager.get_fractional_scale(&surface, &globals.qh, surface.id());
@@ -768,23 +778,18 @@ impl WaylandWindowStatePtr {
         )
     }
 
-    /// The serial and seat to use when grabbing a child popup, from the most recent press event.
-    pub fn popup_grab(&self) -> Option<(u32, wl_seat::WlSeat)> {
-        self.state.borrow().client.popup_grab_serial_and_seat()
-    }
-
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.state, &other.state)
     }
 
-    pub fn add_child(&self, child: ObjectId) {
+    pub fn add_child(&self, child: ObjectId, blocking: bool) {
         let mut state = self.state.borrow_mut();
-        state.children.insert(child);
+        state.children.insert(child, blocking);
     }
 
     pub fn is_blocked(&self) -> bool {
         let state = self.state.borrow();
-        !state.children.is_empty()
+        state.children.values().any(|&blocking| blocking)
     }
 
     pub fn frame(&self) {
@@ -1252,8 +1257,7 @@ impl WaylandWindowStatePtr {
     pub fn close(&self) {
         let state = self.state.borrow();
         let client = state.client.get_client();
-        #[allow(clippy::mutable_key_type)]
-        let children = state.children.clone();
+        let children = state.children.keys().cloned().collect::<Vec<_>>();
         drop(state);
 
         for child in children {

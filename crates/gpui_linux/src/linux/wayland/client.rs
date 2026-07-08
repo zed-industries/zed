@@ -340,21 +340,6 @@ impl WaylandClientStatePtr {
         self.0.upgrade().unwrap().borrow().serial_tracker.get(kind)
     }
 
-    // A popup grab must reference a press event or the compositor declines it and immediately
-    // dismisses the popup, so return the most recent press serial, or `None` before any press.
-    pub fn popup_grab_serial_and_seat(&self) -> Option<(u32, wl_seat::WlSeat)> {
-        let client = self.0.upgrade()?;
-        let state = client.borrow();
-        let serial = state
-            .serial_tracker
-            .get(SerialKind::MousePress)
-            .max(state.serial_tracker.get(SerialKind::KeyPress));
-        if serial == 0 {
-            return None;
-        }
-        Some((serial, state.wl_seat.clone()))
-    }
-
     pub fn set_pending_activation(&self, window: ObjectId) {
         self.0.upgrade().unwrap().borrow_mut().pending_activation =
             Some(PendingActivation::Window(window));
@@ -864,16 +849,27 @@ impl LinuxClient for WaylandClient {
         let mut state = self.0.borrow_mut();
 
         // Popups name their parent explicitly. Other kinds are parented to the focused window.
-        let parent = match &params.kind {
-            WindowKind::AnchoredPopup(options) => Some(
-                state
+        let (parent, popup_grab) = match &params.kind {
+            WindowKind::AnchoredPopup(options) => {
+                let parent = state
                     .windows
                     .values()
                     .find(|window| window.handle() == options.parent)
                     .cloned()
-                    .ok_or_else(|| anyhow::anyhow!("popup parent window not found"))?,
-            ),
-            _ => state.keyboard_focused_window.clone(),
+                    .ok_or_else(|| anyhow::anyhow!("popup parent window not found"))?;
+                // A popup grab must reference a press event or the compositor declines it and
+                // immediately dismisses the popup, so use the most recent press serial, or no
+                // grab before any press.
+                let popup_grab = options.grab.then(|| {
+                    let serial = state
+                        .serial_tracker
+                        .get(SerialKind::MousePress)
+                        .max(state.serial_tracker.get(SerialKind::KeyPress));
+                    (serial != 0).then(|| (serial, state.wl_seat.clone()))
+                });
+                (Some(parent), popup_grab.flatten())
+            }
+            _ => (state.keyboard_focused_window.clone(), None),
         };
 
         let target_output = params.display_id.and_then(|display_id| {
@@ -887,27 +883,20 @@ impl LinuxClient for WaylandClient {
 
         let appearance = state.common.appearance;
         let compositor_gpu = state.compositor_gpu.take();
-        let globals = state.globals.clone();
-        let gpu_context = state.gpu_context.clone();
-        let client = WaylandClientStatePtr(Rc::downgrade(&self.0));
-
-        // Creating a popup borrows the client state again (for the grab serial), so release
-        // this borrow first.
-        drop(state);
 
         let (window, surface_id) = WaylandWindow::new(
             handle,
-            globals,
-            gpu_context,
+            state.globals.clone(),
+            state.gpu_context.clone(),
             compositor_gpu,
-            client,
+            WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
             appearance,
             parent,
+            popup_grab,
             target_output,
         )?;
 
-        let mut state = self.0.borrow_mut();
         if window.0.toplevel().is_some() {
             state.consume_startup_activation_token(&window.0.surface());
         }
