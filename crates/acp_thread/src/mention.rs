@@ -820,7 +820,8 @@ fn single_query_param(url: &Url, name: &'static str) -> Result<Option<String>> {
 }
 
 pub fn selection_name(path: Option<&Path>, line_range: &RangeInclusive<u32>) -> String {
-    format!("{}{}",
+    format!(
+        "{}{}",
         path.and_then(|path| path.file_name())
             .unwrap_or("Untitled".as_ref())
             .display(),
