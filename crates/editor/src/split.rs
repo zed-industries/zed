@@ -3,27 +3,27 @@ use std::{
     sync::Arc,
 };
 
-use buffer_diff::{BufferDiff, BufferDiffSnapshot};
+use buffer_diff::{BufferDiff, BufferDiffSnapshot, DiffHunkStatus};
 use collections::HashMap;
 
+use fs::Fs;
 use gpui::{
-    Action, AppContext as _, Entity, EventEmitter, Focusable, Font, Pixels, Subscription,
-    WeakEntity, canvas,
+    Action, AnyElement, Entity, EventEmitter, Focusable, Font, Pixels, Subscription, WeakEntity,
+    canvas, prelude::*,
 };
-use itertools::Itertools;
+
 use language::{Buffer, Capability, HighlightedText};
 use multi_buffer::{
     Anchor, AnchorRangeExt as _, BufferOffset, ExcerptRange, ExpandExcerptDirection, MultiBuffer,
-    MultiBufferDiffHunk, MultiBufferPoint, MultiBufferSnapshot, PathKey,
+    MultiBufferPoint, MultiBufferSnapshot, PathKey,
 };
 use project::Project;
 use rope::Point;
-use settings::{DiffViewStyle, SeedQuerySetting, Settings, SettingsStore};
+use settings::{DiffViewStyle, SeedQuerySetting, Settings, SettingsStore, update_settings_file};
 use text::{Bias, BufferId, OffsetRangeExt as _, Patch, ToPoint as _};
-use ui::{
-    App, Context, InteractiveElement as _, IntoElement as _, ParentElement as _, Render,
-    Styled as _, Window, div,
-};
+
+use ui::{Toggleable as _, Tooltip, prelude::*, render_modifiers};
+use util::ResultExt as _;
 
 use crate::{
     display_map::CompanionExcerptPatch,
@@ -37,11 +37,12 @@ use workspace::{
 };
 
 use crate::{
-    Autoscroll, Editor, EditorEvent, EditorSettings, RenderDiffHunkControlsFn, ToggleSoftWrap,
+    Autoscroll, DiffHunkDelegate, Editor, EditorEvent, EditorSettings, ResolvedDiffHunks,
+    ToggleSoftWrap, UncommittedDiffHunkDelegate,
     actions::{DisableBreakpoint, EditLogBreakpoint, EnableBreakpoint, ToggleBreakpoint},
     display_map::Companion,
 };
-use zed_actions::assistant::InlineAssist;
+use zed_actions::{OpenSettingsAt, assistant::InlineAssist};
 
 pub(crate) fn patches_for_lhs_range(
     rhs_snapshot: &MultiBufferSnapshot,
@@ -150,32 +151,97 @@ fn translate_lhs_selections_to_rhs(
     translated
 }
 
-fn translate_lhs_hunks_to_rhs(
-    lhs_hunks: &[MultiBufferDiffHunk],
-    splittable: &SplittableEditor,
-    cx: &App,
-) -> Vec<MultiBufferDiffHunk> {
-    let Some(lhs) = &splittable.lhs else {
-        return vec![];
-    };
-    let lhs_snapshot = lhs.multibuffer.read(cx).snapshot(cx);
-    let rhs_snapshot = splittable.rhs_multibuffer.read(cx).snapshot(cx);
-    let rhs_hunks: Vec<MultiBufferDiffHunk> = rhs_snapshot.diff_hunks().collect();
+struct SplitLhsDiffHunkDelegate {
+    splittable: WeakEntity<SplittableEditor>,
+}
 
-    let mut translated = Vec::new();
-    for lhs_hunk in lhs_hunks {
-        let Some(diff) = lhs_snapshot.diff_for_buffer_id(lhs_hunk.buffer_id) else {
-            continue;
-        };
-        let rhs_buffer_id = diff.buffer_id();
-        if let Some(rhs_hunk) = rhs_hunks.iter().find(|rhs_hunk| {
-            rhs_hunk.buffer_id == rhs_buffer_id
-                && rhs_hunk.diff_base_byte_range == lhs_hunk.diff_base_byte_range
-        }) {
-            translated.push(rhs_hunk.clone());
-        }
+impl DiffHunkDelegate for SplitLhsDiffHunkDelegate {
+    fn toggle(
+        &self,
+        hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.splittable
+            .update(cx, |splittable, cx| {
+                splittable.rhs_editor.update(cx, |editor, cx| {
+                    let delegate = editor.diff_hunk_delegate();
+                    delegate.toggle(hunks, editor, window, cx);
+                });
+            })
+            .log_err();
     }
-    translated
+
+    fn stage_or_unstage(
+        &self,
+        stage: bool,
+        hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.splittable
+            .update(cx, |splittable, cx| {
+                splittable.rhs_editor.update(cx, |editor, cx| {
+                    let delegate = editor.diff_hunk_delegate();
+                    delegate.stage_or_unstage(stage, hunks, editor, window, cx);
+                });
+            })
+            .log_err();
+    }
+
+    fn restore(
+        &self,
+        hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) {
+        self.splittable
+            .update(cx, |splittable, cx| {
+                splittable.rhs_editor.update(cx, |editor, cx| {
+                    let delegate = editor.diff_hunk_delegate();
+                    delegate.restore(hunks, editor, window, cx);
+                });
+            })
+            .log_err();
+    }
+
+    fn render_hunk_controls(
+        &self,
+        row: u32,
+        status: &DiffHunkStatus,
+        hunk_range: Range<Anchor>,
+        is_created_file: bool,
+        line_height: Pixels,
+        editor: &Entity<Editor>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        let Some(splittable) = self.splittable.upgrade() else {
+            return gpui::Empty.into_any_element();
+        };
+        let delegate = splittable.read(cx).rhs_editor.read(cx).diff_hunk_delegate();
+        delegate.render_hunk_controls(
+            row,
+            status,
+            hunk_range,
+            is_created_file,
+            line_height,
+            editor,
+            window,
+            cx,
+        )
+    }
+
+    fn render_hunk_as_staged(&self, status: &DiffHunkStatus, cx: &App) -> bool {
+        let Some(splittable) = self.splittable.upgrade() else {
+            return false;
+        };
+        let delegate = splittable.read(cx).rhs_editor.read(cx).diff_hunk_delegate();
+        delegate.render_hunk_as_staged(status, cx)
+    }
 }
 
 fn patches_for_range<F>(
@@ -401,6 +467,124 @@ fn patch_for_excerpt(
 #[action(namespace = editor)]
 pub struct ToggleSplitDiff;
 
+/// Unified/split diff view toggle buttons, shared by the toolbars of every
+/// diff view (project diff, branch diff, solo diff) so they can't drift apart.
+#[derive(gpui::IntoElement)]
+pub struct DiffStyleControls {
+    splittable_editor: Entity<SplittableEditor>,
+}
+
+impl DiffStyleControls {
+    pub fn new(splittable_editor: Entity<SplittableEditor>) -> Self {
+        Self { splittable_editor }
+    }
+
+    fn set_diff_view_style(
+        splittable_editor: &Entity<SplittableEditor>,
+        diff_view_style: DiffViewStyle,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        update_settings_file(<dyn Fs>::global(cx), cx, move |settings, _| {
+            settings.editor.diff_view_style = Some(diff_view_style);
+        });
+
+        splittable_editor.update(cx, |editor, cx| {
+            if editor.diff_view_style() != diff_view_style {
+                editor.toggle_split(&ToggleSplitDiff, window, cx);
+            }
+        });
+    }
+}
+
+impl RenderOnce for DiffStyleControls {
+    fn render(self, _window: &mut Window, cx: &mut App) -> impl gpui::IntoElement {
+        let editor = self.splittable_editor.read(cx);
+        let diff_view_style = editor.diff_view_style();
+        let is_split_set = diff_view_style == DiffViewStyle::Split;
+        let is_split_pending = is_split_set && !editor.is_split();
+        let min_columns = EditorSettings::get_global(cx).minimum_split_diff_width as u32;
+
+        let split_icon = if is_split_pending {
+            IconName::DiffSplitAuto
+        } else {
+            IconName::DiffSplit
+        };
+
+        h_flex()
+            .gap_1()
+            .child(
+                IconButton::new("diff-style-unified", IconName::DiffUnified)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(diff_view_style == DiffViewStyle::Unified)
+                    .tooltip(Tooltip::text("Unified"))
+                    .on_click({
+                        let splittable_editor = self.splittable_editor.clone();
+                        move |_, window, cx| {
+                            Self::set_diff_view_style(
+                                &splittable_editor,
+                                DiffViewStyle::Unified,
+                                window,
+                                cx,
+                            );
+                        }
+                    }),
+            )
+            .child(
+                IconButton::new("diff-style-split", split_icon)
+                    .icon_size(IconSize::Small)
+                    .toggle_state(is_split_set)
+                    .tooltip(Tooltip::element(move |_, cx| {
+                        let message = if is_split_pending {
+                            format!("Split when wider than {} columns", min_columns).into()
+                        } else {
+                            SharedString::from("Split")
+                        };
+
+                        v_flex()
+                            .child(message)
+                            .child(
+                                h_flex()
+                                    .gap_0p5()
+                                    .text_ui_sm(cx)
+                                    .text_color(Color::Muted.color(cx))
+                                    .children(render_modifiers(
+                                        &gpui::Modifiers::secondary_key(),
+                                        PlatformStyle::platform(),
+                                        None,
+                                        Some(TextSize::Small.rems(cx).into()),
+                                        false,
+                                    ))
+                                    .child("click to change min width"),
+                            )
+                            .into_any_element()
+                    }))
+                    .on_click({
+                        let splittable_editor = self.splittable_editor.clone();
+                        move |_, window, cx| {
+                            if window.modifiers().secondary() {
+                                window.dispatch_action(
+                                    OpenSettingsAt {
+                                        path: "minimum_split_diff_width".to_string(),
+                                        target: None,
+                                    }
+                                    .boxed_clone(),
+                                    cx,
+                                );
+                            } else {
+                                Self::set_diff_view_style(
+                                    &splittable_editor,
+                                    DiffViewStyle::Split,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        }
+                    }),
+            )
+    }
+}
+
 pub struct SplittableEditor {
     rhs_multibuffer: Entity<MultiBuffer>,
     rhs_editor: Entity<Editor>,
@@ -452,28 +636,13 @@ impl SplittableEditor {
         self.lhs.is_some()
     }
 
-    pub fn set_render_diff_hunk_controls(
+    pub fn set_diff_hunk_delegate(
         &self,
-        render_diff_hunk_controls: RenderDiffHunkControlsFn,
+        delegate: Option<Arc<dyn DiffHunkDelegate>>,
         cx: &mut Context<Self>,
     ) {
-        self.update_editors(cx, |editor, cx| {
-            editor.set_render_diff_hunk_controls(render_diff_hunk_controls.clone(), cx);
-        });
-    }
-
-    pub fn disable_diff_hunk_controls(&self, cx: &mut Context<Self>) {
-        let empty_controls = Arc::new(|_, _: &_, _, _, _, _: &_, _: &mut _, _: &mut _| {
-            gpui::Empty.into_any_element()
-        });
-        self.update_editors(cx, |editor, cx| {
-            editor.set_render_diff_hunk_controls(empty_controls.clone(), cx);
-        });
-    }
-
-    pub fn set_render_diff_hunks_as_unstaged(&self, cx: &mut Context<Self>) {
-        self.update_editors(cx, |editor, cx| {
-            editor.set_render_diff_hunks_as_unstaged(true, cx);
+        self.rhs_editor.update(cx, |editor, cx| {
+            editor.set_diff_hunk_delegate(delegate, cx);
         });
     }
 
@@ -514,7 +683,7 @@ impl SplittableEditor {
             editor.disable_inline_diagnostics();
             editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
-            editor.start_temporary_diff_override();
+            editor.set_diff_hunk_delegate(Some(Arc::new(UncommittedDiffHunkDelegate)), cx);
             editor
         });
         // TODO(split-diff) we might want to tag editor events with whether they came from rhs/lhs
@@ -601,9 +770,9 @@ impl SplittableEditor {
             return;
         }
 
-        let is_rhs_singleton = self.rhs_multibuffer.read(cx).is_singleton();
+        let rhs_has_headers = self.rhs_multibuffer.read(cx).snapshot(cx).show_headers();
         let lhs_multibuffer = cx.new(|cx| {
-            let mut multibuffer = if is_rhs_singleton {
+            let mut multibuffer = if !rhs_has_headers {
                 MultiBuffer::without_headers(Capability::ReadOnly)
             } else {
                 MultiBuffer::new(Capability::ReadOnly)
@@ -612,15 +781,16 @@ impl SplittableEditor {
             multibuffer
         });
 
-        let render_diff_hunk_controls = self.rhs_editor.read(cx).render_diff_hunk_controls.clone();
-        let render_diff_hunks_as_unstaged = self.rhs_editor.read(cx).render_diff_hunks_as_unstaged;
+        let splittable = cx.weak_entity();
         let lhs_editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(lhs_multibuffer.clone(), Some(project.clone()), window, cx);
-            editor.set_render_diff_hunks_as_unstaged(render_diff_hunks_as_unstaged, cx);
             editor.set_number_deleted_lines(true, cx);
             editor.set_delegate_expand_excerpts(true);
-            editor.set_delegate_stage_and_restore(true);
+            editor.set_diff_hunk_delegate(
+                Some(Arc::new(SplitLhsDiffHunkDelegate { splittable })),
+                cx,
+            );
             editor.set_delegate_open_excerpts(true);
             editor.set_show_vertical_scrollbar(false, cx);
             editor.disable_lsp_data();
@@ -629,10 +799,6 @@ impl SplittableEditor {
             editor.disable_mouse_wheel_zoom();
             editor.set_minimap_visibility(crate::MinimapVisibility::Disabled, window, cx);
             editor
-        });
-
-        lhs_editor.update(cx, |editor, cx| {
-            editor.set_render_diff_hunk_controls(render_diff_hunk_controls, cx);
         });
 
         let mut subscriptions = vec![cx.subscribe_in(
@@ -665,30 +831,7 @@ impl SplittableEditor {
                         this.expand_excerpts(rhs_anchors.into_iter(), *lines, *direction, cx);
                     }
                 }
-                EditorEvent::StageOrUnstageRequested { stage, hunks } => {
-                    if this.lhs.is_some() {
-                        let translated = translate_lhs_hunks_to_rhs(hunks, this, cx);
-                        if !translated.is_empty() {
-                            let stage = *stage;
-                            this.rhs_editor.update(cx, |editor, cx| {
-                                let chunk_by = translated.into_iter().chunk_by(|h| h.buffer_id);
-                                for (buffer_id, hunks) in &chunk_by {
-                                    editor.do_stage_or_unstage(stage, buffer_id, hunks, cx);
-                                }
-                            });
-                        }
-                    }
-                }
-                EditorEvent::RestoreRequested { hunks } => {
-                    if this.lhs.is_some() {
-                        let translated = translate_lhs_hunks_to_rhs(hunks, this, cx);
-                        if !translated.is_empty() {
-                            this.rhs_editor.update(cx, |editor, cx| {
-                                editor.restore_diff_hunks(translated, cx);
-                            });
-                        }
-                    }
-                }
+
                 EditorEvent::OpenExcerptsRequested {
                     selections_by_buffer,
                     split,

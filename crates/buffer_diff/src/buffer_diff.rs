@@ -122,11 +122,37 @@ struct InternalDiffHunk {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct PendingHunk {
+pub struct PendingHunk {
     buffer_range: Range<Anchor>,
     diff_base_byte_range: Range<usize>,
     buffer_version: clock::Global,
-    new_status: DiffHunkSecondaryStatus,
+    sense: PendingSense,
+}
+
+impl PendingHunk {
+    pub fn new(
+        buffer_range: Range<Anchor>,
+        diff_base_byte_range: Range<usize>,
+        buffer_version: clock::Global,
+        sense: PendingSense,
+    ) -> Self {
+        Self {
+            buffer_range,
+            diff_base_byte_range,
+            buffer_version,
+            sense,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingSense {
+    /// Override the secondary status of the matched hunk (used by the
+    /// uncommitted diff to show a hunk as staging/unstaging in place).
+    SetSecondaryStatus { stage: bool },
+    /// Suppress the matched hunk entirely (used by the unstaged/staged diffs so
+    /// that a hunk disappears the moment it is staged/unstaged).
+    Suppress,
 }
 
 #[derive(Debug, Clone)]
@@ -292,6 +318,56 @@ impl BufferDiffSnapshot {
             !before_start && !after_end
         };
         self.hunks_intersecting_range_impl(filter, buffer, unstaged_counterpart)
+    }
+
+    /// Like [`hunks_intersecting_range`], but ignores optimistic pending hunks
+    /// (both secondary-status overrides and suppressions) and does not compute a
+    /// secondary status.
+    pub fn raw_hunks_intersecting_range<'a>(
+        &'a self,
+        range: Range<Anchor>,
+        buffer: &'a text::BufferSnapshot,
+    ) -> impl 'a + Iterator<Item = DiffHunk> {
+        let range = range.to_offset(buffer);
+        let filter = move |summary: &DiffHunkSummary| {
+            let summary_range = summary.buffer_range.to_offset(buffer);
+            !(summary_range.end < range.start) && !(summary_range.start > range.end)
+        };
+        self.hunks
+            .filter::<_, DiffHunkSummary>(buffer, filter)
+            .map(move |hunk| {
+                let buffer_range = hunk.buffer_range.clone();
+                DiffHunk {
+                    range: buffer_range.to_point(buffer),
+                    diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                    buffer_range,
+                    secondary_status: DiffHunkSecondaryStatus::NoSecondaryHunk,
+                    base_word_diffs: hunk.base_word_diffs.clone(),
+                    buffer_word_diffs: hunk.buffer_word_diffs.clone(),
+                }
+            })
+    }
+
+    /// Maps a range in this diff's main buffer to the range it covers in the
+    /// base text, expanding to whole hunks wherever the range endpoints fall
+    /// inside or touch a hunk (`edit_for_old_position` is inclusive on both
+    /// boundaries, matching `raw_hunks_intersecting_range`). Used by the
+    /// index-write path to compute the index-coordinate footprint of a staging
+    /// operation; like the raw hunks, the mapping ignores optimistic pending
+    /// hunks.
+    pub fn base_text_range_for_buffer_range(
+        &self,
+        range: Range<Anchor>,
+        buffer: &text::BufferSnapshot,
+    ) -> Range<usize> {
+        let point_range = range.to_point(buffer);
+        let patch = self.patch_for_buffer_range(point_range.start..=point_range.end, buffer);
+        let start_point = patch.edit_for_old_position(point_range.start).new.start;
+        let end_point = patch.edit_for_old_position(point_range.end).new.end;
+        let base_text = self.base_text();
+        let start = base_text.point_to_offset(start_point.min(base_text.max_point()));
+        let end = base_text.point_to_offset(end_point.min(base_text.max_point()));
+        start.min(end)..end
     }
 
     pub fn hunks_intersecting_range_rev<'a>(
@@ -705,114 +781,80 @@ impl BufferDiffSnapshot {
 }
 
 impl BufferDiffSnapshot {
-    fn stage_or_unstage_hunks_impl(
-        &mut self,
+    // Compute the edits to apply to the index, and the resulting pending hunks,
+    // for a stage or unstage operation on the uncommitted diff.
+    pub fn compute_uncommitted_index_edits(
+        &self,
         unstaged_diff: &Self,
         stage: bool,
         hunks: &[DiffHunk],
         buffer: &text::BufferSnapshot,
         file_exists: bool,
-    ) -> Option<Rope> {
+    ) -> (Option<Vec<(Range<usize>, Arc<str>)>>, Vec<PendingHunk>) {
         let head_text = self
             .base_text_exists
             .then(|| self.base_text.as_rope().clone());
         let index_text = unstaged_diff
             .base_text_exists
             .then(|| unstaged_diff.base_text.as_rope().clone());
+        let sense = PendingSense::SetSecondaryStatus { stage };
+        let version = buffer.version().clone();
 
         // If the file doesn't exist in either HEAD or the index, then the
         // entire file must be either created or deleted in the index.
         let (index_text, head_text) = match (index_text, head_text) {
             (Some(index_text), Some(head_text)) if file_exists || !stage => (index_text, head_text),
             (index_text, head_text) => {
-                let (new_index_text, new_status) = if stage {
+                let index_len = index_text.as_ref().map_or(0, |rope| rope.len());
+                let new_index_text: Option<Rope> = if stage {
                     log::debug!("stage all");
-                    (
-                        file_exists.then(|| buffer.as_rope().clone()),
-                        DiffHunkSecondaryStatus::SecondaryHunkRemovalPending,
-                    )
+                    file_exists.then(|| buffer.as_rope().clone())
                 } else {
                     log::debug!("unstage all");
-                    (
-                        head_text,
-                        DiffHunkSecondaryStatus::SecondaryHunkAdditionPending,
-                    )
+                    head_text
                 };
 
-                let hunk = PendingHunk {
-                    buffer_range: Anchor::min_max_range_for_buffer(buffer.remote_id()),
-                    diff_base_byte_range: 0..index_text.map_or(0, |rope| rope.len()),
-                    buffer_version: buffer.version().clone(),
-                    new_status,
-                };
-                self.pending_hunks = SumTree::from_item(hunk, buffer);
-                return new_index_text;
+                let pending = vec![PendingHunk::new(
+                    Anchor::min_max_range_for_buffer(buffer.remote_id()),
+                    0..index_len,
+                    version,
+                    sense,
+                )];
+                let edits =
+                    new_index_text.map(|rope| vec![(0..index_len, Arc::from(rope.to_string()))]);
+                return (edits, pending);
             }
         };
-
-        let mut pending_hunks = SumTree::new(buffer);
-        let mut old_pending_hunks = self.pending_hunks.cursor::<DiffHunkSummary>(buffer);
-
-        // first, merge new hunks into pending_hunks
-        for DiffHunk {
-            buffer_range,
-            diff_base_byte_range,
-            secondary_status,
-            ..
-        } in hunks.iter().cloned()
-        {
-            let preceding_pending_hunks = old_pending_hunks.slice(&buffer_range.start, Bias::Left);
-            pending_hunks.append(preceding_pending_hunks, buffer);
-
-            // Skip all overlapping or adjacent old pending hunks
-            while old_pending_hunks.item().is_some_and(|old_hunk| {
-                old_hunk
-                    .buffer_range
-                    .start
-                    .cmp(&buffer_range.end, buffer)
-                    .is_le()
-            }) {
-                old_pending_hunks.next();
-            }
-
-            if (stage && secondary_status == DiffHunkSecondaryStatus::NoSecondaryHunk)
-                || (!stage && secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk)
-            {
-                continue;
-            }
-
-            pending_hunks.push(
-                PendingHunk {
-                    buffer_range,
-                    diff_base_byte_range,
-                    buffer_version: buffer.version().clone(),
-                    new_status: if stage {
-                        DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
-                    } else {
-                        DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
-                    },
-                },
-                buffer,
-            );
-        }
-        // append the remainder
-        pending_hunks.append(old_pending_hunks.suffix(), buffer);
 
         let mut unstaged_hunk_cursor = unstaged_diff.hunks.cursor::<DiffHunkSummary>(buffer);
         unstaged_hunk_cursor.next();
 
-        // then, iterate over all pending hunks (both new ones and the existing ones) and compute the edits
         let mut prev_unstaged_hunk_buffer_end = 0;
         let mut prev_unstaged_hunk_base_text_end = 0;
-        let mut edits = Vec::<(Range<usize>, String)>::new();
-        let mut pending_hunks_iter = pending_hunks.iter().cloned().peekable();
-        while let Some(PendingHunk {
-            buffer_range,
-            diff_base_byte_range,
-            new_status,
-            ..
-        }) = pending_hunks_iter.next()
-        {
+        let mut edits = Vec::<(Range<usize>, Arc<str>)>::new();
+        let mut pending = Vec::<PendingHunk>::new();
+
+        // Process only the hunks the user acted on, skipping any already in the
+        // desired state.
+        let mut hunks_iter = hunks
+            .iter()
+            .filter(|hunk| {
+                !((stage && hunk.secondary_status == DiffHunkSecondaryStatus::NoSecondaryHunk)
+                    || (!stage
+                        && hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk))
+            })
+            .peekable();
+
+        while let Some(hunk) = hunks_iter.next() {
+            let buffer_range = hunk.buffer_range.clone();
+            let diff_base_byte_range = hunk.diff_base_byte_range.clone();
+            pending.push(PendingHunk::new(
+                buffer_range.clone(),
+                diff_base_byte_range.clone(),
+                version.clone(),
+                sense,
+            ));
+
             // Advance unstaged_hunk_cursor to skip unstaged hunks before current hunk
             let skipped_unstaged = unstaged_hunk_cursor.slice(&buffer_range.start, Bias::Left);
 
@@ -846,16 +888,20 @@ impl BufferDiffSnapshot {
                     }
                 }
 
-                // If any unstaged hunks were merged, then subsequent pending hunks may
-                // now overlap this hunk. Merge them.
-                if let Some(next_pending_hunk) = pending_hunks_iter.peek() {
-                    let next_pending_hunk_offset_range =
-                        next_pending_hunk.buffer_range.to_offset(buffer);
-                    if next_pending_hunk_offset_range.start <= buffer_offset_range.end {
-                        buffer_offset_range.end = buffer_offset_range
-                            .end
-                            .max(next_pending_hunk_offset_range.end);
-                        pending_hunks_iter.next();
+                // If any unstaged hunks were merged, then subsequent acted-on hunks
+                // may now overlap this hunk. Merge them.
+                if let Some(next_hunk) = hunks_iter.peek() {
+                    let next_hunk_offset_range = next_hunk.buffer_range.to_offset(buffer);
+                    if next_hunk_offset_range.start <= buffer_offset_range.end {
+                        buffer_offset_range.end =
+                            buffer_offset_range.end.max(next_hunk_offset_range.end);
+                        let merged_hunk = hunks_iter.next().expect("peeked hunk exists");
+                        pending.push(PendingHunk::new(
+                            merged_hunk.buffer_range.clone(),
+                            merged_hunk.diff_base_byte_range.clone(),
+                            version.clone(),
+                            sense,
+                        ));
                         continue;
                     }
                 }
@@ -879,49 +925,59 @@ impl BufferDiffSnapshot {
             let index_start = index_start.min(index_end);
             let index_byte_range = index_start..index_end;
 
-            let replacement_text = match new_status {
-                DiffHunkSecondaryStatus::SecondaryHunkRemovalPending => {
-                    log::debug!("staging hunk {:?}", buffer_offset_range);
+            let replacement_text: Arc<str> = if stage {
+                log::debug!("staging hunk {:?}", buffer_offset_range);
+                Arc::from(
                     buffer
                         .text_for_range(buffer_offset_range)
-                        .collect::<String>()
-                }
-                DiffHunkSecondaryStatus::SecondaryHunkAdditionPending => {
-                    log::debug!("unstaging hunk {:?}", buffer_offset_range);
+                        .collect::<String>(),
+                )
+            } else {
+                log::debug!("unstaging hunk {:?}", buffer_offset_range);
+                Arc::from(
                     head_text
                         .chunks_in_range(diff_base_byte_range.clone())
-                        .collect::<String>()
-                }
-                _ => {
-                    debug_assert!(false);
-                    continue;
-                }
+                        .collect::<String>(),
+                )
             };
 
-            edits.push((index_byte_range, replacement_text));
+            // Distinct worktree hunks can project to touching index ranges
+            // (e.g. a staged deletion ending exactly where the next hunk's
+            // index position starts). Merge them so the edit list stays
+            // strictly disjoint, which the pending-edit eviction logic relies
+            // on to not evict one of these edits when the other is inserted.
+            if let Some((last_range, last_text)) = edits.last_mut()
+                && index_byte_range.start <= last_range.end
+            {
+                debug_assert!(index_byte_range.start == last_range.end);
+                debug_assert!(index_byte_range.end >= last_range.end);
+                last_range.end = index_byte_range.end;
+                let mut merged_text =
+                    String::with_capacity(last_text.len() + replacement_text.len());
+                merged_text.push_str(last_text);
+                merged_text.push_str(&replacement_text);
+                *last_text = Arc::from(merged_text);
+            } else {
+                edits.push((index_byte_range, replacement_text));
+            }
         }
-        drop(pending_hunks_iter);
-        drop(old_pending_hunks);
-        self.pending_hunks = pending_hunks;
 
         #[cfg(debug_assertions)] // invariants: non-overlapping and sorted
         {
             for window in edits.windows(2) {
                 let (range_a, range_b) = (&window[0].0, &window[1].0);
-                debug_assert!(range_a.end < range_b.start);
+                debug_assert!(
+                    range_a.end < range_b.start,
+                    "index edits out of order or overlapping: {:?}",
+                    edits
+                        .iter()
+                        .map(|(range, text)| (range.clone(), text.len()))
+                        .collect::<Vec<_>>()
+                );
             }
         }
 
-        let mut new_index_text = Rope::new();
-        let mut index_cursor = index_text.cursor(0);
-
-        for (old_range, replacement_text) in edits {
-            new_index_text.append(index_cursor.slice(old_range.start));
-            index_cursor.seek_forward(old_range.end);
-            new_index_text.push(&replacement_text);
-        }
-        new_index_text.append(index_cursor.suffix());
-        Some(new_index_text)
+        (Some(edits), pending)
     }
 }
 
@@ -1005,8 +1061,17 @@ impl BufferDiffSnapshot {
                             start_anchor..end_anchor,
                         )
                     {
-                        has_pending = true;
-                        secondary_status = pending_hunk.new_status;
+                        match pending_hunk.sense {
+                            PendingSense::SetSecondaryStatus { stage } => {
+                                has_pending = true;
+                                secondary_status = if stage {
+                                    DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
+                                } else {
+                                    DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
+                                };
+                            }
+                            PendingSense::Suppress => continue,
+                        }
                     }
                 }
 
@@ -1474,7 +1539,6 @@ pub struct DiffChanged {
 pub enum BufferDiffEvent {
     BaseTextChanged,
     DiffChanged(DiffChanged),
-    HunksStagedOrUnstaged(Option<Rope>),
 }
 
 impl EventEmitter<BufferDiffEvent> for BufferDiff {}
@@ -1594,24 +1658,195 @@ impl BufferDiff {
         let Some(diff_snapshot) = &mut self.diff_snapshot else {
             return;
         };
-        if self.secondary_diff.is_some() {
-            diff_snapshot.pending_hunks = SumTree::from_summary(DiffHunkSummary {
-                buffer_range: Anchor::min_min_range_for_buffer(self.buffer_id),
-                diff_base_byte_range: 0..0,
-                added_rows: 0,
-                removed_rows: 0,
-            });
-            let changed_range = Some(Anchor::min_max_range_for_buffer(self.buffer_id));
-            let base_text_range = Some(0..self.base_text(cx).len());
+        let Some((first, last)) = diff_snapshot
+            .pending_hunks
+            .first()
+            .zip(diff_snapshot.pending_hunks.last())
+        else {
+            return;
+        };
+        let changed_range = first.buffer_range.start..last.buffer_range.end;
+        let base_text_changed_range =
+            first.diff_base_byte_range.start..last.diff_base_byte_range.end;
+        let buffer = diff_snapshot.buffer_snapshot.clone();
+        diff_snapshot.pending_hunks = SumTree::new(&buffer);
+        cx.emit(BufferDiffEvent::DiffChanged(DiffChanged {
+            changed_range: Some(changed_range.clone()),
+            base_text_changed_range: Some(base_text_changed_range),
+            extended_range: Some(changed_range),
+            base_text_changed: false,
+        }));
+    }
+
+    /// Installs optimistic pending hunks in this diff, merging them with any
+    /// existing pending hunks (newest wins on overlap) and emitting a
+    /// `DiffChanged` covering both the new hunks and any existing pending hunks
+    /// they replace. `hunks` must be sorted by `buffer_range.start` and
+    /// non-overlapping.
+    ///
+    /// `buffer` must be a current snapshot of this diff's main buffer: the
+    /// incoming hunks carry anchors minted from the current buffer, which this
+    /// diff's internal snapshot (from the last settled recalculation) may not
+    /// have observed yet.
+    pub fn set_pending_hunks(
+        &mut self,
+        hunks: &[PendingHunk],
+        buffer: &text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        if hunks.is_empty() {
+            return;
+        }
+        let Some(diff_snapshot) = self.diff_snapshot.as_mut() else {
+            return;
+        };
+
+        let mut new_pending = SumTree::new(buffer);
+        let mut old = diff_snapshot
+            .pending_hunks
+            .cursor::<DiffHunkSummary>(buffer);
+        let mut changed_start: Option<Anchor> = None;
+        let mut changed_end: Option<Anchor> = None;
+        let mut base_start = usize::MAX;
+        let mut base_end = 0usize;
+        let mut extend_changed_range = |buffer_range: &Range<Anchor>, base_range: &Range<usize>| {
+            changed_start = Some(changed_start.map_or(buffer_range.start, |start| {
+                *start.min(&buffer_range.start, buffer)
+            }));
+            changed_end = Some(
+                changed_end.map_or(buffer_range.end, |end| *end.max(&buffer_range.end, buffer)),
+            );
+            base_start = base_start.min(base_range.start);
+            base_end = base_end.max(base_range.end);
+        };
+        for hunk in hunks {
+            let preceding = old.slice(&hunk.buffer_range.start, Bias::Left);
+            new_pending.append(preceding, buffer);
+
+            // Drop any overlapping or adjacent existing pending hunks, folding
+            // them into the changed range so that views repaint their full
+            // extent (a replaced hunk can be wider than its replacement).
+            while let Some(old_hunk) = old.item() {
+                if old_hunk
+                    .buffer_range
+                    .start
+                    .cmp(&hunk.buffer_range.end, buffer)
+                    .is_gt()
+                {
+                    break;
+                }
+                extend_changed_range(&old_hunk.buffer_range, &old_hunk.diff_base_byte_range);
+                old.next();
+            }
+
+            extend_changed_range(&hunk.buffer_range, &hunk.diff_base_byte_range);
+            new_pending.push(hunk.clone(), buffer);
+        }
+        new_pending.append(old.suffix(), buffer);
+        drop(old);
+        diff_snapshot.pending_hunks = new_pending;
+
+        if let (Some(start), Some(end)) = (changed_start, changed_end) {
+            let changed_range = Some(start..end);
             cx.emit(BufferDiffEvent::DiffChanged(DiffChanged {
                 changed_range: changed_range.clone(),
-                base_text_changed_range: base_text_range,
+                base_text_changed_range: Some(base_start..base_end),
                 extended_range: changed_range,
                 base_text_changed: false,
             }));
         }
     }
 
+    /// Optimistically marks every stageable (resp. unstageable) hunk in this diff
+    /// as staging (resp. unstaging). Used by whole-file staging from the git
+    /// panel, where the actual index change is performed by `git add`/`reset`
+    /// rather than the optimistic index patch.
+    pub fn mark_all_hunks_pending(
+        &mut self,
+        stage: bool,
+        buffer: &text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        let sense = PendingSense::SetSecondaryStatus { stage };
+        let version = buffer.version().clone();
+        let hunks = self
+            .snapshot(cx)
+            .hunks_intersecting_range(Anchor::min_max_range_for_buffer(buffer.remote_id()), buffer)
+            .filter(|hunk| {
+                !((stage && hunk.secondary_status == DiffHunkSecondaryStatus::NoSecondaryHunk)
+                    || (!stage
+                        && hunk.secondary_status == DiffHunkSecondaryStatus::HasSecondaryHunk))
+            })
+            .map(|hunk| {
+                PendingHunk::new(
+                    hunk.buffer_range,
+                    hunk.diff_base_byte_range,
+                    version.clone(),
+                    sense,
+                )
+            })
+            .collect::<Vec<_>>();
+        self.set_pending_hunks(&hunks, buffer, cx);
+    }
+
+    pub fn suppress_all_hunks_pending(
+        &mut self,
+        buffer: &text::BufferSnapshot,
+        cx: &mut Context<Self>,
+    ) {
+        let version = buffer.version().clone();
+        let hunks = self
+            .snapshot(cx)
+            .raw_hunks_intersecting_range(
+                Anchor::min_max_range_for_buffer(buffer.remote_id()),
+                buffer,
+            )
+            .map(|hunk| {
+                PendingHunk::new(
+                    hunk.buffer_range,
+                    hunk.diff_base_byte_range,
+                    version.clone(),
+                    PendingSense::Suppress,
+                )
+            })
+            .collect::<Vec<_>>();
+        self.set_pending_hunks(&hunks, buffer, cx);
+    }
+
+    /// Computes the index-text edits for unstaging the given staged (HEAD-vs-index)
+    /// hunks. `index_buffer` is this diff's main buffer (the index text). The
+    /// returned edits are in index coordinates.
+    pub fn unstage_staged_hunks(
+        &self,
+        hunks: &[DiffHunk],
+        index_buffer: &text::BufferSnapshot,
+    ) -> Option<Vec<(Range<usize>, Arc<str>)>> {
+        let Some(diff_snapshot) = self.diff_snapshot.as_ref() else {
+            return Some(Vec::new());
+        };
+        // With no HEAD, the whole file is one staged addition; unstaging it
+        // removes the file from the index entirely.
+        if !diff_snapshot.base_text_exists {
+            return None;
+        }
+        let head_text = diff_snapshot.base_text.as_rope();
+        let mut edits = hunks
+            .iter()
+            .map(|hunk| {
+                let index_range = hunk.buffer_range.to_offset(index_buffer);
+                let replacement_text: Arc<str> = Arc::from(
+                    head_text
+                        .chunks_in_range(hunk.diff_base_byte_range.clone())
+                        .collect::<String>(),
+                );
+                (index_range, replacement_text)
+            })
+            .collect::<Vec<_>>();
+        edits.sort_by_key(|(range, _)| range.start);
+        Some(edits)
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn stage_or_unstage_hunks(
         &mut self,
         stage: bool,
@@ -1621,74 +1856,40 @@ impl BufferDiff {
         cx: &mut Context<Self>,
     ) -> Option<Rope> {
         let secondary_diff = self.secondary_diff.clone()?;
-        let diff_snapshot = self.diff_snapshot.as_mut()?;
         let unstaged_diff_snapshot = secondary_diff.read_with(cx, |secondary_diff, _cx| {
             secondary_diff.diff_snapshot.clone()
         })?;
-        let new_index_text = diff_snapshot.stage_or_unstage_hunks_impl(
+        let diff_snapshot = self.diff_snapshot.clone()?;
+        let (edits, pending) = diff_snapshot.compute_uncommitted_index_edits(
             &unstaged_diff_snapshot,
             stage,
             hunks,
             buffer,
             file_exists,
         );
-
-        cx.emit(BufferDiffEvent::HunksStagedOrUnstaged(
-            new_index_text.clone(),
-        ));
-        if let Some((first, last)) = hunks.first().zip(hunks.last()) {
-            let changed_range = Some(first.buffer_range.start..last.buffer_range.end);
-            let base_text_changed_range =
-                Some(first.diff_base_byte_range.start..last.diff_base_byte_range.end);
-            cx.emit(BufferDiffEvent::DiffChanged(DiffChanged {
-                changed_range: changed_range.clone(),
-                base_text_changed_range,
-                extended_range: changed_range,
-                base_text_changed: false,
-            }));
-        }
-        new_index_text
+        self.set_pending_hunks(&pending, buffer, cx);
+        edits.map(|edits| {
+            let mut index_text = unstaged_diff_snapshot.base_text.as_rope().clone();
+            for (old_range, replacement_text) in edits.iter().rev() {
+                index_text.replace(old_range.clone(), replacement_text);
+            }
+            index_text
+        })
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn stage_or_unstage_all_hunks(
         &mut self,
         stage: bool,
         buffer: &text::BufferSnapshot,
         file_exists: bool,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<Rope> {
         let hunks = self
             .snapshot(cx)
             .hunks_intersecting_range(Anchor::min_max_range_for_buffer(buffer.remote_id()), buffer)
             .collect::<Vec<_>>();
-        let Some(diff_snapshot) = &mut self.diff_snapshot else {
-            return;
-        };
-        let Some(secondary) = self.secondary_diff.clone() else {
-            return;
-        };
-        let secondary = secondary.read(cx);
-        let Some(secondary_snapshot) = &secondary.diff_snapshot else {
-            return;
-        };
-        diff_snapshot.stage_or_unstage_hunks_impl(
-            &secondary_snapshot,
-            stage,
-            &hunks,
-            buffer,
-            file_exists,
-        );
-        if let Some((first, last)) = hunks.first().zip(hunks.last()) {
-            let changed_range = Some(first.buffer_range.start..last.buffer_range.end);
-            let base_text_changed_range =
-                Some(first.diff_base_byte_range.start..last.diff_base_byte_range.end);
-            cx.emit(BufferDiffEvent::DiffChanged(DiffChanged {
-                changed_range: changed_range.clone(),
-                base_text_changed_range,
-                extended_range: changed_range,
-                base_text_changed: false,
-            }));
-        }
+        self.stage_or_unstage_hunks(stage, &hunks, buffer, file_exists, cx)
     }
 
     pub fn update_diff(
@@ -2835,6 +3036,81 @@ mod tests {
                 DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
             );
         });
+    }
+
+    #[gpui::test]
+    async fn test_set_pending_hunks_change_covers_replaced_hunks(cx: &mut TestAppContext) {
+        let base_text = "
+            zero
+            one
+            two
+            three
+            four
+            five
+        "
+        .unindent();
+        let buffer_text = "
+            ZERO
+            one
+            two
+            THREE
+            four
+            FIVE
+        "
+        .unindent();
+        let buffer = Buffer::new(ReplicaId::LOCAL, BufferId::new(1).unwrap(), buffer_text);
+        let diff = cx.new(|cx| BufferDiff::new_with_base_text(&base_text, &buffer, cx));
+
+        // Install a whole-file pending hunk, as the no-HEAD staging paths do.
+        let version = buffer.version();
+        diff.update(cx, |diff, cx| {
+            diff.set_pending_hunks(
+                &[PendingHunk::new(
+                    Anchor::min_max_range_for_buffer(buffer.remote_id()),
+                    0..base_text.len(),
+                    version.clone(),
+                    PendingSense::SetSecondaryStatus { stage: true },
+                )],
+                &buffer,
+                cx,
+            )
+        });
+
+        let (tx, rx) = mpsc::channel();
+        let subscription =
+            cx.update(|cx| cx.subscribe(&diff, move |_, event, _| tx.send(event.clone()).unwrap()));
+
+        // Replace it with a narrower hunk; the emitted change must still cover
+        // the whole extent of the replaced hunk.
+        diff.update(cx, |diff, cx| {
+            diff.set_pending_hunks(
+                &[PendingHunk::new(
+                    buffer.anchor_before(Point::new(3, 0))..buffer.anchor_before(Point::new(4, 0)),
+                    base_text.find("three").unwrap()..base_text.find("four").unwrap(),
+                    version,
+                    PendingSense::Suppress,
+                )],
+                &buffer,
+                cx,
+            )
+        });
+
+        drop(subscription);
+        let events = rx.into_iter().collect::<Vec<_>>();
+        match events.as_slice() {
+            [
+                BufferDiffEvent::DiffChanged(DiffChanged {
+                    changed_range: Some(changed_range),
+                    ..
+                }),
+            ] => {
+                assert_eq!(
+                    changed_range.to_point(&buffer),
+                    Point::zero()..buffer.max_point(),
+                );
+            }
+            _ => panic!("unexpected events: {:?}", events),
+        }
     }
 
     #[gpui::test]

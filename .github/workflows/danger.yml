@@ -11,6 +11,8 @@ on:
     - edited
     branches:
     - main
+permissions:
+  contents: read
 jobs:
   danger:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -25,9 +27,10 @@ jobs:
       with:
         version: '9'
     - name: steps::setup_node
-      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
       with:
-        node-version: '20'
+        node-version: '24'
+        check-latest: true
         cache: pnpm
         cache-dependency-path: script/danger/pnpm-lock.yaml
     - name: danger::danger_job::install_deps
