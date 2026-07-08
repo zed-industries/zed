@@ -1274,6 +1274,7 @@ impl SerializableItem for Editor {
                         contents: None,
                         language: None,
                         mtime: None,
+                        undo_history: None,
                     }
                 }
             }
@@ -1295,6 +1296,7 @@ impl SerializableItem for Editor {
                 abs_path: None,
                 contents: Some(contents),
                 language,
+                undo_history,
                 ..
             } => window.spawn(cx, {
                 let project = project.clone();
@@ -1322,9 +1324,19 @@ impl SerializableItem for Editor {
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(cx, |buffer, cx| {
                         buffer.set_language_registry(language_registry);
-                        buffer.set_text(contents, cx);
-                        if let Some(entry) = buffer.peek_undo_stack() {
-                            buffer.forget_transaction(entry.transaction_id());
+                        let mut restored = false;
+                        if let Some(history) = undo_history {
+                            if let Err(e) = buffer.restore_history(&history, true, cx) {
+                                log::error!("Failed to restore undo history: {:?}", e);
+                            } else {
+                                restored = true;
+                            }
+                        }
+                        if !restored {
+                            buffer.set_text(contents, cx);
+                            if let Some(entry) = buffer.peek_undo_stack() {
+                                buffer.forget_transaction(entry.transaction_id());
+                            }
                         }
                     });
 
@@ -1342,6 +1354,7 @@ impl SerializableItem for Editor {
                 abs_path: Some(abs_path),
                 contents,
                 mtime,
+                undo_history,
                 ..
             } => {
                 let opened_buffer = project.update(cx, |project, cx| {
@@ -1359,9 +1372,37 @@ impl SerializableItem for Editor {
                             .await
                             .context("Failed to open path in project")?;
 
+                        let mut restored = false;
+                        if let Some(history) = undo_history {
+                            let should_restore = mtime.is_none()
+                                || buffer.read_with(cx, |b, _| b.saved_mtime() == mtime);
+                            if should_restore {
+                                buffer.update(cx, |buffer, cx| {
+                                    if let Err(e) =
+                                        buffer.restore_history(&history, contents.is_some(), cx)
+                                    {
+                                        log::error!("Failed to restore undo history: {:?}", e);
+                                    } else {
+                                        restored = true;
+                                    }
+                                });
+                            }
+                        }
+
                         if let Some(contents) = contents {
                             buffer.update(cx, |buffer, cx| {
-                                restore_serialized_buffer_contents(buffer, contents, mtime, cx);
+                                if restored {
+                                    if mtime.is_some() {
+                                        buffer.did_reload(
+                                            buffer.version(),
+                                            buffer.line_ending(),
+                                            mtime,
+                                            cx,
+                                        );
+                                    }
+                                } else {
+                                    restore_serialized_buffer_contents(buffer, contents, mtime, cx);
+                                }
                             });
                         }
 
@@ -1389,9 +1430,39 @@ impl SerializableItem for Editor {
                                     format!("Failed to open buffer for {abs_path:?}")
                                 })?;
 
+                            let mut restored = false;
+                            if let Some(history) = undo_history {
+                                let should_restore = mtime.is_none()
+                                    || buffer.read_with(cx, |b, _| b.saved_mtime() == mtime);
+                                if should_restore {
+                                    buffer.update(cx, |buffer, cx| {
+                                        if let Err(e) =
+                                            buffer.restore_history(&history, contents.is_some(), cx)
+                                        {
+                                            log::error!("Failed to restore undo history: {:?}", e);
+                                        } else {
+                                            restored = true;
+                                        }
+                                    });
+                                }
+                            }
+
                             if let Some(contents) = contents {
                                 buffer.update(cx, |buffer, cx| {
-                                    restore_serialized_buffer_contents(buffer, contents, mtime, cx);
+                                    if restored {
+                                        if mtime.is_some() {
+                                            buffer.did_reload(
+                                                buffer.version(),
+                                                buffer.line_ending(),
+                                                mtime,
+                                                cx,
+                                            );
+                                        }
+                                    } else {
+                                        restore_serialized_buffer_contents(
+                                            buffer, contents, mtime, cx,
+                                        );
+                                    }
                                 });
                             }
 
@@ -1471,6 +1542,12 @@ impl SerializableItem for Editor {
         let is_dirty = buffer.read(cx).is_dirty();
         let mtime = buffer.read(cx).saved_mtime();
 
+        let undo_history = if serialize_dirty_buffers {
+            buffer.read(cx).serialize_history().ok()
+        } else {
+            None
+        };
+
         let snapshot = buffer.read(cx).snapshot();
 
         let db = EditorDb::global(cx);
@@ -1489,6 +1566,7 @@ impl SerializableItem for Editor {
                     contents,
                     language,
                     mtime,
+                    undo_history,
                 };
                 log::debug!("Serializing editor {item_id:?} in workspace {workspace_id:?}");
                 db.save_serialized_editor(item_id, workspace_id, editor)
@@ -2280,6 +2358,7 @@ mod tests {
     use project::FakeFs;
     use serde_json::json;
     use std::path::{Path, PathBuf};
+    use std::time::Duration;
     use util::{path, rel_path::RelPath};
 
     #[gpui::test]
@@ -2545,6 +2624,7 @@ mod tests {
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(mtime),
+                undo_history: None,
             };
 
             editor_db
@@ -2582,6 +2662,7 @@ mod tests {
                 contents: None,
                 language: None,
                 mtime: None,
+                undo_history: None,
             };
 
             editor_db
@@ -2625,6 +2706,7 @@ mod tests {
                 contents: Some("hello".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: None,
+                undo_history: None,
             };
 
             editor_db
@@ -2667,6 +2749,7 @@ mod tests {
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(old_mtime),
+                undo_history: None,
             };
 
             editor_db
@@ -2701,6 +2784,7 @@ mod tests {
                 contents: None,
                 language: None,
                 mtime: None,
+                undo_history: None,
             };
 
             editor_db
@@ -2754,6 +2838,7 @@ mod tests {
                 contents: Some("modified content".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(mtime),
+                undo_history: None,
             };
 
             editor_db
@@ -2880,6 +2965,7 @@ mod tests {
             contents: None,
             language: None,
             mtime: None,
+            undo_history: None,
         };
 
         editor_db
@@ -2920,5 +3006,151 @@ mod tests {
             pane_items_before, pane_items_after,
             "Editor::deserialize should not add items to panes as a side effect"
         );
+    }
+
+    #[gpui::test]
+    async fn test_undo_restoration(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let workspace_id = workspace.update(cx, |workspace, _| {
+            workspace.set_random_database_id();
+            workspace.database_id().unwrap()
+        });
+        let item_id = 1234 as ItemId;
+
+        // Ensure workspace exists in DB
+        let editor_db = cx.update(|_, cx| EditorDb::global(cx));
+        editor_db
+            .write(move |conn| {
+                conn.exec_bound(
+                    "INSERT INTO workspaces (workspace_id, window_state) VALUES (?1, ?2)",
+                )
+                .unwrap()((workspace_id, "test".to_string()))
+            })
+            .await
+            .unwrap();
+
+        // 1. Create a buffer, make edits, and serialize its history
+        let buffer = project
+            .update(cx, |project, cx| project.create_buffer(None, true, cx))
+            .await
+            .unwrap();
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.set_group_interval(Duration::ZERO);
+            buffer.edit([(0..0, "A")], None, cx);
+            buffer.finalize_last_transaction();
+            buffer.edit([(1..1, "B")], None, cx);
+            buffer.finalize_last_transaction();
+            buffer.edit([(2..2, "C")], None, cx);
+        });
+
+        let (undo_history, contents) = buffer.update(cx, |buffer, _| {
+            (buffer.serialize_history().unwrap(), buffer.text())
+        });
+
+        // 2. Save to DB
+        let serialized_editor = SerializedEditor {
+            abs_path: None,
+            contents: Some(contents),
+            language: None,
+            mtime: None,
+            undo_history: Some(undo_history),
+        };
+
+        // We use a low-level DB call here to simulate a previously saved state
+        editor_db.write(move |conn| {
+            conn.exec_bound("INSERT INTO editors (item_id, workspace_id, contents, undo_history) VALUES (?1, ?2, ?3, ?4)")
+                .unwrap()((item_id, workspace_id, serialized_editor.contents, serialized_editor.undo_history))
+        }).await.unwrap();
+
+        // 3. Deserialize and verify undo works
+        let deserialized =
+            deserialize_editor(item_id, workspace_id, workspace.clone(), project, cx).await;
+
+        workspace.update_in(cx, |_, window, cx| {
+            deserialized.update(cx, |editor, cx| {
+                assert_eq!(editor.text(cx), "ABC");
+
+                // Verify multiple undos
+                editor.undo(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "AB");
+                editor.undo(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "A");
+                editor.undo(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "");
+
+                // Verify redo works
+                editor.redo(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "A");
+                editor.redo(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "AB");
+                editor.redo(&Default::default(), window, cx);
+                assert_eq!(editor.text(cx), "ABC");
+            });
+        });
+    }
+
+    #[gpui::test]
+    async fn test_undo_history_serialization_on_quit(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs.clone(), [], cx).await;
+        let (multi_workspace, cx) =
+            cx.add_window_view(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = multi_workspace.read_with(cx, |mw, _| mw.workspace().clone());
+        let workspace_id = workspace.update(cx, |workspace, _| {
+            workspace.set_random_database_id();
+            workspace.database_id().unwrap()
+        });
+        let item_id = 999 as ItemId;
+
+        let buffer = project
+            .update(cx, |project, cx| project.create_buffer(None, true, cx))
+            .await
+            .unwrap();
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit([(0..0, "persistent edit")], None, cx);
+        });
+
+        let (editor, cx) =
+            cx.add_window_view(|window, cx| Editor::for_buffer(buffer, Some(project), window, cx));
+
+        // Trigger serialization (simulating quit/close)
+        // We need to ensure the workspace exists in DB for foreign keys
+        let editor_db = cx.update(|_, cx| EditorDb::global(cx));
+        editor_db
+            .write(move |conn| {
+                conn.exec_bound(
+                    "INSERT INTO workspaces (workspace_id, window_state) VALUES (?1, ?2)",
+                )
+                .unwrap()((workspace_id, "test".to_string()))
+            })
+            .await
+            .unwrap();
+
+        let task = workspace.update_in(cx, |workspace, window, cx| {
+            editor.update(cx, |editor, cx| {
+                editor
+                    .serialize(workspace, item_id, true, window, cx)
+                    .unwrap()
+            })
+        });
+        task.await.unwrap();
+
+        // Verify the DB contains the undo history
+        let saved = editor_db
+            .get_serialized_editor(item_id, workspace_id)
+            .unwrap()
+            .unwrap();
+        assert!(saved.undo_history.is_some());
+        assert!(saved.undo_history.unwrap().len() > 0);
     }
 }
