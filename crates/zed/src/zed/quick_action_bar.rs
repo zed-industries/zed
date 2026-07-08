@@ -88,14 +88,15 @@ impl QuickActionBar {
         let new_show = EditorSettings::get_global(cx).toolbar.quick_actions;
         if new_show != self.show {
             self.show = new_show;
-            cx.emit(ToolbarItemEvent::ChangeLocation(
-                self.get_toolbar_item_location(),
-            ));
+            let new_location = self.get_toolbar_item_location(cx);
+            cx.emit(ToolbarItemEvent::ChangeLocation(new_location));
         }
     }
 
-    fn get_toolbar_item_location(&self) -> ToolbarItemLocation {
-        if self.show && self.active_editor().is_some() {
+    fn get_toolbar_item_location(&self, cx: &mut Context<Self>) -> ToolbarItemLocation {
+        if self.show
+            && (self.active_editor().is_some() || self.render_open_source_button(cx).is_some())
+        {
             ToolbarItemLocation::PrimaryRight
         } else {
             ToolbarItemLocation::Hidden
@@ -106,6 +107,12 @@ impl QuickActionBar {
 impl Render for QuickActionBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let Some(editor) = self.active_editor() else {
+            if let Some(open_source_button) = self.render_open_source_button(cx) {
+                return h_flex()
+                    .id("quick action bar")
+                    .gap(DynamicSpacing::Base01.rems(cx))
+                    .child(open_source_button);
+            }
             return div().id("empty quick action bar");
         };
 
@@ -788,6 +795,6 @@ impl ToolbarItemView for QuickActionBar {
                     }));
             }
         }
-        self.get_toolbar_item_location()
+        self.get_toolbar_item_location(cx)
     }
 }

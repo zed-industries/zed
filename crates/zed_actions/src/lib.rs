@@ -856,6 +856,39 @@ pub mod wsl_actions {
 }
 
 pub mod preview {
+    use gpui::{Action, actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+
+    actions!(
+        preview,
+        [
+            /// Opens a text editor for the file shown in the current preview.
+            OpenSource,
+        ]
+    );
+
+    /// Where [`Toggle`] shows the preview.
+    #[derive(PartialEq, Clone, Copy, Debug, Default, Deserialize, JsonSchema)]
+    #[serde(rename_all = "snake_case")]
+    pub enum TogglePlacement {
+        /// Swaps the active tab between the file's text editor and its preview.
+        #[default]
+        InPlace,
+        /// Keeps the text editor active and shows the preview in a pane to the side.
+        ToTheSide,
+    }
+
+    /// Toggles between a previewable file's text editor and its preview.
+    #[derive(PartialEq, Clone, Debug, Deserialize, Default, JsonSchema, Action)]
+    #[action(namespace = preview)]
+    #[serde(deny_unknown_fields)]
+    pub struct Toggle {
+        /// Where the preview is shown.
+        #[serde(default)]
+        pub placement: TogglePlacement,
+    }
+
     pub mod markdown {
         use gpui::actions;
 

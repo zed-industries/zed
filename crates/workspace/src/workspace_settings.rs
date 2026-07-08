@@ -5,7 +5,7 @@ use collections::HashMap;
 use serde::Deserialize;
 use settings::CommandAliasTarget;
 pub use settings::{
-    AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
+    AutoPreview, AutosaveSetting, BottomDockLayout, EncodingDisplayOptions, InactiveOpacity,
     PaneSplitDirectionHorizontal, PaneSplitDirectionVertical, RegisterSetting,
     RestoreOnStartupBehavior, Settings,
 };
@@ -39,6 +39,7 @@ pub struct WorkspaceSettings {
     pub zoomed_padding: bool,
     pub window_decorations: settings::WindowDecorations,
     pub focus_follows_mouse: FocusFollowsMouse,
+    pub auto_preview: AutoPreview,
 }
 
 #[derive(Copy, Clone, Deserialize)]
@@ -139,6 +140,7 @@ impl Settings for WorkspaceSettings {
                         .unwrap_or(250),
                 ),
             },
+            auto_preview: workspace.auto_preview.unwrap(),
         }
     }
 }

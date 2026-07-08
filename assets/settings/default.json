@@ -182,6 +182,18 @@
   //
   // Default: true
   "restore_on_file_reopen": true,
+  // How to open files that have a preview available for their file type
+  // (e.g. Markdown or SVG files).
+  // May take 3 values:
+  //  1. Open previewable files in a text editor, previews have to be opened manually.
+  //     "auto_preview": "off"
+  //  2. Open previewable files in their preview instead of a text editor.
+  //     The text editor can be opened from the preview with the `preview::OpenSource` action.
+  //     "auto_preview": "in_place"
+  //  3. Open previewable files in a text editor and keep a preview following the
+  //     active editor in a pane to the side.
+  //     "auto_preview": "to_the_side"
+  "auto_preview": "off",
   // Whether to automatically close files that have been deleted on disk.
   "close_on_file_delete": false,
   // Whether toggling a panel (e.g. with its keyboard shortcut) also closes

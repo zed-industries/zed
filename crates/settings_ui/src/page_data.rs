@@ -3652,7 +3652,7 @@ fn search_and_files_page() -> SettingsPage {
         ]
     }
 
-    fn file_scan_section() -> [SettingsPageItem; 6] {
+    fn file_scan_section() -> [SettingsPageItem; 7] {
         [
             SettingsPageItem::SectionHeader("File Scan"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -3744,6 +3744,20 @@ fn search_and_files_page() -> SettingsPage {
                     },
                     write: |settings_content, value, _| {
                         settings_content.workspace.close_on_file_delete = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Auto Preview",
+                description: "How to open files that have a preview available for their file type (e.g. Markdown or SVG files).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("auto_preview"),
+                    pick: |settings_content| settings_content.workspace.auto_preview.as_ref(),
+                    write: |settings_content, value, _| {
+                        settings_content.workspace.auto_preview = value;
                     },
                 }),
                 metadata: None,

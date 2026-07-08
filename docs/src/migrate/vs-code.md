@@ -123,6 +123,7 @@ The following VS Code settings are automatically imported when you use **Import 
 | `workbench.editor.editorActionsLocation`           | `tab_bar.show_tab_bar_buttons`                     |
 | `workbench.editor.limit.enabled` / `value`         | `max_tabs`                                         |
 | `workbench.editor.restoreViewState`                | `restore_on_file_reopen`                           |
+| `workbench.editorAssociations`                     | `auto_preview`                                     |
 | `workbench.statusBar.visible`                      | `status_bar.show`                                  |
 
 **Project Panel (File Explorer)**
@@ -173,14 +174,15 @@ Zed doesn’t import extensions or keybindings, but this import gets core editor
 You can configure most settings in the Settings Editor ({#kb zed::OpenSettings}). For advanced settings, run {#action zed::OpenSettingsFile} from the Command Palette to edit your settings file directly.
 
 Here’s how common VS Code settings translate:
-| VS Code | Zed | Notes |
-| --- | --- | --- |
-| editor.fontFamily | buffer_font_family | Zed uses Zed Mono by default |
-| editor.fontSize | buffer_font_size | Set in pixels |
-| editor.tabSize | tab_size | Can override per language |
-| editor.insertSpaces | insert_spaces | Boolean |
-| editor.formatOnSave | format_on_save | Works with formatter enabled |
-| editor.wordWrap | soft_wrap | Supports optional wrap column |
+
+| VS Code             | Zed                | Notes                         |
+| ------------------- | ------------------ | ----------------------------- |
+| editor.fontFamily   | buffer_font_family | Zed uses Zed Mono by default  |
+| editor.fontSize     | buffer_font_size   | Set in pixels                 |
+| editor.tabSize      | tab_size           | Can override per language     |
+| editor.insertSpaces | insert_spaces      | Boolean                       |
+| editor.formatOnSave | format_on_save     | Works with formatter enabled  |
+| editor.wordWrap     | soft_wrap          | Supports optional wrap column |
 
 Zed also supports per-project settings. You can find these in the Settings Editor as well.
 

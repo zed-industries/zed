@@ -4575,10 +4575,14 @@ dependencies = [
  "editor",
  "feature_flags",
  "gpui",
+ "language",
  "log",
+ "project",
+ "settings",
  "text",
  "ui",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -17806,11 +17810,18 @@ dependencies = [
 name = "svg_preview"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "editor",
  "file_icons",
  "gpui",
  "language",
+ "markdown_preview",
  "multi_buffer",
+ "project",
+ "serde_json",
+ "settings",
  "ui",
+ "util",
  "workspace",
  "zed_actions",
 ]

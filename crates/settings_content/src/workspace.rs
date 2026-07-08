@@ -134,6 +134,38 @@ pub struct WorkspaceSettingsContent {
     /// Whether the focused panel follows the mouse location
     /// Default: false
     pub focus_follows_mouse: Option<FocusFollowsMouse>,
+    /// How to open files that have a preview available for their file type
+    /// (e.g. Markdown or SVG files).
+    ///
+    /// Default: off
+    pub auto_preview: Option<AutoPreview>,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    Debug,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoPreview {
+    /// Open previewable files in a text editor, previews have to be opened manually.
+    #[default]
+    Off,
+    /// Open previewable files in their preview instead of a text editor.
+    /// The text editor can be opened from the preview with the `preview::OpenSource` action.
+    InPlace,
+    /// Open previewable files in a text editor and keep a preview following the
+    /// active editor in a pane to the side.
+    ToTheSide,
 }
 
 #[with_fallible_options]

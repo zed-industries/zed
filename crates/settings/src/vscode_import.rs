@@ -1058,6 +1058,15 @@ impl VsCodeSettings {
             }),
             zoomed_padding: None,
             focus_follows_mouse: None,
+            auto_preview: self
+                .read_value("workbench.editorAssociations")
+                .and_then(|value| {
+                    let associations = value.as_object()?;
+                    associations
+                        .values()
+                        .any(|editor| editor.as_str() == Some("vscode.markdown.preview.editor"))
+                        .then_some(AutoPreview::InPlace)
+                }),
         }
     }
 

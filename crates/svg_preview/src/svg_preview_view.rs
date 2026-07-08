@@ -1,6 +1,8 @@
 use std::mem;
 use std::sync::Arc;
 
+use anyhow::Result;
+use editor::Editor;
 use file_icons::FileIcons;
 use gpui::{
     App, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement, ParentElement, Render,
@@ -8,9 +10,12 @@ use gpui::{
 };
 use language::{Buffer, BufferEvent};
 use multi_buffer::MultiBuffer;
+use project::{Project, ProjectEntryId, ProjectPath};
+use settings::Settings as _;
 use ui::prelude::*;
-use workspace::item::Item;
-use workspace::{Pane, Workspace};
+use workspace::item::{Item, ItemBufferKind, ProjectItem};
+use workspace::{AutoPreview, Pane, Workspace, WorkspaceSettings};
+use zed_actions::preview::{OpenSource, Toggle, TogglePlacement};
 
 use crate::{OpenFollowingPreview, OpenPreview, OpenPreviewToTheSide};
 
@@ -79,6 +84,8 @@ impl SvgPreviewView {
             move |this: &mut SvgPreviewView, workspace, event: &workspace::Event, window, cx| {
                 if let workspace::Event::ActiveItemChanged = event {
                     let workspace = workspace.read(cx);
+                    // When the active item is not an SVG buffer, keep showing the last
+                    // previewed file instead of blanking the view.
                     if let Some(active_item) = workspace.active_item(cx)
                         && let Some(buffer) = active_item.downcast::<MultiBuffer>()
                         && Self::is_svg_file(&buffer, cx)
@@ -93,8 +100,6 @@ impl SvgPreviewView {
                             this.render_image(window, cx);
                             cx.notify();
                         }
-                    } else {
-                        this.set_current(None, window, cx);
                     }
                 }
             },
@@ -202,29 +207,134 @@ impl SvgPreviewView {
             })
     }
 
-    pub fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>) {
-        workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
-            if let Some(buffer) = Self::resolve_active_item_as_svg_buffer(workspace, cx)
-                && Self::is_svg_file(&buffer, cx)
-            {
-                let view = Self::create_svg_view(
-                    SvgPreviewMode::Default,
+    pub fn is_svg_path(path: impl AsRef<std::path::Path>) -> bool {
+        path.as_ref()
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"))
+    }
+
+    fn is_following(&self) -> bool {
+        self._workspace_subscription.is_some()
+    }
+
+    pub(crate) fn auto_preview_provider() -> workspace::AutoPreviewProvider {
+        workspace::AutoPreviewProvider {
+            applies_to: |item, cx| {
+                item.downcast::<Editor>()
+                    .is_some_and(|editor| Self::is_svg_file(editor.read(cx).buffer(), cx))
+            },
+            has_open_sources: |workspace, cx| {
+                workspace
+                    .items_of_type::<Editor>(cx)
+                    .any(|editor| Self::is_svg_file(editor.read(cx).buffer(), cx))
+            },
+            is_follow_view: |item, cx| {
+                item.downcast::<SvgPreviewView>()
+                    .is_some_and(|view| view.read(cx).is_following())
+            },
+            is_preview_view: |item, cx| {
+                item.downcast::<SvgPreviewView>()
+                    .is_some_and(|view| !view.read(cx).is_following())
+            },
+            build_follow_view: |workspace, window, cx| {
+                let buffer = Self::resolve_active_item_as_svg_buffer(workspace, cx)?;
+                Some(Box::new(Self::create_svg_view(
+                    SvgPreviewMode::Follow,
                     workspace,
-                    buffer.clone(),
+                    buffer,
                     window,
                     cx,
-                );
-                workspace.active_pane().update(cx, |pane, cx| {
-                    if let Some(existing_view_idx) =
-                        Self::find_existing_preview_item_idx(pane, &buffer, cx)
-                    {
-                        pane.activate_item(existing_view_idx, true, true, window, cx);
-                    } else {
-                        pane.add_item(Box::new(view), true, true, None, window, cx)
-                    }
+                )))
+            },
+            build_preview_view: |workspace, item, window, cx| {
+                let editor = item.downcast::<Editor>()?;
+                let buffer = editor.read(cx).buffer().clone();
+                Some(Box::new(Self::create_svg_view(
+                    SvgPreviewMode::Default,
+                    workspace,
+                    buffer,
+                    window,
+                    cx,
+                )))
+            },
+            source_view: |workspace, item, window, cx| {
+                let preview = item.downcast::<SvgPreviewView>()?;
+                let buffer = preview.read(cx).buffer.clone()?;
+                let existing_editor = workspace.items_of_type::<Editor>(cx).find(|editor| {
+                    editor.read(cx).buffer().read(cx).as_singleton().as_ref() == Some(&buffer)
                 });
-                cx.notify();
+                let editor = existing_editor.unwrap_or_else(|| {
+                    let project = workspace.project().clone();
+                    cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx))
+                });
+                Some(Box::new(editor))
+            },
+        }
+    }
+
+    /// Opens (or reveals) a preview for the active SVG editor.
+    /// Returns false when the active item is not an SVG editor.
+    fn open_preview_for_active_editor(
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> bool {
+        let Some(buffer) = Self::resolve_active_item_as_svg_buffer(workspace, cx) else {
+            return false;
+        };
+        let view = Self::create_svg_view(
+            SvgPreviewMode::Default,
+            workspace,
+            buffer.clone(),
+            window,
+            cx,
+        );
+        workspace.active_pane().update(cx, |pane, cx| {
+            if let Some(existing_view_idx) = Self::find_existing_preview_item_idx(pane, &buffer, cx)
+            {
+                pane.activate_item(existing_view_idx, true, true, window, cx);
+            } else {
+                pane.add_item(Box::new(view), true, true, None, window, cx)
             }
+        });
+        cx.notify();
+        true
+    }
+
+    /// Activates (or opens) a text editor for the active SVG preview.
+    /// Returns false when the active item is not an SVG preview.
+    fn open_source_for_active_preview(
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) -> bool {
+        let Some(preview) = workspace
+            .active_item(cx)
+            .and_then(|item| item.downcast::<SvgPreviewView>())
+        else {
+            return false;
+        };
+        let Some(buffer) = preview.read(cx).buffer.clone() else {
+            return true;
+        };
+        let existing_editor = workspace.items_of_type::<Editor>(cx).find(|editor| {
+            editor.read(cx).buffer().read(cx).as_singleton().as_ref() == Some(&buffer)
+        });
+        if let Some(editor) = existing_editor {
+            workspace.activate_item(&editor, true, true, window, cx);
+        } else {
+            let project = workspace.project().clone();
+            let editor = cx.new(|cx| Editor::for_buffer(buffer, Some(project), window, cx));
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(Box::new(editor), true, true, None, window, cx);
+            });
+        }
+        true
+    }
+
+    pub fn register(workspace: &mut Workspace, _window: &mut Window, _cx: &mut Context<Workspace>) {
+        workspace.register_action(move |workspace, _: &OpenPreview, window, cx| {
+            Self::open_preview_for_active_editor(workspace, window, cx);
         });
 
         workspace.register_action(move |workspace, _: &OpenPreviewToTheSide, window, cx| {
@@ -274,6 +384,94 @@ impl SvgPreviewView {
                 cx.notify();
             }
         });
+
+        workspace.register_action(move |workspace, _: &OpenSource, window, cx| {
+            if !Self::open_source_for_active_preview(workspace, window, cx) {
+                cx.propagate();
+            }
+        });
+
+        workspace.register_action(move |workspace, action: &Toggle, window, cx| {
+            let handled = match action.placement {
+                TogglePlacement::InPlace => {
+                    Self::open_source_for_active_preview(workspace, window, cx)
+                        || Self::open_preview_for_active_editor(workspace, window, cx)
+                }
+                TogglePlacement::ToTheSide => {
+                    workspace::show_side_preview_for_active_item(workspace, window, cx)
+                }
+            };
+            if !handled {
+                cx.propagate();
+            }
+        });
+    }
+}
+
+/// A [`project::ProjectItem`] that claims SVG files when the `auto_preview` setting
+/// is set to `in_place`, so that opening such files shows their rendered preview instead of an editor.
+pub struct SvgPreviewItem {
+    buffer: Entity<Buffer>,
+}
+
+impl project::ProjectItem for SvgPreviewItem {
+    fn try_open(
+        project: &Entity<Project>,
+        path: &ProjectPath,
+        cx: &mut App,
+    ) -> Option<Task<Result<Entity<Self>>>> {
+        if WorkspaceSettings::get_global(cx).auto_preview != AutoPreview::InPlace
+            || !project
+                .read(cx)
+                .absolute_path(path, cx)
+                .is_some_and(SvgPreviewView::is_svg_path)
+        {
+            return None;
+        }
+        let buffer = project.update(cx, |project, cx| project.open_buffer(path.clone(), cx));
+        Some(cx.spawn(async move |cx| {
+            let buffer = buffer.await?;
+            Ok(cx.new(|_| SvgPreviewItem { buffer }))
+        }))
+    }
+
+    fn entry_id(&self, cx: &App) -> Option<ProjectEntryId> {
+        project::ProjectItem::entry_id(self.buffer.read(cx), cx)
+    }
+
+    fn project_path(&self, cx: &App) -> Option<ProjectPath> {
+        project::ProjectItem::project_path(self.buffer.read(cx), cx)
+    }
+
+    fn is_dirty(&self) -> bool {
+        // This item is only a carrier between `try_open` and `for_project_item`: the
+        // preview reports its dirty state through the buffer it renders.
+        false
+    }
+}
+
+impl ProjectItem for SvgPreviewView {
+    type Item = SvgPreviewItem;
+
+    fn for_project_item(
+        _project: Entity<Project>,
+        _pane: Option<&Pane>,
+        item: Entity<Self::Item>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let buffer = item.read(cx).buffer.clone();
+        let subscription = Self::create_buffer_subscription(&buffer, window, cx);
+        let mut this = Self {
+            focus_handle: cx.focus_handle(),
+            buffer: Some(buffer),
+            current_svg: None,
+            _buffer_subscription: Some(subscription),
+            _workspace_subscription: None,
+            _refresh: Task::ready(()),
+        };
+        this.render_image(window, cx);
+        this
     }
 }
 
@@ -337,5 +535,483 @@ impl Item for SvgPreviewView {
         Some("svg preview: open")
     }
 
+    fn buffer_kind(&self, _cx: &App) -> ItemBufferKind {
+        ItemBufferKind::Singleton
+    }
+
+    fn is_dirty(&self, cx: &App) -> bool {
+        self.buffer
+            .as_ref()
+            .is_some_and(|buffer| buffer.read(cx).is_dirty())
+    }
+
+    fn for_each_project_item(
+        &self,
+        cx: &App,
+        f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
+    ) {
+        // Previews that follow the active editor are not bound to a single file.
+        if self.is_following() {
+            return;
+        }
+        if let Some(buffer) = &self.buffer {
+            f(buffer.entity_id(), buffer.read(cx))
+        }
+    }
+
     fn to_item_events(_event: &Self::Event, _f: &mut dyn FnMut(workspace::item::ItemEvent)) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use editor::Editor;
+    use gpui::{BorrowAppContext as _, Focusable as _, TestAppContext, WindowHandle};
+    use serde_json::json;
+    use settings::SettingsStore;
+    use util::path;
+    use util::rel_path::rel_path;
+    use workspace::{AppState, AutoPreview, MultiWorkspace, open_paths};
+    use zed_actions::preview::OpenSource;
+
+    use super::SvgPreviewView;
+
+    const SVG_CONTENTS: &str = r#"<svg xmlns="http://www.w3.org/2000/svg"></svg>"#;
+
+    #[gpui::test]
+    async fn auto_preview_opens_svg_files_as_preview(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        set_auto_preview(cx, AutoPreview::InPlace);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "a.svg": SVG_CONTENTS,
+                    "b.txt": "plain text",
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        open_workspace_path(&multi_workspace, "a.svg", cx).await;
+        let preview = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    assert_eq!(workspace.active_pane().read(cx).items_len(), 1);
+                    let preview = workspace
+                        .active_item(cx)
+                        .and_then(|item| item.downcast::<SvgPreviewView>())
+                        .expect("SVG file should have been opened as a preview");
+                    assert!(
+                        preview.read(cx).focus_handle.contains_focused(window, cx),
+                        "the opened preview should be focused"
+                    );
+                    preview
+                })
+            })
+            .unwrap();
+        assert_eq!(
+            preview
+                .read_with(cx, |preview, cx| preview
+                    .buffer
+                    .as_ref()
+                    .unwrap()
+                    .read(cx)
+                    .file()
+                    .unwrap()
+                    .path()
+                    .clone())
+                .as_ref(),
+            rel_path("a.svg")
+        );
+
+        // Reopening the file should reuse the existing preview.
+        open_workspace_path(&multi_workspace, "a.svg", cx).await;
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    assert_eq!(workspace.active_pane().read(cx).items_len(), 1);
+                    assert_eq!(
+                        workspace
+                            .active_item(cx)
+                            .and_then(|item| item.downcast::<SvgPreviewView>()),
+                        Some(preview.clone())
+                    );
+                })
+            })
+            .unwrap();
+
+        open_workspace_path(&multi_workspace, "b.txt", cx).await;
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    assert_eq!(workspace.active_pane().read(cx).items_len(), 2);
+                    assert!(
+                        workspace
+                            .active_item(cx)
+                            .and_then(|item| item.downcast::<Editor>())
+                            .is_some(),
+                        "non-previewable files should still open in an editor"
+                    );
+                })
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn open_source_opens_an_editor_for_the_previewed_file(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        set_auto_preview(cx, AutoPreview::InPlace);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/dir"), json!({ "a.svg": SVG_CONTENTS }))
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        open_workspace_path(&multi_workspace, "a.svg", cx).await;
+        multi_workspace
+            .update(cx, |_, window, cx| {
+                window.dispatch_action(Box::new(OpenSource), cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        let editor = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    assert_eq!(
+                        workspace.active_pane().read(cx).items_len(),
+                        2,
+                        "an editor should have been added next to the preview"
+                    );
+                    workspace
+                        .active_item(cx)
+                        .and_then(|item| item.downcast::<Editor>())
+                        .expect("the editor for the previewed file should be active")
+                })
+            })
+            .unwrap();
+        let editor_path = editor.read_with(cx, |editor, cx| {
+            editor
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap()
+                .read(cx)
+                .file()
+                .unwrap()
+                .path()
+                .clone()
+        });
+        assert_eq!(editor_path.as_ref(), rel_path("a.svg"));
+    }
+
+    #[gpui::test]
+    async fn svg_files_open_in_an_editor_by_default(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/dir"), json!({ "a.svg": SVG_CONTENTS }))
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        open_workspace_path(&multi_workspace, "a.svg", cx).await;
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    assert!(
+                        workspace
+                            .active_item(cx)
+                            .and_then(|item| item.downcast::<Editor>())
+                            .is_some(),
+                        "with auto_preview off, SVG files should open in an editor"
+                    );
+                })
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn to_the_side_auto_preview_follows_editors_and_closes_with_them(
+        cx: &mut TestAppContext,
+    ) {
+        let app_state = init_test(cx);
+        set_auto_preview(cx, AutoPreview::ToTheSide);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/dir"), json!({ "a.svg": SVG_CONTENTS }))
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        open_workspace_path(&multi_workspace, "a.svg", cx).await;
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    let editor = workspace
+                        .active_item(cx)
+                        .and_then(|item| item.downcast::<Editor>())
+                        .expect("SVG files should still open in an editor");
+                    assert!(
+                        editor
+                            .read(cx)
+                            .focus_handle(cx)
+                            .contains_focused(window, cx),
+                        "the editor should keep the focus"
+                    );
+                    assert_eq!(
+                        workspace.panes().len(),
+                        2,
+                        "a pane should have been split for the preview"
+                    );
+                    let preview = workspace
+                        .items_of_type::<SvgPreviewView>(cx)
+                        .next()
+                        .expect("a preview should have been opened to the side");
+                    assert!(preview.read(cx).is_following());
+                    assert_ne!(
+                        workspace.pane_for(&preview),
+                        Some(workspace.active_pane().clone()),
+                        "the preview should live in the other pane"
+                    );
+                })
+            })
+            .unwrap();
+
+        multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    let editors = workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>();
+                    for editor in editors {
+                        let pane = workspace.pane_for(&editor).unwrap();
+                        pane.update(cx, |pane, cx| {
+                            pane.remove_item(editor.entity_id(), false, true, window, cx)
+                        });
+                    }
+                })
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    assert_eq!(
+                        workspace.items_of_type::<SvgPreviewView>(cx).count(),
+                        0,
+                        "the preview should close when no SVG editors remain"
+                    );
+                    assert_eq!(
+                        workspace.panes().len(),
+                        1,
+                        "the preview pane should be removed with the preview"
+                    );
+                })
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn single_side_preview_is_shared_between_preview_kinds(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+        cx.update(markdown_preview::init);
+        set_auto_preview(cx, AutoPreview::ToTheSide);
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(
+                path!("/dir"),
+                json!({
+                    "a.md": "# a",
+                    "b.svg": SVG_CONTENTS,
+                }),
+            )
+            .await;
+
+        cx.update(|cx| {
+            open_paths(
+                &[PathBuf::from(path!("/dir"))],
+                app_state.clone(),
+                workspace::OpenOptions::default(),
+                cx,
+            )
+        })
+        .await
+        .unwrap();
+        cx.run_until_parked();
+
+        let multi_workspace = cx.update(|cx| cx.windows()[0].downcast::<MultiWorkspace>().unwrap());
+        open_workspace_path(&multi_workspace, "a.md", cx).await;
+        let markdown_preview_pane = multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    assert_eq!(workspace.panes().len(), 2);
+                    let preview = workspace
+                        .items_of_type::<markdown_preview::markdown_preview_view::MarkdownPreviewView>(cx)
+                        .next()
+                        .expect("a markdown preview should have been opened to the side");
+                    let pane = workspace.pane_for(&preview).unwrap();
+                    assert_eq!(pane.read(cx).items_len(), 1);
+                    pane
+                })
+            })
+            .unwrap();
+
+        open_workspace_path(&multi_workspace, "b.svg", cx).await;
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    assert_eq!(
+                        workspace.panes().len(),
+                        2,
+                        "the preview pane should be reused for the other preview kind"
+                    );
+                    assert_eq!(
+                        workspace
+                            .items_of_type::<markdown_preview::markdown_preview_view::MarkdownPreviewView>(cx)
+                            .count(),
+                        0,
+                        "the markdown preview should have been replaced"
+                    );
+                    let preview = workspace
+                        .items_of_type::<SvgPreviewView>(cx)
+                        .next()
+                        .expect("an SVG preview should have taken the preview tab slot");
+                    assert!(preview.read(cx).is_following());
+                    let pane = workspace.pane_for(&preview).unwrap();
+                    assert_eq!(pane, markdown_preview_pane);
+                    assert_eq!(
+                        pane.read(cx).items_len(),
+                        1,
+                        "a single dynamic preview tab should be kept to the side"
+                    );
+                })
+            })
+            .unwrap();
+
+        open_workspace_path(&multi_workspace, "a.md", cx).await;
+        multi_workspace
+            .update(cx, |multi_workspace, _, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    assert_eq!(workspace.panes().len(), 2);
+                    assert_eq!(workspace.items_of_type::<SvgPreviewView>(cx).count(), 0);
+                    let preview = workspace
+                        .items_of_type::<markdown_preview::markdown_preview_view::MarkdownPreviewView>(cx)
+                        .next()
+                        .expect("the markdown preview should be back in the preview tab slot");
+                    let pane = workspace.pane_for(&preview).unwrap();
+                    assert_eq!(pane.read(cx).items_len(), 1);
+                })
+            })
+            .unwrap();
+    }
+
+    fn set_auto_preview(cx: &mut TestAppContext, auto_preview: AutoPreview) {
+        cx.update(|cx| {
+            cx.update_global::<SettingsStore, _>(|settings, cx| {
+                settings.update_user_settings(cx, |settings| {
+                    settings.workspace.auto_preview = Some(auto_preview);
+                });
+            });
+        });
+    }
+
+    async fn open_workspace_path(
+        multi_workspace: &WindowHandle<MultiWorkspace>,
+        file: &str,
+        cx: &mut TestAppContext,
+    ) {
+        let open_task = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspace().clone();
+                workspace.update(cx, |workspace, cx| {
+                    let worktree_id = workspace
+                        .project()
+                        .read(cx)
+                        .worktrees(cx)
+                        .next()
+                        .unwrap()
+                        .read(cx)
+                        .id();
+                    workspace.open_path((worktree_id, rel_path(file)), None, true, window, cx)
+                })
+            })
+            .unwrap();
+        open_task.await.unwrap();
+        cx.run_until_parked();
+    }
+
+    fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
+        cx.update(|cx| {
+            let state = AppState::test(cx);
+            editor::init(cx);
+            crate::init(cx);
+            state
+        })
+    }
 }
