@@ -1245,6 +1245,56 @@ mod tests {
         assert_eq!(backend.unwatch_calls, &[parent.to_path_buf()]);
     }
 
+    #[gpui::test]
+    async fn pending_path_is_registered_once_created(cx: &mut gpui::TestAppContext) {
+        let temp_dir = tempfile::tempdir().expect("create temp dir");
+        let path = temp_dir.path().join("file.txt");
+
+        let (tx, rx) = async_channel::unbounded();
+        let pending_path_events: Arc<Mutex<Vec<PathEvent>>> = Default::default();
+        let watcher = FsWatcher::new(cx.executor(), tx, pending_path_events.clone());
+
+        watcher
+            .add(&path)
+            .expect("add path that does not exist yet");
+        assert!(
+            watcher
+                .pending_registrations
+                .lock()
+                .contains_key(path.as_path())
+        );
+        assert!(watcher.registrations.lock().is_empty());
+
+        std::fs::write(&path, b"contents").expect("create path");
+
+        // poll_path_until_created stats the path on smol's blocking pool, which
+        // the deterministic executor cannot drive; park until the poll task
+        // signals the event channel.
+        cx.executor().allow_parking();
+        cx.executor().advance_clock(poll_interval());
+        rx.recv().await.expect("receive watcher event");
+
+        assert!(
+            !watcher
+                .pending_registrations
+                .lock()
+                .contains_key(path.as_path())
+        );
+        let case_insensitive = case_insensitive_path(&path);
+        let key = WatchKey::for_registration(SanitizedPath::new(&path), case_insensitive);
+        assert!(watcher.registrations.lock().contains_key(&key));
+
+        // poll_path_until_created also enqueues a Rescan for the same path, but
+        // enqueue_path_events -> util::extend_sorted dedups by path, so only Created survives.
+        assert_eq!(
+            pending_path_events.lock().clone(),
+            vec![PathEvent {
+                path: path.clone(),
+                kind: Some(PathEventKind::Created),
+            }]
+        );
+    }
+
     #[test]
     fn native_watch_limit_cools_down_subsequent_native_registrations() {
         let native_backend = Arc::new(Mutex::new(FakeWatchBackend {

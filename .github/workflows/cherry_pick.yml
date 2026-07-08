@@ -21,6 +21,8 @@ on:
         description: pr_number
         required: true
         type: string
+permissions:
+  contents: read
 jobs:
   run_cherry_pick:
     runs-on: namespace-profile-2x4-ubuntu-2404
