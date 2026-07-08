@@ -17,9 +17,10 @@ use settings::{DocumentFoldingRanges, DocumentSymbols, IntoGpui, SemanticTokens}
 
 pub use settings::{
     AutoIndentMode, CompletionSettingsContent, EditPredictionDataCollectionChoice,
-    EditPredictionPromptFormat, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
+    EditPredictionPromptFormatContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LineEndingSetting,
-    LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+    LspInsertMode, REST_OF_LANGUAGE_SERVERS, RewrapBehavior, ShowWhitespaceSetting, SoftWrap,
+    WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
@@ -276,9 +277,6 @@ pub struct PrettierSettings {
 }
 
 impl LanguageSettings {
-    /// A token representing the rest of the available language servers.
-    const REST_OF_LANGUAGE_SERVERS: &'static str = "...";
-
     pub fn for_buffer<'a>(buffer: &'a Buffer, cx: &'a App) -> Cow<'a, LanguageSettings> {
         Self::resolve(Some(buffer), None, cx)
     }
@@ -382,7 +380,7 @@ impl LanguageSettings {
         enabled_language_servers
             .into_iter()
             .flat_map(|language_server| {
-                if language_server.0.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
+                if language_server.0.as_ref() == REST_OF_LANGUAGE_SERVERS {
                     rest.clone()
                 } else {
                     vec![language_server]
@@ -477,7 +475,6 @@ pub struct EditPredictionSettings {
     /// Settings specific to Ollama.
     pub ollama: Option<OpenAiCompatibleEditPredictionSettings>,
     pub open_ai_compatible_api: Option<OpenAiCompatibleEditPredictionSettings>,
-    pub examples_dir: Option<Arc<Path>>,
     /// Controls whether training data collection is enabled.
     ///
     /// `Default` means the value stored in the legacy KV store is used as a fallback,
@@ -538,6 +535,46 @@ pub struct OpenAiCompatibleEditPredictionSettings {
     /// The prompt format to use for completions. When `None`, the format
     /// will be derived from the model name at request time.
     pub prompt_format: EditPredictionPromptFormat,
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum EditPredictionPromptFormat {
+    #[default]
+    Infer,
+    Zeta(ZetaVersion),
+    CodeLlama,
+    StarCoder,
+    DeepseekCoder,
+    Qwen,
+    CodeGemma,
+    Codestral,
+    Glm,
+}
+
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
+pub enum ZetaVersion {
+    Zeta1,
+    Zeta2,
+    #[default] // NOTE: make latest version default when adding
+    Zeta2_1,
+}
+
+impl From<EditPredictionPromptFormatContent> for EditPredictionPromptFormat {
+    fn from(value: EditPredictionPromptFormatContent) -> Self {
+        match value {
+            EditPredictionPromptFormatContent::Infer => Self::Infer,
+            EditPredictionPromptFormatContent::Zeta => Self::Zeta(ZetaVersion::Zeta1),
+            EditPredictionPromptFormatContent::Zeta2 => Self::Zeta(ZetaVersion::Zeta2),
+            EditPredictionPromptFormatContent::Zeta2_1 => Self::Zeta(ZetaVersion::Zeta2_1),
+            EditPredictionPromptFormatContent::CodeLlama => Self::CodeLlama,
+            EditPredictionPromptFormatContent::StarCoder => Self::StarCoder,
+            EditPredictionPromptFormatContent::DeepseekCoder => Self::DeepseekCoder,
+            EditPredictionPromptFormatContent::Qwen => Self::Qwen,
+            EditPredictionPromptFormatContent::CodeGemma => Self::CodeGemma,
+            EditPredictionPromptFormatContent::Codestral => Self::Codestral,
+            EditPredictionPromptFormatContent::Glm => Self::Glm,
+        }
+    }
 }
 
 impl AllLanguageSettings {
@@ -816,7 +853,7 @@ impl settings::Settings for AllLanguageSettings {
                 model: model.0,
                 max_output_tokens: ollama.max_output_tokens.unwrap(),
                 api_url: ollama.api_url.unwrap().into(),
-                prompt_format: ollama.prompt_format.unwrap(),
+                prompt_format: ollama.prompt_format.unwrap().into(),
             });
         let openai_compatible_settings = edit_predictions.open_ai_compatible_api.unwrap();
         let openai_compatible_settings = openai_compatible_settings
@@ -831,7 +868,7 @@ impl settings::Settings for AllLanguageSettings {
                 model,
                 max_output_tokens: openai_compatible_settings.max_output_tokens.unwrap(),
                 api_url: api_url.into(),
-                prompt_format: openai_compatible_settings.prompt_format.unwrap(),
+                prompt_format: openai_compatible_settings.prompt_format.unwrap().into(),
             });
 
         let mut file_types: FxHashMap<Arc<str>, (GlobSet, Vec<String>)> = FxHashMap::default();
@@ -871,7 +908,6 @@ impl settings::Settings for AllLanguageSettings {
                 codestral: codestral_settings,
                 ollama: ollama_settings,
                 open_ai_compatible_api: openai_compatible_settings,
-                examples_dir: edit_predictions.examples_dir,
                 allow_data_collection: edit_predictions.allow_data_collection.unwrap_or_default(),
             },
             defaults: default_language_settings,
@@ -1052,7 +1088,7 @@ mod tests {
         // A value of just `["..."]` is the same as taking all of the available language servers.
         assert_eq!(
             LanguageSettings::resolve_language_servers(
-                &[LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()],
+                &[REST_OF_LANGUAGE_SERVERS.into()],
                 &available_language_servers,
             ),
             available_language_servers
@@ -1063,7 +1099,7 @@ mod tests {
             LanguageSettings::resolve_language_servers(
                 &[
                     "biome".into(),
-                    LanguageSettings::REST_OF_LANGUAGE_SERVERS.into(),
+                    REST_OF_LANGUAGE_SERVERS.into(),
                     "deno".into()
                 ],
                 &available_language_servers
@@ -1084,7 +1120,7 @@ mod tests {
                     "deno".into(),
                     "!typescript-language-server".into(),
                     "!biome".into(),
-                    LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()
+                    REST_OF_LANGUAGE_SERVERS.into()
                 ],
                 &available_language_servers
             ),
@@ -1096,7 +1132,7 @@ mod tests {
             LanguageSettings::resolve_language_servers(
                 &[
                     "my-cool-language-server".into(),
-                    LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()
+                    REST_OF_LANGUAGE_SERVERS.into()
                 ],
                 &available_language_servers
             ),

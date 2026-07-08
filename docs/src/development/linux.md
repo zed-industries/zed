@@ -159,7 +159,7 @@ Use this when Zed is using a lot of CPU. It is not useful for hangs.
   run `sudo chown $USER:$USER perf.data`
 
 - Get build info:
-  Run zed again and type `zed: about` in the command pallet to get the exact commit.
+  Run zed again and type {#action zed::About} in the command pallet to get the exact commit.
 
 The `perf.data` file can be sent to Zed together with the exact commit.
 

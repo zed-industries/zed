@@ -3,6 +3,8 @@ pub mod edit_prediction_registry;
 #[cfg(target_os = "macos")]
 pub(crate) mod mac_only_instance;
 mod migrate;
+#[cfg(target_os = "macos")]
+pub(crate) mod move_to_applications;
 mod open_listener;
 mod open_url_modal;
 mod quick_action_bar;
@@ -13,6 +15,7 @@ pub mod visual_tests;
 #[cfg(target_os = "windows")]
 pub(crate) mod windows_only_instance;
 
+use agent_settings::{UserAgentsMdState, init_user_agents_md};
 use agent_ui::AgentDiffToolbar;
 use anyhow::Context as _;
 pub use app_menus::*;
@@ -28,13 +31,17 @@ use feature_flags::{FeatureFlagAppExt as _, PanicFeatureFlag};
 use fs::Fs;
 use futures::FutureExt as _;
 use futures::{StreamExt, channel::mpsc, select_biased};
+use git_ui::branch_diff::BranchDiffToolbar;
 use git_ui::commit_view::CommitViewToolbar;
 use git_ui::git_panel::GitPanel;
-use git_ui::project_diff::{BranchDiffToolbar, ProjectDiffToolbar};
+use git_ui::project_diff::ProjectDiffToolbar;
+use git_ui::solo_diff_view::{SoloDiffGitToolbar, SoloDiffStyleToolbar};
+use git_ui::staged_diff::StagedDiffToolbar;
+use git_ui::unstaged_diff::UnstagedDiffToolbar;
 use gpui::{
     Action, App, AppContext as _, AsyncWindowContext, ClipboardItem, Context, DismissEvent,
     Element, Entity, FocusHandle, Focusable, Image, ImageFormat, KeyBinding, ParentElement,
-    PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Size, Task, TitlebarOptions,
+    PathPromptOptions, PromptLevel, ReadGlobal, SharedString, Size, Task, TaskExt, TitlebarOptions,
     UpdateGlobal, WeakEntity, Window, WindowBounds, WindowHandle, WindowKind, WindowOptions,
     actions, image_cache, img, point, px, retain_all,
 };
@@ -46,7 +53,6 @@ use language_tools::lsp_log_view::LspLogToolbarItemView;
 use markdown::{Markdown, MarkdownElement, MarkdownFont, MarkdownStyle};
 use migrate::{MigrationBanner, MigrationEvent, MigrationNotification, MigrationType};
 use migrator::migrate_keymap;
-use onboarding::DOCS_URL;
 use onboarding::multibuffer_hint::MultibufferHint;
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
@@ -62,12 +68,14 @@ use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    BaseKeymap, DEFAULT_KEYMAP_PATH, InvalidSettingsError, KeybindSource, KeymapFile,
-    KeymapFileLoadResult, MigrationStatus, Settings, SettingsFile, SettingsStore, VIM_KEYMAP_PATH,
-    initial_local_debug_tasks_content, initial_project_settings_content, initial_tasks_content,
-    update_settings_file,
+    BaseKeymap, DEFAULT_KEYMAP_PATH, DefaultOpenBehavior, InvalidSettingsError, KeybindSource,
+    KeymapFile, KeymapFileLoadResult, MigrationStatus, SPECIFIC_OVERRIDES_KEYMAP_PATH, Settings,
+    SettingsFile, SettingsStore, VIM_KEYMAP_PATH, initial_local_debug_tasks_content,
+    initial_project_settings_content, initial_tasks_content, update_settings_file,
 };
 use sidebar::Sidebar;
+#[cfg(debug_assertions)]
+use workspace::workspace_error::{ErrorAction, ErrorSeverity, WorkspaceError};
 
 use std::{
     borrow::Cow,
@@ -96,9 +104,17 @@ use workspace::{
 };
 use workspace::{Pane, notifications::DetachAndPromptErr};
 use zed_actions::{
-    About, OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings, OpenSettingsFile,
-    OpenZedUrl, Quit,
+    About, GetMerch, OpenAccountSettings, OpenBrowser, OpenDocs, OpenServerSettings,
+    OpenSettingsFile, OpenStatusPage, OpenZedUrl, Quit,
 };
+
+const DOCS_URL: &str = "https://zed.dev/docs/";
+const STATUS_URL: &str = "https://status.zed.dev";
+const MERCH_URL: &str = "https://merch.zed.dev/";
+
+pub struct CrashHandler(pub Arc<crashes::Client>);
+
+impl gpui::Global for CrashHandler {}
 
 actions!(
     zed,
@@ -146,6 +162,15 @@ actions!(
     ]
 );
 
+#[cfg(debug_assertions)]
+actions!(
+    dev,
+    [
+        /// Show an error on the workspace level.
+        ShowWorkspaceError
+    ]
+);
+
 pub fn init(cx: &mut App) {
     #[cfg(target_os = "macos")]
     cx.on_action(|_: &Hide, cx| cx.hide());
@@ -176,15 +201,22 @@ pub fn init(cx: &mut App) {
         }
     })
     .detach();
-    cx.on_action(|_: &OpenLog, cx| {
-        with_active_or_new_workspace(cx, |workspace, window, cx| {
-            open_log_file(workspace, window, cx);
+
+    // When Zed logs to stdout rather than the log file, avoid registering
+    // handlers for both `OpenLog` and `RevealLogInFileManager`, as the log file
+    // does not exist in that scenario and these actions would error.
+    if !crate::stdout_is_a_pty() {
+        cx.on_action(|_: &OpenLog, cx| {
+            with_active_or_new_workspace(cx, |workspace, window, cx| {
+                open_log_file(workspace, window, cx);
+            });
+        })
+        .on_action(|_: &workspace::RevealLogInFileManager, cx| {
+            cx.reveal_path(paths::log_file().as_path());
         });
-    })
-    .on_action(|_: &workspace::RevealLogInFileManager, cx| {
-        cx.reveal_path(paths::log_file().as_path());
-    })
-    .on_action(|_: &zed_actions::OpenLicenses, cx| {
+    }
+
+    cx.on_action(|_: &zed_actions::OpenLicenses, cx| {
         with_active_or_new_workspace(cx, |workspace, window, cx| {
             open_bundled_file(
                 workspace,
@@ -349,7 +381,10 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         focus: false,
         show: false,
         kind: WindowKind::Normal,
-        is_movable: true,
+        // On macOS, Zed handles window movement itself, so disable AppKit's titlebar dragging.
+        // On other platforms, `is_movable` gates native window dragging (e.g. Windows'
+        // `HTCAPTION` hit test), so it must remain `true`.
+        is_movable: cfg!(not(target_os = "macos")),
         display_id: display.map(|display| display.id()),
         window_background: cx.theme().window_background_appearance(),
         app_id: Some(app_id.to_owned()),
@@ -377,6 +412,8 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         _on_close_subscription = bind_on_window_closed(cx);
     })
     .detach();
+
+    init_cursor_hide_mode(cx);
 
     cx.observe_new(|_multi_workspace: &mut MultiWorkspace, window, cx| {
         let Some(window) = window else {
@@ -515,7 +552,9 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
             show_software_emulation_warning_if_needed(specs.clone(), window, cx);
-            crashes::set_gpu_info(specs);
+            if let Some(crash_client) = cx.try_global::<CrashHandler>() {
+                crashes::set_gpu_info(&crash_client.0, specs);
+            }
         }
 
         let edit_prediction_menu_handle = PopoverMenuHandle::default();
@@ -566,6 +605,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             cx.new(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         let line_ending_indicator =
             cx.new(|_| line_ending_selector::LineEndingIndicator::default());
+        let git_blame_status = cx.new(|_| git_ui::GitBlameStatus::default());
         let merge_conflict_indicator =
             cx.new(|cx| git_ui::MergeConflictIndicator::new(workspace, cx));
         workspace.status_bar().update(cx, |status_bar, cx| {
@@ -573,6 +613,7 @@ pub fn initialize_workspace(app_state: Arc<AppState>, cx: &mut App) {
             status_bar.add_left_item(lsp_button, window, cx);
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(active_file_name, window, cx);
+            status_bar.add_left_item(git_blame_status, window, cx);
             status_bar.add_left_item(merge_conflict_indicator, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
             status_bar.add_right_item(edit_prediction_ui, window, cx);
@@ -849,6 +890,8 @@ fn register_actions(
 ) {
     workspace
         .register_action(|_, _: &OpenDocs, _, cx| cx.open_url(DOCS_URL))
+        .register_action(|_, _: &OpenStatusPage, _, cx| cx.open_url(STATUS_URL))
+        .register_action(|_, _: &GetMerch, _, cx| cx.open_url(MERCH_URL))
         .register_action(
             |workspace: &mut Workspace,
              _: &input_latency_ui::DumpInputLatencyHistogram,
@@ -876,7 +919,7 @@ fn register_actions(
         })
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open(RawOpenRequest {
-                urls: vec![action.url.clone()],
+                urls: vec![String::from(&*action.url)],
                 ..Default::default()
             })
         })
@@ -894,7 +937,7 @@ fn register_actions(
                 }
                 Err(e) => {
                     workspace.show_error(
-                        &anyhow::anyhow!(
+                        format!(
                             "Opening this URL in a browser failed because the URL is invalid: {}\n\nError was: {e}",
                             action.url
                         ),
@@ -914,7 +957,12 @@ fn register_actions(
                     multiple: true,
                     prompt: None,
                 },
-                action.create_new_window,
+                action.create_new_window.unwrap_or_else(|| {
+                    matches!(
+                        WorkspaceSettings::get_global(cx).default_open_behavior,
+                        DefaultOpenBehavior::NewWindow
+                    )
+                }),
                 window,
                 cx,
             );
@@ -1278,6 +1326,45 @@ fn register_actions(
     }
 
     workspace.register_action(sidebar::dump_workspace_info);
+
+    #[cfg(debug_assertions)]
+    workspace.register_action(|workspace, _: &ShowWorkspaceError, _, cx| {
+        struct DebugError;
+        struct SecondDebugError;
+
+        impl WorkspaceError for DebugError {
+            fn primary_message(&self) -> SharedString {
+                SharedString::new_static(
+                    "Error: Prepare rename via rust-analyzer failed: No references found at position",
+                )
+            }
+
+            fn severity(&self) -> ErrorSeverity {
+                ErrorSeverity::Warning
+            }
+
+            fn primary_action(&self) -> ErrorAction {
+                ErrorAction::dismiss()
+            }
+        }
+
+        impl WorkspaceError for SecondDebugError {
+            fn primary_message(&self) -> SharedString {
+                SharedString::new_static("This is some error to ignore.")
+            }
+
+            fn severity(&self) -> ErrorSeverity {
+                ErrorSeverity::Error
+            }
+
+            fn primary_action(&self) -> ErrorAction {
+                ErrorAction::dismiss()
+            }
+        }
+
+        workspace.show_error(DebugError, cx);
+        workspace.show_error(SecondDebugError, cx);
+    });
 }
 
 fn initialize_pane(
@@ -1291,6 +1378,8 @@ fn initialize_pane(
         pane.toolbar().update(cx, |toolbar, cx| {
             let multibuffer_hint = cx.new(|_| MultibufferHint::new());
             toolbar.add_item(multibuffer_hint, window, cx);
+            let solo_diff_style_toolbar = cx.new(SoloDiffStyleToolbar::new);
+            toolbar.add_item(solo_diff_style_toolbar, window, cx);
             let breadcrumbs = cx.new(|_| Breadcrumbs::new());
             toolbar.add_item(breadcrumbs, window, cx);
             let buffer_search_bar = cx.new(|cx| {
@@ -1327,8 +1416,14 @@ fn initialize_pane(
             toolbar.add_item(highlights_tree_item, window, cx);
             let project_diff_toolbar = cx.new(|cx| ProjectDiffToolbar::new(workspace, cx));
             toolbar.add_item(project_diff_toolbar, window, cx);
+            let staged_diff_toolbar = cx.new(|cx| StagedDiffToolbar::new(workspace, cx));
+            toolbar.add_item(staged_diff_toolbar, window, cx);
+            let unstaged_diff_toolbar = cx.new(|cx| UnstagedDiffToolbar::new(workspace, cx));
+            toolbar.add_item(unstaged_diff_toolbar, window, cx);
             let branch_diff_toolbar = cx.new(BranchDiffToolbar::new);
             toolbar.add_item(branch_diff_toolbar, window, cx);
+            let solo_diff_git_toolbar = cx.new(SoloDiffGitToolbar::new);
+            toolbar.add_item(solo_diff_git_toolbar, window, cx);
             let commit_view_toolbar = cx.new(|_| CommitViewToolbar::new());
             toolbar.add_item(commit_view_toolbar, window, cx);
             let agent_diff_toolbar = cx.new(AgentDiffToolbar::new);
@@ -1466,7 +1561,7 @@ fn open_about_window(cx: &mut App) {
                                         window.remove_window();
                                     }))
                                     .child(
-                                        Button::new("ok", "Ok")
+                                        Button::new("ok", "OK")
                                             .full_width()
                                             .style(ButtonStyle::OutlinedGhost)
                                             .toggle_state(ok_is_focused)
@@ -1540,7 +1635,7 @@ fn open_about_window(cx: &mut App) {
             window_bounds: Some(WindowBounds::centered(window_size, cx)),
             is_resizable: false,
             is_minimizable: false,
-            kind: WindowKind::Normal,
+            kind: WindowKind::Floating,
             app_id: Some(ReleaseChannel::global(cx).app_id().to_owned()),
             ..Default::default()
         },
@@ -1612,13 +1707,16 @@ fn quit(_: &Quit, cx: &mut App) {
         // If the user cancels any save prompt, then keep the app open.
         for window in &workspace_windows {
             let window = *window;
-            let workspaces = window
+            let active_and_workspaces = window
                 .update(cx, |multi_workspace, _, _cx| {
-                    multi_workspace.workspaces().cloned().collect::<Vec<_>>()
+                    (
+                        multi_workspace.workspace().clone(),
+                        multi_workspace.workspaces().cloned().collect::<Vec<_>>(),
+                    )
                 })
                 .log_err();
 
-            let Some(workspaces) = workspaces else {
+            let Some((originally_active, workspaces)) = active_and_workspaces else {
                 continue;
             };
 
@@ -1634,10 +1732,34 @@ fn quit(_: &Quit, cx: &mut App) {
                     .log_err()
                 {
                     if !should_close.await? {
+                        // Activating each workspace above to surface its save
+                        // prompts changed which workspace is active. Restore the
+                        // user's focused workspace before bailing so the window
+                        // is left as they had it.
+                        window
+                            .update(cx, |multi_workspace, window, cx| {
+                                multi_workspace.activate(
+                                    originally_active.clone(),
+                                    None,
+                                    window,
+                                    cx,
+                                );
+                            })
+                            .log_err();
                         return Ok(());
                     }
                 }
             }
+
+            // The loop above activated each workspace in turn, overwriting the
+            // persisted active workspace. Re-activate the workspace the user
+            // actually had focused so it is the one serialized (and restored on
+            // next launch) as active, rather than whichever happened to be last.
+            window
+                .update(cx, |multi_workspace, window, cx| {
+                    multi_workspace.activate(originally_active, None, window, cx);
+                })
+                .log_err();
         }
         // Flush all pending workspace serialization before quitting so that
         // session_id/window_id are up-to-date in the database.
@@ -1846,6 +1968,51 @@ fn notify_settings_errors(result: settings::SettingsParseResult, is_user: bool, 
     };
 }
 
+#[derive(Copy, Clone, Debug, settings::RegisterSetting)]
+struct CursorHideModeSetting(gpui::CursorHideMode);
+
+impl Settings for CursorHideModeSetting {
+    fn from_settings(content: &settings::SettingsContent) -> Self {
+        Self(match content.hide_mouse.unwrap_or_default() {
+            settings::HideMouseMode::Never => gpui::CursorHideMode::Never,
+            settings::HideMouseMode::OnTyping => gpui::CursorHideMode::OnTyping,
+            settings::HideMouseMode::OnTypingAndAction => gpui::CursorHideMode::OnTypingAndAction,
+        })
+    }
+}
+
+fn init_cursor_hide_mode(cx: &mut App) {
+    let apply = |cx: &mut App| cx.set_cursor_hide_mode(CursorHideModeSetting::get_global(cx).0);
+    apply(cx);
+    cx.observe_global::<SettingsStore>(apply).detach();
+}
+
+/// Starts watching `~/.config/zed/AGENTS.md` (or the platform equivalent) and
+/// surfaces any read errors using the same notification UI as settings errors.
+///
+/// The file itself is loaded into [`agent_settings::UserAgentsMd`] for inclusion
+/// in prompts.
+pub fn watch_user_agents_md(fs: Arc<dyn fs::Fs>, cx: &mut App) {
+    struct UserAgentsMdParseError;
+    let notification_id = NotificationId::unique::<UserAgentsMdParseError>();
+
+    init_user_agents_md(fs, cx, move |state, cx| match state {
+        UserAgentsMdState::Loaded(_) | UserAgentsMdState::Empty => {
+            dismiss_app_notification(&notification_id, cx);
+        }
+        UserAgentsMdState::Error(message) => {
+            let path = paths::agents_file().display().to_string();
+            log::error!("Failed to load user AGENTS.md from {path}: {message}");
+            let body = format!("Failed to load {path}\n{message}");
+            let notification_id = notification_id.clone();
+            show_app_notification(notification_id, cx, move |cx| {
+                let body = body.clone();
+                cx.new(|cx| MessageNotification::new(body, cx))
+            });
+        }
+    });
+}
+
 pub fn watch_settings_files(fs: Arc<dyn fs::Fs>, cx: &mut App) {
     MigrationNotification::set_global(cx.new(|_| MigrationNotification), cx);
 
@@ -1877,19 +2044,23 @@ pub fn handle_keymap_file_changes(
     let mut old_base_keymap = *BaseKeymap::get_global(cx);
     let mut old_vim_enabled = VimModeSetting::get_global(cx).0;
     let mut old_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
+    let mut old_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
 
     cx.observe_global::<SettingsStore>(move |cx| {
         let new_base_keymap = *BaseKeymap::get_global(cx);
         let new_vim_enabled = VimModeSetting::get_global(cx).0;
         let new_helix_enabled = vim_mode_setting::HelixModeSetting::get_global(cx).0;
+        let new_disable_ai = DisableAiSettings::get_global(cx).disable_ai;
 
         if new_base_keymap != old_base_keymap
             || new_vim_enabled != old_vim_enabled
             || new_helix_enabled != old_helix_enabled
+            || new_disable_ai != old_disable_ai
         {
             old_base_keymap = new_base_keymap;
             old_vim_enabled = new_vim_enabled;
             old_helix_enabled = new_helix_enabled;
+            old_disable_ai = new_disable_ai;
 
             base_keymap_tx.unbounded_send(()).unwrap();
         }
@@ -2058,7 +2229,7 @@ fn reload_keymaps(cx: &mut App, mut user_key_bindings: Vec<KeyBinding>) {
     for key_binding in &mut user_key_bindings {
         key_binding.set_meta(KeybindSource::User.meta());
     }
-    cx.bind_keys(user_key_bindings);
+    cx.bind_keys(filter_disabled_ai_bindings(user_key_bindings, cx));
 
     let menus = app_menus(cx);
     cx.set_menus(menus);
@@ -2078,19 +2249,64 @@ pub fn load_default_keymap(cx: &mut App) {
         return;
     }
 
-    cx.bind_keys(
+    cx.bind_keys(filter_disabled_ai_bindings(
         KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, Some(KeybindSource::Default), cx).unwrap(),
-    );
+        cx,
+    ));
 
     if let Some(asset_path) = base_keymap.asset_path() {
-        cx.bind_keys(KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap());
+        cx.bind_keys(filter_disabled_ai_bindings(
+            KeymapFile::load_asset(asset_path, Some(KeybindSource::Base), cx).unwrap(),
+            cx,
+        ));
     }
 
     if VimModeSetting::get_global(cx).0 || vim_mode_setting::HelixModeSetting::get_global(cx).0 {
-        cx.bind_keys(
+        cx.bind_keys(filter_disabled_ai_bindings(
             KeymapFile::load_asset(VIM_KEYMAP_PATH, Some(KeybindSource::Vim), cx).unwrap(),
-        );
+            cx,
+        ));
     }
+
+    cx.bind_keys(
+        KeymapFile::load_asset(
+            SPECIFIC_OVERRIDES_KEYMAP_PATH,
+            Some(KeybindSource::Default),
+            cx,
+        )
+        .unwrap(),
+    );
+}
+
+/// Namespaces of actions that are part of an AI feature. When the user opts out
+/// of AI via the `disable_ai` setting, bindings to these actions are dropped so
+/// that lower-precedence editor defaults (e.g. `editor::NewlineBelow` for
+/// `ctrl-enter`) can fire instead of being shadowed by an action whose handler
+/// silently no-ops.
+const AI_ACTION_NAMESPACES: &[&str] = &[
+    "acp::",
+    "agent::",
+    "assistant::",
+    "edit_prediction::",
+    "inline_assistant::",
+    "zeta::",
+];
+
+fn is_ai_keybinding(binding: &KeyBinding) -> bool {
+    let name = binding.action().name();
+    AI_ACTION_NAMESPACES
+        .iter()
+        .any(|namespace| name.starts_with(namespace))
+}
+
+fn filter_disabled_ai_bindings(bindings: Vec<KeyBinding>, cx: &App) -> Vec<KeyBinding> {
+    if !DisableAiSettings::get_global(cx).disable_ai {
+        return bindings;
+    }
+    bindings
+        .into_iter()
+        .filter(|binding| !is_ai_keybinding(binding))
+        .collect()
 }
 
 pub fn open_new_ssh_project_from_project(
@@ -2327,12 +2543,12 @@ fn open_settings_file(
     cx: &mut Context<Workspace>,
 ) {
     cx.spawn_in(window, async move |workspace, cx| {
-        let (worktree_creation_task, settings_open_task) = workspace
+        workspace
             .update_in(cx, |workspace, window, cx| {
                 workspace.with_local_or_wsl_workspace(window, cx, move |workspace, window, cx| {
                     let project = workspace.project().clone();
 
-                    let worktree_creation_task = cx.spawn_in(window, async move |_, cx| {
+                    cx.spawn_in(window, async move |workspace, cx| {
                         let config_dir = project
                             .update(cx, |project, cx| {
                                 project.try_windows_path_to_wsl(paths::config_dir().as_path(), cx)
@@ -2347,20 +2563,23 @@ fn open_settings_file(
                         // drag and drop from OS) still have their worktrees
                         // released on file close, causing LSP servers'
                         // restarts.
-                        project
+                        let (_worktree, _) = project
                             .update(cx, |project, cx| {
                                 project.find_or_create_worktree(&config_dir, false, cx)
                             })
-                            .await
-                    });
-                    let settings_open_task =
-                        create_and_open_local_file(abs_path, window, cx, default_content);
-                    (worktree_creation_task, settings_open_task)
+                            .await?;
+
+                        workspace
+                            .update_in(cx, |_, window, cx| {
+                                create_and_open_local_file(abs_path, window, cx, default_content)
+                            })?
+                            .await?;
+                        anyhow::Ok(())
+                    })
                 })
             })?
+            .await?
             .await?;
-        let _ = worktree_creation_task.await?;
-        let _ = settings_open_task.await?;
         anyhow::Ok(())
     })
     .detach_and_log_err(cx);
@@ -4116,7 +4335,7 @@ mod tests {
         let (editor_1, buffer) = workspace.update_in(cx, |_, window, cx| {
             pane_1.update(cx, |pane_1, cx| {
                 let editor = pane_1.active_item().unwrap().downcast::<Editor>().unwrap();
-                assert_eq!(editor.project_path(cx), Some(file1.clone()));
+                assert_eq!(editor.read(cx).active_project_path(cx), Some(file1.clone()));
                 let buffer = editor.update(cx, |editor, cx| {
                     editor.insert("dirt", window, cx);
                     editor.buffer().downgrade()
@@ -4672,7 +4891,7 @@ mod tests {
                     let scroll_position = editor_ref.scroll_position(cx);
 
                     (
-                        editor_ref.project_path(cx).unwrap(),
+                        editor_ref.active_project_path(cx).unwrap(),
                         selections[0].start,
                         scroll_position.y,
                     )
@@ -5190,10 +5409,10 @@ mod tests {
                 "recent_projects",
                 "remote_debug",
                 "repl",
-                "rules_library",
                 "search",
                 "settings_editor",
                 "settings_profile_selector",
+                "skill_creator",
                 "snippets",
                 "stash_picker",
                 "svg",
@@ -5202,6 +5421,7 @@ mod tests {
                 "task",
                 "terminal",
                 "terminal_panel",
+                "text_finder",
                 "theme",
                 "theme_selector",
                 "toast",
@@ -5411,7 +5631,6 @@ mod tests {
             );
             language_models::init(app_state.user_store.clone(), app_state.client.clone(), cx);
             web_search::init(cx);
-            git_graph::init(cx);
             web_search_providers::init(app_state.client.clone(), app_state.user_store.clone(), cx);
             let prompt_builder = PromptBuilder::load(app_state.fs.clone(), false, cx);
             project::AgentRegistryStore::init_global(
@@ -5625,6 +5844,67 @@ mod tests {
         cx.run_until_parked();
 
         // If this panics, the test has failed
+    }
+
+    #[gpui::test]
+    async fn test_disable_ai_filters_keybindings(cx: &mut gpui::TestAppContext) {
+        let _app_state = init_keymap_test(cx);
+
+        // With AI enabled, the default keymap should include the assistant
+        // bindings that intercept e.g. ctrl-enter in the editor.
+        cx.update(load_default_keymap);
+        cx.update(|cx| {
+            let keymap = cx.key_bindings();
+            let keymap = keymap.borrow();
+            let has_ai_binding = keymap.bindings().any(|binding| is_ai_keybinding(binding));
+            assert!(
+                has_ai_binding,
+                "expected AI-namespaced bindings in the default keymap before disabling AI"
+            );
+        });
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |settings_store, cx| {
+                settings_store.update_user_settings(cx, |settings| {
+                    settings.project.disable_ai = Some(SaturatingBool(true));
+                });
+            });
+        });
+
+        // The default keymap should drop every AI-namespaced binding so that
+        // lower-precedence editor defaults can run instead.
+        cx.update(|cx| {
+            cx.clear_key_bindings();
+            load_default_keymap(cx);
+        });
+        cx.update(|cx| {
+            let keymap = cx.key_bindings();
+            let keymap = keymap.borrow();
+            if let Some(binding) = keymap.bindings().find(|b| is_ai_keybinding(b)) {
+                panic!(
+                    "expected no AI-namespaced bindings after disabling AI, but found `{}`",
+                    binding.action().name()
+                );
+            }
+        });
+
+        // User-defined bindings to AI actions should also be filtered.
+        let user_binding = KeyBinding::new(
+            "ctrl-enter",
+            zed_actions::assistant::InlineAssist { prompt: None },
+            None,
+        );
+        cx.update(|cx| reload_keymaps(cx, vec![user_binding]));
+        cx.update(|cx| {
+            let keymap = cx.key_bindings();
+            let keymap = keymap.borrow();
+            if let Some(binding) = keymap.bindings().find(|b| is_ai_keybinding(b)) {
+                panic!(
+                    "expected user binding `{}` to be filtered when AI is disabled",
+                    binding.action().name()
+                );
+            }
+        });
     }
 
     #[gpui::test]
@@ -6389,6 +6669,145 @@ mod tests {
                     vec![ProjectGroupKey::new(None, PathList::new(&[dir3]))]
                 );
                 assert_eq!(mw.workspaces().count(), 1);
+            })
+            .unwrap();
+    }
+
+    #[gpui::test]
+    async fn test_quit_preserves_focused_workspace_for_restore(cx: &mut TestAppContext) {
+        use session::Session;
+        use workspace::{OpenMode, Workspace};
+
+        let app_state = init_test(cx);
+        cx.update(init);
+
+        let dir1 = path!("/dir1");
+        let dir2 = path!("/dir2");
+
+        let fs = app_state.fs.clone();
+        let fake_fs = fs.as_fake();
+        fake_fs.insert_tree(dir1, json!({})).await;
+        fake_fs.insert_tree(dir2, json!({})).await;
+
+        let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+
+        // Window with two retained workspaces: dir1 added first, dir2 second.
+        let workspace::OpenResult { window, .. } = cx
+            .update(|cx| {
+                Workspace::new_local(
+                    vec![dir1.into()],
+                    app_state.clone(),
+                    None,
+                    None,
+                    None,
+                    OpenMode::Activate,
+                    cx,
+                )
+            })
+            .await
+            .expect("failed to open first workspace");
+
+        window
+            .update(cx, |multi_workspace, _, cx| {
+                multi_workspace.open_sidebar(cx);
+            })
+            .unwrap();
+
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.open_project(vec![dir2.into()], OpenMode::Activate, window, cx)
+            })
+            .unwrap()
+            .await
+            .expect("failed to open second workspace");
+        cx.run_until_parked();
+
+        // Focus dir1 (the first workspace). dir2 was activated last when it was
+        // opened and is iterated last by the quit-time close-prompt loop, so
+        // without the fix the persisted active workspace gets clobbered to dir2.
+        window
+            .update(cx, |multi_workspace, window, cx| {
+                let workspace = multi_workspace.workspaces().next().unwrap().clone();
+                multi_workspace.activate(workspace, None, window, cx);
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .read_with(cx, |mw, cx| {
+                assert!(
+                    mw.workspace()
+                        .read(cx)
+                        .root_paths(cx)
+                        .iter()
+                        .any(|p| p.as_ref() == Path::new(dir1)),
+                    "dir1 should be the focused workspace before quitting"
+                );
+            })
+            .unwrap();
+
+        // Quit. With no dirty items there are no save prompts, so the quit flow
+        // runs the prepare_to_close loop (which activates every workspace in
+        // turn to surface prompts) and then flushes serialization. cx.quit() is
+        // a no-op in tests, so the window stays around for inspection.
+        cx.dispatch_action(*window, Quit);
+        cx.run_until_parked();
+
+        // The fix re-activates the originally-focused workspace after the loop,
+        // so the window must still be focused on dir1, not dir2.
+        window
+            .read_with(cx, |mw, cx| {
+                let active = mw.workspace().read(cx).root_paths(cx);
+                assert!(
+                    active.iter().any(|p| p.as_ref() == Path::new(dir1)),
+                    "quitting must not change which workspace is focused"
+                );
+                assert!(
+                    !active.iter().any(|p| p.as_ref() == Path::new(dir2)),
+                    "dir2 must not become the focused workspace after quitting"
+                );
+            })
+            .unwrap();
+
+        // Simulate a fresh launch and verify dir1 is restored as the active
+        // workspace rather than dir2 (or an empty window).
+        window
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _cx| {
+                app_session
+                    .replace_session_for_test(Session::test_with_old_session(session_id.clone()));
+            });
+        });
+
+        let mut async_cx = cx.to_async();
+        crate::restore_or_create_workspace(app_state.clone(), &mut async_cx)
+            .await
+            .expect("failed to restore workspaces");
+        cx.run_until_parked();
+
+        let restored_windows: Vec<WindowHandle<MultiWorkspace>> = cx.read(|cx| {
+            cx.windows()
+                .into_iter()
+                .filter_map(|window| window.downcast::<MultiWorkspace>())
+                .collect()
+        });
+        assert_eq!(restored_windows.len(), 1);
+
+        restored_windows[0]
+            .read_with(cx, |mw, cx| {
+                let active = mw.workspace().read(cx).root_paths(cx);
+                assert!(
+                    active.iter().any(|p| p.as_ref() == Path::new(dir1)),
+                    "the focused workspace (dir1) must be restored as active"
+                );
+                assert!(
+                    !active.iter().any(|p| p.as_ref() == Path::new(dir2)),
+                    "dir2 must not be restored as the active workspace"
+                );
             })
             .unwrap();
     }

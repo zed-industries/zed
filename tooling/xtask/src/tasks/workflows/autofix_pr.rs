@@ -2,7 +2,10 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, FluentBuilder, NamedJob, RepositoryTarget, TokenPermissions, named, use_clang},
+    steps::{
+        self, CommonPermissionSets, DownloadArtifactStep, FluentBuilder, IfNoFilesFound, NamedJob,
+        RepositoryTarget, TokenPermissions, UploadArtifactStep, ZippyGitIdentity, named, use_clang,
+    },
     vars::{self, StepOutput, WorkflowInput},
 };
 
@@ -12,6 +15,7 @@ pub fn autofix_pr() -> Workflow {
     let run_autofix = run_autofix(&pr_number, &run_clippy);
     let commit_changes = commit_changes(&pr_number, &run_autofix);
     named::workflow()
+        .with_minimal_permissions()
         .run_name(format!("autofix PR #{pr_number}"))
         .on(Event::default().workflow_dispatch(
             WorkflowDispatch::default()
@@ -31,26 +35,14 @@ pub fn autofix_pr() -> Workflow {
 const PATCH_ARTIFACT_NAME: &str = "autofix-patch";
 const PATCH_FILE_PATH: &str = "autofix.patch";
 
-fn upload_patch_artifact() -> Step<Use> {
-    Step::new(format!("upload artifact {}", PATCH_ARTIFACT_NAME))
-        .uses(
-            "actions",
-            "upload-artifact",
-            "330a01c490aca151604b8cf639adc76d48f6c5d4", // v5
-        )
-        .add_with(("name", PATCH_ARTIFACT_NAME))
-        .add_with(("path", PATCH_FILE_PATH))
-        .add_with(("if-no-files-found", "ignore"))
-        .add_with(("retention-days", "1"))
+fn upload_patch_artifact() -> UploadArtifactStep {
+    steps::upload_artifact(PATCH_ARTIFACT_NAME, PATCH_FILE_PATH)
+        .if_no_files_found(IfNoFilesFound::Ignore)
+        .retention_days(1)
 }
 
-fn download_patch_artifact() -> Step<Use> {
-    named::uses(
-        "actions",
-        "download-artifact",
-        "018cc2cf5baa6db3ef3c5f8a56943fffe632ef53", // v6.0.0
-    )
-    .add_with(("name", PATCH_ARTIFACT_NAME))
+fn download_patch_artifact() -> DownloadArtifactStep {
+    steps::download_artifact().artifact_name(PATCH_ARTIFACT_NAME)
 }
 
 fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJob {
@@ -100,6 +92,11 @@ fn run_autofix(pr_number: &WorkflowInput, run_clippy: &WorkflowInput) -> NamedJo
     named::job(use_clang(
         Job::default()
             .runs_on(runners::LINUX_DEFAULT)
+            .permissions(
+                Permissions::default()
+                    .contents(Level::Read)
+                    .pull_requests(Level::Read),
+            )
             .outputs([(
                 "has_changes".to_owned(),
                 "${{ steps.create-patch.outputs.has_changes }}".to_owned(),
@@ -138,16 +135,7 @@ fn commit_changes(pr_number: &WorkflowInput, autofix_job: &NamedJob) -> NamedJob
             git commit -am "Autofix"
             git push
         "#})
-        .add_env(("GIT_COMMITTER_NAME", "Zed Zippy"))
-        .add_env((
-            "GIT_COMMITTER_EMAIL",
-            "234243425+zed-zippy[bot]@users.noreply.github.com",
-        ))
-        .add_env(("GIT_AUTHOR_NAME", "Zed Zippy"))
-        .add_env((
-            "GIT_AUTHOR_EMAIL",
-            "234243425+zed-zippy[bot]@users.noreply.github.com",
-        ))
+        .with_zippy_git_identity()
         .add_env(("GITHUB_TOKEN", token))
     }
 

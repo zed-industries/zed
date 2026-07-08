@@ -8,7 +8,7 @@ use super::{
 use anyhow::{Context as _, Result, anyhow};
 use collections::HashMap;
 use futures::{
-    FutureExt, SinkExt, Stream, StreamExt, TryFutureExt,
+    FutureExt, SinkExt, StreamExt, TryFutureExt,
     channel::{mpsc, oneshot},
     stream::BoxStream,
 };
@@ -278,11 +278,23 @@ impl Peer {
                     );
                     let response_channel =
                         response_channels.lock().as_mut()?.remove(&responding_to);
-                    let stream_response_channel = stream_response_channels
-                        .lock()
-                        .as_ref()?
-                        .get(&responding_to)
-                        .cloned();
+                    let terminal_stream_response = matches!(
+                        &incoming.payload,
+                        Some(proto::envelope::Payload::Error(_))
+                            | Some(proto::envelope::Payload::EndStream(_))
+                    );
+                    let stream_response_channel = if terminal_stream_response {
+                        stream_response_channels
+                            .lock()
+                            .as_mut()?
+                            .remove(&responding_to)
+                    } else {
+                        stream_response_channels
+                            .lock()
+                            .as_ref()?
+                            .get(&responding_to)
+                            .cloned()
+                    };
 
                     if let Some(tx) = response_channel {
                         let requester_resumed = oneshot::channel();
@@ -319,21 +331,15 @@ impl Peer {
                                 ?error,
                                 "incoming stream response: request future dropped",
                             );
+                            // The consumer has gone away, so drop the bookkeeping
+                            // for this stream rather than letting it accumulate
+                            // every subsequent message until a terminal frame.
+                            if let Some(channels) = stream_response_channels.lock().as_mut() {
+                                channels.remove(&responding_to);
+                            }
+                        } else {
+                            let _ = requester_resumed.1.await;
                         }
-
-                        tracing::debug!(
-                            %connection_id,
-                            message_id,
-                            responding_to,
-                            "incoming stream response: waiting to resume requester"
-                        );
-                        let _ = requester_resumed.1.await;
-                        tracing::debug!(
-                            %connection_id,
-                            message_id,
-                            responding_to,
-                            "incoming stream response: requester resumed"
-                        );
                     } else {
                         let message_type = proto::build_typed_envelope(
                             connection_id.into(),
@@ -484,55 +490,96 @@ impl Peer {
         &self,
         receiver_id: ConnectionId,
         request: T,
-    ) -> impl Future<Output = Result<impl Unpin + Stream<Item = Result<T::Response>>>> {
+    ) -> impl Future<Output = Result<BoxStream<'static, Result<T::Response>>>> {
+        let stream =
+            self.request_stream_dynamic(receiver_id, request.into_envelope(0, None, None), T::NAME);
+
+        async move {
+            Ok(stream
+                .await?
+                .map(|response| {
+                    T::Response::from_envelope(response?)
+                        .context("received response of the wrong type")
+                })
+                .boxed())
+        }
+    }
+
+    pub fn request_stream_dynamic(
+        &self,
+        receiver_id: ConnectionId,
+        mut envelope: proto::Envelope,
+        request_type: &'static str,
+    ) -> impl Future<Output = Result<BoxStream<'static, Result<proto::Envelope>>>> + use<> {
         let (tx, rx) = mpsc::unbounded();
         let send = self.connection_state(receiver_id).and_then(|connection| {
             let message_id = connection.next_message_id.fetch_add(1, SeqCst);
+            envelope.id = message_id;
             let stream_response_channels = connection.stream_response_channels.clone();
             stream_response_channels
                 .lock()
                 .as_mut()
                 .context("connection was closed")?
                 .insert(message_id, tx);
-            connection
+            if let Err(error) = connection
                 .outgoing_tx
-                .unbounded_send(Message::Envelope(
-                    request.into_envelope(message_id, None, None),
-                ))
-                .context("connection was closed")?;
+                .unbounded_send(Message::Envelope(envelope))
+            {
+                if let Some(channels) = stream_response_channels.lock().as_mut() {
+                    channels.remove(&message_id);
+                }
+                return Err(error).context("connection was closed");
+            }
             Ok((message_id, stream_response_channels))
         });
 
         async move {
             let (message_id, stream_response_channels) = send?;
             let stream_response_channels = Arc::downgrade(&stream_response_channels);
-
-            Ok(rx.filter_map(move |(response, _barrier)| {
+            let cleanup_stream_response_channel = util::defer({
                 let stream_response_channels = stream_response_channels.clone();
-                future::ready(match response {
-                    Ok(response) => {
-                        if let Some(proto::envelope::Payload::Error(error)) = &response.payload {
-                            Some(Err(RpcError::from_proto(error, T::NAME)))
-                        } else if let Some(proto::envelope::Payload::EndStream(_)) =
-                            &response.payload
-                        {
-                            // Remove the transmitting end of the response channel to end the stream.
-                            if let Some(channels) = stream_response_channels.upgrade()
-                                && let Some(channels) = channels.lock().as_mut()
-                            {
-                                channels.remove(&message_id);
-                            }
-                            None
-                        } else {
-                            Some(
-                                T::Response::from_envelope(response)
-                                    .context("received response of the wrong type"),
-                            )
-                        }
+                move || {
+                    if let Some(channels) = stream_response_channels.upgrade()
+                        && let Some(channels) = channels.lock().as_mut()
+                    {
+                        channels.remove(&message_id);
                     }
-                    Err(error) => Some(Err(error)),
+                }
+            });
+
+            Ok(rx
+                .filter_map(move |(response, _barrier)| {
+                    let _keep_cleanup_guard_alive = &cleanup_stream_response_channel;
+                    let stream_response_channels = stream_response_channels.clone();
+                    future::ready(match response {
+                        Ok(response) => {
+                            if let Some(proto::envelope::Payload::Error(error)) = &response.payload
+                            {
+                                // Remove the transmitting end of the response channel to end the stream.
+                                if let Some(channels) = stream_response_channels.upgrade()
+                                    && let Some(channels) = channels.lock().as_mut()
+                                {
+                                    channels.remove(&message_id);
+                                }
+                                Some(Err(RpcError::from_proto(error, request_type)))
+                            } else if let Some(proto::envelope::Payload::EndStream(_)) =
+                                &response.payload
+                            {
+                                // Remove the transmitting end of the response channel to end the stream.
+                                if let Some(channels) = stream_response_channels.upgrade()
+                                    && let Some(channels) = channels.lock().as_mut()
+                                {
+                                    channels.remove(&message_id);
+                                }
+                                None
+                            } else {
+                                Some(Ok(response))
+                            }
+                        }
+                        Err(error) => Some(Err(error)),
+                    })
                 })
-            }))
+                .boxed())
         }
     }
 
@@ -660,6 +707,13 @@ impl Peer {
             .get(&connection_id)
             .with_context(|| format!("no such connection: {connection_id}"))?;
         Ok(connection.clone())
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn pending_stream_request_count(&self, connection_id: ConnectionId) -> Option<usize> {
+        let connection = self.connection_state(connection_id).ok()?;
+        let channels = connection.stream_response_channels.lock();
+        Some(channels.as_ref()?.len())
     }
 }
 
@@ -990,6 +1044,268 @@ mod tests {
                 "response 2".to_string()
             ]
         );
+    }
+
+    #[gpui::test(iterations = 50)]
+    async fn test_request_stream(cx: &mut TestAppContext) {
+        init_logger();
+
+        let executor = cx.executor();
+        let server = Peer::new(0);
+        let client = Peer::new(0);
+
+        let (client_to_server_conn, server_to_client_conn, _kill) =
+            Connection::in_memory(executor.clone());
+        let (client_to_server_conn_id, io_task1, mut client_incoming) =
+            client.add_test_connection(client_to_server_conn, executor.clone());
+        let (_, io_task2, mut server_incoming) =
+            server.add_test_connection(server_to_client_conn, executor.clone());
+
+        executor.spawn(io_task1).detach();
+        executor.spawn(io_task2).detach();
+        executor
+            .spawn(async move { while client_incoming.next().await.is_some() {} })
+            .detach();
+
+        executor
+            .spawn({
+                let server = server.clone();
+                async move {
+                    let request = server_incoming
+                        .next()
+                        .await
+                        .unwrap()
+                        .into_any()
+                        .downcast::<TypedEnvelope<proto::Test>>()
+                        .unwrap();
+                    let receipt = request.receipt();
+                    server.respond(receipt, proto::Test { id: 1 }).unwrap();
+                    server.respond(receipt, proto::Test { id: 2 }).unwrap();
+                    server.respond(receipt, proto::Test { id: 3 }).unwrap();
+                    server.end_stream(receipt).unwrap();
+
+                    // Prevent the connection from being dropped.
+                    server_incoming.next().await;
+                }
+            })
+            .detach();
+
+        let mut stream = client
+            .request_stream(client_to_server_conn_id, proto::Test { id: 0 })
+            .await
+            .unwrap();
+
+        let mut received = Vec::new();
+        while let Some(item) = stream.next().await {
+            received.push(item.unwrap());
+        }
+
+        assert_eq!(
+            received,
+            vec![
+                proto::Test { id: 1 },
+                proto::Test { id: 2 },
+                proto::Test { id: 3 },
+            ]
+        );
+        assert_eq!(
+            client.pending_stream_request_count(client_to_server_conn_id),
+            Some(0)
+        );
+    }
+
+    #[gpui::test]
+    async fn test_request_stream_send_failure_cleans_up_response_channel(cx: &mut TestAppContext) {
+        init_logger();
+
+        let executor = cx.executor();
+        let client = Peer::new(0);
+
+        let (client_to_server_conn, _server_to_client_conn, _kill) =
+            Connection::in_memory(executor.clone());
+        let (client_to_server_conn_id, io_task, _client_incoming) =
+            client.add_test_connection(client_to_server_conn, executor.clone());
+
+        drop(io_task);
+
+        let result = client
+            .request_stream(client_to_server_conn_id, proto::Test { id: 0 })
+            .await;
+
+        assert!(
+            result.is_err(),
+            "stream request should fail when the connection write task has gone away"
+        );
+        assert_eq!(
+            client.pending_stream_request_count(client_to_server_conn_id),
+            Some(0),
+            "failed stream request should not leave response channel bookkeeping behind"
+        );
+    }
+
+    #[gpui::test(iterations = 50)]
+    async fn test_request_stream_terminates_on_error(cx: &mut TestAppContext) {
+        init_logger();
+
+        let executor = cx.executor();
+        let server = Peer::new(0);
+        let client = Peer::new(0);
+
+        let (client_to_server_conn, server_to_client_conn, _kill) =
+            Connection::in_memory(executor.clone());
+        let (client_to_server_conn_id, io_task1, mut client_incoming) =
+            client.add_test_connection(client_to_server_conn, executor.clone());
+        let (_, io_task2, mut server_incoming) =
+            server.add_test_connection(server_to_client_conn, executor.clone());
+
+        executor.spawn(io_task1).detach();
+        executor.spawn(io_task2).detach();
+        executor
+            .spawn(async move { while client_incoming.next().await.is_some() {} })
+            .detach();
+
+        executor
+            .spawn({
+                let server = server.clone();
+                async move {
+                    let request = server_incoming
+                        .next()
+                        .await
+                        .unwrap()
+                        .into_any()
+                        .downcast::<TypedEnvelope<proto::Test>>()
+                        .unwrap();
+                    let receipt = request.receipt();
+                    server.respond(receipt, proto::Test { id: 1 }).unwrap();
+                    // Send an Error without a trailing EndStream. The Error alone
+                    // should be treated as a terminal stream response.
+                    server
+                        .respond_with_error(
+                            receipt,
+                            ErrorCode::Internal.message("boom".to_string()).to_proto(),
+                        )
+                        .unwrap();
+
+                    // Prevent the connection from being dropped.
+                    server_incoming.next().await;
+                }
+            })
+            .detach();
+
+        let mut stream = client
+            .request_stream(client_to_server_conn_id, proto::Test { id: 0 })
+            .await
+            .unwrap();
+
+        assert_eq!(stream.next().await.unwrap().unwrap(), proto::Test { id: 1 });
+
+        let error = stream.next().await.unwrap().unwrap_err();
+        assert!(
+            format!("{error}").contains("boom"),
+            "expected error to surface server message, got: {error}"
+        );
+
+        // The error alone (without an EndStream) should terminate the stream.
+        assert!(stream.next().await.is_none());
+        assert_eq!(
+            client.pending_stream_request_count(client_to_server_conn_id),
+            Some(0)
+        );
+    }
+
+    #[gpui::test(iterations = 50)]
+    async fn test_dropping_stream_request_before_completion(cx: &mut TestAppContext) {
+        init_logger();
+
+        let executor = cx.executor();
+        let server = Peer::new(0);
+        let client = Peer::new(0);
+
+        let (client_to_server_conn, server_to_client_conn, _kill) =
+            Connection::in_memory(executor.clone());
+        let (client_to_server_conn_id, io_task1, mut client_incoming) =
+            client.add_test_connection(client_to_server_conn, executor.clone());
+        let (_, io_task2, mut server_incoming) =
+            server.add_test_connection(server_to_client_conn, executor.clone());
+
+        executor.spawn(io_task1).detach();
+        executor.spawn(io_task2).detach();
+        executor
+            .spawn(async move { while client_incoming.next().await.is_some() {} })
+            .detach();
+
+        let (drop_signal_tx, drop_signal_rx) = oneshot::channel::<()>();
+        let server_task = executor.spawn({
+            let server = server.clone();
+            async move {
+                let request = server_incoming
+                    .next()
+                    .await
+                    .unwrap()
+                    .into_any()
+                    .downcast::<TypedEnvelope<proto::Test>>()
+                    .unwrap();
+                let receipt = request.receipt();
+                server.respond(receipt, proto::Test { id: 1 }).unwrap();
+
+                // Wait until the consumer has dropped the stream.
+                drop_signal_rx.await.ok();
+
+                // Send a non-terminal response after the consumer is gone. The
+                // peer should detect that the receiver has been dropped and clean
+                // up its bookkeeping. Crucially, we do NOT send EndStream here
+                // because that would clean up via the terminal-response path and
+                // mask the bug.
+                server.respond(receipt, proto::Test { id: 2 }).unwrap();
+
+                // A Ping/Ack round-trip after the response acts as a sync
+                // barrier: because messages over the in-memory connection are
+                // delivered in order, by the time the client observes the Ack,
+                // it has already processed the dropped response above.
+                let ping = server_incoming
+                    .next()
+                    .await
+                    .unwrap()
+                    .into_any()
+                    .downcast::<TypedEnvelope<proto::Ping>>()
+                    .unwrap();
+                server.respond(ping.receipt(), proto::Ack {}).unwrap();
+
+                // Prevent the connection from being dropped.
+                server_incoming.next().await;
+            }
+        });
+
+        let mut stream = client
+            .request_stream(client_to_server_conn_id, proto::Test { id: 0 })
+            .await
+            .unwrap();
+
+        assert_eq!(stream.next().await.unwrap().unwrap(), proto::Test { id: 1 });
+
+        // The stream is mid-flight, so the channel should be tracked.
+        assert_eq!(
+            client.pending_stream_request_count(client_to_server_conn_id),
+            Some(1)
+        );
+
+        drop(stream);
+        drop_signal_tx.send(()).ok();
+
+        // Synchronization barrier: once this Ack arrives, the read loop has
+        // already processed the orphaned stream response that came before it.
+        client
+            .request(client_to_server_conn_id, proto::Ping {})
+            .await
+            .unwrap();
+
+        assert_eq!(
+            client.pending_stream_request_count(client_to_server_conn_id),
+            Some(0),
+            "stream channel should be removed once the consumer has dropped the stream"
+        );
+
+        drop(server_task);
     }
 
     #[gpui::test(iterations = 50)]
