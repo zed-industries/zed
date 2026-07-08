@@ -266,15 +266,63 @@ struct BackgroundScannerState {
     watched_dir_abs_paths_by_entry_id: HashMap<ProjectEntryId, Arc<Path>>,
     path_prefixes_to_scan: HashSet<Arc<RelPath>>,
     paths_to_scan: HashSet<Arc<RelPath>>,
-    /// The ids of all of the entries that were removed from the snapshot
-    /// as part of the current update. These entry ids may be re-used
-    /// if the same inode is discovered at a new path, or if the given
-    /// path is re-created after being deleted.
-    removed_entries: HashMap<u64, Entry>,
-    removed_entries_by_path: HashMap<Arc<RelPath>, Entry>,
+    removed_entries: RemovedEntries,
     changed_paths: Vec<Arc<RelPath>>,
     prev_snapshot: Snapshot,
     scanning_enabled: bool,
+}
+
+/// The entries that were removed from the snapshot as part of the current
+/// update. Their entry ids may be re-used if the same inode is discovered
+/// at a new path, or if the given path is re-created after being deleted.
+///
+/// Symlink aliases inside the worktree share their inode (and usually mtime)
+/// with the symlink target, so an inode may correspond to several entries.
+/// The path index allows an exact match to take precedence over the
+/// inode-based rename heuristics in that case.
+#[derive(Default)]
+struct RemovedEntries {
+    by_inode: HashMap<u64, Entry>,
+    by_path: HashMap<Arc<RelPath>, Entry>,
+}
+
+impl RemovedEntries {
+    fn insert(&mut self, entry: &Entry) {
+        self.by_path.insert(entry.path.clone(), entry.clone());
+        match self.by_inode.entry(entry.inode) {
+            hash_map::Entry::Occupied(mut o) => {
+                if entry.id > o.get().id {
+                    o.insert(entry.clone());
+                }
+            }
+            hash_map::Entry::Vacant(v) => {
+                v.insert(entry.clone());
+            }
+        }
+    }
+
+    fn take_by_path(&mut self, path: &RelPath, inode: u64) -> Option<Entry> {
+        if self.by_path.get(path)?.inode != inode {
+            return None;
+        }
+        let removed = self.by_path.remove(path)?;
+        if let hash_map::Entry::Occupied(o) = self.by_inode.entry(removed.inode)
+            && o.get().id == removed.id
+        {
+            o.remove();
+        }
+        Some(removed)
+    }
+
+    fn take_by_inode(&mut self, inode: u64) -> Option<Entry> {
+        let removed = self.by_inode.remove(&inode)?;
+        if let hash_map::Entry::Occupied(o) = self.by_path.entry(removed.path.clone())
+            && o.get().id == removed.id
+        {
+            o.remove();
+        }
+        Some(removed)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1191,8 +1239,7 @@ impl LocalWorktree {
                         scanning_enabled,
                         path_prefixes_to_scan: Default::default(),
                         paths_to_scan: Default::default(),
-                        removed_entries: Default::default(),
-                        removed_entries_by_path: Default::default(),
+                        removed_entries: RemovedEntries::default(),
                         changed_paths: Default::default(),
                     }),
                     phase: BackgroundScannerPhase::InitialScan,
@@ -3034,44 +3081,12 @@ impl BackgroundScannerState {
         }
     }
 
-    fn removed_entry_id_for_path(&mut self, path: &RelPath, inode: u64) -> Option<ProjectEntryId> {
-        let removed_entry = self.removed_entries_by_path.remove(path)?;
-        if removed_entry.inode != inode {
-            return None;
-        }
-        if self
-            .removed_entries
-            .get(&removed_entry.inode)
-            .map(|entry| entry.id)
-            == Some(removed_entry.id)
-        {
-            self.removed_entries.remove(&removed_entry.inode);
-        }
-        Some(removed_entry.id)
-    }
-
     fn reuse_entry_id(&mut self, entry: &mut Entry) {
-        if let Some(entry_id) = self.removed_entry_id_for_path(&entry.path, entry.inode) {
-            entry.id = entry_id;
+        let Some(mtime) = entry.mtime else {
             return;
-        }
-
-        if let Some(mtime) = entry.mtime {
-            // If an entry with the same inode was removed from the worktree during this scan,
-            // then it *might* represent the same file or directory. But the OS might also have
-            // re-used the inode for a completely different file or directory.
-            //
-            // Conditionally reuse the old entry's id:
-            // * if the mtime is the same, the file was probably been renamed.
-            // * if the path is the same, the file may just have been updated
-            if let Some(removed_entry) = self.removed_entries.remove(&entry.inode) {
-                if removed_entry.mtime == Some(mtime) || removed_entry.path == entry.path {
-                    self.removed_entries_by_path.remove(&removed_entry.path);
-                    entry.id = removed_entry.id;
-                }
-            } else if let Some(existing_entry) = self.snapshot.entry_for_path(&entry.path) {
-                entry.id = existing_entry.id;
-            }
+        };
+        if let Some(entry_id) = self.reused_entry_id(&entry.path, entry.inode, mtime) {
+            entry.id = entry_id;
         }
     }
 
@@ -3081,8 +3096,18 @@ impl BackgroundScannerState {
         path: &RelPath,
         metadata: &fs::Metadata,
     ) -> ProjectEntryId {
-        if let Some(entry_id) = self.removed_entry_id_for_path(path, metadata.inode) {
-            return entry_id;
+        self.reused_entry_id(path, metadata.inode, metadata.mtime)
+            .unwrap_or_else(|| ProjectEntryId::new(next_entry_id))
+    }
+
+    fn reused_entry_id(
+        &mut self,
+        path: &RelPath,
+        inode: u64,
+        mtime: MTime,
+    ) -> Option<ProjectEntryId> {
+        if let Some(removed_entry) = self.removed_entries.take_by_path(path, inode) {
+            return Some(removed_entry.id);
         }
 
         // If an entry with the same inode was removed from the worktree during this scan,
@@ -3092,15 +3117,12 @@ impl BackgroundScannerState {
         // Conditionally reuse the old entry's id:
         // * if the mtime is the same, the file was probably been renamed.
         // * if the path is the same, the file may just have been updated
-        if let Some(removed_entry) = self.removed_entries.remove(&metadata.inode) {
-            if removed_entry.mtime == Some(metadata.mtime) || *removed_entry.path == *path {
-                self.removed_entries_by_path.remove(&removed_entry.path);
-                return removed_entry.id;
-            }
-        } else if let Some(existing_entry) = self.snapshot.entry_for_path(path) {
-            return existing_entry.id;
+        if let Some(removed_entry) = self.removed_entries.take_by_inode(inode) {
+            (removed_entry.mtime == Some(mtime) || *removed_entry.path == *path)
+                .then_some(removed_entry.id)
+        } else {
+            Some(self.snapshot.entry_for_path(path)?.id)
         }
-        ProjectEntryId::new(next_entry_id)
     }
 
     async fn insert_entry(&mut self, entry: Entry, fs: &dyn Fs, watcher: &dyn Watcher) -> Entry {
@@ -3209,20 +3231,7 @@ impl BackgroundScannerState {
                 removed_dir_abs_paths.push(watch_path);
             }
 
-            self.removed_entries_by_path
-                .insert(entry.path.clone(), entry.clone());
-
-            match self.removed_entries.entry(entry.inode) {
-                hash_map::Entry::Occupied(mut e) => {
-                    let prev_removed_entry = e.get_mut();
-                    if entry.id > prev_removed_entry.id {
-                        *prev_removed_entry = entry.clone();
-                    }
-                }
-                hash_map::Entry::Vacant(e) => {
-                    e.insert(entry.clone());
-                }
-            }
+            self.removed_entries.insert(entry);
 
             if entry.path.file_name() == Some(GITIGNORE) {
                 let abs_parent_path = self.snapshot.absolutize(&entry.path.parent().unwrap());
@@ -4647,10 +4656,10 @@ impl BackgroundScanner {
         {
             let mut state = self.state.lock().await;
             state.snapshot.completed_scan_id = state.snapshot.scan_id;
-            for (_, entry) in mem::take(&mut state.removed_entries) {
+            let RemovedEntries { by_inode, by_path } = mem::take(&mut state.removed_entries);
+            for entry in by_inode.into_values().chain(by_path.into_values()) {
                 state.scanned_dirs.remove(&entry.id);
             }
-            state.removed_entries_by_path.clear();
         }
         self.send_status_update(false, SmallVec::new(), &relative_paths)
             .await;
