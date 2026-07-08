@@ -4,9 +4,11 @@ use gpui::{
     App, Context, DismissEvent, Entity, EventEmitter, ParentElement, Task, TaskExt, WeakEntity,
     Window,
 };
+use language::Buffer;
 use picker::{Picker, PickerDelegate};
 use project::{Project, ProjectPath, search::SearchResult};
-use text::Point;
+use std::ops::Range;
+use text::{Anchor, Point};
 use util::{ResultExt as _, paths::PathMatcher};
 use workspace::{
     Workspace,
@@ -19,6 +21,7 @@ use workspace::{
 use crate::SearchOptions;
 
 const MAX_TODO_MATCHES: usize = 200;
+const TODO_MARKER_COLUMN_WIDTH_REMS: f32 = 5.5;
 
 pub fn init(cx: &mut App) {
     cx.observe_new(
@@ -30,7 +33,8 @@ pub fn init(cx: &mut App) {
                 workspace.toggle_modal(window, cx, move |window, cx| {
                     let delegate =
                         TodoPickerDelegate::new(workspace_handle.clone(), project.clone());
-                    Picker::uniform_list(delegate, window, cx)
+                    let preview = picker_preview::editor_preview(project.clone(), window, cx);
+                    Picker::uniform_list_with_preview(delegate, preview, window, cx)
                 });
             });
         },
@@ -85,10 +89,13 @@ impl TodoMarker {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct TodoEntry {
     pub marker: TodoMarker,
     pub project_path: ProjectPath,
+    pub buffer: Entity<Buffer>,
+    pub anchor_range: Range<Anchor>,
+    pub range: Range<usize>,
     pub row: u32,
     pub column: u32,
     pub text: String,
@@ -98,6 +105,9 @@ impl TodoEntry {
     pub fn new(
         marker: TodoMarker,
         project_path: ProjectPath,
+        buffer: Entity<Buffer>,
+        anchor_range: Range<Anchor>,
+        range: Range<usize>,
         row: u32,
         column: u32,
         text: String,
@@ -105,6 +115,9 @@ impl TodoEntry {
         Self {
             marker,
             project_path,
+            buffer,
+            anchor_range,
+            range,
             row,
             column,
             text,
@@ -227,12 +240,7 @@ impl TodoPickerDelegate {
         }
     }
 
-    pub fn set_entries(
-        &mut self,
-        entries: Vec<TodoEntry>,
-        window: &mut Window,
-        cx: &mut Context<Picker<Self>>,
-    ) {
+    pub fn set_entries(&mut self, entries: Vec<TodoEntry>) {
         self.entries = entries;
         self.match_candidates = self
             .entries
@@ -240,8 +248,6 @@ impl TodoPickerDelegate {
             .enumerate()
             .map(|(id, entry)| StringMatchCandidate::new(id, &entry.candidate_text()))
             .collect();
-        self.filter(&self.query.clone(), window, cx);
-        cx.notify();
     }
 
     fn filter(&mut self, query: &str, window: &mut Window, cx: &mut Context<Picker<Self>>) {
@@ -300,13 +306,14 @@ impl TodoPickerDelegate {
             while let Ok(result) = search_results.rx.recv().await {
                 match result {
                     SearchResult::Buffer { buffer, ranges } => {
-                        let mut buffer_entries = buffer.read_with(cx, |buffer, cx| {
-                            todo_entries_for_buffer(&buffer, &ranges, cx)
+                        let mut buffer_entries = buffer.read_with(cx, |buffer_snapshot, cx| {
+                            todo_entries_for_buffer(&buffer, buffer_snapshot, &ranges, cx)
                         });
                         entries.append(&mut buffer_entries);
 
                         picker.update_in(cx, |picker, window, cx| {
-                            picker.delegate.set_entries(entries.clone(), window, cx);
+                            picker.delegate.set_entries(entries.clone());
+                            picker.refresh(window, cx);
                         })?;
                     }
                     SearchResult::LimitReached
@@ -338,11 +345,12 @@ fn todo_search_regex() -> String {
 }
 
 fn todo_entries_for_buffer(
-    buffer: &language::Buffer,
-    ranges: &[std::ops::Range<text::Anchor>],
+    buffer: &Entity<Buffer>,
+    buffer_snapshot: &Buffer,
+    ranges: &[Range<Anchor>],
     cx: &App,
 ) -> Vec<TodoEntry> {
-    let Some(file) = buffer.file() else {
+    let Some(file) = buffer_snapshot.file() else {
         return Vec::new();
     };
     let project_path = ProjectPath {
@@ -352,11 +360,13 @@ fn todo_entries_for_buffer(
     let mut entries = Vec::new();
 
     for range in ranges {
-        let start_offset: usize = buffer.summary_for_anchor(&range.start);
-        let point = buffer.offset_to_point(start_offset);
-        let line = buffer
+        let start_offset: usize = buffer_snapshot.summary_for_anchor(&range.start);
+        let end_offset: usize = buffer_snapshot.summary_for_anchor(&range.end);
+        let point = buffer_snapshot.offset_to_point(start_offset);
+        let line = buffer_snapshot
             .text_for_range(
-                Point::new(point.row, 0)..Point::new(point.row, buffer.line_len(point.row)),
+                Point::new(point.row, 0)
+                    ..Point::new(point.row, buffer_snapshot.line_len(point.row)),
             )
             .collect::<String>();
         let Some(parsed) = parse_todo_comment(&line) else {
@@ -366,6 +376,9 @@ fn todo_entries_for_buffer(
         entries.push(TodoEntry::new(
             parsed.marker,
             project_path.clone(),
+            buffer.clone(),
+            range.clone(),
+            start_offset..end_offset,
             point.row,
             parsed.column,
             parsed.text,
@@ -417,7 +430,6 @@ impl PickerDelegate for TodoPickerDelegate {
     ) -> Option<AnyElement> {
         let picker = cx.entity();
         let selected_marker = self.marker_filter;
-        let current_query = self.query.clone();
 
         Some(
             PopoverMenu::new("todo-marker-filter")
@@ -430,7 +442,6 @@ impl PickerDelegate for TodoPickerDelegate {
                 )
                 .menu(move |window, cx| {
                     let picker = picker.clone();
-                    let current_query = current_query.clone();
 
                     Some(ContextMenu::build(
                         window,
@@ -441,12 +452,10 @@ impl PickerDelegate for TodoPickerDelegate {
                                     .toggleable(IconPosition::End, selected_marker.is_none())
                                     .handler({
                                         let picker = picker.clone();
-                                        let current_query = current_query.clone();
                                         move |window, cx| {
                                             picker.update(cx, |picker, cx| {
                                                 picker.delegate.marker_filter = None;
-                                                picker.delegate.filter(&current_query, window, cx);
-                                                cx.notify();
+                                                picker.refresh(window, cx);
                                             });
                                         }
                                     }),
@@ -461,16 +470,10 @@ impl PickerDelegate for TodoPickerDelegate {
                                         )
                                         .handler({
                                             let picker = picker.clone();
-                                            let current_query = current_query.clone();
                                             move |window, cx| {
                                                 picker.update(cx, |picker, cx| {
                                                     picker.delegate.marker_filter = Some(marker);
-                                                    picker.delegate.filter(
-                                                        &current_query,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                    cx.notify();
+                                                    picker.refresh(window, cx);
                                                 });
                                             }
                                         }),
@@ -545,6 +548,21 @@ impl PickerDelegate for TodoPickerDelegate {
 
     fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
 
+    fn try_get_preview_data_for_match(&self, _cx: &App) -> Option<picker::PreviewUpdate> {
+        let entry = self
+            .matches
+            .get(self.selected_match_index)
+            .and_then(|string_match| self.entries.get(string_match.candidate_id))?;
+
+        Some(picker::PreviewUpdate::from_buffer(
+            entry.buffer.clone(),
+            picker::MatchLocation {
+                anchor_range: entry.anchor_range.clone(),
+                range: entry.range.clone(),
+            },
+        ))
+    }
+
     fn match_count(&self) -> usize {
         self.matches.len()
     }
@@ -589,26 +607,39 @@ impl PickerDelegate for TodoPickerDelegate {
                 .toggle_state(selected)
                 .child(
                     h_flex()
+                        .w_full()
+                        .min_w_0()
                         .gap_2()
                         .child(
-                            Label::new(entry.marker.as_str())
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
+                            h_flex()
+                                .w(rems(TODO_MARKER_COLUMN_WIDTH_REMS))
+                                .flex_none()
+                                .justify_end()
+                                .child(
+                                    Label::new(entry.marker.as_str())
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
                         )
                         .child(
-                            v_flex().child(Label::new(entry.text.clone())).child(
-                                h_flex()
-                                    .child(
-                                        Label::new(path.display(path_style).into_owned())
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(
-                                        Label::new(format!(":{}", entry.row + 1))
-                                            .size(LabelSize::Small)
-                                            .color(Color::Placeholder),
-                                    ),
-                            ),
+                            v_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .child(Label::new(entry.text.clone()))
+                                .child(
+                                    h_flex()
+                                        .min_w_0()
+                                        .child(
+                                            Label::new(path.display(path_style).into_owned())
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new(format!(":{}", entry.row + 1))
+                                                .size(LabelSize::Small)
+                                                .color(Color::Placeholder),
+                                        ),
+                                ),
                         ),
                 ),
         )
