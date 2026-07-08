@@ -1931,32 +1931,22 @@ impl LocalLspStore {
                 };
 
                 let Some(language_server) = language_server else {
-                    if trigger == FormatTrigger::Manual {
-                        zlog::info!(
-                            logger =>
-                            "No language server found to format buffer '{:?}'. Skipping",
-                            buffer_path_abs.as_path().to_string_lossy()
-                        );
-                    } else {
-                        zlog::debug!(
-                            logger =>
-                            "No language server found to format buffer '{:?}'. Skipping",
-                            buffer_path_abs.as_path().to_string_lossy()
-                        );
-                    }
+                    zlog::debug!(
+                        logger =>
+                        "No language server found to format buffer {buffer_path_abs:?}. Skipping",
+                    );
                     return Ok(());
                 };
 
                 zlog::trace!(
                     logger =>
-                    "Formatting buffer '{:?}' using language server '{:?}'",
-                    buffer_path_abs.as_path().to_string_lossy(),
+                    "Formatting buffer {buffer_path_abs:?} using language server {:?}",
                     language_server.name()
                 );
 
                 let edits = if let Some(ranges) = buffer.ranges.as_ref() {
                     zlog::trace!(logger => "formatting ranges");
-                    let range_result = Self::format_ranges_via_lsp(
+                    let range_edits = Self::format_ranges_via_lsp(
                         &lsp_store,
                         &buffer.handle,
                         ranges,
@@ -1965,15 +1955,15 @@ impl LocalLspStore {
                         &settings,
                         cx,
                     )
-                    .await;
+                    .await
+                    .context("Failed to format ranges via language server")?;
 
-                    match range_result {
-                        Ok(Some(edits)) => edits,
-                        Ok(None) => {
-                            if matches!(
-                                settings.format_on_save,
-                                FormatOnSave::ModificationsIfAvailable
-                            ) {
+                    match range_edits {
+                        Some(edits) => edits,
+                        None => {
+                            if trigger == FormatTrigger::Save
+                                && settings.format_on_save == FormatOnSave::ModificationsIfAvailable
+                            {
                                 zlog::debug!(
                                     logger =>
                                     "Falling back to full format - LSP does not support range formatting"
@@ -1989,37 +1979,12 @@ impl LocalLspStore {
                                 .await
                                 .context("failed to format via language server")?
                             } else {
-                                zlog::info!(
-                                    logger =>
-                                    "Skipping format - LSP does not support range formatting and format_on_save is not set to modifications_if_available"
-                                );
-                                Vec::new()
-                            }
-                        }
-                        Err(err) => {
-                            if matches!(
-                                settings.format_on_save,
-                                FormatOnSave::ModificationsIfAvailable
-                            ) {
                                 zlog::debug!(
                                     logger =>
-                                    "Falling back to full format - range formatting failed: {}",
-                                    err
+                                    "Skipping range format - language server {:?} does not support range formatting",
+                                    language_server.name()
                                 );
-                                Self::format_via_lsp(
-                                    &lsp_store,
-                                    &buffer.handle,
-                                    buffer_path_abs,
-                                    &language_server,
-                                    &settings,
-                                    cx,
-                                )
-                                .await
-                                .context("failed to format via language server")?
-                            } else {
-                                return Err(err.context(
-                                    "Failed to format ranges via language server",
-                                ));
+                                Vec::new()
                             }
                         }
                     }

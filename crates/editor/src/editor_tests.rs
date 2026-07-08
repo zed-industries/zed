@@ -14952,7 +14952,7 @@ async fn setup_range_format_test(
 }
 
 /// Like `setup_range_format_test`, but backs the buffer with a FakeFs git
-/// repository so that `GitStore::get_uncommitted_diff` returns a real diff.
+/// repository so that `GitStore::get_unstaged_diff` returns a real diff.
 /// `head_content` sets the HEAD base, `index_content` sets the staged base.
 /// The buffer starts empty; the caller must `editor.set_text(...)` to set the
 /// working-tree content (the diff recomputes from buffer changes).
@@ -15248,8 +15248,7 @@ async fn test_range_format_on_save_timeout(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_modifications_format_on_save(cx: &mut TestAppContext) {
-    let (project, editor, cx, fake_server) =
-        setup_range_format_test_with_git(cx, "", "").await;
+    let (project, editor, cx, fake_server) = setup_range_format_test_with_git(cx, "", "").await;
 
     update_test_language_settings(cx, &|settings| {
         settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
@@ -15297,21 +15296,29 @@ async fn test_modifications_format_on_save(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_modifications_format_no_changes(cx: &mut TestAppContext) {
+async fn test_modifications_format_skips_without_git_diff(cx: &mut TestAppContext) {
     let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
 
     update_test_language_settings(cx, &|settings| {
         settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
     });
 
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("one\ntwo\nthree\n", window, cx)
+    });
     assert!(
-        !cx.read(|cx| editor.is_dirty(cx)),
-        "editor should not be dirty before save"
+        cx.read(|cx| editor.is_dirty(cx)),
+        "editor should be dirty before save"
     );
 
-    let _no_format_handler = fake_server
+    let _no_range_format_handler = fake_server
         .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
-            panic!("rangeFormatting must not be called when no lines are modified");
+            panic!("rangeFormatting must not be called when no git diff is available");
+        })
+        .next();
+    let _no_format_handler = fake_server
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| async move {
+            panic!("full formatting must not be called for Modifications without a git diff");
         })
         .next();
 
@@ -15331,7 +15338,14 @@ async fn test_modifications_format_no_changes(cx: &mut TestAppContext) {
         .unwrap();
     save.await;
     cx.run_until_parked();
-    assert!(!cx.read(|cx| editor.is_dirty(cx)));
+    assert!(
+        !cx.read(|cx| editor.is_dirty(cx)),
+        "the buffer should be saved despite the skipped formatting"
+    );
+    assert_eq!(
+        editor.update(cx, |editor, cx| editor.text(cx)),
+        "one\ntwo\nthree\n"
+    );
 }
 
 #[gpui::test]
@@ -15339,9 +15353,22 @@ async fn test_modifications_format_lsp_no_range_support(cx: &mut TestAppContext)
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_file(path!("/file.rs"), Default::default()).await;
+    fs.insert_tree(
+        path!("/project"),
+        json!({
+            ".git": {},
+            "file.rs": "",
+        }),
+    )
+    .await;
 
-    let project = Project::test(fs, [path!("/").as_ref()], cx).await;
+    let head_content = "one\ntwo\nthree\n";
+    fs.set_head_and_index_for_repo(
+        std::path::Path::new(path!("/project/.git")),
+        &[("file.rs", head_content.to_string())],
+    );
+
+    let project = Project::test(fs, [path!("/project").as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
@@ -15359,7 +15386,13 @@ async fn test_modifications_format_lsp_no_range_support(cx: &mut TestAppContext)
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer(path!("/file.rs"), cx)
+            project.open_local_buffer(path!("/project/file.rs"), cx)
+        })
+        .await
+        .unwrap();
+    project
+        .update(cx, |project, cx| {
+            project.open_unstaged_diff(buffer.clone(), cx)
         })
         .await
         .unwrap();
@@ -15376,8 +15409,9 @@ async fn test_modifications_format_lsp_no_range_support(cx: &mut TestAppContext)
     });
 
     editor.update_in(cx, |editor, window, cx| {
-        editor.set_text("one\ntwo\nthree\n", window, cx)
+        editor.set_text("one\nTWO\nthree\n", window, cx)
     });
+    cx.run_until_parked();
     assert!(cx.read(|cx| editor.is_dirty(cx)));
 
     let _no_range_format_handler = fake_server
@@ -15410,14 +15444,13 @@ async fn test_modifications_format_lsp_no_range_support(cx: &mut TestAppContext)
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
     assert_eq!(
         editor.update(cx, |editor, cx| editor.text(cx)),
-        "one\ntwo\nthree\n"
+        "one\nTWO\nthree\n"
     );
 }
 
 #[gpui::test]
 async fn test_modifications_format_lsp_returns_empty_edits(cx: &mut TestAppContext) {
-    let (project, editor, cx, fake_server) =
-        setup_range_format_test_with_git(cx, "", "").await;
+    let (project, editor, cx, fake_server) = setup_range_format_test_with_git(cx, "", "").await;
 
     update_test_language_settings(cx, &|settings| {
         settings.defaults.format_on_save = Some(FormatOnSave::Modifications);
@@ -15600,7 +15633,8 @@ async fn test_modifications_format_range_excludes_staged_hunk(cx: &mut TestAppCo
     let captured_start_line_clone = captured_start_line.clone();
     let mut responded_rx =
         fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(move |params, _| {
-            captured_start_line_clone.store(params.range.start.line as usize, atomic::Ordering::SeqCst);
+            captured_start_line_clone
+                .store(params.range.start.line as usize, atomic::Ordering::SeqCst);
             async move { Ok(Some(Vec::new())) }
         });
 
@@ -15623,7 +15657,8 @@ async fn test_modifications_format_range_excludes_staged_hunk(cx: &mut TestAppCo
 
     let start_line = captured_start_line.load(atomic::Ordering::SeqCst);
     assert_ne!(
-        start_line, usize::MAX,
+        start_line,
+        usize::MAX,
         "expected at least one range formatting request"
     );
     assert_eq!(
@@ -15650,11 +15685,12 @@ async fn test_modifications_format_pure_unstaged_with_git(cx: &mut TestAppContex
 
     let request_count = Arc::new(AtomicUsize::new(0));
     let request_count_clone = request_count.clone();
-    let mut responded_rx =
-        fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_params, _| {
+    let mut responded_rx = fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(
+        move |_params, _| {
             request_count_clone.fetch_add(1, atomic::Ordering::SeqCst);
             async move { Ok(Some(Vec::new())) }
-        });
+        },
+    );
 
     let save = editor
         .update_in(cx, |editor, window, cx| {
@@ -15843,11 +15879,12 @@ async fn test_modifications_format_crlf_line_endings(cx: &mut TestAppContext) {
 
     let request_count = Arc::new(AtomicUsize::new(0));
     let request_count_clone = request_count.clone();
-    let mut responded_rx =
-        fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_params, _| {
+    let mut responded_rx = fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(
+        move |_params, _| {
             request_count_clone.fetch_add(1, atomic::Ordering::SeqCst);
             async move { Ok(Some(Vec::new())) }
-        });
+        },
+    );
 
     let save = editor
         .update_in(cx, |editor, window, cx| {
@@ -15892,11 +15929,12 @@ async fn test_modifications_format_merge_boundary_one_row_gap(cx: &mut TestAppCo
 
     let request_count = Arc::new(AtomicUsize::new(0));
     let request_count_clone = request_count.clone();
-    let mut responded_rx =
-        fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_params, _| {
+    let mut responded_rx = fake_server.set_request_handler::<lsp::request::RangeFormatting, _, _>(
+        move |_params, _| {
             request_count_clone.fetch_add(1, atomic::Ordering::SeqCst);
             async move { Ok(Some(Vec::new())) }
-        });
+        },
+    );
 
     let save = editor
         .update_in(cx, |editor, window, cx| {
@@ -15924,7 +15962,7 @@ async fn test_modifications_format_merge_boundary_one_row_gap(cx: &mut TestAppCo
 }
 
 #[gpui::test]
-async fn test_modifications_if_available_fallback_with_git(cx: &mut TestAppContext) {
+async fn test_modifications_if_available_empty_diff_skips_formatting(cx: &mut TestAppContext) {
     let head_content = "line0\nline1\nline2\n";
     let (project, editor, cx, fake_server) =
         setup_range_format_test_with_git(cx, head_content, head_content).await;
@@ -15941,6 +15979,60 @@ async fn test_modifications_if_available_fallback_with_git(cx: &mut TestAppConte
     let _no_range_format = fake_server
         .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
             panic!("range formatting must not be called when diff is empty");
+        })
+        .next();
+    let _no_format = fake_server
+        .set_request_handler::<lsp::request::Formatting, _, _>(move |_, _| async move {
+            panic!("full formatting must not be called when a diff is available but empty");
+        })
+        .next();
+
+    let save = editor
+        .update_in(cx, |editor, window, cx| {
+            editor.save(
+                SaveOptions {
+                    format: true,
+                    autosave: false,
+                    force_format: false,
+                },
+                project.clone(),
+                window,
+                cx,
+            )
+        })
+        .unwrap();
+    save.await;
+    cx.run_until_parked();
+    assert!(
+        !cx.read(|cx| editor.is_dirty(cx)),
+        "the buffer should be saved despite the skipped formatting"
+    );
+}
+
+#[gpui::test]
+async fn test_modifications_if_available_no_git_falls_back_to_full_format(cx: &mut TestAppContext) {
+    let (project, editor, cx, fake_server) = setup_range_format_test_with_capabilities(
+        cx,
+        lsp::ServerCapabilities {
+            document_range_formatting_provider: Some(lsp::OneOf::Left(true)),
+            document_formatting_provider: Some(lsp::OneOf::Left(true)),
+            ..lsp::ServerCapabilities::default()
+        },
+    )
+    .await;
+
+    update_test_language_settings(cx, &|settings| {
+        settings.defaults.format_on_save = Some(FormatOnSave::ModificationsIfAvailable);
+    });
+
+    editor.update_in(cx, |editor, window, cx| {
+        editor.set_text("one\ntwo\nthree\n", window, cx)
+    });
+    assert!(cx.read(|cx| editor.is_dirty(cx)));
+
+    let _no_range_format = fake_server
+        .set_request_handler::<lsp::request::RangeFormatting, _, _>(move |_, _| async move {
+            panic!("range formatting must not be called when no git diff is available");
         })
         .next();
 
@@ -15971,7 +16063,7 @@ async fn test_modifications_if_available_fallback_with_git(cx: &mut TestAppConte
 
     assert!(
         formatting_called.load(atomic::Ordering::SeqCst),
-        "ModificationsIfAvailable must fall back to full-buffer formatting when diff is empty"
+        "ModificationsIfAvailable must fall back to full-buffer formatting when no git diff is available"
     );
 }
 

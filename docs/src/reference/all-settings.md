@@ -1929,7 +1929,7 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
-3. `modifications`, formats only lines modified since the last commit:
+3. `modifications`, formats only lines with unstaged changes:
 
 ```json [settings]
 {
@@ -1947,9 +1947,7 @@ This mode requires source control and LSP range formatting support. If no git di
 }
 ```
 
-Similar to `modifications`, but falls back to formatting the entire file whenever range formatting cannot be applied. This includes when no git diff is available (e.g., for untracked files or files outside a repository), when there are no uncommitted changes to format, or when the language server does not support range formatting. In all of these cases, the mode behaves like `on` instead.
-
-This option is inspired by VSCode's `editor.formatOnSaveMode: "modificationsIfAvailable"` setting. Unlike VS Code, which skips formatting when range formatting cannot be applied, Zed always falls back to full-file formatting.
+Similar to `modifications`, but behaves like `on` when range formatting cannot be applied: when no git diff is available (e.g., when source control is unavailable) or when the language server does not support range formatting. When a git diff is available but contains no unstaged changes, nothing is formatted.
 
 ## Formatter
 

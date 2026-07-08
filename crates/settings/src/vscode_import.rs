@@ -555,22 +555,19 @@ impl VsCodeSettings {
             extend_comment_on_newline: None,
             extend_list_on_newline: None,
             indent_list_on_tab: None,
-            format_on_save: self
-                .read_enum("editor.formatOnSaveMode", |s| match s {
-                    "modificationsIfAvailable" => Some(FormatOnSave::ModificationsIfAvailable),
-                    "modifications" => Some(FormatOnSave::Modifications),
-                    "file" => Some(FormatOnSave::On),
-                    _ => None,
-                })
-                .or_else(|| {
-                    self.read_bool("editor.formatOnSave").map(|b| {
-                        if b {
-                            FormatOnSave::On
-                        } else {
-                            FormatOnSave::Off
-                        }
+            // In VS Code, `editor.formatOnSaveMode` only applies when `editor.formatOnSave` is enabled.
+            format_on_save: self.read_bool("editor.formatOnSave").map(|enabled| {
+                if enabled {
+                    self.read_enum("editor.formatOnSaveMode", |s| match s {
+                        "modificationsIfAvailable" => Some(FormatOnSave::ModificationsIfAvailable),
+                        "modifications" => Some(FormatOnSave::Modifications),
+                        _ => None,
                     })
-                }),
+                    .unwrap_or(FormatOnSave::On)
+                } else {
+                    FormatOnSave::Off
+                }
+            }),
             formatter: None,
             hard_tabs: self.read_bool("editor.insertSpaces").map(|v| !v),
             indent_guides: skip_default(IndentGuideSettingsContent {
