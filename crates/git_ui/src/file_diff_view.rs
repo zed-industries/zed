@@ -236,7 +236,7 @@ impl Item for FileDiffView {
                             .to_string(),
                     )
                 })
-                .unwrap_or_else(|| "untitled".into())
+                .unwrap_or_else(|| MultiBuffer::DEFAULT_TITLE.into())
         };
         let old_filename = title_text(&self.old_buffer);
         let new_filename = title_text(&self.new_buffer);
@@ -250,7 +250,7 @@ impl Item for FileDiffView {
                 .read(cx)
                 .file()
                 .map(|file| file.full_path(cx).compact().to_string_lossy().into_owned())
-                .unwrap_or_else(|| "untitled".into())
+                .unwrap_or_else(|| MultiBuffer::DEFAULT_TITLE.into())
         };
         let old_path = path(&self.old_buffer);
         let new_path = path(&self.new_buffer);
