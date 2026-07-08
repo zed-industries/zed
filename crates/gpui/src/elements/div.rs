@@ -22,10 +22,9 @@ use crate::{
     HitboxBehavior, HitboxId, InspectorElementId, IntoElement, IsZero, KeyContext, KeyDownEvent,
     KeyUpEvent, KeyboardButton, KeyboardClickEvent, LayoutId, ModifiersChangedEvent, MouseButton,
     MouseClickEvent, MouseDownEvent, MouseExitEvent, MouseMoveEvent, MousePressureEvent,
-    MouseUpEvent, Overflow,
-    ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
-    StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea, point, px,
-    size,
+    MouseUpEvent, Overflow, ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString,
+    Size, Style, StyleRefinement, Styled, Task, TooltipId, Visibility, Window, WindowControlArea,
+    point, px, size,
 };
 use collections::HashMap;
 use gpui_util::ResultExt;
@@ -2830,15 +2829,15 @@ impl Interactivity {
                     .pending_mouse_down
                     .get_or_insert_with(Default::default)
                     .clone();
-                let update_hover =
-                    Rc::new(move |is_hovered: bool, window: &mut Window, cx: &mut App| {
-                        let mut was_hovered = was_hovered.borrow_mut();
-                        if is_hovered != *was_hovered {
-                            *was_hovered = is_hovered;
-                            drop(was_hovered);
-                            hover_listener(&is_hovered, window, cx);
-                        }
-                    });
+                let hover_listener = Rc::new(hover_listener);
+                let update_hover = move |is_hovered: bool, window: &mut Window, cx: &mut App| {
+                    let mut was_hovered = was_hovered.borrow_mut();
+                    if is_hovered != *was_hovered {
+                        *was_hovered = is_hovered;
+                        drop(was_hovered);
+                        hover_listener(&is_hovered, window, cx);
+                    }
+                };
 
                 window.on_mouse_event({
                     let update_hover = update_hover.clone();
