@@ -207,6 +207,15 @@ pub(crate) fn bundle_windows(
         name: format!("bundle_windows_{arch}"),
         job: bundle_job(deps)
             .runs_on(runners::WINDOWS_DEFAULT)
+            // Trusted Signing authenticates via GitHub OIDC federation instead of a long-lived secret.
+            // `id-token: write` lets the job mint the OIDC token, and the environment fixes the token's
+            // subject so a single Azure federated credential covers every scenario.
+            .permissions(
+                Permissions::default()
+                    .contents(Level::Read)
+                    .id_token(Level::Write),
+            )
+            .environment(Environment::default().name("release-signing"))
             .envs(bundle_envs(platform))
             .add_step(steps::checkout_repo())
             .when_some(release_channel, |job, release_channel| {
