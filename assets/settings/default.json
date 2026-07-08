@@ -726,6 +726,8 @@
     "regex": false,
     // Whether to center the cursor on each search match when navigating.
     "center_on_match": false,
+    // Whether to restore the last text finder query when reopening it.
+    "restore_last_text_finder_query": false,
   },
   // When to populate a new search's query based on the text under the cursor.
   // This setting can take the following three values:

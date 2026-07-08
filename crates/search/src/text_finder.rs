@@ -5,7 +5,7 @@ use db::{
     sqlez::{domain::Domain, thread_safe_connection::ThreadSafeConnection},
     sqlez_macros::sql,
 };
-use editor::Editor;
+use editor::{Editor, EditorSettings};
 use gpui::{
     App, AppContext, Context, DismissEvent, Entity, EventEmitter, FocusHandle, Focusable,
     Modifiers, Subscription, Task, WeakEntity, actions,
@@ -14,7 +14,7 @@ use language::Buffer;
 use picker::Picker;
 
 use project::ProjectPath;
-use settings::SeedQuerySetting;
+use settings::{SeedQuerySetting, Settings as _};
 use text::Anchor;
 use ui::Window;
 use workspace::{
@@ -322,13 +322,22 @@ impl TextFinder {
         window: &mut Window,
         cx: &mut Context<Workspace>,
     ) -> Option<SearchSeed> {
-        let last_search = load_last_search(workspace.database_id(), cx);
-        let options = last_search.as_ref().and_then(|seed| seed.options);
-
-        let query = Self::active_item_query(workspace, window, cx)
-            .or_else(|| last_search.map(|seed| seed.query))?;
-
-        Some(SearchSeed { query, options })
+        if EditorSettings::get_global(cx)
+            .search
+            .restore_last_text_finder_query
+        {
+            let last_search = load_last_search(workspace.database_id(), cx);
+            let options = last_search.as_ref().and_then(|seed| seed.options);
+            let query = Self::active_item_query(workspace, window, cx, SeedQuerySetting::Selection)
+                .or_else(|| last_search.map(|seed| seed.query))?;
+            Some(SearchSeed { query, options })
+        } else {
+            let query = Self::active_item_query(workspace, window, cx, SeedQuerySetting::Always)?;
+            Some(SearchSeed {
+                query,
+                options: None,
+            })
+        }
     }
 
     /// The query to seed from the active item, if any.
@@ -337,10 +346,13 @@ impl TextFinder {
     /// ignored. Confirming a match jumps to (and places the cursor on) it, so seeding from the
     /// cursor on reopen would clobber the search you were in the middle of, whereas a deliberate
     /// selection (e.g. a double-click) is a clear signal to search for that text.
+    ///
+    /// Last query can be disabled by the user in the settings, see: `Restore Last Text Finder Query`.
     fn active_item_query(
         workspace: &mut Workspace,
         window: &mut Window,
         cx: &mut Context<Workspace>,
+        seed_setting: SeedQuerySetting,
     ) -> Option<String> {
         let item = workspace.active_item(cx)?;
 
@@ -358,7 +370,7 @@ impl TextFinder {
         }
 
         if let Some(editor) = item.act_as::<Editor>(cx) {
-            let query = editor.query_suggestion(Some(SeedQuerySetting::Selection), window, cx);
+            let query = editor.query_suggestion(Some(seed_setting), window, cx);
             if !query.is_empty() {
                 return Some(query);
             }
@@ -451,11 +463,16 @@ impl ModalView for TextFinder {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> DismissDecision {
-        let picker = self.picker.read(cx);
-        let query = picker.query(cx);
-        if !query.is_empty() {
-            let options = picker.delegate.search_options;
-            store_last_search(self.workspace_id, query, options, cx);
+        if EditorSettings::get_global(cx)
+            .search
+            .restore_last_text_finder_query
+        {
+            let picker = self.picker.read(cx);
+            let query = picker.query(cx);
+            if !query.is_empty() {
+                let options = picker.delegate.search_options;
+                store_last_search(self.workspace_id, query, options, cx);
+            }
         }
         DismissDecision::Dismiss(true)
     }

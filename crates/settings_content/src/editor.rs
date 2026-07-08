@@ -941,6 +941,10 @@ pub struct SearchSettingsContent {
     pub regex: Option<bool>,
     /// Whether to center the cursor on each search match when navigating.
     pub center_on_match: Option<bool>,
+    /// Whether to restore the last text finder query when reopening it.
+    ///
+    /// Default: false
+    pub restore_last_text_finder_query: Option<bool>,
 }
 
 #[with_fallible_options]
