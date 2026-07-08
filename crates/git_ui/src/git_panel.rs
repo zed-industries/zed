@@ -5,7 +5,7 @@ use crate::commit_view::CommitView;
 use crate::git_panel_settings::GitPanelScrollbarAccessor;
 use crate::project_diff::{BranchDiff, Diff, ProjectDiff};
 use crate::remote_output::{self, RemoteAction, SuccessMessage};
-use crate::solo_diff_view::SoloDiffView;
+use crate::solo_diff_view::{DiffSide, SoloDiffView};
 use crate::{branch_picker, picker_prompt, render_remote_button};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, repository_selector::RepositorySelector,
@@ -1693,7 +1693,17 @@ impl GitPanel {
                 .clone();
             let repository = self.active_repository.clone()?;
 
-            SoloDiffView::open_or_focus(entry, repository, self.workspace.clone(), window, cx)
+            let side = if GitPanelSettings::get_global(cx).open_side_specific_diffs {
+                match entry.stage_side {
+                    None => DiffSide::Uncommitted,
+                    Some(StageSection::Staged) => DiffSide::Staged,
+                    Some(StageSection::Unstaged) => DiffSide::Unstaged,
+                }
+            } else {
+                DiffSide::Uncommitted
+            };
+
+            SoloDiffView::open_or_focus(entry, repository, side, self.workspace.clone(), window, cx)
                 .detach_and_notify_err(self.workspace.clone(), window, cx);
 
             Some(())
@@ -1727,6 +1737,21 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // In `group_by == Staged` mode, a Staged/Changes row opens its side-specific
+        // single-file diff (working tree vs index, or index vs HEAD), matching VS Code.
+        // This overrides the configured primary click action for those rows only, and is
+        // gated behind the `open_side_specific_diffs` setting.
+        if GitPanelSettings::get_global(cx).open_side_specific_diffs
+            && self
+                .selected_entry
+                .and_then(|ix| self.entries.get(ix))
+                .and_then(|entry| entry.status_entry())
+                .is_some_and(|entry| entry.stage_side.is_some())
+        {
+            self.open_solo_diff(&Default::default(), window, cx);
+            return;
+        }
+
         let entry_primary_click_action =
             GitPanelSettings::get_global(cx).entry_primary_click_action;
         let action = match (entry_primary_click_action, secondary) {
@@ -6942,7 +6967,18 @@ impl GitPanel {
                 cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.selected_entry = Some(ix);
                     cx.notify();
-                    this.open_selected_entry_on_click(event.modifiers().secondary(), window, cx);
+                    if event.click_count() >= 2
+                        && GitPanelSettings::get_global(cx).open_file_on_double_click
+                    {
+                        // Double-click opens the actual file, like VS Code.
+                        this.view_file(&Default::default(), window, cx);
+                    } else {
+                        this.open_selected_entry_on_click(
+                            event.modifiers().secondary(),
+                            window,
+                            cx,
+                        );
+                    }
                 })
             })
             .on_mouse_down(
@@ -9952,6 +9988,219 @@ mod tests {
             // Header checkboxes: Staged is fully-on (unstage all), Changes fully-off.
             assert_eq!(panel.header_state(Section::Staged), ToggleState::Selected);
             assert_eq!(panel.header_state(Section::Changes), ToggleState::Unselected);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_new_diff_settings_default_to_off(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update(|cx| {
+            let settings = GitPanelSettings::get_global(cx);
+            assert!(!settings.open_file_on_double_click);
+            assert!(!settings.open_side_specific_diffs);
+            assert!(!settings.read_only_diffs);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_open_side_specific_diffs_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "partial.rs": "line\nworktree\n",
+            }),
+        )
+        .await;
+
+        // head != index (a staged change) and index != worktree (an unstaged change),
+        // so `partial.rs` is partially staged and appears in both sections.
+        fs.set_head_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("partial.rs", "line\nhead\n".into())],
+            "deadbeef",
+        );
+        fs.set_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("partial.rs", "line\nindex\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let git_panel = settings.git_panel.get_or_insert_default();
+                    git_panel.group_by = Some(GitPanelGroupBy::Staged);
+                    git_panel.open_side_specific_diffs = Some(true);
+                })
+            });
+        });
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        await_git_panel_entries(&panel, cx).await;
+
+        // Open the Staged-side row: it should produce an index-vs-HEAD (Staged) diff.
+        let staged_ix = panel
+            .read_with(cx, |panel, _| {
+                panel.entries.iter().position(|entry| {
+                    entry
+                        .status_entry()
+                        .is_some_and(|entry| entry.stage_side == Some(StageSection::Staged))
+                })
+            })
+            .expect("a staged-side row should exist");
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(staged_ix);
+            panel.open_solo_diff(&menu::SecondaryConfirm, window, cx);
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let view = workspace
+                .item_of_type::<SoloDiffView>(cx)
+                .expect("a SoloDiffView should be open");
+            assert_eq!(view.read(cx).diff_side(), DiffSide::Staged);
+        });
+
+        // Open the Changes-side row: it should produce a working-tree-vs-index (Unstaged) diff.
+        let unstaged_ix = panel
+            .read_with(cx, |panel, _| {
+                panel.entries.iter().position(|entry| {
+                    entry
+                        .status_entry()
+                        .is_some_and(|entry| entry.stage_side == Some(StageSection::Unstaged))
+                })
+            })
+            .expect("a changes-side row should exist");
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(unstaged_ix);
+            panel.open_solo_diff(&menu::SecondaryConfirm, window, cx);
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let side = workspace
+                .items_of_type::<SoloDiffView>(cx)
+                .map(|view| view.read(cx).diff_side())
+                .find(|side| *side == DiffSide::Unstaged);
+            assert_eq!(side, Some(DiffSide::Unstaged));
+        });
+
+        // With the setting disabled, a staged-side row opens the combined (Uncommitted) diff.
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().open_side_specific_diffs =
+                        Some(false);
+                })
+            });
+        });
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(staged_ix);
+            panel.open_solo_diff(&menu::SecondaryConfirm, window, cx);
+        });
+        cx.run_until_parked();
+        workspace.read_with(cx, |workspace, cx| {
+            let has_uncommitted = workspace
+                .items_of_type::<SoloDiffView>(cx)
+                .any(|view| view.read(cx).diff_side() == DiffSide::Uncommitted);
+            assert!(
+                has_uncommitted,
+                "disabling open_side_specific_diffs should open the combined diff"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_read_only_diffs_setting(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/project"),
+            json!({
+                ".git": {},
+                "tracked.rs": "new\n",
+            }),
+        )
+        .await;
+        fs.set_head_and_index_for_repo(
+            path!("/project/.git").as_ref(),
+            &[("tracked.rs", "old\n".into())],
+        );
+
+        let project = Project::test(fs.clone(), [Path::new(path!("/project"))], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        cx.read(|cx| {
+            project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .unwrap()
+                .read(cx)
+                .as_local()
+                .unwrap()
+                .scan_complete()
+        })
+        .await;
+
+        cx.update(|_window, cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.git_panel.get_or_insert_default().read_only_diffs = Some(true);
+                })
+            });
+        });
+
+        let panel = workspace.update_in(cx, GitPanel::new);
+        await_git_panel_entries(&panel, cx).await;
+
+        let entry_ix = panel
+            .read_with(cx, |panel, _| {
+                entry_index_for_repo_path(panel, &repo_path("tracked.rs"))
+            })
+            .expect("tracked.rs should be listed");
+        panel.update_in(cx, |panel, window, cx| {
+            panel.selected_entry = Some(entry_ix);
+            panel.open_solo_diff(&menu::SecondaryConfirm, window, cx);
+        });
+        cx.run_until_parked();
+
+        workspace.read_with(cx, |workspace, cx| {
+            let view = workspace
+                .item_of_type::<SoloDiffView>(cx)
+                .expect("a SoloDiffView should be open");
+            assert!(
+                view.read(cx).is_read_only(cx),
+                "working-tree diff should be read-only when read_only_diffs is enabled"
+            );
         });
     }
 

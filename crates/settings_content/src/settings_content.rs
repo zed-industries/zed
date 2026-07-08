@@ -724,6 +724,26 @@ pub struct GitPanelSettingsContent {
     ///
     /// Default: project_diff
     pub entry_primary_click_action: Option<GitPanelClickBehavior>,
+
+    /// Whether double-clicking a file in the Git panel opens the file in the editor.
+    /// When disabled, a double-click behaves like a normal click (opens the diff).
+    ///
+    /// Default: false
+    pub open_file_on_double_click: Option<bool>,
+
+    /// When `group_by` is `staged`, whether clicking a "Staged Changes" or "Changes" row
+    /// opens a diff scoped to that side (working tree vs index, or index vs HEAD) instead
+    /// of the configured `entry_primary_click_action`. Has no effect unless `group_by` is
+    /// `staged`.
+    ///
+    /// Default: false
+    pub open_side_specific_diffs: Option<bool>,
+
+    /// Whether single-file diffs opened from the Git panel are read-only. When disabled,
+    /// working-tree diffs remain editable (the staged "Index" view is always read-only).
+    ///
+    /// Default: false
+    pub read_only_diffs: Option<bool>,
 }
 
 #[derive(

@@ -1,4 +1,4 @@
-use crate::{git_panel::GitStatusEntry, git_status_icon};
+use crate::{git_panel::GitStatusEntry, git_panel_settings::GitPanelSettings, git_status_icon};
 use anyhow::{Context as _, Result};
 use buffer_diff::DiffHunkSecondaryStatus;
 use editor::{
@@ -14,7 +14,7 @@ use gpui::{
     Action, AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle,
     Focusable, IntoElement, Render, Subscription, Task, WeakEntity, Window,
 };
-use language::{Anchor, Buffer, HighlightedText, OffsetRangeExt as _, Point};
+use language::{Anchor, Buffer, Capability, HighlightedText, OffsetRangeExt as _, Point};
 use multi_buffer::{MultiBuffer, PathKey, excerpt_context_lines};
 use project::{
     Project,
@@ -39,12 +39,34 @@ use workspace::{
     searchable::SearchableItemHandle,
 };
 
+/// Which git diff a `SoloDiffView` shows. Mirrors VS Code's per-side diffs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DiffSide {
+    /// Working tree vs HEAD, with unstaged changes as a secondary diff (the combined view).
+    Uncommitted,
+    /// Working tree vs index — the unstaged changes ("file (Working Tree)").
+    Unstaged,
+    /// Index vs HEAD — the staged changes, shown read-only ("file (Index)").
+    Staged,
+}
+
+impl DiffSide {
+    fn tab_suffix(self) -> &'static str {
+        match self {
+            DiffSide::Uncommitted => "",
+            DiffSide::Unstaged => " (Working Tree)",
+            DiffSide::Staged => " (Index)",
+        }
+    }
+}
+
 pub struct SoloDiffView {
     repository: Entity<Repository>,
     repository_id: RepositoryId,
     repo_path: RepoPath,
     buffer: Entity<Buffer>,
     diff: Entity<buffer_diff::BufferDiff>,
+    side: DiffSide,
     editor: Entity<SplittableEditor>,
     workspace: WeakEntity<Workspace>,
     showing_full_file: bool,
@@ -55,6 +77,7 @@ impl SoloDiffView {
     pub fn open_or_focus(
         entry: GitStatusEntry,
         repository: Entity<Repository>,
+        side: DiffSide,
         workspace: WeakEntity<Workspace>,
         window: &mut Window,
         cx: &mut App,
@@ -66,7 +89,7 @@ impl SoloDiffView {
         let existing = workspace_entity
             .read(cx)
             .items_of_type::<SoloDiffView>(cx)
-            .find(|item| item.read(cx).matches(&repository, &entry.repo_path, cx));
+            .find(|item| item.read(cx).matches(&repository, &entry.repo_path, side, cx));
         if let Some(existing) = existing {
             workspace_entity.update(cx, |workspace, cx| {
                 workspace.activate_item(&existing, true, true, window, cx);
@@ -93,21 +116,50 @@ impl SoloDiffView {
                     project.open_buffer(project_path.clone(), cx)
                 })
                 .await?;
-            let diff = project
-                .update(cx, |project, cx| {
-                    project.open_uncommitted_diff(buffer.clone(), cx)
-                })
-                .await?;
+            let diff = match side {
+                DiffSide::Uncommitted => {
+                    project
+                        .update(cx, |project, cx| {
+                            project.open_uncommitted_diff(buffer.clone(), cx)
+                        })
+                        .await?
+                }
+                DiffSide::Unstaged => {
+                    project
+                        .update(cx, |project, cx| {
+                            project.open_unstaged_diff(buffer.clone(), cx)
+                        })
+                        .await?
+                }
+                DiffSide::Staged => {
+                    project
+                        .update(cx, |project, cx| {
+                            project.open_staged_diff(buffer.clone(), cx)
+                        })
+                        .await?
+                }
+            };
 
             workspace_entity.update_in(cx, |workspace, window, cx| {
+                // For the staged (index vs HEAD) view, the diff was computed against the
+                // read-only index buffer, so that is the buffer we must display.
+                let display_buffer = if side == DiffSide::Staged {
+                    project
+                        .read(cx)
+                        .get_staged_diff_buffer(buffer.read(cx).remote_id(), cx)
+                        .unwrap_or_else(|| buffer.clone())
+                } else {
+                    buffer.clone()
+                };
                 let workspace_handle = cx.entity();
                 let view = cx.new(|cx| {
                     Self::new(
                         project,
                         repository,
                         repo_path,
-                        buffer,
+                        display_buffer,
                         diff,
+                        side,
                         workspace_handle,
                         window,
                         cx,
@@ -126,13 +178,21 @@ impl SoloDiffView {
         repo_path: RepoPath,
         buffer: Entity<Buffer>,
         diff: Entity<buffer_diff::BufferDiff>,
+        side: DiffSide,
         workspace: Entity<Workspace>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let repository_id = repository.read(cx).id;
+        // The working-tree buffer is ReadWrite (editable); the staged "Index" buffer is
+        // ReadOnly. The `read_only_diffs` setting can force read-only for either.
+        let capability = if GitPanelSettings::get_global(cx).read_only_diffs {
+            Capability::ReadOnly
+        } else {
+            buffer.read(cx).capability()
+        };
         let multibuffer = cx.new(|cx| {
-            let mut multibuffer = MultiBuffer::without_headers(buffer.read(cx).capability());
+            let mut multibuffer = MultiBuffer::without_headers(capability);
             multibuffer.set_excerpts_for_path(
                 PathKey::for_buffer(&buffer, cx),
                 buffer.clone(),
@@ -188,6 +248,7 @@ impl SoloDiffView {
             repo_path,
             buffer,
             diff,
+            side,
             editor,
             workspace: workspace.downgrade(),
             showing_full_file: false,
@@ -246,8 +307,30 @@ impl SoloDiffView {
         cx.notify();
     }
 
-    fn matches(&self, repository: &Entity<Repository>, repo_path: &RepoPath, cx: &App) -> bool {
-        self.repository_id == repository.read(cx).id && &self.repo_path == repo_path
+    #[cfg(test)]
+    pub(crate) fn diff_side(&self) -> DiffSide {
+        self.side
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_read_only(&self, cx: &App) -> bool {
+        self.editor
+            .read(cx)
+            .rhs_editor()
+            .read(cx)
+            .read_only(cx)
+    }
+
+    fn matches(
+        &self,
+        repository: &Entity<Repository>,
+        repo_path: &RepoPath,
+        side: DiffSide,
+        cx: &App,
+    ) -> bool {
+        self.repository_id == repository.read(cx).id
+            && &self.repo_path == repo_path
+            && self.side == side
     }
 
     fn button_states(&self, cx: &App) -> SoloDiffButtonStates {
@@ -373,7 +456,8 @@ impl Item for SoloDiffView {
     }
 
     fn tab_content_text(&self, _detail: usize, cx: &App) -> SharedString {
-        self.buffer
+        let name = self
+            .buffer
             .read(cx)
             .file()
             .and_then(|file| {
@@ -384,29 +468,29 @@ impl Item for SoloDiffView {
                         .to_string(),
                 )
             })
+            .or_else(|| self.repo_path.file_name().map(str::to_owned))
             .unwrap_or_else(|| {
                 self.repo_path
                     .as_ref()
                     .display(PathStyle::local())
                     .into_owned()
-            })
-            .into()
+            });
+        format!("{name}{}", self.side.tab_suffix()).into()
     }
 
     fn tab_tooltip_text(&self, cx: &App) -> Option<SharedString> {
-        Some(
-            self.buffer
-                .read(cx)
-                .file()
-                .map(|file| file.full_path(cx).compact().to_string_lossy().into_owned())
-                .unwrap_or_else(|| {
-                    self.repo_path
-                        .as_ref()
-                        .display(PathStyle::local())
-                        .into_owned()
-                })
-                .into(),
-        )
+        let path = self
+            .buffer
+            .read(cx)
+            .file()
+            .map(|file| file.full_path(cx).compact().to_string_lossy().into_owned())
+            .unwrap_or_else(|| {
+                self.repo_path
+                    .as_ref()
+                    .display(PathStyle::local())
+                    .into_owned()
+            });
+        Some(format!("{path}{}", self.side.tab_suffix()).into())
     }
 
     fn to_item_events(event: &EditorEvent, f: &mut dyn FnMut(ItemEvent)) {

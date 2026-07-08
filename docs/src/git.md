@@ -46,6 +46,78 @@ The colored bars in the gutter that show added, modified, and deleted lines can 
 
 Zed wraps commit messages at 72 characters (a Git convention). To change this, search for "Git Commit" in Settings and adjust **Preferred Line Length**.
 
+#### Grouping Staged and Unstaged Changes
+
+The Git Panel can split changes into separate **Staged Changes** and **Changes** sections,
+similar to VS Code's Source Control view. A file that is partially staged (some hunks staged,
+some not) appears in both sections. Set `group_by` to `"staged"` to enable it:
+
+```json
+{
+  "git_panel": {
+    "group_by": "staged"
+  }
+}
+```
+
+`group_by` accepts:
+
+- `"none"` — a single flat list of changes.
+- `"status"` (default) — Conflicts / Tracked / Untracked sections.
+- `"staged"` — Staged Changes / Changes sections.
+
+#### Side-Specific Diffs
+
+When `group_by` is `"staged"`, you can make clicking a row open a diff scoped to that side,
+matching VS Code:
+
+- Clicking a **Changes** row opens the working tree vs. the index (`<file> (Working Tree)`) —
+  your unstaged edits diffed against the already-staged version. This diff is editable.
+- Clicking a **Staged Changes** row opens the index vs. `HEAD` (`<file> (Index)`) — the staged
+  change diffed against the last commit. This view is read-only.
+
+This is off by default (clicks use `entry_primary_click_action` instead). Enable it with:
+
+```json
+{
+  "git_panel": {
+    "group_by": "staged",
+    "open_side_specific_diffs": true
+  }
+}
+```
+
+`open_side_specific_diffs` has no effect unless `group_by` is `"staged"`.
+
+#### Opening Files on Double-Click
+
+By default, clicking a file in the Git Panel opens its diff. To also open the actual file in
+the editor when you double-click a row (a single click still opens the diff), enable:
+
+```json
+{
+  "git_panel": {
+    "open_file_on_double_click": true
+  }
+}
+```
+
+#### Read-Only Diffs
+
+Single-file diffs opened from the Git Panel are editable on the working-tree side by default
+(the staged "Index" view is always read-only). To make these diffs read-only instead, enable:
+
+```json
+{
+  "git_panel": {
+    "read_only_diffs": true
+  }
+}
+```
+
+The [Project Diff](#project-diff) is unaffected by this setting and remains an editable
+multibuffer.
+
 ## Project Diff
 
 You can see all of the changes captured by Git in Zed by opening the Project Diff ({#kb git::Diff}), accessible via the {#action git::Diff} action in the Command Palette or the Git Panel.

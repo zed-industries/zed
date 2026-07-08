@@ -1310,6 +1310,17 @@ impl GitStore {
         diff_state.read(cx).staged_diff()
     }
 
+    /// The read-only index-blob buffer that backs the staged diff (index vs HEAD).
+    /// Present only after `open_staged_diff` has completed for this buffer.
+    pub fn get_staged_diff_buffer(
+        &self,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Option<Entity<Buffer>> {
+        let diff_state = self.diffs.get(&buffer_id)?;
+        diff_state.read(cx).staged_index_buffer()
+    }
+
     pub fn get_uncommitted_diff(
         &self,
         buffer_id: BufferId,
@@ -4053,6 +4064,12 @@ impl BufferGitState {
 
     fn staged_diff(&self) -> Option<Entity<BufferDiff>> {
         self.staged_diff.as_ref().and_then(|(set, _)| set.upgrade())
+    }
+
+    fn staged_index_buffer(&self) -> Option<Entity<Buffer>> {
+        self.staged_diff
+            .as_ref()
+            .map(|(_, index_buffer)| index_buffer.clone())
     }
 
     fn uncommitted_diff(&self) -> Option<Entity<BufferDiff>> {

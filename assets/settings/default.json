@@ -1025,6 +1025,22 @@
     // Choices: project_diff, file_diff, view_file
     // Default: project_diff
     "entry_primary_click_action": "project_diff",
+    // Whether double-clicking a file in the Git panel opens the file in the editor.
+    // When disabled, a double-click behaves like a normal click (opens the diff).
+    //
+    // Default: false
+    "open_file_on_double_click": false,
+    // When "group_by" is "staged", whether clicking a "Staged Changes" or "Changes" row
+    // opens a diff scoped to that side (working tree vs index, or index vs HEAD) instead
+    // of the configured "entry_primary_click_action". No effect unless "group_by" is "staged".
+    //
+    // Default: false
+    "open_side_specific_diffs": false,
+    // Whether single-file diffs opened from the Git panel are read-only. When disabled,
+    // working-tree diffs remain editable (the staged "Index" view is always read-only).
+    //
+    // Default: false
+    "read_only_diffs": false,
   },
   "agent": {
     // Whether the inline assistant should use streaming tools, when available

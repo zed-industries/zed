@@ -3258,6 +3258,18 @@ impl Project {
             .update(cx, |git_store, cx| git_store.open_staged_diff(buffer, cx))
     }
 
+    /// The read-only index-blob buffer that backs the staged diff (index vs HEAD).
+    /// Present only after `open_staged_diff` has completed for this buffer.
+    pub fn get_staged_diff_buffer(
+        &self,
+        buffer_id: BufferId,
+        cx: &App,
+    ) -> Option<Entity<Buffer>> {
+        self.git_store
+            .read(cx)
+            .get_staged_diff_buffer(buffer_id, cx)
+    }
+
     #[ztracing::instrument(skip_all)]
     pub fn open_uncommitted_diff(
         &mut self,
