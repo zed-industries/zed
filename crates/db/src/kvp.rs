@@ -107,6 +107,14 @@ impl ScopedKeyValueStore<'_> {
         .context("Failed to read from scoped_kv_store")
     }
 
+    pub fn keys(&self) -> anyhow::Result<Vec<String>> {
+        self.store
+            .select_bound::<&str, String>("SELECT key FROM scoped_kv_store WHERE namespace = (?)")?(
+            self.namespace,
+        )
+        .context("Failed to read keys from scoped_kv_store")
+    }
+
     pub async fn write(&self, key: String, value: String) -> anyhow::Result<()> {
         let namespace = self.namespace.to_owned();
         self.store
@@ -214,9 +222,13 @@ mod tests {
             .write("key-3".to_string(), "value-a3".to_string())
             .await
             .unwrap();
+        let mut scope_a_keys = scope_a.keys().unwrap();
+        scope_a_keys.sort();
+        assert_eq!(scope_a_keys, vec!["key-2".to_string(), "key-3".to_string()]);
         scope_a.delete_all().await.unwrap();
         assert_eq!(scope_a.read("key-2").unwrap(), None);
         assert_eq!(scope_a.read("key-3").unwrap(), None);
+        assert_eq!(scope_a.keys().unwrap(), Vec::<String>::new());
         assert_eq!(scope_b.read("key-1").unwrap(), Some("value-b1".to_string()));
     }
 }
