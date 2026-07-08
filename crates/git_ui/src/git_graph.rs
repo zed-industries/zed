@@ -1558,7 +1558,7 @@ impl GitGraph {
     }
 
     /// Returns the column fractions in display order:
-    /// `[graph, description, author, date, commit]`.
+    /// `[graph, description, date, author, commit]`.
     /// For path history there is no graph column, so its fraction is 0.
     fn preview_column_fractions(&self, window: &Window, cx: &App) -> [f32; 5] {
         let raw = self
@@ -1591,14 +1591,14 @@ impl GitGraph {
     }
 
     fn table_column_width_config(&self, window: &Window, cx: &App) -> ColumnWidthConfig {
-        let [_, description, author, date, commit] = self.preview_column_fractions(window, cx);
-        let table_total = description + author + date + commit;
+        let [_, description, date, author, commit] = self.preview_column_fractions(window, cx);
+        let table_total = description + date + author + commit;
 
         let widths = if table_total > 0.0 {
             vec![
                 DefiniteLength::Fraction(description / table_total),
-                DefiniteLength::Fraction(author / table_total),
                 DefiniteLength::Fraction(date / table_total),
+                DefiniteLength::Fraction(author / table_total),
                 DefiniteLength::Fraction(commit / table_total),
             ]
         } else {
@@ -1664,8 +1664,8 @@ impl GitGraph {
                 RedistributableColumnsState::new(
                     4,
                     vec![
-                        DefiniteLength::Fraction(0.72),
-                        DefiniteLength::Fraction(0.06),
+                        DefiniteLength::Fraction(0.66),
+                        DefiniteLength::Fraction(0.12),
                         DefiniteLength::Fraction(0.12),
                         DefiniteLength::Fraction(0.10),
                     ],
@@ -1678,8 +1678,8 @@ impl GitGraph {
                     5,
                     vec![
                         DefiniteLength::Fraction(0.30),
-                        DefiniteLength::Fraction(0.45),
-                        DefiniteLength::Fraction(0.05),
+                        DefiniteLength::Fraction(0.39),
+                        DefiniteLength::Fraction(0.11),
                         DefiniteLength::Fraction(0.11),
                         DefiniteLength::Fraction(0.09),
                     ],
@@ -2165,6 +2165,7 @@ impl GitGraph {
                         })
                         .child(h_flex().gap_2().overflow_hidden().child(subject_label))
                         .into_any_element(),
+                    column_label(formatted_time.into()),
                     {
                         let avatar_sha: SharedString = commit.data.sha.to_string().into();
                         let avatar =
@@ -2175,22 +2176,14 @@ impl GitGraph {
                             .id(ElementId::NamedInteger("commit-author".into(), idx as u64))
                             .h(row_height)
                             .items_center()
+                            .gap_1p5()
+                            .overflow_hidden()
                             .child(avatar)
                             .when_some(author_name, |this, author_name| {
-                                let author_email = author_email.clone();
-                                this.tooltip(move |_window, cx| match &author_email {
-                                    Some(author_email) => Tooltip::with_meta(
-                                        author_name.clone(),
-                                        None,
-                                        author_email.clone(),
-                                        cx,
-                                    ),
-                                    None => Tooltip::simple(author_name.clone(), cx),
-                                })
+                                this.child(column_label(author_name))
                             })
                             .into_any_element()
                     },
-                    column_label(formatted_time.into()),
                     column_label(short_sha.into()),
                 ]
             })
@@ -4440,12 +4433,12 @@ impl Render for GitGraph {
             let [
                 graph_fraction,
                 description_fraction,
-                author_fraction,
                 date_fraction,
+                author_fraction,
                 commit_fraction,
             ] = self.preview_column_fractions(window, cx);
             let table_fraction =
-                description_fraction + author_fraction + date_fraction + commit_fraction;
+                description_fraction + date_fraction + author_fraction + commit_fraction;
             let table_width_config = self.table_column_width_config(window, cx);
 
             let table_collapsed = table_fraction <= f32::EPSILON;
@@ -4480,10 +4473,10 @@ impl Render for GitGraph {
                                                 Label::new("Description")
                                                     .color(Color::Muted)
                                                     .into_any_element(),
-                                                Label::new("Author")
+                                                Label::new("Date")
                                                     .color(Color::Muted)
                                                     .into_any_element(),
-                                                Label::new("Date")
+                                                Label::new("Author")
                                                     .color(Color::Muted)
                                                     .into_any_element(),
                                                 Label::new("Commit")
@@ -4498,10 +4491,10 @@ impl Render for GitGraph {
                                                 Label::new("Description")
                                                     .color(Color::Muted)
                                                     .into_any_element(),
-                                                Label::new("Author")
+                                                Label::new("Date")
                                                     .color(Color::Muted)
                                                     .into_any_element(),
-                                                Label::new("Date")
+                                                Label::new("Author")
                                                     .color(Color::Muted)
                                                     .into_any_element(),
                                                 Label::new("Commit")
