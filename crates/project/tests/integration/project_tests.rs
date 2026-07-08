@@ -7673,6 +7673,110 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     );
 }
 
+// Regression test for https://github.com/zed-industries/zed/issues/59077:
+// a "rename symbol" whose workspace edit also renames the file used to swap the
+// two files' contents. The edited content must end up in the renamed file.
+#[gpui::test]
+async fn test_rename_that_also_renames_file(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/one.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let response = project.update(cx, |project, cx| {
+        project.perform_rename(buffer.clone(), 7, "THREE".to_string(), cx)
+    });
+    fake_server
+        .set_request_handler::<lsp::request::Rename, _, _>(|_params, _| async move {
+            Ok(Some(lsp::WorkspaceEdit {
+                changes: None,
+                document_changes: Some(DocumentChanges::Operations(vec![
+                    lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
+                        text_document: lsp::OptionalVersionedTextDocumentIdentifier {
+                            uri: Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
+                            version: None,
+                        },
+                        edits: vec![lsp::Edit::Plain(lsp::TextEdit::new(
+                            lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                            "THREE".to_string(),
+                        ))],
+                    }),
+                    lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(lsp::RenameFile {
+                        old_uri: Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
+                        new_uri: Uri::from_file_path(path!("/dir/three.rs")).unwrap(),
+                        options: None,
+                        annotation_id: None,
+                    })),
+                ])),
+                change_annotations: None,
+            }))
+        })
+        .next()
+        .await
+        .unwrap();
+    response.await.unwrap();
+    cx.executor().run_until_parked();
+
+    // The renamed file must contain the edited content, not the stale pre-edit
+    // content, and the old file must be gone (no content swap).
+    assert_eq!(
+        fs.load(Path::new(path!("/dir/three.rs"))).await.unwrap(),
+        "const THREE: usize = 1;"
+    );
+    assert!(
+        fs.load(Path::new(path!("/dir/one.rs"))).await.is_err(),
+        "old file should not exist after the rename"
+    );
+
+    // The buffer should follow the rename to the new path, hold the edited
+    // content, and be saved (so it can't be written back to the old path).
+    buffer.read_with(cx, |buffer, _cx| {
+        assert_eq!(buffer.text(), "const THREE: usize = 1;");
+        assert_eq!(
+            buffer.file().unwrap().path().as_ref(),
+            rel_path("three.rs"),
+            "buffer should be associated with the renamed file"
+        );
+        assert!(
+            !buffer.is_dirty(),
+            "buffer should be saved after the rename"
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_search(cx: &mut gpui::TestAppContext) {
     init_test(cx);
