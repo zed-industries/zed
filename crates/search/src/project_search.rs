@@ -12,6 +12,7 @@ use crate::{
 };
 use anyhow::Context as _;
 use collections::HashMap;
+use db::kvp::KeyValueStore;
 use editor::{
     Anchor, Editor, EditorEvent, EditorSettings, MAX_TAB_TITLE_LEN, MultiBuffer, PathKey,
     SelectionEffects,
@@ -28,20 +29,23 @@ use gpui::{
     actions, div,
 };
 use itertools::Itertools;
-use language::{Buffer, Language};
+use language::{Buffer, CodeLabel, Language};
 use menu::Confirm;
 use multi_buffer;
 use project::{
-    Project, ProjectPath, SearchResults,
+    Completion, CompletionDisplayOptions, CompletionResponse, CompletionSource, Project,
+    ProjectPath, SearchResults,
     search::{SearchInputKind, SearchQuery, SearchResult},
     search_history::SearchHistoryCursor,
 };
+use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
     mem,
     ops::{Not, Range},
     pin::pin,
+    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -53,9 +57,9 @@ use ui::{
 };
 use util::{ResultExt as _, paths::PathMatcher, rel_path::RelPath};
 use workspace::{
-    DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
+    DeploySearch, ItemId, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
-    item::{Item, ItemEvent, ItemHandle, SaveOptions},
+    item::{Item, ItemEvent, ItemHandle, SaveOptions, SerializableItem},
     searchable::{Direction, SearchEvent, SearchToken, SearchableItem, SearchableItemHandle},
 };
 
@@ -110,6 +114,7 @@ impl Global for ActiveSettings {}
 
 pub fn init(cx: &mut App) {
     cx.set_global(ActiveSettings::default());
+    workspace::register_serializable_item::<ProjectSearchView>(cx);
     cx.observe_new(|workspace: &mut Workspace, _window, _cx| {
         register_workspace_action(workspace, move |search_bar, _: &Deploy, window, cx| {
             search_bar.focus_search(window, cx);
@@ -235,6 +240,143 @@ fn contains_uppercase(str: &str) -> bool {
     str.chars().any(|c| c.is_uppercase())
 }
 
+const SEARCH_HISTORY_NAMESPACE: &str = "project_search_history";
+const MAX_PERSISTED_SEARCH_HISTORY: usize = 50;
+const PERSISTED_SEARCH_HISTORY_KINDS: [SearchInputKind; 3] = [
+    SearchInputKind::Query,
+    SearchInputKind::Include,
+    SearchInputKind::Exclude,
+];
+
+fn search_history_kvp_key(kind: SearchInputKind) -> &'static str {
+    match kind {
+        SearchInputKind::Query => "query",
+        SearchInputKind::Include => "include",
+        SearchInputKind::Exclude => "exclude",
+    }
+}
+
+/// Seeds the project's search history with entries persisted from previous
+/// sessions and other windows, so that a fresh window starts with the
+/// combined history instead of an empty one.
+fn seed_search_history_from_db(project: &Entity<Project>, cx: &mut App) {
+    let db = KeyValueStore::global(cx);
+    let store = db.scoped(SEARCH_HISTORY_NAMESPACE);
+    project.update(cx, |project, _| {
+        for kind in PERSISTED_SEARCH_HISTORY_KINDS {
+            if !project.search_history(kind).is_empty() {
+                continue;
+            }
+            let Some(entries) = store
+                .read(search_history_kvp_key(kind))
+                .log_err()
+                .flatten()
+                .and_then(|value| serde_json::from_str::<Vec<String>>(&value).log_err())
+            else {
+                continue;
+            };
+            let history = project.search_history_mut(kind);
+            let mut cursor = SearchHistoryCursor::default();
+            for entry in entries {
+                history.add(&mut cursor, entry);
+            }
+        }
+    });
+}
+
+/// Completes search inputs with this project's search history (which includes
+/// the persisted history of previous sessions), most recent entries first.
+struct SearchHistoryCompletionProvider {
+    search: WeakEntity<ProjectSearch>,
+    kind: SearchInputKind,
+}
+
+impl editor::CompletionProvider for SearchHistoryCompletionProvider {
+    fn completions(
+        &self,
+        buffer: &Entity<Buffer>,
+        _buffer_position: text::Anchor,
+        _trigger: editor::CompletionContext,
+        _window: &mut Window,
+        cx: &mut Context<Editor>,
+    ) -> Task<anyhow::Result<Vec<CompletionResponse>>> {
+        let Some(search) = self.search.upgrade() else {
+            return Task::ready(Ok(Vec::new()));
+        };
+        let current_text = buffer.read(cx).text();
+        let replace_range = text::Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id());
+        let project = search.read(cx).project.clone();
+        let completions = project
+            .read(cx)
+            .search_history(self.kind)
+            .iter()
+            .filter(|entry| *entry != current_text)
+            .map(|entry| Completion {
+                replace_range: replace_range.clone(),
+                new_text: entry.to_string(),
+                label: CodeLabel::plain(entry.to_string(), None),
+                match_start: None,
+                snippet_deduplication_key: None,
+                icon_path: None,
+                icon_color: None,
+                documentation: None,
+                confirm: None,
+                source: CompletionSource::Custom,
+                insert_text_mode: None,
+                group: None,
+            })
+            .collect::<Vec<_>>();
+        Task::ready(Ok(vec![CompletionResponse {
+            is_incomplete: false,
+            display_options: CompletionDisplayOptions::default(),
+            completions,
+        }]))
+    }
+
+    fn is_completion_trigger(
+        &self,
+        _buffer: &Entity<Buffer>,
+        _position: language::Anchor,
+        _text: &str,
+        _trigger_in_words: bool,
+        _cx: &mut Context<Editor>,
+    ) -> bool {
+        true
+    }
+
+    fn sort_completions(&self) -> bool {
+        false
+    }
+}
+
+/// Appends the given entries to the persisted, cross-workspace search
+/// history, deduplicating by recency and keeping at most
+/// [`MAX_PERSISTED_SEARCH_HISTORY`] entries per input kind.
+fn persist_search_history(new_entries: Vec<(SearchInputKind, String)>, cx: &App) {
+    if new_entries.is_empty() {
+        return;
+    }
+    let db = KeyValueStore::global(cx);
+    db::write_and_log(cx, move || async move {
+        let store = db.scoped(SEARCH_HISTORY_NAMESPACE);
+        for (kind, new_entry) in new_entries {
+            let key = search_history_kvp_key(kind);
+            let mut entries = match store.read(key)? {
+                Some(value) => serde_json::from_str::<Vec<String>>(&value).unwrap_or_default(),
+                None => Vec::new(),
+            };
+            entries.retain(|entry| entry != &new_entry);
+            entries.push(new_entry);
+            let excess_entries = entries.len().saturating_sub(MAX_PERSISTED_SEARCH_HISTORY);
+            entries.drain(..excess_entries);
+            store
+                .write(key.to_string(), serde_json::to_string(&entries)?)
+                .await?;
+        }
+        Ok(())
+    });
+}
+
 pub struct ProjectSearch {
     pub(crate) project: Entity<Project>,
     pub excerpts: Entity<MultiBuffer>,
@@ -327,6 +469,7 @@ impl ProjectSearch {
         let capability = project.read(cx).capability();
         let excerpts = cx.new(|_| MultiBuffer::new(capability));
         let subscription = Self::subscribe_to_excerpts(&excerpts, cx);
+        seed_search_history_from_db(&project, cx);
 
         Self {
             project,
@@ -433,24 +576,28 @@ impl ProjectSearch {
     fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) {
         let project_search_turning_into_text_finder =
             Arc::clone(&self.project_search_turning_into_text_finder);
+        let mut history_entries = vec![(SearchInputKind::Query, query.as_str().to_string())];
         let search = self.project.update(cx, |project, cx| {
             project
                 .search_history_mut(SearchInputKind::Query)
                 .add(&mut self.search_history_cursor, query.as_str().to_string());
             let included = query.as_inner().files_to_include().sources().join(",");
             if !included.is_empty() {
+                history_entries.push((SearchInputKind::Include, included.clone()));
                 project
                     .search_history_mut(SearchInputKind::Include)
                     .add(&mut self.search_included_history_cursor, included);
             }
             let excluded = query.as_inner().files_to_exclude().sources().join(",");
             if !excluded.is_empty() {
+                history_entries.push((SearchInputKind::Exclude, excluded.clone()));
                 project
                     .search_history_mut(SearchInputKind::Exclude)
                     .add(&mut self.search_excluded_history_cursor, excluded);
             }
             project.search(query.clone(), cx)
         });
+        persist_search_history(history_entries, cx);
         self.last_search_query_text = Some(query.as_str().to_string());
         self.search_id += 1;
         self.active_query = Some(query);
@@ -860,6 +1007,144 @@ impl Item for ProjectSearchView {
     }
 }
 
+const PROJECT_SEARCH_ITEMS_NAMESPACE: &str = "project_search_items";
+
+fn serialized_project_search_key(workspace_id: WorkspaceId, item_id: ItemId) -> String {
+    format!("{}-{item_id}", i64::from(workspace_id))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SerializedProjectSearch {
+    query: String,
+    replacement: String,
+    included_files: String,
+    excluded_files: String,
+    search_options: u8,
+    filters_enabled: bool,
+    replace_enabled: bool,
+    included_opened_only: bool,
+}
+
+impl SerializableItem for ProjectSearchView {
+    fn serialized_item_kind() -> &'static str {
+        "ProjectSearchView"
+    }
+
+    fn cleanup(
+        workspace_id: WorkspaceId,
+        alive_items: Vec<ItemId>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<()>> {
+        let db = KeyValueStore::global(cx);
+        cx.background_spawn(async move {
+            let store = db.scoped(PROJECT_SEARCH_ITEMS_NAMESPACE);
+            let workspace_prefix = format!("{}-", i64::from(workspace_id));
+            for key in store.keys()? {
+                let item_id = key
+                    .strip_prefix(&workspace_prefix)
+                    .and_then(|item_id| item_id.parse::<ItemId>().ok());
+                if let Some(item_id) = item_id
+                    && !alive_items.contains(&item_id)
+                {
+                    store.delete(key).await?;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    fn deserialize(
+        project: Entity<Project>,
+        workspace: WeakEntity<Workspace>,
+        workspace_id: WorkspaceId,
+        item_id: ItemId,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Task<anyhow::Result<Entity<Self>>> {
+        let db = KeyValueStore::global(cx);
+        window.spawn(cx, async move |cx| {
+            let serialized = cx
+                .background_spawn(async move {
+                    let key = serialized_project_search_key(workspace_id, item_id);
+                    let value = db
+                        .scoped(PROJECT_SEARCH_ITEMS_NAMESPACE)
+                        .read(&key)?
+                        .with_context(|| format!("no serialized project search for key {key}"))?;
+                    anyhow::Ok(serde_json::from_str::<SerializedProjectSearch>(&value)?)
+                })
+                .await?;
+            cx.update(|window, cx| {
+                let model = cx.new(|cx| ProjectSearch::new(project, cx));
+                let settings = ProjectSearchSettings {
+                    search_options: SearchOptions::from_bits_truncate(serialized.search_options),
+                    filters_enabled: serialized.filters_enabled,
+                };
+                let view = cx.new(|cx| {
+                    let mut view =
+                        ProjectSearchView::new(workspace, model, window, cx, Some(settings));
+                    view.replace_enabled = serialized.replace_enabled;
+                    view.included_opened_only = serialized.included_opened_only;
+                    view.query_editor.update(cx, |editor, cx| {
+                        editor.set_text(serialized.query, window, cx)
+                    });
+                    view.replacement_editor.update(cx, |editor, cx| {
+                        editor.set_text(serialized.replacement, window, cx)
+                    });
+                    view.included_files_editor.update(cx, |editor, cx| {
+                        editor.set_text(serialized.included_files, window, cx)
+                    });
+                    view.excluded_files_editor.update(cx, |editor, cx| {
+                        editor.set_text(serialized.excluded_files, window, cx)
+                    });
+                    view
+                });
+                view.update(cx, |view, cx| {
+                    if !view.search_query_text(cx).is_empty() {
+                        view.search(cx);
+                    }
+                });
+                anyhow::Ok(view)
+            })?
+        })
+    }
+
+    fn serialize(
+        &mut self,
+        workspace: &mut Workspace,
+        item_id: ItemId,
+        _closing: bool,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<anyhow::Result<()>>> {
+        let workspace_id = workspace.database_id()?;
+        let serialized = SerializedProjectSearch {
+            query: self.query_editor.read(cx).text(cx),
+            replacement: self.replacement_editor.read(cx).text(cx),
+            included_files: self.included_files_editor.read(cx).text(cx),
+            excluded_files: self.excluded_files_editor.read(cx).text(cx),
+            search_options: self.search_options.bits(),
+            filters_enabled: self.filters_enabled,
+            replace_enabled: self.replace_enabled,
+            included_opened_only: self.included_opened_only,
+        };
+        let db = KeyValueStore::global(cx);
+        Some(cx.background_spawn(async move {
+            let value = serde_json::to_string(&serialized)?;
+            db.scoped(PROJECT_SEARCH_ITEMS_NAMESPACE)
+                .write(serialized_project_search_key(workspace_id, item_id), value)
+                .await
+        }))
+    }
+
+    fn should_serialize(&self, event: &Self::Event) -> bool {
+        matches!(
+            event,
+            ViewEvent::EditorEvent(EditorEvent::BufferEdited | EditorEvent::Edited { .. })
+        )
+    }
+}
+
 impl ProjectSearchView {
     pub fn get_matches(&self, cx: &App) -> Vec<Range<Anchor>> {
         self.entity.read(cx).match_ranges.clone()
@@ -1063,6 +1348,10 @@ impl ProjectSearchView {
             editor.set_use_autoclose(false);
             editor.set_use_selection_highlight(false);
             editor.set_text(query_text, window, cx);
+            editor.set_completion_provider(Some(Rc::new(SearchHistoryCompletionProvider {
+                search: entity.downgrade(),
+                kind: SearchInputKind::Query,
+            })));
             editor
         });
         // Subscribe to query_editor in order to reraise editor events for workspace item activation purposes
@@ -1115,7 +1404,10 @@ impl ProjectSearchView {
         let included_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text(INCLUDE_PLACEHOLDER, window, cx);
-
+            editor.set_completion_provider(Some(Rc::new(SearchHistoryCompletionProvider {
+                search: entity.downgrade(),
+                kind: SearchInputKind::Include,
+            })));
             editor
         });
         // Subscribe to include_files_editor in order to reraise editor events for workspace item activation purposes
@@ -1128,7 +1420,10 @@ impl ProjectSearchView {
         let excluded_files_editor = cx.new(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text(EXCLUDE_PLACEHOLDER, window, cx);
-
+            editor.set_completion_provider(Some(Rc::new(SearchHistoryCompletionProvider {
+                search: entity.downgrade(),
+                kind: SearchInputKind::Exclude,
+            })));
             editor
         });
         // Subscribe to excluded_files_editor in order to reraise editor events for workspace item activation purposes
@@ -5662,10 +5957,326 @@ pub mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_project_search_view_serialization(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.ts": "const TWO = 2; // ONE",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+        let workspace_id = WorkspaceId::from_i64(1);
+        let item_id = 42;
+        let key = serialized_project_search_key(workspace_id, item_id);
+        let serialized = SerializedProjectSearch {
+            query: "ONE".to_string(),
+            replacement: "REPLACED".to_string(),
+            included_files: "*.rs".to_string(),
+            excluded_files: "*.ts".to_string(),
+            search_options: (SearchOptions::CASE_SENSITIVE | SearchOptions::WHOLE_WORD).bits(),
+            filters_enabled: true,
+            replace_enabled: true,
+            included_opened_only: false,
+        };
+        let db = cx.update(|_, cx| KeyValueStore::global(cx));
+        db.scoped(PROJECT_SEARCH_ITEMS_NAMESPACE)
+            .write(key.clone(), serde_json::to_string(&serialized).unwrap())
+            .await
+            .unwrap();
+
+        let search_view = cx
+            .update(|window, cx| {
+                ProjectSearchView::deserialize(
+                    project.clone(),
+                    workspace.downgrade(),
+                    workspace_id,
+                    item_id,
+                    window,
+                    cx,
+                )
+            })
+            .await
+            .unwrap();
+        cx.background_executor.run_until_parked();
+
+        search_view.read_with(cx, |search_view, cx| {
+            assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
+            assert_eq!(search_view.replacement_editor.read(cx).text(cx), "REPLACED");
+            assert_eq!(search_view.included_files_editor.read(cx).text(cx), "*.rs");
+            assert_eq!(search_view.excluded_files_editor.read(cx).text(cx), "*.ts");
+            assert_eq!(
+                search_view.search_options,
+                SearchOptions::CASE_SENSITIVE | SearchOptions::WHOLE_WORD
+            );
+            assert!(search_view.filters_enabled);
+            assert!(search_view.replace_enabled);
+            assert!(!search_view.included_opened_only);
+            assert_eq!(
+                search_view.entity.read(cx).match_ranges.len(),
+                1,
+                "Restored search should have re-run and matched `ONE` in one.rs only"
+            );
+        });
+
+        cx.update(|window, cx| ProjectSearchView::cleanup(workspace_id, vec![item_id], window, cx))
+            .await
+            .unwrap();
+        assert_eq!(
+            db.scoped(PROJECT_SEARCH_ITEMS_NAMESPACE)
+                .read(&key)
+                .unwrap(),
+            Some(serde_json::to_string(&serialized).unwrap()),
+            "Cleanup should keep serialized data of alive items"
+        );
+
+        cx.update(|window, cx| ProjectSearchView::cleanup(workspace_id, Vec::new(), window, cx))
+            .await
+            .unwrap();
+        assert_eq!(
+            db.scoped(PROJECT_SEARCH_ITEMS_NAMESPACE)
+                .read(&key)
+                .unwrap(),
+            None,
+            "Cleanup should remove serialized data of dead items"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_search_history_persistence(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::new_search(workspace, &workspace::NewSearch, window, cx)
+        });
+        let search_view = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+                .expect("Search view expected to appear after new search event trigger")
+        });
+
+        let mut search = |query: &str| {
+            search_view.update_in(cx, |search_view, window, cx| {
+                search_view.filters_enabled = true;
+                search_view.included_files_editor.update(cx, |editor, cx| {
+                    editor.set_text("*.rs", window, cx);
+                });
+                search_view.excluded_files_editor.update(cx, |editor, cx| {
+                    editor.set_text("*.ts", window, cx);
+                });
+                search_view
+                    .query_editor
+                    .update(cx, |editor, cx| editor.set_text(query, window, cx));
+                search_view.search(cx);
+            });
+            cx.background_executor.run_until_parked();
+        };
+        search("ONE");
+        search("TWO");
+        search("ONE");
+
+        let db = cx.update(|_, cx| KeyValueStore::global(cx));
+        let read_persisted = |kind: SearchInputKind| {
+            let value = db
+                .scoped(SEARCH_HISTORY_NAMESPACE)
+                .read(search_history_kvp_key(kind))
+                .unwrap()
+                .expect("persisted search history entry expected");
+            serde_json::from_str::<Vec<String>>(&value).unwrap()
+        };
+        assert_eq!(
+            read_persisted(SearchInputKind::Query),
+            vec!["TWO".to_string(), "ONE".to_string()],
+            "Queries should be persisted from oldest to newest, deduplicated by recency"
+        );
+        assert_eq!(
+            read_persisted(SearchInputKind::Include),
+            vec!["*.rs".to_string()]
+        );
+        assert_eq!(
+            read_persisted(SearchInputKind::Exclude),
+            vec!["*.ts".to_string()]
+        );
+
+        // A search model created for another project (e.g. in a new window)
+        // starts with the combined history, most recent entries first.
+        let other_project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        cx.update(|_, cx| cx.new(|cx| ProjectSearch::new(other_project.clone(), cx)));
+        other_project.read_with(cx, |project, _| {
+            assert_eq!(
+                project
+                    .search_history(SearchInputKind::Query)
+                    .iter()
+                    .collect::<Vec<_>>(),
+                vec!["ONE", "TWO"],
+                "Seeded history should be iterated from newest to oldest"
+            );
+            assert_eq!(
+                project
+                    .search_history(SearchInputKind::Include)
+                    .iter()
+                    .collect::<Vec<_>>(),
+                vec!["*.rs"]
+            );
+            assert_eq!(
+                project
+                    .search_history(SearchInputKind::Exclude)
+                    .iter()
+                    .collect::<Vec<_>>(),
+                vec!["*.ts"]
+            );
+        });
+
+        // The persisted history is capped.
+        cx.update(|_, cx| {
+            let entries = (0..2 * MAX_PERSISTED_SEARCH_HISTORY)
+                .map(|i| (SearchInputKind::Query, format!("entry-{i}")))
+                .collect::<Vec<_>>();
+            persist_search_history(entries, cx);
+        });
+        cx.background_executor.run_until_parked();
+        let persisted_queries = read_persisted(SearchInputKind::Query);
+        assert_eq!(persisted_queries.len(), MAX_PERSISTED_SEARCH_HISTORY);
+        assert_eq!(
+            persisted_queries.last().map(String::as_str),
+            Some("entry-99"),
+            "The most recent entry should be the last one"
+        );
+        assert_eq!(
+            persisted_queries.first().map(String::as_str),
+            Some("entry-50"),
+            "Oldest entries should have been dropped"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_search_history_completions(cx: &mut TestAppContext) {
+        use editor::CompletionProvider as _;
+
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            path!("/dir"),
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+        let window =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window
+            .read_with(cx, |mw, _| mw.workspace().clone())
+            .unwrap();
+        let cx = &mut VisualTestContext::from_window(window.into(), cx);
+
+        workspace.update_in(cx, |workspace, window, cx| {
+            ProjectSearchView::new_search(workspace, &workspace::NewSearch, window, cx)
+        });
+        let search_view = cx.read(|cx| {
+            workspace
+                .read(cx)
+                .active_pane()
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.downcast::<ProjectSearchView>())
+                .expect("Search view expected to appear after new search event trigger")
+        });
+
+        for query in ["ONE", "TWO", "THREE"] {
+            search_view.update_in(cx, |search_view, window, cx| {
+                search_view
+                    .query_editor
+                    .update(cx, |editor, cx| editor.set_text(query, window, cx));
+                search_view.search(cx);
+            });
+            cx.background_executor.run_until_parked();
+        }
+
+        let completions = search_view.update_in(cx, |search_view, window, cx| {
+            search_view
+                .query_editor
+                .update(cx, |editor, cx| editor.set_text("TWO", window, cx));
+            let provider = SearchHistoryCompletionProvider {
+                search: search_view.entity.downgrade(),
+                kind: SearchInputKind::Query,
+            };
+            let buffer = search_view
+                .query_editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .unwrap();
+            search_view.query_editor.update(cx, |_, cx| {
+                let position =
+                    text::Anchor::min_max_range_for_buffer(buffer.read(cx).remote_id()).start;
+                provider.completions(
+                    &buffer,
+                    position,
+                    editor::CompletionContext {
+                        trigger_kind: lsp::CompletionTriggerKind::INVOKED,
+                        trigger_character: None,
+                    },
+                    window,
+                    cx,
+                )
+            })
+        });
+        let new_texts = completions
+            .await
+            .unwrap()
+            .into_iter()
+            .flat_map(|response| response.completions)
+            .map(|completion| completion.new_text)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            new_texts,
+            vec!["THREE".to_string(), "ONE".to_string()],
+            "History completions should be sorted by recency and exclude the current query"
+        );
+    }
+
     fn init_test(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
+            cx.set_global(db::AppDatabase::test_new());
 
             theme_settings::init(theme::LoadThemes::JustBase, cx);
 
