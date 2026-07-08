@@ -31,11 +31,8 @@
 #   writablePaths = [ ];        # writable subtrees when fs = "restricted"
 #   networkAccess = "blocked";  # or "unrestricted" / "restricted"
 #   allowedDomains = [ ];       # allowed hosts when networkAccess = "restricted"
-#   gitDisabled = [ ];          # `.git` dirs whose contents are protected
-#                               # (read-only on Linux). Mutually exclusive with
-#                               # gitAllowed.
-#   gitAllowed = [ ];           # `.git` dirs whose contents are made writable.
-#                               # Mutually exclusive with gitDisabled.
+#   protectedPaths = [ ];       # paths that remain readable but not writable,
+#                               # even if they fall under a writable subtree.
 #
 # Two echo servers (`echo1`, `echo2`) on separate nodes give the network checks
 # real peers, so a restricted-network policy that allowlists `echo1` can be
@@ -237,136 +234,49 @@ in
         succeeds = true;
       }
 
-      # ---- Git protection ----------------------------------------------------
-      # The worktree is writable, but the `.git` directory inside it can be
-      # protected (Git disabled) or opened up (Git allowed) independently. On
-      # Linux a protected `.git` is re-bound read-only *over* the writable
-      # worktree, so its contents stay readable but writes are denied.
-
-      # Git disabled: the worktree is writable but `.git` is protected, so a
-      # write into `.git` is denied. This is the core case the feature exists
-      # for — an agent editing the project must not be able to corrupt Git
-      # metadata.
+      # ---- Protected paths ---------------------------------------------------
+      # A path inside a writable subtree can be re-bound read-only over the
+      # writable bind (order matters: later binds win). On Linux, protected paths
+      # remain readable but writes are denied.
       {
         fs = "restricted";
         writablePaths = [ "/sandbox-test/repo" ];
-        gitDisabled = [ "/sandbox-test/repo/.git" ];
+        protectedPaths = [ "/sandbox-test/repo/protected" ];
         networkAccess = "blocked";
-        write = "/sandbox-test/repo/.git/test";
+        write = "/sandbox-test/repo/protected/test";
         succeeds = false;
       }
 
-      # Git allowed: the same write into `.git` now succeeds because the policy
-      # makes `.git` writable.
+      # Protected paths affect only the protected subtree: ordinary writes
+      # elsewhere in the writable worktree are unaffected.
       {
         fs = "restricted";
         writablePaths = [ "/sandbox-test/repo" ];
-        gitAllowed = [ "/sandbox-test/repo/.git" ];
-        networkAccess = "blocked";
-        write = "/sandbox-test/repo/.git/test";
-        succeeds = true;
-      }
-
-      # Git disabled protects only `.git`: ordinary writes elsewhere in the
-      # writable worktree are unaffected.
-      {
-        fs = "restricted";
-        writablePaths = [ "/sandbox-test/repo" ];
-        gitDisabled = [ "/sandbox-test/repo/.git" ];
+        protectedPaths = [ "/sandbox-test/repo/protected" ];
         networkAccess = "blocked";
         write = "/sandbox-test/repo/src/main.rs";
         succeeds = true;
       }
 
-      # Git disabled is a subtree protection: a write to something nested deep
-      # inside `.git` is denied too, not just a top-level file.
+      # Protected paths block writes but NOT reads on Linux because the protected
+      # subtree is read-only.
       {
         fs = "restricted";
         writablePaths = [ "/sandbox-test/repo" ];
-        gitDisabled = [ "/sandbox-test/repo/.git" ];
+        protectedPaths = [ "/sandbox-test/repo/protected" ];
         networkAccess = "blocked";
-        write = "/sandbox-test/repo/.git/hooks/pre-commit";
-        succeeds = false;
-      }
-
-      # Git disabled blocks writes but NOT reads: on Linux a protected `.git` is
-      # read-only, so its contents remain readable from inside the sandbox
-      # (Git status, log, diff, … must keep working).
-      {
-        fs = "restricted";
-        writablePaths = [ "/sandbox-test/repo" ];
-        gitDisabled = [ "/sandbox-test/repo/.git" ];
-        networkAccess = "blocked";
-        read = "/sandbox-test/repo/.git/HEAD";
+        read = "/sandbox-test/repo/protected/HEAD";
         succeeds = true;
       }
 
-      # Git allowed grants writes to `.git` on its own, even when the worktree
-      # itself is not in `writablePaths`. The policy's Git dirs are made
-      # writable directly.
-      {
-        fs = "restricted";
-        writablePaths = [ ];
-        gitAllowed = [ "/sandbox-test/repo/.git" ];
-        networkAccess = "blocked";
-        write = "/sandbox-test/repo/.git/test";
-        succeeds = true;
-      }
-
-      # ...and that grant is scoped to `.git`: it does not make the surrounding
-      # worktree writable. A write next to `.git` (not in `writablePaths`) is
-      # still denied.
-      {
-        fs = "restricted";
-        writablePaths = [ ];
-        gitAllowed = [ "/sandbox-test/repo/.git" ];
-        networkAccess = "blocked";
-        write = "/sandbox-test/repo/README.md";
-        succeeds = false;
-      }
-
-      # Multiple repositories: each protected `.git` is independently denied.
-      # This exercises the list handling — a write into the *second* repo's
-      # `.git` must still be blocked.
-      {
-        fs = "restricted";
-        writablePaths = [
-          "/sandbox-test/repo-a"
-          "/sandbox-test/repo-b"
-        ];
-        gitDisabled = [
-          "/sandbox-test/repo-a/.git"
-          "/sandbox-test/repo-b/.git"
-        ];
-        networkAccess = "blocked";
-        write = "/sandbox-test/repo-b/.git/test";
-        succeeds = false;
-      }
-
-      # The fs escape hatch supersedes Git protection: when filesystem writes
-      # are unrestricted there is no read-only bind to protect `.git`, so the
-      # write succeeds. This documents that `gitDisabled` only has teeth under a
-      # restricted filesystem policy.
+      # Protected paths stay read-only even when ordinary filesystem writes are
+      # otherwise unrestricted.
       {
         fs = "unrestricted";
-        gitDisabled = [ "/sandbox-test/repo/.git" ];
+        protectedPaths = [ "/sandbox-test/repo/protected" ];
         networkAccess = "blocked";
-        write = "/sandbox-test/repo/.git/test";
-        succeeds = true;
-      }
-
-      # Documented Linux gap: a `.git` that does not yet exist when the sandbox
-      # is built cannot be re-bound read-only, so it is skipped. Writing the
-      # `.git` entry itself (its parent worktree is writable, and `.git` does
-      # not exist beforehand) therefore succeeds. macOS denies this even before
-      # `.git` exists; bwrap cannot, and this test pins that difference.
-      {
-        fs = "restricted";
-        writablePaths = [ "/sandbox-test/fresh-repo" ];
-        gitDisabled = [ "/sandbox-test/fresh-repo/.git" ];
-        networkAccess = "blocked";
-        write = "/sandbox-test/fresh-repo/.git";
-        succeeds = true;
+        write = "/sandbox-test/repo/protected/test";
+        succeeds = false;
       }
 
       # Blocked network: the echo server is unreachable.
