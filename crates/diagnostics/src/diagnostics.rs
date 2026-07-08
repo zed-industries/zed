@@ -807,6 +807,10 @@ impl Item for ProjectDiagnosticsEditor {
         self.editor.for_each_project_item(cx, f)
     }
 
+    fn active_project_path(&self, cx: &App) -> Option<ProjectPath> {
+        self.editor.read(cx).active_project_path(cx)
+    }
+
     fn set_nav_history(
         &mut self,
         nav_history: ItemNavHistory,

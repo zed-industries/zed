@@ -141,7 +141,7 @@ impl RenderOnce for AlertModal {
         if let Some(footer) = self.footer {
             modal = modal.child(footer);
         } else if has_default_footer {
-            let primary_action = self.primary_action.unwrap_or_else(|| "Ok".into());
+            let primary_action = self.primary_action.unwrap_or_else(|| "OK".into());
             let dismiss_label = self.dismiss_label.unwrap_or_else(|| "Cancel".into());
 
             modal = modal.child(
@@ -174,13 +174,12 @@ impl Component for AlertModal {
         ComponentStatus::WorkInProgress
     }
 
-    fn description() -> Option<&'static str> {
-        Some("A modal dialog that presents an alert message with primary and dismiss actions.")
+    fn description() -> &'static str {
+        "A modal dialog that presents an alert message with primary and dismiss actions."
     }
 
-    fn preview(_window: &mut Window, cx: &mut App) -> Option<AnyElement> {
-        Some(
-            v_flex()
+    fn preview(_window: &mut Window, cx: &mut App) -> AnyElement {
+        v_flex()
                 .gap_6()
                 .p_4()
                 .children(vec![
@@ -246,7 +245,6 @@ Review .zed/settings.json for any extensions or commands configured by this proj
                             .into_any_element(),
                     )]),
                 ])
-                .into_any_element(),
-        )
+                .into_any_element()
     }
 }

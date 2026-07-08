@@ -14,9 +14,11 @@ on:
         description: Description for the changes to be expected with this rollout
         type: string
         default: ''
+permissions:
+  contents: read
 jobs:
   fetch_extension_repos:
-    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && github.ref == 'refs/heads/main'
+    if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && (github.ref == 'refs/tags/extension-workflows' || github.ref == 'refs/heads/main')
     runs-on: namespace-profile-2x4-ubuntu-2404
     steps:
     - name: checkout_zed_repo
@@ -220,21 +222,18 @@ jobs:
         clean: false
         fetch-depth: 0
         token: ${{ steps.generate-token.outputs.token }}
-    - name: extension_workflow_rollout::create_rollout_tag::update_rollout_tag
-      run: |
-        if git rev-parse "extension-workflows" >/dev/null 2>&1; then
-            git tag -d "extension-workflows"
-            git push origin ":refs/tags/extension-workflows" || true
-        fi
-
-        echo "Creating new tag 'extension-workflows' at $(git rev-parse --short HEAD)"
-        git tag "extension-workflows"
-        git push origin "extension-workflows"
-      env:
-        GIT_AUTHOR_NAME: zed-zippy[bot]
-        GIT_AUTHOR_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
-        GIT_COMMITTER_NAME: zed-zippy[bot]
-        GIT_COMMITTER_EMAIL: 234243425+zed-zippy[bot]@users.noreply.github.com
+    - name: steps::update_tag
+      uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+      with:
+        script: |
+          github.rest.git.updateRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'tags/extension-workflows',
+              sha: context.sha,
+              force: true
+          })
+        github-token: ${{ steps.generate-token.outputs.token }}
     timeout-minutes: 1
 defaults:
   run:
