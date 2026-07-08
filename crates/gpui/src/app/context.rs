@@ -7,7 +7,7 @@ use anyhow::Result;
 use futures::FutureExt;
 use gpui_util::Deferred;
 use std::{
-    any::{Any, TypeId},
+    any::{Any, TypeId, type_name},
     borrow::{Borrow, BorrowMut},
     future::Future,
     ops,
@@ -214,7 +214,7 @@ impl<'a, T: 'static> Context<'a, T> {
         T: 'static,
     {
         let handle = self.weak_entity();
-        self.app.on_app_quit(move |cx| {
+        self.app.on_app_quit_named(type_name::<T>(), move |cx| {
             let future = handle.update(cx, |entity, cx| on_quit(entity, cx)).ok();
             async move {
                 if let Some(future) = future {

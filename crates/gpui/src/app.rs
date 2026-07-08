@@ -276,7 +276,10 @@ type Handler = Box<dyn FnMut(&mut App) -> bool + 'static>;
 type Listener = Box<dyn FnMut(&dyn Any, &mut App) -> bool + 'static>;
 pub(crate) type KeystrokeObserver =
     Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut App) -> bool + 'static>;
-type QuitHandler = Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'static>;
+pub(crate) struct QuitHandler {
+    label: &'static str,
+    callback: Box<dyn FnOnce(&mut App) -> LocalBoxFuture<'static, ()> + 'static>,
+}
 type WindowClosedHandler = Box<dyn FnMut(&mut App, WindowId)>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut App) + 'static>;
 type NewEntityListener = Box<dyn FnMut(AnyEntity, &mut Option<&mut Window>, &mut App) + 'static>;
@@ -882,9 +885,20 @@ impl App {
     /// will be given `SHUTDOWN_TIMEOUT` to complete before exiting.
     pub fn shutdown(&mut self) {
         let mut futures = Vec::new();
+        let mut quit_observers = Vec::new();
 
         for observer in self.quit_observers.remove(&()) {
-            futures.push(observer(self));
+            let completed = Rc::new(Cell::new(false));
+            let label = observer.label;
+            let future = (observer.callback)(self);
+            futures.push({
+                let completed = completed.clone();
+                async move {
+                    future.await;
+                    completed.set(true);
+                }
+            });
+            quit_observers.push((label, completed));
         }
 
         self.windows.clear();
@@ -898,7 +912,11 @@ impl App {
             .block_with_timeout(SHUTDOWN_TIMEOUT, futures)
             .is_err()
         {
-            log::error!("timed out waiting on app_will_quit");
+            let pending_observers = quit_observers
+                .iter()
+                .filter_map(|(label, completed)| (!completed.get()).then_some(*label))
+                .join(", ");
+            log::error!("timed out waiting on app_will_quit: {pending_observers}");
         }
 
         self.quitting = false;
@@ -2136,12 +2154,26 @@ impl App {
     where
         Fut: 'static + Future<Output = ()>,
     {
+        self.on_app_quit_named("app", on_quit)
+    }
+
+    pub(crate) fn on_app_quit_named<Fut>(
+        &self,
+        label: &'static str,
+        mut on_quit: impl FnMut(&mut App) -> Fut + 'static,
+    ) -> Subscription
+    where
+        Fut: 'static + Future<Output = ()>,
+    {
         let (subscription, activate) = self.quit_observers.insert(
             (),
-            Box::new(move |cx| {
-                let future = on_quit(cx);
-                future.boxed_local()
-            }),
+            QuitHandler {
+                label,
+                callback: Box::new(move |cx| {
+                    let future = on_quit(cx);
+                    future.boxed_local()
+                }),
+            },
         );
         activate();
         subscription
