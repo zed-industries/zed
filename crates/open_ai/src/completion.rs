@@ -814,7 +814,8 @@ impl OpenAiResponseEventMapper {
                 }
                 events
             }
-            ResponsesStreamEvent::ReasoningSummaryTextDelta { delta, .. } => {
+            ResponsesStreamEvent::ReasoningSummaryTextDelta { delta, .. }
+            | ResponsesStreamEvent::ReasoningDelta { delta, .. } => {
                 if delta.is_empty() {
                     Vec::new()
                 } else {
@@ -973,6 +974,7 @@ impl OpenAiResponseEventMapper {
             | ResponsesStreamEvent::ContentPartDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryTextDone { .. }
             | ResponsesStreamEvent::ReasoningSummaryPartDone { .. }
+            | ResponsesStreamEvent::ReasoningDone { .. }
             | ResponsesStreamEvent::Created { .. }
             | ResponsesStreamEvent::InProgress { .. }
             | ResponsesStreamEvent::Unknown => Vec::new(),
@@ -1368,6 +1370,22 @@ mod tests {
         assert!(matches!(
             mapped[3],
             LanguageModelCompletionEvent::Stop(StopReason::EndTurn)
+        ));
+    }
+
+    #[test]
+    fn responses_stream_maps_mantle_reasoning_delta() {
+        let event = serde_json::from_value::<ResponsesStreamEvent>(json!({
+            "type": "response.reasoning.delta",
+            "delta": "checking the contract terms"
+        }))
+        .unwrap();
+
+        let mapped = map_response_events(vec![event]);
+        assert!(matches!(
+            &mapped[0],
+            LanguageModelCompletionEvent::Thinking { text, signature: None }
+                if text == "checking the contract terms"
         ));
     }
 
