@@ -4364,6 +4364,107 @@ mod tests {
         assert!(active_tooltip.borrow().is_none());
     }
 
+    struct NestedTooltipOwner;
+
+    impl Render for NestedTooltipOwner {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                div()
+                    .id("outer-target")
+                    .w(px(50.))
+                    .h(px(50.))
+                    .hoverable_tooltip(|_, cx| cx.new(|_| TooltipWithInnerTooltip).into()),
+            )
+        }
+    }
+
+    struct TooltipWithInnerTooltip;
+
+    impl Render for TooltipWithInnerTooltip {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().w(px(100.)).h(px(100.)).child(
+                div()
+                    .id("inner-target")
+                    .size_full()
+                    .tooltip(|_, cx| cx.new(|_| TestTooltipView).into()),
+            )
+        }
+    }
+
+    #[test]
+    fn tooltip_inside_hoverable_tooltip_is_rendered() {
+        fn draw(test_app: &mut TestAppContext, any_window: AnyWindowHandle) {
+            test_app
+                .update_window(any_window, |_, window, cx| {
+                    window.draw(cx).clear();
+                })
+                .unwrap();
+        }
+
+        fn move_mouse(
+            test_app: &mut TestAppContext,
+            any_window: AnyWindowHandle,
+            position: Point<Pixels>,
+        ) {
+            test_app
+                .update_window(any_window, |_, window, cx| {
+                    window.dispatch_event(
+                        MouseMoveEvent {
+                            position,
+                            modifiers: Default::default(),
+                            pressed_button: None,
+                        }
+                        .to_platform_input(),
+                        cx,
+                    );
+                })
+                .unwrap();
+        }
+
+        fn rendered_tooltip_count(
+            test_app: &mut TestAppContext,
+            any_window: AnyWindowHandle,
+        ) -> usize {
+            test_app
+                .update_window(any_window, |_, window, _| window.tooltip_bounds.len())
+                .unwrap()
+        }
+
+        let mut test_app = TestAppContext::single();
+        let window = test_app.add_window(|_, _| NestedTooltipOwner);
+        let any_window: AnyWindowHandle = window.into();
+
+        draw(&mut test_app, any_window);
+
+        // Hover the element that has the hoverable tooltip.
+        move_mouse(&mut test_app, any_window, point(px(10.), px(10.)));
+        draw(&mut test_app, any_window);
+        test_app
+            .dispatcher
+            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        test_app.run_until_parked();
+        draw(&mut test_app, any_window);
+
+        assert_eq!(rendered_tooltip_count(&mut test_app, any_window), 1);
+
+        // Move into the tooltip (outside the origin element), over the inner element that has its
+        // own tooltip. The tooltip is shown at the mouse position (10, 10) offset by (1, 1) and is
+        // 100x100, so (75, 75) is inside it while being outside the 50x50 origin element.
+        move_mouse(&mut test_app, any_window, point(px(75.), px(75.)));
+        draw(&mut test_app, any_window);
+        test_app
+            .dispatcher
+            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
+        test_app.run_until_parked();
+        draw(&mut test_app, any_window);
+
+        assert_eq!(
+            rendered_tooltip_count(&mut test_app, any_window),
+            2,
+            "the tooltip of an element inside a hoverable tooltip should render on top of it"
+        );
+    }
+
     #[test]
     fn test_write_a11y_info_string_and_numeric_properties() {
         let mut interactivity = Interactivity::default();

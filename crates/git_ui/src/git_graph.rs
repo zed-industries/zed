@@ -2582,7 +2582,7 @@ impl GitGraph {
                     }),
                 )
                 .entry(
-                    "Copy SHA",
+                    "Copy Commit SHA",
                     Some(CopyCommitSha.boxed_clone()),
                     window.handler_for(&git_graph, move |this, _window, cx| {
                         this.copy_commit_sha(index, cx);
