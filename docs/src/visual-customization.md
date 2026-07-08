@@ -266,9 +266,15 @@ TBD: Centered layout related settings
     "quick_actions": true, // Whether to show quick action buttons.
     "selections_menu": true, // Whether to show the Selections menu
     "agent_review": true, // Whether to show agent review buttons
-    "code_actions": false // Whether to show code action buttons
+    "code_actions": false, // Whether to show code action buttons
+    "file_path_nav": false // Whether to show clickable file path segments in the breadcrumbs
   }
 ```
+
+With `file_path_nav` enabled, click a breadcrumb segment to browse that folder, then click an entry to open it. Inside the dropdown:
+
+- <kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> — move between path segments
+- <kbd>→</kbd> / <kbd>←</kbd> — expand / collapse a directory
 
 ### Editor Scrollbar and Minimap {#editor-scrollbar}
 

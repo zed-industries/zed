@@ -1084,6 +1084,43 @@ impl Item for Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
+        use crate::file_path_nav::FilePathNav;
+
+        if self.breadcrumbs_visible()
+            && EditorSettings::get_global(cx).toolbar.file_path_nav
+            && self.buffer.read(cx).is_singleton()
+        {
+            let buffer = self.buffer.read(cx).as_singleton()?;
+            let file = project::File::from_dyn(buffer.read(cx).file())?;
+            let worktree_id = file.worktree_id(cx);
+            let path = file.path.clone();
+
+            let project = self.project.as_ref()?.downgrade();
+            let workspace = self.workspace.as_ref().map(|workspace| workspace.0.clone());
+
+            let show_root = project
+                .upgrade()
+                .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+                .unwrap_or(false);
+            let root_name = if show_root {
+                project.upgrade().and_then(|project| {
+                    project
+                        .read(cx)
+                        .worktree_for_id(worktree_id, cx)
+                        .map(|worktree| {
+                            SharedString::from(worktree.read(cx).root_name_str().to_owned())
+                        })
+                })
+            } else {
+                None
+            };
+
+            return Some(
+                FilePathNav::new(worktree_id, path, show_root, root_name, project, workspace)
+                    .into_any_element(),
+            );
+        }
+
         (!TabBarSettings::get_global(cx).show && ItemSettings::get_global(cx).file_icons)
             .then(|| {
                 path_for_buffer(&self.buffer, 0, true, cx)
