@@ -2,7 +2,10 @@ use gh_workflow::*;
 
 use crate::tasks::workflows::{
     runners,
-    steps::{self, NamedJob, RepositoryTarget, TokenPermissions, ZippyGitIdentity, named},
+    steps::{
+        self, CommonPermissionSets, NamedJob, RepositoryTarget, TokenPermissions, ZippyGitIdentity,
+        named,
+    },
     vars::{StepOutput, WorkflowInput},
 };
 
@@ -13,6 +16,7 @@ pub fn cherry_pick() -> Workflow {
     let pr_number = WorkflowInput::string("pr_number", None);
     let cherry_pick = run_cherry_pick(&branch, &commit, &channel);
     named::workflow()
+        .with_minimal_permissions()
         .run_name(format!("cherry_pick to {channel} #{pr_number}"))
         .on(Event::default().workflow_dispatch(
             WorkflowDispatch::default()

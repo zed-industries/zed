@@ -207,7 +207,7 @@ fn path_match_helper<'a>(
                 candidate.path.into()
             },
             path_prefix: if root_is_file {
-                RelPath::empty().into()
+                RelPath::empty_arc()
             } else {
                 Arc::clone(path_prefix)
             },
@@ -239,7 +239,7 @@ pub fn match_fixed_path_set(
 
     let root_is_file = worktree_root_name.is_some() && candidates.iter().all(|c| c.path.is_empty());
 
-    let path_prefix = worktree_root_name.unwrap_or_else(|| RelPath::empty().into());
+    let path_prefix = worktree_root_name.unwrap_or_else(|| RelPath::empty_arc());
 
     let mut results = Vec::new();
 

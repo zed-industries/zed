@@ -1349,7 +1349,6 @@ impl Element for TerminalElement {
             };
 
             let terminal_input_handler = TerminalInputHandler {
-                terminal: self.terminal.clone(),
                 terminal_view: self.terminal_view.clone(),
                 cursor_bounds: layout.ime_cursor_bounds.map(|bounds| bounds + origin),
                 workspace: self.workspace.clone(),
@@ -1510,7 +1509,6 @@ impl IntoElement for TerminalElement {
 }
 
 struct TerminalInputHandler {
-    terminal: Entity<Terminal>,
     terminal_view: Entity<TerminalView>,
     workspace: WeakEntity<Workspace>,
     cursor_bounds: Option<Bounds<Pixels>>,
@@ -1521,22 +1519,15 @@ impl InputHandler for TerminalInputHandler {
         &mut self,
         _ignore_disabled_input: bool,
         _: &mut Window,
-        cx: &mut App,
+        _cx: &mut App,
     ) -> Option<UTF16Selection> {
-        if self
-            .terminal
-            .read(cx)
-            .last_content
-            .mode
-            .contains(Modes::ALT_SCREEN)
-        {
-            None
-        } else {
-            Some(UTF16Selection {
-                range: 0..0,
-                reversed: false,
-            })
-        }
+        // Always return a valid selection for IME positioning,
+        // even in ALT_SCREEN mode (fullscreen TUI apps like opencode, vim, etc.)
+        // The terminal still has a cursor position that should be used for IME candidate window placement.
+        Some(UTF16Selection {
+            range: 0..0,
+            reversed: false,
+        })
     }
 
     fn marked_text_range(

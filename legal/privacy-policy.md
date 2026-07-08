@@ -3,11 +3,11 @@ title: Privacy Policy
 slug: privacy-policy
 ---
 
-**Last Updated**: March 2, 2026
+**Last Updated**: June 9, 2026
 
 ## Summary
 
-Zed collects user information (name, email, username, IP address, etc.), device and usage data, and web analytics to improve our products and services, as well as payment details if you subscribe. We do not store your source code and we process but do not store audio/video/screenshare from collaboration sessions.
+Zed collects user information (name, email, username, IP address, etc.), device and usage data, and web analytics to improve our products and services, as well as payment details if you subscribe. We do not store your source code and we process but do not store audio/video/screenshare from collaboration sessions. For a limited set of provider-designated AI models (such as Anthropic's Mythos-class models), the model provider retains prompts and outputs for a limited period for safety purposes; see our [AI Privacy documentation](https://zed.dev/docs/ai/privacy-and-security).
 
 - **We don't sell your data and we don't allow AI providers to train on it**
 - **You control Zed editor telemetry** — disable it in Settings or learn more at [https://zed.dev/docs/telemetry](/telemetry)
