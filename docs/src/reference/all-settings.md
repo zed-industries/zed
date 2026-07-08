@@ -214,6 +214,40 @@ Add an extension here with `false` to pin it to its currently installed version.
 Selecting **Install Another Version…** from an extension's `⋯` menu on the Extensions
 page ({#action zed::Extensions}) does this automatically.
 
+## Auto Preview
+
+- Description: How to open files that have a preview available for their file type (e.g. Markdown or SVG files).
+- Setting: `auto_preview`
+- Default: `off`
+
+**Options**
+
+1. Open previewable files in a text editor, previews have to be opened manually:
+
+```json [settings]
+{
+  "auto_preview": "off"
+}
+```
+
+2. Open previewable files in their preview instead of a text editor. The text editor can be opened from the preview with the {#action preview::OpenSource} action:
+
+```json [settings]
+{
+  "auto_preview": "in_place"
+}
+```
+
+3. Open previewable files in a text editor and keep a preview following the active editor in a pane to the side:
+
+```json [settings]
+{
+  "auto_preview": "to_the_side"
+}
+```
+
+The {#action preview::Toggle} action switches between a previewable file's text editor and its preview. By default the preview replaces the file's tab (`"placement": "in_place"`); bind the action with `["preview::Toggle", { "placement": "to_the_side" }]` to keep the text editor active and show the preview in a pane to the side, the way the `to_the_side` mode of `auto_preview` does.
+
 ## Autosave
 
 - Description: When to automatically save edited buffers.
