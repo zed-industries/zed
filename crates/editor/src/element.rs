@@ -3,6 +3,7 @@ mod mouse;
 
 #[cfg(test)]
 pub(crate) use header::StickyHeader;
+pub use header::file_status_label_color;
 pub(crate) use header::{header_jump_data, render_buffer_header};
 
 use crate::{
@@ -538,6 +539,7 @@ impl EditorElement {
         register_action(editor, window, Editor::spawn_nearest_task);
         register_action(editor, window, Editor::open_selections_in_multibuffer);
         register_action(editor, window, Editor::toggle_bookmark);
+        register_action(editor, window, Editor::toggle_bookmark_with_label);
         register_action(editor, window, Editor::edit_bookmark);
         register_action(editor, window, Editor::go_to_next_bookmark);
         register_action(editor, window, Editor::go_to_previous_bookmark);
@@ -4622,7 +4624,7 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (Vec<AnyElement>, Vec<(DisplayRow, Bounds<Pixels>)>) {
-        let render_diff_hunk_controls = editor.read(cx).render_diff_hunk_controls.clone();
+        let diff_hunk_delegate = editor.read(cx).diff_hunk_delegate();
         let hovered_diff_hunk_row = editor.read(cx).hovered_diff_hunk_row;
         let sticky_top = text_hitbox.bounds.top() + sticky_header_height;
 
@@ -4694,7 +4696,7 @@ impl EditorElement {
                         sticky_top.min(max_y)
                     };
 
-                    let mut element = render_diff_hunk_controls(
+                    let mut element = diff_hunk_delegate.render_hunk_controls(
                         display_row_range.start.0,
                         status,
                         multi_buffer_range.clone(),
@@ -6546,8 +6548,11 @@ impl EditorElement {
     }
 
     fn diff_hunk_hollow(&self, status: DiffHunkStatus, cx: &mut App) -> bool {
-        let unstaged =
-            self.editor.read(cx).render_diff_hunks_as_unstaged || status.has_secondary_hunk();
+        let unstaged = !self
+            .editor
+            .read(cx)
+            .diff_hunk_delegate()
+            .render_hunk_as_staged(&status, cx);
         let unstaged_hollow = matches!(
             ProjectSettings::get_global(cx).git.hunk_style,
             GitHunkStyleSetting::UnstagedHollow
@@ -9294,7 +9299,7 @@ impl Element for EditorElement {
                     };
 
                     let (diff_hunk_controls, diff_hunk_control_bounds) =
-                        if is_read_only && !self.editor.read(cx).delegate_stage_and_restore {
+                        if is_read_only && self.editor.read(cx).diff_hunk_delegate.is_none() {
                             (vec![], vec![])
                         } else {
                             self.layout_diff_hunk_controls(
@@ -11277,6 +11282,57 @@ mod tests {
         assert!(!relative_rows.contains_key(&DisplayRow(3)));
         assert_eq!(relative_rows[&DisplayRow(4)], 1);
         assert_eq!(relative_rows[&DisplayRow(5)], 2);
+    }
+
+    #[gpui::test]
+    async fn test_relative_line_numbers_after_scrolling_wrapped_line(cx: &mut TestAppContext) {
+        init_test(cx, |_| {});
+
+        let window = cx.add_window(|window, cx| {
+            let buffer = MultiBuffer::build_simple("", cx);
+            Editor::new(EditorMode::full(), buffer, None, window, cx)
+        });
+
+        update_test_language_settings(
+            cx,
+            &|settings: &mut settings::AllLanguageSettingsContent| {
+                settings.defaults.soft_wrap = Some(language_settings::SoftWrap::Bounded);
+                settings.defaults.preferred_line_length = Some(10);
+            },
+        );
+
+        window
+            .update(cx, |editor, _window, cx| {
+                let text = format!("{}\nshort line", "a".repeat(100));
+                editor.buffer.update(cx, |buffer, cx| {
+                    buffer.edit([(Point::default()..Point::default(), text)], None, cx);
+                });
+            })
+            .unwrap();
+        cx.run_until_parked();
+
+        window
+            .update(cx, |editor, _window, cx| {
+                let snapshot = editor.snapshot(_window, cx);
+
+                let line_1_display_row = Point::new(1, 0).to_display_point(&snapshot).row();
+                assert!(
+                    line_1_display_row.0 > 1,
+                    "Line 0 should wrap into multiple rows"
+                );
+
+                let start_row = DisplayRow(1);
+                let relative_rows = snapshot.calculate_relative_line_numbers(
+                    &(start_row..line_1_display_row.next_row()),
+                    line_1_display_row,
+                    false,
+                );
+
+                // If the bug exists, line_1_display_row would have a non-zero relative number
+                // and would be included in the map. It should be 0 (and thus omitted).
+                assert!(!relative_rows.contains_key(&line_1_display_row));
+            })
+            .unwrap();
     }
 
     #[gpui::test]

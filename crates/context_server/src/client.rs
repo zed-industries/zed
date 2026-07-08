@@ -4,7 +4,7 @@ use futures::{FutureExt, StreamExt, channel::oneshot, future, select};
 use futures_lite::future::yield_now;
 use gpui::{AppContext as _, AsyncApp, BackgroundExecutor, Task};
 use parking_lot::Mutex;
-use postage::barrier;
+use postage::{barrier, prelude::Stream as _};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, value::RawValue};
 use slotmap::SlotMap;
@@ -21,6 +21,7 @@ use std::{
 use util::{ResultExt, TryFutureExt};
 
 use crate::{
+    oauth::WwwAuthenticate,
     transport::{StdioTransport, Transport},
     types::{CancelledParams, ClientNotification, Notification as _, notifications::Cancelled},
 };
@@ -56,19 +57,19 @@ pub(crate) struct Client {
     #[allow(clippy::type_complexity)]
     #[allow(dead_code)]
     io_tasks: Mutex<Option<(Task<Option<()>>, Task<Option<()>>)>>,
-    #[allow(dead_code)]
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     executor: BackgroundExecutor,
-    #[allow(dead_code)]
     transport: Arc<dyn Transport>,
     request_timeout: Option<Duration>,
     /// Single-slot side channel for the last transport-level error. When the
     /// output task encounters a send failure it stashes the error here and
-    /// exits; the next request to observe cancellation `.take()`s it so it can
-    /// propagate a typed error (e.g. `TransportError::AuthRequired`) instead
-    /// of a generic "cancelled". This works because `initialize` is the sole
-    /// in-flight request at startup, but would need rethinking if concurrent
-    /// requests are ever issued during that phase.
+    /// exits; the next request to observe cancellation `.take()`s it so it
+    /// can fail with the underlying cause (e.g. "connection refused") instead
+    /// of a generic "cancelled". This is best-effort diagnostics: with
+    /// concurrent requests in flight, a single arbitrary one receives the
+    /// stashed error. Nothing may depend on it for correctness —
+    /// authentication challenges are observed via [`Self::wait_for_shutdown`]
+    /// and [`Transport::auth_challenge`], which do not involve requests.
     last_transport_error: Arc<Mutex<Option<anyhow::Error>>>,
 }
 
@@ -346,6 +347,28 @@ impl Client {
         }
         drop(output_done_tx);
         Ok(())
+    }
+
+    /// A future that resolves once the transport's output loop has terminated
+    /// — after a send failure, or when this client is dropped — yielding the
+    /// authentication challenge recorded by the transport if it shut down on a
+    /// `401 Unauthorized` response.
+    ///
+    /// Unlike `last_transport_error`, this does not require a request to be in
+    /// flight when the transport fails. Returns `None` if the shutdown signal
+    /// was already claimed: there is a single signal per client.
+    pub(crate) fn wait_for_shutdown(
+        &self,
+    ) -> Option<future::BoxFuture<'static, Option<WwwAuthenticate>>> {
+        let mut output_done = self.output_done_rx.lock().take()?;
+        let transport = self.transport.clone();
+        Some(
+            async move {
+                output_done.recv().await;
+                transport.auth_challenge()
+            }
+            .boxed(),
+        )
     }
 
     /// Sends a JSON-RPC request to the context server and waits for a response.
