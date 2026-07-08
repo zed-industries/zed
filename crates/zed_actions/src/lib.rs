@@ -404,6 +404,18 @@ pub mod text_finder {
     );
 }
 
+pub mod todo {
+    use gpui::actions;
+
+    actions!(
+        todo,
+        [
+            /// Opens the TODO comments picker.
+            Open,
+        ]
+    );
+}
+
 pub mod project_panel {
     use gpui::actions;
 

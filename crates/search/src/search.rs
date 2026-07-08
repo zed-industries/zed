@@ -21,12 +21,14 @@ pub mod project_search;
 pub(crate) mod search_bar;
 pub mod search_status_button;
 pub mod text_finder;
+pub mod todo_picker;
 
 pub fn init(cx: &mut App) {
     menu::init();
     buffer_search::init(cx);
     project_search::init(cx);
     text_finder::init(cx);
+    todo_picker::init(cx);
 }
 
 actions!(

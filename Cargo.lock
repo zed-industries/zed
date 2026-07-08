@@ -16270,6 +16270,7 @@ dependencies = [
  "file_icons",
  "fs",
  "futures 0.3.32",
+ "fuzzy",
  "gpui",
  "itertools 0.14.0",
  "language",
