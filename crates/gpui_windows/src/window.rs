@@ -537,7 +537,10 @@ impl WindowsWindow {
                 parent_hwnd,
                 None,
                 Some(hinstance.into()),
-                Some(&context as *const _ as *const _),
+                // The `WndProc` recovers this as `*mut WindowCreateContext` and writes
+                // through it (setting `inner`), so the pointer must carry mutable
+                // provenance. Derive it from `&raw mut` rather than a shared reference.
+                Some(&raw mut context as *const _),
             )
         };
 
