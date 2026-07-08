@@ -57,6 +57,7 @@ use std::{
     ffi::OsStr,
     fmt,
     future::Future,
+    io,
     mem::{self},
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
@@ -79,6 +80,17 @@ pub use worktree_settings::WorktreeSettings;
 use crate::ignore::IgnoreKind;
 
 pub const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
+
+fn is_not_found_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.downcast_ref::<io::Error>().is_some_and(|error| {
+            matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            )
+        })
+    })
+}
 
 /// A set of local or remote files that are being opened as part of a project.
 /// Responsible for tracking related FS (for local)/collab (for remote) events and corresponding updates.
@@ -4361,7 +4373,11 @@ impl BackgroundScanner {
         let root_canonical_path = match &root_canonical_path {
             Ok(path) => SanitizedPath::new(path),
             Err(err) => {
-                log::error!("failed to canonicalize root path {root_path:?}: {err:#}");
+                if is_not_found_error(err) {
+                    log::debug!("worktree root path disappeared before rescan: {root_path:?}");
+                } else {
+                    log::error!("failed to canonicalize root path {root_path:?}: {err:#}");
+                }
                 return true;
             }
         };
@@ -4475,7 +4491,13 @@ impl BackgroundScanner {
                     .and_then(|handle| match handle.current_path(&self.fs) {
                         Ok(new_path) => Some(new_path),
                         Err(e) => {
-                            log::error!("Failed to refresh worktree root path: {e:#}");
+                            if is_not_found_error(&e) {
+                                log::debug!(
+                                    "worktree root path was deleted before it could be refreshed"
+                                );
+                            } else {
+                                log::error!("Failed to refresh worktree root path: {e:#}");
+                            }
                             None
                         }
                     })
@@ -4492,10 +4514,14 @@ impl BackgroundScanner {
                         .unbounded_send(ScanState::RootUpdated { new_path })
                         .ok();
                 } else {
-                    log::error!("root path could not be canonicalized: {err:#}");
+                    if is_not_found_error(err) {
+                        log::debug!("worktree root path no longer exists: {root_path:?}");
+                    } else {
+                        log::error!("root path could not be canonicalized: {err:#}");
+                    }
 
                     // For single-file worktrees, if we can't canonicalize and the file handle
-                    // fallback also failed, the file is gone - close the worktree
+                    // also failed to refresh, the file is gone - close the worktree
                     if self.is_single_file {
                         log::info!(
                             "single-file worktree root {:?} no longer exists, marking as deleted",
@@ -5103,7 +5129,15 @@ impl BackgroundScanner {
                 let canonical_path = match self.fs.canonicalize(&child_abs_path).await {
                     Ok(path) => path,
                     Err(err) => {
-                        log::error!("error reading target of symlink {child_abs_path:?}: {err:#}",);
+                        if is_not_found_error(&err) {
+                            log::debug!(
+                                "symlink target disappeared before scan: {child_abs_path:?}"
+                            );
+                        } else {
+                            log::error!(
+                                "error reading target of symlink {child_abs_path:?}: {err:#}",
+                            );
+                        }
                         continue;
                     }
                 };
@@ -5419,7 +5453,11 @@ impl BackgroundScanner {
                     );
                 }
                 Err(err) => {
-                    log::error!("error reading file {abs_path:?} on event: {err:#}");
+                    if is_not_found_error(&err) {
+                        log::debug!("file disappeared before event processing: {abs_path:?}");
+                    } else {
+                        log::error!("error reading file {abs_path:?} on event: {err:#}");
+                    }
                     state.unwatch_path(
                         self.watcher.as_ref(),
                         path,
