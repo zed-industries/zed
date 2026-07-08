@@ -194,11 +194,11 @@ impl VsCodeSettings {
             helix_mode: None,
             hide_mouse: None,
             image_viewer: None,
+            markdown_preview: None,
             journal: None,
             language_models: None,
             line_indicator_format: None,
             log: None,
-            message_editor: None,
             node: self.node_binary_settings(),
 
             outline_panel: self.outline_panel_settings_content(),
@@ -899,6 +899,7 @@ impl VsCodeSettings {
                 .map(FontSize::from),
             font_weight: None,
             keep_selection_on_copy: None,
+            open_links_in_mouse_mode: None,
             line_height: self
                 .read_f32("terminal.integrated.lineHeight")
                 .map(|lh| TerminalLineHeight::Custom(lh)),
@@ -981,6 +982,7 @@ impl VsCodeSettings {
             git_commit_buffer_font_size: None,
             markdown_preview_font_family: None,
             markdown_preview_code_font_family: None,
+            markdown_preview_font_size: None,
             markdown_preview_theme: None,
             theme: None,
             icon_theme: None,

@@ -571,7 +571,7 @@ async fn test_normalize_whitespace(cx: &mut gpui::TestAppContext) {
 
     // Spawn a task to format the buffer's whitespace.
     // Pause so that the formatting task starts running.
-    let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(cx));
+    let format = buffer.update(cx, |buffer, cx| buffer.remove_trailing_whitespace(None, cx));
     yield_now().await;
 
     // Edit the buffer while the normalization task is running.
@@ -975,6 +975,35 @@ async fn test_outline_with_extra_context(cx: &mut gpui::TestAppContext) {
             .collect::<Vec<_>>(),
         &[("function a", 0)]
     );
+}
+
+#[gpui::test]
+async fn test_outline_selection_range_for_multiline_c_signature(cx: &mut gpui::TestAppContext) {
+    let text = indoc! {"
+        void
+        evdev_post_scroll(struct evdev_device *device,
+                  usec_t time,
+                  enum libinput_pointer_axis_source source,
+                  const struct normalized_coords *delta)
+        {
+            return;
+        }
+    "};
+
+    let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(c_lang(), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+    let outline = snapshot.outline(None);
+
+    let item = outline
+        .items
+        .iter()
+        .find(|item| item.text.contains("evdev_post_scroll"))
+        .unwrap()
+        .to_point(&snapshot);
+
+    assert_eq!(item.source_range_for_text.start, Point::new(0, 0));
+    assert_eq!(item.selection_range.start, Point::new(1, 0));
+    assert_eq!(item.text, "void evdev_post_scroll( )");
 }
 
 #[gpui::test]
@@ -2145,6 +2174,38 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut App) {
             }
             "#
             .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_autoindent_block_mode_with_hard_tabs(cx: &mut App) {
+    init_settings(cx, |settings| {
+        settings.defaults.hard_tabs = Some(true);
+    });
+
+    cx.new(|cx| {
+        let text = "fn a() {\n\tb();\n}";
+        let mut buffer = Buffer::local(text, cx).with_language(rust_lang(), cx);
+
+        // Insert a block whose indentation mixes tab-indented lines with
+        // lines that have no leading whitespace, like a snippet body.
+        let inserted_text = "if c {\n\td();\n}\n";
+        buffer.edit(
+            [(Point::new(2, 0)..Point::new(2, 0), inserted_text)],
+            Some(AutoindentMode::Block {
+                original_indent_columns: Vec::new(),
+            }),
+            cx,
+        );
+
+        // All of the block's lines are indented, including the ones that
+        // originally had no indentation.
+        assert_eq!(
+            buffer.text(),
+            "fn a() {\n\tb();\n\tif c {\n\t\td();\n\t}\n}"
         );
 
         buffer
@@ -3763,7 +3824,7 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
     }
 
     let rope = Rope::from(text.as_str());
-    let actual_ranges = trailing_whitespace_ranges(&rope);
+    let actual_ranges = trailing_whitespace_ranges(&rope, None);
     let expected_ranges = TRAILING_WHITESPACE_REGEX
         .find_iter(&text)
         .map(|m| m.range())
@@ -3774,6 +3835,228 @@ fn test_trailing_whitespace_ranges(mut rng: StdRng) {
         "wrong ranges for text lines:\n{:?}",
         text.split('\n').collect::<Vec<_>>()
     );
+}
+
+#[gpui::test(iterations = 500)]
+fn test_trailing_whitespace_ranges_in_rows(mut rng: StdRng) {
+    let mut text = String::new();
+    for _ in 0..rng.random_range(0..16) {
+        for _ in 0..rng.random_range(0..36) {
+            text.push(match rng.random_range(0..10) {
+                0..=1 => ' ',
+                3 => '\t',
+                _ => rng.random_range('a'..='z'),
+            });
+        }
+        text.push('\n');
+    }
+    match rng.random_range(0..10) {
+        0..=1 => drop(text.pop()),
+        2..=3 => text.push_str(&"\n".repeat(rng.random_range(1..5))),
+        _ => {}
+    }
+
+    let rope = Rope::from(text.as_str());
+    let all_ranges = trailing_whitespace_ranges(&rope, None);
+    let lines = text.split('\n').collect::<Vec<_>>();
+
+    // A range covering every row must reproduce the unfiltered full scan exactly.
+    assert_eq!(
+        trailing_whitespace_ranges(&rope, Some(&[0..u32::MAX])),
+        all_ranges,
+        "full-coverage mismatch for lines:\n{lines:?}",
+    );
+
+    // For a random (possibly gappy) subset of rows, the filtered variant must equal
+    // the full scan restricted to ranges whose line is in the subset.
+    let max_row = rope.max_point().row;
+    let mut row_ranges = Vec::new();
+    let mut row = 0;
+    while row <= max_row {
+        let span = rng.random_range(0..=3);
+        if span > 0 {
+            let end = (row + span).min(max_row + 1);
+            row_ranges.push(row..end);
+            row = end;
+        }
+        row += 1;
+    }
+
+    let expected = all_ranges
+        .iter()
+        .filter(|range| {
+            let row = rope.offset_to_point(range.start).row;
+            row_ranges.iter().any(|r| r.contains(&row))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(
+        trailing_whitespace_ranges(&rope, Some(&row_ranges)),
+        expected,
+        "subset mismatch for ranges {row_ranges:?} and lines:\n{lines:?}",
+    );
+}
+
+#[gpui::test]
+async fn test_trailing_whitespace_in_ranges(cx: &mut gpui::TestAppContext) {
+    // line 0: "zero"      (no trailing whitespace)
+    // line 1: "one  "     (2 trailing spaces)
+    // line 2: "two"       (no trailing whitespace)
+    // line 3: "three   "  (3 trailing spaces)
+    // line 4: "four"      (no trailing whitespace)
+    // line 5: "five    "  (4 trailing spaces)
+    let text = ["zero", "one  ", "two", "three   ", "four", "five    "].join("\n");
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+
+    // Only rows 1 and 5 are modified, so only those lines get cleaned; line 3 stays untouched.
+    let modified_rows = [1u32..2, 5..6];
+    let diff = buffer
+        .update(cx, |buffer, cx| {
+            buffer.remove_trailing_whitespace(Some(&modified_rows), cx)
+        })
+        .await;
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx);
+        assert_eq!(
+            buffer.text(),
+            ["zero", "one", "two", "three   ", "four", "five"].join("\n")
+        );
+    });
+}
+
+#[gpui::test]
+async fn test_trailing_whitespace_empty_ranges(cx: &mut gpui::TestAppContext) {
+    let text = ["zero", "one  ", "two  "].join("\n");
+    let buffer = cx.new(|cx| Buffer::local(text.clone(), cx));
+
+    let diff = buffer
+        .update(cx, |buffer, cx| {
+            buffer.remove_trailing_whitespace(Some(&[]), cx)
+        })
+        .await;
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), text);
+    });
+}
+
+#[gpui::test]
+async fn test_final_newline_modified_last_line(cx: &mut gpui::TestAppContext) {
+    // No final newline; the modified range (rows 0..3) includes the last line (row 2).
+    let text = "line0\nline1\nline2";
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+
+    buffer.update(cx, |buffer, cx| {
+        let diff = buffer.ensure_final_newline(Some(&[0u32..3]));
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "line0\nline1\nline2\n");
+    });
+}
+
+#[gpui::test]
+async fn test_final_newline_unmodified_last_line(cx: &mut gpui::TestAppContext) {
+    // No final newline; the modified range (rows 0..2) excludes the last line (row 2), so nothing changes.
+    let text = "line0\nline1\nline2";
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+
+    buffer.update(cx, |buffer, cx| {
+        let diff = buffer.ensure_final_newline(Some(&[0u32..2]));
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "line0\nline1\nline2");
+    });
+}
+
+// An empty last line (file already ends with a newline) is left untouched, even with extra
+// trailing blank lines. With `None` these would collapse; scoped to rows they must not, to
+// avoid deleting unselected rows.
+#[gpui::test]
+async fn test_final_newline_does_not_collapse_trailing_blank_lines(cx: &mut gpui::TestAppContext) {
+    let text = "line0\nline1\n\n";
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+
+    buffer.update(cx, |buffer, cx| {
+        let diff = buffer.ensure_final_newline(Some(&[0u32..4]));
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "line0\nline1\n\n");
+    });
+}
+
+// When scoped to rows, only a newline is inserted; unlike the `None` (whole-buffer) case, it
+// does not trim trailing whitespace on the last line.
+#[gpui::test]
+async fn test_final_newline_in_range_only_inserts(cx: &mut gpui::TestAppContext) {
+    let text = "line0\nline1  ";
+    let buffer = cx.new(|cx| Buffer::local(text, cx));
+
+    buffer.update(cx, |buffer, cx| {
+        let diff = buffer.ensure_final_newline(Some(&[0u32..2]));
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "line0\nline1  \n");
+    });
+}
+
+#[gpui::test]
+async fn test_final_newline_whole_buffer(cx: &mut gpui::TestAppContext) {
+    // (input, expected) pairs for the whole-buffer (`None`) case.
+    let cases = [
+        // Content without a trailing newline gets exactly one appended.
+        ("line0\nline1", "line0\nline1\n"),
+        // A buffer already ending in a single newline is left untouched.
+        ("line0\nline1\n", "line0\nline1\n"),
+        // Trailing blank lines and whitespace at the end of the file collapse to one newline.
+        ("line0\nline1\n\n\n", "line0\nline1\n"),
+        ("line0\nline1  \n  ", "line0\nline1\n"),
+        // An empty buffer stays empty.
+        ("", ""),
+    ];
+
+    for (input, expected) in cases {
+        let buffer = cx.new(|cx| Buffer::local(input, cx));
+        buffer.update(cx, |buffer, cx| {
+            let diff = buffer.ensure_final_newline(None);
+            buffer.apply_diff(diff, cx);
+            assert_eq!(buffer.text(), expected, "wrong result for input {input:?}");
+        });
+    }
+}
+
+#[gpui::test]
+async fn test_trailing_whitespace_in_ranges_crlf(cx: &mut gpui::TestAppContext) {
+    let text = "zero\r\none  \r\ntwo\r\nthree   \r\nfour\r\nfive    ";
+    let buffer = cx.new(|cx| {
+        let buffer = Buffer::local(text, cx);
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+        buffer
+    });
+
+    let modified_rows = [1u32..2, 5..6];
+    let diff = buffer
+        .update(cx, |buffer, cx| {
+            buffer.remove_trailing_whitespace(Some(&modified_rows), cx)
+        })
+        .await;
+    buffer.update(cx, |buffer, cx| {
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "zero\none\ntwo\nthree   \nfour\nfive");
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
+}
+
+#[gpui::test]
+async fn test_final_newline_in_range_crlf(cx: &mut gpui::TestAppContext) {
+    let text = "line0\r\nline1\r\nline2";
+    let buffer = cx.new(|cx| {
+        let buffer = Buffer::local(text, cx);
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+        buffer
+    });
+
+    buffer.update(cx, |buffer, cx| {
+        let diff = buffer.ensure_final_newline(Some(&[0u32..3]));
+        buffer.apply_diff(diff, cx);
+        assert_eq!(buffer.text(), "line0\nline1\nline2\n");
+        assert_eq!(buffer.line_ending(), LineEnding::Windows);
+    });
 }
 
 #[gpui::test]
@@ -4049,6 +4332,20 @@ fn javascript_lang() -> Language {
     .unwrap()
 }
 
+fn c_lang() -> Arc<Language> {
+    Arc::new(
+        Language::new(
+            LanguageConfig {
+                name: "C".into(),
+                ..Default::default()
+            },
+            Some(tree_sitter_c::LANGUAGE.into()),
+        )
+        .with_outline_query(include_str!("../../grammars/src/c/outline.scm"))
+        .unwrap(),
+    )
+}
+
 pub fn markdown_inline_lang() -> Language {
     Language::new(
         LanguageConfig {
@@ -4189,6 +4486,51 @@ fn test_random_chunk_bitmaps(cx: &mut App, mut rng: StdRng) {
                     byte_idx, chunk_text, byte as char, is_tab, has_bit
                 );
             }
+        }
+    }
+}
+
+#[gpui::test]
+fn test_formatted_chunks(cx: &mut gpui::App) {
+    init_settings(cx, |_| {});
+    let buffer = cx.new(|cx| Buffer::local("use std::cmp::Eq;", cx).with_language(rust_lang(), cx));
+    let snapshot = buffer.read(cx).snapshot();
+
+    let chunks = snapshot.chunks(
+        0..snapshot.len(),
+        LanguageAwareStyling {
+            tree_sitter: true,
+            diagnostics: false,
+        },
+    );
+
+    for chunk in chunks {
+        let chunk_text = chunk.text;
+        let chars_bitmap = chunk.chars;
+
+        // Verify chars bitmap
+        let char_indices = chunk_text
+            .char_indices()
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>();
+
+        assert_eq!(char_indices.len() as u32, chars_bitmap.count_ones());
+
+        for byte_idx in 0..chunk_text.len() {
+            let should_have_bit = char_indices.contains(&byte_idx);
+            let has_bit = chars_bitmap & (1 << byte_idx) != 0;
+
+            if has_bit != should_have_bit {
+                eprintln!("Chunk text bytes: {:?}", chunk_text.as_bytes());
+                eprintln!("Char indices: {:?}", char_indices);
+                eprintln!("Chars bitmap: {:#b}", chars_bitmap);
+            }
+
+            assert_eq!(
+                has_bit, should_have_bit,
+                "Chars bitmap mismatch at byte index {} in chunk {:?}. Expected bit: {}, Got bit: {}",
+                byte_idx, chunk_text, should_have_bit, has_bit
+            );
         }
     }
 }

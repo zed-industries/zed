@@ -3,8 +3,8 @@
 use anyhow::Result;
 use buffer_diff::BufferDiff;
 use editor::{
-    Editor, EditorEvent, EditorSettings, MultiBuffer, SplittableEditor, ToPoint,
-    actions::DiffClipboardWithSelectionData,
+    Editor, EditorEvent, EditorSettings, MultiBuffer, RestoreOnlyUnstagedDiffHunkDelegate,
+    SplittableEditor, ToPoint, actions::DiffClipboardWithSelectionData,
 };
 use futures::{FutureExt, select_biased};
 use gpui::{
@@ -184,11 +184,8 @@ impl TextDiffView {
                 window,
                 cx,
             );
-            splittable.disable_diff_hunk_controls(cx);
-            splittable.set_render_diff_hunks_as_unstaged(cx);
-            splittable.rhs_editor().update(cx, |editor, _cx| {
-                editor.start_temporary_diff_override();
-            });
+            splittable
+                .set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
             splittable
         });
 
@@ -221,7 +218,7 @@ impl TextDiffView {
                     .file()
                     .map(|f| f.full_path(cx).compact().to_string_lossy().into_owned())
             })
-            .unwrap_or("untitled".into());
+            .unwrap_or(MultiBuffer::DEFAULT_TITLE.into());
 
         let selection_location_path = selection_location_text
             .map(|text| format!("{} @ {}", path, text))

@@ -412,7 +412,6 @@ async fn test_diagnostics_with_folds(cx: &mut TestAppContext) {
             "§ main.js
              § -----
              ⋯
-
              tset(); § no method `tset`"
         }
     );
