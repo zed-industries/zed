@@ -44,6 +44,8 @@ impl std::fmt::Debug for ConfigurationError {
 
 #[derive(Default)]
 pub struct LanguageModelRegistry {
+    /// True if the user has *NO* default model configured in settings
+    should_use_fallback: bool,
     default_model: Option<ConfiguredModel>,
     /// This model is automatically configured by a user's environment after
     /// authenticating all providers. It's only used when `default_model` is not set.
@@ -149,6 +151,10 @@ impl LanguageModelRegistry {
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake_model(&self) -> Arc<dyn LanguageModel> {
         self.default_model.as_ref().unwrap().model.clone()
+    }
+
+    pub fn set_should_use_fallback(&mut self, value: bool) {
+        self.should_use_fallback = value;
     }
 
     pub fn register_provider<T: LanguageModelProvider + LanguageModelProviderState>(
@@ -357,11 +363,30 @@ impl LanguageModelRegistry {
         self.default_model = model;
     }
 
-    pub fn set_environment_fallback_model(
-        &mut self,
-        model: Option<ConfiguredModel>,
-        cx: &mut Context<Self>,
-    ) {
+    pub fn refresh_fallback_model(&mut self, cx: &mut Context<Self>) {
+        // If the fallback model was already set or we don't want to use it, do nothing
+        if !self.should_use_fallback || self.available_fallback_model.is_some() {
+            return;
+        }
+
+        let fallback_model = self
+            .providers()
+            .iter()
+            .filter(|provider| provider.is_authenticated(cx))
+            .find_map(|provider| {
+                let model = provider
+                    .default_model(cx)
+                    .or_else(|| provider.recommended_models(cx).first().cloned())?;
+                Some(ConfiguredModel {
+                    provider: provider.clone(),
+                    model,
+                })
+            });
+
+        self.set_fallback_model(fallback_model, cx);
+    }
+
+    fn set_fallback_model(&mut self, model: Option<ConfiguredModel>, cx: &mut Context<Self>) {
         if self.default_model.is_none() {
             match (self.available_fallback_model.as_ref(), model.as_ref()) {
                 (Some(old), Some(new)) if old.is_same_as(new) => {}
@@ -417,9 +442,13 @@ impl LanguageModelRegistry {
             return None;
         }
 
-        self.default_model
-            .clone()
-            .or_else(|| self.available_fallback_model.clone())
+        self.default_model.clone().or_else(|| {
+            if self.should_use_fallback {
+                self.available_fallback_model.clone()
+            } else {
+                None
+            }
+        })
     }
 
     pub fn default_fast_model(&self, cx: &App) -> Option<ConfiguredModel> {
@@ -617,7 +646,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_configure_environment_fallback_model(cx: &mut gpui::TestAppContext) {
+    async fn test_configure_fallback_model(cx: &mut gpui::TestAppContext) {
         let registry = cx.new(|_| LanguageModelRegistry::default());
 
         let provider = Arc::new(FakeLanguageModelProvider::default());
@@ -631,13 +660,17 @@ mod tests {
             let provider = registry.provider(&provider.id()).unwrap();
             let model = provider.default_model(cx).unwrap();
 
-            registry.set_environment_fallback_model(
+            registry.set_fallback_model(
                 Some(ConfiguredModel {
                     provider: provider.clone(),
                     model: model.clone(),
                 }),
                 cx,
             );
+
+            assert!(registry.default_model().is_none());
+
+            registry.set_should_use_fallback(true);
 
             let default_model = registry.default_model().unwrap();
             assert_eq!(default_model.model.id(), model.id());

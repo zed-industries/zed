@@ -35,8 +35,8 @@ mod imp {
 
     use anyhow::{Context as _, Result, bail};
     use sandbox::{
-        CommandAndArgs, GitSandboxPolicy, HostFilesystemLocation, Sandbox, SandboxError,
-        SandboxFsPolicy, SandboxNetPolicy, SandboxPolicy,
+        CommandAndArgs, HostFilesystemLocation, Sandbox, SandboxError, SandboxFsPolicy,
+        SandboxNetPolicy, SandboxPolicy,
     };
     use serde::Deserialize;
 
@@ -112,14 +112,9 @@ mod imp {
         network_access: NetMode,
         #[serde(default)]
         allowed_domains: Vec<String>,
-        /// `.git` directories to protect (contents read-only on Linux). Selects a
-        /// `Denied` Git policy. Mutually exclusive with `gitAllowed`.
+        /// Paths to protect from writes even if they fall under a writable path.
         #[serde(default)]
-        git_disabled: Vec<String>,
-        /// `.git` directories to make writable. Selects an `Allowed` Git policy.
-        /// Mutually exclusive with `gitDisabled`.
-        #[serde(default)]
-        git_allowed: Vec<String>,
+        protected_paths: Vec<String>,
 
         // ---- operation (exactly one) ----
         /// Read this host path from inside the sandbox.
@@ -180,7 +175,9 @@ mod imp {
 
     fn policy_of(check: &Check) -> Result<SandboxPolicy> {
         let fs = match check.fs {
-            FsMode::Unrestricted => SandboxFsPolicy::Unrestricted,
+            FsMode::Unrestricted => SandboxFsPolicy::Unrestricted {
+                protected_paths: capture_protected_paths(&check.protected_paths),
+            },
             FsMode::Restricted => {
                 let mut writable_paths = Vec::new();
                 for path in &check.writable_paths {
@@ -194,7 +191,11 @@ mod imp {
                             .with_context(|| format!("failed to capture writable path {path}"))?,
                     );
                 }
-                SandboxFsPolicy::Restricted { writable_paths }
+                let protected_paths = capture_protected_paths(&check.protected_paths);
+                SandboxFsPolicy::Restricted {
+                    writable_paths,
+                    protected_paths,
+                }
             }
         };
         let network = match check.network_access {
@@ -204,29 +205,15 @@ mod imp {
                 allowed_domains: check.allowed_domains.clone(),
             },
         };
-        // `gitAllowed` and `gitDisabled` are mutually exclusive; `gitAllowed`
-        // wins if both are (mistakenly) set. With neither, the default protects
-        // an empty set of dirs, which is a no-op.
-        let git = if !check.git_allowed.is_empty() {
-            GitSandboxPolicy::Allowed {
-                git_dirs: capture_git_dirs(&check.git_allowed),
-            }
-        } else if !check.git_disabled.is_empty() {
-            GitSandboxPolicy::Denied {
-                git_dirs: capture_git_dirs(&check.git_disabled),
-            }
-        } else {
-            GitSandboxPolicy::default()
-        };
-        Ok(SandboxPolicy { fs, network, git })
+        Ok(SandboxPolicy { fs, network })
     }
 
-    /// Capture each already-existing `.git` directory, mirroring production's
-    /// fail-closed `filter_map(HostFilesystemLocation::new(..).ok())`: a `.git`
-    /// that does not yet exist can't be pinned and is simply skipped (the
-    /// documented Linux gap). Unlike writable paths, these are never created
-    /// here — whether one exists is exactly what several checks turn on.
-    fn capture_git_dirs(paths: &[String]) -> Vec<HostFilesystemLocation> {
+    /// Capture each already-existing protected path, mirroring production's
+    /// fail-closed `filter_map(HostFilesystemLocation::new(..).ok())`: a path
+    /// that does not yet exist can't be pinned and is simply skipped. Unlike
+    /// writable paths, these are never created here — whether one exists is
+    /// exactly what several checks turn on.
+    fn capture_protected_paths(paths: &[String]) -> Vec<HostFilesystemLocation> {
         paths
             .iter()
             .filter_map(|path| HostFilesystemLocation::new(path).ok())
@@ -237,14 +224,15 @@ mod imp {
         if let Some(name) = &check.name {
             return name.clone();
         }
-        let git = if !check.git_allowed.is_empty() {
-            format!(",git_allowed={:?}", check.git_allowed)
-        } else if !check.git_disabled.is_empty() {
-            format!(",git_disabled={:?}", check.git_disabled)
-        } else {
+        let protected = if check.protected_paths.is_empty() {
             String::new()
+        } else {
+            format!(",protected_paths={:?}", check.protected_paths)
         };
-        let policy = format!("fs={:?},net={:?}{git}", check.fs, check.network_access);
+        let policy = format!(
+            "fs={:?},net={:?}{protected}",
+            check.fs, check.network_access
+        );
         let op = if let Some(path) = &check.read {
             format!("read {path}")
         } else if let Some(path) = &check.write {
@@ -329,7 +317,7 @@ mod imp {
         if let Some(parent) = path.parent() {
             // Create the parent on the host so the only thing under test is the
             // sandbox's write permission, not a missing directory. This also
-            // makes a `.git` parent exist before the policy captures it.
+            // makes a protected parent exist before the policy captures it.
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create parent of {}", path.display()))?;
         }
