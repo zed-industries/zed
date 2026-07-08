@@ -547,6 +547,9 @@ impl<D: PickerDelegate> Picker<D> {
             actions_menu_handle: PopoverMenuHandle::default(),
             reopenable: true,
         };
+        // give delegate the initial preview layout
+        this.delegate
+            .preview_layout_changed(matches!(initial_layout, preview::Layout::Right));
         if this.reopenable {
             let focus_handle = this.focus_handle(cx);
             workspace::register_reopenable_picker(&focus_handle, cx);
