@@ -13,7 +13,10 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use settings::{RegisterSetting, Settings, SettingsStore};
 use smol::fs::File;
-use smol::{fs, io::AsyncReadExt};
+use smol::{
+    fs,
+    io::{AsyncReadExt, AsyncWriteExt},
+};
 use std::mem;
 use std::{
     env::{
@@ -126,20 +129,33 @@ pub struct AssetQuery<'a> {
 pub enum AutoUpdateStatus {
     Idle,
     Checking,
-    Downloading { version: VersionCheckType },
-    Installing { version: VersionCheckType },
-    Updated { version: VersionCheckType },
-    Errored { error: Arc<anyhow::Error> },
+    Downloading {
+        version: VersionCheckType,
+        /// Download progress as a fraction in the range `0.0..=1.0`, or `None`
+        /// when the total download size is not yet known.
+        progress: Option<f32>,
+    },
+    Installing {
+        version: VersionCheckType,
+    },
+    Updated {
+        version: VersionCheckType,
+    },
+    Errored {
+        error: Arc<anyhow::Error>,
+    },
 }
 
 impl PartialEq for AutoUpdateStatus {
+    // `progress` is deliberately not compared: two `Downloading` statuses for
+    // the same version are equal regardless of how far the download is.
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (AutoUpdateStatus::Idle, AutoUpdateStatus::Idle) => true,
             (AutoUpdateStatus::Checking, AutoUpdateStatus::Checking) => true,
             (
-                AutoUpdateStatus::Downloading { version: v1 },
-                AutoUpdateStatus::Downloading { version: v2 },
+                AutoUpdateStatus::Downloading { version: v1, .. },
+                AutoUpdateStatus::Downloading { version: v2, .. },
             ) => v1 == v2,
             (
                 AutoUpdateStatus::Installing { version: v1 },
@@ -700,6 +716,7 @@ impl AutoUpdater {
         this.update(cx, |this, cx| {
             this.status = AutoUpdateStatus::Downloading {
                 version: newer_version.clone(),
+                progress: None,
             };
             cx.notify();
         });
@@ -708,9 +725,27 @@ impl AutoUpdater {
             .await
             .context("Failed to create installer dir")?;
         let target_path = Self::target_path(&installer_dir).await?;
-        download_release(&target_path, fetched_release_data, client)
-            .await
-            .with_context(|| format!("Failed to download update to {}", target_path.display()))?;
+        let progress_entity = this.clone();
+        let mut progress_cx = cx.clone();
+        download_release(
+            &target_path,
+            fetched_release_data,
+            client,
+            move |progress| {
+                progress_entity.update(&mut progress_cx, |this, cx| {
+                    if let AutoUpdateStatus::Downloading {
+                        progress: current_progress,
+                        ..
+                    } = &mut this.status
+                    {
+                        *current_progress = progress;
+                        cx.notify();
+                    }
+                });
+            },
+        )
+        .await
+        .with_context(|| format!("Failed to download update to {}", target_path.display()))?;
 
         this.update(cx, |this, cx| {
             this.status = AutoUpdateStatus::Installing {
@@ -989,6 +1024,7 @@ async fn download_release(
     target_path: &Path,
     release: ReleaseAsset,
     client: Arc<HttpClientWithUrl>,
+    mut on_progress: impl FnMut(Option<f32>),
 ) -> Result<()> {
     let mut target_file = File::create(&target_path).await?;
 
@@ -998,7 +1034,40 @@ async fn download_release(
         "failed to download update: {:?}",
         response.status()
     );
-    smol::io::copy(response.body_mut(), &mut target_file).await?;
+
+    let total_bytes = response
+        .headers()
+        .get(http_client::http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|total_bytes| *total_bytes > 0);
+
+    let mut downloaded_bytes: u64 = 0;
+    let mut last_reported_percent: Option<u8> = None;
+    let mut buffer = [0u8; 8192];
+    let body = response.body_mut();
+    loop {
+        let bytes_read = body.read(&mut buffer).await?;
+        if bytes_read == 0 {
+            break;
+        }
+        target_file.write_all(&buffer[..bytes_read]).await?;
+        downloaded_bytes += bytes_read as u64;
+
+        if let Some(total_bytes) = total_bytes {
+            let fraction = (downloaded_bytes as f32 / total_bytes as f32).clamp(0.0, 1.0);
+            // Only report when the whole-number percentage changes to avoid notifying the UI on every chunk.
+            let percent = (fraction * 100.0) as u8;
+            if last_reported_percent != Some(percent) {
+                last_reported_percent = Some(percent);
+                on_progress(Some(fraction));
+            }
+        }
+    }
+    target_file.flush().await?;
+    if total_bytes.is_some() && last_reported_percent != Some(100) {
+        on_progress(Some(1.0));
+    }
     log::info!("downloaded update. path:{:?}", target_path);
 
     Ok(())
@@ -1297,7 +1366,8 @@ mod tests {
         assert_eq!(
             status,
             AutoUpdateStatus::Downloading {
-                version: VersionCheckType::Semantic(semver::Version::new(0, 100, 1))
+                version: VersionCheckType::Semantic(semver::Version::new(0, 100, 1)),
+                progress: None,
             }
         );
 
@@ -1335,6 +1405,114 @@ mod tests {
         let path = will_restart.await.unwrap().unwrap();
         assert_eq!(path, tmp_dir.path().join("zed"));
         assert_eq!(std::fs::read_to_string(path).unwrap(), "<fake-zed-update>");
+    }
+
+    #[gpui::test]
+    async fn test_download_release_reports_progress(cx: &mut TestAppContext) {
+        cx.background_executor.allow_parking();
+
+        let body = vec![0u8; 20_000];
+        let content_length = body.len();
+
+        let client = FakeHttpClient::create(move |_req| {
+            let body = body.clone();
+            async move {
+                Ok(Response::builder()
+                    .status(200)
+                    .header(
+                        http_client::http::header::CONTENT_LENGTH,
+                        body.len().to_string(),
+                    )
+                    .body(body.into())
+                    .unwrap())
+            }
+        });
+
+        let temp_dir = tempdir().unwrap();
+        let target_path = temp_dir.path().join("zed-download");
+        let release = ReleaseAsset {
+            version: "1.0.0".to_string(),
+            url: "https://test.example/download".to_string(),
+        };
+
+        let reported = Rc::new(std::cell::RefCell::new(Vec::<f32>::new()));
+        download_release(&target_path, release, client, {
+            let reported = reported.clone();
+            move |fraction| {
+                if let Some(fraction) = fraction {
+                    reported.borrow_mut().push(fraction);
+                }
+            }
+        })
+        .await
+        .unwrap();
+
+        let reported = reported.borrow();
+        assert!(
+            reported.len() >= 2,
+            "expected progress to be reported across multiple reads, got {reported:?}"
+        );
+        assert_eq!(
+            reported.last().copied(),
+            Some(1.0),
+            "download should finish at 100%"
+        );
+        for fraction in reported.iter() {
+            assert!(
+                (0.0..=1.0).contains(fraction),
+                "progress {fraction} out of range"
+            );
+        }
+        for pair in reported.windows(2) {
+            assert!(
+                pair[0] <= pair[1],
+                "progress must not decrease: {reported:?}"
+            );
+        }
+
+        let downloaded_len = std::fs::metadata(&target_path).unwrap().len();
+        assert_eq!(downloaded_len, content_length as u64);
+    }
+
+    #[gpui::test]
+    async fn test_download_release_without_content_length_reports_no_progress(
+        cx: &mut TestAppContext,
+    ) {
+        cx.background_executor.allow_parking();
+
+        let body = vec![0u8; 20_000];
+        let content_length = body.len();
+
+        let client = FakeHttpClient::create(move |_req| {
+            let body = body.clone();
+            async move { Ok(Response::builder().status(200).body(body.into()).unwrap()) }
+        });
+
+        let temp_dir = tempdir().unwrap();
+        let target_path = temp_dir.path().join("zed-download");
+        let release = ReleaseAsset {
+            version: "1.0.0".to_string(),
+            url: "https://test.example/download".to_string(),
+        };
+
+        let reported = Rc::new(std::cell::RefCell::new(Vec::<Option<f32>>::new()));
+        download_release(&target_path, release, client, {
+            let reported = reported.clone();
+            move |fraction| {
+                reported.borrow_mut().push(fraction);
+            }
+        })
+        .await
+        .unwrap();
+
+        assert!(
+            reported.borrow().is_empty(),
+            "progress should not be reported when the total size is unknown, got {:?}",
+            reported.borrow()
+        );
+
+        let downloaded_len = std::fs::metadata(&target_path).unwrap().len();
+        assert_eq!(downloaded_len, content_length as u64);
     }
 
     #[test]

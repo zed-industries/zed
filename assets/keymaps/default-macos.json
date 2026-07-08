@@ -337,6 +337,13 @@
     },
   },
   {
+    "context": "AgentTerminalThread",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-f": "agent::ToggleSearch",
+    },
+  },
+  {
     "context": "AcpThreadSearchBar",
     "use_key_equivalents": true,
     "bindings": {

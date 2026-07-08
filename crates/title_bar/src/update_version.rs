@@ -43,6 +43,7 @@ impl UpdateVersion {
             AutoUpdateStatus::Idle => AutoUpdateStatus::Checking,
             AutoUpdateStatus::Checking => AutoUpdateStatus::Downloading {
                 version: VersionCheckType::Semantic(Version::new(1, 99, 0)),
+                progress: Some(0.5),
             },
             AutoUpdateStatus::Downloading { .. } => AutoUpdateStatus::Installing {
                 version: VersionCheckType::Semantic(Version::new(1, 99, 0)),
@@ -85,9 +86,9 @@ impl Render for UpdateVersion {
             AutoUpdateStatus::Checking if self.update_check_type.is_manual() => {
                 UpdateButton::checking().into_any_element()
             }
-            AutoUpdateStatus::Downloading { version } => {
+            AutoUpdateStatus::Downloading { version, progress } => {
                 let version = Self::version_tooltip_message(&version);
-                UpdateButton::downloading(version).into_any_element()
+                UpdateButton::downloading(version, *progress).into_any_element()
             }
             AutoUpdateStatus::Installing { version } => {
                 let version = Self::version_tooltip_message(&version);

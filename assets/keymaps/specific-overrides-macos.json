@@ -41,6 +41,9 @@
     "bindings": {
       "alt-cmd-f": "text_finder::ToProjectSearch",
       "tab": "picker::MultiSelectNext",
+      "alt-cmd-[": "text_finder::Fold",
+      "alt-cmd-]": "text_finder::Unfold",
+      "cmd-shift-enter": "text_finder::ToggleFoldAll",
       "cmd-j": "pane::SplitDown",
       "cmd-k": "pane::SplitUp",
       "cmd-h": "pane::SplitLeft",
