@@ -4127,12 +4127,16 @@ impl AcpThread {
                 return Ok(());
             };
 
-            let equal = git_store
+            let Some(equal) = git_store
                 .update(cx, |git, cx| {
                     git.compare_checkpoints(old_checkpoint.clone(), new_checkpoint, cx)
                 })
                 .await
-                .unwrap_or(true);
+                .context("failed to compare checkpoints")
+                .log_err()
+            else {
+                return Ok(());
+            };
 
             this.update(cx, |this, cx| {
                 if let Some((ix, message)) = this.user_message_mut(&client_id) {
@@ -4740,7 +4744,7 @@ mod tests {
     use gpui::UpdateGlobal as _;
     use gpui::{App, AsyncApp, TestAppContext, WeakEntity};
     use indoc::indoc;
-    use project::{AgentId, FakeFs, Fs};
+    use project::{AgentId, FakeFs, Fs, RemoveOptions};
     use rand::{distr, prelude::*};
     use serde_json::json;
     use settings::SettingsStore;
@@ -9252,6 +9256,84 @@ mod tests {
             "send should succeed even when new message added during update_last_checkpoint: {:?}",
             result.err()
         );
+    }
+
+    /// This is a regression test for a bug where update_last_checkpoint would
+    /// swallow a checkpoint comparison error and hide an already-visible
+    /// "Restore checkpoint" button without logging anything.
+    #[gpui::test]
+    async fn test_update_last_checkpoint_compare_error_keeps_checkpoint_visible(
+        cx: &mut TestAppContext,
+    ) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(path!("/test"), json!({".git": {}, "file.txt": "content"}))
+            .await;
+        let project = Project::test(fs.clone(), [Path::new(path!("/test"))], cx).await;
+
+        // The handler waits for this signal so the repository can be swapped
+        // out while the turn is still running.
+        let (complete_tx, complete_rx) = futures::channel::oneshot::channel::<()>();
+        let complete_rx = RefCell::new(Some(complete_rx));
+        let connection = Rc::new(FakeAgentConnection::new().on_user_message(
+            move |_, _thread, _cx| {
+                let complete_rx = complete_rx.borrow_mut().take();
+                async move {
+                    if let Some(rx) = complete_rx {
+                        rx.await.ok();
+                    }
+                    Ok(acp::PromptResponse::new(acp::StopReason::EndTurn))
+                }
+                .boxed_local()
+            },
+        ));
+
+        let thread = cx
+            .update(|cx| {
+                connection.new_session(project, PathList::new(&[Path::new(path!("/test"))]), cx)
+            })
+            .await
+            .unwrap();
+
+        let send_future = thread.update(cx, |thread, cx| thread.send_raw("message", cx));
+        let send_task = cx.background_executor.spawn(send_future);
+        cx.run_until_parked();
+
+        // Show the checkpoint, as update_last_checkpoint_if_changed does when
+        // files change during the turn.
+        thread.update(cx, |thread, _| {
+            let (_, message) = thread.last_user_message().unwrap();
+            message.checkpoint.as_mut().unwrap().show = true;
+        });
+
+        // Recreate `.git` so the git store reopens the repository. The fresh
+        // fake repository doesn't contain the checkpoint recorded at send
+        // time, so the end-of-turn comparison fails.
+        fs.remove_dir(
+            Path::new(path!("/test/.git")),
+            RemoveOptions {
+                recursive: true,
+                ignore_if_not_exists: false,
+            },
+        )
+        .await
+        .unwrap();
+        cx.run_until_parked();
+        fs.create_dir(Path::new(path!("/test/.git"))).await.unwrap();
+        cx.run_until_parked();
+
+        complete_tx.send(()).unwrap();
+        send_task.await.unwrap();
+        cx.run_until_parked();
+
+        thread.update(cx, |thread, _| {
+            let (_, message) = thread.last_user_message().unwrap();
+            assert!(
+                message.checkpoint.as_ref().unwrap().show,
+                "a checkpoint comparison failure must not hide the restore checkpoint button"
+            );
+        });
     }
 
     /// Tests that when a follow-up message is sent during generation,
