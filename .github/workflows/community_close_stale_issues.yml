@@ -13,10 +13,15 @@ on:
         type: number
         default: 1000
 
+permissions:
+  contents: read
+
 jobs:
   stale:
     if: github.repository_owner == 'zed-industries'
     runs-on: namespace-profile-2x4-ubuntu-2404
+    permissions:
+      issues: write
     steps:
       - uses: actions/stale@997185467fa4f803885201cee163a9f38240193d # v10
         with:
