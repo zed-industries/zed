@@ -133,7 +133,7 @@ The agent can search your codebase to find relevant context, but providing it ex
 Add context by typing `@` in the message editor.
 You can mention files, directories, symbols, previous threads, skills, diagnostics, branch diffs, and URLs to fetch.
 
-When you paste multi-line code selections copied from a buffer, Zed automatically formats them as @-mentions with the file context.
+When you paste selections copied from a buffer, Zed automatically formats them as @-mentions with the file context.
 To paste content without this automatic formatting, use {#kb agent::PasteRaw} to paste raw text directly.
 
 ### Selection as Context
