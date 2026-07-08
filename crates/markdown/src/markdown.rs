@@ -395,14 +395,19 @@ pub struct Markdown {
     context_menu_selected_text: Option<String>,
     search_highlights: Vec<Range<usize>>,
     active_search_highlight: Option<usize>,
-    /// Measured height per block, keyed by source range so it survives
+    /// Measured (width, height) per block, keyed by source range so it survives
     /// append-only reparses (only changed tail blocks get new ranges). Lets the
     /// renderer size the document and place off-screen blocks without laying them
-    /// out. Reparsable blocks are never stored — their render can change.
-    block_heights: HashMap<Range<usize>, Pixels>,
-    /// Width the cached heights were measured at; clearing the cache on a change
-    /// keeps wrap-dependent heights from going stale after a resize.
-    last_layout_width: Option<Pixels>,
+    /// out. The stored width tags each height with the wrap width it was measured
+    /// at: an entry whose width differs from the current one is a miss, so a
+    /// resize can't reuse a stale (wrong-width) height. Reparsable blocks are
+    /// never stored — their render can change.
+    block_heights: HashMap<Range<usize>, (Pixels, Pixels)>,
+    /// Last width prepaint drew at, used only as an estimate hint: request_layout
+    /// has no bounds and so can't know this frame's width, so it sizes the
+    /// container from the cache filtered at this width. Purely a hint — the
+    /// per-width tag on `block_heights` is what enforces correctness.
+    last_known_width: Option<Pixels>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -596,7 +601,7 @@ impl Markdown {
             search_highlights: Vec::new(),
             active_search_highlight: None,
             block_heights: HashMap::default(),
-            last_layout_width: None,
+            last_known_width: None,
         };
         this.parse(cx);
         this
@@ -622,6 +627,7 @@ impl Markdown {
     fn toggle_code_block_wrap(&mut self, id: usize) {
         if !self.wrapped_code_blocks.remove(&id) {
             self.wrapped_code_blocks.insert(id);
+            self.code_block_scroll_handles.remove(&id);
         }
     }
 
@@ -735,6 +741,7 @@ impl Markdown {
 
     pub fn replace(&mut self, source: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.source = source.into();
+        self.block_heights.clear();
         self.parse(cx);
     }
 
@@ -780,6 +787,9 @@ impl Markdown {
         self.should_reparse = false;
         self.search_highlights.clear();
         self.active_search_highlight = None;
+        // Revised content can reuse the same byte ranges with different rendering,
+        // so drop cached heights; append-only growth keeps its cache elsewhere.
+        self.block_heights.clear();
         // Don't clear parsed_markdown here - keep existing content visible until new parse completes
         self.parse(cx);
     }
@@ -1189,16 +1199,11 @@ impl ParsedMarkdown {
     /// exactly that block — the basis for building only the on-screen ones.
     fn root_block_event_ranges(&self) -> Vec<Range<usize>> {
         let mut ranges = Vec::with_capacity(self.root_block_starts.len());
-        let mut start = None;
+        let mut start = 0;
         for (index, (_, event)) in self.events.iter().enumerate() {
-            match event {
-                MarkdownEvent::RootStart => start = Some(index),
-                MarkdownEvent::RootEnd(_) => {
-                    if let Some(start) = start.take() {
-                        ranges.push(start..index + 1);
-                    }
-                }
-                _ => {}
+            if let MarkdownEvent::RootEnd(_) = event {
+                ranges.push(start..index + 1);
+                start = index + 1;
             }
         }
         ranges
@@ -1978,8 +1983,8 @@ impl MarkdownElement {
                 break;
             }
             let height = match self.markdown.read(cx).block_heights.get(&range).copied() {
-                Some(height) => height,
-                None => {
+                Some((measured_width, height)) if measured_width == bounds.size.width => height,
+                _ => {
                     let (_, height) = self.build_root_block(
                         &layout.parsed_markdown,
                         root_block.clone(),
@@ -2001,9 +2006,10 @@ impl MarkdownElement {
             y += height;
         }
         if !to_cache.is_empty() {
+            let width = bounds.size.width;
             self.markdown.update(cx, |markdown, _| {
                 for (range, height) in to_cache {
-                    markdown.block_heights.insert(range, height);
+                    markdown.block_heights.insert(range, (width, height));
                 }
             });
         }
@@ -2911,22 +2917,26 @@ impl Element for MarkdownElement {
         // cover every event contiguously — there are never gaps between
         // top-level blocks. prepaint builds only the on-screen ones.
         let root_blocks = parsed_markdown.root_block_event_ranges();
+        // Contiguity and a zero start are guaranteed by construction (each range
+        // begins where the previous ended). The one remaining invariant is that
+        // no events trail the final RootEnd, so the last range reaches the end.
         debug_assert!(
-            match (root_blocks.first(), root_blocks.last()) {
-                (Some(first), Some(last)) =>
-                    first.start == 0
-                        && last.end == parsed_markdown.events.len()
-                        && root_blocks.windows(2).all(|pair| pair[0].end == pair[1].start),
-                _ => true,
+            match root_blocks.last() {
+                Some(last) => last.end == parsed_markdown.events.len(),
+                None => true,
             },
-            "root block ranges must cover all events without gaps"
+            "events must not trail the final root block"
         );
 
-        // Per-root_block heights (estimating unmeasured blocks); sets the extent
-        // without laying anything out, and is reused by prepaint.
+        // Per-root_block heights (estimating unmeasured blocks) to set the extent
+        // without laying anything out. request_layout has no bounds, so it can't
+        // know this frame's width; it estimates from the cache at the last drawn
+        // width. prepaint recomputes at the true width, so the extent here may lag
+        // a frame on resize (accepted — a tighter fix needs request_measured_layout).
+        let width = self.markdown.read(cx).last_known_width.unwrap_or_default();
         let heights = {
             let block_heights = &self.markdown.read(cx).block_heights;
-            root_block_heights(block_heights, &parsed_markdown.events, &root_blocks)
+            root_block_heights(block_heights, &parsed_markdown.events, &root_blocks, width)
         };
         let total_height: Pixels = heights.iter().map(|(_, height)| *height).sum();
 
@@ -2939,7 +2949,6 @@ impl Element for MarkdownElement {
             MarkdownLayoutState::Virtualized(MarkdownLayout {
                 parsed_markdown,
                 root_blocks,
-                root_block_heights: heights,
                 images,
                 active_root_block,
                 markdown_end,
@@ -2982,16 +2991,6 @@ impl Element for MarkdownElement {
         let visible_top = viewport.top() - BLOCK_OVERSCAN;
         let visible_bottom = viewport.bottom() + BLOCK_OVERSCAN;
 
-        // Heights depend on wrap width, so drop the cache when the width changes;
-        // blocks then re-measure at the new width instead of keeping stale
-        // (wider-width) heights that would mis-size the extent and positions.
-        self.markdown.update(cx, |markdown, _| {
-            if markdown.last_layout_width != Some(bounds.size.width) {
-                markdown.last_layout_width = Some(bounds.size.width);
-                markdown.block_heights.clear();
-            }
-        });
-
         let available = gpui::size(
             gpui::AvailableSpace::Definite(bounds.size.width),
             gpui::AvailableSpace::MinContent,
@@ -3003,8 +3002,22 @@ impl Element for MarkdownElement {
         let mut footnote_refs = Vec::new();
         let mut measured = Vec::new();
 
+        // Recompute per-block heights at this frame's true width — the cache is
+        // width-tagged, so a resize reads mismatched entries as unmeasured. The
+        // heights snapshot from request_layout was estimated at the last drawn
+        // width and would mis-position blocks on the resize frame.
+        let block_heights = {
+            let cache = &self.markdown.read(cx).block_heights;
+            root_block_heights(
+                cache,
+                &layout.parsed_markdown.events,
+                &layout.root_blocks,
+                bounds.size.width,
+            )
+        };
+
         let mut y = bounds.top();
-        for (root_block, (range, height)) in layout.root_blocks.iter().zip(&layout.root_block_heights) {
+        for (root_block, (range, height)) in layout.root_blocks.iter().zip(&block_heights) {
             let height = *height;
             let block_top = y;
             if block_top + height >= visible_top && block_top <= visible_bottom {
@@ -3044,13 +3057,13 @@ impl Element for MarkdownElement {
             }
         }
 
-        if !measured.is_empty() {
-            self.markdown.update(cx, |markdown, _| {
-                for (range, height) in measured {
-                    markdown.block_heights.insert(range, height);
-                }
-            });
-        }
+        let width = bounds.size.width;
+        self.markdown.update(cx, |markdown, _| {
+            markdown.last_known_width = Some(width);
+            for (range, height) in measured {
+                markdown.block_heights.insert(range, (width, height));
+            }
+        });
 
         let text = RenderedText {
             lines: lines.into(),
@@ -3131,7 +3144,6 @@ pub enum MarkdownPrepaintState {
 pub struct MarkdownLayout {
     parsed_markdown: ParsedMarkdown,
     root_blocks: Vec<Range<usize>>,
-    root_block_heights: Vec<(Range<usize>, Pixels)>,
     images: HashMap<usize, Arc<Image>>,
     active_root_block: Option<usize>,
     markdown_end: usize,
@@ -3170,12 +3182,14 @@ fn root_block_source_range(
 }
 
 /// Per-root_block (source range, height), substituting `ESTIMATED_BLOCK_HEIGHT`
-/// for any block not yet measured. Shared by the extent sum, block positioning,
-/// and scroll-target estimation.
+/// for any block not yet measured at `width`. A cached entry measured at a
+/// different width is treated as a miss, since heights depend on wrap width.
+/// Shared by the extent sum, block positioning, and scroll-target estimation.
 fn root_block_heights(
-    block_heights: &HashMap<Range<usize>, Pixels>,
+    block_heights: &HashMap<Range<usize>, (Pixels, Pixels)>,
     events: &[(Range<usize>, MarkdownEvent)],
     root_blocks: &[Range<usize>],
+    width: Pixels,
 ) -> Vec<(Range<usize>, Pixels)> {
     root_blocks
         .iter()
@@ -3183,8 +3197,8 @@ fn root_block_heights(
             let range = root_block_source_range(events, root_block);
             let height = block_heights
                 .get(&range)
-                .copied()
-                .unwrap_or(ESTIMATED_BLOCK_HEIGHT);
+                .filter(|(measured_width, _)| *measured_width == width)
+                .map_or(ESTIMATED_BLOCK_HEIGHT, |(_, height)| *height);
             (range, height)
         })
         .collect()
@@ -4762,8 +4776,9 @@ mod tests {
     }
 
     // A resize changes wrap width, so cached heights of off-screen blocks (which
-    // aren't re-measured each frame) would otherwise stay stale. The width-change
-    // clear drops them so they re-measure at the new width.
+    // aren't re-measured each frame) would otherwise stay stale. Entries are
+    // tagged with the width they were measured at, so a mismatched width reads as
+    // unmeasured rather than reusing a stale height.
     #[gpui::test]
     fn resize_invalidates_height_cache(cx: &mut TestAppContext) {
         struct TestWindow;
@@ -4810,11 +4825,61 @@ mod tests {
             "off-screen block should keep its cached height across a scroll"
         );
 
-        // Resize narrower while it's off-screen: the stale height is dropped.
+        // Resize narrower while it's off-screen: the entry is width-tagged at the
+        // old width, so it no longer counts as measured at the new width and the
+        // renderer falls back to the estimate.
         draw(&mut cx, 300., 2000.);
+        let cached_width = cx.update(|_, cx| {
+            markdown
+                .read(cx)
+                .block_heights
+                .get(&top_range)
+                .map(|(width, _)| *width)
+        });
+        assert_ne!(
+            cached_width,
+            Some(px(300.)),
+            "resize should leave the off-screen block's height stale (not valid at the new width)"
+        );
+    }
+
+    // `reset()` swaps in revised content that can reuse the same byte ranges with
+    // different rendering, so its cached heights must be dropped rather than reused.
+    #[gpui::test]
+    fn reset_invalidates_height_cache(cx: &mut TestAppContext) {
+        struct TestWindow;
+        impl Render for TestWindow {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                div()
+            }
+        }
+        ensure_theme_initialized(cx);
+        let markdown = cx.new(|cx| Markdown::new(perf_doc(30).into(), None, None, cx));
+        let (_, cx) = cx.add_window_view(|_, _| TestWindow);
+        cx.simulate_resize(size(px(800.), px(600.)));
+        cx.run_until_parked();
+
+        let markdown_for_draw = markdown.clone();
+        cx.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), move |_, _| {
+            MarkdownElement::new(markdown_for_draw, MarkdownStyle::default()).virtualized()
+                .code_block_renderer(CodeBlockRenderer::Default {
+                    copy_button_visibility: CopyButtonVisibility::Hidden,
+                    wrap_button_visibility: WrapButtonVisibility::Hidden,
+                    border: false,
+                })
+        });
         assert!(
-            !cx.update(|_, cx| markdown.read(cx).block_heights.contains_key(&top_range)),
-            "resize did not invalidate the off-screen block's stale height"
+            cx.update(|_, cx| markdown.read(cx).block_heights.len()) > 0,
+            "the initial draw should have measured some blocks"
+        );
+
+        cx.update(|_, cx| {
+            markdown.update(cx, |markdown, cx| markdown.reset(perf_doc(40).into(), cx))
+        });
+        assert_eq!(
+            cx.update(|_, cx| markdown.read(cx).block_heights.len()),
+            0,
+            "reset should drop cached heights so revised content re-measures"
         );
     }
 
@@ -4970,9 +5035,14 @@ mod tests {
 
         markdown.update(cx, |markdown, _| {
             assert!(markdown.code_block_scroll_handle(0).is_some());
+            assert!(markdown.code_block_scroll_handles.contains_key(&0));
 
             markdown.toggle_code_block_wrap(0);
             assert!(markdown.code_block_scroll_handle(0).is_none());
+            assert!(
+                !markdown.code_block_scroll_handles.contains_key(&0),
+                "wrapping should evict the stored scroll handle, not just hide it"
+            );
 
             markdown.toggle_code_block_wrap(0);
             assert!(markdown.code_block_scroll_handle(0).is_some());
