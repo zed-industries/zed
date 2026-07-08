@@ -5840,7 +5840,7 @@ fn panels_page() -> SettingsPage {
         ]
     }
 
-    fn git_panel_section() -> [SettingsPageItem; 17] {
+    fn git_panel_section() -> [SettingsPageItem; 20] {
         [
             SettingsPageItem::SectionHeader("Git Panel"),
             SettingsPageItem::SettingItem(SettingItem {
@@ -6074,6 +6074,71 @@ fn panels_page() -> SettingsPage {
                             .git_panel
                             .get_or_insert_default()
                             .entry_primary_click_action = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Open Side-Specific Diffs",
+                description: "When Group By is set to Staged, clicking a Staged Changes or Changes row opens a diff scoped to that side (working tree vs index, or index vs HEAD). No effect unless Group By is Staged.",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_panel.open_side_specific_diffs"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .open_side_specific_diffs
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .open_side_specific_diffs = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Open File On Double-Click",
+                description: "Whether double-clicking a file in the Git panel opens the file in the editor. When disabled, a double-click behaves like a normal click (opens the diff).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_panel.open_file_on_double_click"),
+                    pick: |settings_content| {
+                        settings_content
+                            .git_panel
+                            .as_ref()?
+                            .open_file_on_double_click
+                            .as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .open_file_on_double_click = value;
+                    },
+                }),
+                metadata: None,
+                files: USER,
+            }),
+            SettingsPageItem::SettingItem(SettingItem {
+                title: "Read-Only Diffs",
+                description: "Whether single-file diffs opened from the Git panel are read-only. When disabled, working-tree diffs remain editable (the staged \"Index\" view is always read-only).",
+                field: Box::new(SettingField {
+                    organization_override: None,
+                    json_path: Some("git_panel.read_only_diffs"),
+                    pick: |settings_content| {
+                        settings_content.git_panel.as_ref()?.read_only_diffs.as_ref()
+                    },
+                    write: |settings_content, value, _| {
+                        settings_content
+                            .git_panel
+                            .get_or_insert_default()
+                            .read_only_diffs = value;
                     },
                 }),
                 metadata: None,
