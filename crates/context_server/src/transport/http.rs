@@ -300,10 +300,7 @@ impl HttpTransport {
                                     data_buffer.clear();
                                 }
                                 in_message = false;
-                            } else if let Some(data) = line
-                                .strip_prefix("data:")
-                                .map(|data| data.strip_prefix(' ').unwrap_or(data))
-                            {
+                            } else if let Some(data) = line.strip_prefix("data:") {
                                 // Handle data lines
                                 let data = data.trim();
                                 if !data.is_empty() {
@@ -500,43 +497,49 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_sse_data_field_without_space_after_colon(cx: &mut TestAppContext) {
-        let client = make_fake_http_client(|_req| {
-            Box::pin(async {
-                Ok(Response::builder()
-                    .status(200)
-                    .header("Content-Type", "text/event-stream;charset=UTF-8")
-                    .body(AsyncBody::from(
-                        b"id:1\nevent:message\ndata:{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n\n"
-                            .to_vec(),
-                    ))
-                    .unwrap())
-            })
-        });
+    async fn test_sse_data_field(cx: &mut TestAppContext) {
+        for data_prefix in ["data:", "data: "] {
+            let body = format!(
+                "id:1\nevent:message\n{data_prefix}{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{}}}}\n\n"
+            );
+            let client = make_fake_http_client(move |_req| {
+                let body = body.clone();
+                Box::pin(async move {
+                    Ok(Response::builder()
+                        .status(200)
+                        .header("Content-Type", "text/event-stream;charset=UTF-8")
+                        .body(AsyncBody::from(body.into_bytes()))
+                        .unwrap())
+                })
+            });
 
-        let transport = HttpTransport::new(
-            client,
-            "http://mcp.example.com/mcp".to_string(),
-            HashMap::default(),
-            cx.background_executor.clone(),
-        );
+            let transport = HttpTransport::new(
+                client,
+                "http://mcp.example.com/mcp".to_string(),
+                HashMap::default(),
+                cx.background_executor.clone(),
+            );
 
-        transport
-            .send(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#.to_string())
-            .await
-            .expect("send should succeed");
+            transport
+                .send(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#.to_string())
+                .await
+                .expect("send should succeed");
 
-        let mut responses = transport.receive();
-        let next_response = responses.next().fuse();
-        let timeout = cx.background_executor.timer(Duration::from_secs(1)).fuse();
-        futures::pin_mut!(next_response, timeout);
+            let mut responses = transport.receive();
+            let next_response = responses.next().fuse();
+            let timeout = cx.background_executor.timer(Duration::from_secs(1)).fuse();
+            futures::pin_mut!(next_response, timeout);
 
-        let response = futures::select_biased! {
-            response = next_response => response.expect("expected SSE response"),
-            _ = timeout => panic!("timed out waiting for SSE response"),
-        };
+            let response = futures::select_biased! {
+                response = next_response => response.expect("expected SSE response"),
+                _ = timeout => panic!("timed out waiting for SSE response with {data_prefix:?}"),
+            };
 
-        assert_eq!(response, r#"{"jsonrpc":"2.0","id":1,"result":{}}"#);
+            assert_eq!(
+                response, r#"{"jsonrpc":"2.0","id":1,"result":{}}"#,
+                "unexpected SSE response for {data_prefix:?}",
+            );
+        }
     }
 
     #[gpui::test]
