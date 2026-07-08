@@ -9,9 +9,11 @@ const DELETION_COST: u32 = 10;
 /// and return the best match found so far at each step.
 pub struct StreamingFuzzyMatcher {
     snapshot: TextBufferSnapshot,
+    buffer_text: String,
     query_lines: Vec<String>,
     line_hint: Option<u32>,
     incomplete_line: String,
+    raw_query: String,
     matches: Vec<SearchMatch>,
     matrix: SearchMatrix,
 }
@@ -27,11 +29,14 @@ struct SearchMatch {
 impl StreamingFuzzyMatcher {
     pub fn new(snapshot: TextBufferSnapshot) -> Self {
         let buffer_line_count = snapshot.max_point().row as usize + 1;
+        let buffer_text = snapshot.text();
         Self {
             snapshot,
+            buffer_text,
             query_lines: Vec::new(),
             line_hint: None,
             incomplete_line: String::new(),
+            raw_query: String::new(),
             matches: Vec::new(),
             matrix: SearchMatrix::new(buffer_line_count + 1),
         }
@@ -70,6 +75,7 @@ impl StreamingFuzzyMatcher {
     /// query so far, or `None` if no suitable match exists yet.
     pub fn push(&mut self, chunk: &str, line_hint: Option<u32>) -> Option<Range<usize>> {
         // Add the chunk to our incomplete line buffer
+        self.raw_query.push_str(chunk);
         self.incomplete_line.push_str(chunk);
         self.line_hint = line_hint;
 
@@ -83,7 +89,7 @@ impl StreamingFuzzyMatcher {
 
             self.incomplete_line.replace_range(..last_pos + 1, "");
 
-            self.matches = self.resolve_location_fuzzy();
+            self.matches = self.resolve_location();
         }
 
         let best_match = self.select_best_match();
@@ -124,9 +130,50 @@ impl StreamingFuzzyMatcher {
 
             self.query_lines
                 .push(std::mem::take(&mut self.incomplete_line));
-            self.matches = self.resolve_location_fuzzy();
+            self.matches = self.resolve_location();
         }
         self.match_ranges()
+    }
+
+    /// Resolves the current query to a set of matching ranges in the buffer.
+    ///
+    /// This first attempts the existing line-based fuzzy matching, which
+    /// handles whole-line queries (including typos and whitespace/formatting
+    /// differences, and tracks the `(query_row, buffer_row)` line pairs used
+    /// to align them). If that finds no candidate at all, it falls back to
+    /// an exact substring search for the raw query text accumulated so far,
+    /// which handles queries that are fragments of a single line (e.g. a
+    /// substring appearing in the middle of a much longer line) rather than
+    /// an entire line's content. Substring matches have no line pairs, since
+    /// they aren't aligned by line.
+    fn resolve_location(&mut self) -> Vec<SearchMatch> {
+        let fuzzy_matches = self.resolve_location_fuzzy();
+        if !fuzzy_matches.is_empty() {
+            return fuzzy_matches;
+        }
+        self.resolve_substring_matches()
+    }
+
+    /// Finds all non-overlapping exact occurrences of the raw query text
+    /// accumulated so far within the buffer.
+    fn resolve_substring_matches(&self) -> Vec<SearchMatch> {
+        if self.raw_query.is_empty() {
+            return Vec::new();
+        }
+
+        let mut matches = Vec::new();
+        let mut search_start = 0;
+        while let Some(relative_pos) = self.buffer_text[search_start..].find(self.raw_query.as_str())
+        {
+            let match_start = search_start + relative_pos;
+            let match_end = match_start + self.raw_query.len();
+            matches.push(SearchMatch {
+                range: match_start..match_end,
+                line_pairs: Vec::new(),
+            });
+            search_start = match_end;
+        }
+        matches
     }
 
     fn resolve_location_fuzzy(&mut self) -> Vec<SearchMatch> {
@@ -774,6 +821,34 @@ mod tests {
             best_match.is_none(),
             "Best match should be None when query cannot be uniquely resolved"
         );
+    }
+
+    #[gpui::test]
+    fn test_mid_line_fragment_resolves_to_substring() {
+        // Regression test for https://github.com/zed-industries/zed/issues/59369:
+        // `old_text` fragments that only cover the middle of a much longer
+        // line (not the whole trimmed line) should still be found.
+        let buffer = TextBuffer::new(
+            ReplicaId::LOCAL,
+            BufferId::new(1).unwrap(),
+            concat!(
+                "Use the two lines below as edit targets.\n",
+                "\n",
+                "Short line target: SHORT_MARKER_LINE\n",
+                "\n",
+                "3D, first-person perspective, keyboard WASD, voxel-based, singleplayer, targeting steam PC\n",
+            ),
+        );
+        let snapshot = buffer.snapshot();
+
+        let mut matcher = StreamingFuzzyMatcher::new(snapshot.clone());
+        let range = matcher
+            .push("keyboard WASD, voxel-based", None)
+            .or_else(|| matcher.finish().first().cloned())
+            .expect("Expected to find the mid-line fragment");
+
+        let matched_text = snapshot.text_for_range(range).collect::<String>();
+        assert_eq!(matched_text, "keyboard WASD, voxel-based");
     }
 
     #[gpui::test]
