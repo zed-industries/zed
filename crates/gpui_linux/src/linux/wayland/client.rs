@@ -634,7 +634,7 @@ impl WaylandClient {
             .unwrap();
 
         let compositor_gpu = detect_compositor_gpu();
-        let gpu_context = Rc::new(RefCell::new(None));
+        let gpu_context = Rc::new(gpui_wgpu::SharedGpuContext::new());
 
         let seat = seat.unwrap();
         let globals = Globals::new(

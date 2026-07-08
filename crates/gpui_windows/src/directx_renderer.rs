@@ -338,6 +338,9 @@ impl DirectXRenderer {
                     self.draw_polychrome_sprites(texture_id, range.start, range.len())
                 }
                 PrimitiveBatch::Surfaces(range) => self.draw_surfaces(&scene.surfaces[range]),
+                // External composition is only implemented in the wgpu backend;
+                // the element's fallback quad covers this arm.
+                PrimitiveBatch::ExternalCompositors(_) => Ok(()),
             }
             .context(format!(
                 "scene too large:\

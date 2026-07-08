@@ -5,8 +5,9 @@ use crate::{
     AsyncWindowContext, AvailableSpace, Background, BorderStyle, Bounds, BoxShadow, Capslock,
     Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
     DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
-    EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
-    Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
+    EntityId, EventEmitter, ExternalCompositorPrimitive, ExternalCompositorRegistry,
+    ExternalSlotHandle, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla,
+    InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
     KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
     MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels, PlatformAtlas,
     PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point, PolychromeSprite,
@@ -1033,6 +1034,12 @@ pub struct Window {
     active: Rc<Cell<bool>>,
     hovered: Rc<Cell<bool>>,
     pub(crate) needs_present: Rc<Cell<bool>>,
+    /// Monotonically incremented once per call to [`Window::draw`]. Used to order
+    /// external compositor frame-in-flight tracking (see
+    /// [`ExternalCompositorRegistry`]): elements record the frame they painted a slot
+    /// in, and the backend renderer records the frame it composited that slot in, so
+    /// the registry can tell whether a slot's texture is still needed before freeing it.
+    pub(crate) frame_counter: u64,
     /// Tracks recent input event timestamps to determine if input is arriving at a high rate.
     /// Used to selectively enable VRR optimization only when input rate exceeds 60fps.
     pub(crate) input_rate_tracker: Rc<RefCell<InputRateTracker>>,
@@ -1741,6 +1748,7 @@ impl Window {
             active,
             hovered,
             needs_present,
+            frame_counter: 0,
             input_rate_tracker,
             #[cfg(feature = "input-latency-histogram")]
             input_latency_tracker: InputLatencyTracker::new()?,
@@ -2420,6 +2428,21 @@ impl Window {
         self.scale_factor
     }
 
+    /// The monotonically increasing counter of frames drawn by this window so far
+    /// (see [`Window::draw`]). Used to correlate external compositor paint and
+    /// composite calls across the render backend; see [`ExternalCompositorRegistry`].
+    pub fn frame_counter(&self) -> u64 {
+        self.frame_counter
+    }
+
+    /// This window's external compositor registry, if the platform backend supports
+    /// external composition (see [`ExternalCompositorRegistry`]). Returns `None` on
+    /// backends without support (e.g. headless/test windows, or macOS/Metal in this
+    /// phase).
+    pub fn external_compositor_registry(&self) -> Option<Rc<RefCell<ExternalCompositorRegistry>>> {
+        self.platform_window.external_compositor_registry()
+    }
+
     /// The size of an em for the base font of the application. Adjusting this value allows the
     /// UI to scale, just like zooming a web page.
     pub fn rem_size(&self) -> Pixels {
@@ -2636,6 +2659,11 @@ impl Window {
     /// the contents of the new [`Scene`], use [`Self::present`].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut App) -> ArenaClearNeeded {
+        // Advance the frame counter before painting so that elements painting an
+        // external compositor primitive this frame (see `paint_external_compositor`)
+        // record the frame that is about to be drawn, not the previous one.
+        self.frame_counter = self.frame_counter.wrapping_add(1);
+
         // Drain unconditionally so a stale first-invalidation timestamp can't
         // leak into a later frame across enable/disable of frame tracing.
         let frame_dirty = self.invalidator.take_frame_dirty();
@@ -4144,6 +4172,44 @@ impl Window {
             content_mask,
             image_buffer,
         });
+    }
+
+    /// Paint an external compositor slot into the scene for the next frame at the
+    /// current z-index.
+    ///
+    /// This inserts a neutral [`ExternalCompositorPrimitive`] into the scene; no
+    /// backend-specific work happens here; the render backend resolves `handle`
+    /// against the window's [`ExternalCompositorRegistry`] and composites it at a
+    /// controlled point later in the frame, using its own backend-specific
+    /// composition trait (e.g. `gpui_wgpu::WgpuExternalCompositor`). If the window
+    /// has a registry (see [`Window::external_compositor_registry`]), this also
+    /// records that `handle`'s slot was painted in the current frame, so the
+    /// registry can enforce its frame-in-flight contract on unregister.
+    ///
+    /// This method should only be called as part of the paint phase of element drawing.
+    pub fn paint_external_compositor(
+        &mut self,
+        bounds: Bounds<Pixels>,
+        handle: ExternalSlotHandle,
+    ) {
+        self.invalidator.debug_assert_paint();
+
+        let bounds = self.snap_bounds(bounds);
+        let content_mask = self.snapped_content_mask();
+        self.next_frame
+            .scene
+            .insert_primitive(ExternalCompositorPrimitive {
+                order: 0,
+                bounds,
+                content_mask,
+                handle,
+            });
+
+        if let Some(registry) = self.external_compositor_registry() {
+            registry
+                .borrow_mut()
+                .mark_painted(handle, self.frame_counter);
+        }
     }
 
     /// Removes an image from the sprite atlas.

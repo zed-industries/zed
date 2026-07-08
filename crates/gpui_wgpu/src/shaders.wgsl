@@ -1362,3 +1362,58 @@ fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
 
     return ycbcr_to_RGB * y_cb_cr;
 }
+
+// --- external compositors --- //
+
+struct ExternalCompositorInstance {
+    bounds: Bounds,
+    content_mask: Bounds,
+    alpha_premultiplied: u32,
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
+}
+
+// Reuses the `instances_with_texture` bind group layout (storage buffer + filtered
+// texture + sampler), and the `t_sprite`/`s_sprite` bindings declared above: this
+// pipeline's bind group layout is identical in shape to mono/poly sprites and paths,
+// just with a single instance per draw call (see `WgpuRenderer::draw`).
+@group(1) @binding(0) var<storage, read> b_external_compositors: array<ExternalCompositorInstance>;
+
+struct ExternalCompositorVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) texture_position: vec2<f32>,
+    @location(1) instance_id: u32,
+    @location(3) clip_distances: vec4<f32>,
+}
+
+@vertex
+fn vs_external_compositor(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> ExternalCompositorVarying {
+    let instance = b_external_compositors[instance_id];
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+
+    var out = ExternalCompositorVarying();
+    out.position = to_device_position(unit_vertex, instance.bounds);
+    out.texture_position = unit_vertex;
+    out.instance_id = instance_id;
+    out.clip_distances = distance_from_clip_rect(unit_vertex, instance.bounds, instance.content_mask);
+    return out;
+}
+
+@fragment
+fn fs_external_compositor(input: ExternalCompositorVarying) -> @location(0) vec4<f32> {
+    // Sample before the (potential) early-out below: derivative-based texture
+    // sampling must stay in uniform control flow, same as fs_poly_sprite/fs_mono_sprite.
+    let c = textureSample(t_sprite, s_sprite, input.texture_position);
+
+    // Alpha clip after using the derivatives.
+    if (any(input.clip_distances < vec4<f32>(0.0))) {
+        return vec4<f32>(0.0);
+    }
+
+    let instance = b_external_compositors[input.instance_id];
+    if (instance.alpha_premultiplied == 0u) {
+        return vec4<f32>(c.rgb * c.a, c.a);
+    }
+    return c;
+}

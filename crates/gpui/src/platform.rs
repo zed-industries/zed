@@ -665,6 +665,17 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas>;
     fn is_subpixel_rendering_supported(&self) -> bool;
 
+    /// Returns this window's [`ExternalCompositorRegistry`](crate::ExternalCompositorRegistry),
+    /// if the backend supports external composition. The default implementation
+    /// returns `None`, which is appropriate for backends that don't support it (e.g.
+    /// headless/test windows, or platforms without a renderer that implements the
+    /// `ExternalCompositors` scene batch, such as macOS/Metal in this phase).
+    fn external_compositor_registry(
+        &self,
+    ) -> Option<std::rc::Rc<std::cell::RefCell<crate::ExternalCompositorRegistry>>> {
+        None
+    }
+
     // macOS specific methods
     fn get_title(&self) -> String {
         String::new()

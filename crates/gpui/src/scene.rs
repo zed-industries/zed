@@ -5,8 +5,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, Hsla, Pixels,
-    Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
+    AtlasTextureId, AtlasTile, Background, Bounds, ContentMask, Corners, Edges, ExternalSlotHandle,
+    Hsla, Pixels, Point, Radians, ScaledPixels, Size, bounds_tree::BoundsTree, point,
 };
 use std::{
     fmt::Debug,
@@ -36,6 +36,7 @@ pub struct Scene {
     pub subpixel_sprites: Vec<SubpixelSprite>,
     pub polychrome_sprites: Vec<PolychromeSprite>,
     pub surfaces: Vec<PaintSurface>,
+    pub external_compositors: Vec<ExternalCompositorPrimitive>,
 }
 
 #[expect(missing_docs)]
@@ -52,6 +53,7 @@ impl Scene {
         self.subpixel_sprites.clear();
         self.polychrome_sprites.clear();
         self.surfaces.clear();
+        self.external_compositors.clear();
     }
 
     pub fn len(&self) -> usize {
@@ -119,6 +121,10 @@ impl Scene {
                 surface.order = order;
                 self.surfaces.push(surface.clone());
             }
+            Primitive::ExternalCompositor(external_compositor) => {
+                external_compositor.order = order;
+                self.external_compositors.push(external_compositor.clone());
+            }
         }
         self.paint_operations
             .push(PaintOperation::Primitive(primitive));
@@ -146,6 +152,8 @@ impl Scene {
         self.polychrome_sprites
             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
         self.surfaces.sort_by_key(|surface| surface.order);
+        self.external_compositors
+            .sort_by_key(|external_compositor| external_compositor.order);
     }
 
     #[cfg_attr(
@@ -173,6 +181,8 @@ impl Scene {
             polychrome_sprites_iter: self.polychrome_sprites.iter().peekable(),
             surfaces_start: 0,
             surfaces_iter: self.surfaces.iter().peekable(),
+            external_compositors_start: 0,
+            external_compositors_iter: self.external_compositors.iter().peekable(),
         }
     }
 }
@@ -195,6 +205,7 @@ pub(crate) enum PrimitiveKind {
     SubpixelSprite,
     PolychromeSprite,
     Surface,
+    ExternalCompositor,
 }
 
 pub(crate) enum PaintOperation {
@@ -214,6 +225,7 @@ pub enum Primitive {
     SubpixelSprite(SubpixelSprite),
     PolychromeSprite(PolychromeSprite),
     Surface(PaintSurface),
+    ExternalCompositor(ExternalCompositorPrimitive),
 }
 
 #[expect(missing_docs)]
@@ -228,6 +240,7 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.bounds,
             Primitive::PolychromeSprite(sprite) => &sprite.bounds,
             Primitive::Surface(surface) => &surface.bounds,
+            Primitive::ExternalCompositor(external_compositor) => &external_compositor.bounds,
         }
     }
 
@@ -241,6 +254,7 @@ impl Primitive {
             Primitive::SubpixelSprite(sprite) => &sprite.content_mask,
             Primitive::PolychromeSprite(sprite) => &sprite.content_mask,
             Primitive::Surface(surface) => &surface.content_mask,
+            Primitive::ExternalCompositor(external_compositor) => &external_compositor.content_mask,
         }
     }
 }
@@ -269,6 +283,8 @@ struct BatchIterator<'a> {
     polychrome_sprites_iter: Peekable<slice::Iter<'a, PolychromeSprite>>,
     surfaces_start: usize,
     surfaces_iter: Peekable<slice::Iter<'a, PaintSurface>>,
+    external_compositors_start: usize,
+    external_compositors_iter: Peekable<slice::Iter<'a, ExternalCompositorPrimitive>>,
 }
 
 impl<'a> Iterator for BatchIterator<'a> {
@@ -301,6 +317,10 @@ impl<'a> Iterator for BatchIterator<'a> {
             (
                 self.surfaces_iter.peek().map(|s| s.order),
                 PrimitiveKind::Surface,
+            ),
+            (
+                self.external_compositors_iter.peek().map(|p| p.order),
+                PrimitiveKind::ExternalCompositor,
             ),
         ];
         orders_and_kinds.sort_by_key(|(order, kind)| (order.unwrap_or(u32::MAX), *kind));
@@ -447,6 +467,24 @@ impl<'a> Iterator for BatchIterator<'a> {
                 self.surfaces_start = surfaces_end;
                 Some(PrimitiveBatch::Surfaces(surfaces_start..surfaces_end))
             }
+            PrimitiveKind::ExternalCompositor => {
+                let external_compositors_start = self.external_compositors_start;
+                let mut external_compositors_end = external_compositors_start + 1;
+                self.external_compositors_iter.next();
+                while self
+                    .external_compositors_iter
+                    .next_if(|external_compositor| {
+                        (external_compositor.order, batch_kind) < max_order_and_kind
+                    })
+                    .is_some()
+                {
+                    external_compositors_end += 1;
+                }
+                self.external_compositors_start = external_compositors_end;
+                Some(PrimitiveBatch::ExternalCompositors(
+                    external_compositors_start..external_compositors_end,
+                ))
+            }
         }
     }
 }
@@ -479,6 +517,7 @@ pub enum PrimitiveBatch {
         range: Range<usize>,
     },
     Surfaces(Range<usize>),
+    ExternalCompositors(Range<usize>),
 }
 
 #[derive(Default, Debug, Copy, Clone)]
@@ -728,6 +767,28 @@ pub struct PaintSurface {
 impl From<PaintSurface> for Primitive {
     fn from(surface: PaintSurface) -> Self {
         Primitive::Surface(surface)
+    }
+}
+
+/// A reference to an [`ExternalSlotHandle`] positioned in the scene. The referenced
+/// slot's content is drawn by the backend renderer, outside of `scene.rs`: this
+/// primitive only carries the placement (bounds, content mask, and draw order) and an
+/// opaque handle used to look the slot up in the window's
+/// [`crate::ExternalCompositorRegistry`]. Unlike [`PaintSurface`], this primitive is
+/// not platform-gated: every backend receives it and decides how (or whether) to
+/// composite it.
+#[derive(Clone, Debug)]
+#[expect(missing_docs)]
+pub struct ExternalCompositorPrimitive {
+    pub order: DrawOrder,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub handle: ExternalSlotHandle,
+}
+
+impl From<ExternalCompositorPrimitive> for Primitive {
+    fn from(external_compositor: ExternalCompositorPrimitive) -> Self {
+        Primitive::ExternalCompositor(external_compositor)
     }
 }
 

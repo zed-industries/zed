@@ -1,16 +1,21 @@
 use crate::{CompositorGpuHint, WgpuAtlas, WgpuContext};
 use bytemuck::{Pod, Zeroable};
 use gpui::{
-    AtlasTextureId, Background, Bounds, DevicePixels, GpuSpecs, MonochromeSprite, Path, Point,
-    PolychromeSprite, PrimitiveBatch, Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite,
-    Underline, get_gamma_correction_ratios,
+    AlphaMode, AtlasTextureId, Background, Bounds, DevicePixels, ExternalCompositorError,
+    ExternalCompositorPrimitive, ExternalCompositorRegistry, ExternalSlotDescriptor,
+    ExternalSlotHandle, GpuSpecs, MonochromeSprite, Path, Point, PolychromeSprite, PrimitiveBatch,
+    Quad, ScaledPixels, Scene, Shadow, Size, SubpixelSprite, Underline,
+    get_gamma_correction_ratios,
 };
 use log::warn;
 #[cfg(not(target_family = "wasm"))]
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
+use std::any::Any;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::num::NonZeroU64;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[repr(C)]
@@ -44,6 +49,128 @@ struct SurfaceParams {
     content_mask: PodBounds,
 }
 
+/// Per-draw instance data for an external compositor primitive. Written to the same
+/// `instance_buffer` storage buffer used by mono/poly sprites and paths (see
+/// `WgpuRenderer::draw_instances_with_texture`), one instance per draw call: unlike
+/// sprites, each external compositor primitive has its own texture view, so there is
+/// no batching across primitives.
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct ExternalCompositorInstanceGpu {
+    bounds: PodBounds,
+    content_mask: PodBounds,
+    /// Non-zero if the source texture's color channels are already multiplied by
+    /// alpha (see `gpui::AlphaMode`); the fragment shader premultiplies otherwise.
+    alpha_premultiplied: u32,
+    pad: [u32; 3],
+}
+
+/// Outcome of a single [`WgpuExternalCompositor::compose`] call.
+#[derive(Clone, Debug)]
+pub enum ExternalComposeOutput {
+    /// A frame is ready this call and should be drawn into the slot's bounds.
+    Ready {
+        /// The view containing this frame's composited content.
+        view: Arc<wgpu::TextureView>,
+    },
+    /// No frame is ready yet; the backend draws the slot's fallback color (if any)
+    /// instead.
+    NotReady,
+    /// The graphics context was lost. The caller should invalidate the slot and
+    /// schedule device recovery.
+    ContextLost,
+}
+
+/// Implemented by an external, backend-specific renderer (e.g. a wgpu-based 3D
+/// renderer) that composites into a slot registered with a
+/// [`ExternalCompositorRegistry`] via [`register_external_compositor`].
+///
+/// This trait has no `Send` bound: implementors live on the window's event loop
+/// thread, alongside the [`ExternalCompositorRegistry`], which is shared as
+/// `Rc<RefCell<_>>`.
+///
+/// Unlike the backend-neutral `gpui` core (which stores a slot's compositor as an
+/// opaque `Box<dyn Any>`), this trait's `compose` method takes a concretely-typed,
+/// genuinely lifetime-scoped `&mut WgpuCompositorBackendCtx<'_>` — no `unsafe`
+/// lifetime erasure is involved anywhere in this path (see
+/// `WgpuRenderer::compose_external_compositors`).
+pub trait WgpuExternalCompositor: 'static {
+    /// Called by the backend at a controlled point in the frame (with a live GPU
+    /// command encoder in hand, before the frame is submitted).
+    fn compose(
+        &mut self,
+        slot: ExternalSlotHandle,
+        ctx: &mut WgpuCompositorBackendCtx<'_>,
+    ) -> ExternalComposeOutput;
+
+    /// Called after the graphics context has been recreated (e.g. device-lost
+    /// recovery), once per real device recreation, for every slot that was occupied
+    /// at the time (see `WgpuRenderer::recover`). The handle this compositor was
+    /// registered under is now stale (see
+    /// [`ExternalCompositorRegistry::is_valid`]); the implementor should drop GPU
+    /// resources tied to the old context. The default implementation does nothing.
+    fn on_context_recreated(&mut self, _new_generation: u64) {}
+}
+
+/// Registers `compositor` with `registry`, double-boxing it into the
+/// `Box<dyn Any>` the backend-neutral [`ExternalCompositorRegistry`] stores slot
+/// compositors as: `Box::new(Box::new(compositor) as Box<dyn WgpuExternalCompositor>)
+/// as Box<dyn Any>`. A single `downcast_mut::<Box<dyn WgpuExternalCompositor>>()`
+/// (see `WgpuRenderer::compose_external_compositors`) then recovers a concrete trait
+/// object, without ever needing to erase the non-`'static` lifetimes
+/// [`WgpuCompositorBackendCtx`] carries (e.g. its frame-scoped `encoder`) through
+/// `Any`.
+pub fn register_external_compositor(
+    registry: &Rc<RefCell<ExternalCompositorRegistry>>,
+    descriptor: ExternalSlotDescriptor,
+    compositor: impl WgpuExternalCompositor,
+) -> Result<ExternalSlotHandle, ExternalCompositorError> {
+    let boxed: Box<dyn WgpuExternalCompositor> = Box::new(compositor);
+    let double_boxed: Box<dyn Any> = Box::new(boxed);
+    registry.borrow_mut().register(descriptor, double_boxed)
+}
+
+/// Backend-specific context handed to [`WgpuExternalCompositor::compose`] by this
+/// wgpu render backend. Every field here is either an owned `Arc` clone or a
+/// genuine, non-`'static` borrow scoped to the `compose` call it was created for:
+/// there is no `dyn Any` involved on this path (that erasure only happens once,
+/// around the *outer* `Box<dyn WgpuExternalCompositor>` stored in the registry —
+/// see [`register_external_compositor`]), so `'a` is a real lifetime the compiler
+/// enforces, not merely a documented contract.
+pub struct WgpuCompositorBackendCtx<'a> {
+    /// The shared wgpu device. Compositors may use this to create textures, buffers,
+    /// or pipelines tied to the same device as the rest of the frame. An `Arc` clone
+    /// (not a borrow) so that holding onto it beyond `compose` is safe, even though
+    /// doing so is not the intended usage.
+    pub device: Arc<wgpu::Device>,
+    /// The shared wgpu queue, e.g. for uploads outside of `encoder`. An `Arc` clone,
+    /// for the same reason as `device`.
+    pub queue: Arc<wgpu::Queue>,
+    /// The command encoder for the frame currently being drawn. Compositors that
+    /// need to record GPU work ahead of composition (e.g. rendering into their own
+    /// offscreen texture) can do so here, so that work lands in the same submission
+    /// as the rest of the frame. Unlike `device`/`queue`, this is a genuine
+    /// frame-scoped borrow: do not retain it past `compose`.
+    pub encoder: &'a mut wgpu::CommandEncoder,
+    /// The renderer's current graphics context generation (see
+    /// [`ExternalCompositorRegistry::current_context_generation`] and
+    /// [`GpuContext`]/`SharedGpuContext`, which is this value's single source of
+    /// truth across every window sharing the same device). Compositors compare this
+    /// against the generation they last registered under to detect that they must
+    /// re-register (see [`WgpuExternalCompositor::on_context_recreated`]).
+    pub context_generation: u64,
+    /// A backend-local, monotonically increasing frame index, incremented once per
+    /// `WgpuRenderer::draw` call. This is *not* the same counter as
+    /// [`gpui::Window::frame_counter`]; it exists purely for the compositor's own
+    /// bookkeeping (e.g. resource aging, throttling). The registry's frame-in-flight
+    /// tracking does not depend on it (see [`ExternalCompositorRegistry::mark_processed`]).
+    pub frame_index: u64,
+    /// The pixel format of the window's swapchain surface. Informational only:
+    /// composited views are sampled (not rendered into) by this backend, so they
+    /// need not match this format.
+    pub target_format: wgpu::TextureFormat,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct GammaParams {
@@ -58,6 +185,26 @@ struct GammaParams {
 #[repr(C)]
 struct PathSprite {
     bounds: Bounds<ScaledPixels>,
+}
+
+/// Per-handle outcome of composing an external compositor slot for the current
+/// frame, computed once (and shared by every primitive in the scene referencing
+/// the same handle) in `WgpuRenderer::compose_external_compositors`, before the
+/// main draw loop starts. See that method's docs for why this must run exactly
+/// once per frame, and the module-level notes on `PrimitiveBatch::ExternalCompositors`
+/// in `WgpuRenderer::draw` for how the outcome map is consumed.
+enum ComposeOutcome {
+    /// A frame was ready this call; every primitive referencing this handle draws
+    /// the same view.
+    Ready {
+        view: Arc<wgpu::TextureView>,
+        alpha_premultiplied: bool,
+    },
+    /// No frame ready, the slot is unknown/stale, or composing it failed in some
+    /// other recoverable way (see `WgpuRenderer::compose_one_external_compositor`):
+    /// nothing to draw for this handle. The element's own background (if any, see
+    /// `gpui::elements::ExternalCompositorElement::background`) stays visible.
+    Skipped,
 }
 
 #[derive(Clone, Debug)]
@@ -92,6 +239,7 @@ struct WgpuPipelines {
     poly_sprites: wgpu::RenderPipeline,
     #[allow(dead_code)]
     surfaces: wgpu::RenderPipeline,
+    external_compositors: wgpu::RenderPipeline,
 }
 
 struct WgpuBindGroupLayouts {
@@ -101,8 +249,53 @@ struct WgpuBindGroupLayouts {
     surfaces: wgpu::BindGroupLayout,
 }
 
-/// Shared GPU context reference, used to coordinate device recovery across multiple windows.
-pub type GpuContext = Rc<RefCell<Option<WgpuContext>>>;
+/// Shared GPU context state: the `wgpu` context itself, plus bookkeeping that must be
+/// coordinated across every window sharing it (see [`GpuContext`]).
+///
+/// `generation` used to live as a per-`WgpuRenderer` `Arc<AtomicU64>` field. That was
+/// wrong: when window A's [`WgpuRenderer::recover`] call is the one that actually
+/// recreates the shared [`WgpuContext`], window B's own renderer never learned its
+/// external compositors' GPU resources (also tied to the now-replaced device) had
+/// gone stale, because B's `recover` observed `needs_new_context == false` and so
+/// never bumped its own, separate counter — B's registry, and every compositor
+/// registered on it, silently kept using views from a device that no longer exists.
+/// Hoisting `generation` into the state every window's [`GpuContext`] already points
+/// at fixes this: whichever window's `recover` call actually recreates the context
+/// bumps the one counter every window reads, and every window's `recover` call reads
+/// it and notifies its own registry, regardless of which window did the bumping.
+pub struct SharedGpuContext {
+    /// The shared `wgpu` context, if one has been created yet (and hasn't been torn
+    /// down for recovery).
+    pub context: RefCell<Option<WgpuContext>>,
+    /// Monotonically increasing graphics context generation, bumped exactly once per
+    /// *actual* context recreation (not merely reattaching an already-recovered
+    /// context to another window's surface). Starts at `1`, matching the convention
+    /// [`ExternalCompositorRegistry::current_context_generation`] and
+    /// `ExternalSlotDescriptor::context_generation` also use (generation `0` is
+    /// reserved elsewhere to mean "invalid").
+    pub generation: AtomicU64,
+}
+
+impl SharedGpuContext {
+    /// Creates fresh, empty shared context state (no `wgpu` context yet, generation
+    /// `1`).
+    pub fn new() -> Self {
+        Self {
+            context: RefCell::new(None),
+            generation: AtomicU64::new(1),
+        }
+    }
+}
+
+impl Default for SharedGpuContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Shared GPU context reference, used to coordinate device recovery — and
+/// external-compositor context-generation bookkeeping — across multiple windows.
+pub type GpuContext = Rc<SharedGpuContext>;
 
 /// GPU resources that must be dropped together during device recovery.
 struct WgpuResources {
@@ -158,6 +351,14 @@ pub struct WgpuRenderer {
     device_lost: std::sync::Arc<std::sync::atomic::AtomicBool>,
     surface_configured: bool,
     needs_redraw: bool,
+    /// This window's external compositor registry, if any (see
+    /// [`gpui::PlatformWindow::external_compositor_registry`]). `None` on backends
+    /// that don't wire one up (e.g. the wasm/canvas constructor).
+    external_compositors: Option<Rc<RefCell<ExternalCompositorRegistry>>>,
+    /// Backend-local frame index, incremented once per [`Self::draw`] call. See
+    /// [`WgpuCompositorBackendCtx::frame_index`] for why this is distinct from
+    /// gpui's own `Window::frame_counter`.
+    frame_index: u64,
 }
 
 impl WgpuRenderer {
@@ -171,6 +372,19 @@ impl WgpuRenderer {
         self.resources
             .as_mut()
             .expect("GPU resources not available")
+    }
+
+    /// The current graphics context generation, read from the single source of
+    /// truth shared with every other window that points at the same [`GpuContext`]
+    /// (see [`SharedGpuContext::generation`]). Backends without a shared context at
+    /// all (e.g. the wasm/canvas constructor, which never calls [`Self::recover`])
+    /// report `1`, matching [`ExternalCompositorRegistry::current_context_generation`]'s
+    /// initial value.
+    fn context_generation(&self) -> u64 {
+        self.context
+            .as_ref()
+            .map(|shared| shared.generation.load(Ordering::SeqCst))
+            .unwrap_or(1)
     }
 
     /// Creates a new WgpuRenderer from raw window handles.
@@ -188,6 +402,7 @@ impl WgpuRenderer {
         window: &W,
         config: WgpuSurfaceConfig,
         compositor_gpu: Option<CompositorGpuHint>,
+        external_compositors: Option<Rc<RefCell<ExternalCompositorRegistry>>>,
     ) -> anyhow::Result<Self>
     where
         W: HasWindowHandle + HasDisplayHandle + std::fmt::Debug + Send + Sync + Clone + 'static,
@@ -206,6 +421,7 @@ impl WgpuRenderer {
         // The surface must be created with the same instance that will be used for
         // adapter selection, otherwise wgpu will panic.
         let instance = gpu_context
+            .context
             .borrow()
             .as_ref()
             .map(|ctx| ctx.instance.clone())
@@ -220,7 +436,7 @@ impl WgpuRenderer {
                 .map_err(|e| anyhow::anyhow!("Failed to create surface: {e}"))?
         };
 
-        let mut ctx_ref = gpu_context.borrow_mut();
+        let mut ctx_ref = gpu_context.context.borrow_mut();
         let context = match ctx_ref.as_mut() {
             Some(context) => {
                 context.check_compatible_with_surface(&surface)?;
@@ -238,9 +454,15 @@ impl WgpuRenderer {
             config,
             compositor_gpu,
             atlas,
+            external_compositors,
         )
     }
 
+    /// Creates a new WgpuRenderer targeting a canvas element (wasm only).
+    ///
+    /// External composition is not wired up in this environment: the canvas backend
+    /// always registers `None`, so [`gpui::Window::external_compositor_registry`]
+    /// returns `None` for wasm windows.
     #[cfg(target_family = "wasm")]
     pub fn new_from_canvas(
         context: &WgpuContext,
@@ -254,9 +476,10 @@ impl WgpuRenderer {
 
         let atlas = Arc::new(WgpuAtlas::from_context(context));
 
-        Self::new_internal(None, context, surface, config, None, atlas)
+        Self::new_internal(None, context, surface, config, None, atlas, None)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new_internal(
         gpu_context: Option<GpuContext>,
         context: &WgpuContext,
@@ -264,6 +487,7 @@ impl WgpuRenderer {
         config: WgpuSurfaceConfig,
         compositor_gpu: Option<CompositorGpuHint>,
         atlas: Arc<WgpuAtlas>,
+        external_compositors: Option<Rc<RefCell<ExternalCompositorRegistry>>>,
     ) -> anyhow::Result<Self> {
         let surface_caps = surface.get_capabilities(&context.adapter);
         let preferred_formats = [
@@ -488,6 +712,8 @@ impl WgpuRenderer {
             device_lost: context.device_lost_flag(),
             surface_configured: true,
             needs_redraw: false,
+            external_compositors,
+            frame_index: 0,
         })
     }
 
@@ -872,6 +1098,24 @@ impl WgpuRenderer {
             &layouts.globals,
             &layouts.surfaces,
             wgpu::PrimitiveTopology::TriangleStrip,
+            &[Some(color_target.clone())],
+            1,
+            &shader_module,
+        );
+
+        // Reuses `instances_with_texture`: the layout (storage buffer + filterable
+        // texture + sampler) is identical to what mono/poly sprites and paths need,
+        // and the shader reuses the `t_sprite`/`s_sprite` bindings those pipelines
+        // already declare. Blend state matches poly_sprites: the fragment shader
+        // always emits premultiplied color (converting from straight alpha itself
+        // when the slot's `AlphaMode` requires it).
+        let external_compositors = create_pipeline(
+            "external_compositors",
+            "vs_external_compositor",
+            "fs_external_compositor",
+            &layouts.globals,
+            &layouts.instances_with_texture,
+            wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target)],
             1,
             &shader_module,
@@ -887,6 +1131,7 @@ impl WgpuRenderer {
             subpixel_sprites,
             poly_sprites,
             surfaces,
+            external_compositors,
         }
     }
 
@@ -1147,6 +1392,10 @@ impl WgpuRenderer {
         // Now that we know the surface is healthy, ensure intermediate textures exist
         self.ensure_intermediate_textures();
 
+        // Advance once per actual draw (as opposed to the early-outs above, where
+        // nothing was submitted). See `WgpuCompositorBackendCtx::frame_index`.
+        self.frame_index = self.frame_index.wrapping_add(1);
+
         let frame_view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -1197,6 +1446,41 @@ impl WgpuRenderer {
                 bytemuck::bytes_of(&gamma_params),
             );
         }
+
+        // Compose every external compositor slot the scene references exactly once,
+        // before the main encoder's retry loop below: an instance-buffer overflow
+        // re-runs that loop's body on the same frame, and `WgpuExternalCompositor::compose`
+        // is a side-effecting backend call (it may write textures, advance internal
+        // animation state, etc.) that must not run twice for one frame. The result
+        // is shared by every primitive in the scene that references the same
+        // handle (see `ComposeOutcome`).
+        let external_outcomes = if scene.external_compositors.is_empty() {
+            HashMap::new()
+        } else if let Some(registry) = self.external_compositors.clone() {
+            let mut compose_encoder =
+                self.resources()
+                    .device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("external_compositor_compose_encoder"),
+                    });
+            let outcomes = self.compose_external_compositors(
+                &scene.external_compositors,
+                &registry,
+                &mut compose_encoder,
+            );
+            // Submitted ahead of the main encoder below: queue ordering (not the
+            // render pass itself) is what guarantees a compositor's own GPU work
+            // (e.g. writing into its texture) lands before the main pass samples
+            // that texture.
+            self.resources()
+                .queue
+                .submit(std::iter::once(compose_encoder.finish()));
+            outcomes
+        } else {
+            // No registry wired up for this window (e.g. wasm): nothing to
+            // compose. Each element's own background (if any) stays visible.
+            HashMap::new()
+        };
 
         loop {
             let mut instance_offset: u64 = 0;
@@ -1305,6 +1589,13 @@ impl WgpuRenderer {
                             // Not implemented for Linux/wgpu
                             true
                         }
+                        PrimitiveBatch::ExternalCompositors(range) => self
+                            .draw_external_compositor_batch(
+                                &scene.external_compositors[range],
+                                &external_outcomes,
+                                &mut instance_offset,
+                                &mut pass,
+                            ),
                     };
                     if !ok {
                         overflow = true;
@@ -1321,6 +1612,13 @@ impl WgpuRenderer {
                         self.instance_buffer_capacity
                     );
                     frame.present();
+                    // External compositor bookkeeping (`mark_processed`/
+                    // `drain_pending_removals`, below) is intentionally skipped on
+                    // this give-up path: the main encoder above was never
+                    // submitted, so nothing in this scene actually landed on the
+                    // GPU timeline. The next successful frame (composing runs
+                    // every frame that reaches this point, above the loop) catches
+                    // up as long as the app keeps painting the same handles.
                     return true;
                 }
                 self.grow_instance_buffer();
@@ -1331,6 +1629,20 @@ impl WgpuRenderer {
                 .queue
                 .submit(std::iter::once(encoder.finish()));
             frame.present();
+
+            // Only now that the frame actually landed on the queue: record that
+            // every slot referenced this frame was processed (composed and drawn,
+            // or skipped for any other reason — see `ComposeOutcome`), and free
+            // any slot whose deferred removal was waiting on that (see
+            // `ExternalCompositorRegistry::mark_processed`/`drain_pending_removals`).
+            if let Some(registry) = self.external_compositors.as_ref() {
+                let mut registry = registry.borrow_mut();
+                for handle in external_outcomes.keys() {
+                    registry.mark_processed(*handle);
+                }
+                registry.drain_pending_removals();
+            }
+
             return true;
         }
     }
@@ -1441,6 +1753,224 @@ impl WgpuRenderer {
             sprites.len() as u32,
             &tex_info.view,
             &self.resources().pipelines.poly_sprites,
+            instance_offset,
+            pass,
+        )
+    }
+
+    /// Composes every *distinct* [`ExternalSlotHandle`] referenced by `externals`
+    /// exactly once, using `encoder` — a dedicated encoder submitted ahead of the
+    /// main render encoder (see `Self::draw`), never the encoder any render pass is
+    /// drawing into. Two or more primitives referencing the same handle (e.g. the
+    /// same slot painted into more than one element) share a single
+    /// [`ComposeOutcome`]: only the first one composes, and its `Arc<TextureView>`
+    /// is what every primitive draws (see [`ComposeOutcome`]).
+    ///
+    /// Zero `unsafe`: every field of the [`WgpuCompositorBackendCtx`] passed to
+    /// `compose` is a genuine, compiler-checked borrow (or an owned `Arc` clone) —
+    /// there is no `dyn Any` anywhere on this path. The `Any` erasure only happens
+    /// once, around the outer `Box<dyn WgpuExternalCompositor>` the registry stores
+    /// (see [`register_external_compositor`]), which this function downcasts back to
+    /// a concrete trait object before ever constructing a `WgpuCompositorBackendCtx`.
+    fn compose_external_compositors(
+        &self,
+        externals: &[ExternalCompositorPrimitive],
+        registry: &Rc<RefCell<ExternalCompositorRegistry>>,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> HashMap<ExternalSlotHandle, ComposeOutcome> {
+        let resources = self.resources();
+        let device = Arc::clone(&resources.device);
+        let queue = Arc::clone(&resources.queue);
+        let target_format = self.surface_config.format;
+        let context_generation = self.context_generation();
+
+        let mut outcomes = HashMap::with_capacity(externals.len());
+        for primitive in externals {
+            let handle = primitive.handle;
+            if outcomes.contains_key(&handle) {
+                // Already composed this frame — see this method's docs.
+                continue;
+            }
+            let outcome = self.compose_one_external_compositor(
+                handle,
+                registry,
+                &device,
+                &queue,
+                target_format,
+                context_generation,
+                encoder,
+            );
+            outcomes.insert(handle, outcome);
+        }
+        outcomes
+    }
+
+    /// Composes a single slot for [`Self::compose_external_compositors`]. Every
+    /// return path is a slot the caller must call
+    /// [`ExternalCompositorRegistry::mark_processed`] for once composing (this
+    /// method) is done and the frame that did so has actually landed on the queue
+    /// (see `Self::draw`) — `ComposeOutcome::Skipped` covers every way that can
+    /// happen short of a `Ready` frame (unknown/freed handle, stale context
+    /// generation, a compositor that isn't a `Box<dyn WgpuExternalCompositor>`,
+    /// `NotReady`, and `ContextLost`).
+    fn compose_one_external_compositor(
+        &self,
+        handle: ExternalSlotHandle,
+        registry: &Rc<RefCell<ExternalCompositorRegistry>>,
+        device: &Arc<wgpu::Device>,
+        queue: &Arc<wgpu::Queue>,
+        target_format: wgpu::TextureFormat,
+        context_generation: u64,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> ComposeOutcome {
+        // A slot's descriptor records the graphics context generation it was
+        // registered under. If that no longer matches this renderer's current
+        // generation, the slot's (and its compositor's) GPU resources belong to a
+        // context that no longer exists (see `Self::recover`): skip composing it
+        // this frame without calling `compose` at all. The compositor was already
+        // notified of the recreation via `WgpuExternalCompositor::on_context_recreated`
+        // as part of `recover`'s post-recreation walk; it's up to the app to
+        // unregister the stale handle (see `ExternalCompositorRegistry::is_valid`)
+        // and register a fresh one. This is *not* treated as a fresh device-loss
+        // signal (unlike a `ContextLost` result from `compose` itself): the device
+        // is fine, this slot is simply waiting on the app to catch up.
+        let Some(descriptor_generation) = registry
+            .borrow()
+            .descriptor(handle)
+            .map(|descriptor| descriptor.context_generation)
+        else {
+            // Unknown/fully-freed handle. Nothing to compose; the element's own
+            // background (if any) shows through this frame's `Load` pass.
+            return ComposeOutcome::Skipped;
+        };
+        if descriptor_generation != context_generation {
+            log::debug!(
+                "external compositor slot {handle:?} belongs to graphics context \
+                 generation {descriptor_generation}, current is {context_generation}; \
+                 skipping composition until the app re-registers"
+            );
+            return ComposeOutcome::Skipped;
+        }
+
+        let Some(mut boxed) = registry.borrow_mut().take_compositor(handle) else {
+            return ComposeOutcome::Skipped;
+        };
+        let Some(compositor) = boxed.downcast_mut::<Box<dyn WgpuExternalCompositor>>() else {
+            log::warn!(
+                "external compositor slot {handle:?} holds a compositor that isn't a \
+                 `Box<dyn WgpuExternalCompositor>`; skipping its draw this frame"
+            );
+            registry.borrow_mut().put_back_compositor(handle, boxed);
+            return ComposeOutcome::Skipped;
+        };
+
+        let mut ctx = WgpuCompositorBackendCtx {
+            device: Arc::clone(device),
+            queue: Arc::clone(queue),
+            encoder,
+            context_generation,
+            frame_index: self.frame_index,
+            target_format,
+        };
+        let result = compositor.compose(handle, &mut ctx);
+        // Always put the compositor back, even on error/NotReady: the take-out
+        // dance only exists to avoid re-entrant borrows of `registry` while
+        // `compose` runs, not to permanently remove it.
+        registry.borrow_mut().put_back_compositor(handle, boxed);
+
+        match result {
+            ExternalComposeOutput::Ready { view } => {
+                let alpha_premultiplied = registry
+                    .borrow()
+                    .descriptor(handle)
+                    .map(|descriptor| descriptor.alpha_mode == AlphaMode::PreMultiplied)
+                    .unwrap_or(true);
+                ComposeOutcome::Ready {
+                    view,
+                    alpha_premultiplied,
+                }
+            }
+            ExternalComposeOutput::NotReady => {
+                // Nothing composed this frame; leave the background (if any) up.
+                ComposeOutcome::Skipped
+            }
+            ExternalComposeOutput::ContextLost => {
+                log::warn!(
+                    "external compositor slot {handle:?} reported a lost graphics \
+                     context; scheduling device recovery"
+                );
+                // Reuse the same recovery path `draw()`'s own GPU errors already
+                // drive: platforms poll `device_lost()` every frame and call
+                // `recover()` when it flips true. The whole frame is already doomed
+                // if the device is truly lost; the existing device-lost machinery
+                // recovers before the next draw; aborting mid-frame here would
+                // complicate the retry contract for no user-visible gain.
+                self.device_lost.store(true, Ordering::SeqCst);
+                ComposeOutcome::Skipped
+            }
+        }
+    }
+
+    /// Draws every primitive in a `PrimitiveBatch::ExternalCompositors` batch,
+    /// resolving each one's already-composed outcome (see
+    /// `compose_external_compositors`) by handle. Unlike `Paths`, this needs
+    /// neither a dropped/reopened render pass nor a live command encoder: by the
+    /// time this runs (inside the main draw loop), every slot the scene references
+    /// was already composed once, before the loop started (see `Self::draw`).
+    fn draw_external_compositor_batch(
+        &self,
+        externals: &[ExternalCompositorPrimitive],
+        outcomes: &HashMap<ExternalSlotHandle, ComposeOutcome>,
+        instance_offset: &mut u64,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) -> bool {
+        for primitive in externals {
+            let Some(ComposeOutcome::Ready {
+                view,
+                alpha_premultiplied,
+            }) = outcomes.get(&primitive.handle)
+            else {
+                // NotReady/ContextLost/stale/unknown: the element's own background
+                // (if any) stays visible under this frame's `Load` pass.
+                continue;
+            };
+            if !self.draw_external_compositor(
+                primitive,
+                view,
+                *alpha_premultiplied,
+                instance_offset,
+                pass,
+            ) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Draws one already-composed view (see `compose_external_compositors`) into
+    /// its primitive's bounds. One draw call per primitive: unlike sprites, each
+    /// external compositor primitive has its own texture view, so there is nothing
+    /// to batch.
+    fn draw_external_compositor(
+        &self,
+        primitive: &ExternalCompositorPrimitive,
+        view: &wgpu::TextureView,
+        alpha_premultiplied: bool,
+        instance_offset: &mut u64,
+        pass: &mut wgpu::RenderPass<'_>,
+    ) -> bool {
+        let instance = ExternalCompositorInstanceGpu {
+            bounds: primitive.bounds.into(),
+            content_mask: primitive.content_mask.bounds.into(),
+            alpha_premultiplied: alpha_premultiplied as u32,
+            pad: [0; 3],
+        };
+        let data = bytemuck::bytes_of(&instance);
+        self.draw_instances_with_texture(
+            data,
+            1,
+            view,
+            &self.resources().pipelines.external_compositors,
             instance_offset,
             pass,
         )
@@ -1781,10 +2311,15 @@ impl WgpuRenderer {
     where
         W: HasWindowHandle + HasDisplayHandle + std::fmt::Debug + Send + Sync + Clone + 'static,
     {
-        let gpu_context = self.context.as_ref().expect("recover requires gpu_context");
+        let gpu_context = self
+            .context
+            .as_ref()
+            .expect("recover requires gpu_context")
+            .clone();
 
         // Check if another window already recovered the context
         let needs_new_context = gpu_context
+            .context
             .borrow()
             .as_ref()
             .is_none_or(|ctx| ctx.device_lost());
@@ -1798,7 +2333,7 @@ impl WgpuRenderer {
 
             // Drop old resources to release Arc<Device>/Arc<Queue> and GPU resources
             self.resources = None;
-            *gpu_context.borrow_mut() = None;
+            *gpu_context.context.borrow_mut() = None;
 
             // Wait briefly for the GPU driver to stabilize, then try to
             // recreate the context without software renderers. If this fails
@@ -1810,10 +2345,17 @@ impl WgpuRenderer {
             let surface = create_surface(&instance, window_handle.as_raw())?;
             let new_context =
                 WgpuContext::new_rejecting_software(instance, &surface, self.compositor_gpu)?;
-            *gpu_context.borrow_mut() = Some(new_context);
+            *gpu_context.context.borrow_mut() = Some(new_context);
+            // This call is the one that actually recreated the device: bump the
+            // *shared* generation counter every window's `GpuContext` points at, so
+            // every window (not just this one) learns its external compositors' GPU
+            // resources are now stale. A window that merely reattaches to an
+            // already-recovered context (the `else` branch below) does not bump this
+            // — but it still reads and propagates whatever value is current, below.
+            gpu_context.generation.fetch_add(1, Ordering::SeqCst);
             surface
         } else {
-            let ctx_ref = gpu_context.borrow();
+            let ctx_ref = gpu_context.context.borrow();
             let instance = &ctx_ref.as_ref().unwrap().instance;
             create_surface(instance, window_handle.as_raw())?
         };
@@ -1826,12 +2368,16 @@ impl WgpuRenderer {
             transparent: self.surface_config.alpha_mode != wgpu::CompositeAlphaMode::Opaque,
             preferred_present_mode: Some(self.surface_config.present_mode),
         };
-        let gpu_context = Rc::clone(gpu_context);
-        let ctx_ref = gpu_context.borrow();
+        let ctx_ref = gpu_context.context.borrow();
         let context = ctx_ref.as_ref().expect("context should exist");
 
         self.resources = None;
         self.atlas.handle_device_lost(context);
+
+        // Capture the fields `new_internal` doesn't derive from `context`/`surface`
+        // before `*self` is replaced below, so they survive the reconstruction
+        // instead of silently resetting to their `new_internal` defaults.
+        let external_compositors = self.external_compositors.clone();
 
         *self = Self::new_internal(
             Some(gpu_context.clone()),
@@ -1840,10 +2386,55 @@ impl WgpuRenderer {
             config,
             self.compositor_gpu,
             self.atlas.clone(),
+            external_compositors.clone(),
         )?;
+
+        // Regardless of whether *this* call was the one that actually recreated the
+        // device (`needs_new_context`) or merely reattached to an already-recovered
+        // one, read the shared generation now and propagate it to this window's own
+        // registry: this is what fixes the cross-window notification gap phase B
+        // left (window B previously kept its stale, per-renderer generation counter
+        // and its registry — and every compositor on it — never learned its GPU
+        // resources were gone).
+        let new_generation = gpu_context.generation.load(Ordering::SeqCst);
+        if let Some(registry) = external_compositors.as_ref() {
+            registry.borrow_mut().on_context_recreated(new_generation);
+            notify_external_compositors_context_recreated(registry, new_generation);
+        }
 
         log::info!("GPU recovery complete");
         Ok(())
+    }
+}
+
+/// Walks every occupied slot of `registry` (see
+/// [`ExternalCompositorRegistry::occupied_handles`], which includes ones just marked
+/// stale) and, for each one whose compositor downcasts to
+/// `Box<dyn WgpuExternalCompositor>`, calls
+/// [`WgpuExternalCompositor::on_context_recreated`]. Called by [`WgpuRenderer::recover`]
+/// right after `registry.on_context_recreated(new_generation)`, once per window
+/// sharing this registry's `WgpuRenderer` — not once globally — so every window's own
+/// compositors are notified regardless of which window's `recover` call actually
+/// recreated the shared device.
+#[cfg(not(target_family = "wasm"))]
+fn notify_external_compositors_context_recreated(
+    registry: &Rc<RefCell<ExternalCompositorRegistry>>,
+    new_generation: u64,
+) {
+    let handles: Vec<ExternalSlotHandle> = registry.borrow().occupied_handles().collect();
+    for handle in handles {
+        let Some(mut boxed) = registry.borrow_mut().take_compositor(handle) else {
+            continue;
+        };
+        if let Some(compositor) = boxed.downcast_mut::<Box<dyn WgpuExternalCompositor>>() {
+            compositor.on_context_recreated(new_generation);
+        } else {
+            log::warn!(
+                "external compositor slot {handle:?} holds a compositor that isn't a \
+                 `Box<dyn WgpuExternalCompositor>`; skipping context-recreation notification"
+            );
+        }
+        registry.borrow_mut().put_back_compositor(handle, boxed);
     }
 }
 

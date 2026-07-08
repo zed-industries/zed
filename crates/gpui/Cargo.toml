@@ -160,6 +160,12 @@ unicode-segmentation = { workspace = true }
 http_client = { workspace = true, features = ["test-support"] }
 proptest = { workspace = true }
 reqwest_client = { workspace = true, features = ["test-support"] }
+# Dev-only, for the `external_compositor` example: `gpui_wgpu` already depends on
+# `gpui` (a normal, non-dev dependency), so this is a dev-dependency-rooted cycle —
+# explicitly permitted by Cargo (dev-deps are only linked for tests/examples/benches,
+# never for the library target itself) and already the shape `gpui_platform` above
+# uses transitively (gpui_platform -> gpui_linux -> gpui_wgpu on this platform).
+gpui_wgpu.workspace = true
 
 [target.'cfg(target_family = "wasm")'.dev-dependencies]
 wasm-bindgen = { workspace = true }
@@ -256,3 +262,7 @@ path = "examples/mouse_pressure.rs"
 [[example]]
 name = "a11y"
 path = "examples/a11y.rs"
+
+[[example]]
+name = "external_compositor"
+path = "examples/external_compositor.rs"

@@ -7,4 +7,7 @@ pub use cosmic_text_system::*;
 pub use wgpu;
 pub use wgpu_atlas::*;
 pub use wgpu_context::*;
-pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
+pub use wgpu_renderer::{
+    ExternalComposeOutput, GpuContext, SharedGpuContext, WgpuCompositorBackendCtx,
+    WgpuExternalCompositor, WgpuRenderer, WgpuSurfaceConfig, register_external_compositor,
+};

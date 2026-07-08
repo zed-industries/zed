@@ -7776,6 +7776,7 @@ dependencies = [
  "gpui_shared_string",
  "gpui_util",
  "gpui_web",
+ "gpui_wgpu",
  "hdrhistogram",
  "heapless",
  "http_client",
