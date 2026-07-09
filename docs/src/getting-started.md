@@ -27,6 +27,8 @@ zed ~/projects/my-app
 
 Or use `Cmd+O` (macOS) / `Ctrl+O` (Linux/Windows) to open a folder from within Zed.
 
+By default, new projects open in your current window's threads sidebar. To open in a new window instead, use `zed -n ~/projects/my-app` or press `Cmd+Enter` when selecting from Open Recent. See [Windows & Projects](./windows-and-projects.md) for more details.
+
 ### 2. Learn the Essential Commands
 
 | Action          | macOS         | Linux/Windows  |
@@ -39,6 +41,10 @@ Or use `Cmd+O` (macOS) / `Ctrl+O` (Linux/Windows) to open a folder from within Z
 | Open settings   | `Cmd+,`       | `Ctrl+,`       |
 
 The command palette (`Cmd+Shift+P`) is your gateway to every action in Zed. If you forget a shortcut, search for it there.
+
+### Panel Layout
+
+Use **Panel Layout > Agentic** from the user menu in the title bar (or the {#action workspace::UseAgenticLayout} action) when you want the Agent Panel and Threads Sidebar next to each other on the left. Use **Panel Layout > Classic** (or {#action workspace::UseClassicLayout}) to restore the editor-oriented layout.
 
 ### 3. Configure Your Editor
 

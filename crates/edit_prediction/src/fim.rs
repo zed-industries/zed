@@ -1,5 +1,5 @@
 use crate::{
-    EditPredictionId, EditPredictionModelInput, cursor_excerpt,
+    EditPredictionId, EditPredictionInputs, EditPredictionModelInput, cursor_excerpt,
     open_ai_compatible::{self, load_open_ai_compatible_api_key_if_needed},
     prediction::EditPredictionResult,
 };
@@ -10,15 +10,16 @@ use language::{
     language_settings::all_language_settings,
 };
 use std::{path::Path, sync::Arc, time::Instant};
-use zeta_prompt::{ZetaPromptInput, compute_editable_and_context_ranges};
+use zeta_prompt::{Zeta2PromptInput, compute_editable_and_context_ranges};
 
 const FIM_CONTEXT_TOKENS: usize = 512;
 
 struct FimRequestOutput {
     request_id: String,
     edits: Vec<(std::ops::Range<Anchor>, Arc<str>)>,
+    editable_range: std::ops::Range<Anchor>,
     snapshot: BufferSnapshot,
-    inputs: ZetaPromptInput,
+    inputs: Zeta2PromptInput,
     buffer: Entity<Buffer>,
 }
 
@@ -28,6 +29,7 @@ pub fn request_prediction(
         snapshot,
         position,
         events,
+        trigger,
         ..
     }: EditPredictionModelInput,
     prompt_format: EditPredictionPromptFormat,
@@ -76,7 +78,7 @@ pub fn request_prediction(
             0,
         );
 
-        let inputs = ZetaPromptInput {
+        let inputs = Zeta2PromptInput {
             events,
             related_files: Some(Vec::new()),
             active_buffer_diagnostics: Vec::new(),
@@ -127,9 +129,15 @@ pub fn request_prediction(
             vec![(anchor..anchor, completion)]
         };
 
+        let editable_range = snapshot.anchor_range_inside(
+            (excerpt_offset_range.start + editable_range.start)
+                ..(excerpt_offset_range.start + editable_range.end),
+        );
+
         anyhow::Ok(FimRequestOutput {
             request_id,
             edits,
+            editable_range,
             snapshot,
             inputs,
             buffer,
@@ -145,8 +153,10 @@ pub fn request_prediction(
                 &output.snapshot,
                 output.edits.into(),
                 None,
-                output.inputs,
+                Some(output.editable_range),
+                EditPredictionInputs::V2(output.inputs),
                 None,
+                trigger,
                 cx.background_executor().now() - request_start,
                 cx,
             )

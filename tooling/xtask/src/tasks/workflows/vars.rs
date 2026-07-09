@@ -19,10 +19,6 @@ macro_rules! var {
     };
 }
 
-secret!(ANTHROPIC_API_KEY);
-secret!(OPENAI_API_KEY);
-secret!(GOOGLE_AI_API_KEY);
-secret!(GOOGLE_CLOUD_PROJECT);
 secret!(APPLE_NOTARIZATION_ISSUER_ID);
 secret!(APPLE_NOTARIZATION_KEY);
 secret!(APPLE_NOTARIZATION_KEY_ID);
@@ -41,12 +37,11 @@ secret!(SENTRY_AUTH_TOKEN);
 secret!(ZED_CLIENT_CHECKSUM_SEED);
 secret!(ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON);
 secret!(ZED_SENTRY_MINIDUMP_ENDPOINT);
-secret!(SLACK_APP_ZED_UNIT_EVALS_BOT_TOKEN);
 secret!(ZED_ZIPPY_APP_ID);
 secret!(ZED_ZIPPY_APP_PRIVATE_KEY);
 secret!(DISCORD_WEBHOOK_RELEASE_NOTES);
 secret!(WINGET_TOKEN);
-secret!(VERCEL_TOKEN);
+secret!(ZED_DEV_REVALIDATE_TOKEN);
 secret!(SLACK_WEBHOOK_WORKFLOW_FAILURES);
 secret!(R2_ACCOUNT_ID);
 secret!(R2_ACCESS_KEY_ID);
@@ -54,6 +49,7 @@ secret!(R2_SECRET_ACCESS_KEY);
 secret!(CLOUDFLARE_API_TOKEN);
 secret!(CLOUDFLARE_ACCOUNT_ID);
 secret!(DOCS_AMPLITUDE_API_KEY);
+secret!(DOCS_CONSENT_IO_INSTANCE);
 
 // todo(ci) make these secrets too...
 var!(AZURE_SIGNING_ACCOUNT_NAME);
@@ -100,12 +96,6 @@ pub fn one_workflow_per_non_main_branch_and_token<T: AsRef<str>>(token: T) -> Co
             ),
             token.as_ref()
         ))
-        .cancel_in_progress(true)
-}
-
-pub(crate) fn allow_concurrent_runs() -> Concurrency {
-    Concurrency::default()
-        .group("${{ github.workflow }}-${{ github.ref_name }}-${{ github.run_id }}")
         .cancel_in_progress(true)
 }
 
@@ -384,6 +374,8 @@ pub mod assets {
     pub const MAC_X86_64: &str = "Zed-x86_64.dmg";
     pub const LINUX_AARCH64: &str = "zed-linux-aarch64.tar.gz";
     pub const LINUX_X86_64: &str = "zed-linux-x86_64.tar.gz";
+    pub const BWRAP_LINUX_AARCH64: &str = "bwrap-linux-aarch64.gz";
+    pub const BWRAP_LINUX_X86_64: &str = "bwrap-linux-x86_64.gz";
     pub const WINDOWS_X86_64: &str = "Zed-x86_64.exe";
     pub const WINDOWS_AARCH64: &str = "Zed-aarch64.exe";
 
@@ -400,6 +392,8 @@ pub mod assets {
             MAC_X86_64,
             LINUX_AARCH64,
             LINUX_X86_64,
+            BWRAP_LINUX_AARCH64,
+            BWRAP_LINUX_X86_64,
             WINDOWS_X86_64,
             WINDOWS_AARCH64,
             REMOTE_SERVER_MAC_AARCH64,
