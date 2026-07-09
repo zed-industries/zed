@@ -818,10 +818,7 @@ async fn open_workspaces(
 ) -> Result<()> {
     if paths.is_empty()
         && diff_paths.is_empty()
-        && !matches!(
-            open_behavior,
-            cli::OpenBehavior::AlwaysNew | cli::OpenBehavior::PreferNewWindow
-        )
+        && !matches!(open_behavior, cli::OpenBehavior::AlwaysNew)
     {
         return restore_or_create_workspace(app_state, cx).await;
     }
@@ -1109,7 +1106,8 @@ mod tests {
     use remote::SshConnectionOptions;
     use rope::Rope;
     use serde_json::json;
-    use std::{sync::Arc, task::Poll};
+    use session::Session;
+    use std::{path::Path, sync::Arc, task::Poll};
     use util::path;
     use workspace::{AppState, MultiWorkspace};
 
@@ -2651,6 +2649,78 @@ mod tests {
             !prompt_shown,
             "no prompt should be shown when setting already configured"
         );
+    }
+
+    #[gpui::test]
+    async fn test_e2e_new_window_setting_restores_workspace_when_no_paths(cx: &mut TestAppContext) {
+        let app_state = init_test(cx);
+
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(path!("/project"), json!({ "file.txt": "content" }))
+            .await;
+
+        cx.update(|cx| {
+            settings::SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.workspace.cli_default_open_behavior =
+                        Some(settings::CliDefaultOpenBehavior::NewWindow);
+                });
+            });
+        });
+
+        let session_id = cx.read(|cx| app_state.session.read(cx).id().to_owned());
+
+        open_workspace_file(path!("/project"), Default::default(), app_state.clone(), cx).await;
+        assert_eq!(cx.windows().len(), 1);
+
+        let multi_workspace = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        let serialization_tasks = multi_workspace
+            .update(cx, |multi_workspace, window, cx| {
+                multi_workspace.flush_all_serialization(window, cx)
+            })
+            .unwrap();
+        futures::future::join_all(serialization_tasks).await;
+
+        multi_workspace
+            .update(cx, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.windows().len(), 0);
+
+        cx.update(|cx| {
+            app_state.session.update(cx, |app_session, _cx| {
+                app_session.replace_session_for_test(Session::test_with_old_session(session_id));
+            });
+        });
+
+        let (status, prompt_shown) = run_cli_with_zed_handler(
+            cx,
+            app_state,
+            make_cli_open_request(Vec::new(), cli::OpenBehavior::Default),
+            None,
+        );
+
+        assert_eq!(status, 0);
+        assert!(
+            !prompt_shown,
+            "no prompt should be shown when no windows exist"
+        );
+        assert_eq!(cx.windows().len(), 1);
+
+        let restored_window = cx.windows()[0].downcast::<MultiWorkspace>().unwrap();
+        restored_window
+            .read_with(cx, |multi_workspace, cx| {
+                let root_paths = multi_workspace.workspace().read(cx).root_paths(cx);
+                assert!(
+                    root_paths
+                        .iter()
+                        .any(|path| path.as_ref() == Path::new(path!("/project"))),
+                    "expected CLI launch with no paths to restore /project, got {root_paths:?}"
+                );
+            })
+            .unwrap();
     }
 
     #[gpui::test]
