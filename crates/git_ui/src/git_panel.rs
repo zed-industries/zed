@@ -9754,13 +9754,15 @@ mod tests {
         // 3. Configure in Project settings (project-local).
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.set_local_settings(
-                    worktree_id,
-                    LocalSettingsPath::InWorktree(RelPath::empty().into()),
-                    LocalSettingsKind::Settings,
-                    Some(r#"{"git_commit_message_skill_name": "project-skill"}"#),
-                    cx,
-                );
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        LocalSettingsPath::InWorktree(RelPath::empty().into()),
+                        LocalSettingsKind::Settings,
+                        Some(r#"{"git_commit_message_skill_name": "project-skill"}"#),
+                        cx,
+                    )
+                    .unwrap();
             });
 
             let (settings_file, skill_name) = GitPanel::git_commit_message_skill_setting(
@@ -9784,7 +9786,6 @@ mod tests {
         let fs = FakeFs::new(cx.background_executor.clone());
 
         let global_skills_dir = agent_skills::global_skills_dir();
-        let global_skill_path = global_skills_dir.join("global-skill").join("SKILL.md");
 
         fs.insert_tree(
                 path!("/project"),
@@ -9841,13 +9842,15 @@ mod tests {
         // 2. Load project-local skill.
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.set_local_settings(
-                    worktree_id,
-                    LocalSettingsPath::InWorktree(RelPath::empty().into()),
-                    LocalSettingsKind::Settings,
-                    Some(r#"{"git_commit_message_skill_name": "project-skill"}"#),
-                    cx,
-                );
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        LocalSettingsPath::InWorktree(RelPath::empty().into()),
+                        LocalSettingsKind::Settings,
+                        Some(r#"{"git_commit_message_skill_name": "project-skill"}"#),
+                        cx,
+                    )
+                    .unwrap();
             });
         });
 
@@ -9870,13 +9873,15 @@ mod tests {
         // 3. Load missing project-local skill (should bail).
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.set_local_settings(
-                    worktree_id,
-                    LocalSettingsPath::InWorktree(RelPath::empty().into()),
-                    LocalSettingsKind::Settings,
-                    Some(r#"{"git_commit_message_skill_name": "missing-project-skill"}"#),
-                    cx,
-                );
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        LocalSettingsPath::InWorktree(RelPath::empty().into()),
+                        LocalSettingsKind::Settings,
+                        Some(r#"{"git_commit_message_skill_name": "missing-project-skill"}"#),
+                        cx,
+                    )
+                    .unwrap();
             });
         });
 
@@ -9899,20 +9904,21 @@ mod tests {
             agent_skills::SKILL_FILE_NAME
         );
         let relative_skill_path = RelPath::unix(&relative_skill_path_string).unwrap();
-        let expected_path = Path::new(path!("/project"))
-            .join(relative_skill_path.as_std_path());
+        let expected_path = Path::new(path!("/project")).join(relative_skill_path.as_std_path());
         assert!(err_msg.contains(&expected_path.display().to_string()));
 
         // 4. Load missing global skill (should bail).
         cx.update(|cx| {
             cx.update_global::<SettingsStore, _>(|store, cx| {
-                store.set_local_settings(
-                    worktree_id,
-                    LocalSettingsPath::InWorktree(RelPath::empty().into()),
-                    LocalSettingsKind::Settings,
-                    Some(r#"{}"#),
-                    cx,
-                );
+                store
+                    .set_local_settings(
+                        worktree_id,
+                        LocalSettingsPath::InWorktree(RelPath::empty().into()),
+                        LocalSettingsKind::Settings,
+                        Some(r#"{}"#),
+                        cx,
+                    )
+                    .unwrap();
                 store.update_user_settings(cx, |settings| {
                     settings.project.git_commit_message_skill_name =
                         Some("missing-global-skill".to_string());
