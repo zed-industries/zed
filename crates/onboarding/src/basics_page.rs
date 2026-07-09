@@ -331,19 +331,24 @@ fn render_telemetry_section(tab_index: &mut isize, cx: &App) -> impl IntoElement
 
 fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoElement {
     let base_keymap = match BaseKeymap::get_global(cx) {
-        BaseKeymap::VSCode => Some(0),
-        BaseKeymap::JetBrains => Some(1),
-        BaseKeymap::SublimeText => Some(2),
-        BaseKeymap::Atom => Some(3),
-        BaseKeymap::Emacs => Some(4),
-        BaseKeymap::Cursor => Some(5),
-        BaseKeymap::TextMate | BaseKeymap::None => None,
+        BaseKeymap::Zed => Some(0),
+        BaseKeymap::VSCode => Some(1),
+        BaseKeymap::JetBrains => Some(2),
+        BaseKeymap::SublimeText => Some(3),
+        BaseKeymap::Atom => Some(4),
+        BaseKeymap::Emacs => Some(5),
+        BaseKeymap::Cursor => Some(6),
+        BaseKeymap::TextMate => Some(7),
+        BaseKeymap::None => None,
     };
 
     return v_flex().gap_2().child(Label::new("Base Keymap")).child(
         ToggleButtonGroup::two_rows(
             "base_keymap_selection",
             [
+                ToggleButtonWithIcon::new("Zed", IconName::AiZed, |_, _, cx| {
+                    write_keymap_base(BaseKeymap::Zed, cx);
+                }),
                 ToggleButtonWithIcon::new("VS Code", IconName::EditorVsCode, |_, _, cx| {
                     write_keymap_base(BaseKeymap::VSCode, cx);
                 }),
@@ -363,6 +368,9 @@ fn render_base_keymap_section(tab_index: &mut isize, cx: &mut App) -> impl IntoE
                 }),
                 ToggleButtonWithIcon::new("Cursor", IconName::EditorCursor, |_, _, cx| {
                     write_keymap_base(BaseKeymap::Cursor, cx);
+                }),
+                ToggleButtonWithIcon::new("TextMate", IconName::Keyboard, |_, _, cx| {
+                    write_keymap_base(BaseKeymap::TextMate, cx);
                 }),
             ],
         )
