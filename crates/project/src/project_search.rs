@@ -152,7 +152,7 @@ impl Search {
     }
 
     pub(crate) const MAX_SEARCH_RESULT_FILES: usize = 5_000;
-    pub(crate) const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
+    pub const MAX_SEARCH_RESULT_RANGES: usize = 10_000;
     /// Prepares a project search run. The resulting [`SearchResultsHandle`] has to be used to specify whether you're interested in matching buffers
     /// or full search results.
     pub fn into_handle(mut self, query: SearchQuery, cx: &mut App) -> SearchResultsHandle {

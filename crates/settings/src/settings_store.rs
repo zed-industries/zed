@@ -2461,6 +2461,148 @@ mod tests {
             .unindent(),
             cx,
         );
+
+        // formatOnSave: true with formatOnSaveMode: modificationsIfAvailable
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSave": true, "editor.formatOnSaveMode": "modificationsIfAvailable" }"#
+                .to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "format_on_save": "modifications_if_available"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSave: true with formatOnSaveMode: modifications
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSave": true, "editor.formatOnSaveMode": "modifications" }"#
+                .to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "format_on_save": "modifications"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSave: true with formatOnSaveMode: file
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSave": true, "editor.formatOnSaveMode": "file" }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "format_on_save": "on"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSaveMode is ignored when formatOnSave is disabled, as in VS Code
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSave": false, "editor.formatOnSaveMode": "modifications" }"#
+                .to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "format_on_save": "off"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSaveMode alone does nothing, as formatOnSave defaults to false in VS Code
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSaveMode": "modifications" }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              }
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSaveMode not set, formatOnSave: true
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSave": true }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "format_on_save": "on"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
+
+        // formatOnSaveMode not set, formatOnSave: false
+        check_vscode_import(
+            &mut store,
+            r#"{
+            }
+            "#
+            .unindent(),
+            r#"{ "editor.formatOnSave": false }"#.to_owned(),
+            r#"{
+              "base_keymap": "VSCode",
+              "minimap": {
+                "show": "always"
+              },
+              "format_on_save": "off"
+            }
+            "#
+            .unindent(),
+            cx,
+        );
     }
 
     #[track_caller]

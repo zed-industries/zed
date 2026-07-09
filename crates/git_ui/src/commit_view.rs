@@ -2,8 +2,8 @@ use anyhow::{Context as _, Result};
 use buffer_diff::BufferDiff;
 use collections::HashMap;
 use editor::{
-    Addon, Editor, EditorEvent, EditorSettings, MultiBuffer, SplittableEditor,
-    hover_markdown_style, multibuffer_context_lines,
+    Addon, Editor, EditorEvent, EditorSettings, MultiBuffer, RestoreOnlyDiffHunkDelegate,
+    SplittableEditor, hover_markdown_style, multibuffer_context_lines,
 };
 use futures_lite::future::yield_now;
 use git::repository::{CommitDetails, CommitDiff, RepoPath, is_binary_content};
@@ -275,7 +275,7 @@ impl CommitView {
                 window,
                 cx,
             );
-            editor.disable_diff_hunk_controls(cx);
+            editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
 
             editor.rhs_editor().update(cx, |editor, cx| {
                 editor.set_show_bookmarks(false, cx);
@@ -1193,7 +1193,7 @@ impl Item for CommitView {
                         window,
                         cx,
                     );
-                    editor.disable_diff_hunk_controls(cx);
+                    editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyDiffHunkDelegate)), cx);
                     editor.rhs_editor().update(cx, |editor, cx| {
                         editor.set_show_bookmarks(false, cx);
                         editor.set_show_breakpoints(false, cx);

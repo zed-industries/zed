@@ -1272,7 +1272,7 @@ async fn test_visual_rename_uses_visible_cursor_position(cx: &mut gpui::TestAppC
     let mut prepare_request = cx.set_request_handler::<lsp::request::PrepareRenameRequest, _, _>(
         move |_, params, _| async move {
             assert_eq!(params.position, expected_position);
-            Ok(Some(lsp::PrepareRenameResponse::Range(def_range)))
+            Ok(Some(lsp::PrepareRenameResponse::Range(tgt_range)))
         },
     );
     let mut rename_request =

@@ -23,14 +23,15 @@ askpass.workspace = true
 async-channel.workspace = true
 buffer_diff.workspace = true
 call = { workspace = true, optional = true }
+client.workspace = true
 collections.workspace = true
 component.workspace = true
 db.workspace = true
 editor.workspace = true
 file_icons.workspace = true
 fs.workspace = true
-futures.workspace = true
 futures-lite.workspace = true
+futures.workspace = true
 fuzzy.workspace = true
 fuzzy_nucleo.workspace = true
 git.workspace = true
@@ -50,8 +51,8 @@ prompt_store.workspace = true
 proto.workspace = true
 rand.workspace = true
 release_channel.workspace = true
-remote_connection.workspace = true
 remote.workspace = true
+remote_connection.workspace = true
 schemars.workspace = true
 search.workspace = true
 serde.workspace = true
@@ -67,6 +68,7 @@ theme.workspace = true
 theme_settings.workspace = true
 time.workspace = true
 time_format.workspace = true
+tracing.workspace = true
 ui.workspace = true
 ui_input.workspace = true
 util.workspace = true
@@ -75,7 +77,6 @@ workspace.workspace = true
 zed_actions.workspace = true
 zeroize.workspace = true
 ztracing.workspace = true
-tracing.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
@@ -91,12 +92,12 @@ indoc.workspace = true
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
+remote_connection = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 task.workspace = true
 unindent.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
-remote_connection = { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-machete]
 ignored = ["tracing"]

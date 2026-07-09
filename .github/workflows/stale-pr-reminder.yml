@@ -20,13 +20,14 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 jobs:
   check-stale-prs:
     if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      pull-requests: read
     env:
       REPO: ${{ github.repository }}
       # Only surface PRs created on or after this date. Update this if the

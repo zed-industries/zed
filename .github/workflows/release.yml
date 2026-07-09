@@ -8,6 +8,8 @@ on:
   push:
     tags:
     - v*
+permissions:
+  contents: read
 jobs:
   run_tests_mac:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')
@@ -723,6 +725,8 @@ jobs:
     - bundle_windows_aarch64
     - bundle_windows_x86_64
     runs-on: namespace-profile-4x8-ubuntu-2204
+    permissions:
+      contents: write
     steps:
     - name: release::download_workflow_artifacts
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c

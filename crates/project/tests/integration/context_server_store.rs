@@ -914,6 +914,421 @@ async fn test_remote_context_server(cx: &mut TestAppContext) {
     cx.run_until_parked();
 }
 
+// A server may accept `initialize` unauthenticated (returns 200) yet only send
+// `WWW-Authenticate` on a later request such as `tools/list` / `tools/call`.
+// That post-initialize 401 must initiate the OAuth flow instead of surfacing as
+// an opaque request failure while the server stays "Running".
+#[gpui::test]
+async fn test_http_server_authenticates_on_post_init_401(cx: &mut TestAppContext) {
+    use context_server::transport::TransportError;
+
+    const SERVER_ID: &str = "auth-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    set_fake_mcp_http_client(cx, |message| {
+        if message.contains("\"method\":\"initialize\"") {
+            Ok(initialize_response())
+        } else if message.contains("notifications/initialized") {
+            Ok(notification_accepted_response())
+        } else {
+            Ok(unauthorized_response())
+        }
+    });
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_http_context_server_configuration(&server_id, cx);
+
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+            ],
+            cx,
+        );
+        cx.run_until_parked();
+    }
+
+    let client = store.read_with(cx, |store, _| {
+        store
+            .get_running_server(&server_id)
+            .expect("server should be running")
+            .client()
+            .expect("running server should have a client")
+    });
+
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::AuthRequired),
+            ],
+            cx,
+        );
+
+        // The 401 tears down the client, and the request that carried it fails
+        // with the typed error.
+        let error = client
+            .request::<context_server::types::requests::ListTools>(())
+            .await
+            .expect_err("request challenged with a 401 should fail");
+        assert!(
+            matches!(
+                error.downcast_ref::<TransportError>(),
+                Some(TransportError::AuthRequired { .. })
+            ),
+            "expected an AuthRequired error, got: {error}"
+        );
+
+        cx.run_until_parked();
+    }
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::AuthRequired),
+            "server should require authentication after a post-initialize 401"
+        );
+    });
+}
+
+// The first 401 may even arrive on a notification (`notifications/initialized`
+// here): the send fails with no request in flight to carry a typed error back,
+// and the client is dead by the time anything notices. Watching the transport
+// shutdown must still move the server into `AuthRequired`.
+#[gpui::test]
+async fn test_http_server_authenticates_on_notification_401(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "auth-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    set_fake_mcp_http_client(cx, |message| {
+        if message.contains("\"method\":\"initialize\"") {
+            Ok(initialize_response())
+        } else {
+            Ok(unauthorized_response())
+        }
+    });
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_http_context_server_configuration(&server_id, cx);
+
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::AuthRequired),
+            ],
+            cx,
+        );
+        cx.run_until_parked();
+    }
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::AuthRequired),
+            "server should require authentication after a 401 on a notification"
+        );
+    });
+}
+
+// A transport failure that is not an authentication challenge must not touch
+// the server's state: no spurious auth flow, and (as before the transport
+// watch existed) the server stays `Running`.
+#[gpui::test]
+async fn test_http_server_ignores_non_auth_transport_failure(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "flaky-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    set_fake_mcp_http_client(cx, |message| {
+        if message.contains("\"method\":\"initialize\"") {
+            Ok(initialize_response())
+        } else if message.contains("notifications/initialized") {
+            Ok(notification_accepted_response())
+        } else {
+            Err(anyhow::anyhow!("connection reset"))
+        }
+    });
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_http_context_server_configuration(&server_id, cx);
+
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::Running),
+            ],
+            cx,
+        );
+        cx.run_until_parked();
+
+        let client = store.read_with(cx, |store, _| {
+            store
+                .get_running_server(&server_id)
+                .expect("server should be running")
+                .client()
+                .expect("running server should have a client")
+        });
+
+        client
+            .request::<context_server::types::requests::ListTools>(())
+            .await
+            .expect_err("request should fail when the transport errors");
+
+        cx.run_until_parked();
+        // Dropping the events guard asserts no further status change happened.
+    }
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+            "a non-auth transport failure should not change the server state"
+        );
+    });
+}
+
+// A server may also require authentication on `initialize` itself. The
+// challenge is read from the transport slot rather than the returned error, so
+// the 401 is recognized even if another error (e.g. the request timeout) wins
+// the race to become the reported startup failure.
+#[gpui::test]
+async fn test_http_server_authenticates_on_initialize_401(cx: &mut TestAppContext) {
+    const SERVER_ID: &str = "auth-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    set_fake_mcp_http_client(cx, |_message| Ok(unauthorized_response()));
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_http_context_server_configuration(&server_id, cx);
+
+    {
+        let _server_events = assert_server_events(
+            &store,
+            vec![
+                (server_id.clone(), ContextServerStatus::Starting),
+                (server_id.clone(), ContextServerStatus::AuthRequired),
+            ],
+            cx,
+        );
+        cx.run_until_parked();
+    }
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::AuthRequired),
+            "server should require authentication after a 401 on initialize"
+        );
+    });
+}
+
+// Restarting a server reuses its transport (e.g. via the MCP settings page),
+// so a challenge recorded by a previous client generation must not leak into
+// the next one: after a successful restart, a non-auth transport failure must
+// not trip a spurious auth flow on the stale challenge.
+#[gpui::test]
+async fn test_http_server_restart_clears_stale_auth_challenge(cx: &mut TestAppContext) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    const SERVER_ID: &str = "auth-server";
+    let server_id = ContextServerId(SERVER_ID.into());
+
+    let restarted = Arc::new(AtomicBool::new(false));
+    set_fake_mcp_http_client(cx, {
+        let restarted = restarted.clone();
+        move |message| {
+            if message.contains("\"method\":\"initialize\"") {
+                Ok(initialize_response())
+            } else if message.contains("notifications/initialized") {
+                Ok(notification_accepted_response())
+            } else if restarted.load(Ordering::SeqCst) {
+                Err(anyhow::anyhow!("connection reset"))
+            } else {
+                Ok(unauthorized_response())
+            }
+        }
+    });
+
+    let (_fs, project) = setup_context_server_test(cx, json!({ "code.rs": "" }), vec![]).await;
+    let store = project.read_with(cx, |project, _| project.context_server_store());
+
+    set_http_context_server_configuration(&server_id, cx);
+    cx.run_until_parked();
+
+    // A post-initialize 401 records a challenge on the transport and moves the
+    // server into AuthRequired.
+    let client = store.read_with(cx, |store, _| {
+        store
+            .get_running_server(&server_id)
+            .expect("server should be running")
+            .client()
+            .expect("running server should have a client")
+    });
+    client
+        .request::<context_server::types::requests::ListTools>(())
+        .await
+        .expect_err("request challenged with a 401 should fail");
+    // Drop our handle so the dead client fully goes away, as it does in
+    // production once the store has stopped it: a lingering client would
+    // compete with its successor for the reused transport's response channel.
+    drop(client);
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::AuthRequired),
+        );
+    });
+
+    // The user restarts the same server instance instead of authenticating,
+    // and the server no longer challenges.
+    restarted.store(true, Ordering::SeqCst);
+    store.update(cx, |store, cx| {
+        let server = store.get_server(&server_id).expect("server should exist");
+        store.start_server(server, cx);
+    });
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+        );
+    });
+
+    let client = store.read_with(cx, |store, _| {
+        store
+            .get_running_server(&server_id)
+            .expect("server should be running")
+            .client()
+            .expect("running server should have a client")
+    });
+    client
+        .request::<context_server::types::requests::ListTools>(())
+        .await
+        .expect_err("request should fail when the transport errors");
+    cx.run_until_parked();
+
+    cx.update(|cx| {
+        assert_eq!(
+            store.read(cx).status_for_server(&server_id),
+            Some(ContextServerStatus::Running),
+            "a stale challenge from a previous client generation must not trigger auth"
+        );
+    });
+}
+
+fn set_http_context_server_configuration(server_id: &ContextServerId, cx: &mut TestAppContext) {
+    set_context_server_configuration(
+        vec![(
+            server_id.0.clone(),
+            settings::ContextServerSettingsContent::Http {
+                enabled: true,
+                url: "https://mcp.example.com/mcp".to_string(),
+                headers: Default::default(),
+                timeout: None,
+                oauth: None,
+            },
+        )],
+        cx,
+    );
+}
+
+/// A fake HTTP client that serves the OAuth discovery documents (CIMD-capable,
+/// so no dynamic client registration is needed) and routes MCP endpoint POSTs
+/// to `respond_to_mcp_message` by the JSON-RPC message in the request body.
+fn set_fake_mcp_http_client(
+    cx: &mut TestAppContext,
+    respond_to_mcp_message: impl Fn(&str) -> Result<Response<http_client::AsyncBody>>
+    + Send
+    + Sync
+    + 'static,
+) {
+    let respond_to_mcp_message = Arc::new(respond_to_mcp_message);
+    let client = FakeHttpClient::create(move |request| {
+        let respond_to_mcp_message = respond_to_mcp_message.clone();
+        async move {
+            let uri = request.uri().to_string();
+            let discovery_document = if uri.contains("oauth-protected-resource") {
+                Some(json!({
+                    "resource": "https://mcp.example.com",
+                    "authorization_servers": ["https://auth.example.com"],
+                    "scopes_supported": ["mcp:read"]
+                }))
+            } else if uri.contains("oauth-authorization-server") {
+                Some(json!({
+                    "issuer": "https://auth.example.com",
+                    "authorization_endpoint": "https://auth.example.com/authorize",
+                    "token_endpoint": "https://auth.example.com/token",
+                    "code_challenge_methods_supported": ["S256"],
+                    "client_id_metadata_document_supported": true
+                }))
+            } else {
+                None
+            };
+            if let Some(document) = discovery_document {
+                return Ok(json_response(document));
+            }
+
+            let mut body = request.into_body();
+            let mut message = String::new();
+            futures::AsyncReadExt::read_to_string(&mut body, &mut message).await?;
+            respond_to_mcp_message(&message)
+        }
+    });
+    cx.update(|cx| cx.set_http_client(client));
+}
+
+fn json_response(body: serde_json::Value) -> Response<http_client::AsyncBody> {
+    Response::builder()
+        .status(200)
+        .header("Content-Type", "application/json")
+        .body(http_client::AsyncBody::from(body.to_string()))
+        .unwrap()
+}
+
+fn initialize_response() -> Response<http_client::AsyncBody> {
+    json_response(json!({
+        "jsonrpc": "2.0",
+        "id": 0,
+        "result": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "serverInfo": { "name": "test-server", "version": "1.0.0" }
+        }
+    }))
+}
+
+fn notification_accepted_response() -> Response<http_client::AsyncBody> {
+    Response::builder()
+        .status(202)
+        .body(http_client::AsyncBody::empty())
+        .unwrap()
+}
+
+fn unauthorized_response() -> Response<http_client::AsyncBody> {
+    Response::builder()
+        .status(401)
+        .header("WWW-Authenticate", "Bearer")
+        .body(http_client::AsyncBody::empty())
+        .unwrap()
+}
+
 struct ServerEvents {
     received_event_count: Rc<RefCell<usize>>,
     expected_event_count: usize,

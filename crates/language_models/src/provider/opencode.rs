@@ -14,6 +14,7 @@ use language_model::{
     SubPageProviderSettings, env_var,
 };
 use opencode::{ApiProtocol, OPENCODE_API_URL, OpenCodeSubscription};
+pub use settings::OpenCodeApiProtocol;
 pub use settings::OpenCodeAvailableModel as AvailableModel;
 use settings::{Settings, SettingsStore, update_settings_file};
 use std::sync::{Arc, LazyLock};
@@ -263,12 +264,12 @@ impl LanguageModelProvider for OpenCodeLanguageModelProvider {
         }
 
         for model in &settings.available_models {
-            let protocol = match model.protocol.as_str() {
-                "anthropic" => ApiProtocol::Anthropic,
-                "openai_responses" => ApiProtocol::OpenAiResponses,
-                "openai_chat" => ApiProtocol::OpenAiChat,
-                "google" => ApiProtocol::Google,
-                _ => ApiProtocol::OpenAiChat, // default fallback
+            let protocol = match model.protocol {
+                Some(OpenCodeApiProtocol::Anthropic) => ApiProtocol::Anthropic,
+                Some(OpenCodeApiProtocol::OpenAiResponses) => ApiProtocol::OpenAiResponses,
+                Some(OpenCodeApiProtocol::OpenAiChat) => ApiProtocol::OpenAiChat,
+                Some(OpenCodeApiProtocol::Google) => ApiProtocol::Google,
+                None => ApiProtocol::OpenAiChat, // default fallback
             };
             let subscription = match model.subscription {
                 Some(settings::OpenCodeModelSubscription::Go) => OpenCodeSubscription::Go,
@@ -574,6 +575,12 @@ impl LanguageModel for OpenCodeLanguageModel {
             .is_some_and(|levels| levels.iter().any(|effort| *effort != ReasoningEffort::None))
     }
 
+    fn supports_disabling_thinking(&self) -> bool {
+        self.model
+            .supported_reasoning_effort_levels()
+            .is_some_and(|levels| levels.contains(&ReasoningEffort::None))
+    }
+
     fn supported_effort_levels(&self) -> Vec<LanguageModelEffortLevel> {
         self.model
             .supported_reasoning_effort_levels()
@@ -692,7 +699,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 let openai_request = into_open_ai(
                     request,
                     self.model.id(),
-                    false,
+                    true,
                     false,
                     self.model.max_output_tokens(self.subscription),
                     ChatCompletionMaxTokensParameter::MaxCompletionTokens,
@@ -715,7 +722,7 @@ impl LanguageModel for OpenCodeLanguageModel {
                 let response_request = into_open_ai_response(
                     request,
                     self.model.id(),
-                    false,
+                    true,
                     false,
                     self.model.max_output_tokens(self.subscription),
                     None,
@@ -730,11 +737,14 @@ impl LanguageModel for OpenCodeLanguageModel {
                 .boxed()
             }
             ApiProtocol::Google => {
-                let google_request = into_google(
-                    request,
-                    self.model.id().to_string(),
-                    google_ai::GoogleModelMode::Default,
-                );
+                let mode = if self.supports_thinking() && request.thinking_allowed {
+                    google_ai::GoogleModelMode::Thinking {
+                        budget_tokens: None,
+                    }
+                } else {
+                    google_ai::GoogleModelMode::Default
+                };
+                let google_request = into_google(request, self.model.id().to_string(), mode);
                 let stream = self.stream_google(google_request, http_client, extra_headers, cx);
                 async move {
                     let mapper = GoogleEventMapper::new();

@@ -27,6 +27,7 @@
             })();
         </script>
         <title>{{ title }}</title>
+        <link rel="llms.txt" href="{{ path_to_root }}llms.txt">
         {{#if is_print }}
         <meta name="robots" content="noindex">
         {{/if}}
@@ -86,6 +87,9 @@
             document.body.classList.remove('no-js');
             document.body.classList.add('js');
         </script>
+        <div style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;">
+            Agent documentation index: <a href="{{ path_to_root }}llms.txt">llms.txt</a>. Markdown versions are available for docs pages.
+        </div>
 
         <header class="header-bar">
             <div class="left-container">
@@ -154,6 +158,95 @@
                 </div>
             </div>
             {{/if}}
+
+            <div class="page">
+                <div id="content" class="content">
+                    <main>
+                      {{{ content }}}
+                        <div class="footer-buttons">
+                            {{#previous}}
+                            <a rel="prev" href="{{ path_to_root }}{{link}}" class="footer-button" title="{{title}}">
+                                <i class="fa fa-angle-left"></i>
+                                {{title}}
+                            </a>
+                            {{/previous}}
+                            {{#next}}
+                            <a rel="next" href="{{ path_to_root }}{{link}}" class="footer-button" title="{{title}}">
+                                {{title}}
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+                            {{/next}}
+                        </div>
+                        <footer class="footer">
+                            <a href="/" class="logo-nav">
+                                <img
+                                    src="https://zed.dev/logo_icon.webp"
+                                    class="footer-logo"
+                                    alt="Zed Industries"
+                                />
+                            </a>
+                            <span class="footer-separator">•</span>
+                            <a class="footer-link" href="https://zed.dev"
+                                >Back to Site</a
+                            >
+                            <span class="footer-separator">•</span>
+                            <a
+                                class="footer-link"
+                                href="https://zed.dev/releases"
+                                >Releases</a
+                            >
+                            <span class="footer-separator">•</span>
+                            <a
+                                class="footer-link"
+                                href="https://zed.dev/roadmap"
+                                >Roadmap</a
+                            >
+                            <span class="footer-separator">•</span>
+                            <a
+                                class="footer-link"
+                                href="https://github.com/zed-industries/zed"
+                                >GitHub</a
+                            >
+                            <span class="footer-separator">•</span>
+                            <a
+                                class="footer-link"
+                                href="https://zed.dev/blog"
+                                >Blog</a
+                            >
+                            <span class="footer-separator">•</span>
+                            <button
+                                id="c15t-manage-consent-btn"
+                                class="footer-link"
+                            >
+                                Manage Site Cookies
+                            </button>
+                        </footer>
+                    </main>
+                    <div class="toc-container">
+                        <nav class="pagetoc"></nav>
+                    </div>
+                    <!-- Immediately detect if page has headins that are not h1 to prevent flicker -->
+                    <script>
+                        (function() {
+                            var tocContainer = document.querySelector('.toc-container');
+                            var headers = document.querySelectorAll('.header');
+                            var hasNonH1Headers = false;
+                            for (var i = 0; i < headers.length; i++) {
+                                var parent = headers[i].parentElement;
+                                if (parent && !parent.tagName.toLowerCase().startsWith('h1')) {
+                                    hasNonH1Headers = true;
+                                    break;
+                                }
+                            }
+                            if (hasNonH1Headers) {
+                                tocContainer.classList.add('has-toc');
+                            } else {
+                                tocContainer.classList.add('no-toc');
+                            }
+                        })();
+                    </script>
+                </div>
+            </div>
 
             <nav id="sidebar" class="sidebar" aria-label="Table of contents">
                 <div class="sidebar-scrollbox">
@@ -291,95 +384,6 @@
                     }
                 }
             </script>
-
-            <div class="page">
-                <div id="content" class="content">
-                    <main>
-                      {{{ content }}}
-                        <div class="footer-buttons">
-                            {{#previous}}
-                            <a rel="prev" href="{{ path_to_root }}{{link}}" class="footer-button" title="{{title}}">
-                                <i class="fa fa-angle-left"></i>
-                                {{title}}
-                            </a>
-                            {{/previous}}
-                            {{#next}}
-                            <a rel="next" href="{{ path_to_root }}{{link}}" class="footer-button" title="{{title}}">
-                                {{title}}
-                                <i class="fa fa-angle-right"></i>
-                            </a>
-                            {{/next}}
-                        </div>
-                        <footer class="footer">
-                            <a href="/" class="logo-nav">
-                                <img
-                                    src="https://zed.dev/logo_icon.webp"
-                                    class="footer-logo"
-                                    alt="Zed Industries"
-                                />
-                            </a>
-                            <span class="footer-separator">•</span>
-                            <a class="footer-link" href="https://zed.dev"
-                                >Back to Site</a
-                            >
-                            <span class="footer-separator">•</span>
-                            <a
-                                class="footer-link"
-                                href="https://zed.dev/releases"
-                                >Releases</a
-                            >
-                            <span class="footer-separator">•</span>
-                            <a
-                                class="footer-link"
-                                href="https://zed.dev/roadmap"
-                                >Roadmap</a
-                            >
-                            <span class="footer-separator">•</span>
-                            <a
-                                class="footer-link"
-                                href="https://github.com/zed-industries/zed"
-                                >GitHub</a
-                            >
-                            <span class="footer-separator">•</span>
-                            <a
-                                class="footer-link"
-                                href="https://zed.dev/blog"
-                                >Blog</a
-                            >
-                            <span class="footer-separator">•</span>
-                            <button
-                                id="c15t-manage-consent-btn"
-                                class="footer-link"
-                            >
-                                Manage Site Cookies
-                            </button>
-                        </footer>
-                    </main>
-                    <div class="toc-container">
-                        <nav class="pagetoc"></nav>
-                    </div>
-                    <!-- Immediately detect if page has headins that are not h1 to prevent flicker -->
-                    <script>
-                        (function() {
-                            var tocContainer = document.querySelector('.toc-container');
-                            var headers = document.querySelectorAll('.header');
-                            var hasNonH1Headers = false;
-                            for (var i = 0; i < headers.length; i++) {
-                                var parent = headers[i].parentElement;
-                                if (parent && !parent.tagName.toLowerCase().startsWith('h1')) {
-                                    hasNonH1Headers = true;
-                                    break;
-                                }
-                            }
-                            if (hasNonH1Headers) {
-                                tocContainer.classList.add('has-toc');
-                            } else {
-                                tocContainer.classList.add('no-toc');
-                            }
-                        })();
-                    </script>
-                </div>
-            </div>
         </div>
 
         {{#if live_reload_endpoint}}

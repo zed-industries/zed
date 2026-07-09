@@ -254,13 +254,13 @@ If your use-case isn't covered by any of these, you can take full control by add
 
 ### Configuring JavaScript debug tasks
 
-JavaScript debugging is more complicated than other languages because there are two different environments: Node.js and the browser. `vscode-js-debug` exposes a `type` field, that you can use to specify the environment, either `node` or `chrome`.
+JavaScript debugging is more complicated than for other languages because there are two different environments: Node.js and the browser. `vscode-js-debug` exposes a `type` field, that you can use to specify the environment, either `node` or `chrome`.
 
 - [vscode-js-debug configuration documentation](https://github.com/microsoft/vscode-js-debug/blob/main/OPTIONS.md)
 
 ### Attach debugger to a server running in web browser (`npx serve`)
 
-Given an externally-ran web server (e.g., with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
+Given an externally-run web server (e.g., with `npx serve` or `npx live-server`) one can attach to it and open it with a browser.
 
 ```json [debug]
 [

@@ -19,7 +19,8 @@ pub use settings::{
     AutoIndentMode, CompletionSettingsContent, EditPredictionDataCollectionChoice,
     EditPredictionPromptFormatContent, EditPredictionProvider, EditPredictionsMode, FormatOnSave,
     Formatter, FormatterList, InlayHintKind, LanguageSettingsContent, LineEndingSetting,
-    LspInsertMode, RewrapBehavior, ShowWhitespaceSetting, SoftWrap, WordsCompletionMode,
+    LspInsertMode, REST_OF_LANGUAGE_SERVERS, RewrapBehavior, ShowWhitespaceSetting, SoftWrap,
+    WordsCompletionMode,
 };
 use settings::{RegisterSetting, Settings, SettingsLocation, SettingsStore, merge_from::MergeFrom};
 use shellexpand;
@@ -276,9 +277,6 @@ pub struct PrettierSettings {
 }
 
 impl LanguageSettings {
-    /// A token representing the rest of the available language servers.
-    const REST_OF_LANGUAGE_SERVERS: &'static str = "...";
-
     pub fn for_buffer<'a>(buffer: &'a Buffer, cx: &'a App) -> Cow<'a, LanguageSettings> {
         Self::resolve(Some(buffer), None, cx)
     }
@@ -382,7 +380,7 @@ impl LanguageSettings {
         enabled_language_servers
             .into_iter()
             .flat_map(|language_server| {
-                if language_server.0.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
+                if language_server.0.as_ref() == REST_OF_LANGUAGE_SERVERS {
                     rest.clone()
                 } else {
                     vec![language_server]
@@ -1090,7 +1088,7 @@ mod tests {
         // A value of just `["..."]` is the same as taking all of the available language servers.
         assert_eq!(
             LanguageSettings::resolve_language_servers(
-                &[LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()],
+                &[REST_OF_LANGUAGE_SERVERS.into()],
                 &available_language_servers,
             ),
             available_language_servers
@@ -1101,7 +1099,7 @@ mod tests {
             LanguageSettings::resolve_language_servers(
                 &[
                     "biome".into(),
-                    LanguageSettings::REST_OF_LANGUAGE_SERVERS.into(),
+                    REST_OF_LANGUAGE_SERVERS.into(),
                     "deno".into()
                 ],
                 &available_language_servers
@@ -1122,7 +1120,7 @@ mod tests {
                     "deno".into(),
                     "!typescript-language-server".into(),
                     "!biome".into(),
-                    LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()
+                    REST_OF_LANGUAGE_SERVERS.into()
                 ],
                 &available_language_servers
             ),
@@ -1134,7 +1132,7 @@ mod tests {
             LanguageSettings::resolve_language_servers(
                 &[
                     "my-cool-language-server".into(),
-                    LanguageSettings::REST_OF_LANGUAGE_SERVERS.into()
+                    REST_OF_LANGUAGE_SERVERS.into()
                 ],
                 &available_language_servers
             ),

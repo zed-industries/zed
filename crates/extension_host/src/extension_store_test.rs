@@ -769,7 +769,11 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     theme_extension::init(proxy.clone(), theme_registry.clone(), cx.executor());
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
     language_extension::init(
-        LspAccess::ViaLspStore(project.update(cx, |project, _| project.lsp_store())),
+        LspAccess::ViaLspStore(
+            project
+                .update(cx, |project, _| project.lsp_store())
+                .downgrade(),
+        ),
         proxy.clone(),
         language_registry.clone(),
     );

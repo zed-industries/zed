@@ -7,6 +7,8 @@ on:
   push:
     tags:
     - collab-production
+permissions:
+  contents: read
 jobs:
   style:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions')

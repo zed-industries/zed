@@ -6,8 +6,8 @@ use anyhow::Result;
 use buffer_diff::DiffHunkStatus;
 use collections::{HashMap, HashSet};
 use editor::{
-    Direction, Editor, EditorEvent, EditorSettings, MultiBuffer, MultiBufferSnapshot,
-    SelectionEffects, SplittableEditor, ToPoint,
+    DiffHunkDelegate, Direction, Editor, EditorEvent, EditorSettings, MultiBuffer,
+    MultiBufferSnapshot, ResolvedDiffHunks, SelectionEffects, SplittableEditor, ToPoint,
     actions::{GoToHunk, GoToPreviousHunk},
     multibuffer_context_lines,
     scroll::Autoscroll,
@@ -28,7 +28,7 @@ use std::{
     ops::Range,
     sync::Arc,
 };
-use ui::{CommonAnimationExt, IconButtonShape, KeyBinding, Tooltip, prelude::*, vertical_divider};
+use ui::{CommonAnimationExt, Divider, IconButtonShape, KeyBinding, Tooltip, prelude::*};
 use util::ResultExt;
 use workspace::{
     Item, ItemHandle, ItemNavHistory, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
@@ -101,8 +101,7 @@ impl AgentDiffPane {
                 cx,
             );
             diff_display_editor
-                .set_render_diff_hunk_controls(diff_hunk_controls(&thread, workspace.clone()), cx);
-            diff_display_editor.set_render_diff_hunks_as_unstaged(cx);
+                .set_diff_hunk_delegate(Some(agent_diff_delegate(&thread, workspace.clone())), cx);
             diff_display_editor.update_editors(cx, |editor, _cx| {
                 editor.register_addon(AgentDiffAddon);
             });
@@ -722,29 +721,68 @@ impl Render for AgentDiffPane {
     }
 }
 
-fn diff_hunk_controls(
+struct AgentDiffDelegate {
+    thread: Entity<AcpThread>,
+    workspace: WeakEntity<Workspace>,
+}
+
+fn agent_diff_delegate(
     thread: &Entity<AcpThread>,
     workspace: WeakEntity<Workspace>,
-) -> editor::RenderDiffHunkControlsFn {
-    let thread = thread.clone();
+) -> Arc<dyn DiffHunkDelegate> {
+    Arc::new(AgentDiffDelegate {
+        thread: thread.clone(),
+        workspace,
+    })
+}
 
-    Arc::new(
-        move |row, status, hunk_range, is_created_file, line_height, editor, _, cx| {
-            {
-                render_diff_hunk_controls(
-                    row,
-                    status,
-                    hunk_range,
-                    is_created_file,
-                    line_height,
-                    &thread,
-                    editor,
-                    workspace.clone(),
-                    cx,
-                )
-            }
-        },
-    )
+impl DiffHunkDelegate for AgentDiffDelegate {
+    fn toggle(
+        &self,
+        _hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        _window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) {
+    }
+
+    fn stage_or_unstage(
+        &self,
+        _stage: bool,
+        _hunks: Vec<ResolvedDiffHunks>,
+        _editor: &mut Editor,
+        _window: &mut Window,
+        _cx: &mut Context<Editor>,
+    ) {
+    }
+
+    fn render_hunk_controls(
+        &self,
+        row: u32,
+        status: &DiffHunkStatus,
+        hunk_range: Range<editor::Anchor>,
+        is_created_file: bool,
+        line_height: Pixels,
+        editor: &Entity<Editor>,
+        _window: &mut Window,
+        cx: &mut App,
+    ) -> AnyElement {
+        render_diff_hunk_controls(
+            row,
+            status,
+            hunk_range,
+            is_created_file,
+            line_height,
+            &self.thread,
+            editor,
+            self.workspace.clone(),
+            cx,
+        )
+    }
+
+    fn render_hunk_as_staged(&self, _status: &DiffHunkStatus, _cx: &App) -> bool {
+        false
+    }
 }
 
 fn render_diff_hunk_controls(
@@ -1099,7 +1137,7 @@ impl Render for AgentDiffToolbar {
                                     }),
                             )
                             .into_any_element(),
-                        vertical_divider().into_any_element(),
+                        Divider::vertical().into_any_element(),
                         h_flex()
                             .gap_0p5()
                             .child(
@@ -1141,7 +1179,7 @@ impl Render for AgentDiffToolbar {
                     .mr_1()
                     .gap_1()
                     .children(content)
-                    .child(vertical_divider())
+                    .child(Divider::vertical())
                     .when_some(editor.read(cx).workspace(), |this, _workspace| {
                         this.child(
                             IconButton::new("review", IconName::ListTodo)
@@ -1158,7 +1196,7 @@ impl Render for AgentDiffToolbar {
                                 }),
                         )
                     })
-                    .child(vertical_divider())
+                    .child(Divider::vertical())
                     .on_action({
                         let editor = editor.clone();
                         move |_action: &OpenAgentDiff, window, cx| {
@@ -1528,7 +1566,7 @@ impl AgentDiff {
             for (editor, _) in self.reviewing_editors.drain() {
                 editor
                     .update(cx, |editor, cx| {
-                        editor.end_temporary_diff_override(cx);
+                        editor.set_diff_hunk_delegate(None, cx);
                         editor.unregister_addon::<EditorAgentDiffAddon>();
                     })
                     .ok();
@@ -1577,12 +1615,10 @@ impl AgentDiff {
 
                 if previous_state.is_none() {
                     editor.update(cx, |editor, cx| {
-                        editor.start_temporary_diff_override();
-                        editor.set_render_diff_hunk_controls(
-                            diff_hunk_controls(&thread, workspace.clone()),
+                        editor.set_diff_hunk_delegate(
+                            Some(agent_diff_delegate(&thread, workspace.clone())),
                             cx,
                         );
-                        editor.set_render_diff_hunks_as_unstaged(true, cx);
                         editor.set_expand_all_diff_hunks(cx);
                         editor.register_addon(EditorAgentDiffAddon);
                     });
@@ -1629,7 +1665,7 @@ impl AgentDiff {
             if in_workspace {
                 editor
                     .update(cx, |editor, cx| {
-                        editor.end_temporary_diff_override(cx);
+                        editor.set_diff_hunk_delegate(None, cx);
                         editor.unregister_addon::<EditorAgentDiffAddon>();
                     })
                     .ok();

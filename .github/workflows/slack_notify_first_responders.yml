@@ -4,6 +4,9 @@ on:
   issues:
     types: [labeled]
 
+permissions:
+  contents: read
+
 env:
   PRIORITY_LABELS: '["priority:P0", "priority:P1"]'
   REPRODUCIBLE_LABEL: 'state:reproducible'

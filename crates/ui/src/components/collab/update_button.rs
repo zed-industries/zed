@@ -1,6 +1,10 @@
 use gpui::{AnyElement, ClickEvent, prelude::*};
 
-use crate::{ButtonLike, CommonAnimationExt, Tooltip, prelude::*};
+use crate::{ButtonLike, CircularProgress, CommonAnimationExt, Tooltip, prelude::*};
+
+const LOAD_CIRCLE_GLYPH_VIEWBOX: f32 = 16.0;
+const LOAD_CIRCLE_GLYPH_STROKE_WIDTH: f32 = 1.2;
+const LOAD_CIRCLE_GLYPH_RADIUS: f32 = 5.0;
 
 /// A button component displayed in the title bar to show auto-update status.
 #[derive(IntoElement, RegisterComponent)]
@@ -12,6 +16,7 @@ pub struct UpdateButton {
     tooltip: Option<SharedString>,
     disabled: bool,
     show_dismiss: bool,
+    progress: Option<f32>,
     on_click: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
     on_dismiss: Option<Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>>,
 }
@@ -26,6 +31,7 @@ impl UpdateButton {
             tooltip: None,
             disabled: false,
             show_dismiss: false,
+            progress: None,
             on_click: None,
             on_dismiss: None,
         }
@@ -78,15 +84,21 @@ impl UpdateButton {
         self
     }
 
+    pub fn progress(mut self, progress: impl Into<Option<f32>>) -> Self {
+        self.progress = progress.into();
+        self
+    }
+
     pub fn checking() -> Self {
         Self::new(IconName::LoadCircle, "Checking for Zed Updates…")
             .icon_animate(true)
             .disabled(true)
     }
 
-    pub fn downloading(version: impl Into<SharedString>) -> Self {
+    pub fn downloading(version: impl Into<SharedString>, progress: Option<f32>) -> Self {
         Self::new(IconName::Download, "Downloading Zed Update…")
             .tooltip(version)
+            .progress(progress)
             .disabled(true)
     }
 
@@ -112,23 +124,43 @@ impl UpdateButton {
 }
 
 impl RenderOnce for UpdateButton {
-    fn render(self, _window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let border_color = if self.disabled {
             cx.theme().colors().border
         } else {
             cx.theme().colors().text.opacity(0.15)
         };
 
-        let icon = Icon::new(self.icon)
-            .size(IconSize::XSmall)
-            .when_some(self.icon_color, |this, color| this.color(color));
-        let icon_element = if self.icon_animate {
-            icon.with_rotate_animation(2).into_any_element()
+        let icon_element = if let Some(progress) = self.progress {
+            let progress = progress.clamp(0.0, 1.0);
+            let icon_box = IconSize::XSmall.rems().to_pixels(window.rem_size());
+            let progress_color = Color::Default.color(cx);
+            CircularProgress::new(progress, 1.0, icon_box, cx)
+                .stroke_width(
+                    icon_box * (LOAD_CIRCLE_GLYPH_STROKE_WIDTH / LOAD_CIRCLE_GLYPH_VIEWBOX),
+                )
+                .radius(icon_box * (LOAD_CIRCLE_GLYPH_RADIUS / LOAD_CIRCLE_GLYPH_VIEWBOX))
+                .bg_color(progress_color.opacity(0.2))
+                .progress_color(progress_color)
+                .into_any_element()
         } else {
-            icon.into_any_element()
+            let icon = Icon::new(self.icon)
+                .size(IconSize::XSmall)
+                .when_some(self.icon_color, |this, color| this.color(color));
+            if self.icon_animate {
+                icon.with_rotate_animation(2).into_any_element()
+            } else {
+                icon.into_any_element()
+            }
         };
 
         let tooltip = self.tooltip.clone();
+
+        let label_row = h_flex()
+            .h_full()
+            .gap_1()
+            .child(icon_element)
+            .child(Label::new(self.message).size(LabelSize::Small));
 
         h_flex()
             .mr_2()
@@ -137,13 +169,7 @@ impl RenderOnce for UpdateButton {
             .border_color(border_color)
             .child(
                 ButtonLike::new("update-button")
-                    .child(
-                        h_flex()
-                            .h_full()
-                            .gap_1()
-                            .child(icon_element)
-                            .child(Label::new(self.message).size(LabelSize::Small)),
-                    )
+                    .child(label_row)
                     .when_some(tooltip, |this, tooltip| {
                         this.tooltip(Tooltip::text(tooltip))
                     })
@@ -189,7 +215,7 @@ impl Component for UpdateButton {
                         single_example("Checking", UpdateButton::checking().into_any_element()),
                         single_example(
                             "Downloading",
-                            UpdateButton::downloading(version).into_any_element(),
+                            UpdateButton::downloading(version, Some(0.45)).into_any_element(),
                         ),
                         single_example(
                             "Installing",

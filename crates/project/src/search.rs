@@ -251,6 +251,7 @@ impl SearchQuery {
 
         let regex = RegexBuilder::new(&pattern)
             .case_insensitive(!case_sensitive)
+            .crlf(true)
             .build()?;
         Ok(Self::Regex {
             regex,

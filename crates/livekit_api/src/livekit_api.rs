@@ -31,10 +31,25 @@ pub struct LiveKitClient {
     url: Arc<str>,
     key: Arc<str>,
     secret: Arc<str>,
+    timestamp_source: Arc<dyn token::UnixTimestampSource>,
 }
 
 impl LiveKitClient {
-    pub fn new(mut url: String, key: String, secret: String) -> Self {
+    pub fn new(url: String, key: String, secret: String) -> Self {
+        Self::new_with_timestamp_source(
+            url,
+            key,
+            secret,
+            Arc::new(token::SystemUnixTimestampSource),
+        )
+    }
+
+    pub(crate) fn new_with_timestamp_source(
+        mut url: String,
+        key: String,
+        secret: String,
+        timestamp_source: Arc<dyn token::UnixTimestampSource>,
+    ) -> Self {
         if url.ends_with('/') {
             url.pop();
         }
@@ -47,6 +62,7 @@ impl LiveKitClient {
             url: url.into(),
             key: key.into(),
             secret: secret.into(),
+            timestamp_source,
         }
     }
 
@@ -61,7 +77,13 @@ impl LiveKitClient {
         Res: Default + Message,
     {
         let client = self.http.clone();
-        let token = token::create(&self.key, &self.secret, None, grant);
+        let token = token::create_with_timestamp_source(
+            &self.key,
+            &self.secret,
+            None,
+            grant,
+            self.timestamp_source.as_ref(),
+        );
         let url = format!("{}/{}", self.url, path);
         log::info!("Request {}: {:?}", url, body);
         async move {
@@ -163,20 +185,22 @@ impl Client for LiveKitClient {
     }
 
     fn room_token(&self, room: &str, identity: &str) -> Result<String> {
-        token::create(
+        token::create_with_timestamp_source(
             &self.key,
             &self.secret,
             Some(identity),
             token::VideoGrant::to_join(room),
+            self.timestamp_source.as_ref(),
         )
     }
 
     fn guest_token(&self, room: &str, identity: &str) -> Result<String> {
-        token::create(
+        token::create_with_timestamp_source(
             &self.key,
             &self.secret,
             Some(identity),
             token::VideoGrant::for_guest(room),
+            self.timestamp_source.as_ref(),
         )
     }
 }

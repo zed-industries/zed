@@ -392,5 +392,5 @@ pub fn interpolate_edits(
 
     edits.extend(model_edits.cloned());
 
-    if edits.is_empty() { None } else { Some(edits) }
+    Some(edits)
 }

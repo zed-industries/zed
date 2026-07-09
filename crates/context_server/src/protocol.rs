@@ -8,11 +8,12 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use futures::channel::oneshot;
+use futures::{channel::oneshot, future::BoxFuture};
 use gpui::AsyncApp;
 use serde_json::Value;
 
 use crate::client::{Client, NotificationSubscription};
+use crate::oauth::WwwAuthenticate;
 use crate::types::{self, Notification, Request};
 
 pub struct ModelContextProtocol {
@@ -120,6 +121,20 @@ impl InitializedContextServerProtocol {
 
     pub fn notify<T: Notification>(&self, params: T::Params) -> Result<()> {
         self.inner.notify(T::METHOD, params)
+    }
+
+    /// A future that resolves once the underlying transport's output loop has
+    /// terminated — after a send failure, or when the client is dropped —
+    /// yielding the authentication challenge recorded by the transport if it
+    /// shut down on a `401 Unauthorized` response.
+    ///
+    /// Servers may accept `initialize` unauthenticated and only challenge a
+    /// later request or notification. Awaiting this is what lets the owner of
+    /// the connection notice such a challenge even when no request was in
+    /// flight to carry a typed error back. Returns `None` if the shutdown
+    /// signal was already claimed: there is a single signal per client.
+    pub fn wait_for_shutdown(&self) -> Option<BoxFuture<'static, Option<WwwAuthenticate>>> {
+        self.inner.wait_for_shutdown()
     }
 
     pub fn on_notification(

@@ -5,7 +5,7 @@ pub(crate) mod scroll_amount;
 use crate::editor_settings::ScrollBeyondLastLine;
 use crate::{
     Anchor, DisplayPoint, DisplayRow, Editor, EditorEvent, EditorMode, EditorSettings,
-    MultiBufferSnapshot, RowExt, SizingBehavior, ToPoint,
+    MultiBufferSnapshot, RowExt, SelectionEffects, SizingBehavior, ToPoint,
     display_map::{DisplaySnapshot, ToDisplayPoint},
     hover_popover::hide_hover,
     persistence::EditorDb,
@@ -943,6 +943,63 @@ impl Editor {
                 amount.lines(visible_line_count),
             );
         self.set_scroll_position(new_position, window, cx);
+    }
+
+    pub fn scroll_screen_with_cursor_margin(
+        &mut self,
+        amount: &ScrollAmount,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.scroll_screen(amount, window, cx);
+
+        let Some(visible_line_count) = self.visible_line_count() else {
+            return;
+        };
+        let display_snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let top = self
+            .scroll_manager
+            .scroll_top_display_point(&display_snapshot, cx);
+        let vertical_scroll_margin =
+            (self.vertical_scroll_margin() as u32).min(visible_line_count as u32 / 2);
+
+        let max_point = display_snapshot.max_point();
+        let min_row = if top.row().0 == 0 {
+            DisplayRow(0)
+        } else {
+            DisplayRow(top.row().0 + vertical_scroll_margin)
+        };
+        let max_row = if top.row().0 + visible_line_count as u32 >= max_point.row().0 {
+            max_point.row()
+        } else {
+            DisplayRow(
+                (top.row().0 + visible_line_count as u32)
+                    .saturating_sub(1 + vertical_scroll_margin),
+            )
+        };
+
+        self.change_selections(
+            SelectionEffects::no_scroll().nav_history(false),
+            window,
+            cx,
+            |s| {
+                s.move_with(&mut |map, selection| {
+                    let head = selection.head();
+                    let new_row = if head.row() < min_row {
+                        min_row
+                    } else if head.row() > max_row {
+                        max_row
+                    } else {
+                        head.row()
+                    };
+                    if new_row != head.row() {
+                        let new_head =
+                            map.clip_point(DisplayPoint::new(new_row, head.column()), Bias::Left);
+                        selection.collapse_to(new_head, selection.goal);
+                    }
+                })
+            },
+        );
     }
 
     /// Returns an ordering. The newest selection is:

@@ -1,11 +1,14 @@
-use std::ops::Range;
+use std::{ops::Range, sync::Arc};
 
 use acp_thread::{AcpThread, AgentThreadEntry, AssistantMessageChunk};
 use agent::ThreadStore;
 use agent_client_protocol::schema::v1 as acp;
 use agent_settings::AgentSettings;
 use collections::{HashMap, HashSet};
-use editor::{Editor, EditorEvent, EditorMode, MinimapVisibility, SizingBehavior};
+use editor::{
+    Editor, EditorEvent, EditorMode, MinimapVisibility, RestoreOnlyUnstagedDiffHunkDelegate,
+    SizingBehavior,
+};
 use gpui::{
     AnyEntity, App, AppContext as _, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     ScrollHandle, TextStyleRefinement, WeakEntity, Window,
@@ -682,7 +685,7 @@ fn create_editor_diff(
         editor.set_show_code_actions(false, cx);
         editor.set_show_git_diff_gutter(false, cx);
         editor.set_expand_all_diff_hunks(cx);
-        editor.set_render_diff_hunks_as_unstaged(true, cx);
+        editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
         editor.set_text_style_refinement(diff_editor_text_style_refinement(cx));
         editor
     })

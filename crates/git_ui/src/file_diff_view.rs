@@ -2,7 +2,10 @@
 
 use anyhow::Result;
 use buffer_diff::BufferDiff;
-use editor::{Editor, EditorEvent, EditorSettings, MultiBuffer, SplittableEditor};
+use editor::{
+    Editor, EditorEvent, EditorSettings, MultiBuffer, RestoreOnlyUnstagedDiffHunkDelegate,
+    SplittableEditor,
+};
 use futures::{FutureExt, select_biased};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
@@ -103,11 +106,8 @@ impl FileDiffView {
                 window,
                 cx,
             );
-            splittable.rhs_editor().update(cx, |editor, _| {
-                editor.start_temporary_diff_override();
-            });
-            splittable.disable_diff_hunk_controls(cx);
-            splittable.set_render_diff_hunks_as_unstaged(cx);
+            splittable
+                .set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
             splittable
         });
 
@@ -236,7 +236,7 @@ impl Item for FileDiffView {
                             .to_string(),
                     )
                 })
-                .unwrap_or_else(|| "untitled".into())
+                .unwrap_or_else(|| MultiBuffer::DEFAULT_TITLE.into())
         };
         let old_filename = title_text(&self.old_buffer);
         let new_filename = title_text(&self.new_buffer);
@@ -250,7 +250,7 @@ impl Item for FileDiffView {
                 .read(cx)
                 .file()
                 .map(|file| file.full_path(cx).compact().to_string_lossy().into_owned())
-                .unwrap_or_else(|| "untitled".into())
+                .unwrap_or_else(|| MultiBuffer::DEFAULT_TITLE.into())
         };
         let old_path = path(&self.old_buffer);
         let new_path = path(&self.new_buffer);

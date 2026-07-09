@@ -1,7 +1,10 @@
 use crate::file_diff_view::build_buffer_diff;
 use anyhow::Result;
 use buffer_diff::BufferDiff;
-use editor::{Editor, EditorEvent, MultiBuffer, multibuffer_context_lines};
+use editor::{
+    Editor, EditorEvent, MultiBuffer, RestoreOnlyUnstagedDiffHunkDelegate,
+    multibuffer_context_lines,
+};
 use gpui::{
     AnyElement, App, AppContext as _, AsyncApp, Context, Entity, EventEmitter, FocusHandle,
     Focusable, Font, IntoElement, Render, SharedString, Task, Window,
@@ -91,7 +94,7 @@ fn register_entry(
             RelPath::new(rel, PathStyle::local())
                 .map(|r| r.into_owned().into())
                 .unwrap_or_else(|_| {
-                    RelPath::new(Path::new("untitled"), PathStyle::Posix)
+                    RelPath::new(Path::new(MultiBuffer::DEFAULT_TITLE), PathStyle::Posix)
                         .unwrap()
                         .into_owned()
                         .into()
@@ -105,7 +108,7 @@ fn register_entry(
                 .and_then(|s| RelPath::new(Path::new(s), PathStyle::Posix).ok())
                 .map(|r| r.into_owned().into())
                 .unwrap_or_else(|| {
-                    RelPath::new(Path::new("untitled"), PathStyle::Posix)
+                    RelPath::new(Path::new(MultiBuffer::DEFAULT_TITLE), PathStyle::Posix)
                         .unwrap()
                         .into_owned()
                         .into()
@@ -196,14 +199,9 @@ impl MultiDiffView {
         let editor = cx.new(|cx| {
             let mut editor =
                 Editor::for_multibuffer(multibuffer, Some(project.clone()), window, cx);
-            editor.start_temporary_diff_override();
+            editor.set_diff_hunk_delegate(Some(Arc::new(RestoreOnlyUnstagedDiffHunkDelegate)), cx);
             editor.disable_diagnostics(cx);
             editor.set_expand_all_diff_hunks(cx);
-            editor.set_render_diff_hunks_as_unstaged(true, cx);
-            editor.set_render_diff_hunk_controls(
-                Arc::new(|_, _, _, _, _, _, _, _| gpui::Empty.into_any_element()),
-                cx,
-            );
             editor
         });
 

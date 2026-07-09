@@ -772,21 +772,20 @@ fn client_capabilities_for_agent(
             .write_text_file(true))
         .terminal(true)
         .auth(acp::AuthCapabilities::new().terminal(true))
+        .session(
+            acp::ClientSessionCapabilities::new().config_options(
+                acp::SessionConfigOptionsCapabilities::new()
+                    .boolean(acp::BooleanConfigOptionCapabilities::new()),
+            ),
+        )
         .meta(meta);
 
     if supports_beta_features {
-        capabilities = capabilities
-            .elicitation(
-                acp::ElicitationCapabilities::new()
-                    .form(acp::ElicitationFormCapabilities::new())
-                    .url(acp::ElicitationUrlCapabilities::new()),
-            )
-            .session(
-                acp::ClientSessionCapabilities::new().config_options(
-                    acp::SessionConfigOptionsCapabilities::new()
-                        .boolean(acp::BooleanConfigOptionCapabilities::new()),
-                ),
-            );
+        capabilities = capabilities.elicitation(
+            acp::ElicitationCapabilities::new()
+                .form(acp::ElicitationFormCapabilities::new())
+                .url(acp::ElicitationUrlCapabilities::new()),
+        );
     }
 
     capabilities
@@ -1300,7 +1299,6 @@ impl AcpConnection {
         cx: &mut AsyncApp,
     ) {
         let id = self.id.clone();
-        let apply_boolean_defaults = cx.update(|cx| cx.has_flag::<AcpBetaFeatureFlag>());
         let defaults_to_apply: Vec<_> = {
             let config_opts_ref = config_options.borrow();
             config_opts_ref
@@ -1332,9 +1330,6 @@ impl AcpConnection {
                                     }),
                                 _ => None,
                             }
-                        }
-                        acp::SessionConfigKind::Boolean(_) if !apply_boolean_defaults => {
-                            return None;
                         }
                         acp::SessionConfigKind::Boolean(_) => default_value
                             .as_bool()
@@ -3045,8 +3040,8 @@ mod tests {
     }
 
     #[test]
-    fn client_capabilities_include_boolean_config_options_when_supported() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), true);
+    fn client_capabilities_include_boolean_config_options() {
+        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
 
         assert!(
             capabilities
@@ -3055,13 +3050,6 @@ mod tests {
                 .and_then(|config_options| config_options.boolean)
                 .is_some()
         );
-    }
-
-    #[test]
-    fn client_capabilities_omit_boolean_config_options_when_unsupported() {
-        let capabilities = client_capabilities_for_agent(&AgentId::new("codex-acp"), false);
-
-        assert!(capabilities.session.is_none());
     }
 
     #[test]
@@ -3549,69 +3537,7 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn default_config_options_skip_boolean_defaults_when_acp_beta_is_disabled(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        cx.update(|cx| init_settings_with_acp_beta_override(false, cx));
-
-        let (connection, set_config_requests) = connect_config_defaults_test_agent(cx).await;
-        connection.defaults.set(
-            None,
-            HashMap::from_iter([
-                (
-                    "web_search".to_string(),
-                    AgentConfigOptionValue::Boolean(true),
-                ),
-                ("mode".to_string(), AgentConfigOptionValue::from("manual")),
-            ]),
-        );
-        let config_options = Rc::new(RefCell::new(vec![
-            acp::SessionConfigOption::boolean("web_search", "Web Search", false),
-            acp::SessionConfigOption::select(
-                "mode",
-                "Mode",
-                "auto",
-                vec![
-                    acp::SessionConfigSelectOption::new("auto", "Auto"),
-                    acp::SessionConfigSelectOption::new("manual", "Manual"),
-                ],
-            ),
-        ]));
-
-        let mut async_cx = cx.to_async();
-        connection.apply_default_config_options(
-            &acp::SessionId::new("session-config-defaults"),
-            &config_options,
-            &mut async_cx,
-        );
-        drop(async_cx);
-        cx.run_until_parked();
-
-        let requests = set_config_requests
-            .lock()
-            .expect("set config requests mutex poisoned");
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].config_id, acp::SessionConfigId::new("mode"));
-        assert_eq!(
-            requests[0].value,
-            acp::SessionConfigOptionValue::value_id("manual")
-        );
-
-        let options = config_options.borrow();
-        assert!(
-            matches!(&options[0].kind, acp::SessionConfigKind::Boolean(boolean) if !boolean.current_value)
-        );
-        assert!(
-            matches!(&options[1].kind, acp::SessionConfigKind::Select(select) if select.current_value == acp::SessionConfigValueId::new("manual"))
-        );
-    }
-
-    #[gpui::test]
-    async fn default_config_options_apply_boolean_defaults_when_acp_beta_is_enabled(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        cx.update(|cx| init_settings_with_acp_beta_override(true, cx));
-
+    async fn default_config_options_apply_boolean_defaults(cx: &mut gpui::TestAppContext) {
         let (connection, set_config_requests) = connect_config_defaults_test_agent(cx).await;
         connection.defaults.set(
             None,
@@ -3652,19 +3578,6 @@ mod tests {
         assert!(
             matches!(&options[0].kind, acp::SessionConfigKind::Boolean(boolean) if boolean.current_value)
         );
-    }
-
-    fn init_settings_with_acp_beta_override(enabled: bool, cx: &mut App) {
-        let mut store = settings::SettingsStore::test(cx);
-        store.register_setting::<feature_flags::FeatureFlagsSettings>();
-        store.update_user_settings(cx, |content| {
-            content.feature_flags.get_or_insert_default().insert(
-                AcpBetaFeatureFlag::NAME.to_string(),
-                if enabled { "on" } else { "off" }.to_string(),
-            );
-        });
-        cx.set_global(store);
-        cx.update_flags(false, Vec::new());
     }
 
     async fn connect_config_defaults_test_agent(

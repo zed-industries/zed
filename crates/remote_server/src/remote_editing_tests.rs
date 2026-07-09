@@ -2161,13 +2161,17 @@ async fn test_remote_root_repo_common_dir(cx: &mut TestAppContext, server_cx: &m
         .unwrap();
     cx.executor().run_until_parked();
 
-    let common_dir = worktree_main.read_with(cx, |worktree, _| {
-        worktree.snapshot().root_repo_common_dir().cloned()
+    let (common_dir, is_linked_worktree) = worktree_main.read_with(cx, |worktree, _| {
+        (
+            worktree.snapshot().root_repo_common_dir().cloned(),
+            worktree.snapshot().root_repo_is_linked_worktree(),
+        )
     });
     assert_eq!(
         common_dir.as_deref(),
         Some(Path::new("/code/main_repo/.git")),
     );
+    assert!(!is_linked_worktree);
 
     // Linked worktree: root_repo_common_dir should point to the main repo's .git.
     let (worktree_linked, _) = project
@@ -2178,12 +2182,32 @@ async fn test_remote_root_repo_common_dir(cx: &mut TestAppContext, server_cx: &m
         .unwrap();
     cx.executor().run_until_parked();
 
-    let common_dir = worktree_linked.read_with(cx, |worktree, _| {
-        worktree.snapshot().root_repo_common_dir().cloned()
+    let (common_dir, is_linked_worktree) = worktree_linked.read_with(cx, |worktree, _| {
+        (
+            worktree.snapshot().root_repo_common_dir().cloned(),
+            worktree.snapshot().root_repo_is_linked_worktree(),
+        )
     });
     assert_eq!(
         common_dir.as_deref(),
         Some(Path::new("/code/main_repo/.git")),
+    );
+    assert!(is_linked_worktree);
+
+    let main_worktree_paths = project.read_with(cx, |project, cx| {
+        project
+            .worktree_paths(cx)
+            .main_worktree_path_list()
+            .ordered_paths()
+            .map(|path| path.to_path_buf())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(
+        main_worktree_paths,
+        vec![
+            PathBuf::from("/code/main_repo"),
+            PathBuf::from("/code/main_repo"),
+        ]
     );
 
     // No git repo: root_repo_common_dir should be None.
@@ -2195,10 +2219,14 @@ async fn test_remote_root_repo_common_dir(cx: &mut TestAppContext, server_cx: &m
         .unwrap();
     cx.executor().run_until_parked();
 
-    let common_dir = worktree_no_git.read_with(cx, |worktree, _| {
-        worktree.snapshot().root_repo_common_dir().cloned()
+    let (common_dir, is_linked_worktree) = worktree_no_git.read_with(cx, |worktree, _| {
+        (
+            worktree.snapshot().root_repo_common_dir().cloned(),
+            worktree.snapshot().root_repo_is_linked_worktree(),
+        )
     });
     assert_eq!(common_dir, None);
+    assert!(!is_linked_worktree);
 }
 
 #[gpui::test]

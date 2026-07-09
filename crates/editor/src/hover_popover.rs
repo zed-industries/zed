@@ -798,19 +798,33 @@ pub fn diagnostics_markdown_style(window: &Window, cx: &App) -> MarkdownStyle {
     }
 }
 
+fn parse_file_link(link: &str) -> Option<(PathBuf, Option<String>)> {
+    let uri = Url::parse(link).ok().filter(|uri| uri.scheme() == "file")?;
+    let fragment = uri.fragment().map(ToOwned::to_owned);
+    let path = uri.to_file_path().unwrap_or_else(|_| {
+        let encoded = uri.path();
+
+        urlencoding::decode(encoded)
+            .map(Cow::into_owned)
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(encoded))
+    });
+
+    Some((path, fragment))
+}
+
 pub fn open_markdown_url(
     workspace: Option<Entity<Workspace>>,
     link: SharedString,
     window: &mut Window,
     cx: &mut App,
 ) {
-    if let Ok(uri) = Url::parse(&link)
-        && uri.scheme() == "file"
+    if let Some((path, fragment)) = parse_file_link(&link)
         && let Some(workspace) = workspace
     {
         workspace.update(cx, |workspace, cx| {
             let task = workspace.open_abs_path(
-                PathBuf::from(uri.path()),
+                path,
                 OpenOptions {
                     visible: Some(OpenVisible::None),
                     ..Default::default()
@@ -823,7 +837,7 @@ pub fn open_markdown_url(
                 let item = task.await?;
                 // Ruby LSP uses URLs with #L1,1-4,4
                 // we'll just take the first number and assume it's a line number
-                let Some(fragment) = uri.fragment() else {
+                let Some(fragment) = fragment else {
                     return anyhow::Ok(());
                 };
                 let mut accum = 0u32;
@@ -2746,5 +2760,22 @@ mod tests {
                 "No hover info task should be scheduled when hover is disabled"
             );
         });
+    }
+
+    #[test]
+    fn test_parse_file_links() {
+        assert_eq!(
+            parse_file_link("file:///path/to/file"),
+            Some((PathBuf::from("/path/to/file"), None))
+        );
+        assert_eq!(
+            parse_file_link("file:///path/to/file%20with%20spaces"),
+            Some((PathBuf::from("/path/to/file with spaces"), None))
+        );
+        assert_eq!(
+            parse_file_link("file:///path/to/file#123"),
+            Some((PathBuf::from("/path/to/file"), Some("123".to_string())))
+        );
+        assert_eq!(parse_file_link("http://example.com/"), None,);
     }
 }

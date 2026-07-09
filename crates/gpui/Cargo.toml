@@ -29,9 +29,7 @@ test-support = [
 bench = ["test-support", "dep:criterion", "dep:hdrhistogram"]
 inspector = ["gpui_macros/inspector"]
 leak-detection = ["backtrace"]
-wayland = [
-    "bitflags",
-]
+wayland = []
 x11 = [
     "scap?/x11",
 ]
@@ -51,7 +49,7 @@ accesskit.workspace = true
 anyhow.workspace = true
 async-task = "4.7"
 backtrace = { workspace = true, optional = true }
-bitflags = { workspace = true, optional = true }
+bitflags.workspace = true
 
 collections.workspace = true
 criterion = { workspace = true, optional = true }
@@ -256,3 +254,7 @@ path = "examples/mouse_pressure.rs"
 [[example]]
 name = "a11y"
 path = "examples/a11y.rs"
+
+[[example]]
+name = "view_example"
+path = "examples/view_example/view_example_main.rs"

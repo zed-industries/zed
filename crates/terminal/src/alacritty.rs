@@ -800,6 +800,10 @@ pub(super) fn clear_saved_screen(term: &mut Term<ZedListener>) {
     }
 }
 
+pub(super) fn shrink_to_used(term: &mut Term<ZedListener>) {
+    term.grid_mut().truncate();
+}
+
 pub(super) fn make_content(term: &Term<ZedListener>, last_content: &Content) -> Content {
     let content = term.renderable_content();
 

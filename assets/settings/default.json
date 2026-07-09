@@ -1458,7 +1458,13 @@
   // The EditorConfig `end_of_line` property overrides this setting and behaves
   // like `enforce_lf` or `enforce_crlf`.
   "line_ending": "detect",
-  // Whether or not to perform a buffer format before saving: [on, off]
+  // Whether or not to perform a buffer format before saving:
+  //   "on" — format the whole buffer
+  //   "off" — do not format
+  //   "modifications" — format only lines with unstaged changes; skips formatting
+  //     when no git diff is available or the language server lacks range formatting
+  //   "modifications_if_available" — same, but falls back to formatting the whole
+  //     buffer when range formatting cannot be used
   // Keep in mind, if the autosave with delay is enabled, format_on_save will be ignored
   "format_on_save": "off",
   // How to perform a buffer format. This setting can take multiple values:
@@ -1897,6 +1903,12 @@
     "copy_on_select": false,
     // Whether to keep the text selection after copying it to the clipboard.
     "keep_selection_on_copy": true,
+    // Whether cmd-click (ctrl-click on Linux and Windows) opens hyperlinks even
+    // when the terminal application has enabled mouse reporting (e.g. vim with
+    // mouse=a, htop). When false, these clicks are forwarded to the application
+    // instead, and hyperlinks can still be opened with shift-cmd-click
+    // (shift-ctrl-click).
+    "open_links_in_mouse_mode": true,
     // Whether to show the terminal button in the status bar
     "button": true,
     // Any key-value pairs added to this list will be added to the terminal's

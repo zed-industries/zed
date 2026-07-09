@@ -8,7 +8,7 @@ use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DummyKeyboardMapper,
     ForegroundExecutor, Keymap, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
     PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Task,
-    ThermalState, WindowAppearance, WindowParams,
+    ThermalState, WindowAppearance, WindowKind, WindowParams, popup::PopupNotSupportedError,
 };
 use gpui_wgpu::WgpuContext;
 use std::{
@@ -166,6 +166,12 @@ impl Platform for WebPlatform {
         handle: AnyWindowHandle,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
+        // Native popups are not implemented on the web yet. Rejecting lets callers fall back to
+        // gpui's in-window popovers.
+        if let WindowKind::AnchoredPopup(_) = params.kind {
+            return Err(PopupNotSupportedError.into());
+        }
+
         let context_ref = self.wgpu_context.borrow();
         let context = context_ref.as_ref().ok_or_else(|| {
             anyhow::anyhow!("WebGPU context not initialized. Was Platform::run() called?")

@@ -162,28 +162,6 @@ impl FakeGitRepository {
 }
 
 impl GitRepository for FakeGitRepository {
-    fn load_index_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
-        let fut = self.with_state_async(false, move |state| {
-            state
-                .index_contents
-                .get(&path)
-                .context("not present in index")
-                .cloned()
-        });
-        self.executor.spawn(async move { fut.await.ok() }).boxed()
-    }
-
-    fn load_committed_text(&self, path: RepoPath) -> BoxFuture<'_, Option<String>> {
-        let fut = self.with_state_async(false, move |state| {
-            state
-                .head_contents
-                .get(&path)
-                .context("not present in HEAD")
-                .cloned()
-        });
-        self.executor.spawn(async move { fut.await.ok() }).boxed()
-    }
-
     fn load_commit_template(&self) -> BoxFuture<'_, Result<Option<GitCommitTemplate>>> {
         async { Ok(None) }.boxed()
     }
@@ -262,6 +240,24 @@ impl GitRepository for FakeGitRepository {
                 .map(|rev| state.refs.get(&rev).cloned())
                 .collect())
         })
+    }
+
+    fn load_revisions(&self, revisions: Vec<String>) -> BoxFuture<'_, Result<Vec<Option<String>>>> {
+        let fut = self.with_state_async(false, move |state| {
+            Ok(revisions
+                .into_iter()
+                .map(|rev| {
+                    let (prefix, path) = rev.split_once(':')?;
+                    let repo_path = RepoPath::new(path).ok()?;
+                    match prefix {
+                        "" => state.index_contents.get(&repo_path).cloned(),
+                        "HEAD" => state.head_contents.get(&repo_path).cloned(),
+                        _ => None,
+                    }
+                })
+                .collect())
+        });
+        self.executor.spawn(fut).boxed()
     }
 
     fn show(&self, commit: String) -> BoxFuture<'_, Result<CommitDetails>> {

@@ -109,6 +109,7 @@ pub fn parse_git_diff_name_status(content: &str) -> impl Iterator<Item = (&str, 
             let path = parts.next()?;
             let status = match status_str {
                 "M" => StatusCode::Modified,
+                "T" => StatusCode::TypeChanged,
                 "A" => StatusCode::Added,
                 "D" => StatusCode::Deleted,
                 _ => continue,
@@ -127,6 +128,7 @@ mod tests {
     fn test_parse_git_diff_name_status() {
         let input = concat!(
             "M\x00Cargo.lock\x00",
+            "T\x00LICENSE-GPL\x00",
             "M\x00crates/project/Cargo.toml\x00",
             "M\x00crates/project/src/buffer_store.rs\x00",
             "D\x00crates/project/src/git.rs\x00",
@@ -142,6 +144,7 @@ mod tests {
             output,
             &[
                 ("Cargo.lock", StatusCode::Modified),
+                ("LICENSE-GPL", StatusCode::TypeChanged),
                 ("crates/project/Cargo.toml", StatusCode::Modified),
                 ("crates/project/src/buffer_store.rs", StatusCode::Modified),
                 ("crates/project/src/git.rs", StatusCode::Deleted),

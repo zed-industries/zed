@@ -16,6 +16,7 @@ use ui::{
 struct ElicitationOption {
     value: String,
     label: SharedString,
+    description: Option<SharedString>,
 }
 
 enum ElicitationFieldState {
@@ -429,6 +430,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn single_select_options_include_titled_descriptions() {
+        let schema = acp::StringPropertySchema::new().one_of(vec![
+            acp::EnumOption::new("production", "Production").description("Use live resources"),
+        ]);
+
+        let options = single_select_options(&schema);
+
+        let [option] = options.as_slice() else {
+            panic!("expected one option, got {}", options.len());
+        };
+        assert_eq!(option.value, "production");
+        assert_eq!(option.label.to_string(), "Production");
+        assert_eq!(
+            option
+                .description
+                .as_ref()
+                .map(|description| description.to_string()),
+            Some("Use live resources".to_string())
+        );
+    }
+
+    #[test]
+    fn multi_select_options_include_titled_descriptions() {
+        let schema = acp::MultiSelectPropertySchema::titled(vec![
+            acp::EnumOption::new("repository", "Repository Access")
+                .description("Read and update repositories"),
+        ]);
+
+        let options = multi_select_options(&schema);
+
+        let [option] = options.as_slice() else {
+            panic!("expected one option, got {}", options.len());
+        };
+        assert_eq!(option.value, "repository");
+        assert_eq!(option.label.to_string(), "Repository Access");
+        assert_eq!(
+            option
+                .description
+                .as_ref()
+                .map(|description| description.to_string()),
+            Some("Read and update repositories".to_string())
+        );
+    }
+
     #[gpui::test]
     fn form_state_preserves_string_whitespace(cx: &mut TestAppContext) {
         crate::conversation_view::tests::init_test(cx);
@@ -773,8 +819,10 @@ fn preview_form_schema() -> acp::ElicitationSchema {
                 .title("Environment")
                 .description("Select the environment this credential should target.")
                 .one_of(vec![
-                    acp::EnumOption::new("production", "Production"),
-                    acp::EnumOption::new("staging", "Staging"),
+                    acp::EnumOption::new("production", "Production")
+                        .description("Use the live account and production resources."),
+                    acp::EnumOption::new("staging", "Staging")
+                        .description("Validate changes against staging data first."),
                     acp::EnumOption::new("development", "Development"),
                 ])
                 .default_value("staging"),
@@ -783,8 +831,10 @@ fn preview_form_schema() -> acp::ElicitationSchema {
         .property(
             "scopes",
             acp::MultiSelectPropertySchema::titled(vec![
-                acp::EnumOption::new("profile", "Profile"),
-                acp::EnumOption::new("repository", "Repository Access"),
+                acp::EnumOption::new("profile", "Profile")
+                    .description("Read account identity and basic profile details."),
+                acp::EnumOption::new("repository", "Repository Access")
+                    .description("Read and update repositories connected to this account."),
                 acp::EnumOption::new("terminal", "Terminal Commands"),
             ])
             .title("Access")
@@ -810,6 +860,7 @@ fn single_select_options(schema: &acp::StringPropertySchema) -> Vec<ElicitationO
             .map(|option| ElicitationOption {
                 value: option.value.clone(),
                 label: SharedString::from(option.title.clone()),
+                description: option.description.clone().map(SharedString::from),
             })
             .collect();
     }
@@ -822,6 +873,7 @@ fn single_select_options(schema: &acp::StringPropertySchema) -> Vec<ElicitationO
         .map(|value| ElicitationOption {
             value: value.clone(),
             label: SharedString::from(value.clone()),
+            description: None,
         })
         .collect()
 }
@@ -843,12 +895,13 @@ fn single_select_default_value(
 
 fn multi_select_options(schema: &acp::MultiSelectPropertySchema) -> Vec<ElicitationOption> {
     match &schema.items {
-        acp::MultiSelectItems::Untitled(items) => items
+        acp::MultiSelectItems::String(items) => items
             .values
             .iter()
             .map(|value| ElicitationOption {
                 value: value.clone(),
                 label: SharedString::from(value.clone()),
+                description: None,
             })
             .collect(),
         acp::MultiSelectItems::Titled(items) => items
@@ -857,6 +910,7 @@ fn multi_select_options(schema: &acp::MultiSelectPropertySchema) -> Vec<Elicitat
             .map(|option| ElicitationOption {
                 value: option.value.clone(),
                 label: SharedString::from(option.title.clone()),
+                description: option.description.clone().map(SharedString::from),
             })
             .collect(),
         _ => Vec::new(),
@@ -1310,11 +1364,7 @@ impl<'a> ElicitationCard<'a> {
                                 cx,
                             );
                         })
-                        .child(
-                            div()
-                                .mt_0p5()
-                                .child(Checkbox::new(checkbox_id, checkbox_state)),
-                        )
+                        .child(div().child(Checkbox::new(checkbox_id, checkbox_state)))
                         .child(
                             v_flex()
                                 .gap_0p5()
@@ -1412,8 +1462,8 @@ impl<'a> ElicitationCard<'a> {
                                 )))
                                 .w_full()
                                 .min_h(rems_from_px(28.))
-                                .items_center()
-                                .gap_2()
+                                .items_start()
+                                .gap_1p5()
                                 .rounded_sm()
                                 .border_1()
                                 .border_color(field_border_color.opacity(0.5))
@@ -1430,8 +1480,8 @@ impl<'a> ElicitationCard<'a> {
                                         cx,
                                     );
                                 })
-                                .child(Checkbox::new(checkbox_id, checkbox_state))
-                                .child(Label::new(option.label).size(LabelSize::Small).truncate())
+                                .child(div().child(Checkbox::new(checkbox_id, checkbox_state)))
+                                .child(Self::render_option_content(option))
                         }))
                         .into_any_element()
                 }
@@ -1479,8 +1529,8 @@ impl<'a> ElicitationCard<'a> {
                     .id(option_id)
                     .w_full()
                     .min_h(rems_from_px(28.))
-                    .items_center()
-                    .gap_2()
+                    .items_start()
+                    .gap_1p5()
                     .rounded_sm()
                     .border_1()
                     .border_color(border_color.opacity(0.5))
@@ -1496,14 +1546,37 @@ impl<'a> ElicitationCard<'a> {
                             cx,
                         );
                     })
-                    .child(Self::render_radio_indicator(
-                        is_selected,
-                        border_color,
-                        control_background,
-                    ))
-                    .child(Label::new(option.label).size(LabelSize::Small).truncate())
+                    .child(
+                        div()
+                            .size(Checkbox::container_size())
+                            .flex_none()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(Self::render_radio_indicator(
+                                is_selected,
+                                border_color,
+                                control_background,
+                            )),
+                    )
+                    .child(Self::render_option_content(option))
             }))
             .into_any_element()
+    }
+
+    fn render_option_content(option: ElicitationOption) -> Div {
+        v_flex()
+            .min_w_0()
+            .flex_1()
+            .gap_0p5()
+            .child(Label::new(option.label).size(LabelSize::Small).truncate())
+            .when_some(option.description, |this, description| {
+                this.child(
+                    Label::new(description)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+            })
     }
 
     fn option_row_background(is_selected: bool, cx: &App) -> Hsla {

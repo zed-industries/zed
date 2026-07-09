@@ -434,6 +434,7 @@ ul#searchresults span.teaser em {
 
 .sidebar {
   position: relative;
+  order: 0;
   width: var(--sidebar-width);
   flex-shrink: 0;
   display: flex;

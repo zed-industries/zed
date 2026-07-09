@@ -80,7 +80,7 @@ You can connect both local and remote MCP servers from **Settings → AI → MCP
 
 Most MCP servers require configuration after installation.
 
-In the case of extensions, after installing it, Zed will pop up a modal displaying what is required for you to properly set it up.
+In the case of an extension, after installing it, Zed will pop up a modal displaying what is required for you to properly set it up.
 For example, the GitHub MCP extension requires you to add a [Personal Access Token](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
 
 In the case of custom servers, make sure you check the provider documentation to determine what type of command, arguments, and environment variables need to be added to the JSON.

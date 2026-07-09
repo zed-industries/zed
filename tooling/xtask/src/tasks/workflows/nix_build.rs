@@ -1,6 +1,6 @@
 use crate::tasks::workflows::{
     runners::{Arch, Platform},
-    steps::{CommonJobConditions, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob},
+    steps::{CommonJobConditions, CommonPermissionSets, DEFAULT_REPOSITORY_OWNER_GUARD, NamedJob},
 };
 
 use super::{runners, steps, steps::named, vars};
@@ -13,6 +13,7 @@ use gh_workflow::*;
 pub fn nix_build() -> Workflow {
     let [nix_linux_x86_64, nix_mac_aarch64] = nix_pr_jobs(&["run-nix", "run-bundling"]);
     named::workflow()
+        .with_minimal_permissions()
         .on(Event::default().pull_request(
             PullRequest::default().types([PullRequestType::Labeled, PullRequestType::Synchronize]),
         ))

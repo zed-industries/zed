@@ -17,7 +17,7 @@ use project::{
 use settings::Settings;
 use std::{ops::Range, sync::Arc};
 use ui::{ButtonLike, Divider, Tooltip, prelude::*};
-use util::{debug_panic, maybe};
+use util::debug_panic;
 use workspace::{HideStatusItem, StatusItemView, Workspace, item::ItemHandle};
 use zed_actions::agent::{
     ConflictContent, ResolveConflictedFilesWithAgent, ResolveConflictsWithAgent,
@@ -115,19 +115,17 @@ pub(crate) fn buffer_ranges_updated(
         return;
     }
 
-    let buffer_conflicts = editor
-        .addon_mut::<ConflictAddon>()
-        .unwrap()
-        .buffers
-        .entry(buffer_id)
-        .or_insert_with(|| {
-            let subscription = cx.subscribe(&conflict_set, conflicts_updated);
-            BufferConflicts {
-                block_ids: Vec::new(),
-                conflict_set: conflict_set.clone(),
-                _subscription: subscription,
-            }
-        });
+    let Some(conflict_addon) = editor.addon_mut::<ConflictAddon>() else {
+        return;
+    };
+    let buffer_conflicts = conflict_addon.buffers.entry(buffer_id).or_insert_with(|| {
+        let subscription = cx.subscribe(&conflict_set, conflicts_updated);
+        BufferConflicts {
+            block_ids: Vec::new(),
+            conflict_set: conflict_set.clone(),
+            _subscription: subscription,
+        }
+    });
 
     let conflict_set = buffer_conflicts.conflict_set.clone();
     let conflicts_len = conflict_set.read(cx).snapshot().conflicts.len();
@@ -150,18 +148,17 @@ pub(crate) fn buffers_removed(
     cx: &mut Context<Editor>,
 ) {
     let mut removed_block_ids = HashSet::default();
-    editor
-        .addon_mut::<ConflictAddon>()
-        .unwrap()
-        .buffers
-        .retain(|buffer_id, buffer| {
-            if removed_buffer_ids.contains(buffer_id) {
-                removed_block_ids.extend(buffer.block_ids.iter().map(|(_, block_id)| *block_id));
-                false
-            } else {
-                true
-            }
-        });
+    let Some(conflict_addon) = editor.addon_mut::<ConflictAddon>() else {
+        return;
+    };
+    conflict_addon.buffers.retain(|buffer_id, buffer| {
+        if removed_buffer_ids.contains(buffer_id) {
+            removed_block_ids.extend(buffer.block_ids.iter().map(|(_, block_id)| *block_id));
+            false
+        } else {
+            true
+        }
+    });
     editor.remove_blocks(removed_block_ids, None, cx);
 }
 
@@ -176,9 +173,13 @@ fn conflicts_updated(
     let conflict_set = conflict_set.read(cx).snapshot();
     let multibuffer = editor.buffer().read(cx);
     let snapshot = multibuffer.snapshot(cx);
-    let old_range = maybe!({
-        let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
-        let buffer_conflicts = conflict_addon.buffers.get(&buffer_id)?;
+    let old_range = {
+        let Some(conflict_addon) = editor.addon_mut::<ConflictAddon>() else {
+            return;
+        };
+        let Some(buffer_conflicts) = conflict_addon.buffers.get(&buffer_id) else {
+            return;
+        };
         match buffer_conflicts.block_ids.get(event.old_range.clone()) {
             Some(_) => Some(event.old_range.clone()),
             None => {
@@ -197,10 +198,12 @@ fn conflicts_updated(
                 }
             }
         }
-    });
+    };
 
     // Remove obsolete highlights and blocks
-    let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
+    let Some(conflict_addon) = editor.addon_mut::<ConflictAddon>() else {
+        return;
+    };
     if let Some((buffer_conflicts, old_range)) = conflict_addon
         .buffers
         .get_mut(&buffer_id)
@@ -256,7 +259,9 @@ fn conflicts_updated(
     }
     let new_block_ids = editor.insert_blocks(blocks, None, cx);
 
-    let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
+    let Some(conflict_addon) = editor.addon_mut::<ConflictAddon>() else {
+        return;
+    };
     if let Some((buffer_conflicts, old_range)) =
         conflict_addon.buffers.get_mut(&buffer_id).zip(old_range)
     {
@@ -481,7 +486,7 @@ pub(crate) fn resolve_conflict(
                 let buffer_id = resolved_conflict.ours.end.buffer_id;
                 let buffer = multibuffer.read(cx).buffer(buffer_id)?;
                 resolved_conflict.resolve(buffer.clone(), &ranges, cx);
-                let conflict_addon = editor.addon_mut::<ConflictAddon>().unwrap();
+                let conflict_addon = editor.addon_mut::<ConflictAddon>()?;
                 let snapshot = multibuffer.read(cx).snapshot(cx);
                 let buffer_snapshot = buffer.read(cx).snapshot();
                 let state = conflict_addon

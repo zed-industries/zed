@@ -9,6 +9,8 @@ on:
     types:
     - labeled
     - synchronize
+permissions:
+  contents: read
 jobs:
   build_nix_linux_x86_64:
     if: (github.repository_owner == 'zed-industries' || github.repository_owner == 'zed-extensions') && ((github.event.action == 'labeled' && (github.event.label.name == 'run-nix' || github.event.label.name == 'run-bundling')) || (github.event.action == 'synchronize' && (contains(github.event.pull_request.labels.*.name, 'run-nix') || contains(github.event.pull_request.labels.*.name, 'run-bundling'))))

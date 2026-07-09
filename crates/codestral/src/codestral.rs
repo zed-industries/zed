@@ -82,9 +82,10 @@ struct CurrentCompletion {
 
 impl CurrentCompletion {
     /// Attempts to adjust the edits based on changes made to the buffer since the completion was generated.
-    /// Returns None if the user's edits conflict with the predicted edits.
+    /// Returns None if no predicted edits remain or the user's edits conflict with the predicted edits.
     fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, Arc<str>)>> {
         edit_prediction_types::interpolate_edits(&self.snapshot, new_snapshot, &self.edits)
+            .filter(|edits| !edits.is_empty())
     }
 }
 

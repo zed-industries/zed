@@ -163,7 +163,7 @@ Enable Next LS by adding the following to your settings file:
 
 Next LS can accept initialization options.
 
-Completions are an experimental feature within Next LS, they are enabled by default in Zed. Disable them by adding the following to your settings file:
+Completions are an experimental feature within Next LS, and are enabled by default in Zed. Disable them by adding the following to your settings file:
 
 ```json [settings]
   "lsp": {

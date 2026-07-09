@@ -2163,6 +2163,11 @@ impl Buffer {
                             for row in row_range.skip(1) {
                                 indent_sizes.entry(row).or_insert_with(|| {
                                     let mut size = snapshot.indent_size_for_line(row);
+                                    // A line with no indentation has an arbitrary
+                                    // indent kind, so it can adopt the new kind.
+                                    if size.len == 0 {
+                                        size.kind = new_indent.kind;
+                                    }
                                     if size.kind == new_indent.kind {
                                         match delta.cmp(&0) {
                                             Ordering::Greater => size.len += delta as u32,

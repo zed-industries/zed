@@ -2774,6 +2774,54 @@ impl Pane {
         self.activate_item(index, true, true, window, cx);
     }
 
+    fn tab_icon_element(
+        &self,
+        item: &dyn ItemHandle,
+        is_active: bool,
+        window: &Window,
+        cx: &App,
+    ) -> Option<AnyElement> {
+        let icon = item
+            .tab_icon(window, cx)?
+            .size(IconSize::Small)
+            .color(Color::Muted);
+
+        let item_diagnostic = item
+            .project_path(cx)
+            .and_then(|project_path| self.diagnostics.get(&project_path));
+
+        let Some(diagnostic) = item_diagnostic else {
+            return Some(icon.into_any_element());
+        };
+
+        let knockout_item_color = if is_active {
+            cx.theme().colors().tab_active_background
+        } else {
+            cx.theme().colors().tab_bar_background
+        };
+
+        let (icon_decoration, icon_color) = if matches!(diagnostic, &DiagnosticSeverity::ERROR) {
+            (IconDecorationKind::X, Color::Error)
+        } else {
+            (IconDecorationKind::Triangle, Color::Warning)
+        };
+
+        Some(
+            DecoratedIcon::new(
+                icon,
+                Some(
+                    IconDecoration::new(icon_decoration, knockout_item_color, cx)
+                        .color(icon_color.color(cx))
+                        .position(Point {
+                            x: px(-2.),
+                            y: px(-2.),
+                        }),
+                ),
+            )
+            .into_any_element(),
+        )
+    }
+
     fn render_tab(
         &self,
         ix: usize,
@@ -2802,54 +2850,7 @@ impl Pane {
             cx,
         );
 
-        let item_diagnostic = item
-            .project_path(cx)
-            .map_or(None, |project_path| self.diagnostics.get(&project_path));
-
-        let decorated_icon = item_diagnostic.map_or(None, |diagnostic| {
-            let icon = match item.tab_icon(window, cx) {
-                Some(icon) => icon,
-                None => return None,
-            };
-
-            let knockout_item_color = if is_active {
-                cx.theme().colors().tab_active_background
-            } else {
-                cx.theme().colors().tab_bar_background
-            };
-
-            let (icon_decoration, icon_color) = if matches!(diagnostic, &DiagnosticSeverity::ERROR)
-            {
-                (IconDecorationKind::X, Color::Error)
-            } else {
-                (IconDecorationKind::Triangle, Color::Warning)
-            };
-
-            Some(DecoratedIcon::new(
-                icon.size(IconSize::Small).color(Color::Muted),
-                Some(
-                    IconDecoration::new(icon_decoration, knockout_item_color, cx)
-                        .color(icon_color.color(cx))
-                        .position(Point {
-                            x: px(-2.),
-                            y: px(-2.),
-                        }),
-                ),
-            ))
-        });
-
-        let icon = if decorated_icon.is_none() {
-            match item_diagnostic {
-                Some(&DiagnosticSeverity::ERROR) => None,
-                Some(&DiagnosticSeverity::WARNING) => None,
-                _ => item
-                    .tab_icon(window, cx)
-                    .map(|icon| icon.color(Color::Muted)),
-            }
-            .map(|icon| icon.size(IconSize::Small))
-        } else {
-            None
-        };
+        let icon = self.tab_icon_element(item, is_active, window, cx);
 
         let settings = ItemSettings::get_global(cx);
         let close_side = &settings.close_position;
@@ -2888,7 +2889,7 @@ impl Pane {
                 }))
         };
 
-        let has_file_icon = icon.is_some() | decorated_icon.is_some();
+        let has_file_icon = icon.is_some();
 
         let capability = item.capability(cx);
         let tab = Tab::new(ix)
@@ -3040,10 +3041,8 @@ impl Pane {
                 h_flex()
                     .id(("pane-tab-content", ix))
                     .gap_1()
-                    .children(if let Some(decorated_icon) = decorated_icon {
-                        Some(decorated_icon.into_any_element())
-                    } else if let Some(icon) = icon {
-                        Some(icon.into_any_element())
+                    .children(if let Some(icon) = icon {
+                        Some(icon)
                     } else if !capability.editable() {
                         Some(read_only_toggle(capability == Capability::Read).into_any_element())
                     } else {
@@ -4213,7 +4212,7 @@ fn default_render_tab_bar_buttons(
             PopoverMenu::new("pane-tab-bar-popover-menu")
                 .trigger_with_tooltip(
                     IconButton::new("plus", IconName::Plus).icon_size(IconSize::Small),
-                    Tooltip::text("New..."),
+                    Tooltip::text("New…"),
                 )
                 .anchor(Anchor::TopRight)
                 .with_handle(pane.new_item_context_menu_handle.clone())
@@ -4941,8 +4940,13 @@ impl Render for DraggedTab {
             window,
             cx,
         );
+        let icon =
+            self.pane
+                .read(cx)
+                .tab_icon_element(self.item.as_ref(), self.is_active, window, cx);
         Tab::new("")
             .toggle_state(self.is_active)
+            .children(icon)
             .child(label)
             .render(window, cx)
             .font(ui_font)

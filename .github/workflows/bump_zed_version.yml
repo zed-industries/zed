@@ -8,6 +8,8 @@ on:
         description: 'Which channels to bump: all, main, preview, or stable'
         type: string
         default: all
+permissions:
+  contents: read
 jobs:
   resolve_versions:
     if: github.repository_owner == 'zed-industries'
@@ -86,6 +88,9 @@ jobs:
     - resolve_versions
     if: inputs.target == 'all' || inputs.target == 'main'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
     - id: generate-token
       name: steps::authenticate_as_zippy
@@ -127,6 +132,8 @@ jobs:
     - resolve_versions
     if: inputs.target == 'all' || inputs.target == 'preview'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    permissions:
+      contents: write
     steps:
     - id: generate-token
       name: steps::authenticate_as_zippy
@@ -180,6 +187,8 @@ jobs:
     - resolve_versions
     if: inputs.target == 'all' || inputs.target == 'stable'
     runs-on: namespace-profile-16x32-ubuntu-2204
+    permissions:
+      contents: write
     steps:
     - id: generate-token
       name: steps::authenticate_as_zippy

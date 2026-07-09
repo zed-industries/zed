@@ -360,10 +360,6 @@ impl Editor {
         self.delegate_expand_excerpts = delegate;
     }
 
-    pub(super) fn set_delegate_stage_and_restore(&mut self, delegate: bool) {
-        self.delegate_stage_and_restore = delegate;
-    }
-
     pub(super) fn set_on_local_selections_changed(
         &mut self,
         callback: Option<Box<dyn Fn(Point, &mut Window, &mut Context<Self>) + 'static>>,

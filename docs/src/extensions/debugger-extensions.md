@@ -81,7 +81,7 @@ Your extension can define one or more debug locators. Each debug locator must be
 ```
 
 Locators have two components.
-First, each locator is ran on each available task to figure out if any of the available locators can provide a debug scenario for a given task. This is done by calling `dap_locator_create_scenario`.
+First, each locator is run on each available task to figure out if any of the available locators can provide a debug scenario for a given task. This is done by calling `dap_locator_create_scenario`.
 
 ```rust
 impl zed::Extension for MyExtension {

@@ -79,7 +79,7 @@ On macOS, your system Python will _not_ work. Either set up [pyenv](https://gith
 
 </div>
 
-To setup your current Python to have an available kernel, run:
+To set up your current Python to have an available kernel, run:
 
 ```sh
 pip install ipykernel
@@ -217,4 +217,4 @@ Available kernels:
   rust                  /Users/z/Library/Jupyter/kernels/rust
 ```
 
-> Note: Zed makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want to explicitly control run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.
+> Note: Zed makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want to explicitly control this, run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.

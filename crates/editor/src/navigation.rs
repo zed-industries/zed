@@ -608,6 +608,68 @@ impl Editor {
         })
     }
 
+    pub fn move_to_next_comment_paragraph(
+        &mut self,
+        _: &MoveToNextCommentParagraph,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate();
+            return;
+        }
+        // Keep the destination paragraph near the top of the viewport so the
+        // whole paragraph below the caret stays visible after a jump.
+        self.change_selections(
+            SelectionEffects::scroll(Autoscroll::top_relative(5.0)),
+            window,
+            cx,
+            |s| {
+                s.move_with(&mut |map, selection| {
+                    selection.collapse_to(
+                        movement::comment_paragraph(
+                            map,
+                            selection.head(),
+                            workspace::searchable::Direction::Next,
+                        ),
+                        SelectionGoal::None,
+                    )
+                });
+            },
+        )
+    }
+
+    pub fn move_to_previous_comment_paragraph(
+        &mut self,
+        _: &MoveToPreviousCommentParagraph,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(self.mode, EditorMode::SingleLine) {
+            cx.propagate();
+            return;
+        }
+        // Keep the destination paragraph near the top of the viewport so the
+        // whole paragraph below the caret stays visible after a jump.
+        self.change_selections(
+            SelectionEffects::scroll(Autoscroll::top_relative(5.0)),
+            window,
+            cx,
+            |s| {
+                s.move_with(&mut |map, selection| {
+                    selection.collapse_to(
+                        movement::comment_paragraph(
+                            map,
+                            selection.head(),
+                            workspace::searchable::Direction::Prev,
+                        ),
+                        SelectionGoal::None,
+                    )
+                });
+            },
+        )
+    }
+
     pub fn select_to_start_of_paragraph(
         &mut self,
         _: &SelectToStartOfParagraph,

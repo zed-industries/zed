@@ -1436,8 +1436,15 @@ impl KeymapEditor {
             self.table_interaction_state.read(cx).scroll_offset(),
         ));
         let keyboard_mapper = cx.keyboard_mapper().clone();
+        let deprecated_aliases = cx.deprecated_actions_to_preferred_actions().clone();
         cx.spawn(async move |_, _| {
-            remove_keybinding(to_remove, &fs, keyboard_mapper.as_ref()).await
+            remove_keybinding(
+                to_remove,
+                &fs,
+                keyboard_mapper.as_ref(),
+                &deprecated_aliases,
+            )
+            .await
         })
         .detach_and_notify_err(self.workspace.clone(), window, cx);
     }
@@ -2839,6 +2846,7 @@ impl KeybindingEditorModal {
 
         let create = self.creating;
         let keyboard_mapper = cx.keyboard_mapper().clone();
+        let deprecated_aliases = cx.deprecated_actions_to_preferred_actions().clone();
 
         let action_name = self
             .get_selected_action_name(cx)
@@ -2869,6 +2877,7 @@ impl KeybindingEditorModal {
                 new_action_args.as_deref(),
                 &fs,
                 keyboard_mapper.as_ref(),
+                &deprecated_aliases,
             )
             .await
             {
@@ -3607,6 +3616,7 @@ async fn save_keybinding_update(
     new_args: Option<&str>,
     fs: &Arc<dyn Fs>,
     keyboard_mapper: &dyn PlatformKeyboardMapper,
+    deprecated_aliases: &HashMap<&'static str, &'static str>,
 ) -> anyhow::Result<()> {
     let keymap_contents = settings::KeymapFile::load_keymap_file(fs)
         .await
@@ -3656,8 +3666,9 @@ async fn save_keybinding_update(
         keymap_contents,
         tab_size,
         keyboard_mapper,
+        deprecated_aliases,
     )
-    .map_err(|err| anyhow::anyhow!("Could not save updated keybinding: {}", err))?;
+    .map_err(|err| err.context("Could not save updated keybinding"))?;
     fs.write(
         paths::keymap_file().as_path(),
         updated_keymap_contents.as_bytes(),
@@ -3678,6 +3689,7 @@ async fn remove_keybinding(
     existing: ProcessedBinding,
     fs: &Arc<dyn Fs>,
     keyboard_mapper: &dyn PlatformKeyboardMapper,
+    deprecated_aliases: &HashMap<&'static str, &'static str>,
 ) -> anyhow::Result<()> {
     let Some(keystrokes) = existing.keystrokes() else {
         anyhow::bail!("Cannot remove a keybinding that does not exist");
@@ -3707,6 +3719,7 @@ async fn remove_keybinding(
         keymap_contents,
         tab_size,
         keyboard_mapper,
+        deprecated_aliases,
     )
     .context("Failed to update keybinding")?;
     fs.write(
@@ -4015,6 +4028,204 @@ mod persistence {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fs::FakeFs;
+    use gpui::{TestAppContext, VisualTestContext};
+    use project::Project;
+    use serde_json::json;
+    use settings::KeymapFileLoadResult;
+    use workspace::{AppState, MultiWorkspace};
+
+    async fn reload_keymap_from_file(fs: &Arc<FakeFs>, cx: &mut TestAppContext) {
+        let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        cx.update(|cx| {
+            let mut key_bindings = match KeymapFile::load(&content, cx) {
+                KeymapFileLoadResult::Success { key_bindings } => key_bindings,
+                KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
+                    panic!("keymap failed to load: {error_message:?}")
+                }
+                KeymapFileLoadResult::JsonParseFailure { error } => {
+                    panic!("keymap json parse failure: {error}")
+                }
+            };
+            cx.clear_key_bindings();
+            for key_binding in &mut key_bindings {
+                key_binding.set_meta(KeybindSource::User.meta());
+            }
+            cx.bind_keys(key_bindings);
+            KeymapEventChannel::trigger_keymap_changed(cx);
+        });
+    }
+
+    async fn setup_keymap_editor(
+        cx: &mut TestAppContext,
+        keymap_content: &str,
+    ) -> (Arc<FakeFs>, Entity<KeymapEditor>, VisualTestContext) {
+        cx.update(|cx| {
+            let _state = AppState::test(cx);
+            editor::init(cx);
+            cx.set_global(KeymapEventChannel::new());
+        });
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            paths::config_dir(),
+            json!({ "keymap.json": keymap_content }),
+        )
+        .await;
+
+        reload_keymap_from_file(&fs, cx).await;
+
+        let project = Project::test(fs.clone(), [], cx).await;
+        let window_handle =
+            cx.add_window(|window, cx| MultiWorkspace::test_new(project.clone(), window, cx));
+        let workspace = window_handle
+            .read_with(cx, |multi_workspace, _| multi_workspace.workspace().clone())
+            .unwrap();
+        let mut cx = VisualTestContext::from_window(window_handle.into(), cx);
+        let keymap_editor = cx
+            .update(|window, cx| cx.new(|cx| KeymapEditor::new(workspace.downgrade(), window, cx)));
+        cx.run_until_parked();
+        (fs, keymap_editor, cx)
+    }
+
+    fn visible_rows_for_action(editor: &KeymapEditor, action_name: &str) -> Vec<usize> {
+        editor
+            .matches
+            .iter()
+            .enumerate()
+            .filter(|(_, string_match)| {
+                let binding = &editor.keybindings[string_match.candidate_id];
+                binding.action().name == action_name && binding.keystrokes().is_some()
+            })
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    #[gpui::test]
+    async fn test_delete_one_of_two_identical_user_bindings(cx: &mut TestAppContext) {
+        let keymap_content = r#"[
+    {
+        "bindings": {
+            "alt-cmd-shift-c": "zed::OpenKeymap"
+        }
+    },
+    {
+        "bindings": {
+            "alt-cmd-shift-c": "zed::OpenKeymap"
+        }
+    }
+]"#;
+        let (fs, keymap_editor, mut cx) = setup_keymap_editor(cx, keymap_content).await;
+        let cx = &mut cx;
+
+        let rows = keymap_editor.read_with(cx, |editor, _| {
+            visible_rows_for_action(editor, "zed::OpenKeymap")
+        });
+        assert_eq!(
+            rows.len(),
+            2,
+            "expected the two duplicate bindings to show as two rows"
+        );
+
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            editor.selected_index = Some(rows[1]);
+            editor.delete_binding(&DeleteBinding, window, cx);
+        });
+        cx.run_until_parked();
+
+        let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        assert_eq!(
+            content.matches("alt-cmd-shift-c").count(),
+            1,
+            "expected exactly one binding remaining in the keymap file, got:\n{content}"
+        );
+
+        // Simulate the keymap file watcher reacting to the change.
+        reload_keymap_from_file(&fs, cx).await;
+        cx.run_until_parked();
+
+        let rows = keymap_editor.read_with(cx, |editor, _| {
+            visible_rows_for_action(editor, "zed::OpenKeymap")
+        });
+        assert_eq!(rows.len(), 1, "expected one row remaining after deletion");
+    }
+
+    // Regression test: one of the two entries in the keymap file uses a
+    // deprecated alias of the action (`editor::CopyRelativePath` instead of
+    // `workspace::CopyRelativePath`). Both rows display identically in the
+    // keymap editor (aliases resolve to the canonical action on load), but
+    // deletion targets the canonical action name, so `KeymapFile::update_keybinding`
+    // used to never find the alias entry, making it impossible to delete.
+    #[gpui::test]
+    async fn test_delete_binding_with_deprecated_action_alias(cx: &mut TestAppContext) {
+        let keymap_content = r#"[
+    {
+        "bindings": {
+            "alt-cmd-shift-c": "editor::CopyRelativePath"
+        }
+    },
+    {
+        "bindings": {
+            "alt-cmd-shift-c": "workspace::CopyRelativePath"
+        }
+    }
+]"#;
+        let (fs, keymap_editor, mut cx) = setup_keymap_editor(cx, keymap_content).await;
+        let cx = &mut cx;
+
+        let rows = keymap_editor.read_with(cx, |editor, _| {
+            visible_rows_for_action(editor, "workspace::CopyRelativePath")
+        });
+        assert_eq!(
+            rows.len(),
+            2,
+            "both the alias and the canonical entry should show as (identical) rows"
+        );
+
+        // Delete the first row. Both rows report the canonical action name, so
+        // `find_binding` matches the canonical file entry and removes it.
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            editor.selected_index = Some(rows[0]);
+            editor.delete_binding(&DeleteBinding, window, cx);
+        });
+        cx.run_until_parked();
+
+        let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        assert_eq!(
+            content.matches("alt-cmd-shift-c").count(),
+            1,
+            "first deletion should remove one of the two entries, got:\n{content}"
+        );
+
+        // Simulate the keymap file watcher reacting to the change.
+        reload_keymap_from_file(&fs, cx).await;
+        cx.run_until_parked();
+
+        let rows = keymap_editor.read_with(cx, |editor, _| {
+            visible_rows_for_action(editor, "workspace::CopyRelativePath")
+        });
+        assert_eq!(
+            rows.len(),
+            1,
+            "one row should remain after the first deletion"
+        );
+
+        // Delete the remaining row (the alias entry). `find_binding` must
+        // resolve the deprecated alias in the file to the canonical action
+        // name to find and remove it.
+        keymap_editor.update_in(cx, |editor, window, cx| {
+            editor.selected_index = Some(rows[0]);
+            editor.delete_binding(&DeleteBinding, window, cx);
+        });
+        cx.run_until_parked();
+
+        let content = fs.load(paths::keymap_file().as_path()).await.unwrap();
+        assert_eq!(
+            content.matches("alt-cmd-shift-c").count(),
+            0,
+            "second deletion should remove the remaining (alias) entry, got:\n{content}"
+        );
+    }
 
     #[test]
     fn normalized_ctx_cmp() {
