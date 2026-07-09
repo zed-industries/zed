@@ -15,6 +15,8 @@ Ruby support is available through the [Ruby extension](https://github.com/zed-ex
   - [solargraph](https://github.com/castwide/solargraph)
   - [rubocop](https://github.com/rubocop/rubocop)
   - [Herb](https://herb-tools.dev)
+  - [kanayago](https://github.com/S-H-GAMELINKS/kanayago)
+  - [fuzzy-ruby-server](https://github.com/doompling/fuzzy_ruby_server)
 - Debug Adapter: [`rdbg`](https://github.com/ruby/debug)
 
 The Ruby extension also provides support for ERB files.
@@ -34,6 +36,8 @@ In addition to these two language servers, Zed also supports:
 - [sorbet](https://sorbet.org/) which is a static type checker for Ruby with a custom gradual type system.
 - [steep](https://github.com/soutaro/steep) which is a static type checker for Ruby that uses Ruby Signature (RBS).
 - [Herb](https://herb-tools.dev) which is a language server for ERB files.
+- [kanayago](https://github.com/S-H-GAMELINKS/kanayago) which is a Ruby language server that makes Ruby's parser available as a gem.
+- [fuzzy-ruby-server](https://github.com/doompling/fuzzy_ruby_server) which is a Ruby language server designed for large codebases, using full-text search for fast, fuzzy search results that approximate Ruby's behavior.
 
 When configuring a language server, it helps to open the LSP Logs window using the 'dev: Open Language Server Logs' command. You can then choose the corresponding language instance to see any logged information.
 
@@ -43,7 +47,7 @@ The [Ruby extension](https://github.com/zed-extensions/ruby) offers both `solarg
 
 ### Language Server Activation
 
-For all supported Ruby language servers (`solargraph`, `ruby-lsp`, `rubocop`, `sorbet`, and `steep`), the Ruby extension follows this activation sequence:
+For all supported Ruby language servers (`solargraph`, `ruby-lsp`, `rubocop`, `sorbet` and `steep`), the Ruby extension follows this activation sequence:
 
 1. If the language server is found in your project's `Gemfile`, it will be used through `bundle exec`.
 2. If not found in the `Gemfile`, the Ruby extension will look for the executable in your system `PATH`.
