@@ -554,9 +554,15 @@ impl VsCodeSettings {
             extend_comment_on_newline: None,
             extend_list_on_newline: None,
             indent_list_on_tab: None,
-            format_on_save: self.read_bool("editor.guides.formatOnSave").map(|b| {
-                if b {
-                    FormatOnSave::On
+            // In VS Code, `editor.formatOnSaveMode` only applies when `editor.formatOnSave` is enabled.
+            format_on_save: self.read_bool("editor.formatOnSave").map(|enabled| {
+                if enabled {
+                    self.read_enum("editor.formatOnSaveMode", |s| match s {
+                        "modificationsIfAvailable" => Some(FormatOnSave::ModificationsIfAvailable),
+                        "modifications" => Some(FormatOnSave::Modifications),
+                        _ => None,
+                    })
+                    .unwrap_or(FormatOnSave::On)
                 } else {
                     FormatOnSave::Off
                 }
@@ -899,6 +905,7 @@ impl VsCodeSettings {
                 .map(FontSize::from),
             font_weight: None,
             keep_selection_on_copy: None,
+            open_links_in_mouse_mode: None,
             line_height: self
                 .read_f32("terminal.integrated.lineHeight")
                 .map(|lh| TerminalLineHeight::Custom(lh)),
