@@ -1354,7 +1354,7 @@ impl RemoteConnectionOptions {
             RemoteConnectionOptions::Ssh(_) => "ssh",
             RemoteConnectionOptions::Wsl(_) => "wsl",
             RemoteConnectionOptions::Docker(opts) => {
-                if opts.use_podman {
+                if opts.is_podman() {
                     "podman"
                 } else {
                     "docker"

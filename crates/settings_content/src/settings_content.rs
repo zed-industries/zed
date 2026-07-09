@@ -1228,7 +1228,7 @@ pub struct RemoteSettingsContent {
     ///
     /// Default: null (auto-detect)
     pub dev_container_use_buildkit: Option<bool>,
-    /// The container CLI binary used to manage dev containers. When set, this
+    /// The container CLI binary used to manage devcontainers. When set, this
     /// takes priority over `use_podman` and allows using alternatives such as
     /// `podman-remote` or an absolute path like `/usr/bin/podman-remote`.
     ///

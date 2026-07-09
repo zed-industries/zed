@@ -53,6 +53,20 @@ pub struct DockerConnectionOptions {
     pub remote_env: BTreeMap<String, String>,
 }
 
+impl DockerConnectionOptions {
+    pub fn is_podman(&self) -> bool {
+        if let Some(binary) = &self.container_binary {
+            std::path::Path::new(binary)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|name| name.starts_with("podman"))
+                .unwrap_or(false)
+        } else {
+            self.use_podman
+        }
+    }
+}
+
 pub(crate) struct DockerExecConnection {
     proxy_process: Mutex<Option<u32>>,
     remote_dir_for_server: String,
