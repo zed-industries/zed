@@ -106,6 +106,16 @@ impl TableDataEngine {
             .get(&column)
             .unwrap_or(&empty);
 
+        // Counts must reflect rows that also satisfy every other column's
+        // currently applied filter, not the whole dataset, so counts stay
+        // accurate once filters are stacked across columns. `column`'s own
+        // filter is excluded so its entries show what selecting them would
+        // additionally include, independent of its current selection.
+        let mut other_columns_filter_stack = self.filter_stack.clone();
+        other_columns_filter_stack.retention_config.remove(&column);
+        let rows_passing_other_filters =
+            retain_rows(&self.contents.rows, &other_columns_filter_stack);
+
         Ok(Arc::new(
             all_column_entries
                 .iter()
@@ -117,7 +127,16 @@ impl TableDataEngine {
                             is_applied: active_column_filters.contains(&entry.content),
                         }
                     };
-                    (entry.clone(), state)
+                    let adjusted_entry = FilterEntry {
+                        content: entry.content.clone(),
+                        rows: entry
+                            .rows
+                            .iter()
+                            .filter(|row| rows_passing_other_filters.contains(row))
+                            .copied()
+                            .collect(),
+                    };
+                    (adjusted_entry, state)
                 })
                 .collect(),
         ))
