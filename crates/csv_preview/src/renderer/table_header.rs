@@ -171,11 +171,9 @@ impl Render for CsvFilterMenu {
             .collect();
 
         let entry_count = self.entries.len();
-        // Measure the actual text line height and add py_1 padding (4px × 2) to get
-        // the true row height. This avoids the last item being clipped when there are
-        // fewer entries than the 300px cap.
-        let row_height = window.text_style().line_height_in_pixels(window.rem_size()) + px(8.);
-        let list_height = (row_height * entry_count as f32).min(px(300.)) - px(8.);
+        // Cap like the command palette picker: grow to fit content, up to a
+        // fraction of the window, then scroll. Avoids hand-computing row height.
+        let max_list_height = window.viewport_size().height * 0.6;
         let border_color = cx.theme().colors().border_variant;
 
         v_flex()
@@ -210,10 +208,13 @@ impl Render for CsvFilterMenu {
             )
             // Entry list
             .child(
-                div()
+                v_flex()
                     .relative()
                     .w_full()
-                    .h(list_height)
+                    .flex_grow_1()
+                    .min_h_0()
+                    .max_h(max_list_height)
+                    .overflow_hidden()
                     .child(
                         uniform_list(
                             ElementId::Name(format!("csv-filter-list-{}", col.get()).into()),
@@ -328,9 +329,9 @@ impl Render for CsvFilterMenu {
                             ),
                         )
                         .w_full()
-                        .h_full()
+                        .flex_grow_1()
                         .track_scroll(&self.scroll_handle)
-                        .with_sizing_behavior(ListSizingBehavior::Auto),
+                        .with_sizing_behavior(ListSizingBehavior::Infer),
                     )
                     .vertical_scrollbar_for(&self.scroll_handle, window, cx),
             )
