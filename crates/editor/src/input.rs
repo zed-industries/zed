@@ -23,6 +23,37 @@ impl Editor {
         self.use_autoclose = autoclose;
     }
 
+    fn shift_selections_by_relative_utf16_range(
+        &mut self,
+        relative_utf16_range: Range<isize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let selections = self
+            .selections
+            .all::<MultiBufferOffsetUtf16>(&self.display_snapshot(cx));
+        self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            let new_ranges = selections.into_iter().map(|range| {
+                let start = MultiBufferOffsetUtf16(OffsetUtf16(
+                    range
+                        .head()
+                        .0
+                        .0
+                        .saturating_add_signed(relative_utf16_range.start),
+                ));
+                let end = MultiBufferOffsetUtf16(OffsetUtf16(
+                    range
+                        .head()
+                        .0
+                        .0
+                        .saturating_add_signed(relative_utf16_range.end),
+                ));
+                start..end
+            });
+            s.select_ranges(new_ranges);
+        });
+    }
+
     pub fn replay_insert_event(
         &mut self,
         text: &str,
@@ -41,29 +72,7 @@ impl Editor {
         });
 
         if let Some(relative_utf16_range) = relative_utf16_range {
-            let selections = self
-                .selections
-                .all::<MultiBufferOffsetUtf16>(&self.display_snapshot(cx));
-            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                let new_ranges = selections.into_iter().map(|range| {
-                    let start = MultiBufferOffsetUtf16(OffsetUtf16(
-                        range
-                            .head()
-                            .0
-                            .0
-                            .saturating_add_signed(relative_utf16_range.start),
-                    ));
-                    let end = MultiBufferOffsetUtf16(OffsetUtf16(
-                        range
-                            .head()
-                            .0
-                            .0
-                            .saturating_add_signed(relative_utf16_range.end),
-                    ));
-                    start..end
-                });
-                s.select_ranges(new_ranges);
-            });
+            self.shift_selections_by_relative_utf16_range(relative_utf16_range, window, cx);
         }
 
         self.handle_input(text, window, cx);
@@ -77,35 +86,16 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if !self.input_enabled {
+            cx.emit(EditorEvent::InputIgnored {
+                text: snippet_source.into(),
+            });
             return;
         }
         let Some(snippet) = Snippet::parse(snippet_source).log_err() else {
             return;
         };
         if let Some(relative_utf16_range) = relative_utf16_range {
-            let selections = self
-                .selections
-                .all::<MultiBufferOffsetUtf16>(&self.display_snapshot(cx));
-            self.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
-                let new_ranges = selections.into_iter().map(|range| {
-                    let start = MultiBufferOffsetUtf16(OffsetUtf16(
-                        range
-                            .head()
-                            .0
-                            .0
-                            .saturating_add_signed(relative_utf16_range.start),
-                    ));
-                    let end = MultiBufferOffsetUtf16(OffsetUtf16(
-                        range
-                            .head()
-                            .0
-                            .0
-                            .saturating_add_signed(relative_utf16_range.end),
-                    ));
-                    start..end
-                });
-                s.select_ranges(new_ranges);
-            });
+            self.shift_selections_by_relative_utf16_range(relative_utf16_range, window, cx);
         }
         let ranges = self
             .selections

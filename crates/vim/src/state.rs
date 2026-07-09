@@ -988,16 +988,13 @@ impl VimGlobals {
         }
     }
 
-    pub fn observe_insertion(&mut self, text: &Arc<str>, range_to_replace: Option<Range<isize>>) {
+    fn observe_replayable(&mut self, action: ReplayableAction) {
         if self.ignore_current_insertion {
             self.ignore_current_insertion = false;
             return;
         }
         if self.dot_recording {
-            self.recording_actions.push(ReplayableAction::Insertion {
-                text: text.clone(),
-                utf16_range_to_replace: range_to_replace.clone(),
-            });
+            self.recording_actions.push(action.clone());
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
                 self.recorded_actions = std::mem::take(&mut self.recording_actions);
@@ -1007,13 +1004,18 @@ impl VimGlobals {
             }
         }
         if let Some(recording_register) = self.recording_register {
-            self.recordings.entry(recording_register).or_default().push(
-                ReplayableAction::Insertion {
-                    text: text.clone(),
-                    utf16_range_to_replace: range_to_replace,
-                },
-            );
+            self.recordings
+                .entry(recording_register)
+                .or_default()
+                .push(action);
         }
+    }
+
+    pub fn observe_insertion(&mut self, text: &Arc<str>, range_to_replace: Option<Range<isize>>) {
+        self.observe_replayable(ReplayableAction::Insertion {
+            text: text.clone(),
+            utf16_range_to_replace: range_to_replace,
+        });
     }
 
     pub fn observe_snippet_insertion(
@@ -1021,32 +1023,10 @@ impl VimGlobals {
         snippet_source: &Arc<str>,
         range_to_replace: Option<Range<isize>>,
     ) {
-        if self.ignore_current_insertion {
-            self.ignore_current_insertion = false;
-            return;
-        }
-        if self.dot_recording {
-            self.recording_actions
-                .push(ReplayableAction::SnippetInsertion {
-                    snippet_source: snippet_source.clone(),
-                    utf16_range_to_replace: range_to_replace.clone(),
-                });
-            if self.stop_recording_after_next_action {
-                self.dot_recording = false;
-                self.recorded_actions = std::mem::take(&mut self.recording_actions);
-                self.recorded_count = self.recording_count.take();
-                self.recorded_register_for_dot = self.recording_register_for_dot.take();
-                self.stop_recording_after_next_action = false;
-            }
-        }
-        if let Some(recording_register) = self.recording_register {
-            self.recordings.entry(recording_register).or_default().push(
-                ReplayableAction::SnippetInsertion {
-                    snippet_source: snippet_source.clone(),
-                    utf16_range_to_replace: range_to_replace,
-                },
-            );
-        }
+        self.observe_replayable(ReplayableAction::SnippetInsertion {
+            snippet_source: snippet_source.clone(),
+            utf16_range_to_replace: range_to_replace,
+        });
     }
 
     pub fn focused_vim(&self) -> Option<Entity<Vim>> {

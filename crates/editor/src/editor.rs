@@ -248,7 +248,9 @@ use std::{
     time::{Duration, Instant},
 };
 use task::TaskVariables;
-use text::{BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _, ToPoint as _};
+use text::{
+    BufferId, FromAnchor, OffsetUtf16, Rope, ToOffset as _, ToOffsetUtf16 as _, ToPoint as _,
+};
 use theme::{
     AccentColors, ActiveTheme, GlobalTheme, PlayerColor, StatusColors, SyntaxTheme, Theme,
 };
@@ -4710,31 +4712,9 @@ impl Editor {
             ranges: Vec<Range<T>>,
             choices: Option<Vec<String>>,
         }
-        f
-
-        // Converts a byte offset within the snippet text into a `(row, column)`
-        // relative to the start of the snippet.
-        fn snippet_point(text: &str, offset: isize) -> Point {
-            let offset = (offset.max(0) as usize).min(text.len());
-            let mut row = 0;
-            let mut line_start = 0;
-            for (ix, byte) in text.as_bytes()[..offset].iter().enumerate() {
-                if *byte == b'\n' {
-                    row += 1;
-                    line_start = ix + 1;
-                }
-            }
-            Point::new(row, (offset - line_start) as u32)
-        }
 
         let tabstops = self.buffer.update(cx, |buffer, cx| {
             let snippet_text: Arc<str> = snippet.text.clone().into();
-            // Anchor the insertion points so we can find where each snippet
-            // actually landed. `AutoindentMode::Block` shifts the inserted text
-            // by the indentation of its first line while preserving the
-            // snippet's internal layout, so tabstop positions must be computed
-            // relative to that landing point rather than from raw offsets, which
-            // don't account for the indentation autoindent adds.
             let snapshot_before_edit = buffer.snapshot(cx);
             let insertion_points = insertion_ranges
                 .iter()
@@ -4752,6 +4732,11 @@ impl Editor {
             let snapshot = buffer.snapshot(cx);
             let snapshot = &snapshot;
             let snippet = &snippet;
+            let snippet_rope = Rope::from(snippet.text.as_str());
+            let snippet_rope = &snippet_rope;
+            let snippet_point = |offset: isize| {
+                snippet_rope.offset_to_point((offset.max(0) as usize).min(snippet.text.len()))
+            };
             snippet
                 .tabstops
                 .iter()
@@ -4763,18 +4748,39 @@ impl Editor {
                         .ranges
                         .iter()
                         .flat_map(|tabstop_range| {
-                            let start = snippet_point(&snippet.text, tabstop_range.start);
-                            let end = snippet_point(&snippet.text, tabstop_range.end);
+                            let start = snippet_point(tabstop_range.start);
+                            let end = snippet_point(tabstop_range.end);
                             insertion_points.iter().map(move |insertion_point| {
                                 let base = insertion_point.to_point(&snapshot);
+                                // Inserting multi-line text only prepends the insertion
+                                // point's column to the snippet's first line; every
+                                // subsequent line replaces its own line entirely, so its
+                                // column is relative to that line's own start rather than
+                                // `base.column`. By the time this snapshot is read,
+                                // `AutoindentMode::Block` has already re-indented that
+                                // line relative to how it was authored in the snippet
+                                // text, so the tabstop's column must be shifted by the
+                                // same delta rather than assumed to start at 0.
                                 let to_offset = |offset: Point| {
-                                    let point = snapshot.clip_point(
-                                        Point::new(
-                                            base.row + offset.row,
-                                            base.column + offset.column,
-                                        ),
-                                        Bias::Left,
-                                    );
+                                    let point = if offset.row == 0 {
+                                        Point::new(base.row, base.column + offset.column)
+                                    } else {
+                                        let actual_row = base.row + offset.row;
+                                        let raw_line_start =
+                                            snippet_rope.point_to_offset(Point::new(offset.row, 0));
+                                        let raw_indent = snippet_rope
+                                            .chars_at(raw_line_start)
+                                            .take_while(|c| *c == ' ' || *c == '\t')
+                                            .count() as i64;
+                                        let actual_indent = snapshot
+                                            .indent_size_for_line(MultiBufferRow(actual_row))
+                                            .len as i64;
+                                        let column = (offset.column as i64 + actual_indent
+                                            - raw_indent)
+                                            .max(0) as u32;
+                                        Point::new(actual_row, column)
+                                    };
+                                    let point = snapshot.clip_point(point, Bias::Left);
                                     snapshot.point_to_offset(point)
                                 };
                                 snapshot.anchor_before(to_offset(start))
