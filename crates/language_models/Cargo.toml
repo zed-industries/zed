@@ -68,6 +68,7 @@ ui.workspace = true
 ui_input.workspace = true
 url.workspace = true
 util.workspace = true
+uuid.workspace = true
 x_ai = { workspace = true, features = ["schemars"] }
 
 [dev-dependencies]

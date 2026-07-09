@@ -1,6 +1,7 @@
 use anyhow::{Context as _, Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use collections::HashMap;
 use credentials_provider::CredentialsProvider;
 use futures::{FutureExt, StreamExt, future::BoxFuture, future::Shared};
 use gpui::{App, AsyncApp, Context, Entity, SharedString, Task, Window};
@@ -24,6 +25,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ui::{ConfiguredApiCard, prelude::*};
 use url::form_urlencoded;
 use util::ResultExt as _;
+use uuid::Uuid;
 
 use crate::provider::open_ai::{OpenAiResponseEventMapper, into_open_ai_response};
 
@@ -35,6 +37,7 @@ const SUBSCRIPTION_DESCRIPTION: &str =
     "Sign in with your ChatGPT Plus or Pro subscription to use OpenAI models in Zed's agent.";
 
 const CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+const CODEX_COMPATIBILITY_VERSION: &str = "0.144.0";
 const OPENAI_TOKEN_URL: &str = "https://auth.openai.com/oauth/token";
 const OPENAI_AUTHORIZE_URL: &str = "https://auth.openai.com/oauth/authorize";
 const CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -63,6 +66,7 @@ pub struct State {
     sign_in_task: Option<Task<Result<()>>>,
     refresh_task: Option<Shared<Task<Result<CodexCredentials, Arc<anyhow::Error>>>>>,
     load_task: Option<Shared<Task<Result<(), Arc<anyhow::Error>>>>>,
+    codex_session_ids: HashMap<String, String>,
     credentials_provider: Arc<dyn CredentialsProvider>,
     auth_generation: u64,
     last_auth_error: Option<SharedString>,
@@ -113,6 +117,7 @@ impl OpenAiSubscribedProvider {
             sign_in_task: None,
             refresh_task: None,
             load_task: None,
+            codex_session_ids: HashMap::default(),
             credentials_provider,
             auth_generation: 0,
             last_auth_error: None,
@@ -516,6 +521,8 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
             request.speed = None;
         }
 
+        let thread_id = request.thread_id.clone();
+
         // The Codex backend rejects `max_output_tokens` (`Unsupported parameter`),
         // unlike the public OpenAI Responses API. Pass `None` so the field is
         // omitted from the serialized request body entirely.
@@ -556,6 +563,22 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
 
         let future = cx.spawn(async move |cx| {
             let creds = get_fresh_credentials(&state, &http_client, cx).await?;
+            let codex_session_id = if let Some(thread_id) = thread_id
+                .as_deref()
+                .filter(|thread_id| !thread_id.is_empty())
+            {
+                state
+                    .update(cx, |state, _| {
+                        state
+                            .codex_session_ids
+                            .entry(thread_id.to_string())
+                            .or_insert_with(|| Uuid::now_v7().to_string())
+                            .clone()
+                    })
+                    .map_err(LanguageModelCompletionError::Other)?
+            } else {
+                Uuid::now_v7().to_string()
+            };
 
             let mut header_pairs: Vec<(HeaderName, HeaderValue)> = vec![
                 (
@@ -566,7 +589,14 @@ impl LanguageModel for OpenAiSubscribedLanguageModel {
                     HeaderName::from_static("openai-beta"),
                     HeaderValue::from_static("responses=experimental"),
                 ),
+                (
+                    HeaderName::from_static("version"),
+                    HeaderValue::from_static(CODEX_COMPATIBILITY_VERSION),
+                ),
             ];
+            if let Ok(value) = HeaderValue::from_str(&codex_session_id) {
+                header_pairs.push((HeaderName::from_static("session-id"), value));
+            }
             if let Some(ref id) = creds.account_id {
                 if !id.is_empty() {
                     if let Ok(value) = HeaderValue::from_str(id) {
@@ -689,6 +719,7 @@ async fn get_fresh_credentials(
                     let _ = state_clone.update(cx, |s, cx| {
                         s.refresh_task = None;
                         s.credentials = None;
+                        s.codex_session_ids.clear();
                         s.last_auth_error =
                             Some("Your session has expired. Please sign in again.".into());
                         cx.notify();
@@ -1067,6 +1098,7 @@ fn do_sign_out(state: &gpui::WeakEntity<State>, cx: &mut App) -> Task<Result<()>
             s.credentials = None;
             s.sign_in_task = None;
             s.refresh_task = None;
+            s.codex_session_ids.clear();
             s.last_auth_error = None;
             cx.notify();
         })
@@ -1262,6 +1294,7 @@ mod tests {
             sign_in_task: None,
             refresh_task: None,
             load_task: None,
+            codex_session_ids: HashMap::default(),
             credentials_provider: Arc::new(FakeCredentialsProvider::new()),
             auth_generation: 0,
             last_auth_error: None,
@@ -1318,6 +1351,7 @@ mod tests {
             sign_in_task: None,
             refresh_task: None,
             load_task: None,
+            codex_session_ids: HashMap::default(),
             credentials_provider: Arc::new(FakeCredentialsProvider::new()),
             auth_generation: 0,
             last_auth_error: None,
@@ -1354,6 +1388,7 @@ mod tests {
             sign_in_task: None,
             refresh_task: None,
             load_task: None,
+            codex_session_ids: HashMap::default(),
             credentials_provider: Arc::new(FakeCredentialsProvider::new()),
             auth_generation: 0,
             last_auth_error: None,
@@ -1388,6 +1423,7 @@ mod tests {
             sign_in_task: None,
             refresh_task: None,
             load_task: None,
+            codex_session_ids: HashMap::default(),
             credentials_provider: creds_provider.clone(),
             auth_generation: 0,
             last_auth_error: None,
@@ -1431,6 +1467,7 @@ mod tests {
             sign_in_task: None,
             refresh_task: None,
             load_task: None,
+            codex_session_ids: HashMap::default(),
             credentials_provider: Arc::new(FakeCredentialsProvider::new()),
             auth_generation: 0,
             last_auth_error: None,
@@ -1488,6 +1525,7 @@ mod tests {
             sign_in_task: None,
             refresh_task: None,
             load_task: None,
+            codex_session_ids: HashMap::default(),
             credentials_provider: creds_provider.clone(),
             auth_generation: 0,
             last_auth_error: None,
@@ -1540,6 +1578,7 @@ mod tests {
             sign_in_task: None,
             refresh_task: None,
             load_task: None,
+            codex_session_ids: HashMap::default(),
             credentials_provider: creds_provider.clone(),
             auth_generation: 0,
             last_auth_error: None,
