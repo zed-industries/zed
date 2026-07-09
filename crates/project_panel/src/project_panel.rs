@@ -6832,6 +6832,7 @@ impl Render for ProjectPanel {
         let has_worktree = !self.state.visible_entries.is_empty();
         let project = self.project.read(cx);
         let panel_settings = ProjectPanelSettings::get_global(cx);
+        let focus_handle = self.focus_handle(cx);
         let indent_size = panel_settings.indent_size;
         let show_indent_guides = panel_settings.indent_guides.show == ShowIndentGuides::Always;
         let horizontal_scroll = panel_settings.scrollbar.horizontal_scroll;
@@ -7012,6 +7013,31 @@ impl Render for ProjectPanel {
                 .track_focus(&self.focus_handle(cx))
                 .child(
                     v_flex()
+                        .child(
+                            h_flex()
+                                .h_8()
+                                .px_2()
+                                .justify_end()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .bg(cx.theme().colors().toolbar_background)
+                                .child(
+                                    IconButton::new(
+                                        "collapse-all-project-entries",
+                                        IconName::ChevronDownUp,
+                                    )
+                                    .icon_size(IconSize::Small)
+                                    .disabled(!has_worktree)
+                                    .tooltip(Tooltip::for_action_title_in(
+                                        "Collapse All",
+                                        &CollapseAllEntries,
+                                        &focus_handle,
+                                    ))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.collapse_all_entries(&CollapseAllEntries, window, cx);
+                                    })),
+                                ),
+                        )
                         .child(
                             uniform_list("entries", item_count, {
                                 cx.processor(|this, range: Range<usize>, window, cx| {
