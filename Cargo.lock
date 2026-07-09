@@ -322,9 +322,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol"
-version = "1.0.1"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16302d16c7531355db16593d99c38c8297db0c4653aa7dd80c3556bb17f4cd8c"
+checksum = "ed34c8297a72c9d99fc7493ba6370f45c69fdcd51fdfb469d80f266cf63e5a98"
 dependencies = [
  "agent-client-protocol-derive",
  "agent-client-protocol-schema",
@@ -344,9 +344,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-derive"
-version = "1.0.1"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88b37d552feb6981a0109febda6b71fc723678cd065974c2d76279c19c407095"
+checksum = "0de0877cd41073fa0a124edb972df0d02e88c70adde11f49cf2231fd63aae738"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -354,9 +354,9 @@ dependencies = [
 
 [[package]]
 name = "agent-client-protocol-schema"
-version = "1.1.0"
+version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac542aba230234b1591ace7286a47c0514fe3efc3037d43296bde31ba7ee5728"
+checksum = "06679e1542356341f4550ccfb16338b64f37f6af70de2105446ef6fbb078234c"
 dependencies = [
  "anyhow",
  "derive_more",
@@ -3907,6 +3907,7 @@ dependencies = [
  "lsp",
  "menu",
  "project",
+ "release_channel",
  "serde_json",
  "settings",
  "ui",
@@ -5343,9 +5344,9 @@ dependencies = [
 
 [[package]]
 name = "dlib"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "330c60081dcc4c72131f8eb70510f1ac07223e5d4163db481a04a0befcffa412"
+checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
  "libloading",
 ]
@@ -5809,6 +5810,7 @@ dependencies = [
  "unicode-width",
  "unindent",
  "url",
+ "urlencoding",
  "util",
  "uuid",
  "vim_mode_setting",
@@ -6463,9 +6465,9 @@ dependencies = [
 
 [[package]]
 name = "fancy-regex"
-version = "0.17.0"
+version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72cf461f865c862bb7dc573f643dd6a2b6842f7c30b07882b56bd148cc2761b8"
+checksum = "e1e1dacd0d2082dfcf1351c4bdd566bbe89a2b263235a2b50058f1e130a47277"
 dependencies = [
  "bit-set 0.8.0",
  "regex-automata",
@@ -9792,6 +9794,7 @@ dependencies = [
  "http_client",
  "log",
  "partial-json-fixer",
+ "pretty_assertions",
  "schemars 1.0.4",
  "serde",
  "serde_json",
@@ -9809,6 +9812,7 @@ dependencies = [
  "async-lock",
  "aws-config",
  "aws-credential-types",
+ "aws-sigv4",
  "aws_http_client",
  "base64 0.22.1",
  "bedrock",
@@ -13999,7 +14003,7 @@ dependencies = [
  "dap",
  "encoding_rs",
  "extension",
- "fancy-regex 0.17.0",
+ "fancy-regex 0.18.0",
  "fs",
  "futures 0.3.32",
  "fuzzy",
@@ -15062,9 +15066,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.13"
+version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5276caf25ac86c8d810222b3dbb938e512c55c6831a10f3e6ed1c93b84041f1c"
+checksum = "6e1dd4122fc1595e8162618945476892eefca7b88c52820e74af6262213cae8f"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -19445,7 +19449,7 @@ checksum = "c4013970217383f67b18aef68f6fb2e8d409bc5755227092d32efb0422ba24b8"
 [[package]]
 name = "tree-sitter-md"
 version = "0.3.2"
-source = "git+https://github.com/tree-sitter-grammars/tree-sitter-markdown?rev=9a23c1a96c0513d8fc6520972beedd419a973539#9a23c1a96c0513d8fc6520972beedd419a973539"
+source = "git+https://github.com/zed-industries/tree-sitter-markdown?rev=b596e737286780d7bfa9fcddceaeeb754574b352#b596e737286780d7bfa9fcddceaeeb754574b352"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -20839,9 +20843,9 @@ dependencies = [
 
 [[package]]
 name = "wayland-backend"
-version = "0.3.11"
+version = "0.3.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673a33c33048a5ade91a6b139580fa174e19fb0d23f396dca9fa15f2e1e49b35"
+checksum = "2857dd20b54e916ec7253b3d6b4d5c4d7d4ca2c33c2e11c6c76a99bd8744755d"
 dependencies = [
  "cc",
  "downcast-rs",
@@ -20925,9 +20929,9 @@ dependencies = [
 
 [[package]]
 name = "wayland-sys"
-version = "0.31.7"
+version = "0.31.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34949b42822155826b41db8e5d0c1be3a2bd296c747577a43a3e6daefc296142"
+checksum = "d8eab23fefc9e41f8e841df4a9c707e8a8c4ed26e944ef69297184de2785e3be"
 dependencies = [
  "dlib",
  "log",
@@ -22990,7 +22994,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "1.11.0"
+version = "1.12.0"
 dependencies = [
  "acp_thread",
  "acp_tools",

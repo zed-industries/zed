@@ -43,7 +43,7 @@ Zed automatically out of the box supports JSON Schema validation of `package.jso
 
 To specify a schema inline with your JSON files, add a `$schema` top level key linking to your json schema file.
 
-For example to for a `.luarc.json` for use with [lua-language-server](https://github.com/LuaLS/lua-language-server/):
+For example, for a `.luarc.json` for use with [lua-language-server](https://github.com/LuaLS/lua-language-server/):
 
 ```json
 {

@@ -21,8 +21,7 @@ mod yarn;
 use anyhow::Result;
 use async_trait::async_trait;
 use buffer_diff::{
-    BufferDiffEvent, DiffChanged, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind,
-    assert_hunks,
+    BufferDiff, DiffHunkSecondaryStatus, DiffHunkStatus, DiffHunkStatusKind, assert_hunks,
 };
 use collections::{BTreeSet, HashMap, HashSet};
 use encoding_rs;
@@ -90,7 +89,7 @@ use task::{ResolvedTask, ShellKind, TaskContext};
 use text::{Anchor, PointUtf16, ReplicaId, ToOffset, Unclipped};
 use unindent::Unindent as _;
 use util::{
-    TryFutureExt as _, assert_set_eq, maybe, path,
+    RandomCharIter, TryFutureExt as _, assert_set_eq, maybe, path,
     paths::{PathMatcher, PathStyle},
     rel_path::{RelPath, rel_path},
     test::{TempTree, marked_text_offsets},
@@ -7674,6 +7673,110 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
     );
 }
 
+// Regression test for https://github.com/zed-industries/zed/issues/59077:
+// a "rename symbol" whose workspace edit also renames the file used to swap the
+// two files' contents. The edited content must end up in the renamed file.
+#[gpui::test]
+async fn test_rename_that_also_renames_file(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp(path!("/dir/one.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    cx.executor().run_until_parked();
+
+    let response = project.update(cx, |project, cx| {
+        project.perform_rename(buffer.clone(), 7, "THREE".to_string(), cx)
+    });
+    fake_server
+        .set_request_handler::<lsp::request::Rename, _, _>(|_params, _| async move {
+            Ok(Some(lsp::WorkspaceEdit {
+                changes: None,
+                document_changes: Some(DocumentChanges::Operations(vec![
+                    lsp::DocumentChangeOperation::Edit(lsp::TextDocumentEdit {
+                        text_document: lsp::OptionalVersionedTextDocumentIdentifier {
+                            uri: Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
+                            version: None,
+                        },
+                        edits: vec![lsp::Edit::Plain(lsp::TextEdit::new(
+                            lsp::Range::new(lsp::Position::new(0, 6), lsp::Position::new(0, 9)),
+                            "THREE".to_string(),
+                        ))],
+                    }),
+                    lsp::DocumentChangeOperation::Op(lsp::ResourceOp::Rename(lsp::RenameFile {
+                        old_uri: Uri::from_file_path(path!("/dir/one.rs")).unwrap(),
+                        new_uri: Uri::from_file_path(path!("/dir/three.rs")).unwrap(),
+                        options: None,
+                        annotation_id: None,
+                    })),
+                ])),
+                change_annotations: None,
+            }))
+        })
+        .next()
+        .await
+        .unwrap();
+    response.await.unwrap();
+    cx.executor().run_until_parked();
+
+    // The renamed file must contain the edited content, not the stale pre-edit
+    // content, and the old file must be gone (no content swap).
+    assert_eq!(
+        fs.load(Path::new(path!("/dir/three.rs"))).await.unwrap(),
+        "const THREE: usize = 1;"
+    );
+    assert!(
+        fs.load(Path::new(path!("/dir/one.rs"))).await.is_err(),
+        "old file should not exist after the rename"
+    );
+
+    // The buffer should follow the rename to the new path, hold the edited
+    // content, and be saved (so it can't be written back to the old path).
+    buffer.read_with(cx, |buffer, _cx| {
+        assert_eq!(buffer.text(), "const THREE: usize = 1;");
+        assert_eq!(
+            buffer.file().unwrap().path().as_ref(),
+            rel_path("three.rs"),
+            "buffer should be associated with the renamed file"
+        );
+        assert!(
+            !buffer.is_dirty(),
+            "buffer should be saved after the rename"
+        );
+    });
+}
+
 #[gpui::test]
 async fn test_search(cx: &mut gpui::TestAppContext) {
     init_test(cx);
@@ -9671,10 +9774,13 @@ async fn test_staged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         .unwrap();
     cx.run_until_parked();
     unstaged_diff.read_with(cx, |diff, cx| {
-        assert_eq!(diff.base_text(cx).language().cloned(), None);
+        assert_eq!(
+            diff.base_text(cx).language().cloned(),
+            Some(language.clone())
+        );
     });
 
-    let staged_diff = project
+    let (staged_diff, index_text_buffer) = project
         .update(cx, |project, cx| {
             project.open_staged_diff(buffer.clone(), cx)
         })
@@ -9682,6 +9788,14 @@ async fn test_staged_diff_for_buffer(cx: &mut gpui::TestAppContext) {
         .unwrap();
 
     cx.run_until_parked();
+    index_text_buffer.read_with(cx, |buffer, cx| {
+        let file = buffer.file().unwrap();
+        assert_eq!(file.file_name(cx), "main.rs");
+        assert_eq!(
+            file.disk_state(),
+            DiskState::Historic { was_deleted: false }
+        );
+    });
     unstaged_diff.read_with(cx, |diff, cx| {
         assert_eq!(
             diff.base_text(cx).language().cloned(),
@@ -9870,7 +9984,7 @@ async fn test_staged_diff_without_unstaged_diff(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let staged_diff = project
+    let (staged_diff, _) = project
         .update(cx, |project, cx| {
             project.open_staged_diff(buffer.clone(), cx)
         })
@@ -10157,7 +10271,6 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-    let mut diff_events = cx.events(&uncommitted_diff);
 
     // The hunks are initially unstaged.
     uncommitted_diff.read_with(cx, |diff, cx| {
@@ -10189,15 +10302,14 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     });
 
     // Stage a hunk. It appears as optimistically staged.
-    uncommitted_diff.update(cx, |diff, cx| {
-        let range =
-            snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_before(Point::new(2, 0));
-        let hunks = diff
-            .snapshot(cx)
-            .hunks_intersecting_range(range, &snapshot)
-            .collect::<Vec<_>>();
-        diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
-
+    let range = snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_before(Point::new(2, 0));
+    project
+        .update(cx, |project, cx| {
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![range], cx)
+        })
+        .unwrap();
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10225,28 +10337,9 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    // The diff emits a change event for the range of the staged hunk.
-    assert!(matches!(
-        diff_events.next().await.unwrap(),
-        BufferDiffEvent::HunksStagedOrUnstaged(_)
-    ));
-    let event = diff_events.next().await.unwrap();
-    if let BufferDiffEvent::DiffChanged(DiffChanged {
-        changed_range: Some(changed_range),
-        base_text_changed_range: _,
-        extended_range: _,
-        base_text_changed: _,
-    }) = event
-    {
-        let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(1, 0)..Point::new(2, 0));
-    } else {
-        panic!("Unexpected event {event:?}");
-    }
-
     // When the write to the index completes, it appears as staged.
     cx.run_until_parked();
-    uncommitted_diff.update(cx, |diff, cx| {
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10273,21 +10366,6 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
             ],
         );
     });
-
-    // The diff emits a change event for the changed index text.
-    let event = diff_events.next().await.unwrap();
-    if let BufferDiffEvent::DiffChanged(DiffChanged {
-        changed_range: Some(changed_range),
-        base_text_changed_range: _,
-        extended_range: _,
-        base_text_changed: _,
-    }) = event
-    {
-        let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(1, 0)..Point::new(2, 0));
-    } else {
-        panic!("Unexpected event {event:?}");
-    }
 
     // Simulate a problem writing to the git index.
     fs.set_error_message_for_index_write(
@@ -10296,15 +10374,14 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
     );
 
     // Stage another hunk.
-    uncommitted_diff.update(cx, |diff, cx| {
-        let range =
-            snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_before(Point::new(4, 0));
-        let hunks = diff
-            .snapshot(cx)
-            .hunks_intersecting_range(range, &snapshot)
-            .collect::<Vec<_>>();
-        diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
-
+    let range = snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_before(Point::new(4, 0));
+    project
+        .update(cx, |project, cx| {
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![range], cx)
+        })
+        .unwrap();
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10331,27 +10408,10 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
             ],
         );
     });
-    assert!(matches!(
-        diff_events.next().await.unwrap(),
-        BufferDiffEvent::HunksStagedOrUnstaged(_)
-    ));
-    let event = diff_events.next().await.unwrap();
-    if let BufferDiffEvent::DiffChanged(DiffChanged {
-        changed_range: Some(changed_range),
-        base_text_changed_range: _,
-        extended_range: _,
-        base_text_changed: _,
-    }) = event
-    {
-        let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(3, 0)..Point::new(4, 0));
-    } else {
-        panic!("Unexpected event {event:?}");
-    }
 
     // When the write fails, the hunk returns to being unstaged.
     cx.run_until_parked();
-    uncommitted_diff.update(cx, |diff, cx| {
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10379,32 +10439,29 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    let event = diff_events.next().await.unwrap();
-    if let BufferDiffEvent::DiffChanged(DiffChanged {
-        changed_range: Some(changed_range),
-        base_text_changed_range: _,
-        extended_range: _,
-        base_text_changed: _,
-    }) = event
-    {
-        let changed_range = changed_range.to_point(&snapshot);
-        assert_eq!(changed_range, Point::new(0, 0)..Point::new(5, 0));
-    } else {
-        panic!("Unexpected event {event:?}");
-    }
-
     // Allow writing to the git index to succeed again.
     fs.set_error_message_for_index_write("/dir/.git".as_ref(), None);
 
     // Stage two hunks with separate operations.
-    uncommitted_diff.update(cx, |diff, cx| {
+    let (range0, range2) = uncommitted_diff.read_with(cx, |diff, cx| {
         let hunks = diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>();
-        diff.stage_or_unstage_hunks(true, &hunks[0..1], &snapshot, true, cx);
-        diff.stage_or_unstage_hunks(true, &hunks[2..3], &snapshot, true, cx);
+        (hunks[0].buffer_range.clone(), hunks[2].buffer_range.clone())
     });
+    project
+        .update(cx, |project, cx| {
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![range0], cx)
+        })
+        .unwrap();
+    project
+        .update(cx, |project, cx| {
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![range2], cx)
+        })
+        .unwrap();
 
     // Both staged hunks appear as pending.
-    uncommitted_diff.update(cx, |diff, cx| {
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10434,7 +10491,7 @@ async fn test_staging_hunks(cx: &mut gpui::TestAppContext) {
 
     // Both staging operations take effect.
     cx.run_until_parked();
-    uncommitted_diff.update(cx, |diff, cx| {
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10631,9 +10688,20 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     fs.pause_events();
 
     // Stage the first hunk.
-    uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.snapshot(cx).hunks(&snapshot).next().unwrap();
-        diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
+    let range = uncommitted_diff.read_with(cx, |diff, cx| {
+        diff.snapshot(cx)
+            .hunks(&snapshot)
+            .next()
+            .unwrap()
+            .buffer_range
+    });
+    project
+        .update(cx, |project, cx| {
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![range], cx)
+        })
+        .unwrap();
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10663,9 +10731,20 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
 
     // Stage the second hunk *before* receiving the FS event for the first hunk.
     cx.run_until_parked();
-    uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.snapshot(cx).hunks(&snapshot).nth(1).unwrap();
-        diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
+    let range = uncommitted_diff.read_with(cx, |diff, cx| {
+        diff.snapshot(cx)
+            .hunks(&snapshot)
+            .nth(1)
+            .unwrap()
+            .buffer_range
+    });
+    project
+        .update(cx, |project, cx| {
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![range], cx)
+        })
+        .unwrap();
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10698,10 +10777,19 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     cx.run_until_parked();
 
     // Stage the third hunk before receiving the second FS event.
-    uncommitted_diff.update(cx, |diff, cx| {
-        let hunk = diff.snapshot(cx).hunks(&snapshot).nth(2).unwrap();
-        diff.stage_or_unstage_hunks(true, &[hunk], &snapshot, true, cx);
+    let range = uncommitted_diff.read_with(cx, |diff, cx| {
+        diff.snapshot(cx)
+            .hunks(&snapshot)
+            .nth(2)
+            .unwrap()
+            .buffer_range
     });
+    project
+        .update(cx, |project, cx| {
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![range], cx)
+        })
+        .unwrap();
 
     // Wait for all remaining IO.
     cx.run_until_parked();
@@ -10709,7 +10797,7 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
 
     // Now all hunks are staged.
     cx.run_until_parked();
-    uncommitted_diff.update(cx, |diff, cx| {
+    uncommitted_diff.read_with(cx, |diff, cx| {
         assert_hunks(
             diff.snapshot(cx).hunks(&snapshot),
             &snapshot,
@@ -10733,6 +10821,167 @@ async fn test_staging_hunks_with_delayed_fs_event(cx: &mut gpui::TestAppContext)
     });
 }
 
+#[gpui::test]
+async fn test_restaging_hunk_after_optimistic_unstage(cx: &mut gpui::TestAppContext) {
+    use DiffHunkSecondaryStatus::*;
+    init_test(cx);
+
+    let committed_contents = r#"
+        one
+        two
+        three
+    "#
+    .unindent();
+    let file_contents = r#"
+        one
+        TWO
+        three
+    "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+            "file.txt": file_contents.clone()
+        }),
+    )
+    .await;
+
+    // The hunk starts out staged: the index already matches the worktree.
+    fs.set_head_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("file.txt", committed_contents.clone())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("file.txt", file_contents.clone())],
+    );
+    let repo = fs
+        .open_repo(path!("/dir/.git").as_ref(), Some("git".as_ref()))
+        .unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let snapshot = buffer.read_with(cx, |buffer, _| buffer.snapshot());
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    let hunk_range = uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(NoSecondaryHunk),
+            )],
+        );
+        diff.snapshot(cx)
+            .hunks(&snapshot)
+            .next()
+            .unwrap()
+            .buffer_range
+    });
+
+    // Hold back FS events so that the index writes below stay un-reconciled:
+    // the second operation must run while the first one's optimistic state is
+    // still pending.
+    fs.pause_events();
+
+    // Unstage the hunk. It appears as optimistically unstaged.
+    project
+        .update(cx, |project, cx| {
+            project.unstage_uncommitted_hunks(
+                buffer.clone(),
+                uncommitted_diff.clone(),
+                vec![hunk_range.clone()],
+                cx,
+            )
+        })
+        .unwrap();
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(SecondaryHunkAdditionPending),
+            )],
+        );
+    });
+
+    // Re-stage the same hunk before the unstage write has been reconciled.
+    project
+        .update(cx, |project, cx| {
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, vec![hunk_range.clone()], cx)
+        })
+        .unwrap();
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(SecondaryHunkRemovalPending),
+            )],
+        );
+    });
+
+    cx.run_until_parked();
+    assert_eq!(
+        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
+            .await
+            .unwrap(),
+        file_contents,
+        "the re-stage should have overridden the in-flight unstage"
+    );
+
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+
+    // Once everything settles, the hunk is staged again.
+    uncommitted_diff.read_with(cx, |diff, cx| {
+        assert_hunks(
+            diff.snapshot(cx).hunks(&snapshot),
+            &snapshot,
+            &diff.base_text_string(cx).unwrap(),
+            &[(
+                1..2,
+                "two\n",
+                "TWO\n",
+                DiffHunkStatus::modified(NoSecondaryHunk),
+            )],
+        );
+    });
+    assert_eq!(
+        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
+            .await
+            .unwrap(),
+        file_contents
+    );
+}
+
 #[gpui::test(iterations = 25)]
 async fn test_staging_random_hunks(
     mut rng: StdRng,
@@ -10746,11 +10995,12 @@ async fn test_staging_random_hunks(
     use DiffHunkSecondaryStatus::*;
     init_test(cx);
 
-    let committed_text = (0..30).map(|i| format!("line {i}\n")).collect::<String>();
+    let committed_text = (0..40).map(|i| format!("line {i}\n")).collect::<String>();
     let index_text = committed_text.clone();
-    let buffer_text = (0..30)
-        .map(|i| match i % 5 {
-            0 => format!("line {i} (modified)\n"),
+    let buffer_text = (0..40)
+        .map(|i| match i {
+            35 => format!("line {i}\ninserted after {i}\n"),
+            _ if i < 30 && i % 5 == 0 => format!("line {i} (modified)\n"),
             _ => format!("line {i}\n"),
         })
         .collect::<String>();
@@ -10795,24 +11045,75 @@ async fn test_staging_random_hunks(
     let mut hunks = uncommitted_diff.update(cx, |diff, cx| {
         diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>()
     });
-    assert_eq!(hunks.len(), 6);
+    assert_eq!(hunks.len(), 7);
+    let insertion_hunk = hunks
+        .iter()
+        .find(|hunk| hunk.diff_base_byte_range.is_empty())
+        .unwrap()
+        .clone();
+    fs.pause_events();
+    project
+        .update(cx, |project, cx| {
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(
+                buffer.clone(),
+                unstaged_diff,
+                vec![insertion_hunk.buffer_range.clone()],
+                cx,
+            )
+        })
+        .unwrap();
+    project
+        .update(cx, |project, cx| {
+            project.unstage_uncommitted_hunks(
+                buffer.clone(),
+                uncommitted_diff.clone(),
+                vec![insertion_hunk.buffer_range],
+                cx,
+            )
+        })
+        .unwrap();
+    cx.executor().run_until_parked();
+    assert_eq!(
+        repo.load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
+            .await
+            .unwrap(),
+        index_text
+    );
+    fs.unpause_events_and_flush();
+    cx.run_until_parked();
+    hunks = uncommitted_diff.update(cx, |diff, cx| {
+        diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>()
+    });
+    assert_eq!(hunks.len(), 7);
 
     for _i in 0..operations {
         let hunk_ix = rng.random_range(0..hunks.len());
         let hunk = &mut hunks[hunk_ix];
         let row = hunk.range.start.row;
 
+        let range = hunk.buffer_range.clone();
         if hunk.status().has_secondary_hunk() {
             log::info!("staging hunk at {row}");
-            uncommitted_diff.update(cx, |diff, cx| {
-                diff.stage_or_unstage_hunks(true, std::slice::from_ref(hunk), &snapshot, true, cx);
-            });
+            project
+                .update(cx, |project, cx| {
+                    let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+                    project.stage_hunks(buffer.clone(), unstaged_diff, vec![range], cx)
+                })
+                .unwrap();
             hunk.secondary_status = SecondaryHunkRemovalPending;
         } else {
             log::info!("unstaging hunk at {row}");
-            uncommitted_diff.update(cx, |diff, cx| {
-                diff.stage_or_unstage_hunks(false, std::slice::from_ref(hunk), &snapshot, true, cx);
-            });
+            project
+                .update(cx, |project, cx| {
+                    project.unstage_uncommitted_hunks(
+                        buffer.clone(),
+                        uncommitted_diff.clone(),
+                        vec![range],
+                        cx,
+                    )
+                })
+                .unwrap();
             hunk.secondary_status = SecondaryHunkAdditionPending;
         }
 
@@ -10851,6 +11152,508 @@ async fn test_staging_random_hunks(
             .collect::<Vec<_>>();
         assert_eq!(actual_hunks, expected_hunks);
     });
+}
+
+#[gpui::test(iterations = 25)]
+async fn test_staging_random_hunks_with_edits(
+    mut rng: StdRng,
+    _executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    let operations = env::var("OPERATIONS")
+        .map(|i| i.parse().expect("invalid `OPERATIONS` variable"))
+        .unwrap_or(30);
+
+    init_test(cx);
+
+    fn disk_index_text(fs: &FakeFs) -> String {
+        fs.with_git_state(path!("/dir/.git").as_ref(), false, |state| {
+            state
+                .index_contents
+                .get(&repo_path("file.txt"))
+                .cloned()
+                .expect("file is always present in the index")
+        })
+        .unwrap()
+    }
+
+    fn random_row_range(
+        snapshot: &text::BufferSnapshot,
+        rng: &mut StdRng,
+    ) -> (Range<Anchor>, Range<u32>) {
+        let max_row = snapshot.max_point().row;
+        let start_row = rng.random_range(0..=max_row);
+        let end_row = rng.random_range(start_row..=max_row.min(start_row + 5));
+        let start = Point::new(start_row, 0);
+        let end = Point::new(end_row, snapshot.line_len(end_row));
+        (
+            snapshot.anchor_before(start)..snapshot.anchor_after(end),
+            start_row..end_row,
+        )
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn capture_diff_state(
+        diff: &Entity<BufferDiff>,
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        String,
+        Option<String>,
+        Vec<(Range<Point>, Range<usize>, DiffHunkSecondaryStatus)>,
+    ) {
+        diff.read_with(cx, |diff, cx| {
+            let snapshot = diff.snapshot(cx);
+            let buffer_snapshot = snapshot.buffer_snapshot().clone();
+            let hunks = snapshot
+                .hunks(&buffer_snapshot)
+                .map(|hunk| {
+                    (
+                        hunk.range.clone(),
+                        hunk.diff_base_byte_range.clone(),
+                        hunk.secondary_status,
+                    )
+                })
+                .collect();
+            (buffer_snapshot.text(), snapshot.base_text_string(), hunks)
+        })
+    }
+
+    fn assert_settled(diff: &Entity<BufferDiff>, name: &str, cx: &mut gpui::TestAppContext) {
+        diff.read_with(cx, |diff, cx| {
+            let snapshot = diff.snapshot(cx);
+            let buffer_snapshot = snapshot.buffer_snapshot().clone();
+            let cooked = snapshot
+                .hunks(&buffer_snapshot)
+                .map(|hunk| (hunk.range.clone(), hunk.secondary_status))
+                .collect::<Vec<_>>();
+            for (range, status) in &cooked {
+                assert!(
+                    !matches!(
+                        status,
+                        DiffHunkSecondaryStatus::SecondaryHunkAdditionPending
+                            | DiffHunkSecondaryStatus::SecondaryHunkRemovalPending
+                    ),
+                    "{name} hunk at {range:?} still has pending status {status:?} after settling"
+                );
+            }
+            let full_range = Anchor::min_max_range_for_buffer(buffer_snapshot.remote_id());
+            let raw_ranges = snapshot
+                .raw_hunks_intersecting_range(full_range, &buffer_snapshot)
+                .map(|hunk| hunk.range)
+                .collect::<Vec<_>>();
+            let cooked_ranges = cooked
+                .into_iter()
+                .map(|(range, _)| range)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                raw_ranges, cooked_ranges,
+                "{name} still has suppressed hunks after settling"
+            );
+        })
+    }
+
+    let mut committed_text = (0..40)
+        .map(|i| match i {
+            _ if i % 5 == 0 => format!("line {i} αβ🍐\n"),
+            _ => format!("line {i}\n"),
+        })
+        .collect::<String>();
+    let index_text = (0..40)
+        .map(|i| match i {
+            10 => "line 10 (modified ✅)\n".to_string(),
+            20 => "line 20 (staged-only ⭐)\n".to_string(),
+            _ if i % 5 == 0 => format!("line {i} αβ🍐\n"),
+            _ => format!("line {i}\n"),
+        })
+        .collect::<String>();
+    let buffer_text = (0..40)
+        .map(|i| match i {
+            35 => format!("line {i} αβ🍐\ninserted after {i}\n"),
+            _ if i < 30 && i % 5 == 0 => format!("line {i} (modified ✅)\n"),
+            _ if i % 5 == 0 => format!("line {i} αβ🍐\n"),
+            _ => format!("line {i}\n"),
+        })
+        .collect::<String>();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        path!("/dir"),
+        json!({
+            ".git": {},
+            "file.txt": buffer_text.clone()
+        }),
+    )
+    .await;
+    fs.set_head_for_repo(
+        path!("/dir/.git").as_ref(),
+        &[("file.txt", committed_text.clone())],
+        "deadbeef",
+    );
+    fs.set_index_for_repo(path!("/dir/.git").as_ref(), &[("file.txt", index_text)]);
+    let repo = fs
+        .open_repo(path!("/dir/.git").as_ref(), Some("git".as_ref()))
+        .unwrap();
+
+    let project = Project::test(fs.clone(), [path!("/dir").as_ref()], cx).await;
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer(path!("/dir/file.txt"), cx)
+        })
+        .await
+        .unwrap();
+    let unstaged_diff = project
+        .update(cx, |project, cx| {
+            project.open_unstaged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let (staged_diff, index_buffer) = project
+        .update(cx, |project, cx| {
+            project.open_staged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    let mut events_paused = false;
+    let mut commit_count = 0;
+    for _ in 0..operations {
+        match rng.random_range(0..100) {
+            0..20 => {
+                let snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+                let (range, rows) = random_row_range(&snapshot, &mut rng);
+                log::info!("staging rows {rows:?}");
+                project
+                    .update(cx, |project, cx| {
+                        project.stage_hunks(buffer.clone(), unstaged_diff.clone(), vec![range], cx)
+                    })
+                    .unwrap();
+            }
+            20..35 => {
+                let snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+                let (range, rows) = random_row_range(&snapshot, &mut rng);
+                log::info!("unstaging rows {rows:?} via the uncommitted diff");
+                project
+                    .update(cx, |project, cx| {
+                        project.unstage_uncommitted_hunks(
+                            buffer.clone(),
+                            uncommitted_diff.clone(),
+                            vec![range],
+                            cx,
+                        )
+                    })
+                    .unwrap();
+            }
+            35..50 => {
+                let snapshot = index_buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+                let (range, rows) = random_row_range(&snapshot, &mut rng);
+                log::info!("unstaging index rows {rows:?} via the staged diff");
+                project
+                    .update(cx, |project, cx| {
+                        project.unstage_staged_hunks(staged_diff.clone(), vec![range], cx)
+                    })
+                    .unwrap();
+            }
+            // Line-oriented edits keep the file hunk-rich; uniform random
+            // splices (`randomly_edit`) delete a quarter of the file on
+            // average and quickly collapse it into a single hunk.
+            50..75 => {
+                let snapshot = buffer.read_with(cx, |buffer, _| buffer.text_snapshot());
+                let max_row = snapshot.max_point().row;
+                let row = rng.random_range(0..=max_row);
+                let row_start = snapshot.point_to_offset(Point::new(row, 0));
+                let row_end = snapshot.point_to_offset(Point::new(row, snapshot.line_len(row)));
+                let new_text_len = rng.random_range(0..8);
+                let new_text = RandomCharIter::new(&mut rng)
+                    .take(new_text_len)
+                    .collect::<String>();
+                let (range, new_text) = match rng.random_range(0..10) {
+                    0..3 => (row_start..row_start, format!("{new_text}\n")),
+                    3..5 if max_row > 0 => {
+                        let end = if row < max_row {
+                            snapshot.point_to_offset(Point::new(row + 1, 0))
+                        } else {
+                            snapshot.len()
+                        };
+                        (row_start..end, String::new())
+                    }
+                    5..8 => (row_start..row_end, new_text),
+                    _ => {
+                        let start = snapshot
+                            .clip_offset(rng.random_range(0..=snapshot.len()), text::Bias::Left);
+                        let end = snapshot.clip_offset(
+                            (start + rng.random_range(0..10)).min(snapshot.len()),
+                            text::Bias::Right,
+                        );
+                        (start..end, new_text)
+                    }
+                };
+                log::info!("editing buffer: {range:?} -> {new_text:?}");
+                buffer.update(cx, |buffer, cx| buffer.edit([(range, new_text)], None, cx));
+            }
+            // Commits and whole-file round-trip checkpoints. The round trips
+            // settle first so the resulting index bytes are exactly
+            // predictable, which catches wrong-content writes that the
+            // settled-consistency checks can't see (a corrupted write becomes
+            // the on-disk truth that everything else then agrees with).
+            75..82 => {
+                let buffer_full_range = Anchor::min_max_range_for_buffer(
+                    buffer.read_with(cx, |buffer, _| buffer.remote_id()),
+                );
+                let index_full_range = Anchor::min_max_range_for_buffer(
+                    index_buffer.read_with(cx, |buffer, _| buffer.remote_id()),
+                );
+                match rng.random_range(0..4) {
+                    // Commit: HEAD becomes whatever the index currently
+                    // contains on disk, which may lag in-flight optimistic
+                    // writes, just like running `git commit` in a terminal.
+                    0 => {
+                        let new_head = disk_index_text(&fs);
+                        commit_count += 1;
+                        log::info!("committing (commit {commit_count})");
+                        fs.set_head_for_repo(
+                            path!("/dir/.git").as_ref(),
+                            &[("file.txt", new_head.clone())],
+                            format!("sha-{commit_count}"),
+                        );
+                        committed_text = new_head;
+                    }
+                    // Stage everything and commit it, like `git add -A &&
+                    // git commit`.
+                    1 => {
+                        log::info!("checkpoint: stage-all, then commit");
+                        if events_paused {
+                            fs.unpause_events_and_flush();
+                            events_paused = false;
+                        }
+                        cx.run_until_parked();
+                        project
+                            .update(cx, |project, cx| {
+                                project.stage_hunks(
+                                    buffer.clone(),
+                                    unstaged_diff.clone(),
+                                    vec![buffer_full_range],
+                                    cx,
+                                )
+                            })
+                            .unwrap();
+                        cx.run_until_parked();
+                        let disk = disk_index_text(&fs);
+                        let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
+                        assert_eq!(
+                            disk, buffer_text,
+                            "after staging everything, the index must equal the worktree"
+                        );
+                        commit_count += 1;
+                        log::info!("committing (commit {commit_count})");
+                        fs.set_head_for_repo(
+                            path!("/dir/.git").as_ref(),
+                            &[("file.txt", disk.clone())],
+                            format!("sha-{commit_count}"),
+                        );
+                        committed_text = disk;
+                    }
+                    // Unstage everything via the staged diff, which by
+                    // definition covers every index-vs-HEAD difference.
+                    2 => {
+                        log::info!("checkpoint: unstage-all");
+                        if events_paused {
+                            fs.unpause_events_and_flush();
+                            events_paused = false;
+                        }
+                        cx.run_until_parked();
+                        project
+                            .update(cx, |project, cx| {
+                                project.unstage_staged_hunks(
+                                    staged_diff.clone(),
+                                    vec![index_full_range],
+                                    cx,
+                                )
+                            })
+                            .unwrap();
+                        cx.run_until_parked();
+                        let disk = disk_index_text(&fs);
+                        assert_eq!(
+                            disk, committed_text,
+                            "after unstaging everything, the index must equal HEAD"
+                        );
+                    }
+                    // Unstage everything and immediately re-stage everything
+                    // with no settling in between: the re-stage must supersede
+                    // the in-flight unstage (the footprint mechanism), leaving
+                    // the index equal to the worktree.
+                    _ => {
+                        log::info!("checkpoint: unstage-all then stage-all");
+                        if events_paused {
+                            fs.unpause_events_and_flush();
+                            events_paused = false;
+                        }
+                        cx.run_until_parked();
+                        project
+                            .update(cx, |project, cx| {
+                                project.unstage_staged_hunks(
+                                    staged_diff.clone(),
+                                    vec![index_full_range],
+                                    cx,
+                                )
+                            })
+                            .unwrap();
+                        project
+                            .update(cx, |project, cx| {
+                                project.stage_hunks(
+                                    buffer.clone(),
+                                    unstaged_diff.clone(),
+                                    vec![buffer_full_range],
+                                    cx,
+                                )
+                            })
+                            .unwrap();
+                        cx.run_until_parked();
+                        let disk = disk_index_text(&fs);
+                        let buffer_text = buffer.read_with(cx, |buffer, _| buffer.text());
+                        assert_eq!(
+                            disk, buffer_text,
+                            "re-staging everything must supersede the in-flight unstage"
+                        );
+                    }
+                }
+            }
+            82..90 => {
+                if events_paused {
+                    log::info!("unpausing fs events");
+                    fs.unpause_events_and_flush();
+                    events_paused = false;
+                } else {
+                    log::info!("pausing fs events");
+                    fs.pause_events();
+                    events_paused = true;
+                }
+            }
+            _ => {
+                log::info!("settling");
+                if events_paused {
+                    fs.unpause_events_and_flush();
+                    events_paused = false;
+                }
+                cx.run_until_parked();
+            }
+        }
+
+        for _ in 0..rng.random_range(0..5) {
+            cx.executor().simulate_random_delay().await;
+        }
+    }
+
+    if events_paused {
+        fs.unpause_events_and_flush();
+    }
+    cx.run_until_parked();
+
+    assert_settled(&unstaged_diff, "unstaged diff", cx);
+    assert_settled(&staged_diff, "staged diff", cx);
+    assert_settled(&uncommitted_diff, "uncommitted diff", cx);
+
+    let old_unstaged_state = capture_diff_state(&unstaged_diff, cx);
+    let old_staged_state = capture_diff_state(&staged_diff, cx);
+    let old_uncommitted_state = capture_diff_state(&uncommitted_diff, cx);
+
+    let disk_index_text = repo
+        .load_index_text(RepoPath::from_rel_path(rel_path("file.txt")))
+        .await
+        .unwrap();
+    assert_eq!(
+        old_unstaged_state.1.as_deref(),
+        Some(disk_index_text.as_str()),
+        "unstaged diff base text differs from the index on disk"
+    );
+    assert_eq!(
+        old_staged_state.0, disk_index_text,
+        "staged diff buffer differs from the index on disk"
+    );
+    assert_eq!(
+        old_staged_state.1.as_deref(),
+        Some(committed_text.as_str()),
+        "staged diff base text differs from HEAD"
+    );
+    assert_eq!(
+        old_uncommitted_state.1.as_deref(),
+        Some(committed_text.as_str()),
+        "uncommitted diff base text differs from HEAD"
+    );
+
+    // Differential check: a from-scratch computation over (HEAD, index,
+    // worktree) must agree with the incrementally-maintained state that just
+    // settled.
+    let old_entity_ids = [
+        unstaged_diff.entity_id(),
+        staged_diff.entity_id(),
+        uncommitted_diff.entity_id(),
+    ];
+    drop(unstaged_diff);
+    drop(staged_diff);
+    drop(uncommitted_diff);
+    // An empty update flushes effects so that the dropped entities are
+    // actually released before we reopen.
+    cx.update(|_| {});
+    cx.run_until_parked();
+
+    let unstaged_diff = project
+        .update(cx, |project, cx| {
+            project.open_unstaged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let (staged_diff, _) = project
+        .update(cx, |project, cx| {
+            project.open_staged_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    let uncommitted_diff = project
+        .update(cx, |project, cx| {
+            project.open_uncommitted_diff(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+    cx.run_until_parked();
+
+    assert_ne!(
+        unstaged_diff.entity_id(),
+        old_entity_ids[0],
+        "the unstaged diff was not actually closed"
+    );
+    assert_ne!(
+        staged_diff.entity_id(),
+        old_entity_ids[1],
+        "the staged diff was not actually closed"
+    );
+    assert_ne!(
+        uncommitted_diff.entity_id(),
+        old_entity_ids[2],
+        "the uncommitted diff was not actually closed"
+    );
+
+    assert_eq!(
+        capture_diff_state(&unstaged_diff, cx),
+        old_unstaged_state,
+        "reopened unstaged diff differs from the settled one"
+    );
+    assert_eq!(
+        capture_diff_state(&staged_diff, cx),
+        old_staged_state,
+        "reopened staged diff differs from the settled one"
+    );
+    assert_eq!(
+        capture_diff_state(&uncommitted_diff, cx),
+        old_uncommitted_state,
+        "reopened uncommitted diff differs from the settled one"
+    );
 }
 
 #[gpui::test]
@@ -10975,10 +11778,18 @@ async fn test_staging_hunk_preserve_executable_permission(cx: &mut gpui::TestApp
         .await
         .unwrap();
 
-    uncommitted_diff.update(cx, |diff, cx| {
-        let hunks = diff.snapshot(cx).hunks(&snapshot).collect::<Vec<_>>();
-        diff.stage_or_unstage_hunks(true, &hunks, &snapshot, true, cx);
+    let ranges = uncommitted_diff.read_with(cx, |diff, cx| {
+        diff.snapshot(cx)
+            .hunks(&snapshot)
+            .map(|hunk| hunk.buffer_range)
+            .collect::<Vec<_>>()
     });
+    project
+        .update(cx, |project, cx| {
+            let unstaged_diff = uncommitted_diff.read(cx).secondary_diff().unwrap();
+            project.stage_hunks(buffer.clone(), unstaged_diff, ranges, cx)
+        })
+        .unwrap();
 
     cx.run_until_parked();
 
