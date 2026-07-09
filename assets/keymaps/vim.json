@@ -48,7 +48,7 @@
       "shift-b": ["vim::PreviousWordStart", { "ignore_punctuation": true }],
       "g shift-e": ["vim::PreviousWordEnd", { "ignore_punctuation": true }],
       "/": "vim::Search",
-      "g /": "pane::DeploySearch",
+      "g /": "text_finder::Toggle",
       "?": ["vim::Search", { "backwards": true }],
       "*": "vim::MoveToNext",
       "#": "vim::MoveToPrevious",
@@ -548,7 +548,7 @@
       "space c": "editor::ToggleComments",
       "space p": "editor::Paste",
       "space y": "editor::Copy",
-      "space /": "pane::DeploySearch",
+      "space /": "text_finder::Toggle",
 
       // View mode
       "z c": "editor::ScrollCursorCenter",
@@ -957,13 +957,13 @@
     "context": "!Editor && !Terminal",
     "bindings": {
       ":": "command_palette::Toggle",
-      "g /": "pane::DeploySearch",
+      "g /": "text_finder::Toggle",
       "] b": "pane::ActivateNextItem",
       "[ b": "pane::ActivatePreviousItem",
       "] shift-b": "pane::ActivateLastItem",
       "[ shift-b": ["pane::ActivateItem", 0],
       "space f": "file_finder::Toggle",
-      "space /": "pane::DeploySearch",
+      "space /": "text_finder::Toggle",
       "space shift-s": "project_symbols::Toggle",
       "space w h": "workspace::ActivatePaneLeft",
       "space w j": "workspace::ActivatePaneDown",
