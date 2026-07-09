@@ -12,7 +12,7 @@ use gpui::{
     linear_color_stop, linear_gradient, point, px, size,
 };
 use language::language_settings::ShowWhitespaceSetting;
-use multi_buffer::{Anchor, ExcerptBoundaryInfo};
+use multi_buffer::{Anchor, ExcerptBoundaryInfo, MultiBuffer};
 use project::Entry;
 use settings::{RelativeLineNumbers, Settings};
 use smallvec::SmallVec;
@@ -821,7 +821,7 @@ pub(crate) fn render_buffer_header(
                             |path_header| {
                                 let filename = filename
                                     .map(SharedString::from)
-                                    .unwrap_or_else(|| "untitled".into());
+                                    .unwrap_or_else(|| MultiBuffer::DEFAULT_TITLE.into());
 
                                 let full_path = match parent_path.as_deref() {
                                     Some(parent) if !parent.is_empty() => {
