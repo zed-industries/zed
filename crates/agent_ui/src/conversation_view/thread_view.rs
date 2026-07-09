@@ -9284,7 +9284,8 @@ impl ThreadView {
                                             .get_mut(&tool_call_id_for_pattern)
                                         {
                                             Some(
-                                                selection @ PermissionSelection::SelectedPatterns(_),
+                                                selection
+                                                @ PermissionSelection::SelectedPatterns(_),
                                             ) => {
                                                 selection.toggle_pattern(pattern_index);
                                             }

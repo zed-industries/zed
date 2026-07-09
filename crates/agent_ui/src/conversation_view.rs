@@ -9466,11 +9466,9 @@ pub(crate) mod tests {
         init_test(cx);
 
         let tool_call_id = acp::ToolCallId::new("pattern-toggle-test-1");
-        let tool_call = acp::ToolCall::new(
-            tool_call_id.clone(),
-            "Run `ls && git status && git log`",
-        )
-        .kind(acp::ToolKind::Edit);
+        let tool_call =
+            acp::ToolCall::new(tool_call_id.clone(), "Run `ls && git status && git log`")
+                .kind(acp::ToolKind::Edit);
 
         // Pipeline command — produces `DropdownWithPatterns` with one pattern
         // per distinct sub-command.
