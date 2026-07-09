@@ -287,7 +287,7 @@ impl<'a> OffsetUnifiedDiffBuilder<'a> {
             self.after_hunk_len,
         )
         .unwrap();
-        write!(&mut self.dst, "{}", &self.buffer).unwrap();
+        write!(&mut self.dst, "{}", self.buffer).unwrap();
         self.buffer.clear();
         self.before_hunk_len = 0;
         self.after_hunk_len = 0;
