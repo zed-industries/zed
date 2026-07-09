@@ -4195,12 +4195,6 @@ fn default_render_tab_bar_buttons(
     window: &mut Window,
     cx: &mut Context<Pane>,
 ) -> (Option<AnyElement>, Option<AnyElement>) {
-    // When the pane is unfocused, we render the buttons as invisible rather than
-    // omitting them entirely. This reserves the same layout space so the tab bar's
-    // scroll area width doesn't shift when focus changes — which would otherwise
-    // cancel a tab click (mouse-down shifts layout via focus, mouse-up no longer
-    // hits the tab).
-    // See https://github.com/zed-industries/zed/issues/60367
     let should_hide = !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx);
 
     let (can_clone, can_split_move) = match pane.active_item() {
