@@ -1,11 +1,19 @@
-use editor::Editor;
-use gpui::{
-    DismissEvent, ElementId, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment,
-    ListSizingBehavior, ListState, Subscription, list,
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
+
+use fuzzy::{StringMatch, StringMatchCandidate, match_strings};
+use gpui::{
+    BackgroundExecutor, DismissEvent, ElementId, Entity, Focusable, ForegroundExecutor, Task,
+};
+use picker::{Picker, PickerDelegate};
 use ui::{
-    Color, GradientFade, HighlightedLabel, Icon, IconButton, IconName, IconSize, Label, LabelSize,
-    PopoverMenu, Tooltip, WithScrollbar, prelude::*,
+    Color, GradientFade, HighlightedLabel, Icon, IconButton, IconName, IconSize, Label,
+    LabelSize, ListItem, ListItemSpacing, PopoverMenu, Tooltip, prelude::*,
 };
 
 use crate::{
@@ -18,344 +26,479 @@ use crate::{
     types::AnyColumn,
 };
 
-struct CsvFilterMenu {
-    col: AnyColumn,
-    view: Entity<CsvPreviewView>,
-    editor: Entity<Editor>,
-    /// Entry order frozen at open time: applied-first then sort_order.
-    /// Kept stable so selections don't jump around while the menu is open.
-    stable_order: Vec<Option<SharedString>>,
-    /// Filtered entries for the current search query, recomputed each render.
-    /// Stored on self so the list processor closure can index into it.
-    entries: Vec<(FilterEntry, bool, Vec<usize>)>,
-    list_state: ListState,
-    /// Entry count as of the last `list_state` reset, used to detect when the
-    /// search query has changed the filtered set and the list needs resetting.
-    list_entry_count: usize,
-    _editor_subscription: Subscription,
+struct ColumnFilterRow {
+    entry: FilterEntry,
+    is_applied: bool,
+    /// Set when this value is hidden because another column's active filter
+    /// excludes every row containing it.
+    hidden_by: Option<AnyColumn>,
 }
 
-impl CsvFilterMenu {
+enum ColumnFilterListEntry {
+    Header(SharedString),
+    Row {
+        row_index: usize,
+        positions: Vec<usize>,
+    },
+}
+
+struct ColumnFilterDelegate {
+    col: AnyColumn,
+    view: Entity<CsvPreviewView>,
+    /// Row order frozen at open time (available entries sorted per the
+    /// column's `FilterSortOrder`, then entries hidden by other columns'
+    /// filters). Kept stable so toggling a value doesn't reshuffle the list
+    /// under the user's cursor; only `is_applied`/`hidden_by`/counts are
+    /// refreshed in place after a toggle.
+    rows: Vec<ColumnFilterRow>,
+    /// Number of available (non-hidden) rows, shown in the search placeholder.
+    available_count: usize,
+    string_candidates: Arc<Vec<StringMatchCandidate>>,
+    filtered: Vec<ColumnFilterListEntry>,
+    selected_index: usize,
+    query: String,
+    foreground: ForegroundExecutor,
+    background: BackgroundExecutor,
+    cancel: Option<Arc<AtomicBool>>,
+}
+
+impl ColumnFilterDelegate {
     fn new(
         col: AnyColumn,
         view: Entity<CsvPreviewView>,
         sort_order: FilterSortOrder,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        column_filters: Arc<Vec<(FilterEntry, FilterEntryState)>>,
+        cx: &mut Context<Picker<Self>>,
     ) -> Self {
-        let stable_order = {
-            let column_filters = view
-                .read(cx)
-                .engine
-                .get_filters_for_column(col)
-                .unwrap_or_default();
-
-            let mut available: Vec<(&FilterEntry, bool)> = column_filters
-                .iter()
-                .filter_map(|(entry, state)| match state {
-                    FilterEntryState::Available { is_applied } => Some((entry, *is_applied)),
-                    _ => None,
-                })
-                .collect();
-
-            match sort_order {
-                FilterSortOrder::AlphaThenCount => available.sort_by(|(a, a_app), (b, b_app)| {
-                    b_app
-                        .cmp(a_app)
-                        .then_with(|| a.content.cmp(&b.content))
-                        .then_with(|| b.occurred_times().cmp(&a.occurred_times()))
-                }),
-                FilterSortOrder::CountThenAlpha => available.sort_by(|(a, a_app), (b, b_app)| {
-                    b_app
-                        .cmp(a_app)
-                        .then_with(|| b.occurred_times().cmp(&a.occurred_times()))
-                        .then_with(|| a.content.cmp(&b.content))
-                }),
+        let mut available: Vec<(FilterEntry, bool)> = Vec::new();
+        let mut hidden: Vec<(FilterEntry, AnyColumn)> = Vec::new();
+        for (entry, state) in column_filters.iter() {
+            match state {
+                FilterEntryState::Available { is_applied } => {
+                    available.push((entry.clone(), *is_applied))
+                }
+                FilterEntryState::Unavailable { blocked_by } => {
+                    hidden.push((entry.clone(), *blocked_by))
+                }
             }
+        }
 
-            available
-                .into_iter()
-                .map(|(e, _)| e.content.clone())
-                .collect::<Vec<_>>()
-        };
+        match sort_order {
+            FilterSortOrder::AlphaThenCount => available.sort_by(|(a, a_app), (b, b_app)| {
+                b_app
+                    .cmp(a_app)
+                    .then_with(|| a.content.cmp(&b.content))
+                    .then_with(|| b.occurred_times().cmp(&a.occurred_times()))
+            }),
+            FilterSortOrder::CountThenAlpha => available.sort_by(|(a, a_app), (b, b_app)| {
+                b_app
+                    .cmp(a_app)
+                    .then_with(|| b.occurred_times().cmp(&a.occurred_times()))
+                    .then_with(|| a.content.cmp(&b.content))
+            }),
+        }
 
-        let unique_count = stable_order.len();
-        let editor = cx.new(|cx| {
-            let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(
-                &format!("Search {unique_count} unique values…"),
-                window,
-                cx,
-            );
-            editor
-        });
-        let subscription = cx.observe(&editor, |_, _, cx| cx.notify());
+        let available_count = available.len();
+
+        let rows: Vec<ColumnFilterRow> = available
+            .into_iter()
+            .map(|(entry, is_applied)| ColumnFilterRow {
+                entry,
+                is_applied,
+                hidden_by: None,
+            })
+            .chain(hidden.into_iter().map(|(entry, blocked_by)| ColumnFilterRow {
+                entry,
+                is_applied: false,
+                hidden_by: Some(blocked_by),
+            }))
+            .collect();
+
+        let string_candidates = Arc::new(
+            rows.iter()
+                .enumerate()
+                .map(|(index, row)| {
+                    StringMatchCandidate::new(index, &Self::display_text(&row.entry))
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        let filtered = Self::build_entries(
+            &rows,
+            rows.iter()
+                .enumerate()
+                .map(|(index, _)| (index, Vec::new()))
+                .collect(),
+        );
 
         Self {
             col,
             view,
-            editor,
-            stable_order,
-            entries: Vec::new(),
-            list_state: ListState::new(0, ListAlignment::Top, px(1000.)),
-            list_entry_count: 0,
-            _editor_subscription: subscription,
+            rows,
+            available_count,
+            string_candidates,
+            filtered,
+            selected_index: 0,
+            query: String::new(),
+            foreground: cx.foreground_executor().clone(),
+            background: cx.background_executor().clone(),
+            cancel: None,
         }
     }
-}
 
-impl EventEmitter<DismissEvent> for CsvFilterMenu {}
-
-impl Focusable for CsvFilterMenu {
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.editor.focus_handle(cx)
+    fn display_text(entry: &FilterEntry) -> String {
+        match &entry.content {
+            Some(s) => s.as_ref().to_owned(),
+            None => "<null>".to_owned(),
+        }
     }
-}
 
-impl Render for CsvFilterMenu {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let col = self.col;
-        let query = self.editor.read(cx).text(cx).to_lowercase();
+    /// Assembles the flat list shown to the user from matched
+    /// `(row_index, positions)` pairs (which must be sorted ascending by
+    /// `row_index`, matching `rows`' available-then-hidden order), inserting a
+    /// "Hidden by other filters" header before the first hidden row.
+    fn build_entries(
+        rows: &[ColumnFilterRow],
+        matches: Vec<(usize, Vec<usize>)>,
+    ) -> Vec<ColumnFilterListEntry> {
+        let mut entries = Vec::with_capacity(matches.len() + 1);
+        let mut header_inserted = false;
+        for (row_index, positions) in matches {
+            if rows[row_index].hidden_by.is_some() && !header_inserted {
+                entries.push(ColumnFilterListEntry::Header(
+                    "Hidden by other filters".into(),
+                ));
+                header_inserted = true;
+            }
+            entries.push(ColumnFilterListEntry::Row {
+                row_index,
+                positions,
+            });
+        }
+        entries
+    }
 
-        let column_filters = self
-            .view
-            .read(cx)
-            .engine
-            .get_filters_for_column(col)
-            .unwrap_or_default();
-
-        // Build a lookup: content key → (FilterEntry, is_applied).
-        // Used to resolve live applied state while respecting stable_order.
-        let lookup: Vec<(Option<SharedString>, FilterEntry, bool)> = column_filters
+    fn first_selectable_index(&self) -> usize {
+        self.filtered
             .iter()
-            .filter_map(|(entry, state)| match state {
+            .position(|entry| {
+                matches!(entry, ColumnFilterListEntry::Row { row_index, .. }
+                    if self.rows[*row_index].hidden_by.is_none())
+            })
+            .unwrap_or(0)
+    }
+
+    fn matches_for_query(&self, query: &str) -> Vec<(usize, Vec<usize>)> {
+        if query.is_empty() {
+            return self
+                .rows
+                .iter()
+                .enumerate()
+                .map(|(index, _)| (index, Vec::new()))
+                .collect();
+        }
+
+        let cancel_flag = AtomicBool::new(false);
+        let mut matches: Vec<StringMatch> = self.foreground.block_on(match_strings(
+            self.string_candidates.as_ref(),
+            query,
+            false,
+            true,
+            usize::MAX,
+            &cancel_flag,
+            self.background.clone(),
+        ));
+        matches.sort_by_key(|m| m.candidate_id);
+        matches
+            .into_iter()
+            .map(|m| (m.candidate_id, m.positions))
+            .collect()
+    }
+
+    /// Re-fetches this column's filter entries from the engine (e.g. after a
+    /// toggle changes counts/availability across the cascade) while keeping
+    /// `rows`' frozen order, then re-applies the current search query.
+    fn refresh_rows(&mut self, cx: &mut Context<Picker<Self>>) {
+        let column_filters = match self.view.read(cx).engine.get_filters_for_column(self.col) {
+            Ok(filters) => filters,
+            Err(err) => {
+                log::error!("Failed to get filters for column: {err}");
+                return;
+            }
+        };
+
+        let mut lookup: HashMap<Option<SharedString>, (FilterEntry, FilterEntryState)> =
+            column_filters
+                .iter()
+                .map(|(entry, state)| (entry.content.clone(), (entry.clone(), *state)))
+                .collect();
+
+        for row in &mut self.rows {
+            let Some((entry, state)) = lookup.remove(&row.entry.content) else {
+                continue;
+            };
+            row.entry = entry;
+            match state {
                 FilterEntryState::Available { is_applied } => {
-                    Some((entry.content.clone(), entry.clone(), *is_applied))
+                    row.is_applied = is_applied;
+                    row.hidden_by = None;
                 }
-                _ => None,
-            })
-            .collect();
-
-        let selected_rows: usize = lookup
-            .iter()
-            .filter(|(_, _, is_applied)| *is_applied)
-            .map(|(_, e, _)| e.occurred_times())
-            .sum();
-        let total_rows: usize = lookup.iter().map(|(_, e, _)| e.occurred_times()).sum();
-        let has_active_filters = selected_rows > 0;
-
-        // Follow stable_order; look up live applied state from lookup.
-        // Stored on self so the uniform_list processor closure can index into it.
-        self.entries = self
-            .stable_order
-            .iter()
-            .filter_map(|key| {
-                lookup
-                    .iter()
-                    .find(|(k, _, _)| k == key)
-                    .map(|(_, entry, is_applied)| (entry.clone(), *is_applied))
-            })
-            .filter_map(|(entry, is_applied)| {
-                let display_text = match &entry.content {
-                    Some(s) => s.as_ref().to_owned(),
-                    None => "<null>".to_owned(),
-                };
-                if query.is_empty() {
-                    return Some((entry, is_applied, vec![]));
+                FilterEntryState::Unavailable { blocked_by } => {
+                    row.is_applied = false;
+                    row.hidden_by = Some(blocked_by);
                 }
-                let display_text_lower = display_text.to_lowercase();
-                if let Some(byte_start) = display_text_lower.find(query.as_str()) {
-                    let char_start = display_text_lower[..byte_start].chars().count();
-                    let positions = (char_start..char_start + query.chars().count()).collect();
-                    Some((entry, is_applied, positions))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let entry_count = self.entries.len();
-        // Entries can wrap to multiple lines, so `list`/`ListState` (variable item
-        // height) is used instead of `uniform_list`. Reset only when the filtered
-        // set actually changes size, so typing doesn't drop scroll position/cache
-        // on every render.
-        if entry_count != self.list_entry_count {
-            self.list_state.reset(entry_count);
-            self.list_entry_count = entry_count;
+            }
         }
-        // Cap like the command palette picker: grow to fit content, up to a
-        // fraction of the window, then scroll. Avoids hand-computing row height.
-        let max_list_height = window.viewport_size().height * 0.6;
-        let border_color = cx.theme().colors().border_variant;
 
-        v_flex()
-            .key_context("CsvFilterMenu")
-            .bg(cx.theme().colors().elevated_surface_background)
-            .border_1()
-            .border_color(border_color)
-            .rounded_md()
-            .overflow_hidden()
-            .w(px(300.))
-            .on_action(cx.listener(|_, _: &menu::Cancel, _, cx| {
-                cx.emit(DismissEvent);
-            }))
-            .on_mouse_down_out(cx.listener(|_, _, _, cx| {
-                cx.emit(DismissEvent);
-            }))
-            // Search editor
-            .child(
-                h_flex()
-                    .h_8()
+        self.filtered = Self::build_entries(&self.rows, self.matches_for_query(&self.query));
+        self.selected_index = self
+            .selected_index
+            .min(self.filtered.len().saturating_sub(1));
+    }
+}
+
+impl PickerDelegate for ColumnFilterDelegate {
+    type ListItem = AnyElement;
+
+    fn name() -> &'static str {
+        "csv column filter"
+    }
+
+    fn match_count(&self) -> usize {
+        self.filtered.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_index
+    }
+
+    fn set_selected_index(&mut self, ix: usize, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        self.selected_index = ix.min(self.filtered.len().saturating_sub(1));
+        cx.notify();
+    }
+
+    fn can_select(&self, ix: usize, _window: &mut Window, _cx: &mut Context<Picker<Self>>) -> bool {
+        match self.filtered.get(ix) {
+            Some(ColumnFilterListEntry::Row { row_index, .. }) => {
+                self.rows[*row_index].hidden_by.is_none()
+            }
+            _ => false,
+        }
+    }
+
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut App) -> Arc<str> {
+        format!("Search {} unique values…", self.available_count).into()
+    }
+
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Task<()> {
+        self.query = query.clone();
+
+        if query.is_empty() {
+            self.filtered = Self::build_entries(&self.rows, self.matches_for_query(&query));
+            self.selected_index = self.first_selectable_index();
+            cx.notify();
+            return Task::ready(());
+        }
+
+        if let Some(prev) = &self.cancel {
+            prev.store(true, Ordering::Relaxed);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.cancel = Some(cancel.clone());
+
+        let string_candidates = self.string_candidates.clone();
+        let background = self.background.clone();
+
+        cx.spawn_in(window, async move |this, cx| {
+            let mut matches = match_strings(
+                string_candidates.as_ref(),
+                &query,
+                false,
+                true,
+                usize::MAX,
+                cancel.as_ref(),
+                background,
+            )
+            .await;
+            matches.sort_by_key(|m| m.candidate_id);
+
+            this.update_in(cx, |this, _, cx| {
+                if this.delegate.query != query {
+                    return;
+                }
+                let rows = &this.delegate.rows;
+                let matches = matches.into_iter().map(|m| (m.candidate_id, m.positions)).collect();
+                this.delegate.filtered = ColumnFilterDelegate::build_entries(rows, matches);
+                this.delegate.selected_index = this.delegate.first_selectable_index();
+                cx.notify();
+            })
+            .ok();
+        })
+    }
+
+    fn confirm(&mut self, _secondary: bool, _window: &mut Window, cx: &mut Context<Picker<Self>>) {
+        let Some(ColumnFilterListEntry::Row { row_index, .. }) =
+            self.filtered.get(self.selected_index)
+        else {
+            return;
+        };
+        let row_index = *row_index;
+        if self.rows[row_index].hidden_by.is_some() {
+            return;
+        }
+        let col = self.col;
+        let value = self.rows[row_index].entry.content.clone();
+        self.view
+            .update(cx, |view, cx| view.toggle_filter(col, value, cx));
+        self.refresh_rows(cx);
+        cx.notify();
+    }
+
+    fn dismissed(&mut self, _window: &mut Window, _cx: &mut Context<Picker<Self>>) {}
+
+    fn render_match(
+        &self,
+        ix: usize,
+        selected: bool,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<Self::ListItem> {
+        match self.filtered.get(ix)? {
+            ColumnFilterListEntry::Header(label) => Some(
+                div()
                     .px_2()
-                    .gap_1()
-                    .border_b_1()
-                    .border_color(border_color)
-                    .items_center()
+                    .pt_2()
+                    .pb_1()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
                     .child(
-                        Icon::new(IconName::MagnifyingGlass)
-                            .size(IconSize::Small)
+                        Label::new(label.clone())
+                            .size(LabelSize::XSmall)
                             .color(Color::Muted),
                     )
-                    .child(self.editor.clone()),
-            )
-            // Entry list
-            .child(
-                v_flex()
-                    .relative()
-                    .w_full()
-                    .flex_grow_1()
-                    .min_h_0()
-                    .max_h(max_list_height)
-                    .overflow_hidden()
-                    .child(
-                        list(
-                            self.list_state.clone(),
-                            cx.processor(move |this, ix: usize, _window, cx| {
-                                let hover_bg = cx.theme().colors().element_hover;
-                                let (entry, is_applied, positions) = &this.entries[ix];
-                                let entry_value = entry.content.clone();
-                                let value_text: SharedString = match &entry.content {
-                                    Some(s) => s.clone(),
-                                    None => "<null>".into(),
-                                };
-                                let count_text =
-                                    SharedString::from(entry.occurred_times().to_string());
-                                let is_applied = *is_applied;
-                                let positions = positions.clone();
-                                let view = this.view.clone();
+                    .into_any_element(),
+            ),
+            ColumnFilterListEntry::Row {
+                row_index,
+                positions,
+            } => {
+                let row = &self.rows[*row_index];
+                let value_text: SharedString = match &row.entry.content {
+                    Some(s) => s.clone(),
+                    None => "<null>".into(),
+                };
+                let count_text = SharedString::from(row.entry.occurred_times().to_string());
+                let label = HighlightedLabel::new(value_text.clone(), positions.clone())
+                    .size(LabelSize::Small)
+                    .single_line()
+                    .truncate();
 
-                                h_flex()
-                                    .id(ElementId::NamedInteger(
-                                        format!("csv-filter-entry-{}", col.get()).into(),
-                                        ix as u64,
-                                    ))
-                                    .w_full()
-                                    .px_2()
-                                    .py_1()
-                                    .gap_2()
-                                    .items_center()
-                                    .justify_between()
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(hover_bg))
-                                    // Left: check icon + value text
-                                    .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .items_center()
-                                            .min_w_0()
-                                            .flex_1()
-                                            .child(
-                                                h_flex()
-                                                    .flex_none()
-                                                    .when(!is_applied, |el| el.invisible())
-                                                    .child(
-                                                        Icon::new(IconName::Check)
-                                                            .size(IconSize::Small)
-                                                            .color(Color::Accent),
-                                                    ),
-                                            )
-                                            .child(
-                                                div()
-                                                    .id(ElementId::NamedInteger(
-                                                        format!("csv-filter-value-{}", col.get())
-                                                            .into(),
-                                                        ix as u64,
-                                                    ))
-                                                    .min_w_0()
-                                                    .overflow_hidden()
-                                                    .tooltip(Tooltip::element({
-                                                        let value_text = value_text.clone();
-                                                        move |_window, cx| {
-                                                            div()
-                                                                .font_buffer(cx)
-                                                                .child(value_text.clone())
-                                                                .into_any_element()
-                                                        }
-                                                    }))
-                                                    .child(
-                                                        HighlightedLabel::new(
-                                                            value_text, positions,
-                                                        )
-                                                        .size(LabelSize::Small)
-                                                        .single_line()
-                                                        .truncate(),
-                                                    ),
-                                            ),
-                                    )
-                                    // Right: occurrence count
-                                    .child(
-                                        Label::new(count_text)
-                                            .size(LabelSize::Small)
-                                            .mr_2()
-                                            .color(Color::Muted),
-                                    )
-                                    .on_click(move |_, _window, cx| {
-                                        view.update(cx, |this: &mut CsvPreviewView, cx| {
-                                            this.toggle_filter(col, entry_value.clone(), cx);
-                                        });
-                                    })
-                                    .into_any_element()
-                            }),
+                if row.hidden_by.is_some() {
+                    return Some(
+                        ListItem::new(("csv-filter-hidden", ix))
+                            .disabled(true)
+                            .inset(true)
+                            .spacing(ListItemSpacing::Sparse)
+                            .child(label.color(Color::Disabled))
+                            .end_slot(
+                                Label::new(count_text)
+                                    .size(LabelSize::Small)
+                                    .color(Color::Disabled),
+                            )
+                            .into_any_element(),
+                    );
+                }
+
+                Some(
+                    ListItem::new(("csv-filter-value", ix))
+                        .inset(true)
+                        .spacing(ListItemSpacing::Sparse)
+                        .toggle_state(selected)
+                        .start_slot(
+                            h_flex()
+                                .flex_none()
+                                .when(!row.is_applied, |el| el.invisible())
+                                .child(
+                                    Icon::new(IconName::Check)
+                                        .size(IconSize::Small)
+                                        .color(Color::Accent),
+                                ),
                         )
-                        .w_full()
-                        .flex_grow_1()
-                        .with_sizing_behavior(ListSizingBehavior::Infer),
-                    )
-                    .vertical_scrollbar_for(&self.list_state, window, cx),
-            )
-            // Footer: row count + clear all — shown as soon as any filter is selected
-            .when(has_active_filters, |this| {
-                this.child(
-                    h_flex()
-                        .px_2()
-                        .py_1()
-                        .border_t_1()
-                        .border_color(border_color)
-                        .justify_between()
-                        .items_center()
-                        .child(
-                            Label::new(format!("{selected_rows} / {total_rows} rows selected"))
+                        .child(label)
+                        .end_slot(
+                            Label::new(count_text)
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         )
-                        .child(
-                            div()
-                                .id("csv-filter-clear-all")
-                                .cursor_pointer()
-                                .child(
-                                    Label::new("Clear all")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Accent),
-                                )
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.view.update(cx, |view: &mut CsvPreviewView, cx| {
-                                        view.clear_filters(col, cx);
-                                    });
-                                    cx.emit(DismissEvent);
-                                })),
-                        ),
+                        .tooltip(Tooltip::text(value_text))
+                        .into_any_element(),
                 )
-            })
+            }
+        }
+    }
+
+    fn render_footer(
+        &self,
+        _window: &mut Window,
+        cx: &mut Context<Picker<Self>>,
+    ) -> Option<AnyElement> {
+        let selected_rows: usize = self
+            .rows
+            .iter()
+            .filter(|row| row.hidden_by.is_none() && row.is_applied)
+            .map(|row| row.entry.occurred_times())
+            .sum();
+        let total_rows: usize = self
+            .rows
+            .iter()
+            .filter(|row| row.hidden_by.is_none())
+            .map(|row| row.entry.occurred_times())
+            .sum();
+        if selected_rows == 0 {
+            return None;
+        }
+
+        let col = self.col;
+        Some(
+            h_flex()
+                .w_full()
+                .px_2()
+                .py_1()
+                .border_t_1()
+                .border_color(cx.theme().colors().border_variant)
+                .justify_between()
+                .items_center()
+                .child(
+                    Label::new(format!("{selected_rows} / {total_rows} rows selected"))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
+                .child(
+                    div()
+                        .id("csv-filter-clear-all")
+                        .cursor_pointer()
+                        .child(
+                            Label::new("Clear all")
+                                .size(LabelSize::Small)
+                                .color(Color::Accent),
+                        )
+                        .on_click(cx.listener(move |picker, _, _, cx| {
+                            picker
+                                .delegate
+                                .view
+                                .update(cx, |view, cx| view.clear_filters(col, cx));
+                            picker.delegate.refresh_rows(cx);
+                            cx.notify();
+                            cx.emit(DismissEvent);
+                        })),
+                )
+                .into_any(),
+        )
     }
 }
 
@@ -481,7 +624,7 @@ impl CsvPreviewView {
         &self,
         cx: &mut Context<'_, CsvPreviewView>,
         col: AnyColumn,
-    ) -> PopoverMenu<CsvFilterMenu> {
+    ) -> PopoverMenu<Picker<ColumnFilterDelegate>> {
         let has_active_filters = self.engine.has_active_filters(col);
         let sort_order = self.settings.filter_sort_order;
 
@@ -510,10 +653,26 @@ impl CsvPreviewView {
         .menu({
             let view_entity = cx.entity();
             move |window, cx| {
-                let menu = cx
-                    .new(|cx| CsvFilterMenu::new(col, view_entity.clone(), sort_order, window, cx));
-                menu.focus_handle(cx).focus(window, cx);
-                Some(menu)
+                let view = view_entity.read(cx);
+                let column_filters = match view.engine.get_filters_for_column(col) {
+                    Ok(filters) => filters,
+                    Err(err) => {
+                        log::error!("Failed to get filters for column: {err}");
+                        return None;
+                    }
+                };
+                let view_entity = view_entity.clone();
+
+                let picker = cx.new(|cx| {
+                    let delegate =
+                        ColumnFilterDelegate::new(col, view_entity, sort_order, column_filters, cx);
+                    Picker::list(delegate, window, cx)
+                        .popover()
+                        .initial_width(rems(18.75))
+                        .show_scrollbar(true)
+                });
+                picker.focus_handle(cx).focus(window, cx);
+                Some(picker)
             }
         })
     }
