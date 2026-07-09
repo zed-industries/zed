@@ -528,14 +528,17 @@ impl LanguageModel for AnthropicModel {
     > {
         let has_tools = !request.tools.is_empty();
         let request_id = self.model.request_id(has_tools).to_string();
-        let mut request = into_anthropic(
+        let mut request = match into_anthropic(
             request,
             request_id,
             self.model.default_temperature,
             self.model.max_output_tokens,
             self.model.mode.clone(),
             AnthropicPromptCacheMode::Automatic,
-        );
+        ) {
+            Ok(request) => request,
+            Err(error) => return async move { Err(error.into()) }.boxed(),
+        };
         if !self.model.supports_speed {
             request.speed = None;
         }

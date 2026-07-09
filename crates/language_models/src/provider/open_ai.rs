@@ -464,6 +464,9 @@ impl LanguageModel for OpenAiLanguageModel {
             | Model::FivePointFourPro
             | Model::FivePointFive
             | Model::FivePointFivePro
+            | Model::FivePointSixSol
+            | Model::FivePointSixTerra
+            | Model::FivePointSixLuna
             | Model::O3 => true,
             Model::Four => false,
             Model::Custom {
@@ -553,7 +556,7 @@ impl LanguageModel for OpenAiLanguageModel {
             }
             .boxed()
         } else {
-            let request = into_open_ai(
+            let request = match into_open_ai(
                 request,
                 self.model.id(),
                 self.model.supports_parallel_tool_calls(),
@@ -562,7 +565,10 @@ impl LanguageModel for OpenAiLanguageModel {
                 ChatCompletionMaxTokensParameter::MaxCompletionTokens,
                 None,
                 false,
-            );
+            ) {
+                Ok(request) => request,
+                Err(error) => return async move { Err(error.into()) }.boxed(),
+            };
             let completions = self.stream_completion(request, cx);
             async move {
                 let mapper = OpenAiEventMapper::new();
